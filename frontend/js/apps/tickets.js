@@ -317,11 +317,9 @@ async function renderTickets(body, launchOpts) {
                     </div>
                     <div class="tk-project-footer">
                         <span class="tk-project-members">${memberStr}${_escHtml(extraMembers)}</span>
-                        <span class="tk-project-actions">
-                            <button class="tk-btn-icon tk-edit-project" data-id="${_escHtml(p.id)}" title="${t('Ustawienia')}">
-                                <i class="fas fa-ellipsis-vertical"></i>
-                            </button>
-                            ${isOwner ? '<button class="tk-btn-icon tk-delete-project" data-id="' + _escHtml(p.id) + '" title="' + t('Usuń') + '"><i class="fas fa-trash"></i></button>' : ''}
+                        <span class="tk-actions">
+                            <button class="tk-act-btn" data-id="${_escHtml(p.id)}" title="${t('Ustawienia')}"><i class="fas fa-pen"></i></button>
+                            ${isOwner ? '<button class="tk-act-btn danger tk-delete-project" data-id="' + _escHtml(p.id) + '" title="' + t('Usuń') + '"><i class="fas fa-trash"></i></button>' : ''}
                         </span>
                     </div>
                 </div>`;
@@ -338,13 +336,13 @@ async function renderTickets(body, launchOpts) {
 
         grid.querySelectorAll('.tk-project-card').forEach(card => {
             card.addEventListener('click', (e) => {
-                if (e.target.closest('.tk-btn-icon')) return;
+                if (e.target.closest('.tk-act-btn')) return;
                 const proj = projects.find(p => String(p.id) === card.dataset.id);
                 if (proj) showBoard(proj);
             });
         });
 
-        grid.querySelectorAll('.tk-edit-project').forEach(btn => {
+        grid.querySelectorAll('.tk-act-btn:not(.danger)').forEach(btn => {
             btn.onclick = (e) => {
                 e.stopPropagation();
                 const proj = projects.find(p => String(p.id) === btn.dataset.id);
@@ -505,7 +503,7 @@ async function renderTickets(body, launchOpts) {
                 <button class="tk-btn tk-btn-primary" id="tk-new-ticket">
                     <i class="fas fa-plus"></i> ${t('Ticket')}
                 </button>
-                <button class="tk-btn-icon" id="tk-project-settings" title="${t('Ustawienia')}">
+                <button class="tk-act-btn" id="tk-project-settings" title="${t('Ustawienia')}">
                     <i class="fas fa-sliders"></i>
                 </button>
             </div>
