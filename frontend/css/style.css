@@ -5526,6 +5526,8 @@ a.dkr-port-link:hover {
 
 /* error in message */
 .aic-error { color: #ef4444; font-size: 13px; }
+.aic-context-trim { display: flex; align-items: center; gap: 6px; padding: 6px 16px; margin: 4px 0; font-size: 11px; color: #f59e0b; background: #f59e0b12; border-radius: var(--r-sm); }
+.aic-context-trim i { font-size: 10px; }
 
 /* input bar */
 .aic-input-bar { display: flex; gap: 8px; padding: 12px 24px 16px; border-top: 1px solid var(--border); background: var(--bg-surface); align-items: flex-end; }

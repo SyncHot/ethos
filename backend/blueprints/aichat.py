@@ -7,6 +7,7 @@ Supports local LLM, OpenAI, Azure OpenAI, or any compatible endpoint.
 
 import json
 import os
+import sys
 import time
 import subprocess
 import urllib.request
@@ -17,7 +18,6 @@ import psutil
 
 from flask import Blueprint, request, jsonify, Response, stream_with_context, g
 
-import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from utils import load_json as _load_json, save_json as _save_json, get_username_or, register_pkg_routes, list_directory
 from host import data_path
@@ -147,6 +147,77 @@ _CONFIG_DEFAULTS = {
     'rag_top_k': 3,                 # max context fragments (keep low for N150 prefill speed)
 }
 
+# ── Token estimation & context management ─────────────────────────
+
+# Model context windows (tokens)
+_MODEL_CONTEXT = {
+    'gpt-4o': 128000, 'gpt-4o-mini': 128000,
+    'gpt-4-turbo': 128000, 'gpt-4': 8192,
+    'gpt-3.5-turbo': 16385,
+}
+_DEFAULT_CONTEXT_WINDOW = 4096  # conservative for local models
+
+
+def _estimate_tokens(text):
+    """Rough token estimate: ~4 chars per token for English, ~3 for Polish."""
+    if not text:
+        return 0
+    return max(1, len(text) // 3)
+
+
+def _trim_messages_to_fit(messages, max_context_tokens, max_response_tokens):
+    """Trim conversation history to fit within context window.
+
+    Always keeps: system prompt (first msg) + last user message.
+    Removes oldest messages first until total fits.
+    Returns trimmed list + whether trimming occurred.
+    """
+    budget = max_context_tokens - max_response_tokens - 200  # 200 token safety margin
+    if budget < 500:
+        budget = 500
+
+    # Always keep system (idx 0) and last message
+    if len(messages) <= 2:
+        return messages, False
+
+    system_msg = messages[0]
+    last_msg = messages[-1]
+    middle = messages[1:-1]
+
+    system_tokens = _estimate_tokens(system_msg.get('content', ''))
+    last_tokens = _estimate_tokens(last_msg.get('content', ''))
+    fixed_tokens = system_tokens + last_tokens
+
+    if fixed_tokens >= budget:
+        # Even system + last don't fit — truncate last message content
+        avail = budget - system_tokens
+        if avail < 200:
+            avail = 200
+        content = last_msg.get('content', '')
+        # Rough: 3 chars per token
+        max_chars = avail * 3
+        if len(content) > max_chars:
+            last_msg = dict(last_msg)
+            last_msg['content'] = content[:max_chars] + '\n\n[...wiadomość skrócona z powodu limitu kontekstu]'
+        return [system_msg, last_msg], True
+
+    # Fill from newest to oldest
+    remaining_budget = budget - fixed_tokens
+    kept = []
+    for msg in reversed(middle):
+        msg_tokens = _estimate_tokens(msg.get('content', ''))
+        if msg_tokens <= remaining_budget:
+            kept.append(msg)
+            remaining_budget -= msg_tokens
+        else:
+            break  # stop including older messages
+
+    kept.reverse()
+    trimmed = len(kept) < len(middle)
+    result = [system_msg] + kept + [last_msg]
+    return result, trimmed
+
+
 # ── AI Tools (function calling) ──────────────────────────────────
 
 TICKET_TOOLS = [
@@ -185,8 +256,7 @@ TICKET_TOOLS = [
 
 def _execute_tool(tool_name, args, username):
     """Execute an AI tool and return result string."""
-    from blueprints.tickets import _load, _save, _gen_id, _now, _find_project
-    import threading
+    from blueprints.tickets import _load, _save, _gen_id, _now, _emit
 
     if tool_name == 'create_ticket':
         data = _load()
@@ -224,7 +294,6 @@ def _execute_tool(tool_name, args, username):
         _save(data)
 
         # Emit socket event if available
-        from blueprints.tickets import _emit
         _emit('ticket_created', project['id'], {'ticket': ticket})
 
         return f"Ticket utworzony: [{ticket['priority'].upper()}] {ticket['title']} (id: {ticket['id']}, projekt: {project['name']}, kolumna: {ticket['column']})"
@@ -670,10 +739,21 @@ def chat():
         else:
             api_messages.append({'role': m['role'], 'content': m['content']})
 
+    # ── Smart context trimming — prevent token overflow ──
+    model_name = cfg.get('model', 'gpt-4o')
+    context_window = _MODEL_CONTEXT.get(model_name, _DEFAULT_CONTEXT_WINDOW)
+    if is_local:
+        context_window = min(context_window, 4096)  # local models typically small
+    max_resp_tokens = int(cfg.get('max_tokens', 4096))
+    api_messages, was_trimmed = _trim_messages_to_fit(api_messages, context_window, max_resp_tokens)
+
     def generate():
         full_response = ''
         try:
-            yield f"data: {json.dumps({'type': 'meta', 'conversation_id': conv_id, 'rag_sources': rag_sources})}\n\n"
+            meta = {'type': 'meta', 'conversation_id': conv_id, 'rag_sources': rag_sources}
+            if was_trimmed:
+                meta['context_trimmed'] = True
+            yield f"data: {json.dumps(meta)}\n\n"
 
             if is_local:
                 # ── LOCAL MODEL via llama-cpp-python ──

@@ -462,10 +462,8 @@ window._aicSend = function () {
         container.scrollTop = container.scrollHeight;
     }
 
-    var token = (document.cookie.match(/(?:^|; )nas_token=([^;]*)/) || [])[1] || '';
-    fetch('/api/aichat/chat', {
+    _aicFetch('/api/aichat/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
         body: JSON.stringify({ conversation_id: convId, message: msg, files: filesPayload }),
     }).then(function (response) {
         if (!response.ok) {
@@ -493,6 +491,13 @@ window._aicSend = function () {
                             _aic.ragSources = ev.rag_sources;
                         } else {
                             _aic.ragSources = [];
+                        }
+                        // Show context trimmed warning
+                        if (ev.context_trimmed) {
+                            var trimNote = document.createElement('div');
+                            trimNote.className = 'aic-context-trim';
+                            trimNote.innerHTML = '<i class="fas fa-compress-alt"></i> ' + t('Kontekst skrócony — starsze wiadomości pominięte');
+                            if (container) container.appendChild(trimNote);
                         }
                     } else if (ev.type === 'token') {
                         fullText += ev.content;
