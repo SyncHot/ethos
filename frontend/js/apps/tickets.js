@@ -993,6 +993,13 @@ async function renderTickets(body, launchOpts) {
         const members = currentProject.members || [];
         const ticketComments = await loadComments(ticket.id);
 
+        /* ── fetch copilot logs list ── */
+        let copilotLogs = [];
+        try {
+            const logsResp = await api('/tickets/tickets/' + ticket.id + '/copilot-logs');
+            copilotLogs = (logsResp && logsResp.logs) || [];
+        } catch (e) { /* ignore — no logs available */ }
+
         const labels = (ticket.labels || []);
         const labelsHTML = labels.map(l =>
             `<span class="tk-label tk-label-removable" style="background:${tkLabelColor(l)};" data-label="${_escHtml(l)}">
@@ -1086,6 +1093,25 @@ async function renderTickets(body, launchOpts) {
                         <i class="fas fa-paper-plane"></i> ${t('Wyślij')}
                     </button>
                 </div>
+
+                ${copilotLogs.length ? `
+                <div class="tk-copilot-logs-section" style="margin-top:16px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.1);">
+                    <label><i class="fas fa-robot" style="margin-right:4px;"></i> Copilot Logs (${copilotLogs.length})</label>
+                    <div class="tk-log-tabs" id="tk-log-tabs">
+                        ${copilotLogs.map((log, i) => {
+                            const d = new Date(log.timestamp * 1000);
+                            const label = (log.type === 'qa' ? '🔍 QA' : '🤖 Dev') + ' ' +
+                                d.toLocaleString('pl', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
+                            const sizeKB = (log.size / 1024).toFixed(1);
+                            return '<button class="tk-log-tab' + (i === 0 ? ' active' : '') + '" data-filename="' +
+                                _escHtml(log.filename) + '" data-idx="' + i + '">' + label + ' <span class="tk-log-size">' + sizeKB + 'KB</span></button>';
+                        }).join('')}
+                    </div>
+                    <div class="tk-log-viewer" id="tk-log-viewer">
+                        <div class="tk-log-loading"><i class="fas fa-spinner fa-spin"></i> ${t('Ładowanie...')}</div>
+                    </div>
+                </div>
+                ` : ''}
             </div>
         `;
 
@@ -1190,6 +1216,33 @@ async function renderTickets(body, launchOpts) {
                 toast(t('Komentarz dodany'), 'success');
             }
         };
+
+        /* ── copilot log tabs ── */
+        const logTabs = overlay.querySelector('#tk-log-tabs');
+        const logViewer = overlay.querySelector('#tk-log-viewer');
+        if (logTabs && logViewer) {
+            const loadLog = async (filename) => {
+                logViewer.innerHTML = '<div class="tk-log-loading"><i class="fas fa-spinner fa-spin"></i> ' + t('Ładowanie...') + '</div>';
+                try {
+                    const resp = await api('/tickets/tickets/' + ticket.id + '/copilot-logs/' + encodeURIComponent(filename));
+                    const content = (resp && resp.content) || '';
+                    logViewer.innerHTML = '<pre class="tk-log-content">' + _escHtml(content) + '</pre>';
+                    logViewer.scrollTop = logViewer.scrollHeight;
+                } catch (e) {
+                    logViewer.innerHTML = '<div class="tk-log-error"><i class="fas fa-exclamation-triangle"></i> ' + t('Błąd ładowania logu') + '</div>';
+                }
+            };
+            logTabs.addEventListener('click', (e) => {
+                const tab = e.target.closest('.tk-log-tab');
+                if (!tab) return;
+                logTabs.querySelectorAll('.tk-log-tab').forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+                loadLog(tab.dataset.filename);
+            });
+            // auto-load first log
+            const firstTab = logTabs.querySelector('.tk-log-tab');
+            if (firstTab) loadLog(firstTab.dataset.filename);
+        }
     }
 
     /* ═══════════════════ INIT ═══════════════════ */

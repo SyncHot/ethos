@@ -4,6 +4,8 @@ EthOS – Kanban / Project Management (Tickets) Blueprint
 
 import os
 import sys
+import re
+import glob
 import time
 import uuid
 import threading
@@ -672,3 +674,77 @@ def copilot_queue():
     ))
 
     return jsonify({'queue': queue, 'total': len(queue)})
+
+
+# ---------------------------------------------------------------------------
+# Copilot logs
+# ---------------------------------------------------------------------------
+
+COPILOT_LOG_DIR = '/opt/ethos/logs/copilot_tickets'
+WATCHER_LOG_FILE = '/opt/ethos/logs/ticket_watcher_new.log'
+
+@tickets_bp.route('/tickets/<ticket_id>/copilot-logs', methods=['GET'])
+def copilot_logs(ticket_id):
+    """List copilot execution logs for a ticket."""
+    with _lock:
+        data = _load()
+    ticket = _find_ticket(data, ticket_id)
+    if not ticket:
+        return jsonify({'error': 'Ticket not found'}), 404
+    project = _find_project(data, ticket.get('project_id', ''))
+    if project and not _is_member(project):
+        return jsonify({'error': 'Forbidden'}), 403
+
+    safe_id = re.sub(r'[^a-zA-Z0-9_]', '', ticket_id)
+    pattern = os.path.join(COPILOT_LOG_DIR, f'{safe_id}_*.log')
+    files = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
+
+    logs = []
+    for f in files:
+        name = os.path.basename(f)
+        is_qa = '_qa_' in name
+        try:
+            ts = int(re.search(r'_(\d{10,})', name).group(1))
+        except (AttributeError, ValueError):
+            ts = int(os.path.getmtime(f))
+        logs.append({
+            'filename': name,
+            'type': 'qa' if is_qa else 'dev',
+            'timestamp': ts,
+            'size': os.path.getsize(f),
+        })
+
+    return jsonify({'logs': logs})
+
+
+@tickets_bp.route('/tickets/<ticket_id>/copilot-logs/<filename>', methods=['GET'])
+def copilot_log_content(ticket_id, filename):
+    """Return content of a specific copilot log file."""
+    with _lock:
+        data = _load()
+    ticket = _find_ticket(data, ticket_id)
+    if not ticket:
+        return jsonify({'error': 'Ticket not found'}), 404
+    project = _find_project(data, ticket.get('project_id', ''))
+    if project and not _is_member(project):
+        return jsonify({'error': 'Forbidden'}), 403
+
+    safe_id = re.sub(r'[^a-zA-Z0-9_]', '', ticket_id)
+    safe_name = re.sub(r'[^a-zA-Z0-9_.\-]', '', filename)
+    if not safe_name.startswith(safe_id) or '..' in safe_name:
+        return jsonify({'error': 'Invalid filename'}), 400
+
+    path = os.path.join(COPILOT_LOG_DIR, safe_name)
+    if not os.path.isfile(path):
+        return jsonify({'error': 'Log not found'}), 404
+
+    tail = request.args.get('tail', type=int)
+    try:
+        with open(path, 'r', encoding='utf-8', errors='replace') as f:
+            content = f.read()
+        if tail and tail > 0:
+            lines = content.splitlines()
+            content = '\n'.join(lines[-tail:])
+        return jsonify({'content': content, 'filename': safe_name})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
