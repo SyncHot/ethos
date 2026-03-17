@@ -1096,7 +1096,7 @@ async function renderTickets(body, launchOpts) {
 
                 ${copilotLogs.length ? `
                 <div class="tk-copilot-logs-section" style="margin-top:16px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.1);">
-                    <label><i class="fas fa-robot" style="margin-right:4px;"></i> Copilot Logs (${copilotLogs.length})</label>
+                    <label><i class="fas fa-robot" style="margin-right:4px;"></i> Copilot Logs (${copilotLogs.length}) <span id="tk-log-live" class="tk-log-live-badge" style="display:none;">● LIVE</span></label>
                     <div class="tk-log-tabs" id="tk-log-tabs">
                         ${copilotLogs.map((log, i) => {
                             const d = new Date(log.timestamp * 1000);
@@ -1220,18 +1220,54 @@ async function renderTickets(body, launchOpts) {
         /* ── copilot log tabs ── */
         const logTabs = overlay.querySelector('#tk-log-tabs');
         const logViewer = overlay.querySelector('#tk-log-viewer');
+        let _logPollTimer = null;
+        let _logOffset = 0;
+        let _logFilename = null;
+
         if (logTabs && logViewer) {
             const loadLog = async (filename) => {
+                // stop previous polling
+                if (_logPollTimer) { clearInterval(_logPollTimer); _logPollTimer = null; }
+                _logOffset = 0;
+                _logFilename = filename;
                 logViewer.innerHTML = '<div class="tk-log-loading"><i class="fas fa-spinner fa-spin"></i> ' + t('Ładowanie...') + '</div>';
                 try {
                     const resp = await api('/tickets/tickets/' + ticket.id + '/copilot-logs/' + encodeURIComponent(filename));
                     const content = (resp && resp.content) || '';
+                    _logOffset = resp.offset || content.length;
                     logViewer.innerHTML = '<pre class="tk-log-content">' + _escHtml(content) + '</pre>';
                     logViewer.scrollTop = logViewer.scrollHeight;
+                    // start polling for new content
+                    _logPollTimer = setInterval(() => pollLogUpdates(filename), 3000);
                 } catch (e) {
                     logViewer.innerHTML = '<div class="tk-log-error"><i class="fas fa-exclamation-triangle"></i> ' + t('Błąd ładowania logu') + '</div>';
                 }
             };
+
+            const pollLogUpdates = async (filename) => {
+                if (filename !== _logFilename) return;
+                if (!document.body.contains(logViewer)) {
+                    clearInterval(_logPollTimer); _logPollTimer = null; return;
+                }
+                const liveBadge = overlay.querySelector('#tk-log-live');
+                try {
+                    const resp = await api('/tickets/tickets/' + ticket.id + '/copilot-logs/' + encodeURIComponent(filename) + '?offset=' + _logOffset);
+                    const newContent = (resp && resp.content) || '';
+                    if (newContent.length > 0) {
+                        _logOffset = resp.offset || (_logOffset + newContent.length);
+                        const pre = logViewer.querySelector('.tk-log-content');
+                        if (pre) {
+                            pre.insertAdjacentHTML('beforeend', _escHtml(newContent));
+                            const wasAtBottom = logViewer.scrollHeight - logViewer.scrollTop - logViewer.clientHeight < 80;
+                            if (wasAtBottom) logViewer.scrollTop = logViewer.scrollHeight;
+                        }
+                        if (liveBadge) liveBadge.style.display = 'inline';
+                    } else {
+                        if (liveBadge) liveBadge.style.display = 'none';
+                    }
+                } catch (e) { /* silent — will retry next poll */ }
+            };
+
             logTabs.addEventListener('click', (e) => {
                 const tab = e.target.closest('.tk-log-tab');
                 if (!tab) return;

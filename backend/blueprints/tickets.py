@@ -739,12 +739,21 @@ def copilot_log_content(ticket_id, filename):
         return jsonify({'error': 'Log not found'}), 404
 
     tail = request.args.get('tail', type=int)
+    offset = request.args.get('offset', 0, type=int)
     try:
+        file_size = os.path.getsize(path)
         with open(path, 'r', encoding='utf-8', errors='replace') as f:
+            if offset > 0:
+                f.seek(offset)
             content = f.read()
-        if tail and tail > 0:
+        if tail and tail > 0 and offset == 0:
             lines = content.splitlines()
             content = '\n'.join(lines[-tail:])
-        return jsonify({'content': content, 'filename': safe_name})
+        return jsonify({
+            'content': content,
+            'filename': safe_name,
+            'size': file_size,
+            'offset': file_size,
+        })
     except Exception as e:
         return jsonify({'error': str(e)}), 500

@@ -2826,6 +2826,17 @@
   font-size: 13px;
 }
 .tk-log-error { color: #f97316; }
+.tk-log-live-badge {
+  font-size: 11px;
+  color: #22c55e;
+  font-weight: 600;
+  margin-left: 8px;
+  animation: tk-pulse 1.5s ease-in-out infinite;
+}
+@keyframes tk-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
 
 /* ─── Empty States ─── */
 .tk-empty {
