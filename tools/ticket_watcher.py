@@ -14,7 +14,7 @@ Complexity → Model mapping:
     simple   → claude-haiku-4-20250514 (fast, cost-effective)
 """
 
-import sys, time, json, os, argparse, requests, urllib3
+import sys, time, json, os, argparse, requests, urllib3, subprocess, shlex
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 BASE = "http://localhost:9000/api"
@@ -23,19 +23,20 @@ LOCK_FILE = "/tmp/.ethos_watcher_executing"
 DOCS_DIR = "/opt/ethos/docs"
 
 # ── Complexity → AI Model mapping ────────────────────────────────────────
+# Maps to Copilot CLI --model flag values
 COMPLEXITY_MODEL_MAP = {
     "complex": {
-        "model": "claude-opus-4-20250514",
+        "model": "claude-opus-4.6",
         "label": "Opus (premium)",
         "reason": "Deep reasoning required for complex tasks",
     },
     "medium": {
-        "model": "claude-sonnet-4-20250514",
+        "model": "claude-sonnet-4.6",
         "label": "Sonnet (balanced)",
         "reason": "Good balance of quality and speed",
     },
     "simple": {
-        "model": "claude-haiku-4-20250514",
+        "model": "claude-haiku-4.5",
         "label": "Haiku (fast)",
         "reason": "Fast execution for straightforward tasks",
     },
@@ -171,10 +172,109 @@ def load_docs_context(agent):
 
     return "\n\n".join(context_parts)
 
+# ── Execute ticket via Copilot CLI ────────────────────────────────────────
+
+COPILOT_BIN = "/home/marcin/.local/bin/copilot"
+COPILOT_LOG_DIR = "/opt/ethos/logs/copilot_tickets"
+MAX_AUTOPILOT = 25
+
+def build_copilot_prompt(ticket, agent, info, model_info, docs_context):
+    """Build a comprehensive prompt for Copilot CLI to execute a ticket."""
+    tid = ticket["id"]
+    title = ticket["title"]
+    desc = ticket.get("description", "")
+    priority = ticket.get("priority", "medium")
+    complexity = ticket.get("complexity", "medium")
+    lc = ticket.get("last_comment")
+    feedback = f"\nUser feedback: {lc['text']}" if lc else ""
+
+    prompt = f"""You are an EthOS developer agent. Execute the following ticket.
+
+TICKET: {tid}
+Title: {title}
+Priority: {priority}
+Complexity: {complexity}
+Agent type: {agent}
+Skills needed: {info['skills']}
+{f'Description: {desc}' if desc else ''}
+{feedback}
+
+RULES (follow strictly):
+1. Read the relevant docs before making changes: {', '.join(info.get('docs', []))}
+   Docs are in /opt/ethos/docs/
+2. Follow the lessons learned in /opt/ethos/docs/{info['lessons']}
+3. Work in /opt/ethos/ — this is the project root
+4. After making changes, test them (restart ethos if backend changes: sudo systemctl restart ethos)
+5. Commit changes with a descriptive message including ticket ID [{tid}]
+6. If the task is done, report completion
+
+{f'DOCS CONTEXT:{chr(10)}{docs_context[:4000]}' if docs_context else ''}
+
+Start by reading the relevant files, then implement the solution. Be thorough."""
+
+    return prompt
+
+
+def execute_via_copilot(ticket, agent, info, model_info, docs_context):
+    """Launch Copilot CLI in non-interactive mode to solve the ticket."""
+    tid = ticket["id"]
+    model = model_info["model"]
+
+    # Ensure log dir exists
+    os.makedirs(COPILOT_LOG_DIR, exist_ok=True)
+    log_file = os.path.join(COPILOT_LOG_DIR, f"{tid}_{int(time.time())}.log")
+
+    prompt = build_copilot_prompt(ticket, agent, info, model_info, docs_context)
+
+    cmd = [
+        COPILOT_BIN,
+        "-p", prompt,
+        "--model", model,
+        "--autopilot",
+        "--allow-all",
+        "--max-autopilot-continues", str(MAX_AUTOPILOT),
+    ]
+
+    print(f"COPILOT_START | {tid} | model={model} | log={log_file}", flush=True)
+
+    try:
+        with open(log_file, "w") as lf:
+            lf.write(f"=== Ticket: {tid} | {ticket['title']} ===\n")
+            lf.write(f"=== Model: {model} | Agent: {agent} ===\n")
+            lf.write(f"=== Started: {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n\n")
+            lf.flush()
+
+            proc = subprocess.Popen(
+                cmd,
+                stdout=lf,
+                stderr=subprocess.STDOUT,
+                cwd="/opt/ethos",
+                env={**os.environ, "TERM": "dumb"},
+            )
+
+        # Store PID in lock for monitoring
+        with open(LOCK_FILE, "w") as f:
+            json.dump({
+                "ticket_id": tid,
+                "started": time.time(),
+                "model": model_info,
+                "copilot_pid": proc.pid,
+                "log_file": log_file,
+            }, f)
+
+        print(f"COPILOT_RUNNING | {tid} | PID={proc.pid}", flush=True)
+        return proc
+
+    except Exception as e:
+        print(f"COPILOT_ERROR | {tid} | {e}", flush=True)
+        add_comment(tid, f"[copilot] Błąd uruchamiania Copilot: {e}")
+        return None
+
+
 # ── Auto-execute ─────────────────────────────────────────────────────────
 
 def auto_start_ticket(ticket):
-    """Start ticket: assign, move, select model by complexity, output EXECUTE instruction."""
+    """Start ticket: assign, move, select model by complexity, launch Copilot CLI."""
     tid = ticket["id"]
     title = ticket["title"]
     agent = detect_agent(title, ticket.get("labels", []))
@@ -190,9 +290,6 @@ def auto_start_ticket(ticket):
     # Build context
     desc = ticket.get("description", "")
     lc = ticket.get("last_comment")
-    feedback = f"\nFeedback: {lc['text']}" if lc else ""
-
-    # Load docs rules for the agent type
     docs_context = load_docs_context(agent)
 
     print(f"\n{'='*70}", flush=True)
@@ -200,24 +297,9 @@ def auto_start_ticket(ticket):
     print(f"Title: {title}", flush=True)
     print(f"Priority: {ticket['priority']}", flush=True)
     print(f"Complexity: {complexity} → Model: {model_info['model']} ({model_info['label']})", flush=True)
-    print(f"Reason: {model_info['reason']}", flush=True)
-    if desc: print(f"Description: {desc}", flush=True)
-    if feedback: print(f"Feedback: {lc['text']}", flush=True)
-    print(f"Lessons: {DOCS_DIR}/{info['lessons']}", flush=True)
-    print(f"Skills: {info['skills']}", flush=True)
-    print(f"Docs loaded: {', '.join(info.get('docs', []))}", flush=True)
-    print(f"Status: ASSIGNED to copilot, moved to W trakcie", flush=True)
+    if desc: print(f"Description: {desc[:200]}", flush=True)
+    print(f"Docs: {', '.join(info.get('docs', []))}", flush=True)
     print(f"{'='*70}", flush=True)
-
-    # Output docs rules as context block (for agent consumption)
-    if docs_context:
-        print(f"\n--- RULES & DOCS CONTEXT (for agent) ---", flush=True)
-        # Limit output for readability; full context available in files
-        preview = docs_context[:3000]
-        if len(docs_context) > 3000:
-            preview += f"\n... [{len(docs_context) - 3000} more chars in docs] ..."
-        print(preview, flush=True)
-        print(f"--- END RULES ---\n", flush=True)
 
     comment = (
         f"[copilot] Rozpoczynam prace nad ticketem.\n"
@@ -225,7 +307,10 @@ def auto_start_ticket(ticket):
         f"Złożoność: {complexity} | Docs: {', '.join(info.get('docs', []))}"
     )
     add_comment(tid, comment)
-    return tid
+
+    # Launch Copilot CLI to actually solve the ticket
+    proc = execute_via_copilot(ticket, agent, info, model_info, docs_context)
+    return tid, proc
 
 # ── Main loop ────────────────────────────────────────────────────────────
 
@@ -239,11 +324,38 @@ def main():
     print(f"Ticket Watcher | interval={args.interval}s | mode={mode}", flush=True)
     print(f"Monitoring copilot-enabled projects via /copilot/queue", flush=True)
     print(f"Model mapping: complex→Opus, medium→Sonnet, simple→Haiku", flush=True)
+    print(f"Copilot CLI: {COPILOT_BIN}", flush=True)
 
     prev_state = {}
+    active_proc = None  # Track running Copilot process
+    active_ticket_id = None
 
     while True:
         try:
+            # Check if Copilot process finished
+            if active_proc is not None:
+                retcode = active_proc.poll()
+                if retcode is not None:
+                    executing = get_executing()
+                    log_file = executing.get("log_file", "?") if executing else "?"
+                    if retcode == 0:
+                        print(f"\nCOPILOT_DONE | {active_ticket_id} | exit=0 | log={log_file}", flush=True)
+                        add_comment(active_ticket_id,
+                            f"[copilot] Zakończyłem pracę nad ticketem (exit 0). Log: {log_file}")
+                        # Move to Review
+                        try:
+                            move_ticket(active_ticket_id, "Review")
+                            print(f"MOVED_TO_REVIEW | {active_ticket_id}", flush=True)
+                        except Exception as me:
+                            print(f"MOVE_ERROR | {active_ticket_id} | {me}", flush=True)
+                    else:
+                        print(f"\nCOPILOT_FAILED | {active_ticket_id} | exit={retcode} | log={log_file}", flush=True)
+                        add_comment(active_ticket_id,
+                            f"[copilot] Copilot zakończył z błędem (exit {retcode}). Log: {log_file}")
+                    clear_executing()
+                    active_proc = None
+                    active_ticket_id = None
+
             data = poll_queue()
             queue = data.get("queue", [])
             current_state = {t["id"]: t["column"] for t in queue}
@@ -278,17 +390,24 @@ def main():
             for rid in removed:
                 print(f"DONE | {rid} removed from queue", flush=True)
 
-            # AUTO MODE: pick and start highest priority ticket
-            if args.auto and todo and not is_executing():
+            # AUTO MODE: pick and start highest priority ticket (only if no copilot running)
+            if args.auto and todo and not is_executing() and active_proc is None:
                 prio_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
                 todo.sort(key=lambda t: prio_order.get(t["priority"], 99))
-                auto_start_ticket(todo[0])
+                active_ticket_id, active_proc = auto_start_ticket(todo[0])
 
-            # Check if executing ticket was moved out of queue (done/review)
+            # Check if executing ticket was moved out of queue manually (done/review by user)
             executing = get_executing()
             if executing and executing["ticket_id"] not in current_state:
-                print(f"COMPLETED | {executing['ticket_id']} left queue", flush=True)
+                print(f"COMPLETED | {executing['ticket_id']} left queue (manual)", flush=True)
+                # Kill copilot if still running
+                if active_proc and active_proc.poll() is None:
+                    pid = active_proc.pid
+                    active_proc.terminate()
+                    print(f"COPILOT_TERMINATED | PID={pid} (ticket removed from queue)", flush=True)
                 clear_executing()
+                active_proc = None
+                active_ticket_id = None
 
             prev_state = current_state
 
