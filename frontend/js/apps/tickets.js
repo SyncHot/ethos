@@ -120,6 +120,18 @@ async function renderTickets(body, launchOpts) {
     body.innerHTML = '<div class="tk-app"><div class="tk-loading" style="padding:2rem;text-align:center;"><i class="fas fa-spinner fa-spin"></i> ' + t('Ładowanie...') + '</div></div>';
     const app = body.querySelector('.tk-app');
 
+    /* ── real-time updates via Socket.IO ── */
+    window._onTicketsEvent = (ev) => {
+        if (!currentProject) {
+            if (ev.type.startsWith('project_') || ev.type === 'ticket_created' || ev.type === 'ticket_deleted') {
+                loadProjects().then(renderProjectList);
+            }
+            return;
+        }
+        if (ev.project_id !== currentProject.id) return;
+        loadTickets(currentProject.id).then(() => renderBoard());
+    };
+
     /* ── navigation ── */
     async function showProjectList() {
         currentProject = null;
@@ -312,8 +324,9 @@ async function renderTickets(body, launchOpts) {
                     </div>
                     ${p.description ? '<p class="tk-project-desc">' + _escHtml(p.description) + '</p>' : ''}
                     <div class="tk-project-stats">
-                        <span>${totalTickets} ${t('ticketów')}</span>
-                        <span>${inProgress} ${t('w trakcie')}</span>
+                        <span><i class="fas fa-ticket" style="opacity:0.5;margin-right:3px;"></i>${totalTickets}</span>
+                        <span><i class="fas fa-spinner" style="opacity:0.5;margin-right:3px;"></i>${inProgress}</span>
+                        <span><i class="fas fa-check" style="opacity:0.5;margin-right:3px;"></i>${p.done_count ?? 0}</span>
                     </div>
                     <div class="tk-project-footer">
                         <span class="tk-project-members">${memberStr}${_escHtml(extraMembers)}</span>
@@ -737,15 +750,18 @@ async function renderTickets(body, launchOpts) {
             </span>`
         ).join('');
 
-        const commentsHTML = ticketComments.map(c => `
+        const commentsHTML = ticketComments.map(c => {
+            const ts = c.created || c.created_at;
+            const timeStr = ts ? new Date(ts * 1000).toLocaleString('pl', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '';
+            return `
             <div class="tk-comment">
                 <div class="tk-comment-header">
                     <strong>${_escHtml(c.author || c.user || 'unknown')}</strong>
-                    <span class="tk-comment-date">${c.created_at ? new Date(c.created_at).toLocaleString() : ''}</span>
+                    <span class="tk-comment-date">${timeStr}</span>
                 </div>
                 <div class="tk-comment-body">${_escHtml(c.text || c.body || '')}</div>
-            </div>
-        `).join('');
+            </div>`;
+        }).join('');
 
         const html = `
             <div class="tk-form tk-detail-form">
@@ -790,8 +806,8 @@ async function renderTickets(body, launchOpts) {
 
                 <div class="tk-detail-meta" style="margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.1);font-size:0.8rem;opacity:0.6;">
                     ${ticket.reporter ? '<div>' + t('Zgłaszający') + ': ' + _escHtml(ticket.reporter) + '</div>' : ''}
-                    ${ticket.created_at ? '<div>' + t('Utworzony') + ': ' + new Date(ticket.created_at).toLocaleString() + '</div>' : ''}
-                    ${ticket.updated_at ? '<div>' + t('Zaktualizowany') + ': ' + new Date(ticket.updated_at).toLocaleString() + '</div>' : ''}
+                    ${ticket.created ? '<div>' + t('Utworzony') + ': ' + new Date(ticket.created * 1000).toLocaleString('pl') + '</div>' : ''}
+                    ${ticket.updated ? '<div>' + t('Zaktualizowany') + ': ' + new Date(ticket.updated * 1000).toLocaleString('pl') + '</div>' : ''}
                 </div>
 
                 <div class="tk-comments-section" style="margin-top:16px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.1);">

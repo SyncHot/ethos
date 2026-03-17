@@ -19,6 +19,20 @@ tickets_bp = Blueprint('tickets', __name__, url_prefix='/api/tickets')
 TICKETS_FILE = _data_path('tickets.json')
 
 _lock = threading.Lock()
+_socketio = None
+
+def init_tickets(sio):
+    global _socketio
+    _socketio = sio
+
+def _emit(event_type, project_id, payload=None):
+    if _socketio:
+        _socketio.emit('tickets_event', {
+            'type': event_type,
+            'project_id': project_id,
+            **(payload or {}),
+            'ts': time.time()
+        })
 
 VALID_PRIORITIES = ('critical', 'high', 'medium', 'low')
 DEFAULT_COLUMNS = ["Backlog", "Do zrobienia", "W trakcie", "Review", "Gotowe"]
@@ -91,6 +105,12 @@ def list_projects():
     with _lock:
         data = _load()
     projects = [p for p in data['projects'] if _is_member(p)]
+    all_tickets = data.get('tickets', [])
+    for p in projects:
+        pt = [t for t in all_tickets if t['project_id'] == p['id']]
+        p['ticket_count'] = len(pt)
+        p['in_progress_count'] = sum(1 for t in pt if t.get('column') == 'W trakcie')
+        p['done_count'] = sum(1 for t in pt if t.get('column') == 'Gotowe')
     return jsonify({'projects': projects})
 
 
@@ -129,6 +149,7 @@ def create_project():
         data['projects'].append(project)
         _save(data)
 
+    _emit('project_created', project['id'], {'project': project})
     return jsonify({'ok': True, 'item': project}), 201
 
 
@@ -187,6 +208,7 @@ def update_project(project_id):
         project['updated'] = _now()
         _save(data)
 
+    _emit('project_updated', project_id, {'project': project})
     return jsonify({'ok': True, 'item': project})
 
 
@@ -204,6 +226,7 @@ def delete_project(project_id):
         data['tickets'] = [t for t in data['tickets'] if t['project_id'] != project_id]
         _save(data)
 
+    _emit('project_deleted', project_id)
     return jsonify({'ok': True})
 
 
@@ -303,6 +326,7 @@ def create_ticket(project_id):
         data['tickets'].append(ticket)
         _save(data)
 
+    _emit('ticket_created', ticket['project_id'], {'ticket': ticket})
     return jsonify({'ok': True, 'item': ticket}), 201
 
 
@@ -345,6 +369,7 @@ def update_ticket(ticket_id):
         ticket['updated'] = _now()
         _save(data)
 
+    _emit('ticket_updated', ticket['project_id'], {'ticket': ticket})
     return jsonify({'ok': True, 'item': ticket})
 
 
@@ -360,9 +385,11 @@ def delete_ticket(ticket_id):
         if not project or not _is_member(project):
             return jsonify({'error': 'Access denied'}), 403
 
+        pid = ticket['project_id']
         data['tickets'] = [t for t in data['tickets'] if t['id'] != ticket_id]
         _save(data)
 
+    _emit('ticket_deleted', pid, {'ticket_id': ticket_id})
     return jsonify({'ok': True})
 
 
@@ -413,6 +440,7 @@ def move_ticket(ticket_id):
 
         _save(data)
 
+    _emit('ticket_moved', ticket['project_id'], {'ticket': ticket})
     return jsonify({'ok': True, 'item': ticket})
 
 
@@ -446,6 +474,7 @@ def add_comment(ticket_id):
         ticket['updated'] = _now()
         _save(data)
 
+    _emit('comment_added', ticket['project_id'], {'ticket_id': ticket_id, 'comment': comment})
     return jsonify({'ok': True, 'item': comment}), 201
 
 
@@ -473,6 +502,7 @@ def delete_comment(ticket_id, comment_id):
         ticket['updated'] = _now()
         _save(data)
 
+    _emit('comment_deleted', ticket['project_id'], {'ticket_id': ticket_id, 'comment_id': comment_id})
     return jsonify({'ok': True})
 
 

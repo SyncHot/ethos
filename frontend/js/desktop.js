@@ -1903,6 +1903,13 @@ function connectSocket() {
             loadNotifications();
             toast(t('Błąd skanowania duplikatów:') + ' ' + (data.error || ''), 'error');
         });
+
+        // Tickets real-time events — dispatch to tickets app if open
+        NAS.socket.on('tickets_event', (data) => {
+            if (typeof window._onTicketsEvent === 'function') {
+                window._onTicketsEvent(data);
+            }
+        });
     } catch {
         // Reconnect later
         setTimeout(connectSocket, 5000);

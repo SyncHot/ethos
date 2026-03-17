@@ -84,7 +84,7 @@ from blueprints.ssh_manager import ssh_bp
 from blueprints.websites import websites_bp
 from blueprints.domains_manager import domains_mgr_bp
 from blueprints.stickynotes import notes_bp
-from blueprints.tickets import tickets_bp
+from blueprints.tickets import tickets_bp, init_tickets
 from blueprints.familyhub import familyhub_bp
 from blueprints.sharing import sharing_bp
 from blueprints.installer import installer_bp
@@ -146,6 +146,7 @@ init_downloads(socketio)
 init_update(socketio)
 init_remote_log(socketio)
 init_surveillance(socketio)
+init_tickets(socketio)
 
 # ── Migrate data from app_path → data_path (one-time, for existing installs) ──
 def _migrate_app_data():
