@@ -258,18 +258,11 @@ function renderBuilderApp(body) {
        Image Tab
     ═══════════════════════════════════════════ */
     function renderImage() {
-        const scripts = state.info?.scripts || [];
         blBody.innerHTML = `
             <div class="bl-warn"><i class="fas fa-exclamation-triangle"></i> Budowanie obrazu wymaga ~15-30 minut i dostępu do internetu. Proces pobiera pakiety Debian.</div>
             <div class="bl-section">
-                <div class="bl-section-title"><i class="fas fa-hdd"></i> Nowy obraz systemu</div>
-                <div class="bl-row">
-                    <label>Typ obrazu:</label>
-                    <select class="bl-select" id="bl-img-type">
-                        ${scripts.includes('build-x86-image.sh') ? '<option value="x86" selected>x86_64 (PC / laptop)</option>' : ''}
-                        ${scripts.includes('build-image.sh') ? '<option value="rpi">Raspberry Pi</option>' : ''}
-                    </select>
-                </div>
+                <div class="bl-section-title"><i class="fas fa-hdd"></i> Nowy obraz systemu (x86_64)</div>
+
                 <div style="color:var(--text-secondary);font-size:13px;margin:8px 0 12px;line-height:1.5;">
                     <i class="fas fa-info-circle"></i> Użytkownik, hasło i hostname zostaną ustawione przez kreator przy pierwszym uruchomieniu obrazu.
                 </div>
@@ -288,11 +281,6 @@ function renderBuilderApp(body) {
             </div>
             <div class="bl-log" id="bl-log"></div>
             <div class="bl-result" id="bl-result"></div>`;
-
-        if (scripts.length === 0) {
-            blBody.querySelector('#bl-image-btn').disabled = true;
-            blBody.querySelector('#bl-image-btn').title = t('Brak skryptów budowania');
-        }
 
         blBody.querySelector('#bl-image-btn').onclick = startImage;
         blBody.querySelector('#bl-toggle-log').onclick = () => {
@@ -320,9 +308,7 @@ function renderBuilderApp(body) {
     async function startImage() {
         if (state.building) return;
 
-        const imgType = blBody.querySelector('#bl-img-type')?.value || 'x86';
-
-        if (!confirm(`Budowanie obrazu ${imgType} zajmie ~15-30 minut.\nKontynuować?`)) return;
+        if (!confirm('Budowanie obrazu x86_64 zajmie ~15-30 minut.\nKontynuować?')) return;
 
         state.building = true;
         setDisabled(true);
@@ -353,7 +339,7 @@ function renderBuilderApp(body) {
         try {
             const res = await api('/builder/image', {
                 method: 'POST',
-                body: { type: imgType },
+                body: { type: 'x86' },
             });
 
             if (res.error) {
