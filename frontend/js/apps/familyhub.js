@@ -4,19 +4,14 @@
  */
 
 AppRegistry['family-hub'] = function (appDef) {
-    const winId = 'family-hub-' + Date.now();
-    const el = document.createElement('div');
-    el.className = 'window';
-    el.id = winId;
-    document.getElementById('desktop').appendChild(el);
+    const winId = 'family-hub';
     createWindow(winId, {
         title: t('Centrum Rodzinne'),
         icon: 'fa-house-user',
         iconColor: '#f472b6',
         width: 900, height: 620,
-        onClose: () => { el.remove(); }
+        onRender: (body) => _fhInit(body, winId),
     });
-    _fhInit(el, winId);
 };
 
 /* ═══════════════════════════════════════════════════════════════
@@ -165,7 +160,7 @@ function _fhInit(root, winId) {
     </style>`;
 
     // ── Render shell ──
-    const body = root.querySelector('.window-body') || root;
+    const body = root;
     body.style.position = 'relative';
     body.innerHTML = CSS + `
         <div class="fh-wrap">
