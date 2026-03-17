@@ -2987,3 +2987,104 @@ select.tk-input {
 .dash-spin i { animation: dash-rotate .6s ease; }
 @keyframes dash-rotate { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
 \n/* Nested ticket styles: child/epic */\n.tk-card-child { margin-left: 12px; border-left: 3px solid rgba(255,255,255,0.03); padding-left: 8px; opacity: 0.98; }\n.tk-epic-card { background: linear-gradient(90deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); border-left: 4px solid rgba(58,141,255,0.12); }\n
+
+
+/* ═══ Jira-like Epic / Subtask styles ═══ */
+
+/* Epic colors — rotate through these for distinct epic bands */
+.tk-epic-group { margin-bottom: 2px; }
+
+.tk-epic-card {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  border-left: 4px solid var(--epic-color, #6554c0);
+  padding: 10px 12px;
+  cursor: grab;
+  transition: box-shadow var(--transition-fast), border-color var(--transition-fast);
+}
+.tk-epic-card:hover {
+  box-shadow: var(--shadow-sm);
+  border-color: color-mix(in srgb, var(--epic-color, #6554c0) 60%, var(--border));
+}
+.tk-epic-card .tk-card-header { display: flex; align-items: flex-start; gap: 8px; }
+
+.tk-epic-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+  color: var(--epic-color, #6554c0);
+  margin-top: 4px;
+}
+.tk-epic-badge i { font-size: 9px; }
+
+.tk-epic-progress {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 6px;
+}
+.tk-epic-progress-bar {
+  flex: 1; height: 4px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 2px; overflow: hidden;
+}
+.tk-epic-progress-fill {
+  height: 100%; border-radius: 2px;
+  background: var(--epic-color, #6554c0);
+  transition: width 0.3s ease;
+}
+.tk-epic-progress-text {
+  font-size: 10px; color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.tk-epic-toggle {
+  background: none; border: none; cursor: pointer;
+  color: var(--text-muted); font-size: 10px;
+  padding: 2px 4px; border-radius: 3px;
+  transition: background 0.15s;
+}
+.tk-epic-toggle:hover { background: rgba(255,255,255,0.06); color: var(--text); }
+
+/* Children container */
+.tk-epic-children {
+  margin-left: 16px;
+  padding-left: 12px;
+  border-left: 2px solid color-mix(in srgb, var(--epic-color, #6554c0) 25%, transparent);
+  margin-bottom: 4px;
+}
+.tk-epic-children.collapsed { display: none; }
+
+/* Child cards — slightly smaller, subtask feel */
+.tk-card-child {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 8px 10px;
+  cursor: grab;
+  transition: box-shadow var(--transition-fast), border-color var(--transition-fast);
+  font-size: 12px;
+}
+.tk-card-child:hover {
+  box-shadow: var(--shadow-sm);
+  border-color: var(--accent);
+}
+.tk-card-child + .tk-card-child { margin-top: 4px; }
+.tk-card-child .tk-card-title { font-size: 12px; margin-bottom: 4px; }
+.tk-card-child .tk-card-header { display: flex; align-items: flex-start; gap: 6px; }
+
+.tk-child-badge {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 9px; color: var(--text-muted);
+  margin-top: 2px;
+}
+.tk-child-badge i { font-size: 8px; }
+
+/* Subtask checkbox-style icon in child cards */
+.tk-subtask-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px;
+  border: 1.5px solid var(--epic-color, #6554c0);
+  border-radius: 3px;
+  font-size: 8px; color: var(--epic-color, #6554c0);
+  flex-shrink: 0; margin-top: 1px;
+}
+.tk-subtask-icon.done { background: var(--epic-color, #6554c0); color: #fff; }

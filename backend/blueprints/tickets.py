@@ -421,11 +421,23 @@ def move_ticket(ticket_id):
         ticket['column'] = column
         ticket['updated'] = _now()
 
+        # Cascade: if this ticket is an epic, move all children too
+        epic_label = 'epic:' + ticket_id
+        children_moved = []
+        for t in data['tickets']:
+            if t['id'] == ticket_id:
+                continue
+            if epic_label in t.get('labels', []):
+                t['column'] = column
+                t['updated'] = _now()
+                children_moved.append(t)
+
         # Collect tickets in target column (excluding the moved one)
+        moved_ids = {ticket_id} | {c['id'] for c in children_moved}
         col_tickets = sorted(
             [t for t in data['tickets']
              if t['project_id'] == ticket['project_id']
-             and t['column'] == column and t['id'] != ticket_id],
+             and t['column'] == column and t['id'] not in moved_ids],
             key=lambda t: t.get('order', 0),
         )
 
@@ -435,13 +447,17 @@ def move_ticket(ticket_id):
             order = len(col_tickets)
 
         col_tickets.insert(order, ticket)
+        # Place children right after the epic
+        for ci, child in enumerate(children_moved):
+            col_tickets.insert(order + 1 + ci, child)
+
         for idx, t in enumerate(col_tickets):
             t['order'] = idx
 
         _save(data)
 
-    _emit('ticket_moved', ticket['project_id'], {'ticket': ticket})
-    return jsonify({'ok': True, 'item': ticket})
+    _emit('ticket_moved', ticket['project_id'], {'ticket': ticket, 'children': [c['id'] for c in children_moved]})
+    return jsonify({'ok': True, 'item': ticket, 'children_moved': len(children_moved)})
 
 
 @tickets_bp.route('/tickets/<ticket_id>/comments', methods=['POST'])

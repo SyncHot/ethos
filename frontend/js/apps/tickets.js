@@ -582,19 +582,150 @@ async function renderTickets(body, launchOpts) {
 
         const board = app.querySelector('#tk-board');
 
+        /* ── Jira-like epic colors ── */
+        const EPIC_COLORS = ['#6554c0','#0065ff','#00875a','#ff5630','#ff991f','#36b37e','#00b8d9','#6554c0'];
+        const epicColorMap = {};
+        let epicColorIdx = 0;
+        Object.keys(ticketChildren).forEach(eid => {
+            epicColorMap[eid] = EPIC_COLORS[epicColorIdx % EPIC_COLORS.length];
+            epicColorIdx++;
+        });
+
+        // Collapse state persisted per-session
+        if (!window._tkEpicCollapsed) window._tkEpicCollapsed = {};
+
         /* ── render columns ── */
-        function createTicketCard(tk, isEpic=false, isChild=false, idx=0) {
+        function createEpicGroup(epicTk, children, colName) {
+            const color = epicColorMap[epicTk.id] || '#6554c0';
+            const allChildren = ticketChildren[epicTk.id] || [];
+            const doneCol = (currentProject.columns || DEFAULT_COLUMNS).slice(-1)[0] || 'Gotowe';
+            const doneCount = allChildren.filter(c => c.column === doneCol).length;
+            const totalCount = allChildren.length;
+            const pct = totalCount ? Math.round((doneCount / totalCount) * 100) : 0;
+            const isCollapsed = !!window._tkEpicCollapsed[epicTk.id];
+
+            const group = document.createElement('div');
+            group.className = 'tk-epic-group';
+            group.style.setProperty('--epic-color', color);
+
+            // Epic card
+            const epicCard = document.createElement('div');
+            epicCard.className = 'tk-card tk-epic-card';
+            epicCard.draggable = true;
+            epicCard.dataset.id = epicTk.id;
+            epicCard.dataset.column = colName;
+
+            const prioColor = PRIORITY_COLORS[epicTk.priority] || PRIORITY_COLORS.medium;
+            const visibleLabels = (epicTk.labels || []).filter(l => !String(l).startsWith('epic:'));
+            const labelsHtml = visibleLabels.map(l =>
+                `<span class="tk-label" style="background:${tkLabelColor(l)};">${_escHtml(l)}</span>`
+            ).join('');
+
+            epicCard.innerHTML = `
+                <div class="tk-card-header">
+                    <span class="tk-priority-dot" style="background:${prioColor};" title="${_escHtml(PRIORITY_LABELS[epicTk.priority] || epicTk.priority)}"></span>
+                    <span class="tk-card-title">${_escHtml(epicTk.title)}</span>
+                </div>
+                <div class="tk-epic-badge">
+                    <i class="fas fa-layer-group"></i> EPIC · ${totalCount} subtask${totalCount !== 1 ? 's' : ''}
+                    <button class="tk-epic-toggle" title="${isCollapsed ? 'Rozwiń' : 'Zwiń'}">
+                        <i class="fas fa-chevron-${isCollapsed ? 'right' : 'down'}"></i>
+                    </button>
+                </div>
+                <div class="tk-epic-progress">
+                    <div class="tk-epic-progress-bar"><div class="tk-epic-progress-fill" style="width:${pct}%;"></div></div>
+                    <span class="tk-epic-progress-text">${doneCount}/${totalCount}</span>
+                </div>
+                ${epicTk.assignee ? '<div class="tk-card-assignee"><i class="fas fa-user"></i> ' + _escHtml(epicTk.assignee) + '</div>' : ''}
+                ${labelsHtml ? '<div class="tk-card-labels">' + labelsHtml + '</div>' : ''}
+            `;
+
+            // Toggle collapse
+            epicCard.querySelector('.tk-epic-toggle').addEventListener('click', (e) => {
+                e.stopPropagation();
+                window._tkEpicCollapsed[epicTk.id] = !window._tkEpicCollapsed[epicTk.id];
+                renderBoard();
+            });
+
+            // Drag epic (cascades children via backend)
+            epicCard.addEventListener('dragstart', (e) => {
+                e.dataTransfer.setData('text/plain', JSON.stringify({ id: epicTk.id, fromColumn: colName }));
+                epicCard.classList.add('tk-card-dragging');
+                setTimeout(() => epicCard.style.opacity = '0.5', 0);
+            });
+            epicCard.addEventListener('dragend', () => {
+                epicCard.classList.remove('tk-card-dragging');
+                epicCard.style.opacity = '';
+                board.querySelectorAll('.tk-column-dragover').forEach(el => el.classList.remove('tk-column-dragover'));
+            });
+            epicCard.addEventListener('click', () => showTicketDetail(epicTk));
+
+            group.appendChild(epicCard);
+
+            // Children container
+            if (children.length) {
+                const childWrap = document.createElement('div');
+                childWrap.className = 'tk-epic-children' + (isCollapsed ? ' collapsed' : '');
+                childWrap.style.setProperty('--epic-color', color);
+
+                children.forEach((ch, cidx) => {
+                    const isDone = ch.column === doneCol;
+                    const childCard = document.createElement('div');
+                    childCard.className = 'tk-card-child';
+                    childCard.draggable = true;
+                    childCard.dataset.id = ch.id;
+                    childCard.dataset.column = colName;
+                    childCard.dataset.order = cidx;
+
+                    const cPrioColor = PRIORITY_COLORS[ch.priority] || PRIORITY_COLORS.medium;
+                    const cLabels = (ch.labels || []).filter(l => !String(l).startsWith('epic:'));
+                    const cLabelsHtml = cLabels.map(l =>
+                        `<span class="tk-label" style="background:${tkLabelColor(l)};">${_escHtml(l)}</span>`
+                    ).join('');
+
+                    childCard.innerHTML = `
+                        <div class="tk-card-header">
+                            <span class="tk-subtask-icon${isDone ? ' done' : ''}" style="--epic-color:${color};">
+                                ${isDone ? '<i class="fas fa-check"></i>' : ''}
+                            </span>
+                            <span class="tk-card-title" ${isDone ? 'style="text-decoration:line-through;opacity:0.6;"' : ''}>${_escHtml(ch.title)}</span>
+                        </div>
+                        ${ch.assignee ? '<div class="tk-card-assignee"><i class="fas fa-user"></i> ' + _escHtml(ch.assignee) + '</div>' : ''}
+                        ${cLabelsHtml ? '<div class="tk-card-labels">' + cLabelsHtml + '</div>' : ''}
+                    `;
+
+                    childCard.addEventListener('dragstart', (e) => {
+                        e.dataTransfer.setData('text/plain', JSON.stringify({ id: ch.id, fromColumn: colName }));
+                        childCard.classList.add('tk-card-dragging');
+                        setTimeout(() => childCard.style.opacity = '0.5', 0);
+                    });
+                    childCard.addEventListener('dragend', () => {
+                        childCard.classList.remove('tk-card-dragging');
+                        childCard.style.opacity = '';
+                        board.querySelectorAll('.tk-column-dragover').forEach(el => el.classList.remove('tk-column-dragover'));
+                    });
+                    childCard.addEventListener('click', () => showTicketDetail(ch));
+
+                    childWrap.appendChild(childCard);
+                });
+                group.appendChild(childWrap);
+            }
+
+            return group;
+        }
+
+        function createStandaloneCard(tk, idx) {
             const card = document.createElement('div');
-            card.className = 'tk-card' + (isChild ? ' tk-card-child' : '') + (isEpic ? ' tk-card-epic' : '');
+            card.className = 'tk-card';
             card.draggable = true;
             card.dataset.id = tk.id;
             card.dataset.column = tk.column;
             card.dataset.order = idx;
 
-            const labels = (tk.labels || []).map(l =>
+            const visibleLabels = (tk.labels || []).filter(l => !String(l).startsWith('epic:'));
+            const labelsHtml = visibleLabels.map(l =>
                 `<span class="tk-label" style="background:${tkLabelColor(l)};">${_escHtml(l)}</span>`
             ).join('');
-
             const prioColor = PRIORITY_COLORS[tk.priority] || PRIORITY_COLORS.medium;
 
             card.innerHTML = `
@@ -603,32 +734,31 @@ async function renderTickets(body, launchOpts) {
                     <span class="tk-card-title">${_escHtml(tk.title)}</span>
                 </div>
                 ${tk.assignee ? '<div class="tk-card-assignee"><i class="fas fa-user"></i> ' + _escHtml(tk.assignee) + '</div>' : ''}
-                ${labels ? '<div class="tk-card-labels">' + labels + '</div>' : ''}
+                ${labelsHtml ? '<div class="tk-card-labels">' + labelsHtml + '</div>' : ''}
             `;
 
             card.addEventListener('dragstart', (e) => {
-                e.dataTransfer.setData('text/plain', JSON.stringify({
-                    id: tk.id, fromColumn: tk.column,
-                }));
+                e.dataTransfer.setData('text/plain', JSON.stringify({ id: tk.id, fromColumn: tk.column }));
                 card.classList.add('tk-card-dragging');
                 setTimeout(() => card.style.opacity = '0.5', 0);
             });
-
             card.addEventListener('dragend', () => {
                 card.classList.remove('tk-card-dragging');
                 card.style.opacity = '';
-                board.querySelectorAll('.tk-column-dragover').forEach(el =>
-                    el.classList.remove('tk-column-dragover')
-                );
+                board.querySelectorAll('.tk-column-dragover').forEach(el => el.classList.remove('tk-column-dragover'));
             });
-
             card.addEventListener('click', () => showTicketDetail(tk));
-
             return card;
         }
 
         columns.forEach(colName => {
             const colTickets = filtered.filter(tk => tk.column === colName);
+            // Count epics as 1 unit (don't count their children separately)
+            const epicIds = new Set([...ticketIsEpic]);
+            const childIds = new Set();
+            colTickets.forEach(tk => { if (tk.parent && epicIds.has(tk.parent)) childIds.add(tk.id); });
+            const visibleCount = colTickets.filter(tk => !childIds.has(tk.id)).length;
+
             const col = document.createElement('div');
             col.className = 'tk-column';
             col.dataset.column = colName;
@@ -636,7 +766,7 @@ async function renderTickets(body, launchOpts) {
             col.innerHTML = `
                 <div class="tk-column-header">
                     <span class="tk-column-title">${_escHtml(colName)}</span>
-                    <span class="tk-column-count">${colTickets.length}</span>
+                    <span class="tk-column-count">${visibleCount}</span>
                 </div>
                 <div class="tk-column-body" data-column="${_escHtml(colName)}">
                     ${colTickets.length === 0 ? '<div class="tk-empty-col">' + t('Brak ticketów') + '</div>' : ''}
@@ -646,38 +776,22 @@ async function renderTickets(body, launchOpts) {
             const colBody = col.querySelector('.tk-column-body');
             const renderedIds = new Set();
 
-            // First render epics present in this column
+            // First: epics with their children
             colTickets.forEach((tk, idx) => {
                 if (renderedIds.has(tk.id)) return;
                 if (ticketIsEpic.has(tk.id)) {
-                    const epicCard = createTicketCard(tk, true, false, idx);
-                    epicCard.classList.add('tk-epic-card');
-                    colBody.appendChild(epicCard);
-                    renderedIds.add(tk.id);
-
                     const children = (ticketChildren[tk.id] || []).filter(ch => ch.column === colName);
-                    children.forEach((ch, cidx) => {
-                        const childCard = createTicketCard(ch, false, true, cidx);
-                        colBody.appendChild(childCard);
-                        renderedIds.add(ch.id);
-                    });
+                    const epicGroup = createEpicGroup(tk, children, colName);
+                    colBody.appendChild(epicGroup);
+                    renderedIds.add(tk.id);
+                    children.forEach(ch => renderedIds.add(ch.id));
                 }
             });
 
-            // Then render remaining tickets (orphans or epics without children)
+            // Then: standalone tickets
             colTickets.forEach((tk, idx) => {
                 if (renderedIds.has(tk.id)) return;
-
-                if (tk.parent && ticketIsEpic.has(tk.parent)) {
-                    const parentEpic = tickets.find(tt => tt.id === tk.parent);
-                    if (parentEpic && parentEpic.column === colName) {
-                        // parent epic is in this column — child already rendered under epic
-                        renderedIds.add(tk.id);
-                        return;
-                    }
-                }
-
-                const card = createTicketCard(tk, false, false, idx);
+                const card = createStandaloneCard(tk, idx);
                 colBody.appendChild(card);
                 renderedIds.add(tk.id);
             });
@@ -701,7 +815,7 @@ async function renderTickets(body, launchOpts) {
                 try {
                     const payload = JSON.parse(e.dataTransfer.getData('text/plain'));
                     if (payload.id) {
-                        const targetCards = colBody.querySelectorAll('.tk-card');
+                        const targetCards = colBody.querySelectorAll('.tk-card, .tk-epic-card');
                         let order = targetCards.length;
                         moveTicket(payload.id, colName, order);
                     }
