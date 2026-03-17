@@ -161,14 +161,21 @@ def cleanup_stale_lock():
 def detect_agent(title, labels):
     t = title.lower()
     l = [x.lower() for x in labels]
-    if any(x in t for x in ['[fe]','frontend','ui','ux','css','design']): return "FE/UX"
-    if any(x in t for x in ['[be]','backend','api','endpoint']): return "Backend"
-    if any(x in t for x in ['[devops]','deploy','build','docker']): return "DevOps"
-    if any(x in t for x in ['[sec]','security']): return "Security"
-    if any(x in t for x in ['[docs]','dokumentacja']): return "Docs"
-    if any(x in t for x in ['[qa]','test']): return "QA"
-    if any(x in l for x in ['frontend','fe','ui']): return "FE/UX"
+    # Title-based detection
+    if any(x in t for x in ['[fe]','frontend','ui','ux','css','design','gallery','thumbnail']): return "FE/UX"
+    if any(x in t for x in ['[be]','backend','api','endpoint','flask','route']): return "Backend"
+    if any(x in t for x in ['[devops]','deploy','build','docker','systemd','service','ops']): return "DevOps"
+    if any(x in t for x in ['[sec]','security','auth','permission','encrypt']): return "Security"
+    if any(x in t for x in ['[docs]','dokumentacja','documentation']): return "Docs"
+    if any(x in t for x in ['[qa]','test','qa']): return "QA"
+    # Label-based detection
+    if any(x in l for x in ['frontend','fe','ui','file-manager','gallery']): return "FE/UX"
     if any(x in l for x in ['backend','be','api']): return "Backend"
+    if any(x in l for x in ['devops','ops','infra']): return "DevOps"
+    if any(x in l for x in ['security','sec']): return "Security"
+    # Description keywords (title has abbreviated names like "FM:")
+    if any(x in t for x in ['fm:','file manager','file operations','listing','upload','download']): return "FE/UX"
+    if any(x in t for x in ['cache','index','optim','perf','scalab']): return "Backend"
     return "General"
 
 # ── Model selection based on complexity ──────────────────────────────────
@@ -204,7 +211,11 @@ def load_docs_context(agent):
 
 COPILOT_BIN = "/home/marcin/.local/bin/copilot"
 COPILOT_LOG_DIR = "/opt/ethos/logs/copilot_tickets"
-MAX_AUTOPILOT = 25
+MAX_AUTOPILOT = {
+    "complex": 25,
+    "medium": 15,
+    "simple": 8,
+}
 
 def build_qa_prompt(ticket):
     """Build a QA review prompt — Copilot checks if implementation meets requirements and docs."""
@@ -317,7 +328,7 @@ def parse_qa_verdict(log_file):
         return "error", str(e)
 
 def build_copilot_prompt(ticket, agent, info, model_info, docs_context):
-    """Build a comprehensive prompt for Copilot CLI to execute a ticket."""
+    """Build a focused prompt for Copilot CLI to execute a ticket."""
     tid = ticket["id"]
     title = ticket["title"]
     desc = ticket.get("description", "")
@@ -326,29 +337,27 @@ def build_copilot_prompt(ticket, agent, info, model_info, docs_context):
     lc = ticket.get("last_comment")
     feedback = f"\nUser feedback: {lc['text']}" if lc else ""
 
-    prompt = f"""You are an EthOS developer agent. Execute the following ticket.
+    doc_list = '\n'.join(f'   - /opt/ethos/docs/{d}' for d in info.get('docs', []))
+
+    prompt = f"""You are an EthOS {agent} agent. Execute this ticket efficiently.
 
 TICKET: {tid}
 Title: {title}
-Priority: {priority}
-Complexity: {complexity}
-Agent type: {agent}
-Skills needed: {info['skills']}
 {f'Description: {desc}' if desc else ''}
 {feedback}
 
-RULES (follow strictly):
-1. FIRST read these docs before writing any code:
-   - /opt/ethos/docs/{info['lessons']} (lessons learned — mistakes to avoid)
-   - /opt/ethos/docs/DEV_STANDARDS.md (coding standards)
-{chr(10).join(f'   - /opt/ethos/docs/{d}' for d in info.get('docs', []) if d not in (info['lessons'], 'DEV_STANDARDS.md'))}
-2. Work in /opt/ethos/ — this is the project root
-3. After making changes, test them (restart ethos if backend changes: sudo systemctl restart ethos)
-4. Commit changes with: git add <files> && git commit -m "[{tid}] <description>"
-5. Push with: sudo -u marcin git push
-6. When done, summarize what you changed
+PROJECT: /opt/ethos/ (Flask backend + vanilla JS frontend)
+REFERENCE DOCS (consult only when relevant, do NOT read everything):
+{doc_list}
 
-Start by reading the docs, then implement the solution. Be thorough and complete."""
+WORKFLOW:
+1. Understand what needs to change — explore the relevant source files
+2. Implement the solution
+3. Test if possible (restart ethos if backend changes: sudo systemctl restart ethos)
+4. Commit: git add <files> && git commit -m "[{tid}] <description>"
+5. Push: sudo -u marcin git push
+
+Be focused and efficient. Do not read docs that aren't relevant to the task."""
 
     return prompt
 
@@ -375,7 +384,7 @@ def execute_via_copilot(ticket, agent, info, model_info, docs_context):
         "--model", model,
         "--autopilot",
         "--allow-all",
-        "--max-autopilot-continues", str(MAX_AUTOPILOT),
+        "--max-autopilot-continues", str(MAX_AUTOPILOT.get(ticket.get("complexity", "medium"), 15)),
     ]
 
     print(f"COPILOT_START | {tid} | model={model} | log={log_file}", flush=True)
