@@ -145,6 +145,8 @@ _config_defaults = {
     'alldebrid_api_key': '',
     'realdebrid_api_key': '',
     'premiumize_api_key': '',
+    'debridlink_api_key': '',
+    'torbox_api_key': '',
     'watch_folder': '',
     'watch_folder_enabled': False,
     'overwrite_existing': False,
@@ -652,6 +654,45 @@ def _resolve_premiumize(url, api_key):
     raise Exception(f"Premiumize: {error}")
 
 
+
+def _resolve_debridlink(url, api_key):
+    """Resolve a link through Debrid-Link API."""
+    endpoint = "https://debrid-link.com/api/v2/downloader/add"
+    headers = {'Authorization': f'Bearer {api_key}'}
+    data = {'url': url}
+    req = urllib.request.Request(endpoint, data=urllib.parse.urlencode(data).encode(), headers=headers)
+    ctx = ssl.create_default_context()
+    with urllib.request.urlopen(req, context=ctx, timeout=30) as resp:
+        result = json.loads(resp.read().decode())
+    if result.get('success') and result.get('value'):
+        val = result['value']
+        return {
+            'url': val.get('downloadUrl', ''),
+            'filename': val.get('name', ''),
+            'filesize': val.get('size', 0),
+        }
+    raise Exception(f"Debrid-Link: {result.get('error', 'Unknown error')}")
+
+
+def _resolve_torbox(url, api_key):
+    """Resolve a link through TorBox API."""
+    endpoint = "https://api.torbox.app/v1/api/webdl/createwebdownload"
+    headers = {'Authorization': f'Bearer {api_key}'}
+    data = json.dumps({'url': url}).encode()
+    req = urllib.request.Request(endpoint, data=data, headers={**headers, 'Content-Type': 'application/json'})
+    ctx = ssl.create_default_context()
+    with urllib.request.urlopen(req, context=ctx, timeout=30) as resp:
+        result = json.loads(resp.read().decode())
+    if result.get('success') and result.get('data'):
+        d = result['data']
+        return {
+            'url': d.get('download_url', '') or d.get('cached_url', ''),
+            'filename': d.get('name', ''),
+            'filesize': d.get('size', 0),
+        }
+    raise Exception(f"TorBox: {result.get('detail', 'Unknown error')}")
+
+
 def _resolve_debrid(url, config):
     """Try to resolve URL through configured debrid service."""
     service = config.get('debrid_service', 'none')
@@ -661,6 +702,10 @@ def _resolve_debrid(url, config):
         return _resolve_realdebrid(url, config['realdebrid_api_key'])
     elif service == 'premiumize' and config.get('premiumize_api_key'):
         return _resolve_premiumize(url, config['premiumize_api_key'])
+    elif service == 'debridlink' and config.get('debridlink_api_key'):
+        return _resolve_debridlink(url, config['debridlink_api_key'])
+    elif service == 'torbox' and config.get('torbox_api_key'):
+        return _resolve_torbox(url, config['torbox_api_key'])
     return None  # no debrid configured
 
 
@@ -2396,7 +2441,7 @@ def get_config():
     cfg = _load_config()
     # Mask API keys
     safe = dict(cfg)
-    for k in ('alldebrid_api_key', 'realdebrid_api_key', 'premiumize_api_key'):
+    for k in ('alldebrid_api_key', 'realdebrid_api_key', 'premiumize_api_key', 'debridlink_api_key', 'torbox_api_key'):
         if safe.get(k):
             safe[k] = safe[k][:4] + '***' + safe[k][-4:]
     return jsonify({'ok': True, 'config': safe})
@@ -2425,7 +2470,7 @@ def set_config():
         cfg['debrid_service'] = data['debrid_service']
 
     # Only update API keys if new value provided (not masked)
-    for key in ('alldebrid_api_key', 'realdebrid_api_key', 'premiumize_api_key'):
+    for key in ('alldebrid_api_key', 'realdebrid_api_key', 'premiumize_api_key', 'debridlink_api_key', 'torbox_api_key'):
         if key in data and data[key] and '***' not in data[key]:
             cfg[key] = data[key]
 
@@ -2446,6 +2491,23 @@ def test_debrid():
     if not api_key:
         return jsonify({'ok': False, 'error': 'Brak klucza API'})
 
+    return _do_test_debrid(service, api_key)
+
+
+@downloads_bp.route('/api/downloads/test-saved-debrid', methods=['POST'])
+def test_saved_debrid():
+    """Test the already-saved debrid API key."""
+    data = request.get_json(force=True)
+    service = data.get('service', '')
+    cfg = _load_config()
+    api_key = cfg.get(f'{service}_api_key', '')
+    if not api_key:
+        return jsonify({'ok': False, 'error': 'Brak zapisanego klucza API dla tego serwisu'})
+    return _do_test_debrid(service, api_key)
+
+
+def _do_test_debrid(service, api_key):
+    """Shared debrid test logic."""
     try:
         if service == 'alldebrid':
             result = _http_get_json(
@@ -2473,6 +2535,29 @@ def test_debrid():
             if result.get('status') == 'success':
                 return jsonify({'ok': True, 'info': f"Użytkownik: {result.get('customer_id', '?')}, Premium: {'Tak' if result.get('premium_until') else 'Nie'}"})
             return jsonify({'ok': False, 'error': result.get('message', 'Błąd')})
+
+
+        elif service == 'debridlink':
+            result = _http_get_json(
+                "https://debrid-link.com/api/v2/account/infos",
+                headers={'Authorization': f'Bearer {api_key}'}
+            )
+            if result.get('success') and result.get('value'):
+                val = result['value']
+                prem = 'Tak' if val.get('premiumLeft', 0) > 0 else 'Nie'
+                return jsonify({'ok': True, 'info': f"Użytkownik: {val.get('pseudo', '?')}, Premium: {prem}"})
+            return jsonify({'ok': False, 'error': result.get('error', 'Nieprawidłowy klucz')})
+
+        elif service == 'torbox':
+            result = _http_get_json(
+                "https://api.torbox.app/v1/api/user/me",
+                headers={'Authorization': f'Bearer {api_key}'}
+            )
+            if result.get('success') and result.get('data'):
+                d = result['data']
+                prem = 'Tak' if d.get('plan', 0) > 0 else 'Nie'
+                return jsonify({'ok': True, 'info': f"Użytkownik: {d.get('email', '?')}, Premium: {prem}"})
+            return jsonify({'ok': False, 'error': result.get('detail', 'Nieprawidłowy klucz')})
 
         return jsonify({'ok': False, 'error': 'Nieznany serwis'})
     except Exception as e:

@@ -166,7 +166,7 @@ function renderFM(body, state) {
                     </div>
                     <div class="fm-statusbar" id="fm-statusbar"></div>
                     <!-- Disk analytics panel (hidden) -->
-                    <div class="fm-ana-panel" id="fm-ana-panel" class="fm-ana-overlay hidden">
+                    <div class="fm-ana-panel fm-ana-overlay hidden" id="fm-ana-panel">
                         <div class="fm-ana-header">
                             <button class="fm-toolbar-btn" id="fm-ana-back-btn" title="Zamknij analizę"><i class="fas fa-arrow-left"></i></button>
                             <span class="app-title-sm"><i class="fas fa-chart-pie app-btn-icon app-icon-accent"></i>Analiza dysku</span>

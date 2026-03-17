@@ -166,7 +166,7 @@ img {{ max-width: 100%; }}
             save_path = os.path.join(save_dir, filename)
             doc.save(save_path)
             # Compute user-visible path
-            user_save = save_path[len(DATA_ROOT):]
+            user_save = save_path if save_path.startswith('/') else '/' + save_path
             return jsonify({'ok': True, 'saved_path': user_save, 'filename': filename})
         else:
             # Return as download
@@ -239,7 +239,7 @@ blockquote {{ border-left: 3px solid #ccc; margin-left: 0; padding-left: 12pt; c
             save_path = os.path.join(save_dir, filename)
             with open(save_path, 'wb') as f:
                 f.write(pdf_bytes)
-            user_save = save_path[len(DATA_ROOT):]
+            user_save = save_path if save_path.startswith('/') else '/' + save_path
             return jsonify({'ok': True, 'saved_path': user_save, 'filename': filename})
         else:
             buf = io.BytesIO(pdf_bytes)

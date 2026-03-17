@@ -198,6 +198,20 @@ function renderDownloadManager(body, launchOpts) {
                                 <button class="dlm-btn-sm dlm-test-key" data-service="premiumize"><i class="fas fa-check-circle"></i> Test</button>
                             </div>
                         </div>
+                        <div class="dlm-setting-row dlm-key-row" data-service="debridlink" style="display:none;">
+                            <label>Debrid-Link API Key:</label>
+                            <div class="dl-key-input-row">
+                                <input type="password" class="dlm-input" id="dlm-key-debridlink" placeholder="Klucz API z debrid-link.com/webapp/apikey">
+                                <button class="dlm-btn-sm dlm-test-key" data-service="debridlink"><i class="fas fa-check-circle"></i> Test</button>
+                            </div>
+                        </div>
+                        <div class="dlm-setting-row dlm-key-row" data-service="torbox" style="display:none;">
+                            <label>TorBox API Key:</label>
+                            <div class="dl-key-input-row">
+                                <input type="password" class="dlm-input" id="dlm-key-torbox" placeholder="Klucz API z torbox.app/settings">
+                                <button class="dlm-btn-sm dlm-test-key" data-service="torbox"><i class="fas fa-check-circle"></i> Test</button>
+                            </div>
+                        </div>
                     </div>
                     <div class="dlm-debrid-info" id="dlm-debrid-info"></div>
 
@@ -238,16 +252,24 @@ function renderDownloadManager(body, launchOpts) {
             const svc = btn.dataset.service;
             const keyInput = body.querySelector(`#dlm-key-${svc}`);
             const key = keyInput.value.trim();
-            if (!key || key.includes('***')) {
-                toast(t('Wpisz pełny klucz API'), 'warning');
+            if (!key) {
+                toast(t('Wpisz klucz API'), 'warning');
                 return;
             }
             btn.disabled = true;
             btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
             try {
-                const res = await api('/downloads/test-debrid', {
-                    method: 'POST', body: { service: svc, api_key: key }
-                });
+                let res;
+                if (key.includes('***')) {
+                    // Key is masked (loaded from server) — test the saved key
+                    res = await api('/downloads/test-saved-debrid', {
+                        method: 'POST', body: { service: svc }
+                    });
+                } else {
+                    res = await api('/downloads/test-debrid', {
+                        method: 'POST', body: { service: svc, api_key: key }
+                    });
+                }
                 const infoEl = body.querySelector('#dlm-debrid-info');
                 if (res.ok) {
                     infoEl.innerHTML = `<div class="dlm-info-success"><i class="fas fa-check-circle"></i> ${res.info}</div>`;
@@ -307,6 +329,8 @@ function renderDownloadManager(body, launchOpts) {
         if (config.alldebrid_api_key) body.querySelector('#dlm-key-alldebrid').value = config.alldebrid_api_key;
         if (config.realdebrid_api_key) body.querySelector('#dlm-key-realdebrid').value = config.realdebrid_api_key;
         if (config.premiumize_api_key) body.querySelector('#dlm-key-premiumize').value = config.premiumize_api_key;
+        if (config.debridlink_api_key) body.querySelector('#dlm-key-debridlink').value = config.debridlink_api_key;
+        if (config.torbox_api_key) body.querySelector('#dlm-key-torbox').value = config.torbox_api_key;
     }
 
     // ─── Directory picker — uses global openDirPicker() from desktop.js ───

@@ -5113,7 +5113,7 @@ a.dkr-port-link:hover {
     width: 100%;
     max-width: 794px; /* ~A4 */
     min-height: 600px;
-    background: var(--bg-primary, #fff);
+    background: #ffffff;
     border: 1px solid var(--border);
     border-radius: 2px;
     box-shadow: var(--shadow-sm);
@@ -5121,15 +5121,16 @@ a.dkr-port-link:hover {
     font-family: 'Calibri', 'Segoe UI', Arial, sans-serif;
     font-size: 15px;
     line-height: 1.6;
-    color: var(--text-primary);
+    color: #000000;
     outline: none;
     word-wrap: break-word;
     overflow-wrap: break-word;
 }
 
 [data-theme="dark"] .doceditor-page {
-    background: #1e293b;
-    box-shadow: var(--shadow-sm);
+    background: #ffffff;
+    color: #000000;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
 }
 
 .doceditor-page:focus {
