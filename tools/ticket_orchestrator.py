@@ -60,6 +60,12 @@ def move_ticket(ticket_id, column):
     r.raise_for_status()
     return r.json()
 
+def assign_ticket(ticket_id, username):
+    r = requests.put(f"{BASE}/tickets/tickets/{ticket_id}",
+                     json={"assignee": username}, headers=headers(), verify=False)
+    r.raise_for_status()
+    return r.json()
+
 def add_comment(ticket_id, text):
     r = requests.post(f"{BASE}/tickets/tickets/{ticket_id}/comments",
                       json={"text": text}, headers=headers(), verify=False)
@@ -205,7 +211,10 @@ if __name__ == "__main__":
         if len(sys.argv) < 3:
             print("Użycie: start <ticket_id>")
             sys.exit(1)
-        cmd_move(sys.argv[2], "W trakcie")
+        tid = sys.argv[2]
+        assign_ticket(tid, "copilot")
+        print(f"👤 Ticket {tid} przypisany do: copilot")
+        cmd_move(tid, "W trakcie")
     elif cmd == "review":
         if len(sys.argv) < 3:
             print("Użycie: review <ticket_id>")
@@ -226,6 +235,12 @@ if __name__ == "__main__":
             print("Użycie: comment <ticket_id> <text>")
             sys.exit(1)
         cmd_comment(sys.argv[2], " ".join(sys.argv[3:]))
+    elif cmd == "assign":
+        if len(sys.argv) < 4:
+            print("Użycie: assign <ticket_id> <username>")
+            sys.exit(1)
+        assign_ticket(sys.argv[2], sys.argv[3])
+        print(f"👤 Ticket {sys.argv[2]} przypisany do: {sys.argv[3]}")
     else:
         print(f"❌ Nieznane polecenie: {cmd}")
         print(__doc__)
