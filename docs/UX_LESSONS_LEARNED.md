@@ -12,6 +12,9 @@
 | 3 | Edytor dokumentów: `var(--text-primary)` w dark mode = biały tekst na białym tle | Wymuszone stałe kolory `#fff`/`#000` niezależne od motywu | **Obszary treści użytkownika (edytory, podglądy) MUSZĄ mieć hardcoded kolory. Zmienne motywu (`var(--*)`) tylko dla chrome UI.** |
 | 4 | Duplikat `class=""` na jednym elemencie — przeglądarka ignoruje drugi atrybut | Złączono w jeden `class="a b c"` | **HTML element = JEDEN atrybut `class`. Zawsze łącz. Sprawdź w review.** |
 | 5 | Modalne formularze bez `.tk-form-group` wrapper — labele i inputy zlane w jeden strumień | Każdy label+input opakowany w `<div class="tk-form-group">` | **Każda para label+input MUSI być w kontenerze `.{prefix}-form-group` z `margin-bottom`. Bez wyjątków.** |
+| 6 | Klasy CSS w HTML (`tk-select`) nie pasowały do definicji CSS (`tk-filter-select`) — select bez stylów | Ujednolicono nazwy klas w HTML z definicjami CSS | **Klasa CSS w HTML MUSI dokładnie odpowiadać definicji w CSS. Sprawdź `apps.css` przed użyciem klasy.** |
+| 7 | Pole tekstowe na członków (free-text, comma-separated) — użytkownik musi znać loginy | Chip-picker z dropdown pobierającym userów z `api('/users/list')` | **Dane referencyjne (użytkownicy, grupy) MUSZĄ być wybierane z listy, NIE wpisywane ręcznie.** |
+| 8 | Ikona `fa-cog` nie pasowała do minimalistycznego UI reszty systemu | `fa-ellipsis-vertical` na kartach, `fa-sliders` na toolbarze | **Ikony kontekstowe: `fa-ellipsis-vertical` (⋮). Ustawienia: `fa-sliders`. Unikaj `fa-cog`.** |
 
 ---
 
