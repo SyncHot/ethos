@@ -3157,6 +3157,13 @@ AppRegistry['dashboard'] = function (appDef) {
 function renderDashboard(body) {
     body.innerHTML = `
         <div class="dash">
+            <div class="dash-toolbar">
+                <span class="dash-toolbar-title"><i class="fas fa-tachometer-alt"></i> Dashboard</span>
+                <div style="flex:1;"></div>
+                <button class="tk-act-btn" id="dash-refresh-btn" title="${t('Odśwież')}">
+                    <i class="fas fa-arrows-rotate"></i>
+                </button>
+            </div>
             <div class="dash-grid">
                 <div class="dash-card" id="dash-cpu">
                     <div class="dash-card-header">
@@ -3407,6 +3414,17 @@ function renderDashboard(body) {
     loadSystemInfo();
     loadDockerSummary();
     updateFromSocket();
+
+    // Refresh button
+    const refreshBtn = body.querySelector('#dash-refresh-btn');
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', async () => {
+            refreshBtn.classList.add('dash-spin');
+            refreshBtn.disabled = true;
+            await Promise.all([loadSystemInfo(), loadDockerSummary()]);
+            setTimeout(() => { refreshBtn.classList.remove('dash-spin'); refreshBtn.disabled = false; }, 600);
+        });
+    }
 
     // Refresh disks & docker every 30s
     const interval = setInterval(() => {
