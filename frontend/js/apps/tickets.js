@@ -387,23 +387,31 @@ async function renderTickets(body, launchOpts) {
 
         const html = `
             <div class="tk-form">
-                <label>${t('Nazwa')}</label>
-                <input type="text" id="tk-pf-name" class="tk-input" value="${_escHtml(name)}" placeholder="${t('Nazwa projektu')}" />
-
-                <label>${t('Opis')}</label>
-                <textarea id="tk-pf-desc" class="tk-input" rows="3" placeholder="${t('Opis projektu (opcjonalnie)')}">${_escHtml(desc)}</textarea>
-
-                <label>${t('Kolor')}</label>
-                <div style="display:flex;align-items:center;gap:8px;">
-                    <input type="color" id="tk-pf-color" value="${_escHtml(color)}" style="width:40px;height:32px;border:none;cursor:pointer;" />
-                    <span id="tk-pf-color-val" style="font-size:0.85rem;opacity:0.7;">${_escHtml(color)}</span>
+                <div class="tk-form-group">
+                    <label>${t('Nazwa')}</label>
+                    <input type="text" id="tk-pf-name" class="tk-input" value="${_escHtml(name)}" placeholder="${t('Nazwa projektu')}" autofocus />
                 </div>
-
-                <label>${t('Członkowie')} <small>(${t('oddzieleni przecinkiem')})</small></label>
-                <input type="text" id="tk-pf-members" class="tk-input" value="${_escHtml(members)}" placeholder="marcin, admin, user1" />
-
-                <label>${t('Kolumny')} <small>(${t('oddzielone przecinkiem')})</small></label>
-                <input type="text" id="tk-pf-columns" class="tk-input" value="${_escHtml(columns)}" placeholder="Backlog, Do zrobienia, W trakcie, Review, Gotowe" />
+                <div class="tk-form-group">
+                    <label>${t('Opis')}</label>
+                    <textarea id="tk-pf-desc" class="tk-input" rows="3" placeholder="${t('Opis projektu (opcjonalnie)')}">${_escHtml(desc)}</textarea>
+                </div>
+                <div class="tk-form-row">
+                    <div class="tk-form-group">
+                        <label>${t('Kolor')}</label>
+                        <div class="tk-color-picker">
+                            <input type="color" id="tk-pf-color" value="${_escHtml(color)}" />
+                            <span class="tk-color-hex" id="tk-pf-color-val">${_escHtml(color)}</span>
+                        </div>
+                    </div>
+                    <div class="tk-form-group">
+                        <label>${t('Członkowie')} <small>(${t('przecinek')})</small></label>
+                        <input type="text" id="tk-pf-members" class="tk-input" value="${_escHtml(members)}" placeholder="marcin, admin" />
+                    </div>
+                </div>
+                <div class="tk-form-group">
+                    <label>${t('Kolumny')} <small>(${t('oddzielone przecinkiem')})</small></label>
+                    <input type="text" id="tk-pf-columns" class="tk-input" value="${_escHtml(columns)}" placeholder="Backlog, Do zrobienia, W trakcie, Review, Gotowe" />
+                </div>
             </div>
         `;
 
@@ -610,20 +618,22 @@ async function renderTickets(body, launchOpts) {
 
         const html = `
             <div class="tk-form">
-                <label>${t('Tytuł')} *</label>
-                <input type="text" id="tk-tf-title" class="tk-input" placeholder="${t('Tytuł ticketu')}" />
-
-                <label>${t('Opis')}</label>
-                <textarea id="tk-tf-desc" class="tk-input" rows="4" placeholder="${t('Opis ticketu (opcjonalnie)')}"></textarea>
-
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-                    <div>
+                <div class="tk-form-group">
+                    <label>${t('Tytuł')} *</label>
+                    <input type="text" id="tk-tf-title" class="tk-input" placeholder="${t('Tytuł ticketu')}" autofocus />
+                </div>
+                <div class="tk-form-group">
+                    <label>${t('Opis')}</label>
+                    <textarea id="tk-tf-desc" class="tk-input" rows="4" placeholder="${t('Opis ticketu (opcjonalnie)')}"></textarea>
+                </div>
+                <div class="tk-form-row">
+                    <div class="tk-form-group">
                         <label>${t('Kolumna')}</label>
                         <select id="tk-tf-column" class="tk-input">
                             ${columns.map((c, i) => `<option value="${_escHtml(c)}" ${i === 0 ? 'selected' : ''}>${_escHtml(c)}</option>`).join('')}
                         </select>
                     </div>
-                    <div>
+                    <div class="tk-form-group">
                         <label>${t('Priorytet')}</label>
                         <select id="tk-tf-priority" class="tk-input">
                             ${Object.entries(PRIORITY_LABELS).map(([k, v]) =>
@@ -632,15 +642,19 @@ async function renderTickets(body, launchOpts) {
                         </select>
                     </div>
                 </div>
-
-                <label>${t('Przypisany')}</label>
-                <select id="tk-tf-assignee" class="tk-input">
-                    <option value="">${t('Nieprzypisany')}</option>
-                    ${members.map(m => `<option value="${_escHtml(m)}">${_escHtml(m)}</option>`).join('')}
-                </select>
-
-                <label>${t('Etykiety')} <small>(${t('oddzielone przecinkiem')})</small></label>
-                <input type="text" id="tk-tf-labels" class="tk-input" placeholder="bug, backend, urgent" />
+                <div class="tk-form-row">
+                    <div class="tk-form-group">
+                        <label>${t('Przypisany')}</label>
+                        <select id="tk-tf-assignee" class="tk-input">
+                            <option value="">${t('Nieprzypisany')}</option>
+                            ${members.map(m => `<option value="${_escHtml(m)}">${_escHtml(m)}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="tk-form-group">
+                        <label>${t('Etykiety')} <small>(${t('przecinek')})</small></label>
+                        <input type="text" id="tk-tf-labels" class="tk-input" placeholder="bug, backend, urgent" />
+                    </div>
+                </div>
             </div>
         `;
 
@@ -686,20 +700,22 @@ async function renderTickets(body, launchOpts) {
 
         const html = `
             <div class="tk-form tk-detail-form">
-                <label>${t('Tytuł')}</label>
-                <input type="text" id="tk-df-title" class="tk-input" value="${_escHtml(ticket.title)}" />
-
-                <label>${t('Opis')}</label>
-                <textarea id="tk-df-desc" class="tk-input" rows="4">${_escHtml(ticket.description || '')}</textarea>
-
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-                    <div>
+                <div class="tk-form-group">
+                    <label>${t('Tytuł')}</label>
+                    <input type="text" id="tk-df-title" class="tk-input" value="${_escHtml(ticket.title)}" />
+                </div>
+                <div class="tk-form-group">
+                    <label>${t('Opis')}</label>
+                    <textarea id="tk-df-desc" class="tk-input" rows="4">${_escHtml(ticket.description || '')}</textarea>
+                </div>
+                <div class="tk-form-row">
+                    <div class="tk-form-group">
                         <label>${t('Kolumna')}</label>
                         <select id="tk-df-column" class="tk-input">
                             ${columns.map(c => `<option value="${_escHtml(c)}" ${c === ticket.column ? 'selected' : ''}>${_escHtml(c)}</option>`).join('')}
                         </select>
                     </div>
-                    <div>
+                    <div class="tk-form-group">
                         <label>${t('Priorytet')}</label>
                         <select id="tk-df-priority" class="tk-input">
                             ${Object.entries(PRIORITY_LABELS).map(([k, v]) =>
@@ -708,12 +724,13 @@ async function renderTickets(body, launchOpts) {
                         </select>
                     </div>
                 </div>
-
-                <label>${t('Przypisany')}</label>
-                <select id="tk-df-assignee" class="tk-input">
-                    <option value="">${t('Nieprzypisany')}</option>
-                    ${members.map(m => `<option value="${_escHtml(m)}" ${m === ticket.assignee ? 'selected' : ''}>${_escHtml(m)}</option>`).join('')}
-                </select>
+                <div class="tk-form-group">
+                    <label>${t('Przypisany')}</label>
+                    <select id="tk-df-assignee" class="tk-input">
+                        <option value="">${t('Nieprzypisany')}</option>
+                        ${members.map(m => `<option value="${_escHtml(m)}" ${m === ticket.assignee ? 'selected' : ''}>${_escHtml(m)}</option>`).join('')}
+                    </select>
+                </div>
 
                 <label>${t('Etykiety')}</label>
                 <div id="tk-df-labels" class="tk-labels-wrap">${labelsHTML}</div>

@@ -2801,3 +2801,93 @@
   border-top: 1px solid var(--border);
   margin: 12px 0;
 }
+
+
+/* ─── Tickets: Form Styles ─── */
+.tk-form {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 16px 20px;
+}
+.tk-form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+}
+.tk-form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    margin-bottom: 10px;
+}
+.tk-form label,
+.tk-form .tk-label-text {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin: 0;
+    padding: 0;
+}
+.tk-form label small {
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: normal;
+    opacity: 0.75;
+}
+.tk-input {
+    width: 100%;
+    padding: 9px 12px;
+    font-size: 13px;
+    font-family: inherit;
+    color: var(--text);
+    background: var(--bg-deep, var(--bg));
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+    outline: none;
+    box-sizing: border-box;
+}
+.tk-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.12);
+}
+.tk-input::placeholder {
+    color: var(--text-muted);
+    opacity: 0.6;
+}
+textarea.tk-input {
+    resize: vertical;
+    min-height: 72px;
+    line-height: 1.5;
+}
+select.tk-input {
+    cursor: pointer;
+    appearance: auto;
+}
+.tk-color-picker {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.tk-color-picker input[type="color"] {
+    width: 40px;
+    height: 34px;
+    padding: 2px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--bg-deep, var(--bg));
+    cursor: pointer;
+}
+.tk-color-picker .tk-color-hex {
+    font-size: 12px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    color: var(--text-muted);
+}
+.tk-form .tk-detail-sidebar-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+}
