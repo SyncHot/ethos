@@ -313,7 +313,7 @@ function renderLightbox() {
   document.getElementById('lbName').textContent = item.name;
   document.getElementById('lbCounter').textContent = `${state.lbIdx+1}/${state.items.length}`;
   document.getElementById('lbContent').innerHTML = isVid
-    ? `<video src="${src}" controls autoplay playsinline></video>`
+    ? `<video src="${src}" controls autoplay muted playsinline></video>`
     : `<img src="${src}" alt="">`;
 
   document.getElementById('lbPrev').style.display = state.lbIdx > 0 ? '' : 'none';
