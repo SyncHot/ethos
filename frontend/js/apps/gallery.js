@@ -2,13 +2,15 @@
    EthOS  —  Gallery  (state-of-the-art photo & video gallery)
    ═══════════════════════════════════════════════════════════════════ */
 AppRegistry['gallery'] = function (appDef, launchOpts) {
+  // Support launchOpts.folder to open gallery pre-filtered to a specific source folder
+  const _initFolder = launchOpts?.folder || '';
   createWindow('gallery', {
     title: t('Galeria'),
     icon: 'fa-solid fa-images',
     iconColor: '#ec4899',
     width: 1280,
     height: 820,
-    onRender: body => renderGallery(body),
+    onRender: body => renderGallery(body, _initFolder),
   });
 };
 
@@ -40,7 +42,7 @@ const GAL = {
 };
 
 /* ━━━━  ENTRY  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
-async function renderGallery(body) {
+async function renderGallery(body, initFolder) {
   GAL.root = body;
   GAL.items = [];
   GAL.offset = 0;
@@ -48,7 +50,7 @@ async function renderGallery(body) {
   GAL.view = 'grid';
   GAL.sort = 'date_desc';
   GAL.type = 'all';
-  GAL.folder = '';
+  GAL.folder = initFolder || '';
   GAL.subfolder = '';
   GAL.query = '';
   GAL.monthFilter = '';
@@ -695,6 +697,7 @@ function _galRenderLightbox() {
       <div class="gal-lb-actions">
         <button class="gal-lb-btn gal-lb-info-btn" title="Informacje"><i class="fa-solid fa-circle-info"></i></button>
         <button class="gal-lb-btn gal-lb-fav-btn" title="Ulubione (F)"><i class="fa-regular fa-star"></i></button>
+        <button class="gal-lb-btn gal-lb-show-fm-btn" title="Pokaż w Menedżerze plików"><i class="fa-solid fa-folder-open"></i></button>
         <button class="gal-lb-btn gal-lb-delete-btn" title="Usuń (Delete)"><i class="fa-solid fa-trash"></i></button>
         <button class="gal-lb-btn gal-lb-zoom-in" title="Powiększ"><i class="fa-solid fa-magnifying-glass-plus"></i></button>
         <button class="gal-lb-btn gal-lb-zoom-out" title="Pomniejsz"><i class="fa-solid fa-magnifying-glass-minus"></i></button>
@@ -746,6 +749,14 @@ function _galRenderLightbox() {
   lb.querySelector('.gal-lb-fav-btn').addEventListener('click', () => _galToggleFavorite(item));
   _galUpdateFavBtn();
 
+  // Show in File Manager
+  lb.querySelector('.gal-lb-show-fm-btn').addEventListener('click', () => {
+    const folderPath = item.path.replace(/\/[^/]+$/, '') || '/';
+    _galCloseLightbox();
+    const fmApp = window.NAS?.apps?.find(a => a.id === 'file-manager') || { id: 'file-manager', type: 'builtin' };
+    openApp(fmApp, { path: folderPath });
+  });
+
   // Delete button
   lb.querySelector('.gal-lb-delete-btn').addEventListener('click', async () => {
     confirmDialog(t('Usunąć plik: ') + _esc(item.name) + '?', async () => {
@@ -786,14 +797,13 @@ function _galRenderLightbox() {
       const cacheBust = '&_t=' + Date.now();
       const img = document.querySelector('.gal-lb-img');
       if (img) img.src = img.src.split('&_t=')[0] + cacheBust;
-      // Also refresh grid thumbnail
-      const gridIdx = GAL.items.indexOf(curItem);
-      if (gridIdx !== -1) {
-          const gridCards = GAL.gridEl?.querySelectorAll('.gal-card img');
-          if (gridCards && gridCards[gridIdx]) {
-              gridCards[gridIdx].src = gridCards[gridIdx].src.split('&_t=')[0] + cacheBust;
+      // Refresh thumbnail in any visible grid (main, favorites, custom albums)
+      const encodedPath = encodeURIComponent(curItem.path);
+      GAL.root.querySelectorAll('.gal-card img').forEach(thumb => {
+          if (thumb.src.includes(encodedPath)) {
+              thumb.src = thumb.src.split('&_t=')[0] + cacheBust;
           }
-      }
+      });
     } catch(e) { toast(t('Błąd obrotu: ') + e.message, 'error'); }
   });
 
