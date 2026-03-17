@@ -54,7 +54,7 @@ function _fhInit(root, winId) {
 
     // ── CSS ──
     const CSS = `<style>
-    .fh-wrap { display:flex; flex-direction:column; height:100%; background:var(--bg-primary,#0f172a); color:var(--text-primary,#e2e8f0); font-family:inherit; }
+    .fh-wrap { display:flex; flex-direction:column; height:100%; background:var(--bg-primary,#0f172a); color:var(--text-primary,#e2e8f0); font-family:inherit; position:relative; overflow:hidden; }
     .fh-tabs { display:flex; border-bottom:1px solid var(--border,#1e293b); background:var(--bg-secondary,#1e293b); flex-shrink:0; }
     .fh-tab { flex:1; padding:10px 8px; text-align:center; cursor:pointer; border-bottom:3px solid transparent; transition:all .2s; font-size:13px; opacity:.6; position:relative; }
     .fh-tab:hover { opacity:.85; background:rgba(255,255,255,.03); }
@@ -88,7 +88,7 @@ function _fhInit(root, winId) {
     .fh-react-btn.mine { border-color:rgba(244,114,182,.4); background:rgba(244,114,182,.1); }
     .fh-react-add { opacity:.3; font-size:16px; cursor:pointer; padding:2px 6px; }
     .fh-react-add:hover { opacity:.7; }
-    .fh-react-picker { display:flex; gap:2px; background:var(--bg-secondary,#1e293b); border:1px solid var(--border,#334155); border-radius:8px; padding:4px; position:absolute; bottom:100%; left:0; box-shadow:0 4px 16px rgba(0,0,0,.4); z-index:20; }
+    .fh-react-picker { display:flex; gap:2px; background:var(--bg-secondary,#1e293b); border:1px solid var(--border,#334155); border-radius:8px; padding:4px; position:absolute; bottom:100%; left:0; box-shadow:0 4px 16px rgba(0,0,0,.4); z-index:20; max-width:280px; }
     .fh-react-picker span { cursor:pointer; padding:4px 6px; border-radius:4px; font-size:18px; }
     .fh-react-picker span:hover { background:rgba(255,255,255,.1); }
 
