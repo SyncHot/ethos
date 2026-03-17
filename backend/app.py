@@ -84,6 +84,7 @@ from blueprints.ssh_manager import ssh_bp
 from blueprints.websites import websites_bp
 from blueprints.domains_manager import domains_mgr_bp
 from blueprints.stickynotes import notes_bp
+from blueprints.tickets import tickets_bp
 from blueprints.familyhub import familyhub_bp
 from blueprints.sharing import sharing_bp
 from blueprints.installer import installer_bp
@@ -137,6 +138,7 @@ app.register_blueprint(websites_bp)
 app.register_blueprint(domains_mgr_bp)
 app.register_blueprint(installer_bp)
 app.register_blueprint(notes_bp)
+app.register_blueprint(tickets_bp)
 app.register_blueprint(familyhub_bp)
 app.register_blueprint(sharing_bp)
 init_appstore(socketio)
@@ -374,6 +376,7 @@ _API_TO_APP = {
     '/api/settings/': 'system-settings',
     '/api/ssh/': 'ssh-manager',
     '/api/notes/': 'sticky-notes',
+    '/api/tickets/': 'tickets',
     '/api/familyhub/': 'family-hub',
     '/api/sync/': 'naslink',
     '/api/update/': 'updates',
@@ -6046,6 +6049,15 @@ def get_apps():
             'type': 'builtin',
             'category': 'Narzędzia',
             'description': 'Szybkie notatki — jak karteczki przyklejane na pulpicie'
+        },
+        {
+            'id': 'tickets',
+            'name': 'Tickets',
+            'icon': 'fa-columns',
+            'color': '#8b5cf6',
+            'type': 'builtin',
+            'category': 'Narzędzia',
+            'description': 'Zarządzanie projektami — tablica Kanban w stylu Jira/Trello'
         },
         {
             'id': 'family-hub',
