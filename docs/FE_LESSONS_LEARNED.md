@@ -13,6 +13,7 @@
 | 4 | Duplikat atrybutu `class` na elemencie HTML: `<div class="a" class="b">` — przeglądarka ignoruje drugi | Złączono w jeden atrybut: `class="a b"` | **Element HTML może mieć TYLKO JEDEN atrybut `class`. Zawsze łącz klasy w jednym atrybucie.** |
 | 5 | Edytor dokumentów: biały tekst na ciemnym tle (dark mode) — `color: var(--text-primary)` dziedziczył kolor motywu | Wymuszono `background: #fff; color: #000` niezależnie od motywu | **Obszary edycji treści (edytory, pola tekstowe) MUSZĄ mieć stałe kolory niezależne od motywu. Nie używaj `var(--text-primary)` w edytorach.** |
 | 6 | Masked API key (`XXX***XXX`) wysyłany z frontendu do testu — backend nie mógł go użyć | Stworzono osobny endpoint `test-saved-debrid` który czyta klucz z configu | **Nigdy nie wysyłaj zamaskowanych wartości z powrotem do backendu jako danych operacyjnych. Jeśli wartość jest zamaskowana, utwórz endpoint który czyta oryginał z serwera.** |
+| 7 | `NAS.username` nie istnieje — poprawna ścieżka to `NAS.user?.username`. `isOwner` zawsze `false`, przycisk usuwania nigdy się nie renderował | Zmieniono na `NAS.user?.username` z optional chaining | **Globalny obiekt `NAS` ma `NAS.user.username`, NIE `NAS.username`. Zawsze używaj `NAS.user?.username` z optional chaining.** |
 
 ---
 
