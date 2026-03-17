@@ -1346,6 +1346,7 @@ class ModelLibrary:
         model_id = model['id']
         hf_repo = model['hf_repo']
         hf_file = model['hf_filename']
+        expected_bytes = int(model.get('size_gb', 0) * 1073741824)
 
         def emit_progress(pct, status, speed=''):
             with _download_lock:
@@ -1360,23 +1361,59 @@ class ModelLibrary:
                     'speed': speed,
                 })
 
+        # File-size monitor: polls actual bytes on disk for reliable progress
+        monitor_stop = threading.Event()
+
+        def _file_monitor():
+            target = os.path.join(self.models_path, hf_file)
+            start = time.time()
+            prev_bytes = 0
+            while not monitor_stop.is_set():
+                monitor_stop.wait(0.8)
+                cur = 0
+                for candidate in (target, target + '.incomplete'):
+                    try:
+                        cur = max(cur, os.path.getsize(candidate))
+                    except OSError:
+                        pass
+                # Scan for .incomplete files in subdirs (hf_hub cache pattern)
+                try:
+                    for root_dir, _dirs, files in os.walk(self.models_path):
+                        for f in files:
+                            if hf_file in f and f.endswith('.incomplete'):
+                                try:
+                                    cur = max(cur, os.path.getsize(os.path.join(root_dir, f)))
+                                except OSError:
+                                    pass
+                except OSError:
+                    pass
+                if cur <= 0 or expected_bytes <= 0:
+                    continue
+                elapsed = time.time() - start
+                pct = min(cur / expected_bytes * 100, 99.5)
+                speed = (cur - prev_bytes) / 0.8 if prev_bytes > 0 else (cur / elapsed if elapsed > 1 else 0)
+                prev_bytes = cur
+                speed_str = _fmt_bytes(int(max(speed, 0))) + '/s' if speed > 0 else ''
+                status = f'Pobieranie {hf_file}… {_fmt_bytes(cur)} / {_fmt_bytes(expected_bytes)}'
+                with _download_lock:
+                    _download_state['downloaded_bytes'] = cur
+                    _download_state['total_bytes'] = expected_bytes
+                emit_progress(pct, status, speed_str)
+
         try:
             emit_progress(0, f'Pobieranie {hf_file}…')
 
             target_path = os.path.join(self.models_path, hf_file)
 
-            # Build a factory that injects our emit_progress into _ProgressTqdm
-            def _tqdm_factory(*args, **kwargs):
-                kwargs['_emit_fn'] = emit_progress
-                kwargs['_filename'] = hf_file
-                return _ProgressTqdm(*args, **kwargs)
+            # Start file-size monitor for reliable progress tracking
+            if expected_bytes > 0:
+                mon_thread = threading.Thread(target=_file_monitor, daemon=True)
+                mon_thread.start()
 
             downloaded_path = hf_hub_download(
                 repo_id=hf_repo,
                 filename=hf_file,
                 local_dir=self.models_path,
-                local_dir_use_symlinks=False,
-                tqdm_class=_tqdm_factory,
             )
 
             if not os.path.isfile(downloaded_path):
@@ -1414,6 +1451,7 @@ class ModelLibrary:
                     'error': str(e),
                 })
         finally:
+            monitor_stop.set()
             with _download_lock:
                 _download_state['active'] = False
 

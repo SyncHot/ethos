@@ -1421,7 +1421,18 @@ window._aicWizDownload = function (modelId) {
                         if (bar) bar.style.width = pct + '%';
                         if (pctEl) pctEl.textContent = pct + '%';
                         if (statusEl) statusEl.textContent = ds.status || '';
-                        if (speedEl) speedEl.textContent = ds.speed || '';
+                        // Speed element may not exist yet — create it dynamically
+                        if (speedEl) {
+                            speedEl.textContent = ds.speed || '';
+                        } else if (ds.speed) {
+                            var detailEl = document.querySelector('.aic-wiz-dl-detail');
+                            if (detailEl) {
+                                var sp = document.createElement('span');
+                                sp.id = 'wizDlSpeed';
+                                sp.textContent = ds.speed;
+                                detailEl.appendChild(sp);
+                            }
+                        }
                         if (_aic.wizardRecModel) _aic.wizardRecModel.download_status = ds;
                         if (!ds.active) {
                             clearInterval(_aic._wizDlPoll);
@@ -1435,7 +1446,7 @@ window._aicWizDownload = function (modelId) {
                                 showToast(t('Model pobrany!'), 'success');
                             }
                         }
-                    });
+                    }).catch(function () { /* network hiccup — retry next interval */ });
                 }, 1000);
             }
         });
