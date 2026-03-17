@@ -641,7 +641,7 @@ def copilot_queue():
 
         for t in proj_tickets:
             col = t.get('column', '')
-            if col in ('Do zrobienia', 'W trakcie'):
+            if col in ('Do zrobienia', 'W trakcie', 'QA'):
                 comments = t.get('comments', [])
                 last_comment = None
                 if comments:
@@ -667,7 +667,7 @@ def copilot_queue():
                 })
 
     queue.sort(key=lambda t: (
-        0 if t['column'] == 'Do zrobienia' else 1,
+        0 if t['column'] == 'Do zrobienia' else (1 if t['column'] == 'W trakcie' else 2),
         PRIORITY_ORDER.get(t['priority'], 2),
     ))
 

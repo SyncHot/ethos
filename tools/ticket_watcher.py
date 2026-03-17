@@ -178,6 +178,116 @@ COPILOT_BIN = "/home/marcin/.local/bin/copilot"
 COPILOT_LOG_DIR = "/opt/ethos/logs/copilot_tickets"
 MAX_AUTOPILOT = 25
 
+def build_qa_prompt(ticket):
+    """Build a QA review prompt — Copilot checks if implementation meets requirements and docs."""
+    tid = ticket["id"]
+    title = ticket["title"]
+    desc = ticket.get("description", "")
+    comments = []
+    # Gather all comments for context (implementation notes)
+    lc = ticket.get("last_comment")
+    if lc:
+        comments.append(lc["text"])
+
+    prompt = f"""You are an EthOS QA Expert agent. Your job is to verify that the ticket was implemented correctly.
+
+TICKET: {tid}
+Title: {title}
+{f'Description: {desc}' if desc else ''}
+{f'Latest comment: {lc["text"][:500]}' if lc else ''}
+
+YOUR TASK:
+1. Read the ticket requirements (title + description above)
+2. Read the relevant EthOS docs to understand standards:
+   - /opt/ethos/docs/DEV_STANDARDS.md
+   - /opt/ethos/docs/QA_FAILOVER_PROTOCOLS.md
+   - /opt/ethos/docs/BE_LESSONS_LEARNED.md
+   - /opt/ethos/docs/FE_LESSONS_LEARNED.md
+   - /opt/ethos/docs/UX_LESSONS_LEARNED.md
+3. Check recent git commits to see what was changed: git --no-pager log --oneline -10
+4. Review the changed files and verify they meet the requirements
+5. Test the functionality if possible (curl API endpoints, check if server responds, etc.)
+6. Check if the code follows EthOS coding standards from the docs
+
+VERDICT — you MUST output exactly one of these lines at the END of your response:
+  QA_PASS: <brief reason why it passes>
+  QA_FAIL: <specific issues found that need fixing>
+
+Be strict but fair. Check for real issues, not style nitpicks.
+Focus on: correctness, requirements met, docs compliance, no regressions."""
+
+    return prompt
+
+
+def run_qa_check(ticket):
+    """Launch Copilot CLI as QA agent (always Sonnet) to verify the ticket."""
+    tid = ticket["id"]
+    model = "claude-sonnet-4.6"
+
+    os.makedirs(COPILOT_LOG_DIR, exist_ok=True)
+    log_file = os.path.join(COPILOT_LOG_DIR, f"{tid}_qa_{int(time.time())}.log")
+
+    prompt = build_qa_prompt(ticket)
+
+    cmd = [
+        COPILOT_BIN,
+        "-p", prompt,
+        "--model", model,
+        "--autopilot",
+        "--allow-all",
+        "--max-autopilot-continues", str(15),
+    ]
+
+    print(f"QA_START | {tid} | model={model} | log={log_file}", flush=True)
+
+    try:
+        lf = open(log_file, "w")
+        lf.write(f"=== QA Review: {tid} | {ticket['title']} ===\n")
+        lf.write(f"=== Model: {model} | Started: {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n\n")
+        lf.flush()
+
+        proc = subprocess.Popen(
+            cmd,
+            stdout=lf,
+            stderr=subprocess.STDOUT,
+            cwd="/opt/ethos",
+            env={**os.environ, "TERM": "dumb"},
+        )
+
+        proc._log_fh = lf
+        proc._log_file = log_file
+        proc._qa_mode = True
+
+        print(f"QA_RUNNING | {tid} | PID={proc.pid}", flush=True)
+        return proc
+
+    except Exception as e:
+        print(f"QA_ERROR | {tid} | {e}", flush=True)
+        add_comment(tid, f"[qa] Błąd uruchamiania QA: {e}")
+        return None
+
+
+def parse_qa_verdict(log_file):
+    """Read QA log and extract QA_PASS or QA_FAIL verdict."""
+    try:
+        with open(log_file, "r") as f:
+            content = f.read()
+        # Search from the end for the verdict
+        for line in reversed(content.splitlines()):
+            line = line.strip()
+            if line.startswith("QA_PASS:"):
+                return "pass", line[8:].strip()
+            if line.startswith("QA_FAIL:"):
+                return "fail", line[8:].strip()
+        # If no explicit verdict, check for keywords
+        if "QA_PASS" in content:
+            return "pass", "Implicit pass found in output"
+        if "QA_FAIL" in content:
+            return "fail", "Implicit fail found in output"
+        return "unknown", "No QA verdict found in output"
+    except Exception as e:
+        return "error", str(e)
+
 def build_copilot_prompt(ticket, agent, info, model_info, docs_context):
     """Build a comprehensive prompt for Copilot CLI to execute a ticket."""
     tid = ticket["id"]
@@ -200,17 +310,17 @@ Skills needed: {info['skills']}
 {feedback}
 
 RULES (follow strictly):
-1. Read the relevant docs before making changes: {', '.join(info.get('docs', []))}
-   Docs are in /opt/ethos/docs/
-2. Follow the lessons learned in /opt/ethos/docs/{info['lessons']}
-3. Work in /opt/ethos/ — this is the project root
-4. After making changes, test them (restart ethos if backend changes: sudo systemctl restart ethos)
-5. Commit changes with a descriptive message including ticket ID [{tid}]
-6. If the task is done, report completion
+1. FIRST read these docs before writing any code:
+   - /opt/ethos/docs/{info['lessons']} (lessons learned — mistakes to avoid)
+   - /opt/ethos/docs/DEV_STANDARDS.md (coding standards)
+{chr(10).join(f'   - /opt/ethos/docs/{d}' for d in info.get('docs', []) if d not in (info['lessons'], 'DEV_STANDARDS.md'))}
+2. Work in /opt/ethos/ — this is the project root
+3. After making changes, test them (restart ethos if backend changes: sudo systemctl restart ethos)
+4. Commit changes with: git add <files> && git commit -m "[{tid}] <description>"
+5. Push with: sudo -u marcin git push
+6. When done, summarize what you changed
 
-{f'DOCS CONTEXT:{chr(10)}{docs_context[:4000]}' if docs_context else ''}
-
-Start by reading the relevant files, then implement the solution. Be thorough."""
+Start by reading the docs, then implement the solution. Be thorough and complete."""
 
     return prompt
 
@@ -223,8 +333,13 @@ def execute_via_copilot(ticket, agent, info, model_info, docs_context):
     # Ensure log dir exists
     os.makedirs(COPILOT_LOG_DIR, exist_ok=True)
     log_file = os.path.join(COPILOT_LOG_DIR, f"{tid}_{int(time.time())}.log")
+    prompt_file = os.path.join(COPILOT_LOG_DIR, f"{tid}_prompt.txt")
 
     prompt = build_copilot_prompt(ticket, agent, info, model_info, docs_context)
+
+    # Write prompt to temp file to avoid shell escaping issues
+    with open(prompt_file, "w") as pf:
+        pf.write(prompt)
 
     cmd = [
         COPILOT_BIN,
@@ -238,19 +353,25 @@ def execute_via_copilot(ticket, agent, info, model_info, docs_context):
     print(f"COPILOT_START | {tid} | model={model} | log={log_file}", flush=True)
 
     try:
-        with open(log_file, "w") as lf:
-            lf.write(f"=== Ticket: {tid} | {ticket['title']} ===\n")
-            lf.write(f"=== Model: {model} | Agent: {agent} ===\n")
-            lf.write(f"=== Started: {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n\n")
-            lf.flush()
+        # Open log file persistently (not in with-block) so subprocess can write
+        lf = open(log_file, "w")
+        lf.write(f"=== Ticket: {tid} | {ticket['title']} ===\n")
+        lf.write(f"=== Model: {model} | Agent: {agent} ===\n")
+        lf.write(f"=== Started: {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n\n")
+        lf.flush()
 
-            proc = subprocess.Popen(
-                cmd,
-                stdout=lf,
-                stderr=subprocess.STDOUT,
-                cwd="/opt/ethos",
-                env={**os.environ, "TERM": "dumb"},
-            )
+        proc = subprocess.Popen(
+            cmd,
+            stdout=lf,
+            stderr=subprocess.STDOUT,
+            cwd="/opt/ethos",
+            env={**os.environ, "TERM": "dumb"},
+        )
+
+        # Attach file handle to proc so it stays open until process ends
+        proc._log_fh = lf
+        proc._log_file = log_file
+        proc._prompt_file = prompt_file
 
         # Store PID in lock for monitoring
         with open(LOCK_FILE, "w") as f:
@@ -324,28 +445,40 @@ def main():
     print(f"Ticket Watcher | interval={args.interval}s | mode={mode}", flush=True)
     print(f"Monitoring copilot-enabled projects via /copilot/queue", flush=True)
     print(f"Model mapping: complex→Opus, medium→Sonnet, simple→Haiku", flush=True)
+    print(f"QA agent: Sonnet | Flow: Dev→QA→Review (fail→Do zrobienia)", flush=True)
     print(f"Copilot CLI: {COPILOT_BIN}", flush=True)
 
     prev_state = {}
-    active_proc = None  # Track running Copilot process
+    # Dev process tracking
+    active_proc = None
     active_ticket_id = None
+    # QA process tracking (separate from dev)
+    qa_proc = None
+    qa_ticket_id = None
 
     while True:
         try:
-            # Check if Copilot process finished
+            # --- Check if DEV Copilot process finished ---
             if active_proc is not None:
                 retcode = active_proc.poll()
                 if retcode is not None:
+                    if hasattr(active_proc, '_log_fh'):
+                        try: active_proc._log_fh.close()
+                        except: pass
+                    if hasattr(active_proc, '_prompt_file'):
+                        try: os.remove(active_proc._prompt_file)
+                        except: pass
+
                     executing = get_executing()
                     log_file = executing.get("log_file", "?") if executing else "?"
                     if retcode == 0:
                         print(f"\nCOPILOT_DONE | {active_ticket_id} | exit=0 | log={log_file}", flush=True)
                         add_comment(active_ticket_id,
                             f"[copilot] Zakończyłem pracę nad ticketem (exit 0). Log: {log_file}")
-                        # Move to Review
+                        # Move to QA (not Review — QA agent will verify first)
                         try:
-                            move_ticket(active_ticket_id, "Review")
-                            print(f"MOVED_TO_REVIEW | {active_ticket_id}", flush=True)
+                            move_ticket(active_ticket_id, "QA")
+                            print(f"MOVED_TO_QA | {active_ticket_id}", flush=True)
                         except Exception as me:
                             print(f"MOVE_ERROR | {active_ticket_id} | {me}", flush=True)
                     else:
@@ -356,12 +489,54 @@ def main():
                     active_proc = None
                     active_ticket_id = None
 
+            # --- Check if QA Copilot process finished ---
+            if qa_proc is not None:
+                retcode = qa_proc.poll()
+                if retcode is not None:
+                    if hasattr(qa_proc, '_log_fh'):
+                        try: qa_proc._log_fh.close()
+                        except: pass
+
+                    log_file = qa_proc._log_file if hasattr(qa_proc, '_log_file') else "?"
+                    verdict, reason = parse_qa_verdict(log_file) if log_file != "?" else ("error", "no log")
+
+                    if verdict == "pass":
+                        print(f"\nQA_PASS | {qa_ticket_id} | {reason}", flush=True)
+                        add_comment(qa_ticket_id, f"[qa] ✅ QA PASSED: {reason}")
+                        try:
+                            move_ticket(qa_ticket_id, "Review")
+                            print(f"MOVED_TO_REVIEW | {qa_ticket_id}", flush=True)
+                        except Exception as me:
+                            print(f"MOVE_ERROR | {qa_ticket_id} | {me}", flush=True)
+                    elif verdict == "fail":
+                        print(f"\nQA_FAIL | {qa_ticket_id} | {reason}", flush=True)
+                        add_comment(qa_ticket_id, f"[qa] ❌ QA FAILED: {reason}")
+                        try:
+                            move_ticket(qa_ticket_id, "Do zrobienia")
+                            print(f"MOVED_TO_TODO | {qa_ticket_id} (QA failed, needs rework)", flush=True)
+                        except Exception as me:
+                            print(f"MOVE_ERROR | {qa_ticket_id} | {me}", flush=True)
+                    else:
+                        print(f"\nQA_UNKNOWN | {qa_ticket_id} | exit={retcode} | verdict={verdict} | {reason}", flush=True)
+                        add_comment(qa_ticket_id,
+                            f"[qa] ⚠️ QA verdict unclear (exit {retcode}). Log: {log_file}. Moving to Review for manual check.")
+                        try:
+                            move_ticket(qa_ticket_id, "Review")
+                            print(f"MOVED_TO_REVIEW | {qa_ticket_id} (manual QA needed)", flush=True)
+                        except Exception as me:
+                            print(f"MOVE_ERROR | {qa_ticket_id} | {me}", flush=True)
+
+                    qa_proc = None
+                    qa_ticket_id = None
+
+            # --- Poll queue ---
             data = poll_queue()
             queue = data.get("queue", [])
             current_state = {t["id"]: t["column"] for t in queue}
 
             todo = [t for t in queue if t["column"] == "Do zrobienia"]
             in_progress = [t for t in queue if t["column"] == "W trakcie"]
+            qa_tickets = [t for t in queue if t["column"] == "QA"]
 
             for t in queue:
                 tid, col = t["id"], t["column"]
@@ -390,24 +565,49 @@ def main():
             for rid in removed:
                 print(f"DONE | {rid} removed from queue", flush=True)
 
-            # AUTO MODE: pick and start highest priority ticket (only if no copilot running)
+            # --- AUTO MODE: pick and start DEV ticket ---
             if args.auto and todo and not is_executing() and active_proc is None:
                 prio_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
                 todo.sort(key=lambda t: prio_order.get(t["priority"], 99))
                 active_ticket_id, active_proc = auto_start_ticket(todo[0])
 
-            # Check if executing ticket was moved out of queue manually (done/review by user)
+            # --- AUTO MODE: pick and start QA ticket (runs alongside dev) ---
+            if args.auto and qa_tickets and qa_proc is None:
+                # Pick first QA ticket (not the one we just moved there)
+                qa_candidate = qa_tickets[0]
+                if qa_candidate["id"] != active_ticket_id:
+                    qa_ticket_id = qa_candidate["id"]
+                    qa_proc = run_qa_check(qa_candidate)
+                    if qa_proc is None:
+                        qa_ticket_id = None
+
+            # --- Check if executing ticket was moved out of queue manually ---
             executing = get_executing()
             if executing and executing["ticket_id"] not in current_state:
                 print(f"COMPLETED | {executing['ticket_id']} left queue (manual)", flush=True)
-                # Kill copilot if still running
                 if active_proc and active_proc.poll() is None:
                     pid = active_proc.pid
                     active_proc.terminate()
+                    if hasattr(active_proc, '_log_fh'):
+                        try: active_proc._log_fh.close()
+                        except: pass
                     print(f"COPILOT_TERMINATED | PID={pid} (ticket removed from queue)", flush=True)
                 clear_executing()
                 active_proc = None
                 active_ticket_id = None
+
+            # Check if QA ticket was moved out manually
+            if qa_ticket_id and qa_ticket_id not in current_state:
+                print(f"QA_CANCELLED | {qa_ticket_id} left queue (manual)", flush=True)
+                if qa_proc and qa_proc.poll() is None:
+                    pid = qa_proc.pid
+                    qa_proc.terminate()
+                    if hasattr(qa_proc, '_log_fh'):
+                        try: qa_proc._log_fh.close()
+                        except: pass
+                    print(f"QA_TERMINATED | PID={pid}", flush=True)
+                qa_proc = None
+                qa_ticket_id = None
 
             prev_state = current_state
 

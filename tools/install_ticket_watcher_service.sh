@@ -6,10 +6,20 @@ set -e
 
 SERVICE_FILE="/opt/ethos/tools/ethos-ticket-watcher.service"
 SYSTEMD_PATH="/etc/systemd/system/ethos-ticket-watcher.service"
+VENV_PIP="/opt/ethos/venv/bin/pip"
+REQUIREMENTS="/opt/ethos/backend/requirements.txt"
 
 if [[ "$EUID" -ne 0 ]]; then
     echo "ERROR: Ten skrypt wymaga uprawnień root (sudo)." >&2
     exit 1
+fi
+
+echo "→ Instalowanie zależności Python w venv..."
+if [[ -x "$VENV_PIP" && -f "$REQUIREMENTS" ]]; then
+    "$VENV_PIP" install -r "$REQUIREMENTS" --quiet
+    echo "  ✓ Zależności zainstalowane z $REQUIREMENTS"
+else
+    echo "  ⚠️ Pominięto: nie znaleziono $VENV_PIP lub $REQUIREMENTS"
 fi
 
 echo "→ Kopiowanie pliku jednostki..."
