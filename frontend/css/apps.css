@@ -2948,3 +2948,34 @@ select.tk-input {
 }
 .tk-act-btn:hover { background: rgba(255,255,255,0.12); color: var(--text-primary); }
 .tk-act-btn.danger:hover { color: var(--danger); background: rgba(239,68,68,0.15); }
+
+/* ─── Copilot Toggle Switch ─── */
+.tk-toggle-row {
+    display: flex; align-items: center; gap: 10px;
+    cursor: pointer; user-select: none;
+    margin: 0; padding: 0; font-weight: normal;
+}
+.tk-toggle-row input[type="checkbox"] { display: none; }
+.tk-toggle-slider {
+    position: relative; width: 36px; height: 20px;
+    background: var(--border); border-radius: 10px;
+    transition: background 0.2s; flex-shrink: 0;
+}
+.tk-toggle-slider::after {
+    content: ''; position: absolute; top: 2px; left: 2px;
+    width: 16px; height: 16px; background: #fff; border-radius: 50%;
+    transition: transform 0.2s;
+}
+.tk-toggle-row input:checked + .tk-toggle-slider {
+    background: var(--accent);
+}
+.tk-toggle-row input:checked + .tk-toggle-slider::after {
+    transform: translateX(16px);
+}
+.tk-toggle-label {
+    font-size: 13px; font-weight: 500; color: var(--text-primary);
+}
+.tk-toggle-hint {
+    display: block; font-size: 11px; color: var(--text-secondary);
+    margin-top: 2px; padding-left: 46px;
+}

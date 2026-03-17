@@ -119,6 +119,7 @@ def create_project():
         'members': members,
         'columns': list(DEFAULT_COLUMNS),
         'color': color,
+        'copilot_enabled': bool(body.get('copilot_enabled', False)),
         'created': now,
         'updated': now,
     }
@@ -179,6 +180,9 @@ def update_project(project_id):
                 if project['owner'] not in members:
                     members.insert(0, project['owner'])
                 project['members'] = members
+
+        if 'copilot_enabled' in body:
+            project['copilot_enabled'] = bool(body['copilot_enabled'])
 
         project['updated'] = _now()
         _save(data)
@@ -547,3 +551,46 @@ def project_stats(project_id):
         'by_priority': by_priority,
         'by_assignee': by_assignee,
     })
+
+# ---------------------------------------------------------------------------
+# Copilot Integration
+# ---------------------------------------------------------------------------
+
+PRIORITY_ORDER = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3}
+
+@tickets_bp.route('/copilot/queue', methods=['GET'])
+def copilot_queue():
+    """Returns actionable tickets from copilot-enabled projects."""
+    with _lock:
+        data = _load()
+
+    queue = []
+    for project in data['projects']:
+        if not project.get('copilot_enabled', False):
+            continue
+        if not _is_member(project):
+            continue
+
+        proj_tickets = [t for t in data['tickets'] if t['project_id'] == project['id']]
+
+        for t in proj_tickets:
+            col = t.get('column', '')
+            if col in ('Do zrobienia', 'W trakcie'):
+                queue.append({
+                    'id': t['id'],
+                    'title': t['title'],
+                    'description': t.get('description', ''),
+                    'priority': t.get('priority', 'medium'),
+                    'column': col,
+                    'assignee': t.get('assignee', ''),
+                    'labels': t.get('labels', []),
+                    'project_id': project['id'],
+                    'project_name': project['name'],
+                })
+
+    queue.sort(key=lambda t: (
+        0 if t['column'] == 'Do zrobienia' else 1,
+        PRIORITY_ORDER.get(t['priority'], 2),
+    ))
+
+    return jsonify({'queue': queue, 'total': len(queue)})

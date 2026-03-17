@@ -12,7 +12,7 @@ Output format (one line per event):
     REWORK|<ticket_id>|<title>   (moved back from Review to Do zrobienia)
 """
 
-import sys, time, json, os, argparse, requests, urllib3
+import sys, time, json, os, argparse, requests, urllib3, subprocess
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 BASE = "http://localhost:9000/api"
@@ -58,106 +58,87 @@ def save_state(state):
     with open(STATE_FILE, "w") as f:
         json.dump(state, f)
 
-def poll(project_id):
-    data = api_get(f"/tickets/projects/{project_id}/tickets")
-    tickets = data.get("tickets", [])
-    return {t["id"]: t for t in tickets}
+def poll_queue():
+    r = requests.get(f"{BASE}/tickets/copilot/queue", headers=headers(), verify=False)
+    if r.status_code == 401:
+        login()
+        r = requests.get(f"{BASE}/tickets/copilot/queue", headers=headers(), verify=False)
+    r.raise_for_status()
+    return r.json()
 
-def diff_tickets(old_map, new_map):
-    events = []
-    for tid, ticket in new_map.items():
-        if tid not in old_map:
-            events.append({
-                "type": "NEW",
-                "id": tid,
-                "priority": ticket.get("priority", "medium"),
-                "title": ticket.get("title", ""),
-                "column": ticket.get("column", ""),
-            })
-        else:
-            old_col = old_map[tid].get("column", "")
-            new_col = ticket.get("column", "")
-            if old_col != new_col:
-                ev_type = "REWORK" if new_col == "Do zrobienia" and old_col == "Review" else "MOVED"
-                events.append({
-                    "type": ev_type,
-                    "id": tid,
-                    "from": old_col,
-                    "to": new_col,
-                    "priority": ticket.get("priority", "medium"),
-                    "title": ticket.get("title", ""),
-                })
-    return events
+def assign_ticket(ticket_id, username="copilot"):
+    requests.put(f"{BASE}/tickets/tickets/{ticket_id}",
+                 json={"assignee": username}, headers=headers(), verify=False)
 
-def format_event(ev):
-    if ev["type"] == "NEW":
-        return f"🆕 NEW | {ev['id']} | {ev['priority'].upper()} | {ev['column']} | {ev['title']}"
-    elif ev["type"] == "REWORK":
-        return f"🔄 REWORK | {ev['id']} | {ev['priority'].upper()} | {ev['title']}"
-    elif ev["type"] == "MOVED":
-        return f"➡️  MOVED | {ev['id']} | {ev['from']} → {ev['to']} | {ev['title']}"
-    return str(ev)
+def move_ticket(ticket_id, column):
+    requests.put(f"{BASE}/tickets/tickets/{ticket_id}/move",
+                 json={"column": column, "order": 0}, headers=headers(), verify=False)
 
-def actionable(ev):
-    """Return True if this event needs Copilot action."""
-    if ev["type"] == "NEW" and ev.get("column") == "Do zrobienia":
-        return True
-    if ev["type"] == "REWORK":
-        return True
-    if ev["type"] == "MOVED" and ev.get("to") == "Do zrobienia":
-        return True
-    return False
+def add_comment(ticket_id, text):
+    requests.post(f"{BASE}/tickets/tickets/{ticket_id}/comments",
+                  json={"text": text}, headers=headers(), verify=False)
+
+PRIORITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+
+def detect_agent(title, labels):
+    t = title.lower()
+    l = [x.lower() for x in labels]
+    if any(x in t for x in ['[fe]','frontend','ui','ux','css','design']): return "FE/UX"
+    if any(x in t for x in ['[be]','backend','api','endpoint']): return "Backend"
+    if any(x in t for x in ['[devops]','deploy','build','docker']): return "DevOps"
+    if any(x in t for x in ['[sec]','security']): return "Security"
+    if any(x in t for x in ['[docs]','dokumentacja']): return "Docs"
+    if any(x in t for x in ['[qa]','test']): return "QA"
+    if any(x in l for x in ['frontend','fe','ui']): return "FE/UX"
+    if any(x in l for x in ['backend','be','api']): return "Backend"
+    return "General"
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--interval", type=int, default=15, help="Poll interval in seconds")
+    parser.add_argument("--auto", action="store_true", help="Auto-process tickets (not just watch)")
     args = parser.parse_args()
 
-    projects = api_get("/tickets/projects").get("projects", [])
-    proj = next((p for p in projects if p["name"] == PROJECT_NAME), None)
-    if not proj:
-        print(f"❌ Projekt '{PROJECT_NAME}' nie znaleziony.", flush=True)
-        sys.exit(1)
+    print(f"👁️  Ticket Watcher | interval={args.interval}s | auto={'ON' if args.auto else 'OFF'}", flush=True)
+    print(f"   Monitoring copilot-enabled projects via /copilot/queue", flush=True)
 
-    pid = proj["id"]
-    print(f"👁️  Watcher started | Projekt: {proj['name']} | Interval: {args.interval}s", flush=True)
-    print(f"   Monitoring columns: Do zrobienia, Review → Do zrobienia (rework)", flush=True)
-
-    # Initial snapshot
-    current = poll(pid)
-    
-    # Show initial state
-    todo = [t for t in current.values() if t.get("column") == "Do zrobienia"]
-    if todo:
-        sorted_todo = sorted(todo, key=lambda t: {"critical":0,"high":1,"medium":2,"low":3}.get(t.get("priority","medium"),2))
-        print(f"\n📋 Aktualnie w 'Do zrobienia': {len(todo)} ticketów", flush=True)
-        for t in sorted_todo:
-            print(f"   🎯 ACTION_NEEDED | {t['id']} | {t.get('priority','medium').upper()} | {t['title']}", flush=True)
-    else:
-        print(f"\n✅ 'Do zrobienia' jest puste — czekam na nowe tickety...", flush=True)
-
-    save_state({"tickets": {tid: {"column": t.get("column","")} for tid,t in current.items()}})
+    seen_ids = set()
 
     while True:
-        time.sleep(args.interval)
         try:
-            new_tickets = poll(pid)
-            events = diff_tickets(current, new_tickets)
-            
-            for ev in events:
-                print(f"\n{format_event(ev)}", flush=True)
-                if actionable(ev):
-                    print(f"   🎯 ACTION_NEEDED | {ev['id']} | {ev.get('priority','medium').upper()} | {ev.get('title','')}", flush=True)
-            
-            current = new_tickets
-            save_state({"tickets": {tid: {"column": t.get("column","")} for tid,t in current.items()}})
-            
+            data = poll_queue()
+            queue = data.get("queue", [])
+            total = data.get("total", 0)
+
+            # Check for new actionable tickets
+            todo = [t for t in queue if t["column"] == "Do zrobienia"]
+            new_todo = [t for t in todo if t["id"] not in seen_ids]
+
+            for t in new_todo:
+                agent = detect_agent(t["title"], t.get("labels", []))
+                print(f"\n🎯 ACTION_NEEDED | {t['id']} | {t['priority'].upper()} | {agent} | {t['title']}", flush=True)
+                if t.get("description"):
+                    print(f"   �� {t['description'][:120]}", flush=True)
+
+            # Track all seen IDs
+            current_ids = {t["id"] for t in queue}
+            done_ids = seen_ids - current_ids
+            for did in done_ids:
+                print(f"   ✅ {did} — usunięto z kolejki (przeniesiony)", flush=True)
+            seen_ids = current_ids
+
+            if not queue and total == 0:
+                pass  # silent when empty
+            elif new_todo:
+                print(f"   📊 Kolejka: {len(todo)} do zrobienia, {total} łącznie", flush=True)
+
         except Exception as e:
-            print(f"⚠️  Poll error: {e}", flush=True)
-            try:
-                login()
-            except:
-                pass
+            print(f"⚠️  Error: {e}", flush=True)
+            try: login()
+            except: pass
+
+        time.sleep(args.interval)
+
 
 if __name__ == "__main__":
     main()

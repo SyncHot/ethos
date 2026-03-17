@@ -375,6 +375,7 @@ async function renderTickets(body, launchOpts) {
         const color = existing?.color || '#8b5cf6';
         const existingMembers = existing?.members || [];
         const columns = (existing?.columns || DEFAULT_COLUMNS).join(', ');
+        const copilotEnabled = existing?.copilot_enabled || false;
 
         let allSystemUsers = [];
         try {
@@ -414,6 +415,14 @@ async function renderTickets(body, launchOpts) {
                     <label>${t('Kolumny')} <small>(${t('oddzielone przecinkiem')})</small></label>
                     <input type="text" id="tk-pf-columns" class="tk-input" value="${_escHtml(columns)}" placeholder="Backlog, Do zrobienia, W trakcie, Review, Gotowe" />
                 </div>
+                <div class="tk-form-group">
+                    <label class="tk-toggle-row">
+                        <input type="checkbox" id="tk-pf-copilot" ${copilotEnabled ? 'checked' : ''} />
+                        <span class="tk-toggle-slider"></span>
+                        <span class="tk-toggle-label"><i class="fas fa-robot"></i> ${t('Copilot Agent')}</span>
+                    </label>
+                    <small class="tk-toggle-hint">${t('Copilot automatycznie realizuje tickety z kolumny "Do zrobienia"')}</small>
+                </div>
             </div>
         `;
 
@@ -428,6 +437,7 @@ async function renderTickets(body, launchOpts) {
                 members: Array.from(modal.querySelectorAll('#tk-pf-chips .tk-chip')).map(c => c.dataset.user),
                 columns: modal.querySelector('#tk-pf-columns').value
                     .split(',').map(s => s.trim()).filter(Boolean),
+                copilot_enabled: modal.querySelector('#tk-pf-copilot').checked,
             };
             if (payload.columns.length === 0) payload.columns = [...DEFAULT_COLUMNS];
 
