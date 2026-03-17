@@ -2891,3 +2891,51 @@ select.tk-input {
     grid-template-columns: 1fr 1fr;
     gap: 14px;
 }
+
+/* ─── Chip Picker ─── */
+.tk-chip-picker { display: flex; flex-direction: column; gap: 8px; }
+.tk-chips { display: flex; flex-wrap: wrap; gap: 6px; min-height: 28px; }
+.tk-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: var(--accent); color: #fff;
+  padding: 3px 10px; border-radius: 12px;
+  font-size: 12px; font-weight: 500;
+}
+.tk-chip i { cursor: pointer; opacity: 0.7; font-size: 10px; }
+.tk-chip i:hover { opacity: 1; }
+.tk-chip-select { font-size: 12px; padding: 4px 8px; }
+
+/* ─── Delete project button ─── */
+.tk-delete-project { opacity: 0.5; transition: opacity 0.15s, color 0.15s; }
+.tk-delete-project:hover { opacity: 1; color: #ef4444; }
+
+/* ─── Filter group ─── */
+.tk-filter-group {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 2px 4px 2px 8px;
+}
+.tk-filter-group .tk-filter-select {
+  border: none; background: transparent;
+  padding: 4px 6px; font-size: 12px;
+  color: var(--text);
+}
+.tk-filter-group .tk-filter-select:focus { border: none; box-shadow: none; outline: none; }
+
+/* ─── Search wrap ─── */
+.tk-search-wrap {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 2px 8px;
+}
+.tk-search-wrap .tk-search {
+  border: none; background: transparent;
+  padding: 4px 6px; outline: none;
+  width: 160px; color: var(--text);
+}
+.tk-search-wrap .tk-search:focus { border: none; box-shadow: none; }
+.tk-search-wrap i { font-size: 11px; opacity: 0.4; }

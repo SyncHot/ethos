@@ -303,7 +303,7 @@ async function renderTickets(body, launchOpts) {
                 const memberStr = members.map(m => _escHtml(m)).join(', ');
                 const extraMembers = (p.members || []).length > 3
                     ? ' +' + ((p.members || []).length - 3) : '';
-                const isOwner = p.owner === NAS.username || (p.members || []).includes(NAS.username);
+                const isOwner = p.owner === NAS.username;
 
                 return `<div class="tk-project-card" data-id="${_escHtml(p.id)}" style="border-top:4px solid ${_escHtml(color)};">
                     <div class="tk-project-card-header">
@@ -319,7 +319,7 @@ async function renderTickets(body, launchOpts) {
                         <span class="tk-project-members">${memberStr}${_escHtml(extraMembers)}</span>
                         <span class="tk-project-actions">
                             <button class="tk-btn-icon tk-edit-project" data-id="${_escHtml(p.id)}" title="${t('Ustawienia')}">
-                                <i class="fas fa-cog"></i>
+                                <i class="fas fa-ellipsis-vertical"></i>
                             </button>
                             ${isOwner ? '<button class="tk-btn-icon tk-delete-project" data-id="' + _escHtml(p.id) + '" title="' + t('Usuń') + '"><i class="fas fa-trash"></i></button>' : ''}
                         </span>
@@ -369,14 +369,20 @@ async function renderTickets(body, launchOpts) {
 
     /* ═══════════════════ PROJECT MODAL ═══════════════════ */
 
-    function showProjectModal(existing) {
+    async function showProjectModal(existing) {
         const isEdit = !!existing;
         const title = isEdit ? t('Edytuj projekt') : t('Nowy projekt');
         const name = existing?.name || '';
         const desc = existing?.description || '';
         const color = existing?.color || '#8b5cf6';
-        const members = (existing?.members || []).join(', ');
+        const existingMembers = existing?.members || [];
         const columns = (existing?.columns || DEFAULT_COLUMNS).join(', ');
+
+        let allSystemUsers = [];
+        try {
+            const ulist = await api('/users/list');
+            allSystemUsers = (ulist || []).filter(u => u.nasos_user).map(u => u.username);
+        } catch(e) {}
 
         const html = `
             <div class="tk-form">
@@ -397,8 +403,13 @@ async function renderTickets(body, launchOpts) {
                         </div>
                     </div>
                     <div class="tk-form-group">
-                        <label>${t('Członkowie')} <small>(${t('przecinek')})</small></label>
-                        <input type="text" id="tk-pf-members" class="tk-input" value="${_escHtml(members)}" placeholder="marcin, admin" />
+                        <label>${t('Członkowie')}</label>
+                        <div class="tk-chip-picker" id="tk-pf-members-picker">
+                            <div class="tk-chips" id="tk-pf-chips"></div>
+                            <select class="tk-input tk-chip-select" id="tk-pf-member-add">
+                                <option value="">${t('Dodaj członka...')}</option>
+                            </select>
+                        </div>
                     </div>
                 </div>
                 <div class="tk-form-group">
@@ -416,8 +427,7 @@ async function renderTickets(body, launchOpts) {
                 name: n,
                 description: modal.querySelector('#tk-pf-desc').value.trim(),
                 color: modal.querySelector('#tk-pf-color').value,
-                members: modal.querySelector('#tk-pf-members').value
-                    .split(',').map(s => s.trim()).filter(Boolean),
+                members: Array.from(modal.querySelectorAll('#tk-pf-chips .tk-chip')).map(c => c.dataset.user),
                 columns: modal.querySelector('#tk-pf-columns').value
                     .split(',').map(s => s.trim()).filter(Boolean),
             };
@@ -433,6 +443,37 @@ async function renderTickets(body, launchOpts) {
         const colorInput = overlay.querySelector('#tk-pf-color');
         const colorVal = overlay.querySelector('#tk-pf-color-val');
         colorInput.oninput = () => { colorVal.textContent = colorInput.value; };
+
+        /* ── Chip picker logic ── */
+        const chipsEl = overlay.querySelector('#tk-pf-chips');
+        const addSel  = overlay.querySelector('#tk-pf-member-add');
+        let selectedMembers = [...existingMembers];
+
+        function renderChips() {
+            chipsEl.innerHTML = selectedMembers.map(u =>
+                `<span class="tk-chip" data-user="${_escHtml(u)}">${_escHtml(u)} <i class="fas fa-times tk-chip-remove" data-user="${_escHtml(u)}"></i></span>`
+            ).join('');
+            addSel.innerHTML = '<option value="">' + t('Dodaj członka...') + '</option>' +
+                allSystemUsers.filter(u => !selectedMembers.includes(u))
+                    .map(u => '<option value="' + _escHtml(u) + '">' + _escHtml(u) + '</option>').join('');
+        }
+        renderChips();
+
+        addSel.onchange = () => {
+            const v = addSel.value;
+            if (v && !selectedMembers.includes(v)) {
+                selectedMembers.push(v);
+                renderChips();
+            }
+            addSel.value = '';
+        };
+        chipsEl.addEventListener('click', (e) => {
+            const rm = e.target.closest('.tk-chip-remove');
+            if (rm) {
+                selectedMembers = selectedMembers.filter(u => u !== rm.dataset.user);
+                renderChips();
+            }
+        });
     }
 
     /* ═══════════════════ KANBAN BOARD VIEW ═══════════════════ */
@@ -465,24 +506,31 @@ async function renderTickets(body, launchOpts) {
                     <i class="fas fa-plus"></i> ${t('Ticket')}
                 </button>
                 <button class="tk-btn-icon" id="tk-project-settings" title="${t('Ustawienia')}">
-                    <i class="fas fa-cog"></i>
+                    <i class="fas fa-sliders"></i>
                 </button>
             </div>
             <div class="tk-filter-bar">
-                <select id="tk-f-assignee" class="tk-select">
-                    <option value="">${t('Wszyscy')}</option>
-                    ${members.map(m => `<option value="${_escHtml(m)}" ${filterAssignee === m ? 'selected' : ''}>${_escHtml(m)}</option>`).join('')}
-                </select>
-                <select id="tk-f-priority" class="tk-select">
-                    <option value="">${t('Wszystkie priorytety')}</option>
-                    ${Object.entries(PRIORITY_LABELS).map(([k, v]) =>
-                        `<option value="${k}" ${filterPriority === k ? 'selected' : ''}>${PRIORITY_ICONS[k]} ${_escHtml(v)}</option>`
-                    ).join('')}
-                </select>
+                <div class="tk-filter-group">
+                    <i class="fas fa-user" style="font-size:11px;opacity:0.5;"></i>
+                    <select id="tk-f-assignee" class="tk-filter-select">
+                        <option value="">${t('Wszyscy')}</option>
+                        ${members.map(m => `<option value="${_escHtml(m)}" ${filterAssignee === m ? 'selected' : ''}>${_escHtml(m)}</option>`).join('')}
+                    </select>
+                </div>
+                <div class="tk-filter-group">
+                    <i class="fas fa-flag" style="font-size:11px;opacity:0.5;"></i>
+                    <select id="tk-f-priority" class="tk-filter-select">
+                        <option value="">${t('Priorytet')}</option>
+                        ${Object.entries(PRIORITY_LABELS).map(([k, v]) =>
+                            `<option value="${k}" ${filterPriority === k ? 'selected' : ''}>${PRIORITY_ICONS[k]} ${_escHtml(v)}</option>`
+                        ).join('')}
+                    </select>
+                </div>
+                <div style="flex:1;"></div>
                 <div class="tk-search-wrap">
                     <i class="fas fa-search"></i>
                     <input type="text" class="tk-search" id="tk-f-search"
-                           placeholder="${t('Szukaj ticketów...')}" value="${_escHtml(filterSearch)}" />
+                           placeholder="${t('Szukaj...')}" value="${_escHtml(filterSearch)}" />
                 </div>
             </div>
             <div class="tk-board" id="tk-board"></div>
