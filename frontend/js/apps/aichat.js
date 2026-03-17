@@ -1146,8 +1146,8 @@ function _aicRenderWizard(root) {
     var step = _aic.wizardStep;
     var steps = [
         { icon: 'fa-microchip', label: t('Sprzęt') },
-        { icon: 'fa-cube', label: t('Model') },
         { icon: 'fa-tachometer-alt', label: t('Benchmark') },
+        { icon: 'fa-cube', label: t('Model') },
         { icon: 'fa-check-circle', label: t('Gotowe') },
     ];
     var stepsHtml = '<div class="aic-wiz-steps">';
@@ -1160,8 +1160,8 @@ function _aicRenderWizard(root) {
 
     var bodyHtml = '';
     if (step === 0) bodyHtml = _aicWizStep0();
-    else if (step === 1) bodyHtml = _aicWizStep1();
-    else if (step === 2) bodyHtml = _aicWizStep2();
+    else if (step === 1) bodyHtml = _aicWizStepBench();
+    else if (step === 2) bodyHtml = _aicWizStepModel();
     else bodyHtml = _aicWizStep3();
 
     root.innerHTML =
@@ -1248,12 +1248,91 @@ function _aicWizStep0() {
         '<div class="aic-wiz-hw-item"><i class="fas fa-users-cog"></i> <strong>' + t('Wątki inferencji') + ':</strong> ' +
             (cpu.optimal_threads || '?') + ' (' + t('reguła N-1 — 1 rdzeń zarezerwowany dla systemu') + ')</div>' +
         '<div class="aic-wiz-actions">' +
+            '<button class="aic-btn-primary" onclick="window._aicWizNext()"><i class="fas fa-arrow-right"></i> ' + t('Dalej — benchmark') + '</button>' +
+        '</div>';
+}
+
+/* Step 1: Auto-Benchmark — downloads smallest model if needed, runs benchmark, estimates TPS for all models */
+function _aicWizStepBench() {
+    // Auto-start benchmark on entering this step
+    if (!_aic.wizardBench) {
+        _aic.wizardBench = { running: true, phase: 'starting' };
+        var root = document.querySelector('.aic-root');
+
+        _aicFetch('/api/aichat/models/benchmark/auto', { method: 'POST', body: JSON.stringify({}) })
+            .then(function (r) { return r.json(); }).then(function (d) {
+                if (d.error) {
+                    _aic.wizardBench = { error: d.error, running: false };
+                } else {
+                    _aic.wizardBench = d;
+                    _aic.wizardBench.running = false;
+                }
+                var root2 = document.querySelector('.aic-root');
+                if (root2) _aicRenderWizard(root2);
+            }).catch(function (err) {
+                _aic.wizardBench = { error: err.message || 'Błąd połączenia', running: false };
+                var root2 = document.querySelector('.aic-root');
+                if (root2) _aicRenderWizard(root2);
+            });
+
+        return '<h3><i class="fas fa-tachometer-alt"></i> ' + t('Benchmark wydajności') + '</h3>' +
+            '<div class="aic-wiz-loading">' +
+                '<i class="fas fa-spinner fa-spin fa-2x"></i>' +
+                '<p>' + t('Automatyczny benchmark — pobieranie modelu testowego i pomiar wydajności…') + '</p>' +
+                '<p class="aic-wiz-hint">' + t('To może potrwać 1-2 minuty.') + '</p>' +
+            '</div>';
+    }
+
+    if (_aic.wizardBench.running) {
+        return '<h3><i class="fas fa-tachometer-alt"></i> ' + t('Benchmark wydajności') + '</h3>' +
+            '<div class="aic-wiz-loading">' +
+                '<i class="fas fa-spinner fa-spin fa-2x"></i>' +
+                '<p>' + t('Trwa benchmark — pomiar szybkości inferencji…') + '</p>' +
+            '</div>';
+    }
+
+    var b = _aic.wizardBench;
+    if (b.error) {
+        return '<h3><i class="fas fa-tachometer-alt"></i> ' + t('Benchmark') + '</h3>' +
+            '<div class="aic-wiz-error"><i class="fas fa-exclamation-triangle"></i> ' + _aicEsc(b.error) + '</div>' +
+            '<div class="aic-wiz-actions">' +
+                '<button class="aic-btn-secondary" onclick="window._aicWizPrev()"><i class="fas fa-arrow-left"></i> ' + t('Wstecz') + '</button>' +
+                '<button class="aic-btn-primary" onclick="_aic.wizardBench=null;_aicRenderWizard(document.querySelector(\'.aic-root\'))"><i class="fas fa-redo"></i> ' + t('Ponów') + '</button>' +
+                '<button class="aic-btn-secondary" onclick="_aic.wizardBench={skipped:true};window._aicWizNext()">' + t('Pomiń') + ' <i class="fas fa-forward"></i></button>' +
+            '</div>';
+    }
+
+    // Benchmark results
+    var tier = b.tier || {};
+    return '<h3><i class="fas fa-tachometer-alt"></i> ' + t('Wyniki benchmarku') + '</h3>' +
+        '<p class="aic-wiz-hint">' + t('Testowano na modelu') + ': <strong>' + _aicEsc(b.ref_model_name || b.model_id || '?') + '</strong> (' + _aicEsc(b.ref_params || '?') + ')</p>' +
+        '<div class="aic-wiz-bench-results">' +
+            '<div class="aic-wiz-bench-metric">' +
+                '<div class="aic-wiz-bench-value">' + (b.tps || 0) + '</div>' +
+                '<div class="aic-wiz-bench-label">' + t('tok/s (TPS)') + '</div>' +
+            '</div>' +
+            '<div class="aic-wiz-bench-metric">' +
+                '<div class="aic-wiz-bench-value">' + ((b.ttft || 0) * 1000).toFixed(0) + ' ms</div>' +
+                '<div class="aic-wiz-bench-label">' + t('Time to First Token') + '</div>' +
+            '</div>' +
+            '<div class="aic-wiz-bench-metric">' +
+                '<div class="aic-wiz-bench-value">' + (b.tokens_generated || 0) + '</div>' +
+                '<div class="aic-wiz-bench-label">' + t('Tokenów') + '</div>' +
+            '</div>' +
+        '</div>' +
+        '<div class="aic-wiz-tier" style="border-color:' + (tier.color || '#6b7280') + '">' +
+            '<i class="fas ' + (tier.icon || 'fa-circle') + '" style="color:' + (tier.color || '#6b7280') + '"></i> ' +
+            '<strong>' + t('Profil wydajności') + ': ' + _aicEsc(tier.name || '?') + '</strong>' +
+            ' — ' + _aicEsc(tier.description || '') +
+        '</div>' +
+        '<div class="aic-wiz-actions">' +
+            '<button class="aic-btn-secondary" onclick="window._aicWizPrev()"><i class="fas fa-arrow-left"></i> ' + t('Wstecz') + '</button>' +
             '<button class="aic-btn-primary" onclick="window._aicWizNext()"><i class="fas fa-arrow-right"></i> ' + t('Dalej — wybór modelu') + '</button>' +
         '</div>';
 }
 
-/* Step 1: Model selection with path picker and download progress */
-function _aicWizStep1() {
+/* Step 2: Model selection with path picker and download progress */
+function _aicWizStepModel() {
     if (!_aic.wizardRecModel) {
         Promise.all([
             _aicFetch('/api/aichat/models/catalog').then(function (r) { return r.json(); }),
@@ -1282,19 +1361,34 @@ function _aicWizStep1() {
             '</div>' +
         '</div>';
 
-    // Sort: recommended first, then by RAM descending (strongest first)
+    // Sort: use estimated TPS from benchmark if available, else RAM descending
+    var benchEstimates = (_aic.wizardBench && _aic.wizardBench.model_estimates) || {};
     var models = (_aic.wizardRecModel.models || []).filter(function (m) { return m.status === 'recommended' || m.status === 'possible'; });
     if (!models.length) models = _aic.wizardRecModel.models || [];
     models.sort(function (a, b) {
         if (a.status === 'recommended' && b.status !== 'recommended') return -1;
         if (b.status === 'recommended' && a.status !== 'recommended') return 1;
+        // If we have TPS estimates, sort by estimated TPS (models with ≥5 TPS first, then by size desc)
+        var aEst = benchEstimates[a.id] || 0;
+        var bEst = benchEstimates[b.id] || 0;
+        var aUsable = aEst >= 5 ? 1 : 0;
+        var bUsable = bEst >= 5 ? 1 : 0;
+        if (aUsable !== bUsable) return bUsable - aUsable;
         return (b.ram_required_gb || 0) - (a.ram_required_gb || 0);
     });
 
-    // Auto-select badge for top recommended
+    // Auto-select: biggest model with ≥5 estimated TPS, or first recommended non-downloaded
     var topRecId = null;
     for (var mi = 0; mi < models.length; mi++) {
-        if (models[mi].status === 'recommended' && !models[mi].downloaded) { topRecId = models[mi].id; break; }
+        var est = benchEstimates[models[mi].id] || 0;
+        if (models[mi].status === 'recommended' && !models[mi].downloaded && est >= 5) {
+            topRecId = models[mi].id; break;
+        }
+    }
+    if (!topRecId) {
+        for (var mi2 = 0; mi2 < models.length; mi2++) {
+            if (models[mi2].status === 'recommended' && !models[mi2].downloaded) { topRecId = models[mi2].id; break; }
+        }
     }
 
     var ds = _aic.wizardRecModel.download_status || {};
@@ -1324,7 +1418,16 @@ function _aicWizStep1() {
         var statusIcon = m.status === 'recommended' ? 'fa-check-circle' : m.status === 'possible' ? 'fa-exclamation-circle' : 'fa-times-circle';
         var dlBadge = m.downloaded ? '<span class="aic-wiz-dl-badge"><i class="fas fa-check"></i> ' + t('Pobrany') + '</span>' : '';
         var activeBadge = m.active ? '<span class="aic-wiz-active-badge"><i class="fas fa-bolt"></i> ' + t('Aktywny') + '</span>' : '';
-        var autoTag = (!m.downloaded && m.id === topRecId) ? '<span class="aic-wiz-auto-badge"><i class="fas fa-star"></i> ' + t('Najlepszy dla Twojego sprzętu') + '</span>' : '';
+        var autoTag = (!m.downloaded && m.id === topRecId) ? '<span class="aic-wiz-auto-badge"><i class="fas fa-star"></i> ' + t('Rekomendowany na podstawie benchmarku') + '</span>' : '';
+
+        // Show estimated TPS from benchmark
+        var estTps = benchEstimates[m.id] || 0;
+        var tpsHtml = '';
+        if (estTps > 0) {
+            var tpsColor = estTps >= 15 ? '#10b981' : estTps >= 5 ? '#f59e0b' : '#ef4444';
+            var tpsLabel = estTps >= 15 ? t('szybki') : estTps >= 5 ? t('OK') : t('wolny');
+            tpsHtml = '<span class="aic-wiz-model-tps" style="color:' + tpsColor + '"><i class="fas fa-tachometer-alt"></i> ~' + estTps + ' tok/s (' + tpsLabel + ')</span>';
+        }
 
         var actionBtn = '';
         if (m.downloaded && m.active) {
@@ -1347,19 +1450,20 @@ function _aicWizStep1() {
                 '<div class="aic-wiz-model-meta">' +
                     '<span>' + _aicEsc(m.params) + '</span> · <span>' + _aicEsc(m.quant) + '</span> · <span>' + (m.size_gb || '?') + ' GB</span> · <span>' + (m.ram_required_gb || '?') + ' GB RAM</span>' +
                 '</div>' +
+                tpsHtml +
                 '<div class="aic-wiz-model-desc">' + _aicEsc(m.description || '') + '</div>' +
                 '<div class="aic-wiz-model-actions">' + dlBadge + activeBadge + actionBtn + '</div>' +
             '</div>';
     });
 
     return '<h3><i class="fas fa-cube"></i> ' + t('Wybierz model') + '</h3>' +
-        '<p class="aic-wiz-hint">' + t('System automatycznie proponuje najmocniejszy model pasujący do Twojego sprzętu. Możesz wybrać inny.') + '</p>' +
+        '<p class="aic-wiz-hint">' + t('Modele posortowane wg benchmarku — na górze te z najlepszą wydajnością. Szukaj ≥5 tok/s dla płynnego czatu.') + '</p>' +
         pathHtml +
         progressHtml +
         '<div class="aic-wiz-models">' + cardsHtml + '</div>' +
         '<div class="aic-wiz-actions">' +
             '<button class="aic-btn-secondary" onclick="window._aicWizPrev()"><i class="fas fa-arrow-left"></i> ' + t('Wstecz') + '</button>' +
-            '<button class="aic-btn-primary" onclick="window._aicWizNext()"><i class="fas fa-arrow-right"></i> ' + t('Dalej — benchmark') + '</button>' +
+            '<button class="aic-btn-primary" onclick="window._aicWizNext()"><i class="fas fa-check"></i> ' + t('Zakończ konfigurację') + '</button>' +
         '</div>';
 }
 
@@ -1463,75 +1567,6 @@ window._aicWizActivate = function (modelId) {
                 var root = document.querySelector('.aic-root');
                 if (root) _aicRenderWizard(root);
             }
-        });
-};
-
-/* Step 2: Benchmark */
-function _aicWizStep2() {
-    if (_aic.wizardBench && !_aic.wizardBench.running) {
-        var b = _aic.wizardBench;
-        if (b.error) {
-            return '<h3><i class="fas fa-tachometer-alt"></i> ' + t('Benchmark') + '</h3>' +
-                '<div class="aic-wiz-error"><i class="fas fa-exclamation-triangle"></i> ' + _aicEsc(b.error) + '</div>' +
-                '<div class="aic-wiz-actions">' +
-                    '<button class="aic-btn-secondary" onclick="window._aicWizPrev()"><i class="fas fa-arrow-left"></i> ' + t('Wstecz') + '</button>' +
-                    '<button class="aic-btn-primary" onclick="_aic.wizardBench=null;_aicRenderWizard(document.querySelector(\'.aic-root\'))"><i class="fas fa-redo"></i> ' + t('Ponów') + '</button>' +
-                '</div>';
-        }
-
-        var tier = b.tier || {};
-        return '<h3><i class="fas fa-tachometer-alt"></i> ' + t('Wyniki benchmarku') + '</h3>' +
-            '<div class="aic-wiz-bench-results">' +
-                '<div class="aic-wiz-bench-metric">' +
-                    '<div class="aic-wiz-bench-value">' + (b.tps || 0) + '</div>' +
-                    '<div class="aic-wiz-bench-label">' + t('tok/s (TPS)') + '</div>' +
-                '</div>' +
-                '<div class="aic-wiz-bench-metric">' +
-                    '<div class="aic-wiz-bench-value">' + ((b.ttft || 0) * 1000).toFixed(0) + ' ms</div>' +
-                    '<div class="aic-wiz-bench-label">' + t('Time to First Token') + '</div>' +
-                '</div>' +
-                '<div class="aic-wiz-bench-metric">' +
-                    '<div class="aic-wiz-bench-value">' + (b.tokens_generated || 0) + '</div>' +
-                    '<div class="aic-wiz-bench-label">' + t('Tokenów') + '</div>' +
-                '</div>' +
-            '</div>' +
-            '<div class="aic-wiz-tier" style="border-color:' + (tier.color || '#6b7280') + '">' +
-                '<i class="fas ' + (tier.icon || 'fa-circle') + '" style="color:' + (tier.color || '#6b7280') + '"></i> ' +
-                '<strong>' + t('Profil wydajności') + ': ' + _aicEsc(tier.name || '?') + '</strong>' +
-                ' — ' + _aicEsc(tier.description || '') +
-            '</div>' +
-            '<div class="aic-wiz-actions">' +
-                '<button class="aic-btn-secondary" onclick="window._aicWizPrev()"><i class="fas fa-arrow-left"></i> ' + t('Wstecz') + '</button>' +
-                '<button class="aic-btn-primary" onclick="window._aicWizNext()"><i class="fas fa-check"></i> ' + t('Zakończ konfigurację') + '</button>' +
-            '</div>';
-    }
-
-    return '<h3><i class="fas fa-tachometer-alt"></i> ' + t('Benchmark wydajności') + '</h3>' +
-        '<p class="aic-wiz-hint">' + t('Uruchom benchmark, aby zmierzyć szybkość inferencji na Twoim sprzęcie.') + '</p>' +
-        (_aic.wizardBench && _aic.wizardBench.running
-            ? '<div class="aic-wiz-loading"><i class="fas fa-spinner fa-spin fa-2x"></i><p>' + t('Uruchamianie benchmarku — to może potrwać minutę…') + '</p></div>'
-            : '<div class="aic-wiz-actions">' +
-                '<button class="aic-btn-secondary" onclick="window._aicWizPrev()"><i class="fas fa-arrow-left"></i> ' + t('Wstecz') + '</button>' +
-                '<button class="aic-btn-primary" onclick="window._aicWizRunBench()"><i class="fas fa-play"></i> ' + t('Uruchom benchmark') + '</button>' +
-                '<button class="aic-btn-secondary" onclick="window._aicWizNext()">' + t('Pomiń') + ' <i class="fas fa-forward"></i></button>' +
-            '</div>');
-}
-
-window._aicWizRunBench = function () {
-    _aic.wizardBench = { running: true };
-    var root = document.querySelector('.aic-root');
-    if (root) _aicRenderWizard(root);
-
-    _aicFetch('/api/aichat/models/benchmark', { method: 'POST', body: JSON.stringify({}) })
-        .then(function (r) { return r.json(); }).then(function (d) {
-            _aic.wizardBench = d;
-            _aic.wizardBench.running = false;
-            var root2 = document.querySelector('.aic-root');
-            if (root2) _aicRenderWizard(root2);
-        }).catch(function (err) {
-            _aic.wizardBench = { error: err.message, running: false };
-            var root2 = document.querySelector('.aic-root');
-            if (root2) _aicRenderWizard(root2);
         });
 };
 

@@ -1431,6 +1431,75 @@ def models_benchmark():
     return jsonify(result)
 
 
+@aichat_bp.route('/models/benchmark/auto', methods=['POST'])
+def models_benchmark_auto():
+    """Auto-benchmark: ensure smallest model is available, benchmark it, return TPS scaling for all models."""
+    if not _is_admin():
+        return jsonify({'error': 'Tylko admin'}), 403
+
+    lib = _get_ml()
+    hw = _get_hw()
+    recs = lib.get_recommendations(hw)
+
+    # Find smallest downloaded recommended model, or the smallest recommended overall
+    downloaded_rec = [m for m in recs if m.get('downloaded') and m['status'] in ('recommended', 'possible')]
+    downloaded_rec.sort(key=lambda m: m.get('size_gb', 99))
+
+    if downloaded_rec:
+        bench_model = downloaded_rec[0]
+    else:
+        # Need to download the smallest recommended model first
+        all_rec = [m for m in recs if m['status'] in ('recommended', 'possible')]
+        all_rec.sort(key=lambda m: m.get('size_gb', 99))
+        if not all_rec:
+            return jsonify({'error': 'Brak modeli pasujących do sprzętu'}), 400
+        bench_model = all_rec[0]
+
+        # Trigger synchronous download of the smallest model
+        if not _check_hf_hub():
+            ok_hf, err_hf = _install_py_pkg('huggingface_hub', timeout=300)
+            if not ok_hf:
+                return jsonify({'error': f'Brak huggingface_hub: {err_hf[-200:]}'}), 500
+
+        ok, err = lib.download_sync(bench_model['id'])
+        if not ok:
+            return jsonify({'error': f'Nie udało się pobrać modelu testowego: {err}'}), 500
+
+    # Activate and benchmark
+    lib.set_active_model(bench_model['id'])
+    result = lib.run_benchmark(model_id=bench_model['id'])
+    if 'error' in result:
+        return jsonify(result), 400
+
+    # Calculate TPS scaling for all models based on benchmark of reference model
+    ref_params_b = _parse_params(bench_model.get('params', '0'))
+    ref_tps = result.get('tps', 1)
+    model_estimates = {}
+    for m in recs:
+        m_params_b = _parse_params(m.get('params', '0'))
+        if ref_params_b > 0 and m_params_b > 0:
+            # TPS scales roughly inversely with parameter count
+            estimated_tps = round(ref_tps * (ref_params_b / m_params_b), 1)
+        else:
+            estimated_tps = 0
+        model_estimates[m['id']] = estimated_tps
+
+    result['ref_model_id'] = bench_model['id']
+    result['ref_model_name'] = bench_model.get('name', bench_model['id'])
+    result['ref_params'] = bench_model.get('params', '?')
+    result['model_estimates'] = model_estimates
+    return jsonify(result)
+
+
+def _parse_params(params_str):
+    """Parse '7B' → 7.0, '0.5B' → 0.5, '1.5B' → 1.5"""
+    try:
+        s = str(params_str).upper().replace('B', '').strip()
+        return float(s)
+    except (ValueError, TypeError):
+        return 0
+
+
 @aichat_bp.route('/models/benchmark', methods=['GET'])
 def models_benchmark_results():
     """Get last benchmark results."""

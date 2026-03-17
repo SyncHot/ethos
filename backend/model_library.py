@@ -941,6 +941,43 @@ MODEL_CATALOG = [
         'languages': ['en'],
         'use_cases': ['chat'],
     },
+    # ── Llama 3.2 11B Vision (multimodal) ──────────────────────────
+    {
+        'id': 'llama32-11b-vision-q4',
+        'name': 'Llama 3.2 11B Vision',
+        'family': 'Llama',
+        'params': '11B',
+        'quant': 'Q4_K_M',
+        'size_gb': 6.0,
+        'ram_required_gb': 10,
+        'vram_required_gb': 8,
+        'description': 'Llama 3.2 Vision 11B — multimodalny model rozpoznający obrazy. '
+                       'Opisywanie zdjęć, analiza wykresów, OCR, pytania o obraz.',
+        'hf_repo': 'leafspark/Llama-3.2-11B-Vision-Instruct-GGUF',
+        'hf_filename': 'Llama-3.2-11B-Vision-Instruct.Q4_K_M.gguf',
+        'context_length': 131072,
+        'license': 'Llama 3.2 Community',
+        'languages': ['en', 'pl', 'de', 'fr', 'es'],
+        'use_cases': ['chat', 'vision', 'reasoning', 'multilingual'],
+    },
+    {
+        'id': 'llama32-11b-vision-q8',
+        'name': 'Llama 3.2 11B Vision',
+        'family': 'Llama',
+        'params': '11B',
+        'quant': 'Q8_0',
+        'size_gb': 10.4,
+        'ram_required_gb': 14,
+        'vram_required_gb': 12,
+        'description': 'Llama 3.2 Vision 11B Q8 — wyższa precyzja multimodalnego modelu. '
+                       'Lepsza jakość analizy obrazów kosztem większego zużycia RAM.',
+        'hf_repo': 'leafspark/Llama-3.2-11B-Vision-Instruct-GGUF',
+        'hf_filename': 'Llama-3.2-11B-Vision-Instruct.Q8_0.gguf',
+        'context_length': 131072,
+        'license': 'Llama 3.2 Community',
+        'languages': ['en', 'pl', 'de', 'fr', 'es'],
+        'use_cases': ['chat', 'vision', 'reasoning', 'multilingual'],
+    },
     # ── Llama 3.3 ──────────────────────────────────────────────────
     {
         'id': 'llama33-70b-q2',
@@ -1467,6 +1504,41 @@ class ModelLibrary:
             _download_state['active'] = False
             _download_state['status'] = 'Anulowano'
             _download_state['error'] = 'Pobieranie anulowane'
+
+    def download_sync(self, model_id):
+        """Synchronous download — blocks until done. For small wizard benchmark models."""
+        ok, err = self.check_before_download(model_id)
+        if not ok:
+            return (False, err)
+        model = self.get_model(model_id)
+        if not model:
+            return (False, f'Model {model_id} nie istnieje')
+        hf_repo = model['hf_repo']
+        hf_file = model['hf_filename']
+        try:
+            downloaded_path = hf_hub_download(
+                repo_id=hf_repo,
+                filename=hf_file,
+                local_dir=self.models_path,
+            )
+            target_path = os.path.join(self.models_path, hf_file)
+            if not os.path.isfile(downloaded_path):
+                if os.path.isfile(target_path):
+                    downloaded_path = target_path
+                else:
+                    return (False, f'Plik nie znaleziony: {hf_file}')
+            file_size = os.path.getsize(downloaded_path)
+            size_gb = round(file_size / 1073741824, 2)
+            self._config.setdefault('downloaded', {})[model_id] = {
+                'filename': hf_file,
+                'path': downloaded_path,
+                'downloaded_at': time.strftime('%Y-%m-%dT%H:%M:%S'),
+                'size_gb': size_gb,
+            }
+            self._save_config()
+            return (True, None)
+        except Exception as e:
+            return (False, str(e))
 
     def delete_model(self, model_id):
         """Delete a downloaded model file. Returns (ok, error_msg)."""
