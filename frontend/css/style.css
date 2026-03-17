@@ -1007,7 +1007,7 @@ input, button, select, textarea { font-family: inherit; font-size: inherit; }
 .power-confirm-overlay {
     position: fixed;
     inset: 0;
-    z-index: 9500;
+    z-index: 200000;
     background: rgba(0,0,0,0.5);
     backdrop-filter: blur(4px);
     display: flex;
@@ -3359,7 +3359,7 @@ a.dkr-port-link:hover {
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 9500;
+    z-index: 200000;
     animation: fadeIn 0.15s ease;
 }
 
