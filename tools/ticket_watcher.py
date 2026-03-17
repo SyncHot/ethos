@@ -14,13 +14,14 @@ Complexity → Model mapping:
     simple   → claude-haiku-4-20250514 (fast, cost-effective)
 """
 
-import sys, time, json, os, argparse, requests, urllib3, subprocess, shlex
+import sys, time, json, os, argparse, requests, urllib3, subprocess, shlex, signal
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 BASE = "http://localhost:9000/api"
 TOKEN_FILE = "/tmp/.ethos_orchestrator_token"
 LOCK_FILE = "/tmp/.ethos_watcher_executing"
 DOCS_DIR = "/opt/ethos/docs"
+API_FAIL_THRESHOLD = 3  # consecutive API failures before considering outage
 
 # ── Complexity → AI Model mapping ────────────────────────────────────────
 # Maps to Copilot CLI --model flag values
@@ -127,6 +128,33 @@ def get_executing():
         with open(LOCK_FILE) as f:
             return json.load(f)
     return None
+
+def pid_alive(pid):
+    """Check if a process with given PID is still running."""
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, OSError):
+        return False
+
+def cleanup_stale_lock():
+    """On startup, clean lock file if the PID inside is dead."""
+    executing = get_executing()
+    if not executing:
+        return
+    pid = executing.get("copilot_pid")
+    tid = executing.get("ticket_id", "?")
+    if pid and pid_alive(pid):
+        print(f"STALE_CHECK | {tid} | PID {pid} still alive — killing orphan", flush=True)
+        try:
+            os.kill(pid, signal.SIGTERM)
+            time.sleep(2)
+            if pid_alive(pid):
+                os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+    print(f"STALE_LOCK_CLEARED | {tid} | PID {pid}", flush=True)
+    clear_executing()
 
 # ── Agent detection ──────────────────────────────────────────────────────
 
@@ -448,7 +476,11 @@ def main():
     print(f"QA agent: Sonnet | Flow: Dev→QA→Review (fail→Do zrobienia)", flush=True)
     print(f"Copilot CLI: {COPILOT_BIN}", flush=True)
 
+    # Clean up stale lock from previous watcher instance
+    cleanup_stale_lock()
+
     prev_state = {}
+    api_fail_count = 0
     # Dev process tracking
     active_proc = None
     active_ticket_id = None
@@ -458,6 +490,21 @@ def main():
 
     while True:
         try:
+            # --- Detect dead DEV process (PID gone but poll() wasn't called) ---
+            if active_proc is not None and active_proc.poll() is None:
+                if not pid_alive(active_proc.pid):
+                    print(f"\nDEAD_PROCESS | {active_ticket_id} | PID {active_proc.pid} vanished", flush=True)
+                    if hasattr(active_proc, '_log_fh'):
+                        try: active_proc._log_fh.close()
+                        except: pass
+                    executing = get_executing()
+                    log_file = executing.get("log_file", "?") if executing else "?"
+                    add_comment(active_ticket_id,
+                        f"[copilot] Proces Copilot zniknął nieoczekiwanie (PID {active_proc.pid}). Log: {log_file}")
+                    clear_executing()
+                    active_proc = None
+                    active_ticket_id = None
+
             # --- Check if DEV Copilot process finished ---
             if active_proc is not None:
                 retcode = active_proc.poll()
@@ -488,6 +535,16 @@ def main():
                     clear_executing()
                     active_proc = None
                     active_ticket_id = None
+
+            # --- Detect dead QA process ---
+            if qa_proc is not None and qa_proc.poll() is None:
+                if not pid_alive(qa_proc.pid):
+                    print(f"\nDEAD_QA_PROCESS | {qa_ticket_id} | PID {qa_proc.pid} vanished", flush=True)
+                    if hasattr(qa_proc, '_log_fh'):
+                        try: qa_proc._log_fh.close()
+                        except: pass
+                    qa_proc = None
+                    qa_ticket_id = None
 
             # --- Check if QA Copilot process finished ---
             if qa_proc is not None:
@@ -529,9 +586,22 @@ def main():
                     qa_proc = None
                     qa_ticket_id = None
 
-            # --- Poll queue ---
-            data = poll_queue()
-            queue = data.get("queue", [])
+            # --- Poll queue (with API outage protection) ---
+            try:
+                data = poll_queue()
+                queue = data.get("queue", [])
+                api_fail_count = 0  # reset on success
+            except Exception as poll_err:
+                api_fail_count += 1
+                if api_fail_count <= API_FAIL_THRESHOLD:
+                    print(f"API_RETRY | attempt {api_fail_count}/{API_FAIL_THRESHOLD} | {poll_err}", flush=True)
+                elif api_fail_count == API_FAIL_THRESHOLD + 1:
+                    print(f"API_OUTAGE | backend unreachable, preserving active processes | {poll_err}", flush=True)
+                try: login()
+                except: pass
+                time.sleep(args.interval)
+                continue  # skip queue processing — don't touch prev_state or active procs
+
             current_state = {t["id"]: t["column"] for t in queue}
 
             todo = [t for t in queue if t["column"] == "Do zrobienia"]
