@@ -107,8 +107,8 @@ function _aicLoadStatus(cb) {
         _aic.deps = d.deps || null;
         _aic.calibration = d.calibration || null;
         _aic.rag = d.rag || null;
-        // If local provider and wizard not completed, show wizard
-        if (d.provider === 'local' && !d.calibrated && d.deps && d.deps.llama_cpp) {
+        // Always show wizard on first launch if not completed
+        if (!d.calibrated) {
             _aic.view = 'wizard';
             _aic.wizardStep = 0;
         }
@@ -1252,27 +1252,79 @@ function _aicWizStep0() {
         '</div>';
 }
 
-/* Step 1: Model selection */
+/* Step 1: Model selection with path picker and download progress */
 function _aicWizStep1() {
     if (!_aic.wizardRecModel) {
-        _aicFetch('/api/aichat/models/catalog').then(function (r) { return r.json(); }).then(function (d) {
-            _aic.wizardRecModel = d;
+        Promise.all([
+            _aicFetch('/api/aichat/models/catalog').then(function (r) { return r.json(); }),
+            _aicFetch('/api/aichat/models/path').then(function (r) { return r.json(); }),
+        ]).then(function (results) {
+            _aic.wizardRecModel = results[0];
+            _aic.wizardModelsPath = (results[1] || {}).path || '/opt/ethos/data/models';
+            _aic.wizardDisk = (results[1] || {}).disk || {};
             var root = document.querySelector('.aic-root');
             if (root) _aicRenderWizard(root);
         });
         return '<div class="aic-wiz-loading"><i class="fas fa-spinner fa-spin fa-2x"></i><p>' + t('Ładowanie katalogu modeli…') + '</p></div>';
     }
 
+    // Path picker
+    var disk = _aic.wizardDisk || {};
+    var pathHtml =
+        '<div class="aic-wiz-path">' +
+            '<h4><i class="fas fa-folder-open"></i> ' + t('Gdzie przechowywać modele?') + '</h4>' +
+            '<div class="aic-wiz-path-row">' +
+                '<input type="text" id="wizModelsPath" class="ml-path-input" value="' + _aicEsc(_aic.wizardModelsPath || '') + '">' +
+                '<button class="aic-btn-primary" onclick="window._aicWizSetPath()"><i class="fas fa-check"></i></button>' +
+            '</div>' +
+            '<div class="aic-field-hint">' +
+                '<i class="fas fa-hdd"></i> ' + (disk.free_gb || '?') + ' GB ' + t('wolne') + ' / ' + (disk.total_gb || '?') + ' GB ' + t('łącznie') +
+            '</div>' +
+        '</div>';
+
+    // Sort: recommended first, then by RAM descending (strongest first)
     var models = (_aic.wizardRecModel.models || []).filter(function (m) { return m.status === 'recommended' || m.status === 'possible'; });
     if (!models.length) models = _aic.wizardRecModel.models || [];
+    models.sort(function (a, b) {
+        if (a.status === 'recommended' && b.status !== 'recommended') return -1;
+        if (b.status === 'recommended' && a.status !== 'recommended') return 1;
+        return (b.ram_required_gb || 0) - (a.ram_required_gb || 0);
+    });
+
+    // Auto-select badge for top recommended
+    var topRecId = null;
+    for (var mi = 0; mi < models.length; mi++) {
+        if (models[mi].status === 'recommended' && !models[mi].downloaded) { topRecId = models[mi].id; break; }
+    }
 
     var ds = _aic.wizardRecModel.download_status || {};
+
+    // Download progress bar (shown during download)
+    var progressHtml = '';
+    if (ds.active) {
+        var pct = Math.round(ds.progress || 0);
+        progressHtml =
+            '<div class="aic-wiz-dl-progress">' +
+                '<div class="aic-wiz-dl-info">' +
+                    '<span><i class="fas fa-download"></i> ' + t('Pobieranie modelu…') + '</span>' +
+                    '<span class="aic-wiz-dl-pct">' + pct + '%</span>' +
+                '</div>' +
+                '<div class="ml-dl-bar"><div class="ml-dl-fill" id="wizDlBar" style="width:' + pct + '%"></div></div>' +
+                '<div class="aic-wiz-dl-detail">' +
+                    '<span id="wizDlStatus">' + _aicEsc(ds.status || '') + '</span>' +
+                    (ds.speed ? '<span id="wizDlSpeed">' + _aicEsc(ds.speed) + '</span>' : '') +
+                '</div>' +
+                '<button class="aic-btn-secondary" onclick="window._aicWizCancelDl()"><i class="fas fa-times"></i> ' + t('Anuluj') + '</button>' +
+            '</div>';
+    }
+
     var cardsHtml = '';
     models.slice(0, 12).forEach(function (m) {
         var statusColor = m.status === 'recommended' ? '#10b981' : m.status === 'possible' ? '#f59e0b' : '#ef4444';
         var statusIcon = m.status === 'recommended' ? 'fa-check-circle' : m.status === 'possible' ? 'fa-exclamation-circle' : 'fa-times-circle';
         var dlBadge = m.downloaded ? '<span class="aic-wiz-dl-badge"><i class="fas fa-check"></i> ' + t('Pobrany') + '</span>' : '';
         var activeBadge = m.active ? '<span class="aic-wiz-active-badge"><i class="fas fa-bolt"></i> ' + t('Aktywny') + '</span>' : '';
+        var autoTag = (!m.downloaded && m.id === topRecId) ? '<span class="aic-wiz-auto-badge"><i class="fas fa-star"></i> ' + t('Najlepszy dla Twojego sprzętu') + '</span>' : '';
 
         var actionBtn = '';
         if (m.downloaded && m.active) {
@@ -1286,11 +1338,12 @@ function _aicWizStep1() {
         }
 
         cardsHtml +=
-            '<div class="aic-wiz-model-card">' +
+            '<div class="aic-wiz-model-card' + (m.id === topRecId ? ' aic-wiz-model-top' : '') + '">' +
                 '<div class="aic-wiz-model-head">' +
                     '<span class="aic-wiz-model-name">' + _aicEsc(m.name) + '</span>' +
                     '<span class="aic-wiz-model-status" style="color:' + statusColor + '"><i class="fas ' + statusIcon + '"></i> ' + _aicEsc(m.status_label || '') + '</span>' +
                 '</div>' +
+                autoTag +
                 '<div class="aic-wiz-model-meta">' +
                     '<span>' + _aicEsc(m.params) + '</span> · <span>' + _aicEsc(m.quant) + '</span> · <span>' + (m.size_gb || '?') + ' GB</span> · <span>' + (m.ram_required_gb || '?') + ' GB RAM</span>' +
                 '</div>' +
@@ -1300,7 +1353,9 @@ function _aicWizStep1() {
     });
 
     return '<h3><i class="fas fa-cube"></i> ' + t('Wybierz model') + '</h3>' +
-        '<p class="aic-wiz-hint">' + t('Modele oznaczone jako „Zalecany" optymalnie pasują do Twojego sprzętu.') + '</p>' +
+        '<p class="aic-wiz-hint">' + t('System automatycznie proponuje najmocniejszy model pasujący do Twojego sprzętu. Możesz wybrać inny.') + '</p>' +
+        pathHtml +
+        progressHtml +
         '<div class="aic-wiz-models">' + cardsHtml + '</div>' +
         '<div class="aic-wiz-actions">' +
             '<button class="aic-btn-secondary" onclick="window._aicWizPrev()"><i class="fas fa-arrow-left"></i> ' + t('Wstecz') + '</button>' +
@@ -1308,24 +1363,80 @@ function _aicWizStep1() {
         '</div>';
 }
 
+window._aicWizSetPath = function () {
+    var input = document.getElementById('wizModelsPath');
+    if (!input) return;
+    var path = input.value.trim();
+    if (!path) return;
+    _aicFetch('/api/aichat/models/path', {
+        method: 'POST',
+        body: JSON.stringify({ path: path }),
+    }).then(function (r) { return r.json(); }).then(function (d) {
+        if (d.error) {
+            showToast(d.error, 'error');
+        } else {
+            _aic.wizardModelsPath = d.path;
+            _aic.wizardDisk = d.disk || {};
+            showToast(t('Ścieżka modeli zmieniona'), 'success');
+            _aic.wizardRecModel = null; // force reload
+            var root = document.querySelector('.aic-root');
+            if (root) _aicRenderWizard(root);
+        }
+    });
+};
+
+window._aicWizCancelDl = function () {
+    _aicFetch('/api/aichat/models/download/cancel', { method: 'POST' }).then(function () {
+        if (_aic._wizDlPoll) { clearInterval(_aic._wizDlPoll); _aic._wizDlPoll = null; }
+        showToast(t('Anulowano pobieranie'), 'info');
+        _aic.wizardRecModel = null;
+        var root = document.querySelector('.aic-root');
+        if (root) _aicRenderWizard(root);
+    });
+};
+
 window._aicWizDownload = function (modelId) {
     _aicFetch('/api/aichat/models/download', { method: 'POST', body: JSON.stringify({ model_id: modelId }) })
         .then(function (r) { return r.json(); }).then(function (d) {
             if (d.error) {
-                if (typeof showToast === 'function') showToast(d.error, 'error');
+                showToast(d.error, 'error');
             } else {
-                if (typeof showToast === 'function') showToast(t('Pobieranie rozpoczęte'), 'success');
-                // Poll for status
-                var pollTimer = setInterval(function () {
+                showToast(t('Pobieranie rozpoczęte'), 'success');
+                // Update download_status to show progress immediately
+                if (_aic.wizardRecModel) {
+                    _aic.wizardRecModel.download_status = { active: true, model_id: modelId, progress: 0, status: 'Rozpoczynanie…' };
+                }
+                var root = document.querySelector('.aic-root');
+                if (root) _aicRenderWizard(root);
+                // Poll for download progress with inline updates
+                if (_aic._wizDlPoll) clearInterval(_aic._wizDlPoll);
+                _aic._wizDlPoll = setInterval(function () {
                     _aicFetch('/api/aichat/models/download/status').then(function (r) { return r.json(); }).then(function (ds) {
+                        // Inline update progress bar elements
+                        var bar = document.getElementById('wizDlBar');
+                        var pctEl = document.querySelector('.aic-wiz-dl-pct');
+                        var statusEl = document.getElementById('wizDlStatus');
+                        var speedEl = document.getElementById('wizDlSpeed');
+                        var pct = Math.round(ds.progress || 0);
+                        if (bar) bar.style.width = pct + '%';
+                        if (pctEl) pctEl.textContent = pct + '%';
+                        if (statusEl) statusEl.textContent = ds.status || '';
+                        if (speedEl) speedEl.textContent = ds.speed || '';
+                        if (_aic.wizardRecModel) _aic.wizardRecModel.download_status = ds;
                         if (!ds.active) {
-                            clearInterval(pollTimer);
-                            _aic.wizardRecModel = null; // force reload
-                            var root = document.querySelector('.aic-root');
-                            if (root) _aicRenderWizard(root);
+                            clearInterval(_aic._wizDlPoll);
+                            _aic._wizDlPoll = null;
+                            _aic.wizardRecModel = null; // force reload catalog
+                            var root2 = document.querySelector('.aic-root');
+                            if (root2) _aicRenderWizard(root2);
+                            if (ds.error) {
+                                showToast(ds.error, 'error');
+                            } else {
+                                showToast(t('Model pobrany!'), 'success');
+                            }
                         }
                     });
-                }, 2000);
+                }, 1000);
             }
         });
 };
@@ -1444,24 +1555,32 @@ window._aicWizPrev = function () {
 };
 
 window._aicWizFinish = function () {
-    // Save calibration
+    // Save calibration + force local provider
     var hw = _aic.wizardHw || {};
     var bench = _aic.wizardBench || {};
     var tier = bench.tier || hw.tier || {};
-    _aicFetch('/api/aichat/calibration', {
-        method: 'POST',
-        body: JSON.stringify({
-            tier_id: tier.id || 'balanced',
-            benchmark: bench.tps ? { tps: bench.tps, ttft: bench.ttft } : null,
-            hardware: hw.hardware || null,
+    Promise.all([
+        _aicFetch('/api/aichat/calibration', {
+            method: 'POST',
+            body: JSON.stringify({
+                tier_id: tier.id || 'balanced',
+                benchmark: bench.tps ? { tps: bench.tps, ttft: bench.ttft } : null,
+                hardware: hw.hardware || null,
+            }),
         }),
-    }).then(function () {
+        _aicFetch('/api/aichat/config', {
+            method: 'POST',
+            body: JSON.stringify({ provider: 'local' }),
+        }),
+    ]).then(function () {
         _aic.view = 'chat';
         _aic.wizardStep = 0;
-        if (typeof showToast === 'function') showToast(t('Konfiguracja AI zakończona!'), 'success');
+        showToast(t('Konfiguracja AI zakończona!'), 'success');
         var root = document.querySelector('.aic-root');
         if (root) {
-            _aicLoadStatus(function () { _aicRender(root.parentElement); });
+            _aicLoadConfig(function () {
+                _aicLoadStatus(function () { _aicRender(root.parentElement); });
+            });
         }
     });
 };
@@ -1643,28 +1762,7 @@ function _aicRenderSettings(root) {
             '<div class="aic-settings-body">' +
                 '<div class="aic-field">' +
                     '<label>' + t('Dostawca') + '</label>' +
-                    '<select id="aicProvider">' +
-                        '<option value="local"' + (c.provider === 'local' ? ' selected' : '') + '>' + t('Lokalny model (GGUF)') + '</option>' +
-                        '<option value="openai"' + (c.provider === 'openai' ? ' selected' : '') + '>OpenAI</option>' +
-                        '<option value="azure"' + (c.provider === 'azure' ? ' selected' : '') + '>Azure OpenAI</option>' +
-                        '<option value="custom"' + (c.provider === 'custom' ? ' selected' : '') + '>' + t('Własny endpoint (OpenAI-compatible)') + '</option>' +
-                    '</select>' +
-                '</div>' +
-                '<div class="aic-field">' +
-                    '<label>' + t('Klucz API') + '</label>' +
-                    '<div class="aic-key-row">' +
-                        '<input type="password" id="aicApiKey" placeholder="' + _aicEsc(c.api_key_masked || 'sk-…') + '" autocomplete="off">' +
-                        '<button class="aic-btn-icon" onclick="var i=document.getElementById(\'aicApiKey\');i.type=i.type===\'password\'?\'text\':\'password\'" title="' + t('Pokaż/ukryj') + '"><i class="fas fa-eye"></i></button>' +
-                    '</div>' +
-                    (c.api_key_set ? '<div class="aic-field-hint aic-ok"><i class="fas fa-check-circle"></i> ' + t('Klucz skonfigurowany') + '</div>' : '<div class="aic-field-hint aic-warn"><i class="fas fa-exclamation-triangle"></i> ' + t('Brak klucza API') + '</div>') +
-                '</div>' +
-                '<div class="aic-field">' +
-                    '<label>Endpoint URL</label>' +
-                    '<input type="text" id="aicEndpoint" value="' + _aicEsc(c.endpoint || '') + '">' +
-                '</div>' +
-                '<div class="aic-field">' +
-                    '<label>' + t('Model') + '</label>' +
-                    '<input type="text" id="aicModel" value="' + _aicEsc(c.model || '') + '" placeholder="gpt-4o">' +
+                    '<div class="aic-field-hint aic-ok"><i class="fas fa-shield-alt"></i> ' + t('100% lokalny model — Twoje dane nie opuszczają serwera') + '</div>' +
                 '</div>' +
                 '<div class="aic-field-row">' +
                     '<div class="aic-field">' +
@@ -1731,46 +1829,16 @@ function _aicRenderSettings(root) {
                 '</div>' +
             '</div>' +
         '</div>';
-
-    var prov = root.querySelector('#aicProvider');
-    if (prov) {
-        var _toggleLocalFields = function (val) {
-            var isLocal = val === 'local';
-            ['aicApiKey', 'aicEndpoint', 'aicModel'].forEach(function (id) {
-                var field = document.getElementById(id);
-                if (field) field.closest('.aic-field').style.display = isLocal ? 'none' : '';
-            });
-            // Also hide the api key hint
-            var keyRow = document.getElementById('aicApiKey');
-            if (keyRow) {
-                var hint = keyRow.closest('.aic-field').querySelector('.aic-field-hint');
-                if (hint) hint.style.display = isLocal ? 'none' : '';
-            }
-        };
-        _toggleLocalFields(prov.value);
-        prov.addEventListener('change', function () {
-            var ep = root.querySelector('#aicEndpoint');
-            if (!ep) return;
-            if (this.value === 'openai') ep.value = 'https://api.openai.com/v1/chat/completions';
-            else if (this.value === 'azure') ep.value = 'https://YOUR-RESOURCE.openai.azure.com/openai/deployments/YOUR-DEPLOYMENT/chat/completions?api-version=2024-02-01';
-            _toggleLocalFields(this.value);
-        });
-    }
 }
 
 window._aicSaveSettings = function () {
     var data = {
-        provider: document.getElementById('aicProvider').value,
-        endpoint: document.getElementById('aicEndpoint').value.trim(),
-        model: document.getElementById('aicModel').value.trim(),
+        provider: 'local',
         max_tokens: parseInt(document.getElementById('aicMaxTokens').value) || 4096,
         workspace: document.getElementById('aicWorkspace').value.trim(),
         rag_enabled: document.getElementById('aicRagEnabled') ? document.getElementById('aicRagEnabled').checked : true,
         rag_top_k: parseInt((document.getElementById('aicRagTopK') || {}).value) || 5,
     };
-    // REMOVED: system_prompt and temperature
-    var key = (document.getElementById('aicApiKey') || {}).value;
-    if (key && key.trim()) data.api_key = key.trim();
 
     _aicFetch('/api/aichat/config', {
         method: 'POST',

@@ -5746,6 +5746,7 @@ a.dkr-port-link:hover {
 /* Wizard model cards */
 .aic-wiz-models { display: flex; flex-direction: column; gap: 10px; max-height: 400px; overflow-y: auto; }
 .aic-wiz-model-card { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; background: var(--bg-elevated); border-radius: var(--r-md); border: 1px solid var(--border); }
+.aic-wiz-model-card.aic-wiz-model-top { border-color: #10b981; box-shadow: 0 0 0 1px #10b98140; }
 .aic-wiz-model-head { display: flex; align-items: center; justify-content: space-between; }
 .aic-wiz-model-name { font-weight: 600; font-size: 14px; color: var(--text-primary); }
 .aic-wiz-model-status { font-size: 12px; font-weight: 500; }
@@ -5754,6 +5755,16 @@ a.dkr-port-link:hover {
 .aic-wiz-model-actions { display: flex; align-items: center; gap: 8px; }
 .aic-wiz-dl-badge { font-size: 11px; color: #10b981; font-weight: 500; }
 .aic-wiz-active-badge { font-size: 11px; color: #8b5cf6; font-weight: 500; }
+.aic-wiz-auto-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: #f59e0b; font-weight: 600; }
+.aic-wiz-auto-badge i { font-size: 10px; }
+.aic-wiz-path { margin-bottom: 16px; padding: 12px 16px; background: var(--bg-elevated); border-radius: var(--r-md); border: 1px solid var(--border); }
+.aic-wiz-path h4 { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.aic-wiz-path-row { display: flex; gap: 6px; align-items: center; }
+.aic-wiz-path-row input { flex: 1; }
+.aic-wiz-dl-progress { margin: 12px 0; padding: 14px 16px; background: var(--bg-elevated); border-radius: var(--r-md); border: 1px solid #3b82f640; }
+.aic-wiz-dl-info { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 13px; color: var(--text-primary); }
+.aic-wiz-dl-pct { font-weight: 700; color: var(--accent); }
+.aic-wiz-dl-detail { display: flex; justify-content: space-between; margin-top: 6px; font-size: 11px; color: var(--text-muted); }
 
 /* Wizard benchmark results */
 .aic-wiz-bench-results { display: flex; gap: 20px; justify-content: center; margin: 24px 0; }
