@@ -9,3 +9,5 @@ __pycache__/
 .env
 *.log
 installer/images/*.img
+installer/releases/*.tar.gz
+installer/releases/*.zip
