@@ -2094,6 +2094,166 @@ import threading as _threading
 
 _fileop_lock = _threading.RLock()
 
+# ── Dir-size in-memory cache ────────────────────────────────
+# Maps path → {'size': int, 'expires': monotonic_time}
+# OrderedDict preserves insertion order for O(1) FIFO eviction.
+from collections import OrderedDict as _ODict
+_dirsize_cache = _ODict()
+_dirsize_cache_lock = _threading.Lock()
+_DIRSIZE_CACHE_TTL = 600   # seconds
+_DIRSIZE_CACHE_MAX = 1000  # max entries — increased for better hit rate
+_DIRSIZE_CACHE_PERSIST_FILE = _data_path('.dirsize_cache.json')
+_DIRSIZE_CACHE_SAVE_INTERVAL = 60  # minimum seconds between disk saves
+_dirsize_cache_last_save = 0.0
+
+def _dirsize_cache_get(path):
+    """Return cached size for *path* or None if missing/expired."""
+    with _dirsize_cache_lock:
+        entry = _dirsize_cache.get(path)
+        if entry:
+            if time.monotonic() < entry['expires']:
+                return entry['size']
+            del _dirsize_cache[path]  # evict expired entry eagerly
+        return None
+
+def _dirsize_cache_set(path, size):
+    """Store *size* for *path* with TTL; O(1) FIFO eviction when over limit."""
+    global _dirsize_cache_last_save
+    with _dirsize_cache_lock:
+        # Move-to-end on update keeps most-recently-set at the back
+        if path in _dirsize_cache:
+            _dirsize_cache.move_to_end(path)
+        _dirsize_cache[path] = {'size': size, 'expires': time.monotonic() + _DIRSIZE_CACHE_TTL}
+        if len(_dirsize_cache) > _DIRSIZE_CACHE_MAX:
+            # Evict oldest insertion (O(1) with OrderedDict)
+            _dirsize_cache.popitem(last=False)
+    # Persist to disk (debounced — at most once per _DIRSIZE_CACHE_SAVE_INTERVAL)
+    now = time.monotonic()
+    if now - _dirsize_cache_last_save > _DIRSIZE_CACHE_SAVE_INTERVAL:
+        _dirsize_cache_last_save = now
+        gevent.spawn(_dirsize_cache_persist)
+
+def _dirsize_cache_invalidate(path):
+    """Evict *path* (and any sub-paths) from the dir-size cache."""
+    with _dirsize_cache_lock:
+        keys = [k for k in _dirsize_cache if k == path or k.startswith(path + '/')]
+        for k in keys:
+            del _dirsize_cache[k]
+
+def _dirsize_cache_persist():
+    """Write current in-memory dir-size cache to disk (runs in a background greenlet)."""
+    now = time.monotonic()
+    try:
+        snapshot = {}
+        with _dirsize_cache_lock:
+            for path, entry in list(_dirsize_cache.items()):
+                remaining = entry['expires'] - now
+                if remaining > 0:
+                    snapshot[path] = {'size': entry['size'], 'remaining': round(remaining, 1)}
+        tmp = _DIRSIZE_CACHE_PERSIST_FILE + '.tmp'
+        with open(tmp, 'w') as _f:
+            json.dump(snapshot, _f)
+        os.replace(tmp, _DIRSIZE_CACHE_PERSIST_FILE)
+    except Exception:
+        pass
+
+def _dirsize_cache_restore():
+    """Load persisted dir-size cache from disk at startup."""
+    try:
+        with open(_DIRSIZE_CACHE_PERSIST_FILE) as _f:
+            raw = json.load(_f)
+        now = time.monotonic()
+        loaded = 0
+        with _dirsize_cache_lock:
+            for path, entry in raw.items():
+                remaining = entry.get('remaining', 0)
+                if remaining > 0 and loaded < _DIRSIZE_CACHE_MAX:
+                    _dirsize_cache[path] = {'size': entry['size'], 'expires': now + remaining}
+                    loaded += 1
+    except Exception:
+        pass
+
+# Restore persisted cache at import time
+_dirsize_cache_restore()
+
+# ── Short-lived listing cache ────────────────────────────────
+# Maps real_path → {'items': list, 'expires': monotonic_time}
+# OrderedDict preserves insertion order for O(1) FIFO eviction.
+_listdir_cache = _ODict()
+_listdir_cache_lock = _threading.Lock()
+_LISTDIR_CACHE_TTL = 45   # seconds — slightly longer for better hit rate
+_LISTDIR_CACHE_MAX = 400  # max entries — doubled for large deployments
+
+def _listdir_cache_get(real_path):
+    """Return cached item list for *real_path* or None if missing/expired/stale.
+
+    On every hit we do a single os.path.getmtime() syscall (~1-2 µs) so that
+    any write to the directory immediately invalidates the cached listing
+    instead of waiting up to the full TTL.
+    """
+    with _listdir_cache_lock:
+        entry = _listdir_cache.get(real_path)
+        if not entry:
+            return None
+        if time.monotonic() >= entry['expires']:
+            del _listdir_cache[real_path]  # evict expired entry eagerly
+            return None
+        # Invalidate if directory mtime changed since we cached it
+        _cached_mtime = entry.get('mtime')
+        if _cached_mtime is not None:
+            try:
+                if os.path.getmtime(real_path) != _cached_mtime:
+                    del _listdir_cache[real_path]
+                    return None
+            except OSError:
+                del _listdir_cache[real_path]
+                return None
+        return entry['items']
+
+def _listdir_cache_set(real_path, items, mtime=None):
+    """Store *items* for *real_path* with short TTL; O(1) FIFO eviction.
+
+    Pass *mtime* (os.path.getmtime result) so the cache can self-invalidate
+    the moment the directory changes rather than waiting for TTL expiry.
+    """
+    with _listdir_cache_lock:
+        if real_path in _listdir_cache:
+            _listdir_cache.move_to_end(real_path)
+        _listdir_cache[real_path] = {
+            'items': items,
+            'expires': time.monotonic() + _LISTDIR_CACHE_TTL,
+            'mtime': mtime,
+        }
+        if len(_listdir_cache) > _LISTDIR_CACHE_MAX:
+            _listdir_cache.popitem(last=False)  # O(1) FIFO eviction
+
+def _listdir_cache_invalidate(path):
+    """Evict *path* and its parent from the listing cache."""
+    real = safe_path(path) if path else None
+    parent_real = os.path.dirname(real) if real else None
+    with _listdir_cache_lock:
+        for key in list(_listdir_cache.keys()):
+            if key == real or key == parent_real or (real and key.startswith(real + '/')):
+                del _listdir_cache[key]
+
+
+# ── Background dir-size jobs ────────────────────────────────
+# job_id → { path: str, size: int|None, done: bool, error: bool, ts: float }
+_dirsize_bg_jobs = {}
+_dirsize_bg_lock = _threading.Lock()
+_DIRSIZE_JOB_EXPIRY = 120  # seconds — stale completed jobs are cleaned up
+# path → job_id for currently running (not-yet-done) jobs — prevents duplicate spawning
+_dirsize_running_by_path = {}
+
+def _dirsize_bg_jobs_prune():
+    """Remove completed/stale jobs older than _DIRSIZE_JOB_EXPIRY seconds."""
+    now = time.monotonic()
+    with _dirsize_bg_lock:
+        stale = [jid for jid, j in _dirsize_bg_jobs.items()
+                 if j.get('done') and (now - j.get('ts', now)) > _DIRSIZE_JOB_EXPIRY]
+        for jid in stale:
+            del _dirsize_bg_jobs[jid]
+
 # Two independent operation channels so e.g. compress doesn't block copy/move.
 # Channel 'bg' = heavy background ops (compress, download-zip, transfer)
 # Channel 'fm' = file-management ops (copy, move, extract)
@@ -2167,6 +2327,141 @@ def _clear_zip_task():
     except OSError:
         pass
 
+# ── Persistent copy resume ──
+COPY_RESUME_FILE = _data_path('copy_resume.json')
+
+def _save_copy_task(resolved, dest_dir, total, on_conflict, username):
+    """Persist copy task to disk so it can restart after server reboot."""
+    task = {
+        'resolved': resolved,
+        'dest_dir': dest_dir,
+        'total': total,
+        'on_conflict': on_conflict,
+        'username': username,
+        'started': time.time(),
+    }
+    _save_json(COPY_RESUME_FILE, task)
+
+def _clear_copy_task():
+    """Remove persisted copy task (completed, cancelled, or failed)."""
+    try:
+        if os.path.exists(COPY_RESUME_FILE):
+            os.remove(COPY_RESUME_FILE)
+    except OSError:
+        pass
+
+def _resume_interrupted_copy():
+    """Check for a persisted copy task and restart it after server reboot."""
+    task = _load_json(COPY_RESUME_FILE, None)
+    if not task or not isinstance(task, dict):
+        return
+    resolved = task.get('resolved', [])
+    dest_dir = task.get('dest_dir', '')
+    on_conflict = task.get('on_conflict', 'rename')
+    username = task.get('username')
+    started = task.get('started', 0)
+
+    if time.time() - started > 86400:
+        _clear_copy_task()
+        return
+    if not resolved or not dest_dir or not os.path.isdir(dest_dir):
+        _clear_copy_task()
+        return
+
+    valid = [p for p in resolved if os.path.exists(p)]
+    if not valid:
+        _clear_copy_task()
+        return
+
+    total = _count_items(valid)
+    if total == 0:
+        _clear_copy_task()
+        return
+
+    _fm = _fileop_channels['fm']
+    with _fileop_lock:
+        if _fm['active']:
+            return
+        _fm['active'] = True
+        _fm['operation'] = 'copy'
+        _fm['progress'] = None
+        _fm['cancel'] = False
+        _fm['paused'] = False
+
+    cur_user = {'username': username} if username else None
+    elog('files', 'info', f'Wznawiam kopiowanie po restarcie: {len(valid)} elementów → {dest_dir}')
+    socketio.start_background_task(_bg_copy, valid, dest_dir, total, on_conflict, cur_user)
+
+
+# ── Persistent move resume ──
+MOVE_RESUME_FILE = _data_path('move_resume.json')
+
+def _save_move_task(resolved, dest_dir, total, on_conflict, dest_user_path, username):
+    """Persist move task to disk so it can restart after server reboot."""
+    task = {
+        'resolved': resolved,
+        'dest_dir': dest_dir,
+        'total': total,
+        'on_conflict': on_conflict,
+        'dest_user_path': dest_user_path,
+        'username': username,
+        'started': time.time(),
+    }
+    _save_json(MOVE_RESUME_FILE, task)
+
+def _clear_move_task():
+    """Remove persisted move task (completed, cancelled, or failed)."""
+    try:
+        if os.path.exists(MOVE_RESUME_FILE):
+            os.remove(MOVE_RESUME_FILE)
+    except OSError:
+        pass
+
+def _resume_interrupted_move():
+    """Check for a persisted move task and restart it after server reboot."""
+    task = _load_json(MOVE_RESUME_FILE, None)
+    if not task or not isinstance(task, dict):
+        return
+    resolved = task.get('resolved', [])
+    dest_dir = task.get('dest_dir', '')
+    on_conflict = task.get('on_conflict', 'rename')
+    dest_user_path = task.get('dest_user_path', '')
+    username = task.get('username')
+    started = task.get('started', 0)
+
+    if time.time() - started > 86400:
+        _clear_move_task()
+        return
+    if not resolved or not dest_dir or not os.path.isdir(dest_dir):
+        _clear_move_task()
+        return
+
+    # For moves, only resume sources that still exist (not yet moved)
+    valid = [p for p in resolved if os.path.exists(p)]
+    if not valid:
+        _clear_move_task()
+        return
+
+    total = _count_items(valid)
+    if total == 0:
+        _clear_move_task()
+        return
+
+    _fm = _fileop_channels['fm']
+    with _fileop_lock:
+        if _fm['active']:
+            return
+        _fm['active'] = True
+        _fm['operation'] = 'move'
+        _fm['progress'] = None
+        _fm['cancel'] = False
+        _fm['paused'] = False
+
+    cur_user = {'username': username} if username else None
+    elog('files', 'info', f'Wznawiam przenoszenie po restarcie: {len(valid)} elementów → {dest_dir}')
+    socketio.start_background_task(_bg_move, valid, dest_dir, total, on_conflict, dest_user_path, cur_user)
+
+
 # ── Persistent compress (in-place) resume ──
 COMPRESS_RESUME_FILE = _data_path('compress_resume.json')
 
@@ -2223,10 +2518,11 @@ def _resume_interrupted_compress():
         _clear_compress_task()
         return
 
-    # Remove partial archive from previous attempt
-    if os.path.exists(archive_path):
-        try: os.remove(archive_path)
-        except: pass
+    # Remove partial archives from previous attempt (both final and temp paths)
+    for p in (archive_path, archive_path + '.ethos_archive_tmp'):
+        if os.path.exists(p):
+            try: os.remove(p)
+            except: pass
 
     cur_user = {'username': username} if username else None
 
@@ -2288,6 +2584,106 @@ def _resume_interrupted_zip():
 
     elog('files', 'info', f'Wznawiam przygotowanie ZIP po restarcie: {zip_name} ({total} plików)')
     socketio.start_background_task(_bg_download_zip, valid, tmp_path, zip_name, download_id, total)
+
+def _cleanup_stale_ethos_tmp(data_root=None):
+    """Remove leftover .ethos_tmp partial files from previous crash/abort.
+
+    Scans the data root for .ethos_tmp files older than 1 hour and removes them.
+    Also clears the upload temp directory.
+    """
+    try:
+        if data_root is None:
+            from utils import DATA_ROOT as _dr
+            data_root = _dr
+        cutoff = time.time() - 3600  # 1 hour
+        for dirpath, _dirs, files in os.walk(data_root):
+            for fn in files:
+                if fn.endswith('.ethos_tmp') or fn.endswith('.ethos_upload_tmp'):
+                    fp = os.path.join(dirpath, fn)
+                    try:
+                        if os.path.getmtime(fp) < cutoff:
+                            os.remove(fp)
+                    except OSError:
+                        pass
+    except Exception:
+        pass
+    # Also prune stale upload chunk dirs
+    try:
+        if os.path.isdir(_UPLOAD_TMP_DIR):
+            cutoff = time.time() - _UPLOAD_SESSION_TTL
+            for entry in os.scandir(_UPLOAD_TMP_DIR):
+                if entry.is_dir():
+                    try:
+                        if entry.stat().st_mtime < cutoff:
+                            shutil.rmtree(entry.path, ignore_errors=True)
+                    except OSError:
+                        pass
+    except Exception:
+        pass
+
+
+def _bg_prewarm_home_listing():
+    """Pre-warm the listing cache for all user home directories at startup.
+
+    Runs 12 s after server boot so the first FM open for any user is instant.
+    Uses the preload semaphore to avoid competing with real requests.
+    """
+    try:
+        home_roots = ['/home']
+        dd = _get_data_disk()
+        if dd:
+            home_roots.append(os.path.join(dd, 'home'))
+
+        dirs_to_warm = []
+        for root in home_roots:
+            if not os.path.isdir(root):
+                continue
+            try:
+                for entry in os.scandir(root):
+                    if entry.is_dir(follow_symlinks=False) and not entry.name.startswith('.'):
+                        dirs_to_warm.append(entry.path)
+            except (PermissionError, OSError):
+                pass
+
+        for rpath in dirs_to_warm:
+            if _listdir_cache_get(rpath) is not None:
+                continue  # already warm
+            _preload_sem.acquire()
+            try:
+                if _listdir_cache_get(rpath) is not None:
+                    continue
+                items_pre = []
+                _mtime = None
+                try:
+                    _mtime = os.path.getmtime(rpath)
+                except OSError:
+                    pass
+                try:
+                    for entry in sorted(os.scandir(rpath),
+                                        key=lambda e: (not e.is_dir(), e.name.lower())):
+                        if entry.name in ('.trash', '.thumbs') and entry.is_dir():
+                            continue
+                        try:
+                            st = entry.stat(follow_symlinks=False)
+                            items_pre.append({
+                                'name': entry.name,
+                                'is_dir': entry.is_dir(),
+                                'is_link': entry.is_symlink(),
+                                'size': st.st_size if not entry.is_dir() else 0,
+                                'modified': st.st_mtime,
+                                'permissions': oct(st.st_mode)[-3:],
+                            })
+                        except (PermissionError, OSError):
+                            pass
+                    _listdir_cache_set(rpath, items_pre, mtime=_mtime)
+                except (PermissionError, OSError):
+                    pass
+            finally:
+                _preload_sem.release()
+            gevent.sleep(0.05)  # yield between home dirs to stay low-priority
+    except Exception:
+        pass
+
 
 def _fileop_emit(event, data):
     socketio.emit(event, data)
@@ -2470,7 +2866,7 @@ def pause_fileop():
         if not slot['active']:
             return jsonify({'error': 'Brak aktywnej operacji na tym kanale'}), 400
         operation = slot.get('operation')
-        if operation not in ('transfer', 'download', 'compress'):
+        if operation not in ('transfer', 'download', 'compress', 'copy', 'move'):
             return jsonify({'error': 'Pauza nie jest obsługiwana dla tej operacji'}), 400
         currently_paused = slot.get('paused', False)
         new_paused = not currently_paused
@@ -2537,18 +2933,47 @@ def _chown_recursive(path, username=None):
     except (KeyError, OSError):
         pass
 
-def _copy_with_progress(real_src, target, op_label, done_ref, total, gevent_yield=True, username=None):
-    """Copy file or directory tree with progress updates."""
+def _copy_with_progress(real_src, target, op_label, done_ref, total, gevent_yield=True, username=None, cancel_ref=None, pause_fn=None, partial_files=None):
+    """Copy file or directory tree with progress updates.
+
+    cancel_ref: a mutable list [False] — set to True to abort.
+    pause_fn:   callable returning True while paused.
+    partial_files: list to track files being written (for cleanup on cancel).
+    """
+    def _check():
+        """Return True if cancelled; honour pause."""
+        if cancel_ref is not None and cancel_ref[0]:
+            return True
+        if pause_fn is not None:
+            while pause_fn():
+                if cancel_ref is not None and cancel_ref[0]:
+                    return True
+                gevent.sleep(0.2)
+        return False
+
     if os.path.isdir(real_src):
         os.makedirs(target, exist_ok=True)
         _chown_to_user(target, username)
         for item in os.listdir(real_src):
+            if _check():
+                raise InterruptedError('Kopiowanie anulowane')
             s = os.path.join(real_src, item)
             d = os.path.join(target, item)
             if os.path.isdir(s):
-                _copy_with_progress(s, d, op_label, done_ref, total, gevent_yield, username)
+                _copy_with_progress(s, d, op_label, done_ref, total, gevent_yield, username, cancel_ref, pause_fn, partial_files)
             else:
-                shutil.copy2(s, d)
+                tmp_d = d + '.ethos_tmp'
+                if partial_files is not None:
+                    partial_files.append(tmp_d)
+                try:
+                    shutil.copy2(s, tmp_d)
+                    os.replace(tmp_d, d)
+                    if partial_files is not None and tmp_d in partial_files:
+                        partial_files.remove(tmp_d)
+                except Exception:
+                    try: os.remove(tmp_d)
+                    except OSError: pass
+                    raise
                 _chown_to_user(d, username)
                 done_ref[0] += 1
                 if done_ref[0] % 3 == 0 or done_ref[0] == total:
@@ -2557,7 +2982,18 @@ def _copy_with_progress(real_src, target, op_label, done_ref, total, gevent_yiel
                         gevent.sleep(0)
         done_ref[0] += 1  # count the dir itself
     else:
-        shutil.copy2(real_src, target)
+        tmp_target = target + '.ethos_tmp'
+        if partial_files is not None:
+            partial_files.append(tmp_target)
+        try:
+            shutil.copy2(real_src, tmp_target)
+            os.replace(tmp_target, target)
+            if partial_files is not None and tmp_target in partial_files:
+                partial_files.remove(tmp_target)
+        except Exception:
+            try: os.remove(tmp_target)
+            except OSError: pass
+            raise
         _chown_to_user(target, username)
         done_ref[0] += 1
         _fileop_progress(op_label, os.path.basename(real_src), done_ref[0], total)
@@ -2984,6 +3420,35 @@ def files_list():
         if _cur:
             _home_only_user = _cur['username']
 
+    # ── Short-lived listing cache (skip for home-isolation and password-protected) ──
+    _cache_key = real_path if not _home_only_user else None
+    if _cache_key:
+        cached_items = _listdir_cache_get(_cache_key)
+        if cached_items is not None:
+            # ETag based on directory mtime — allows 304 responses on repeat polls
+            try:
+                dir_mtime = os.path.getmtime(real_path)
+                etag = hashlib.md5(f'{real_path}:{dir_mtime}'.encode()).hexdigest()[:16]
+                if request.headers.get('If-None-Match') == etag:
+                    return '', 304
+                resp = jsonify({'path': path, 'items': cached_items})
+                resp.headers['ETag'] = etag
+                resp.headers['Cache-Control'] = 'no-cache'
+                return resp
+            except OSError:
+                pass
+            return jsonify({'path': path, 'items': cached_items})
+
+    # ETag from directory mtime (computed once, reused below)
+    _etag = None
+    _dir_mtime = None
+    if _cache_key:
+        try:
+            _dir_mtime = os.path.getmtime(real_path)
+            _etag = hashlib.md5(f'{real_path}:{_dir_mtime}'.encode()).hexdigest()[:16]
+        except OSError:
+            pass
+
     items = []
     try:
         for entry in sorted(os.scandir(real_path), key=lambda e: (not e.is_dir(), e.name.lower())):
@@ -3022,7 +3487,14 @@ def files_list():
     except PermissionError:
         return jsonify({'error': 'Brak uprawnień'}), 403
 
-    return jsonify({'path': path, 'items': items})
+    if _cache_key:
+        _listdir_cache_set(_cache_key, items, mtime=_dir_mtime)
+
+    resp = jsonify({'path': path, 'items': items})
+    if _etag:
+        resp.headers['ETag'] = _etag
+        resp.headers['Cache-Control'] = 'no-cache'
+    return resp
 
 
 @app.route('/api/files/search')
@@ -3106,17 +3578,21 @@ def files_search():
 @app.route('/api/files/dir-sizes', methods=['POST'])
 @require_auth
 def files_dir_sizes():
-    """Calculate total size for a list of directories."""
+    """Calculate total size for a list of directories (with TTL cache)."""
     data = request.json or {}
     paths = data.get('paths', [])
     if not paths or not isinstance(paths, list):
         return jsonify({'error': 'Podaj listę ścieżek'}), 400
 
-    import time as _time
-    deadline = _time.monotonic() + 10  # 10s total timeout
+    deadline = time.monotonic() + 10  # 10s total timeout
 
     results = {}
     for p in paths[:50]:  # limit to 50 dirs per request
+        # Return cached result if available and fresh
+        cached = _dirsize_cache_get(p)
+        if cached is not None:
+            results[p] = cached
+            continue
         real = safe_path(p)
         if not real or not os.path.isdir(real):
             results[p] = 0
@@ -3124,23 +3600,140 @@ def files_dir_sizes():
         total = 0
         timed_out = False
         try:
-            for root, dirs, files in os.walk(real):
-                if _time.monotonic() > deadline:
+            stack = [real]
+            while stack:
+                if time.monotonic() > deadline:
                     timed_out = True
                     break
-                # Skip trash/thumbs
-                dirs[:] = [d for d in dirs if d not in ('.trash', '.thumbs')]
-                for f in files:
-                    try:
-                        total += os.path.getsize(os.path.join(root, f))
-                    except OSError:
-                        pass
+                cur = stack.pop()
+                try:
+                    for entry in os.scandir(cur):
+                        try:
+                            if entry.is_dir(follow_symlinks=False):
+                                if entry.name not in ('.trash', '.thumbs'):
+                                    stack.append(entry.path)
+                            else:
+                                total += entry.stat(follow_symlinks=False).st_size
+                        except OSError:
+                            pass
+                except (PermissionError, OSError):
+                    pass
         except (PermissionError, OSError):
             pass
+        if not timed_out:
+            _dirsize_cache_set(p, total)
         results[p] = total
         if timed_out:
             break
     return jsonify({'sizes': results})
+
+
+def _calc_dir_size_worker(job_id, path, real):
+    """Background greenlet: calculate dir size and store in job + cache.
+
+    Uses an iterative os.scandir stack for better performance on large trees
+    (avoids repeated string joins from os.walk and leverages DirEntry caching).
+    """
+    total = 0
+    try:
+        stack = [real]
+        while stack:
+            cur = stack.pop()
+            try:
+                for entry in os.scandir(cur):
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            if entry.name not in ('.trash', '.thumbs'):
+                                stack.append(entry.path)
+                        else:
+                            total += entry.stat(follow_symlinks=False).st_size
+                    except OSError:
+                        pass
+            except (PermissionError, OSError):
+                pass
+        _dirsize_cache_set(path, total)
+        with _dirsize_bg_lock:
+            if job_id in _dirsize_bg_jobs:
+                _dirsize_bg_jobs[job_id].update({'size': total, 'done': True, 'error': False, 'ts': time.monotonic()})
+            _dirsize_running_by_path.pop(path, None)
+    except Exception:
+        with _dirsize_bg_lock:
+            if job_id in _dirsize_bg_jobs:
+                _dirsize_bg_jobs[job_id].update({'size': 0, 'done': True, 'error': True, 'ts': time.monotonic()})
+            _dirsize_running_by_path.pop(path, None)
+
+
+@app.route('/api/files/dir-sizes-start', methods=['POST'])
+@require_auth
+def files_dir_sizes_start():
+    """Start background dir-size calculations, returning job IDs.
+
+    Request body: { "paths": ["/path/to/dir", ...] }
+    Response: { "jobs": { "/path": "job_id", ... }, "cached": { "/path": size, ... } }
+    """
+    data = request.json or {}
+    paths = data.get('paths', [])
+    if not paths or not isinstance(paths, list):
+        return jsonify({'error': 'Podaj listę ścieżek'}), 400
+
+    jobs = {}
+    cached = {}
+    # Prune stale completed jobs to keep _dirsize_bg_jobs tidy
+    _dirsize_bg_jobs_prune()
+    for p in paths[:50]:
+        # Return from cache immediately if fresh
+        cv = _dirsize_cache_get(p)
+        if cv is not None:
+            cached[p] = cv
+            continue
+        real = safe_path(p)
+        if not real or not os.path.isdir(real):
+            cached[p] = 0
+            continue
+        # Reuse an existing running job for this path — avoids duplicate workers
+        with _dirsize_bg_lock:
+            existing_jid = _dirsize_running_by_path.get(p)
+            if (existing_jid and existing_jid in _dirsize_bg_jobs
+                    and not _dirsize_bg_jobs[existing_jid].get('done')):
+                jobs[p] = existing_jid
+                continue
+        job_id = hashlib.md5(f'{p}:{time.monotonic()}'.encode()).hexdigest()[:12]
+        with _dirsize_bg_lock:
+            _dirsize_bg_jobs[job_id] = {'path': p, 'size': None, 'done': False, 'error': False, 'ts': time.monotonic()}
+            _dirsize_running_by_path[p] = job_id
+        gevent.spawn(_calc_dir_size_worker, job_id, p, real)
+        jobs[p] = job_id
+    return jsonify({'jobs': jobs, 'cached': cached})
+
+
+@app.route('/api/files/dir-sizes-result', methods=['POST'])
+@require_auth
+def files_dir_sizes_result():
+    """Poll background dir-size jobs.
+
+    Request body: { "jobs": { "/path": "job_id", ... } }
+    Response: { "sizes": { "/path": size }, "pending": ["/path", ...] }
+    """
+    data = request.json or {}
+    jobs = data.get('jobs', {})
+    sizes = {}
+    pending = []
+    with _dirsize_bg_lock:
+        for path, job_id in jobs.items():
+            entry = _dirsize_bg_jobs.get(job_id)
+            if entry is None:
+                # Job expired/unknown — check cache
+                cv = _dirsize_cache_get(path)
+                if cv is not None:
+                    sizes[path] = cv
+                else:
+                    pending.append(path)
+            elif entry['done']:
+                sizes[path] = entry.get('size') or 0
+                del _dirsize_bg_jobs[job_id]
+            else:
+                pending.append(path)
+    return jsonify({'sizes': sizes, 'pending': pending})
 
 
 @app.route('/api/files/download')
@@ -3191,6 +3784,8 @@ def files_download_zip():
         _fileop_state['active'] = True
         _fileop_state['operation'] = 'download'
         _fileop_state['progress'] = None
+        _fileop_state['cancel'] = False
+        _fileop_state['paused'] = False
 
     socketio.start_background_task(_bg_download_zip, resolved, tmp_path, zip_name, download_id, total)
     _save_zip_task(resolved, tmp_path, zip_name, download_id, total)
@@ -3401,6 +3996,136 @@ def _purge_thumb_cache(real_path):
     except Exception:
         pass
 
+
+# Set of supported image extensions for thumbnail pre-generation
+_THUMB_IMAGE_EXTS = frozenset(('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif'))
+
+# Global semaphore: limits simultaneous thumbnail generation greenlets.
+# Prevents memory overload when multiple users / large directories trigger
+# pregeneration of hundreds of thumbnails concurrently.
+import gevent.lock as _gevent_lock
+_PREGENERATE_CONCURRENCY = 8
+_pregenerate_sem = _gevent_lock.BoundedSemaphore(_PREGENERATE_CONCURRENCY)
+
+# Global semaphore: limits simultaneous listing-preload greenlets.
+_PRELOAD_CONCURRENCY = 12
+_preload_sem = _gevent_lock.BoundedSemaphore(_PRELOAD_CONCURRENCY)
+
+
+@app.route('/api/files/pregenerate-thumbs', methods=['POST'])
+@require_auth
+def files_pregenerate_thumbs():
+    """Pre-generate WebP thumbnails for all images in a directory (background greenlets).
+
+    Called by the frontend when entering thumb view so that thumbnails are warm
+    before the user scrolls to them.  Returns immediately; generation runs async.
+    """
+    data = request.json or {}
+    path = data.get('path', '')
+    w = min(int(data.get('w', 120)), 400)
+    h = min(int(data.get('h', 120)), 400)
+    real_path = safe_path(path)
+    if not real_path or not os.path.isdir(real_path):
+        return jsonify({'error': 'Nieprawidłowa ścieżka'}), 400
+
+    def _generate_one(fpath):
+        try:
+            thumbs_dir, local_path = _local_thumb_path(fpath, w, h)
+            if os.path.isfile(local_path):
+                mtime = os.path.getmtime(fpath)
+                if os.path.getmtime(local_path) >= mtime:
+                    return  # already fresh — skip
+            # Acquire global semaphore before generating to limit memory pressure
+            _pregenerate_sem.acquire()
+            try:
+                generate_thumbnail(fpath, w, h)
+            finally:
+                _pregenerate_sem.release()
+        except Exception:
+            pass
+
+    queued = 0
+    try:
+        for entry in os.scandir(real_path):
+            if not entry.is_file(follow_symlinks=False):
+                continue
+            ext = os.path.splitext(entry.name)[1].lower()
+            if ext in _THUMB_IMAGE_EXTS:
+                gevent.spawn(_generate_one, entry.path)
+                queued += 1
+                if queued >= 200:  # cap to avoid run-away greenlet creation
+                    break
+    except (PermissionError, OSError):
+        pass
+    return jsonify({'ok': True, 'queued': queued})
+
+
+@app.route('/api/files/preload-cache', methods=['POST'])
+@require_auth
+def files_preload_cache():
+    """Pre-populate the listing cache for a directory and its immediate subdirs.
+
+    Called by the frontend on hover/prefetch so that navigating into a folder
+    is instant (cache hit in files_list).  Returns immediately.
+    """
+    data = request.json or {}
+    path = data.get('path', '')
+    real_path = safe_path(path)
+    if not real_path or not os.path.isdir(real_path):
+        return jsonify({'error': 'Nieprawidłowa ścieżka'}), 400
+
+    def _preload_one(rpath):
+        """Scan *rpath* and store result in the listing cache (semaphore-gated)."""
+        if _listdir_cache_get(rpath) is not None:
+            return  # already fresh
+        _preload_sem.acquire()
+        try:
+            # Re-check under semaphore — another greenlet may have just populated it
+            if _listdir_cache_get(rpath) is not None:
+                return
+            items_pre = []
+            _mtime = None
+            try:
+                _mtime = os.path.getmtime(rpath)
+            except OSError:
+                pass
+            for entry in sorted(os.scandir(rpath), key=lambda e: (not e.is_dir(), e.name.lower())):
+                if entry.name in ('.trash', '.thumbs') and entry.is_dir():
+                    continue
+                try:
+                    st = entry.stat(follow_symlinks=False)
+                    items_pre.append({
+                        'name': entry.name,
+                        'is_dir': entry.is_dir(),
+                        'is_link': entry.is_symlink(),
+                        'size': st.st_size if not entry.is_dir() else 0,
+                        'modified': st.st_mtime,
+                        'permissions': oct(st.st_mode)[-3:],
+                    })
+                except (PermissionError, OSError):
+                    pass
+            _listdir_cache_set(rpath, items_pre, mtime=_mtime)
+        except (PermissionError, OSError):
+            pass
+        finally:
+            _preload_sem.release()
+
+    # Preload the directory itself
+    gevent.spawn(_preload_one, real_path)
+    queued = 1
+    # Preload immediate subdirectories (limit to 20 to avoid overload)
+    try:
+        for entry in os.scandir(real_path):
+            if entry.is_dir(follow_symlinks=False) and entry.name not in ('.trash', '.thumbs'):
+                gevent.spawn(_preload_one, entry.path)
+                queued += 1
+                if queued >= 21:
+                    break
+    except (PermissionError, OSError):
+        pass
+    return jsonify({'ok': True, 'queued': queued})
+
+
 @app.route('/api/files/preview')
 @require_auth
 def files_preview():
@@ -3417,9 +4142,18 @@ def files_preview():
     w = request.args.get('w', type=int)
     h = request.args.get('h', type=int)
 
-    # If thumbnail size requested, serve cached thumbnail
+    # If thumbnail size requested, serve cached thumbnail with ETag for 304 support
     if w and h:
-        return generate_thumbnail(real_path, w, h)
+        try:
+            mtime = os.path.getmtime(real_path)
+            etag = _thumb_cache_key(real_path, mtime, w, h)
+            if request.headers.get('If-None-Match') == etag:
+                return '', 304
+            resp = generate_thumbnail(real_path, w, h)
+            resp.headers['ETag'] = etag
+            return resp
+        except Exception:
+            return generate_thumbnail(real_path, w, h)
     return send_file(real_path)
 
 
@@ -3471,12 +4205,248 @@ def files_upload():
         else:
             safe_name = _sanitize_filename(f.filename)
             filepath = os.path.join(real_path, safe_name)
-        f.save(filepath)
+        # Atomic write: save to temp then rename to avoid partial files
+        tmp_filepath = filepath + '.ethos_upload_tmp'
+        try:
+            f.save(tmp_filepath)
+            os.replace(tmp_filepath, filepath)
+        except Exception:
+            try: os.remove(tmp_filepath)
+            except OSError: pass
+            raise
         _chown_to_user(filepath)
         uploaded.append(os.path.relpath(filepath, real_path))
     if uploaded:
         elog('files', 'info', f'Przesłano {len(uploaded)} plik(ów) do {path}', {'files': uploaded[:20]})
+        _listdir_cache_invalidate(path)
+        _dirsize_cache_invalidate(real_path)
     return jsonify({'uploaded': uploaded})
+
+
+# ── Chunked / resumable upload ──────────────────────────────────────────────
+# For large files: client splits into chunks, sends them one by one with session ID.
+# Server assembles chunks and writes final file atomically.
+
+_upload_sessions = {}          # session_id → session_dict
+_upload_sessions_lock = _threading.Lock()
+_UPLOAD_SESSION_TTL = 3600     # 1 hour — stale sessions are cleaned up
+_UPLOAD_TMP_DIR = '/tmp/ethos_uploads'
+
+def _upload_session_tmpdir(session_id):
+    return os.path.join(_UPLOAD_TMP_DIR, session_id)
+
+def _upload_sessions_prune():
+    """Remove stale upload sessions and their temp dirs."""
+    now = time.monotonic()
+    with _upload_sessions_lock:
+        stale = [sid for sid, s in _upload_sessions.items()
+                 if now - s.get('created_at', now) > _UPLOAD_SESSION_TTL]
+    for sid in stale:
+        tmpdir = _upload_session_tmpdir(sid)
+        try: shutil.rmtree(tmpdir, ignore_errors=True)
+        except Exception: pass
+        with _upload_sessions_lock:
+            _upload_sessions.pop(sid, None)
+
+
+@app.route('/api/files/upload-chunk-init', methods=['POST'])
+@require_auth
+def files_upload_chunk_init():
+    """Initialize a resumable chunked upload session.
+
+    Body: {path, filename, size, chunk_size, create_dir}
+    create_dir=true: create destination directory if it doesn't exist (needed for folder uploads).
+    Returns: {session_id, uploaded_chunks: [], chunk_size}
+    """
+    data = request.json or {}
+    dest_path = data.get('path', '/')
+    filename = data.get('filename', '')
+    total_size = int(data.get('size', 0))
+    chunk_size = int(data.get('chunk_size', 5 * 1024 * 1024))  # default 5 MB
+    create_dir = bool(data.get('create_dir', False))
+
+    real_path = safe_path(dest_path)
+    if not real_path:
+        return jsonify({'error': 'Nieprawidłowa ścieżka'}), 400
+    if not os.path.isdir(real_path):
+        if create_dir:
+            try:
+                os.makedirs(real_path, exist_ok=True)
+                _chown_to_user(real_path)
+            except Exception as e:
+                return jsonify({'error': f'Nie można utworzyć folderu: {e}'}), 400
+        else:
+            return jsonify({'error': 'Nieprawidłowa ścieżka'}), 400
+    if not filename:
+        return jsonify({'error': 'Brak nazwy pliku'}), 400
+    if total_size <= 0:
+        return jsonify({'error': 'Nieprawidłowy rozmiar pliku'}), 400
+
+    safe_name = _sanitize_filename(filename)
+    session_id = secrets.token_hex(16)
+    tmpdir = _upload_session_tmpdir(session_id)
+    os.makedirs(tmpdir, exist_ok=True)
+
+    num_chunks = max(1, (total_size + chunk_size - 1) // chunk_size)
+    session = {
+        'session_id': session_id,
+        'dest_path': dest_path,
+        'real_path': real_path,
+        'filename': safe_name,
+        'total_size': total_size,
+        'chunk_size': chunk_size,
+        'num_chunks': num_chunks,
+        'uploaded_chunks': [],
+        'created_at': time.monotonic(),
+        'tmpdir': tmpdir,
+        'username': (get_current_user() or {}).get('username'),
+    }
+    with _upload_sessions_lock:
+        _upload_sessions[session_id] = session
+
+    return jsonify({'session_id': session_id, 'uploaded_chunks': [], 'num_chunks': num_chunks})
+
+
+@app.route('/api/files/upload-chunk', methods=['POST'])
+@require_auth
+def files_upload_chunk():
+    """Upload a single chunk for a resumable upload session.
+
+    Form fields: session_id, chunk_index
+    File: 'chunk' — the binary data
+    Returns: {ok: true, uploaded_chunks: [...]}
+    """
+    session_id = request.form.get('session_id', '')
+    chunk_index = request.form.get('chunk_index', type=int)
+    chunk_file = request.files.get('chunk')
+
+    if chunk_index is None or not chunk_file:
+        return jsonify({'error': 'Brak danych'}), 400
+
+    with _upload_sessions_lock:
+        session = _upload_sessions.get(session_id)
+    if not session:
+        return jsonify({'error': 'Nieznana sesja przesyłania', 'expired': True}), 404
+
+    if chunk_index < 0 or chunk_index >= session['num_chunks']:
+        return jsonify({'error': 'Nieprawidłowy indeks fragmentu'}), 400
+
+    chunk_path = os.path.join(session['tmpdir'], f'chunk_{chunk_index:06d}')
+    tmp_chunk = chunk_path + '.tmp'
+    try:
+        chunk_file.save(tmp_chunk)
+        os.replace(tmp_chunk, chunk_path)
+    except Exception as e:
+        try: os.remove(tmp_chunk)
+        except OSError: pass
+        return jsonify({'error': f'Błąd zapisu fragmentu: {e}'}), 500
+
+    with _upload_sessions_lock:
+        if chunk_index not in session['uploaded_chunks']:
+            session['uploaded_chunks'].append(chunk_index)
+        uploaded = list(session['uploaded_chunks'])
+
+    return jsonify({'ok': True, 'uploaded_chunks': uploaded})
+
+
+@app.route('/api/files/upload-status/<session_id>', methods=['GET'])
+@require_auth
+def files_upload_status(session_id):
+    """Return current upload session status."""
+    with _upload_sessions_lock:
+        session = _upload_sessions.get(session_id)
+    if not session:
+        return jsonify({'error': 'Nieznana sesja', 'expired': True}), 404
+    return jsonify({
+        'session_id': session_id,
+        'uploaded_chunks': list(session['uploaded_chunks']),
+        'num_chunks': session['num_chunks'],
+        'total_size': session['total_size'],
+    })
+
+
+@app.route('/api/files/upload-complete', methods=['POST'])
+@require_auth
+def files_upload_complete():
+    """Finalize a chunked upload: assemble chunks into the destination file.
+
+    Body: {session_id}
+    Returns: {ok: true, filename}
+    """
+    data = request.json or {}
+    session_id = data.get('session_id', '')
+
+    with _upload_sessions_lock:
+        session = _upload_sessions.get(session_id)
+    if not session:
+        return jsonify({'error': 'Nieznana sesja przesyłania', 'expired': True}), 404
+
+    num_chunks = session['num_chunks']
+    uploaded = set(session['uploaded_chunks'])
+    missing = [i for i in range(num_chunks) if i not in uploaded]
+    if missing:
+        return jsonify({'error': f'Brakuje fragmentów: {missing[:10]}', 'missing_chunks': missing}), 400
+
+    real_path = session['real_path']
+    filename = session['filename']
+    tmpdir = session['tmpdir']
+    username = session.get('username')
+
+    if not os.path.isdir(real_path):
+        return jsonify({'error': 'Folder docelowy nie istnieje'}), 400
+
+    dest_file = os.path.join(real_path, filename)
+    tmp_dest = dest_file + '.ethos_upload_tmp'
+
+    try:
+        with open(tmp_dest, 'wb') as out:
+            for i in range(num_chunks):
+                chunk_path = os.path.join(tmpdir, f'chunk_{i:06d}')
+                with open(chunk_path, 'rb') as cf:
+                    while True:
+                        buf = cf.read(65536)
+                        if not buf:
+                            break
+                        out.write(buf)
+        os.replace(tmp_dest, dest_file)
+        _chown_to_user(dest_file, username)
+    except Exception as e:
+        try: os.remove(tmp_dest)
+        except OSError: pass
+        return jsonify({'error': f'Błąd składania pliku: {e}'}), 500
+    finally:
+        # Clean up temp chunks regardless of outcome
+        try: shutil.rmtree(tmpdir, ignore_errors=True)
+        except Exception: pass
+        with _upload_sessions_lock:
+            _upload_sessions.pop(session_id, None)
+
+    dest_path = session['dest_path']
+    elog('files', 'info', f'Przesłano (chunked) {filename} do {dest_path}')
+    _listdir_cache_invalidate(dest_path)
+    _dirsize_cache_invalidate(real_path)
+    return jsonify({'ok': True, 'filename': filename})
+
+
+@app.route('/api/files/upload-abort', methods=['POST'])
+@require_auth
+def files_upload_abort():
+    """Abort a chunked upload session and clean up temp files.
+
+    Body: {session_id}
+    """
+    data = request.json or {}
+    session_id = data.get('session_id', '')
+
+    with _upload_sessions_lock:
+        session = _upload_sessions.pop(session_id, None)
+
+    if session:
+        tmpdir = session.get('tmpdir', '')
+        if tmpdir:
+            try: shutil.rmtree(tmpdir, ignore_errors=True)
+            except Exception: pass
+    return jsonify({'ok': True})
 
 
 @app.route('/api/files/mkdir', methods=['POST'])
@@ -3489,6 +4459,8 @@ def files_mkdir():
     try:
         os.makedirs(real_path, exist_ok=True)
         _chown_to_user(real_path)
+        _dirsize_cache_invalidate(os.path.dirname(real_path))
+        _listdir_cache_invalidate(data.get('path', ''))
         elog('files', 'info', f'Utworzono folder: {data.get("path", "")}')
         return jsonify({'ok': True})
     except Exception as e:
@@ -3598,7 +4570,15 @@ def sync_upload():
         _save_sync_meta(meta)
         return jsonify({'status': 'exists', 'name': os.path.basename(rel_path)})
 
-    f.save(dest_file)
+    # Atomic write: save to temp then rename to avoid partial files on interrupt
+    tmp_dest = dest_file + '.ethos_upload_tmp'
+    try:
+        f.save(tmp_dest)
+        os.replace(tmp_dest, dest_file)
+    except Exception:
+        try: os.remove(tmp_dest)
+        except OSError: pass
+        raise
     _chown_to_user(dest_file)
 
     # Record in sync meta
@@ -3808,6 +4788,8 @@ def files_delete():
             continue
         try:
             _purge_thumb_cache(real_path)
+            _dirsize_cache_invalidate(os.path.dirname(real_path))
+            _listdir_cache_invalidate(p)
 
             if permanent:
                 # Permanent delete (from trash empty or explicit)
@@ -4681,6 +5663,8 @@ def files_rename():
 
         # Migrate folder passwords
         _migrate_folder_passwords(old_user_path, new_user_path)
+        _dirsize_cache_invalidate(os.path.dirname(old))
+        _listdir_cache_invalidate(data.get('path', ''))
 
         elog('files', 'info', f'Zmieniono nazwę: {os.path.basename(old)} → {new_name}')
         return jsonify({'ok': True})
@@ -4706,6 +5690,10 @@ def files_move():
 
         # Migrate folder passwords for moved folder
         _migrate_folder_passwords(old_user_path, new_user_path)
+        _dirsize_cache_invalidate(os.path.dirname(src))
+        _dirsize_cache_invalidate(dest)
+        _listdir_cache_invalidate(data.get('src', ''))
+        _listdir_cache_invalidate(data.get('dest', ''))
 
         return jsonify({'ok': True})
     except Exception as e:
@@ -4792,10 +5780,14 @@ def files_copy():
             _fm['active'] = True
             _fm['operation'] = 'copy'
             _fm['progress'] = None
-        socketio.start_background_task(_bg_copy, resolved, dest_dir, total, on_conflict, get_current_user())
+            _fm['cancel'] = False
+            _fm['paused'] = False
+        cur_user = get_current_user()
+        _save_copy_task(resolved, dest_dir, total, on_conflict, (cur_user or {}).get('username'))
+        socketio.start_background_task(_bg_copy, resolved, dest_dir, total, on_conflict, cur_user)
         return jsonify({'async': True, 'message': f'Kopiowanie {len(resolved)} elementów ({total} plików) w tle'})
 
-    # Small operation — synchronous
+    # Small operation — synchronous (atomic write per file)
     copied = []
     skipped = []
     errors = []
@@ -4814,25 +5806,46 @@ def files_copy():
                 shutil.copytree(real_src, target)
                 _chown_recursive(target)
             else:
-                shutil.copy2(real_src, target)
+                tmp_target = target + '.ethos_tmp'
+                shutil.copy2(real_src, tmp_target)
+                os.replace(tmp_target, target)
                 _chown_to_user(target)
             copied.append(base_name)
         except Exception as e:
             errors.append(f'{base_name}: {str(e)}')
 
+    _listdir_cache_invalidate(data.get('dest', ''))
+    _dirsize_cache_invalidate(dest_dir)
     return jsonify({'copied': copied, 'skipped': skipped, 'errors': errors})
 
 
 def _bg_copy(resolved_sources, dest_dir, total, on_conflict='rename', cur_user=None):
-    """Background copy with progress.  *resolved_sources* are already-resolved real paths."""
+    """Background copy with progress, cancel/pause support, and cleanup on abort."""
     _bg_username = cur_user['username'] if cur_user else None
     copied = []
     skipped = []
     errors = []
     done_ref = [0]
-    _fileop_progress('copy', '', 0, total)
+    partial_files = []  # tracks .ethos_tmp files written so far (for cleanup on cancel)
+    cancel_ref = [False]
+    _fm = _fileop_channels['fm']
+
+    def _check_cancel():
+        with _fileop_lock:
+            cancel_ref[0] = _fm.get('cancel', False)
+        return cancel_ref[0]
+
+    def _is_paused():
+        with _fileop_lock:
+            return _fm.get('paused', False)
+
+    _fileop_progress('copy', '', 0, total, 'fm')
+    cancelled = False
     try:
         for real_src in resolved_sources:
+            if _check_cancel():
+                cancelled = True
+                break
             if not real_src or not os.path.exists(real_src):
                 errors.append(f'Nie znaleziono: {real_src}')
                 continue
@@ -4841,23 +5854,42 @@ def _bg_copy(resolved_sources, dest_dir, total, on_conflict='rename', cur_user=N
             if target is None:
                 skipped.append(base_name)
                 done_ref[0] += _count_items([real_src])
-                _fileop_progress('copy', f'{base_name} (pominięto)', done_ref[0], total)
+                _fileop_progress('copy', f'{base_name} (pominięto)', done_ref[0], total, 'fm')
                 gevent.sleep(0)
                 continue
             try:
-                _copy_with_progress(real_src, target, 'copy', done_ref, total, username=_bg_username)
+                _copy_with_progress(real_src, target, 'copy', done_ref, total, username=_bg_username,
+                                    cancel_ref=cancel_ref, pause_fn=_is_paused, partial_files=partial_files)
                 copied.append(base_name)
+            except InterruptedError:
+                cancelled = True
+                break
             except Exception as e:
                 errors.append(f'{base_name}: {str(e)}')
 
+        if cancelled:
+            # Clean up partial .ethos_tmp files left behind
+            for pf in partial_files:
+                try: os.remove(pf)
+                except OSError: pass
+            _clear_copy_task()
+            _fileop_finish('copy', False, 'Anulowano', 'fm')
+            return
+
+        _clear_copy_task()
         msg = f'Skopiowano {len(copied)} elementów'
         if skipped:
             msg += f', pominięto {len(skipped)}'
         if errors:
             msg += f' ({len(errors)} błędów)'
-        _fileop_finish('copy', len(copied) > 0 or len(skipped) > 0, msg)
+        _fileop_finish('copy', len(copied) > 0 or len(skipped) > 0, msg, 'fm')
     except Exception as e:
-        _fileop_finish('copy', False, str(e))
+        # Clean up partial files on unexpected error
+        for pf in partial_files:
+            try: os.remove(pf)
+            except OSError: pass
+        _clear_copy_task()
+        _fileop_finish('copy', False, str(e), 'fm')
 
 
 @app.route('/api/files/move-multi', methods=['POST'])
@@ -4891,10 +5923,12 @@ def files_move_multi():
             _fm['active'] = True
             _fm['operation'] = 'move'
             _fm['progress'] = None
-        socketio.start_background_task(_bg_move, resolved, dest_dir, total, on_conflict, data.get('dest', ''), get_current_user())
+            _fm['cancel'] = False
+            _fm['paused'] = False
+        cur_user = get_current_user()
+        _save_move_task(resolved, dest_dir, total, on_conflict, data.get('dest', ''), (cur_user or {}).get('username'))
+        socketio.start_background_task(_bg_move, resolved, dest_dir, total, on_conflict, data.get('dest', ''), cur_user)
         return jsonify({'async': True, 'message': f'Przenoszenie {len(resolved)} elementów w tle'})
-
-    on_conflict = data.get('on_conflict', 'rename')  # overwrite | skip | rename
 
     # Small — synchronous
     moved = []
@@ -4920,20 +5954,52 @@ def files_move_multi():
         except Exception as e:
             errors.append(f'{base_name}: {str(e)}')
 
+    _listdir_cache_invalidate(data.get('dest', ''))
+    _dirsize_cache_invalidate(dest_dir)
+    for src_path in sources:
+        _listdir_cache_invalidate(src_path)
+        _dirsize_cache_invalidate(os.path.dirname(safe_path(src_path) or ''))
     return jsonify({'moved': moved, 'skipped': skipped, 'errors': errors})
 
 
 def _bg_move(resolved_sources, dest_dir, total, on_conflict='rename', dest_user_path='', cur_user=None):
-    """Background move with progress.  *resolved_sources* are already-resolved real paths."""
+    """Background move with progress, cancel/pause support."""
     _bg_username = cur_user['username'] if cur_user else None
     moved = []
     skipped = []
     errors = []
     done = 0
     dest_user = dest_user_path.rstrip('/')
-    _fileop_progress('move', '', 0, total)
+    cancel_ref = [False]
+    _fm = _fileop_channels['fm']
+
+    def _check_cancel():
+        with _fileop_lock:
+            cancel_ref[0] = _fm.get('cancel', False)
+        return cancel_ref[0]
+
+    def _is_paused():
+        with _fileop_lock:
+            return _fm.get('paused', False)
+
+    def _wait_if_paused():
+        while _is_paused():
+            if _check_cancel():
+                return True
+            gevent.sleep(0.2)
+        return _check_cancel()
+
+    _fileop_progress('move', '', 0, total, 'fm')
+    cancelled = False
     try:
         for real_src in resolved_sources:
+            if _check_cancel():
+                cancelled = True
+                break
+            # Honour pause between items
+            if _wait_if_paused():
+                cancelled = True
+                break
             if not real_src or not os.path.exists(real_src):
                 errors.append(f'Nie znaleziono: {real_src}')
                 continue
@@ -4943,7 +6009,7 @@ def _bg_move(resolved_sources, dest_dir, total, on_conflict='rename', dest_user_
             if target is None:
                 skipped.append(base_name)
                 done += item_count
-                _fileop_progress('move', f'{base_name} (pominięto)', done, total)
+                _fileop_progress('move', f'{base_name} (pominięto)', done, total, 'fm')
                 gevent.sleep(0)
                 continue
             try:
@@ -4954,19 +6020,26 @@ def _bg_move(resolved_sources, dest_dir, total, on_conflict='rename', dest_user_
                 # Migrate folder passwords
                 if dest_user:
                     _migrate_folder_passwords(real_src.rstrip('/'), dest_user + '/' + base_name)
-                _fileop_progress('move', base_name, done, total)
+                _fileop_progress('move', base_name, done, total, 'fm')
                 gevent.sleep(0)
             except Exception as e:
                 errors.append(f'{base_name}: {str(e)}')
 
+        if cancelled:
+            _clear_move_task()
+            _fileop_finish('move', False, 'Anulowano', 'fm')
+            return
+
+        _clear_move_task()
         msg = f'Przeniesiono {len(moved)} elementów'
         if skipped:
             msg += f', pominięto {len(skipped)}'
         if errors:
             msg += f' ({len(errors)} błędów)'
-        _fileop_finish('move', len(moved) > 0 or len(skipped) > 0, msg)
+        _fileop_finish('move', len(moved) > 0 or len(skipped) > 0, msg, 'fm')
     except Exception as e:
-        _fileop_finish('move', False, str(e))
+        _clear_move_task()
+        _fileop_finish('move', False, str(e), 'fm')
 
 
 # ── Archive / Extract ──
@@ -5018,6 +6091,8 @@ def files_compress():
         _fileop_state['active'] = True
         _fileop_state['operation'] = 'compress'
         _fileop_state['progress'] = None
+        _fileop_state['cancel'] = False
+        _fileop_state['paused'] = False
 
     cur_user = get_current_user()
     _bg_username = cur_user['username'] if cur_user else None
@@ -5027,10 +6102,12 @@ def files_compress():
 
 
 def _bg_compress(resolved, archive_path, fmt, total, cur_user=None):
-    """Background archive creation with progress."""
+    """Background archive creation with progress. Writes to a temp file first,
+    then atomically renames to the final path on success (prevents corrupt archives)."""
     _bg_username = cur_user['username'] if cur_user else None
     done = 0
     cancelled = False
+    tmp_archive_path = archive_path + '.ethos_archive_tmp'
 
     def _check_cancel_pause():
         if _fileop_cancelled():
@@ -5043,7 +6120,7 @@ def _bg_compress(resolved, archive_path, fmt, total, cur_user=None):
 
     try:
         if fmt == 'zip':
-            with zipfile.ZipFile(archive_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            with zipfile.ZipFile(tmp_archive_path, 'w', zipfile.ZIP_DEFLATED) as zf:
                 for src in resolved:
                     if _check_cancel_pause():
                         cancelled = True; break
@@ -5071,7 +6148,7 @@ def _bg_compress(resolved, archive_path, fmt, total, cur_user=None):
                         _fileop_progress('compress', os.path.basename(src), done, total)
                         gevent.sleep(0)
         else:
-            with tarfile.open(archive_path, 'w:gz') as tf:
+            with tarfile.open(tmp_archive_path, 'w:gz') as tf:
                 for src in resolved:
                     if _check_cancel_pause():
                         cancelled = True; break
@@ -5100,21 +6177,25 @@ def _bg_compress(resolved, archive_path, fmt, total, cur_user=None):
                         gevent.sleep(0)
 
         if cancelled:
-            if os.path.exists(archive_path):
-                try: os.remove(archive_path)
-                except: pass
+            for p in (tmp_archive_path,):
+                if os.path.exists(p):
+                    try: os.remove(p)
+                    except: pass
             _clear_compress_task()
             _fileop_finish('compress', False, 'Anulowano')
             return
 
+        # Atomically move temp archive to final path
+        os.replace(tmp_archive_path, archive_path)
         _chown_to_user(archive_path, _bg_username)
         size_mb = round(os.path.getsize(archive_path) / (1024*1024), 1)
         _clear_compress_task()
         _fileop_finish('compress', True, f'{os.path.basename(archive_path)} ({size_mb} MB)')
     except Exception as e:
-        if os.path.exists(archive_path):
-            try: os.remove(archive_path)
-            except: pass
+        for p in (tmp_archive_path, archive_path):
+            if os.path.exists(p):
+                try: os.remove(p)
+                except: pass
         _clear_compress_task()
         _fileop_finish('compress', False, str(e))
 
@@ -5171,20 +6252,33 @@ def files_extract():
         _fm['active'] = True
         _fm['operation'] = 'extract'
         _fm['progress'] = None
+        _fm['cancel'] = False
+        _fm['paused'] = False
 
     socketio.start_background_task(_bg_extract, archive, extract_to, total, get_current_user())
     return jsonify({'async': True, 'message': f'Rozpakowywanie {basename} do {folder_name}/'})
 
 
 def _bg_extract(archive, extract_to, total, cur_user=None):
-    """Background archive extraction with progress."""
+    """Background archive extraction with progress and cancel support."""
     _bg_username = cur_user['username'] if cur_user else None
     done = 0
     basename = os.path.basename(archive)
+    _fm = _fileop_channels['fm']
+
+    def _check_cancel():
+        with _fileop_lock:
+            return _fm.get('cancel', False)
+
     try:
         if basename.endswith('.zip'):
             with zipfile.ZipFile(archive, 'r') as zf:
                 for member in zf.namelist():
+                    if _check_cancel():
+                        try: shutil.rmtree(extract_to, ignore_errors=True)
+                        except Exception: pass
+                        _fileop_finish('extract', False, 'Anulowano')
+                        return
                     zf.extract(member, extract_to)
                     done += 1
                     if done % 20 == 0 or done == total:
@@ -5193,6 +6287,11 @@ def _bg_extract(archive, extract_to, total, cur_user=None):
         elif basename.endswith(('.tar.gz', '.tgz', '.tar.bz2', '.tar.xz', '.tar')):
             with tarfile.open(archive, 'r:*') as tf:
                 for member in tf:
+                    if _check_cancel():
+                        try: shutil.rmtree(extract_to, ignore_errors=True)
+                        except Exception: pass
+                        _fileop_finish('extract', False, 'Anulowano')
+                        return
                     tf.extract(member, extract_to, filter='data')
                     done += 1
                     if done % 20 == 0 or done == total:
@@ -5297,6 +6396,7 @@ def files_transfer_remote():
         _fileop_state['operation'] = 'transfer'
         _fileop_state['progress'] = None
         _fileop_state['cancel'] = False
+        _fileop_state['paused'] = False
         _fileop_state['meta'] = {
             'server_name': server.get('name', server.get('host', '')),
             'server_host': server.get('host', ''),
@@ -7073,6 +8173,8 @@ if __name__ == '__main__':
                         os.remove(info['path'])
                     except OSError:
                         pass
+            # Stale upload sessions (older than session TTL)
+            _upload_sessions_prune()
     socketio.start_background_task(_janitor_loop)
 
     # Resume interrupted NasLink transfer (if any)
@@ -7081,6 +8183,14 @@ if __name__ == '__main__':
     gevent.spawn_later(6, _resume_interrupted_zip)
     # Resume interrupted compress (if any)
     gevent.spawn_later(7, _resume_interrupted_compress)
+    # Resume interrupted copy (if any)
+    gevent.spawn_later(8, _resume_interrupted_copy)
+    # Resume interrupted move (if any)
+    gevent.spawn_later(9, _resume_interrupted_move)
+    # Clean up leftover partial files from previous crash/abort
+    gevent.spawn_later(10, _cleanup_stale_ethos_tmp)
+    # Pre-warm listing cache for all user home directories (background, low priority)
+    gevent.spawn_later(12, _bg_prewarm_home_listing)
 
     # Start event-loop watchdog (ticker in gevent, monitor in real thread)
     socketio.start_background_task(_watchdog_ticker)
