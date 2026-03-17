@@ -124,3 +124,54 @@ python3 /opt/ethos/tools/ticket_orchestrator.py comment <id> "Opis wykonanych zm
 3. **Komentarz po każdej akcji** — co zrobiono, jakie pliki zmieniono
 4. **Commit po każdym tickecie** — osobny commit z ID ticketu w message
 5. **Nie przenoś z Review** — tylko user decyduje o akceptacji lub odrzuceniu
+
+---
+
+## Ticket Watcher — usługa systemd
+
+`ethos-ticket-watcher.service` działa jako usługa systemd, zapewniając ciągłe działanie po zamknięciu konsoli i automatyczny restart przy awarii.
+
+### Zarządzanie usługą
+
+```bash
+# Status
+sudo systemctl status ethos-ticket-watcher
+
+# Start / Stop / Restart
+sudo systemctl start ethos-ticket-watcher
+sudo systemctl stop ethos-ticket-watcher
+sudo systemctl restart ethos-ticket-watcher
+
+# Włącz autostart przy bootowaniu
+sudo systemctl enable ethos-ticket-watcher
+
+# Wyłącz autostart
+sudo systemctl disable ethos-ticket-watcher
+```
+
+### Logi usługi
+
+Logi zapisywane są do:
+- **Główny log**: `/opt/ethos/logs/ticket_watcher.log`
+- **Logi per ticket (Copilot)**: `/opt/ethos/logs/copilot_tickets/<ticket_id>_<ts>.log`
+- **Systemd journal**: `journalctl -u ethos-ticket-watcher -f`
+
+```bash
+# Podgląd live
+tail -f /opt/ethos/logs/ticket_watcher.log
+
+# Systemd journal (ostatnie 50 linii)
+journalctl -u ethos-ticket-watcher -n 50 --no-pager
+```
+
+### Konfiguracja usługi
+
+Plik jednostki: `/etc/systemd/system/ethos-ticket-watcher.service`
+
+Kluczowe parametry:
+- `Restart=on-failure` — automatyczny restart przy błędzie
+- `RestartSec=10` — czeka 10s przed restartem
+- `User=marcin` — uruchamiany jako użytkownik marcin
+- `EnvironmentFile=/opt/ethos/ethos.env` — zmienne środowiskowe
+
+Po zmianie pliku jednostki: `sudo systemctl daemon-reload`
