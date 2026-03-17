@@ -175,3 +175,18 @@ Kluczowe parametry:
 - `EnvironmentFile=/opt/ethos/ethos.env` — zmienne środowiskowe
 
 Po zmianie pliku jednostki: `sudo systemctl daemon-reload`
+
+### Instalacja (nowy serwer)
+
+Plik szablonu jednostki: `tools/ethos-ticket-watcher.service`
+
+```bash
+# Zainstaluj usługę na nowym serwerze
+sudo bash /opt/ethos/tools/install_ticket_watcher_service.sh
+```
+
+Skrypt instalacyjny:
+1. Kopiuje plik jednostki do `/etc/systemd/system/`
+2. Uruchamia `systemctl daemon-reload`
+3. Włącza autostart (`enable`)
+4. Startuje usługę

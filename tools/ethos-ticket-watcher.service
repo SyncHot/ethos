@@ -1,0 +1,22 @@
+[Unit]
+Description=EthOS Ticket Watcher — auto-processes tickets via Copilot CLI
+After=network.target ethos.service
+Wants=network.target
+Requires=ethos.service
+
+[Service]
+Type=simple
+User=marcin
+WorkingDirectory=/opt/ethos
+EnvironmentFile=/opt/ethos/ethos.env
+ExecStartPre=/bin/mkdir -p /opt/ethos/logs/copilot_tickets
+ExecStart=/opt/ethos/venv/bin/python /opt/ethos/tools/ticket_watcher.py --auto --interval 15
+Restart=on-failure
+RestartSec=10
+KillSignal=SIGTERM
+TimeoutStopSec=30
+StandardOutput=append:/opt/ethos/logs/ticket_watcher.log
+StandardError=append:/opt/ethos/logs/ticket_watcher.log
+
+[Install]
+WantedBy=multi-user.target
