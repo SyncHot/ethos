@@ -576,6 +576,15 @@ def copilot_queue():
         for t in proj_tickets:
             col = t.get('column', '')
             if col in ('Do zrobienia', 'W trakcie'):
+                comments = t.get('comments', [])
+                last_comment = None
+                if comments:
+                    lc = comments[-1]
+                    last_comment = {
+                        'author': lc.get('author', ''),
+                        'text': lc.get('text', ''),
+                        'created': lc.get('created', 0),
+                    }
                 queue.append({
                     'id': t['id'],
                     'title': t['title'],
@@ -586,6 +595,7 @@ def copilot_queue():
                     'labels': t.get('labels', []),
                     'project_id': project['id'],
                     'project_name': project['name'],
+                    'last_comment': last_comment,
                 })
 
     queue.sort(key=lambda t: (
