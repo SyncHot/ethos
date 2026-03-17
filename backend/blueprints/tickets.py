@@ -656,6 +656,8 @@ def copilot_queue():
                     'title': t['title'],
                     'description': t.get('description', ''),
                     'priority': t.get('priority', 'medium'),
+                    'type': t.get('type', 'task'),
+                    'complexity': t.get('complexity', 'medium'),
                     'column': col,
                     'assignee': t.get('assignee', ''),
                     'labels': t.get('labels', []),

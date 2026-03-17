@@ -6,7 +6,12 @@ Usage:
     python3 ticket_watcher.py [--interval 15] [--auto]
 
 With --auto: picks highest priority ticket, assigns to copilot, moves to W trakcie,
-outputs EXECUTE instruction for Copilot to act on.
+outputs EXECUTE instruction with model selection based on ticket complexity.
+
+Complexity → Model mapping:
+    complex  → claude-opus-4-20250514 (premium, deep reasoning)
+    medium   → claude-sonnet-4-20250514 (balanced quality/speed)
+    simple   → claude-haiku-4-20250514 (fast, cost-effective)
 """
 
 import sys, time, json, os, argparse, requests, urllib3
@@ -15,6 +20,46 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 BASE = "http://localhost:9000/api"
 TOKEN_FILE = "/tmp/.ethos_orchestrator_token"
 LOCK_FILE = "/tmp/.ethos_watcher_executing"
+DOCS_DIR = "/opt/ethos/docs"
+
+# ── Complexity → AI Model mapping ────────────────────────────────────────
+COMPLEXITY_MODEL_MAP = {
+    "complex": {
+        "model": "claude-opus-4-20250514",
+        "label": "Opus (premium)",
+        "reason": "Deep reasoning required for complex tasks",
+    },
+    "medium": {
+        "model": "claude-sonnet-4-20250514",
+        "label": "Sonnet (balanced)",
+        "reason": "Good balance of quality and speed",
+    },
+    "simple": {
+        "model": "claude-haiku-4-20250514",
+        "label": "Haiku (fast)",
+        "reason": "Fast execution for straightforward tasks",
+    },
+}
+
+# ── Agent type → lessons & skills ────────────────────────────────────────
+AGENT_MAP = {
+    "FE/UX":   {"lessons": "FE_LESSONS_LEARNED.md",     "skills": "frontend, CSS, JS, UX",
+                 "docs": ["UX_LESSONS_LEARNED.md", "UX_UI_DESIGN_SYSTEM.md", "DEV_STANDARDS.md"]},
+    "Backend": {"lessons": "BE_LESSONS_LEARNED.md",      "skills": "Python, Flask, API",
+                 "docs": ["BE_LESSONS_LEARNED.md", "ARCH_CORE_SYSTEM.md", "DEV_STANDARDS.md"]},
+    "DevOps":  {"lessons": "DEVOPS_LESSONS_LEARNED.md",  "skills": "systemd, Docker, deployment",
+                 "docs": ["DEVOPS_LESSONS_LEARNED.md", "QA_FAILOVER_PROTOCOLS.md", "DEV_STANDARDS.md"]},
+    "Security":{"lessons": "BE_LESSONS_LEARNED.md",      "skills": "security, auth, encryption",
+                 "docs": ["ETHOS_MANIFESTO.md", "QA_FAILOVER_PROTOCOLS.md", "DEV_STANDARDS.md"]},
+    "Docs":    {"lessons": "DEVOPS_LESSONS_LEARNED.md",  "skills": "documentation",
+                 "docs": ["APP_DEVELOPMENT_GUIDE.md", "DEV_STANDARDS.md"]},
+    "QA":      {"lessons": "FE_LESSONS_LEARNED.md",      "skills": "testing, QA",
+                 "docs": ["QA_FAILOVER_PROTOCOLS.md", "DEV_STANDARDS.md"]},
+    "General": {"lessons": "FE_LESSONS_LEARNED.md",      "skills": "general development",
+                 "docs": ["DEV_STANDARDS.md", "APP_DEVELOPMENT_GUIDE.md"]},
+}
+
+# ── Auth & API helpers ───────────────────────────────────────────────────
 
 def login():
     r = requests.post(f"{BASE}/auth/login",
@@ -59,12 +104,18 @@ def move_ticket(tid, col):
 def add_comment(tid, text):
     api("POST", f"/tickets/tickets/{tid}/comments", {"text": text})
 
+# ── Execution lock ───────────────────────────────────────────────────────
+
 def is_executing():
     return os.path.exists(LOCK_FILE)
 
-def set_executing(tid):
+def set_executing(tid, model_info=None):
     with open(LOCK_FILE, "w") as f:
-        json.dump({"ticket_id": tid, "started": time.time()}, f)
+        json.dump({
+            "ticket_id": tid,
+            "started": time.time(),
+            "model": model_info,
+        }, f)
 
 def clear_executing():
     if os.path.exists(LOCK_FILE):
@@ -76,14 +127,7 @@ def get_executing():
             return json.load(f)
     return None
 
-AGENT_MAP = {
-    "FE/UX": {"lessons": "FE_LESSONS_LEARNED.md", "skills": "frontend, CSS, JS, UX"},
-    "Backend": {"lessons": "BE_LESSONS_LEARNED.md", "skills": "Python, Flask, API"},
-    "DevOps": {"lessons": "DEVOPS_LESSONS_LEARNED.md", "skills": "systemd, Docker, deployment"},
-    "Docs": {"lessons": "DEVOPS_LESSONS_LEARNED.md", "skills": "documentation"},
-    "QA": {"lessons": "FE_LESSONS_LEARNED.md", "skills": "testing, QA"},
-    "General": {"lessons": "FE_LESSONS_LEARNED.md", "skills": "general development"},
-}
+# ── Agent detection ──────────────────────────────────────────────────────
 
 def detect_agent(title, labels):
     t = title.lower()
@@ -98,36 +142,92 @@ def detect_agent(title, labels):
     if any(x in l for x in ['backend','be','api']): return "Backend"
     return "General"
 
+# ── Model selection based on complexity ──────────────────────────────────
+
+def select_model(ticket):
+    """Select AI model based on ticket complexity; fall back to priority if missing."""
+    complexity = ticket.get("complexity", "medium")
+    if complexity not in COMPLEXITY_MODEL_MAP:
+        complexity = "medium"
+    return COMPLEXITY_MODEL_MAP[complexity]
+
+# ── Load relevant docs for agent ─────────────────────────────────────────
+
+def load_docs_context(agent):
+    """Load and return concatenated content of docs relevant to the agent type."""
+    info = AGENT_MAP.get(agent, AGENT_MAP["General"])
+    doc_files = info.get("docs", [])
+    context_parts = []
+
+    for doc_name in doc_files:
+        doc_path = os.path.join(DOCS_DIR, doc_name)
+        if os.path.exists(doc_path):
+            try:
+                with open(doc_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                context_parts.append(f"--- {doc_name} ---\n{content}")
+            except Exception:
+                pass
+
+    return "\n\n".join(context_parts)
+
+# ── Auto-execute ─────────────────────────────────────────────────────────
+
 def auto_start_ticket(ticket):
-    """Start ticket: assign to copilot, move to W trakcie, output EXECUTE instruction."""
+    """Start ticket: assign, move, select model by complexity, output EXECUTE instruction."""
     tid = ticket["id"]
     title = ticket["title"]
     agent = detect_agent(title, ticket.get("labels", []))
     info = AGENT_MAP.get(agent, AGENT_MAP["General"])
+    model_info = select_model(ticket)
+    complexity = ticket.get("complexity", "medium")
 
     # Assign and move
     assign_ticket(tid, "copilot")
     move_ticket(tid, "W trakcie")
-    set_executing(tid)
+    set_executing(tid, model_info)
 
     # Build context
     desc = ticket.get("description", "")
     lc = ticket.get("last_comment")
     feedback = f"\nFeedback: {lc['text']}" if lc else ""
 
-    print(f"\n{'='*60}", flush=True)
+    # Load docs rules for the agent type
+    docs_context = load_docs_context(agent)
+
+    print(f"\n{'='*70}", flush=True)
     print(f"EXECUTE | {tid} | {agent}", flush=True)
     print(f"Title: {title}", flush=True)
     print(f"Priority: {ticket['priority']}", flush=True)
+    print(f"Complexity: {complexity} → Model: {model_info['model']} ({model_info['label']})", flush=True)
+    print(f"Reason: {model_info['reason']}", flush=True)
     if desc: print(f"Description: {desc}", flush=True)
     if feedback: print(f"Feedback: {lc['text']}", flush=True)
-    print(f"Lessons: /opt/ethos/docs/{info['lessons']}", flush=True)
+    print(f"Lessons: {DOCS_DIR}/{info['lessons']}", flush=True)
     print(f"Skills: {info['skills']}", flush=True)
+    print(f"Docs loaded: {', '.join(info.get('docs', []))}", flush=True)
     print(f"Status: ASSIGNED to copilot, moved to W trakcie", flush=True)
-    print(f"{'='*60}", flush=True)
+    print(f"{'='*70}", flush=True)
 
-    add_comment(tid, f"[copilot] Rozpoczynam prace nad ticketem. Agent: {agent}")
+    # Output docs rules as context block (for agent consumption)
+    if docs_context:
+        print(f"\n--- RULES & DOCS CONTEXT (for agent) ---", flush=True)
+        # Limit output for readability; full context available in files
+        preview = docs_context[:3000]
+        if len(docs_context) > 3000:
+            preview += f"\n... [{len(docs_context) - 3000} more chars in docs] ..."
+        print(preview, flush=True)
+        print(f"--- END RULES ---\n", flush=True)
+
+    comment = (
+        f"[copilot] Rozpoczynam prace nad ticketem.\n"
+        f"Agent: {agent} | Model: {model_info['model']} ({model_info['label']})\n"
+        f"Złożoność: {complexity} | Docs: {', '.join(info.get('docs', []))}"
+    )
+    add_comment(tid, comment)
     return tid
+
+# ── Main loop ────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser()
@@ -138,6 +238,7 @@ def main():
     mode = "AUTO" if args.auto else "WATCH"
     print(f"Ticket Watcher | interval={args.interval}s | mode={mode}", flush=True)
     print(f"Monitoring copilot-enabled projects via /copilot/queue", flush=True)
+    print(f"Model mapping: complex→Opus, medium→Sonnet, simple→Haiku", flush=True)
 
     prev_state = {}
 
@@ -154,15 +255,17 @@ def main():
                 tid, col = t["id"], t["column"]
                 prev_col = prev_state.get(tid)
                 agent = detect_agent(t["title"], t.get("labels", []))
+                complexity = t.get("complexity", "medium")
+                model = COMPLEXITY_MODEL_MAP.get(complexity, COMPLEXITY_MODEL_MAP["medium"])
 
                 if prev_col is None and col == "Do zrobienia":
-                    print(f"\nACTION_NEEDED | {tid} | {t['priority'].upper()} | {agent} | {t['title']}", flush=True)
+                    print(f"\nACTION_NEEDED | {tid} | {t['priority'].upper()} | {agent} | {complexity}→{model['label']} | {t['title']}", flush=True)
                     lc = t.get("last_comment")
                     if lc:
                         print(f"  comment [{lc['author']}]: {lc['text'][:150]}", flush=True)
 
                 elif prev_col and prev_col != col and col == "Do zrobienia":
-                    print(f"\nREWORK | {tid} | {agent} | {t['title']}", flush=True)
+                    print(f"\nREWORK | {tid} | {agent} | {complexity}→{model['label']} | {t['title']}", flush=True)
                     print(f"  moved: {prev_col} -> {col}", flush=True)
                     lc = t.get("last_comment")
                     if lc:
@@ -177,7 +280,6 @@ def main():
 
             # AUTO MODE: pick and start highest priority ticket
             if args.auto and todo and not is_executing():
-                # Sort by priority
                 prio_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
                 todo.sort(key=lambda t: prio_order.get(t["priority"], 99))
                 auto_start_ticket(todo[0])
