@@ -36,6 +36,7 @@ def _emit(event_type, project_id, payload=None):
 
 VALID_PRIORITIES = ('critical', 'high', 'medium', 'low')
 VALID_TYPES = ('task', 'bug', 'epic', 'subtask')
+VALID_COMPLEXITIES = ('simple', 'medium', 'complex')
 DEFAULT_COLUMNS = ["Backlog", "Do zrobienia", "W trakcie", "Review", "Gotowe"]
 
 MAX_TITLE = 200
@@ -288,6 +289,10 @@ def create_ticket(project_id):
     if ticket_type not in VALID_TYPES:
         ticket_type = 'task'
 
+    complexity = body.get('complexity', 'medium')
+    if complexity not in VALID_COMPLEXITIES:
+        complexity = 'medium'
+
     assignee = _strip(body.get('assignee', ''), MAX_TITLE)
     labels = body.get('labels', [])
     if not isinstance(labels, list):
@@ -321,6 +326,7 @@ def create_ticket(project_id):
             'priority': priority,
             'assignee': assignee,
             'type': ticket_type,
+            'complexity': complexity,
             'reporter': g.username,
             'labels': labels,
             'comments': [],
@@ -369,6 +375,10 @@ def update_ticket(ticket_id):
             ttype = body['type']
             if ttype in VALID_TYPES:
                 ticket['type'] = ttype
+        if 'complexity' in body:
+            comp = body['complexity']
+            if comp in VALID_COMPLEXITIES:
+                ticket['complexity'] = comp
         if 'assignee' in body:
             ticket['assignee'] = _strip(body['assignee'], MAX_TITLE)
         if 'labels' in body:

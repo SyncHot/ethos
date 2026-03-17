@@ -45,6 +45,12 @@ const TICKET_TYPES = {
     subtask: { icon: 'fa-minus-square', color: '#36b37e', label: 'Subtask' },
 };
 
+const COMPLEXITY_LEVELS = {
+    simple:  { label: 'Prosty', color: '#22c55e' },
+    medium:  { label: 'Średni', color: '#f59e0b' },
+    complex: { label: 'Złożony', color: '#ef4444' },
+};
+
 const LABEL_COLORS = [
     '#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6',
     '#ec4899', '#06b6d4', '#f97316', '#14b8a6', '#6366f1',
@@ -629,6 +635,7 @@ async function renderTickets(body, launchOpts) {
             epicCard.dataset.column = colName;
 
             const prioColor = PRIORITY_COLORS[epicTk.priority] || PRIORITY_COLORS.medium;
+            const epicCompInfo = COMPLEXITY_LEVELS[epicTk.complexity] || COMPLEXITY_LEVELS.medium;
             const visibleLabels = (epicTk.labels || []).filter(l => !String(l).startsWith('epic:'));
             const labelsHtml = visibleLabels.map(l =>
                 `<span class="tk-label" style="background:${tkLabelColor(l)};">${_escHtml(l)}</span>`
@@ -639,6 +646,7 @@ async function renderTickets(body, launchOpts) {
                     ${_tkTypeIcon('epic')}
                     <span class="tk-priority-dot" style="background:${prioColor};" title="${_escHtml(PRIORITY_LABELS[epicTk.priority] || epicTk.priority)}"></span>
                     <span class="tk-card-title">${_escHtml(epicTk.title)}</span>
+                    <span class="tk-complexity-badge" style="background:${epicCompInfo.color};" title="${t('Złożoność')}: ${_escHtml(epicCompInfo.label)}">${_escHtml(epicCompInfo.label[0])}</span>
                 </div>
                 <div class="tk-epic-badge">
                     <i class="fas fa-layer-group"></i> EPIC · ${totalCount} subtask${totalCount !== 1 ? 's' : ''}
@@ -742,12 +750,14 @@ async function renderTickets(body, launchOpts) {
                 `<span class="tk-label" style="background:${tkLabelColor(l)};">${_escHtml(l)}</span>`
             ).join('');
             const prioColor = PRIORITY_COLORS[tk.priority] || PRIORITY_COLORS.medium;
+            const compInfo = COMPLEXITY_LEVELS[tk.complexity] || COMPLEXITY_LEVELS.medium;
 
             card.innerHTML = `
                 <div class="tk-card-header">
                     ${_tkTypeIcon(tk.type)}
                     <span class="tk-priority-dot" style="background:${prioColor};" title="${_escHtml(PRIORITY_LABELS[tk.priority] || tk.priority)}"></span>
                     <span class="tk-card-title">${_escHtml(tk.title)}</span>
+                    <span class="tk-complexity-badge" style="background:${compInfo.color};" title="${t('Złożoność')}: ${_escHtml(compInfo.label)}">${_escHtml(compInfo.label[0])}</span>
                 </div>
                 ${tk.assignee ? '<div class="tk-card-assignee"><i class="fas fa-user"></i> ' + _escHtml(tk.assignee) + '</div>' : ''}
                 ${labelsHtml ? '<div class="tk-card-labels">' + labelsHtml + '</div>' : ''}
@@ -934,6 +944,16 @@ async function renderTickets(body, launchOpts) {
                         </select>
                     </div>
                     <div class="tk-form-group">
+                        <label>${t('Złożoność')}</label>
+                        <select id="tk-tf-complexity" class="tk-input">
+                            ${Object.entries(COMPLEXITY_LEVELS).map(([k, v]) =>
+                                `<option value="${k}" ${k === 'medium' ? 'selected' : ''}>${_escHtml(v.label)}</option>`
+                            ).join('')}
+                        </select>
+                    </div>
+                </div>
+                <div class="tk-form-row">
+                    <div class="tk-form-group">
                         <label>${t('Przypisany')}</label>
                         <select id="tk-tf-assignee" class="tk-input">
                             <option value="">${t('Nieprzypisany')}</option>
@@ -958,6 +978,7 @@ async function renderTickets(body, launchOpts) {
                 type: modal.querySelector('#tk-tf-type').value,
                 column: modal.querySelector('#tk-tf-column').value,
                 priority: modal.querySelector('#tk-tf-priority').value,
+                complexity: modal.querySelector('#tk-tf-complexity').value,
                 assignee: modal.querySelector('#tk-tf-assignee').value,
                 labels: modal.querySelector('#tk-tf-labels').value
                     .split(',').map(s => s.trim()).filter(Boolean),
@@ -1027,6 +1048,14 @@ async function renderTickets(body, launchOpts) {
                             ).join('')}
                         </select>
                     </div>
+                    <div class="tk-form-group">
+                        <label>${t('Złożoność')}</label>
+                        <select id="tk-df-complexity" class="tk-input">
+                            ${Object.entries(COMPLEXITY_LEVELS).map(([k, v]) =>
+                                `<option value="${k}" ${k === (ticket.complexity || 'medium') ? 'selected' : ''}>${_escHtml(v.label)}</option>`
+                            ).join('')}
+                        </select>
+                    </div>
                 </div>
                 <div class="tk-form-group">
                     <label>${t('Przypisany')}</label>
@@ -1077,6 +1106,7 @@ async function renderTickets(body, launchOpts) {
                     type: modal.querySelector('#tk-df-type').value,
                     column: modal.querySelector('#tk-df-column').value,
                     priority: modal.querySelector('#tk-df-priority').value,
+                    complexity: modal.querySelector('#tk-df-complexity').value,
                     assignee: modal.querySelector('#tk-df-assignee').value,
                     labels: updatedLabels,
                 });

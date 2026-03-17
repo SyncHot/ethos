@@ -2628,6 +2628,18 @@
   display: inline-block;
   flex-shrink: 0;
 }
+.tk-complexity-badge {
+  font-size: 9px;
+  font-weight: 700;
+  color: #fff;
+  padding: 1px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  margin-left: auto;
+  line-height: 1.2;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
 .tk-card-assignee { color: var(--text-secondary); font-size: 11px; }
 .tk-card-labels { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
 .tk-label {
