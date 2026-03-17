@@ -303,7 +303,7 @@ async function renderTickets(body, launchOpts) {
                 const memberStr = members.map(m => _escHtml(m)).join(', ');
                 const extraMembers = (p.members || []).length > 3
                     ? ' +' + ((p.members || []).length - 3) : '';
-                const isOwner = p.owner === NAS.username;
+                const isOwner = p.owner === NAS.user?.username;
 
                 return `<div class="tk-project-card" data-id="${_escHtml(p.id)}" style="border-top:4px solid ${_escHtml(color)};">
                     <div class="tk-project-card-header">
@@ -886,7 +886,7 @@ async function renderTickets(body, launchOpts) {
                 div.className = 'tk-comment';
                 div.innerHTML = `
                     <div class="tk-comment-header">
-                        <strong>${_escHtml(NAS.username)}</strong>
+                        <strong>${_escHtml(NAS.user?.username)}</strong>
                         <span class="tk-comment-date">${new Date().toLocaleString()}</span>
                     </div>
                     <div class="tk-comment-body">${_escHtml(text)}</div>
