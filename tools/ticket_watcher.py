@@ -92,7 +92,20 @@ def api(method, path, body=None):
         kw["headers"] = headers()
         r = fn(f"{BASE}{path}", **kw)
     r.raise_for_status()
-    return r.json()
+    data = r.json()
+    # Detect silent auth failure: ticket endpoints return empty when token is
+    # expired because the auth guard doesn't cover /api/tickets/.
+    # If we get an empty queue/projects, refresh token and retry once.
+    if path == "/tickets/copilot/queue" and data.get("total", -1) == 0:
+        login()
+        kw["headers"] = headers()
+        r = fn(f"{BASE}{path}", **kw)
+        r.raise_for_status()
+        retry_data = r.json()
+        if retry_data.get("total", 0) > 0:
+            print("AUTH_REFRESH | Stale token detected (empty queue), re-logged in", flush=True)
+            return retry_data
+    return data
 
 def poll_queue():
     return api("GET", "/tickets/copilot/queue")
