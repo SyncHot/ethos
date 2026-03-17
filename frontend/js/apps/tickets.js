@@ -141,9 +141,8 @@ async function renderTickets(body, launchOpts) {
 
     async function loadProjects() {
         try {
-            const resp = await api('/tickets/projects');
-            const data = await resp.json();
-            projects = data.projects || data || [];
+            const data = await api('/tickets/projects');
+            projects = data.projects || [];
         } catch (e) {
             toast(t('Błąd ładowania projektów'), 'error');
             projects = [];
@@ -152,9 +151,8 @@ async function renderTickets(body, launchOpts) {
 
     async function loadTickets(projectId) {
         try {
-            const resp = await api('/tickets/projects/' + projectId + '/tickets');
-            const data = await resp.json();
-            tickets = data.tickets || data || [];
+            const data = await api('/tickets/projects/' + projectId + '/tickets');
+            tickets = data.tickets || [];
         } catch (e) {
             toast(t('Błąd ładowania ticketów'), 'error');
             tickets = [];
@@ -163,8 +161,8 @@ async function renderTickets(body, launchOpts) {
 
     async function createProject(payload) {
         try {
-            const resp = await api('/tickets/projects', { method: 'POST', body: payload });
-            if (!resp.ok) throw new Error('API error');
+            const data = await api('/tickets/projects', { method: 'POST', body: payload });
+            if (data.error) throw new Error(data.error);
             toast(t('Projekt utworzony'), 'success');
             await showProjectList();
         } catch (e) {
@@ -174,8 +172,8 @@ async function renderTickets(body, launchOpts) {
 
     async function updateProject(id, payload) {
         try {
-            const resp = await api('/tickets/projects/' + id, { method: 'PUT', body: payload });
-            if (!resp.ok) throw new Error('API error');
+            const data = await api('/tickets/projects/' + id, { method: 'PUT', body: payload });
+            if (data.error) throw new Error(data.error);
             toast(t('Projekt zaktualizowany'), 'success');
             if (currentProject) {
                 Object.assign(currentProject, payload);
@@ -190,8 +188,8 @@ async function renderTickets(body, launchOpts) {
 
     async function deleteProject(id) {
         try {
-            const resp = await api('/tickets/projects/' + id, { method: 'DELETE' });
-            if (!resp.ok) throw new Error('API error');
+            const data = await api('/tickets/projects/' + id, { method: 'DELETE' });
+            if (data.error) throw new Error(data.error);
             toast(t('Projekt usunięty'), 'success');
             await showProjectList();
         } catch (e) {
@@ -201,10 +199,10 @@ async function renderTickets(body, launchOpts) {
 
     async function createTicket(payload) {
         try {
-            const resp = await api('/tickets/projects/' + currentProject.id + '/tickets', {
+            const data = await api('/tickets/projects/' + currentProject.id + '/tickets', {
                 method: 'POST', body: payload,
             });
-            if (!resp.ok) throw new Error('API error');
+            if (data.error) throw new Error(data.error);
             toast(t('Ticket utworzony'), 'success');
             await loadTickets(currentProject.id);
             renderBoard();
@@ -215,8 +213,8 @@ async function renderTickets(body, launchOpts) {
 
     async function updateTicket(id, payload) {
         try {
-            const resp = await api('/tickets/tickets/' + id, { method: 'PUT', body: payload });
-            if (!resp.ok) throw new Error('API error');
+            const data = await api('/tickets/tickets/' + id, { method: 'PUT', body: payload });
+            if (data.error) throw new Error(data.error);
             toast(t('Ticket zaktualizowany'), 'success');
             await loadTickets(currentProject.id);
             renderBoard();
@@ -227,8 +225,8 @@ async function renderTickets(body, launchOpts) {
 
     async function deleteTicket(id) {
         try {
-            const resp = await api('/tickets/tickets/' + id, { method: 'DELETE' });
-            if (!resp.ok) throw new Error('API error');
+            const data = await api('/tickets/tickets/' + id, { method: 'DELETE' });
+            if (data.error) throw new Error(data.error);
             toast(t('Ticket usunięty'), 'success');
             await loadTickets(currentProject.id);
             renderBoard();
@@ -249,14 +247,9 @@ async function renderTickets(body, launchOpts) {
         }
     }
 
-    async function loadComments(ticketId) {
-        try {
-            const resp = await api('/tickets/tickets/' + ticketId + '/comments');
-            const data = await resp.json();
-            return data.comments || data || [];
-        } catch (e) {
-            return [];
-        }
+    function loadComments(ticketId) {
+        const ticket = tickets.find(t => t.id === ticketId);
+        return (ticket && ticket.comments) || [];
     }
 
     async function addComment(ticketId, text) {
