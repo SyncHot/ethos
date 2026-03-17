@@ -1,0 +1,2084 @@
+/* ═══════════════════════════════════════════════════════════
+   EthOS — Desktop Engine
+   Window Manager, Taskbar, Main Menu, Auth, Core
+   ═══════════════════════════════════════════════════════════ */
+
+const NAS = {
+    token: null,
+    nasName: 'EthOS',
+    user: null,   // { username, role }
+    sudoMode: false,  // true when admin (always-on for admins)
+    apps: [],
+    socket: null,
+    stats: { cpu: 0, memory_percent: 0, net_up: 0, net_down: 0 },
+};
+
+// ─────────────────────────── API Helper ───────────────────────────
+
+async function api(path, options = {}) {
+    const headers = { ...(options.headers || {}) };
+    if (NAS.token) headers['Authorization'] = `Bearer ${NAS.token}`;
+    if (options.body && !(options.body instanceof FormData)) {
+        headers['Content-Type'] = 'application/json';
+        options.body = JSON.stringify(options.body);
+    }
+    const resp = await fetch(`/api${path}`, { ...options, headers });
+    if (resp.status === 401) {
+        showLogin();
+        throw new Error('Unauthorized');
+    }
+    return resp.json();
+}
+
+// ─────────────────────────── Toast ───────────────────────────
+
+function toast(message, type = 'info') {
+    const icons = { success: 'fa-check-circle', error: 'fa-exclamation-circle', warning: 'fa-exclamation-triangle', info: 'fa-info-circle' };
+    const el = document.createElement('div');
+    el.className = `toast ${type}`;
+    el.innerHTML = `<i class="fas ${icons[type] || icons.info}"></i><span>${message}</span>`;
+    document.getElementById('toast-container').appendChild(el);
+    setTimeout(() => {
+        el.classList.add('removing');
+        setTimeout(() => el.remove(), 300);
+    }, 3500);
+}
+
+// ───────────────────── Global Task Progress Stack ─────────────────────
+
+function _fmtEta(seconds) {
+    if (!seconds || !isFinite(seconds) || seconds <= 0) return '';
+    const s = Math.round(seconds);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m ${sec}s`;
+    return `${sec}s`;
+}
+
+function _ensureGlobalTaskPanel() {
+    const panel = document.getElementById('notif-panel');
+    if (!panel) return null;
+    let stack = document.getElementById('global-task-stack');
+    if (!stack) {
+        stack = document.createElement('div');
+        stack.id = 'global-task-stack';
+        stack.className = 'global-task-stack hidden';
+        const list = document.getElementById('notif-list');
+        if (list) panel.insertBefore(stack, list);
+    }
+    return stack;
+}
+
+function _updateNotifBadge() {
+    const badge = document.getElementById('notif-badge');
+    if (!badge) return;
+    const activeTasks = NAS.taskProgress ? NAS.taskProgress.getActiveCount() : 0;
+    const notifCount = NAS._notifCount || 0;
+    const total = notifCount + activeTasks;
+    if (total > 0) {
+        badge.textContent = total;
+        badge.classList.remove('hidden');
+    } else {
+        badge.classList.add('hidden');
+    }
+}
+
+function _runTaskAction(action) {
+    if (!action || !action.app) return;
+    const appDef = NAS.apps?.find(a => a.id === action.app);
+    if (!appDef) return;
+
+    // Close notifications panel before navigation.
+    notifPanelOpen = false;
+    document.getElementById('notif-panel')?.classList.add('hidden');
+    document.getElementById('notifications-btn')?.classList.remove('active');
+
+    openApp(appDef, action.launchOpts || undefined);
+
+    if (action.tab) {
+        setTimeout(() => {
+            const tabBtn = document.querySelector(`#win-body-${action.app} [data-tab="${action.tab}"]`);
+            if (tabBtn) tabBtn.click();
+        }, 260);
+    }
+}
+
+NAS.taskProgress = {
+    tasks: new Map(),
+
+    getActiveCount() {
+        let c = 0;
+        this.tasks.forEach(t => {
+            if (t.status === 'running') c += 1;
+        });
+        return c;
+    },
+
+    upsert(task) {
+        if (!task || !task.id) return;
+        const now = Date.now();
+        const prev = this.tasks.get(task.id) || {};
+        const next = {
+            id: task.id,
+            source: task.source || prev.source || t('Zadanie'),
+            title: task.title || prev.title || t('Operacja'),
+            status: task.status || prev.status || 'running',
+            percent: typeof task.percent === 'number' ? Math.max(0, Math.min(100, task.percent)) : (typeof prev.percent === 'number' ? prev.percent : null),
+            message: task.message || prev.message || '',
+            etaSeconds: typeof task.etaSeconds === 'number' ? task.etaSeconds : (typeof prev.etaSeconds === 'number' ? prev.etaSeconds : null),
+            action: task.action || prev.action || null,
+            startedAt: prev.startedAt || now,
+            updatedAt: now,
+        };
+
+        // Estimate ETA from progress if not explicitly provided.
+        if (next.status === 'running' && next.percent && !next.etaSeconds) {
+            const elapsed = (now - next.startedAt) / 1000;
+            const total = elapsed / (next.percent / 100);
+            const eta = Math.max(0, total - elapsed);
+            if (isFinite(eta) && eta > 0 && eta < 24 * 3600) next.etaSeconds = eta;
+        }
+
+        this.tasks.set(task.id, next);
+        this.render();
+        _updateNotifBadge();
+    },
+
+    finish(id, success, message) {
+        const cur = this.tasks.get(id);
+        if (!cur) return;
+        cur.status = success ? 'done' : 'error';
+        cur.percent = success ? 100 : (typeof cur.percent === 'number' ? cur.percent : null);
+        cur.message = message || cur.message || (success ? t('Zakończono') : t('Błąd'));
+        cur.updatedAt = Date.now();
+        cur.etaSeconds = null;
+        this.tasks.set(id, cur);
+        this.render();
+        _updateNotifBadge();
+        setTimeout(() => {
+            const x = this.tasks.get(id);
+            if (x && x.status !== 'running') {
+                this.tasks.delete(id);
+                this.render();
+                _updateNotifBadge();
+            }
+        }, success ? 6000 : 10000);
+    },
+
+    render() {
+        const stack = _ensureGlobalTaskPanel();
+        if (!stack) return;
+
+        const items = [...this.tasks.values()]
+            .sort((a, b) => {
+                if (a.status === 'running' && b.status !== 'running') return -1;
+                if (a.status !== 'running' && b.status === 'running') return 1;
+                return (b.updatedAt || 0) - (a.updatedAt || 0);
+            })
+            .slice(0, 8);
+
+        if (!items.length) {
+            stack.classList.add('hidden');
+            stack.innerHTML = '';
+            return;
+        }
+
+        stack.classList.remove('hidden');
+        stack.innerHTML = `
+            <div class="gts-header">
+                <span><i class="fas fa-layer-group"></i> ${t('Aktywne zadania')}</span>
+                <span class="gts-count">${items.filter(x => x.status === 'running').length}</span>
+            </div>
+            <div class="gts-list">
+                ${items.map(it => {
+                    const icon = it.status === 'running' ? 'fa-spinner fa-spin' : (it.status === 'done' ? 'fa-check-circle' : 'fa-exclamation-triangle');
+                    const eta = _fmtEta(it.etaSeconds);
+                    const pctText = typeof it.percent === 'number' ? `${Math.round(it.percent)}%` : '…';
+                    const pct = typeof it.percent === 'number' ? Math.max(0, Math.min(100, it.percent)) : 8;
+                    const clickable = it.action && it.action.app ? ' clickable' : '';
+                    return `
+                        <div class="gts-item ${it.status}${clickable}" data-task-id="${it.id}">
+                            <div class="gts-row">
+                                <span class="gts-title"><i class="fas ${icon}"></i> ${it.title}</span>
+                                <span class="gts-meta">${pctText}${eta ? ` · ETA ${eta}` : ''}</span>
+                            </div>
+                            <div class="gts-source">${it.source}${it.message ? ` · ${it.message}` : ''}</div>
+                            <div class="gts-track"><div class="gts-fill" style="width:${pct}%"></div></div>
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+        `;
+
+        stack.querySelectorAll('.gts-item.clickable').forEach(el => {
+            el.addEventListener('click', () => {
+                const id = el.dataset.taskId;
+                if (!id) return;
+                const task = this.tasks.get(id);
+                if (task?.action) _runTaskAction(task.action);
+            });
+        });
+    }
+};
+
+// ─────────────────────────── Auth ───────────────────────────
+
+// ─────────────── Global Directory Picker ────────────────────
+/**
+ * Opens a modal directory browser. Used across Download Manager, Editor,
+ * Backup, Sharing, etc. for consistent path selection UX.
+ * @param {string} startPath   Initial directory to show (default '/home')
+ * @param {string} title       Modal title (default 'Wybierz folder')
+ * @param {function} onSelect  Callback receiving the chosen path
+ */
+function openDirPicker(startPath, title, onSelect) {
+    let browsePath = startPath || '/home';
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+        <div class="modal-box" style="width:480px;">
+            <div class="modal-header"><span>${title || t('Wybierz folder')}</span><button class="modal-close"><i class="fas fa-times"></i></button></div>
+            <div class="modal-body" style="padding:0;">
+                <div class="ux-dir-toolbar">
+                    <button class="dlm-btn-sm" id="gdp-dir-up"><i class="fas fa-arrow-up"></i></button>
+                    <span id="gdp-dir-path" class="ux-dir-path"></span>
+                </div>
+                <div id="gdp-dir-list" class="ux-dir-list"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="gdp-dir-cancel">${t('Anuluj')}</button>
+                <button class="btn btn-primary" id="gdp-dir-select">${t('Wybierz')}</button>
+            </div>
+        </div>`;
+    document.body.appendChild(overlay);
+
+    const pathEl = overlay.querySelector('#gdp-dir-path');
+    const listEl = overlay.querySelector('#gdp-dir-list');
+    const close = () => overlay.remove();
+
+    overlay.querySelector('.modal-close').addEventListener('click', close);
+    overlay.querySelector('#gdp-dir-cancel').addEventListener('click', close);
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+    overlay.querySelector('#gdp-dir-up').addEventListener('click', () => {
+        loadDir(browsePath.substring(0, browsePath.lastIndexOf('/')) || '/');
+    });
+    overlay.querySelector('#gdp-dir-select').addEventListener('click', () => {
+        onSelect(browsePath);
+        close();
+    });
+
+    async function loadDir(path) {
+        browsePath = path;
+        pathEl.textContent = path;
+        listEl.innerHTML = '<div class="ux-placeholder"><i class="fas fa-spinner fa-spin"></i></div>';
+        const data = await api(`/files/list?path=${encodeURIComponent(path)}`);
+        if (!data || data.error || data.locked) {
+            listEl.innerHTML = `<div class="ux-placeholder">${t('Brak dostępu')}</div>`;
+            return;
+        }
+        const dirs = (data.items || []).filter(i => i.is_dir).sort((a, b) => a.name.localeCompare(b.name));
+        listEl.innerHTML = '';
+        if (!dirs.length) {
+            listEl.innerHTML = `<div class="ux-placeholder">${t('Brak podfolderów')}</div>`;
+        }
+        dirs.forEach(d => {
+            const row = document.createElement('div');
+            row.className = 'dte-browse-item';
+            row.innerHTML = `<i class="fas fa-folder ux-folder-icon"></i> ${d.name}`;
+            row.addEventListener('click', () => loadDir(path + (path === '/' ? '' : '/') + d.name));
+            listEl.appendChild(row);
+        });
+    }
+    loadDir(browsePath);
+}
+
+// ─────────────────────────── Auth (cont.) ───────────────────
+
+function showLogin() {
+    NAS.token = null;
+    NAS.user = null;
+    NAS.sudoMode = false;
+    localStorage.removeItem('nas_token');
+    document.getElementById('login-screen').classList.remove('hidden', 'fade-out');
+    document.getElementById('desktop').classList.add('hidden');
+    const uEl = document.getElementById('login-username');
+    if (uEl) uEl.value = '';
+    document.getElementById('login-password').value = '';
+    document.getElementById('login-error').textContent = '';
+    document.getElementById('login-password').focus();
+}
+
+function showDesktop() {
+    const loginEl = document.getElementById('login-screen');
+    loginEl.classList.add('fade-out');
+    setTimeout(() => {
+        loginEl.classList.add('hidden');
+        document.getElementById('desktop').classList.remove('hidden');
+        initDesktop();
+    }, 600);
+}
+
+async function tryAutoLogin() {
+    const saved = localStorage.getItem('nas_token');
+    if (!saved) return;
+    NAS.token = saved;
+    try {
+        const data = await api('/auth/verify');
+        if (data.valid) {
+            NAS.nasName = data.nas_name || 'EthOS';
+            NAS.user = data.user || { username: 'admin', role: 'admin' };
+            NAS.sudoMode = NAS.user.role === 'admin';
+            showDesktop();
+        } else {
+            showLogin();
+        }
+    } catch {
+        showLogin();
+    }
+}
+
+document.getElementById('login-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const username = (document.getElementById('login-username')?.value || '').trim();
+    const pw = document.getElementById('login-password').value;
+    const errEl = document.getElementById('login-error');
+    if (!pw) { errEl.textContent = t('Podaj hasło'); return; }
+    try {
+        const data = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password: pw })
+        }).then(r => r.json());
+
+        if (data.token) {
+            NAS.token = data.token;
+            NAS.nasName = data.nas_name || 'EthOS';
+            NAS.user = data.user || { username: username || 'admin', role: 'admin' };
+            NAS.sudoMode = NAS.user.role === 'admin';
+            localStorage.setItem('nas_token', data.token);
+            errEl.textContent = '';
+            showDesktop();
+        } else {
+            errEl.textContent = data.error || t('Błąd logowania');
+            document.getElementById('login-password').classList.add('shake');
+            setTimeout(() => document.getElementById('login-password').classList.remove('shake'), 500);
+        }
+    } catch {
+        errEl.textContent = t('Błąd połączenia z serwerem');
+    }
+});
+
+
+// ─────────────────────────── Clock ───────────────────────────
+
+function updateClocks() {
+    const now = new Date();
+    const time = now.toLocaleTimeString(getLocale(), { hour: '2-digit', minute: '2-digit' });
+    const date = now.toLocaleDateString(getLocale(), { weekday: 'short', day: 'numeric', month: 'short' });
+    const full = now.toLocaleString(getLocale(), { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+    const taskbarClock = document.getElementById('taskbar-clock');
+    if (taskbarClock) taskbarClock.textContent = `${date}  ${time}`;
+
+    const loginTime = document.getElementById('login-time');
+    if (loginTime) loginTime.textContent = full;
+}
+let _clockInterval = setInterval(updateClocks, 1000);
+updateClocks();
+
+
+// ─────────────────────────── Format Helpers ───────────────────────────
+
+function formatBytes(bytes, decimals = 1) {
+    if (!bytes || bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return (bytes / Math.pow(k, i)).toFixed(decimals) + ' ' + sizes[i];
+}
+
+function formatSpeed(bytesPerSec) {
+    if (bytesPerSec < 1024) return Math.round(bytesPerSec) + ' B/s';
+    if (bytesPerSec < 1024 * 1024) return (bytesPerSec / 1024).toFixed(1) + ' KB/s';
+    return (bytesPerSec / (1024 * 1024)).toFixed(1) + ' MB/s';
+}
+
+function formatUptime(seconds) {
+    const d = Math.floor(seconds / 86400);
+    const h = Math.floor((seconds % 86400) / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    if (d > 0) return `${d}d ${h}h ${m}m`;
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
+}
+
+function formatDate(ts) {
+    if (!ts) return '—';
+    return new Date(ts * 1000).toLocaleString(getLocale(), {
+        day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit'
+    });
+}
+
+
+// ═══════════════════════════════════════════════════════════
+//  WINDOW MANAGER
+// ═══════════════════════════════════════════════════════════
+
+const WM = {
+    windows: new Map(),
+    zIndex: 100,
+    activeId: null,
+    dragState: null,
+    resizeState: null,
+};
+
+function createWindow(id, opts = {}) {
+    // Defaults
+    const defaults = {
+        title: t('Okno'),
+        icon: 'fa-window-maximize',
+        iconColor: '#3b82f6',
+        width: 900,
+        height: 600,
+        minWidth: 400,
+        minHeight: 250,
+        content: '',        // HTML string
+        onRender: null,     // function(bodyEl)
+        onClose: null,
+        singleton: true,
+    };
+    const o = { ...defaults, ...opts };
+
+    // Singleton — if already open, focus it
+    if (o.singleton && WM.windows.has(id)) {
+        focusWindow(id);
+        const w = WM.windows.get(id);
+        if (w.minimized) restoreWindow(id);
+        return w;
+    }
+
+    // Position: cascade from center
+    const area = document.getElementById('desktop-area');
+    const areaW = area.clientWidth, areaH = area.clientHeight;
+    const cascade = WM.windows.size * 30;
+    const left = Math.max(40, Math.min((areaW - o.width) / 2 + cascade, areaW - o.width - 40));
+    const top = Math.max(20, Math.min((areaH - o.height) / 2 + cascade, areaH - o.height - 40));
+
+    const winEl = document.createElement('div');
+    winEl.className = 'window opening';
+    winEl.id = `win-${id}`;
+    winEl.style.cssText = `left:${left}px;top:${top}px;width:${o.width}px;height:${o.height}px;z-index:${++WM.zIndex}`;
+
+    winEl.innerHTML = `
+        <div class="window-header" data-winid="${id}">
+            <div class="window-title">
+                <i class="fas ${o.icon}" style="color:${o.iconColor}"></i>
+                <span>${o.title}</span>
+            </div>
+            <div class="window-controls">
+                <button class="win-ctrl minimize" data-action="minimize"><i class="fas fa-minus"></i></button>
+                <button class="win-ctrl maximize" data-action="maximize"><i class="fas fa-expand"></i></button>
+                <button class="win-ctrl close" data-action="close"><i class="fas fa-times"></i></button>
+            </div>
+        </div>
+        <div class="window-body" id="win-body-${id}">${o.content}</div>
+        <div class="win-resize n" data-dir="n"></div>
+        <div class="win-resize s" data-dir="s"></div>
+        <div class="win-resize e" data-dir="e"></div>
+        <div class="win-resize w" data-dir="w"></div>
+        <div class="win-resize ne" data-dir="ne"></div>
+        <div class="win-resize nw" data-dir="nw"></div>
+        <div class="win-resize se" data-dir="se"></div>
+        <div class="win-resize sw" data-dir="sw"></div>
+    `;
+
+    document.getElementById('window-layer').appendChild(winEl);
+
+    setTimeout(() => winEl.classList.remove('opening'), 300);
+
+    const winData = {
+        id,
+        el: winEl,
+        opts: o,
+        minimized: false,
+        maximized: false,
+        prevBounds: null,
+    };
+    WM.windows.set(id, winData);
+
+    // Event: header controls
+    winEl.querySelector('.window-controls').addEventListener('click', e => {
+        const btn = e.target.closest('[data-action]');
+        if (!btn) return;
+        const action = btn.dataset.action;
+        if (action === 'close') closeWindow(id);
+        else if (action === 'minimize') minimizeWindow(id);
+        else if (action === 'maximize') toggleMaximize(id);
+    });
+
+    // Double-click header → maximize
+    winEl.querySelector('.window-header').addEventListener('dblclick', (e) => {
+        if (e.target.closest('.window-controls')) return;
+        toggleMaximize(id);
+    });
+
+    // Click → focus
+    winEl.addEventListener('mousedown', () => focusWindow(id));
+
+    // Drag
+    winEl.querySelector('.window-header').addEventListener('mousedown', (e) => {
+        if (e.target.closest('.window-controls')) return;
+        if (e.button !== 0) return;
+        const w = WM.windows.get(id);
+        if (w.maximized) return;
+        e.preventDefault();
+        WM.dragState = {
+            id,
+            startX: e.clientX,
+            startY: e.clientY,
+            origLeft: winEl.offsetLeft,
+            origTop: winEl.offsetTop,
+        };
+    });
+
+    // Resize
+    winEl.querySelectorAll('.win-resize').forEach(handle => {
+        handle.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            focusWindow(id);
+            WM.resizeState = {
+                id,
+                dir: handle.dataset.dir,
+                startX: e.clientX,
+                startY: e.clientY,
+                origLeft: winEl.offsetLeft,
+                origTop: winEl.offsetTop,
+                origW: winEl.offsetWidth,
+                origH: winEl.offsetHeight,
+                minW: o.minWidth,
+                minH: o.minHeight,
+            };
+        });
+    });
+
+    focusWindow(id);
+    updateTaskbarWindows();
+
+    // Render callback
+    if (o.onRender) {
+        o.onRender(document.getElementById(`win-body-${id}`));
+    }
+
+    return winData;
+}
+
+function closeWindow(id) {
+    const w = WM.windows.get(id);
+    if (!w) return;
+    // Side-panel apps – use their own close logic
+    if (w.el.id === 'sn-panel') {
+        if (typeof _stickyClose === 'function') _stickyClose(w.el, id);
+        return;
+    }
+    w.el.classList.add('closing');
+    if (w.opts.onClose) w.opts.onClose();
+    setTimeout(() => {
+        w.el.remove();
+        WM.windows.delete(id);
+        updateTaskbarWindows();
+        // Focus next window
+        if (WM.activeId === id) {
+            WM.activeId = null;
+            let topZ = 0, topId = null;
+            WM.windows.forEach((ww, wid) => {
+                if (!ww.minimized && ww.el.style.zIndex > topZ) {
+                    topZ = parseInt(ww.el.style.zIndex);
+                    topId = wid;
+                }
+            });
+            if (topId) focusWindow(topId);
+        }
+    }, 200);
+}
+
+function minimizeWindow(id) {
+    const w = WM.windows.get(id);
+    if (!w) return;
+    w.el.classList.add('minimizing');
+    setTimeout(() => {
+        w.el.style.display = 'none';
+        w.el.classList.remove('minimizing');
+        w.minimized = true;
+        updateTaskbarWindows();
+    }, 300);
+}
+
+function restoreWindow(id) {
+    const w = WM.windows.get(id);
+    if (!w) return;
+    w.el.style.display = '';
+    w.minimized = false;
+    focusWindow(id);
+    updateTaskbarWindows();
+}
+
+function toggleMaximize(id) {
+    const w = WM.windows.get(id);
+    if (!w) return;
+
+    if (w.maximized) {
+        // Restore
+        if (w.prevBounds) {
+            w.el.style.left = w.prevBounds.left + 'px';
+            w.el.style.top = w.prevBounds.top + 'px';
+            w.el.style.width = w.prevBounds.width + 'px';
+            w.el.style.height = w.prevBounds.height + 'px';
+        }
+        w.el.classList.remove('maximized');
+        w.maximized = false;
+        w.el.querySelector('.maximize i').className = 'fas fa-expand';
+    } else {
+        // Maximize
+        w.prevBounds = {
+            left: w.el.offsetLeft,
+            top: w.el.offsetTop,
+            width: w.el.offsetWidth,
+            height: w.el.offsetHeight,
+        };
+        w.el.style.left = '0';
+        w.el.style.top = '0';
+        const area = document.getElementById('desktop-area');
+        w.el.style.width = area.clientWidth + 'px';
+        w.el.style.height = area.clientHeight + 'px';
+        w.el.classList.add('maximized');
+        w.maximized = true;
+        w.el.querySelector('.maximize i').className = 'fas fa-compress';
+    }
+}
+
+function focusWindow(id) {
+    if (WM.activeId === id) return;
+    WM.windows.forEach((w) => w.el.classList.remove('focused'));
+    const w = WM.windows.get(id);
+    if (!w) return;
+    w.el.style.zIndex = ++WM.zIndex;
+    w.el.classList.add('focused');
+    WM.activeId = id;
+    updateTaskbarWindows();
+}
+
+// Global mouse handlers for drag & resize
+document.addEventListener('mousemove', (e) => {
+    // Drag
+    if (WM.dragState) {
+        const s = WM.dragState;
+        const w = WM.windows.get(s.id);
+        if (!w) return;
+        w.el.style.left = (s.origLeft + e.clientX - s.startX) + 'px';
+        w.el.style.top = Math.max(0, s.origTop + e.clientY - s.startY) + 'px';
+    }
+    // Resize
+    if (WM.resizeState) {
+        const s = WM.resizeState;
+        const w = WM.windows.get(s.id);
+        if (!w) return;
+        const dx = e.clientX - s.startX;
+        const dy = e.clientY - s.startY;
+        const dir = s.dir;
+
+        let newW = s.origW, newH = s.origH, newL = s.origLeft, newT = s.origTop;
+
+        if (dir.includes('e')) newW = Math.max(s.minW, s.origW + dx);
+        if (dir.includes('s')) newH = Math.max(s.minH, s.origH + dy);
+        if (dir.includes('w')) {
+            newW = Math.max(s.minW, s.origW - dx);
+            if (newW > s.minW) newL = s.origLeft + dx;
+        }
+        if (dir.includes('n')) {
+            newH = Math.max(s.minH, s.origH - dy);
+            if (newH > s.minH) newT = s.origTop + dy;
+        }
+
+        w.el.style.width = newW + 'px';
+        w.el.style.height = newH + 'px';
+        w.el.style.left = newL + 'px';
+        w.el.style.top = Math.max(0, newT) + 'px';
+    }
+});
+
+document.addEventListener('mouseup', () => {
+    WM.dragState = null;
+    WM.resizeState = null;
+});
+
+
+// ─────────────────────────── Taskbar Windows ───────────────────────────
+
+function updateTaskbarWindows() {
+    const container = document.getElementById('taskbar-windows');
+    container.innerHTML = '';
+    WM.windows.forEach((w, id) => {
+        const btn = document.createElement('button');
+        btn.className = `taskbar-win-btn${WM.activeId === id && !w.minimized ? ' active' : ''}${w.minimized ? ' minimized' : ''}`;
+        btn.innerHTML = `<i class="fas ${w.opts.icon}"></i><span>${w.opts.title}</span>`;
+        btn.addEventListener('click', () => {
+            // Side-panel apps (like sticky notes) – toggle close
+            if (w.el.id === 'sn-panel') {
+                if (typeof _stickyClose === 'function') _stickyClose(w.el, id);
+                return;
+            }
+            if (w.minimized) {
+                restoreWindow(id);
+            } else if (WM.activeId === id) {
+                minimizeWindow(id);
+            } else {
+                focusWindow(id);
+            }
+        });
+        container.appendChild(btn);
+    });
+}
+
+
+// ─────────────────────────── Main Menu ───────────────────────────
+
+let menuOpen = false;
+
+function toggleMainMenu() {
+    const menu = document.getElementById('main-menu');
+    const btn = document.getElementById('main-menu-btn');
+    menuOpen = !menuOpen;
+    menu.classList.toggle('hidden', !menuOpen);
+    btn.classList.toggle('active', menuOpen);
+    if (menuOpen) {
+        document.getElementById('mm-search').value = '';
+        document.getElementById('mm-search').focus();
+        renderMenuGrid();
+    }
+}
+
+function closeMainMenu() {
+    menuOpen = false;
+    document.getElementById('main-menu').classList.add('hidden');
+    document.getElementById('main-menu-btn').classList.remove('active');
+}
+
+document.getElementById('main-menu-btn').addEventListener('click', toggleMainMenu);
+document.querySelector('.main-menu-backdrop')?.addEventListener('click', closeMainMenu);
+
+document.getElementById('mm-search').addEventListener('input', (e) => {
+    renderMenuGrid(e.target.value.toLowerCase());
+});
+
+function renderMenuGrid(filter = '') {
+    const grid = document.getElementById('mm-grid');
+    grid.innerHTML = '';
+
+    // Group by category
+    const categories = {};
+    NAS.apps.forEach(app => {
+        if (filter && !t(app.name).toLowerCase().includes(filter) && !t(app.description || '').toLowerCase().includes(filter)) return;
+        const cat = app.category || 'Inne';
+        if (!categories[cat]) categories[cat] = [];
+        categories[cat].push(app);
+    });
+
+    for (const [cat, apps] of Object.entries(categories)) {
+        const catEl = document.createElement('div');
+        catEl.className = 'mm-category';
+        catEl.textContent = t(cat);
+        grid.appendChild(catEl);
+
+        apps.forEach(app => {
+            const el = document.createElement('button');
+            el.className = 'mm-app';
+            const desc = app.domain ? `<div class="mm-app-domain">${app.domain}</div>` : '';
+            el.innerHTML = `
+                <div class="mm-app-icon" style="background:${app.color || '#3b82f6'}">
+                    <i class="fas ${app.icon}"></i>
+                </div>
+                <div class="mm-app-name">${t(app.name)}</div>
+                ${desc}
+            `;
+            el.addEventListener('click', () => {
+                closeMainMenu();
+                openApp(app);
+            });
+            grid.appendChild(el);
+        });
+    }
+}
+
+
+// ─────────────────────────── Desktop Icons ───────────────────────────
+
+function renderDesktopIcons() {
+    const container = document.getElementById('desktop-icons');
+    container.innerHTML = '';
+
+    let desktopApps;
+    if (NAS.desktopAppIds && NAS.desktopAppIds.length) {
+        // Ordered by saved preference
+        desktopApps = NAS.desktopAppIds
+            .map(id => NAS.apps.find(a => a.id === id))
+            .filter(Boolean);
+    } else {
+        // Default: essential apps for a fresh system
+        const defaultIds = ['dashboard', 'file-manager', 'storage-manager', 'network', 'terminal', 'backup'];
+        const defaults = defaultIds.map(id => NAS.apps.find(a => a.id === id)).filter(Boolean);
+        desktopApps = defaults.length ? defaults : NAS.apps.slice(0, 6);
+    }
+
+    desktopApps.forEach(app => {
+        const el = document.createElement('div');
+        el.className = 'desktop-icon';
+        el.innerHTML = `
+            <div class="desktop-icon-img" style="background:${app.color || '#3b82f6'}">
+                <i class="fas ${app.icon}"></i>
+            </div>
+            <div class="desktop-icon-label">${t(app.name)}</div>
+        `;
+        el.addEventListener('dblclick', () => openApp(app));
+        el.addEventListener('click', () => {
+            container.querySelectorAll('.desktop-icon').forEach(i => i.classList.remove('selected'));
+            el.classList.add('selected');
+        });
+        container.appendChild(el);
+    });
+}
+
+
+/* ── Desktop right-click context menu ── */
+(function initDesktopContextMenu() {
+    const desktop = document.getElementById('desktop');
+    if (!desktop) return;
+
+    desktop.addEventListener('contextmenu', e => {
+        // Only on empty desktop area (not on icons or windows)
+        if (e.target.closest('.desktop-icon') || e.target.closest('.window') || e.target.closest('#taskbar')) return;
+        e.preventDefault();
+
+        // Remove any existing context menu
+        document.querySelectorAll('.desktop-ctx-menu').forEach(m => m.remove());
+
+        const menu = document.createElement('div');
+        menu.className = 'desktop-ctx-menu';
+        menu.innerHTML = `
+            <button class="desktop-ctx-item" data-action="configure-icons">
+                <i class="fas fa-th"></i> ${t('Konfiguruj ikony pulpitu')}
+            </button>
+            <button class="desktop-ctx-item" data-action="refresh-desktop">
+                <i class="fas fa-sync-alt"></i> ${t('Odśwież')}
+            </button>
+        `;
+        menu.style.left = e.clientX + 'px';
+        menu.style.top = e.clientY + 'px';
+        document.body.appendChild(menu);
+
+        // Position adjustment if overflows
+        const rect = menu.getBoundingClientRect();
+        if (rect.right > window.innerWidth) menu.style.left = (e.clientX - rect.width) + 'px';
+        if (rect.bottom > window.innerHeight) menu.style.top = (e.clientY - rect.height) + 'px';
+
+        const close = () => menu.remove();
+        setTimeout(() => document.addEventListener('click', close, { once: true }), 10);
+
+        menu.querySelector('[data-action="configure-icons"]').addEventListener('click', () => {
+            close();
+            showDesktopIconsConfig();
+        });
+        menu.querySelector('[data-action="refresh-desktop"]').addEventListener('click', () => {
+            close();
+            renderDesktopIcons();
+        });
+    });
+})();
+
+
+/* ── Desktop icons configuration dialog ── */
+async function showDesktopIconsConfig() {
+    const allApps = NAS.apps || [];
+    const currentIds = NAS.desktopAppIds && NAS.desktopAppIds.length
+        ? [...NAS.desktopAppIds]
+        : allApps.slice(0, 8).map(a => a.id);
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+
+    const modal = document.createElement('div');
+    modal.className = 'di-config-modal';
+    modal.innerHTML = `
+        <div class="di-config-header">
+            <h3><i class="fas fa-th"></i> ${t('Ikony pulpitu')}</h3>
+            <button class="di-config-close">&times;</button>
+        </div>
+        <div class="di-config-hint">${t('Wybierz aplikacje widoczne na pulpicie. Przeciągnij, aby zmienić kolejność.')}</div>
+        <div class="di-config-list" id="di-config-list"></div>
+        <div class="di-config-footer">
+            <button class="di-config-btn di-btn-secondary" id="di-config-reset"><i class="fas fa-undo"></i> ${t('Domyślne')}</button>
+            <button class="di-config-btn di-btn-primary" id="di-config-save"><i class="fas fa-check"></i> ${t('Zapisz')}</button>
+        </div>
+    `;
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    modal.querySelector('.di-config-close').addEventListener('click', () => overlay.remove());
+
+    const listEl = modal.querySelector('#di-config-list');
+
+    // Build a working ordered list: selected first (in order), then unselected
+    let ordered = [];
+    currentIds.forEach(id => {
+        const app = allApps.find(a => a.id === id);
+        if (app) ordered.push({ ...app, checked: true });
+    });
+    allApps.forEach(app => {
+        if (!ordered.find(o => o.id === app.id)) {
+            ordered.push({ ...app, checked: false });
+        }
+    });
+
+    function renderList() {
+        listEl.innerHTML = '';
+        ordered.forEach((item, idx) => {
+            const row = document.createElement('div');
+            row.className = 'di-config-row' + (item.checked ? ' di-row-active' : '');
+            row.draggable = true;
+            row.dataset.idx = idx;
+            row.innerHTML = `
+                <span class="di-drag-handle"><i class="fas fa-grip-vertical"></i></span>
+                <label class="di-config-check">
+                    <input type="checkbox" ${item.checked ? 'checked' : ''} data-idx="${idx}">
+                    <span class="di-check-box"></span>
+                </label>
+                <div class="di-config-icon" style="background:${item.color || '#3b82f6'}">
+                    <i class="fas ${item.icon}"></i>
+                </div>
+                <span class="di-config-name">${t(item.name)}</span>
+            `;
+            listEl.appendChild(row);
+        });
+
+        /* Checkbox toggles */
+        listEl.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+            cb.addEventListener('change', () => {
+                const i = parseInt(cb.dataset.idx);
+                ordered[i].checked = cb.checked;
+                const row = cb.closest('.di-config-row');
+                if (row) row.classList.toggle('di-row-active', cb.checked);
+            });
+        });
+
+        /* Drag-and-drop reorder */
+        let dragIdx = null;
+        listEl.querySelectorAll('.di-config-row').forEach(row => {
+            row.addEventListener('dragstart', e => {
+                dragIdx = parseInt(row.dataset.idx);
+                row.classList.add('di-dragging');
+                e.dataTransfer.effectAllowed = 'move';
+            });
+            row.addEventListener('dragend', () => {
+                row.classList.remove('di-dragging');
+                dragIdx = null;
+            });
+            row.addEventListener('dragover', e => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                row.classList.add('di-drag-over');
+            });
+            row.addEventListener('dragleave', () => row.classList.remove('di-drag-over'));
+            row.addEventListener('drop', e => {
+                e.preventDefault();
+                row.classList.remove('di-drag-over');
+                const dropIdx = parseInt(row.dataset.idx);
+                if (dragIdx !== null && dragIdx !== dropIdx) {
+                    const [moved] = ordered.splice(dragIdx, 1);
+                    ordered.splice(dropIdx, 0, moved);
+                    renderList();
+                }
+            });
+        });
+    }
+
+    renderList();
+
+    /* Reset to defaults */
+    modal.querySelector('#di-config-reset').addEventListener('click', () => {
+        const defaultIds = allApps.slice(0, 8).map(a => a.id);
+        ordered = [];
+        allApps.forEach((app, i) => {
+            ordered.push({ ...app, checked: i < 8 });
+        });
+        renderList();
+    });
+
+    /* Save */
+    modal.querySelector('#di-config-save').addEventListener('click', async () => {
+        const selectedIds = ordered.filter(o => o.checked).map(o => o.id);
+        try {
+            await api('/desktop-apps', { method: 'PUT', body: { app_ids: selectedIds } });
+            NAS.desktopAppIds = selectedIds;
+            renderDesktopIcons();
+            overlay.remove();
+            toast(t('Ikony pulpitu zapisane'), 'success');
+        } catch (e) {
+            toast(t('Błąd zapisu:') + ' ' + e.message, 'error');
+        }
+    });
+}
+
+
+// ─────────────────────────── Open App ───────────────────────────
+
+function openApp(app, launchOpts) {
+    if (app.type === 'builtin') {
+        openBuiltinApp(app, launchOpts);
+    } else if (app.type === 'iframe') {
+        openIframeApp(app);
+    } else if (app.type === 'external') {
+        openExternalApp(app);
+    }
+}
+
+function openIframeApp(app) {
+    createWindow(app.id, {
+        title: t(app.name),
+        icon: app.icon,
+        iconColor: app.color,
+        width: 1100,
+        height: 700,
+        content: `<div class="iframe-container"><iframe src="${app.url}" sandbox="allow-same-origin allow-scripts allow-forms allow-popups"></iframe></div>`,
+    });
+}
+
+function openExternalApp(app) {
+    // External apps from NPM — open in new tab or as iframe window
+    // Try iframe first, fall back to new tab for sites with X-Frame-Options
+    createWindow(app.id, {
+        title: t(app.name),
+        icon: app.icon,
+        iconColor: app.color,
+        width: 1100,
+        height: 700,
+        content: `
+            <div class="iframe-container" id="external-${app.id}">
+                <iframe src="${app.url}" 
+                    referrerpolicy="no-referrer"
+                    allow="fullscreen"
+                    style="width:100%;height:100%;border:none;"
+                    onerror="document.getElementById('external-${app.id}').innerHTML='<div style=\'padding:40px;text-align:center;color:var(--text-muted)\'><i class=\'fas fa-external-link-alt\' style=\'font-size:48px;margin-bottom:16px;\'></i><br>Nie można załadować w ramce.<br><a href=${app.url} target=_blank style=\'color:var(--accent)\'>Otwórz w nowej karcie</a></div>'"
+                ></iframe>
+            </div>
+            <div style="position:absolute;bottom:0;left:0;right:0;padding:6px 16px;background:var(--bg-surface);border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;font-size:12px;">
+                <span style="color:var(--text-muted)">
+                    <i class="fas fa-globe" style="margin-right:4px"></i>${app.domain || app.url}
+                </span>
+                <a href="${app.url}" target="_blank" style="color:var(--accent);text-decoration:none;">
+                    <i class="fas fa-external-link-alt"></i> ${t('Otwórz w nowej karcie')}
+                </a>
+            </div>
+        `,
+    });
+}
+
+function openBuiltinApp(app, launchOpts) {
+    // Handled in apps.js via the global registry
+    if (typeof AppRegistry !== 'undefined' && AppRegistry[app.id]) {
+        AppRegistry[app.id](app, launchOpts);
+    } else {
+        toast(t('Aplikacja nie jest jeszcze dostępna') + `: ${t(app.name)}`, 'warning');
+    }
+}
+
+
+// ─────────────────────────── Notifications ───────────────────────────
+
+let notifPanelOpen = false;
+
+document.getElementById('notifications-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    notifPanelOpen = !notifPanelOpen;
+    document.getElementById('notif-panel').classList.toggle('hidden', !notifPanelOpen);
+    document.getElementById('notifications-btn').classList.toggle('active', notifPanelOpen);
+    // Close other panels
+    closeUserMenu();
+    if (notifPanelOpen) loadNotifications();
+});
+
+document.getElementById('notif-clear').addEventListener('click', async () => {
+    try {
+        await api('/notifications/clear', { method: 'POST' });
+    } catch {}
+    document.getElementById('notif-list').innerHTML = `<p class="notif-empty">${t('Brak powiadomień')}</p>`;
+    document.getElementById('notif-badge').classList.add('hidden');
+});
+
+async function loadNotifications() {
+    try {
+        const data = await api('/notifications');
+        NAS._notifCount = Array.isArray(data) ? data.length : 0;
+        const list = document.getElementById('notif-list');
+        const activeTasks = NAS.taskProgress.getActiveCount();
+        if (!data.length) {
+            list.innerHTML = `<p class="notif-empty">${t('Brak powiadomień')}</p>`;
+            _updateNotifBadge();
+            NAS.taskProgress.render();
+            if (activeTasks > 0) list.innerHTML = '';
+            return;
+        }
+        _updateNotifBadge();
+
+        list.innerHTML = data.map(n => {
+            const hasAction = n.action && n.action.app;
+            const actionAttr = hasAction ? `data-action-app="${n.action.app}" data-action-tab="${n.action.tab || ''}"` : '';
+            const clickClass = hasAction ? ' clickable' : '';
+            const iconMap = { warning: 'fa-exclamation-triangle', info: 'fa-arrow-circle-up', error: 'fa-times-circle', success: 'fa-check-circle', progress: 'fa-spinner fa-spin' };
+            const icon = iconMap[n.type] || 'fa-info-circle';
+            let timeStr = '';
+            if (n.time) {
+                const ago = Math.round((Date.now() / 1000) - n.time);
+                if (ago < 60) timeStr = t('teraz');
+                else if (ago < 3600) timeStr = Math.round(ago / 60) + ' ' + t('min temu');
+                else if (ago < 86400) timeStr = Math.round(ago / 3600) + 'h ' + t('temu');
+                else timeStr = Math.round(ago / 86400) + 'd ' + t('temu');
+            }
+            return `
+            <div class="notif-item${clickClass}" ${actionAttr}>
+                <div class="notif-item-icon ${n.type}">
+                    <i class="fas ${icon}"></i>
+                </div>
+                <div class="notif-item-content">
+                    <div class="notif-item-title">${n.title}${timeStr ? '<span class="notif-time">' + timeStr + '</span>' : ''}</div>
+                    <div class="notif-item-msg">${n.message}${hasAction ? ` <span class="notif-link">${t('Otwórz')} →</span>` : ''}</div>
+                </div>
+            </div>`;
+        }).join('');
+
+        // Handle clickable notifications
+        list.querySelectorAll('.notif-item.clickable').forEach(el => {
+            el.addEventListener('click', () => {
+                const appId = el.dataset.actionApp;
+                const tab = el.dataset.actionTab;
+                // Close notif panel
+                notifPanelOpen = false;
+                document.getElementById('notif-panel').classList.add('hidden');
+                document.getElementById('notifications-btn').classList.remove('active');
+                // Open the app
+                const appDef = NAS.apps.find(a => a.id === appId);
+                if (appDef) {
+                    openApp(appDef);
+                    // Switch tab after a small delay for the window to render
+                    if (tab) {
+                        setTimeout(() => {
+                            const tabBtn = document.querySelector(`#win-body-${appId} [data-tab="${tab}"]`);
+                            if (tabBtn) tabBtn.click();
+                        }, 300);
+                    }
+                }
+            });
+        });
+        NAS.taskProgress.render();
+    } catch {
+        // ignore
+    }
+}
+
+
+// ─────────────────────────── Power Menu ───────────────────────────
+
+let powerMenuOpen = false;
+
+function closePowerMenu() {
+    powerMenuOpen = false;
+    document.getElementById('power-menu').classList.add('hidden');
+    document.getElementById('power-btn').classList.remove('active');
+}
+
+async function loadPowerUptime() {
+    try {
+        const data = await api('/power/status');
+        const el = document.getElementById('pm-uptime');
+        if (el && data.uptime) {
+            el.innerHTML = `<i class="fas fa-clock"></i> Uptime: ${formatUptime(data.uptime)} &nbsp;|&nbsp; Load: ${data.load.join(', ')}`;
+        }
+    } catch {}
+}
+
+document.getElementById('power-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    powerMenuOpen = !powerMenuOpen;
+    document.getElementById('power-menu').classList.toggle('hidden', !powerMenuOpen);
+    document.getElementById('power-btn').classList.toggle('active', powerMenuOpen);
+    // Close other panels
+    closeUserMenu();
+    notifPanelOpen = false;
+    document.getElementById('notif-panel').classList.add('hidden');
+    document.getElementById('notifications-btn').classList.remove('active');
+    if (powerMenuOpen) loadPowerUptime();
+});
+
+document.querySelectorAll('.pm-action').forEach(btn => {
+    btn.addEventListener('click', async () => {
+        const action = btn.dataset.action;
+        const labels = {
+            'restart-app': t('Restart aplikacji (kontener nasos)'),
+            'reboot': t('Restart całego systemu Linux'),
+            'shutdown': t('Wyłączenie systemu Linux')
+        };
+        const icons = {
+            'restart-app': 'fa-sync-alt',
+            'reboot': 'fa-redo',
+            'shutdown': 'fa-power-off'
+        };
+        const colors = {
+            'restart-app': '#22c55e',
+            'reboot': '#f59e0b',
+            'shutdown': '#ef4444'
+        };
+        closePowerMenu();
+
+        // Show confirmation modal
+        const confirmed = await showPowerConfirm(labels[action], icons[action], colors[action]);
+        if (!confirmed) return;
+
+        try {
+            const resp = await api('/power/action', {
+                method: 'POST',
+                body: { action }
+            });
+            if (action === 'reboot' || action === 'restart-app') {
+                showRestartOverlay(action === 'reboot' ? t('Restart systemu…') : t('Restart aplikacji…'));
+            } else if (action === 'shutdown') {
+                showRestartOverlay(t('Wyłączanie systemu…'), true);
+            } else {
+                showToast(resp.message || t('Wykonano'), 'success');
+            }
+        } catch (err) {
+            showToast(t('Błąd:') + ' ' + (err.message || t('nieznany')), 'error');
+        }
+    });
+});
+
+function showPowerConfirm(label, icon, color) {
+    return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.className = 'power-confirm-overlay';
+        overlay.innerHTML = `
+            <div class="power-confirm-box">
+                <div class="power-confirm-icon" style="color:${color}">
+                    <i class="fas ${icon}"></i>
+                </div>
+                <div class="power-confirm-label">${label}</div>
+                <div class="power-confirm-sub">${t('Czy na pewno chcesz kontynuować?')}</div>
+                <div class="power-confirm-btns">
+                    <button class="power-confirm-btn cancel">${t('Anuluj')}</button>
+                    <button class="power-confirm-btn confirm" style="background:${color}">${t('Potwierdź')}</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+        requestAnimationFrame(() => overlay.classList.add('visible'));
+
+        overlay.querySelector('.cancel').addEventListener('click', () => {
+            overlay.classList.remove('visible');
+            setTimeout(() => overlay.remove(), 200);
+            resolve(false);
+        });
+        overlay.querySelector('.confirm').addEventListener('click', () => {
+            overlay.classList.remove('visible');
+            setTimeout(() => overlay.remove(), 200);
+            resolve(true);
+        });
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) {
+                overlay.classList.remove('visible');
+                setTimeout(() => overlay.remove(), 200);
+                resolve(false);
+            }
+        });
+    });
+}
+
+
+function showRestartOverlay(msg, isShutdown = false) {
+    const COUNTDOWN = isShutdown ? 30 : 20;
+    let remaining = COUNTDOWN;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'power-restart-overlay';
+    overlay.innerHTML = `
+        <div class="power-restart-spinner"></div>
+        <div class="power-restart-msg">${msg}</div>
+        <div class="power-restart-countdown">${t('System pojawi się za')} <span id="prc-sec">${remaining}</span> s</div>
+        <div class="power-restart-status">${t('Oczekiwanie…')}</div>
+    `;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('visible'));
+
+    const secEl = overlay.querySelector('#prc-sec');
+    const statusEl = overlay.querySelector('.power-restart-status');
+    const countdownEl = overlay.querySelector('.power-restart-countdown');
+
+    const timer = setInterval(() => {
+        remaining--;
+        if (remaining >= 0) secEl.textContent = remaining;
+        if (remaining <= 0) {
+            clearInterval(timer);
+            if (isShutdown) {
+                countdownEl.textContent = t('System został wyłączony');
+                statusEl.textContent = t('Możesz bezpiecznie odłączyć zasilanie.');
+                overlay.querySelector('.power-restart-spinner').style.display = 'none';
+                return;
+            }
+            countdownEl.textContent = t('Łączenie z systemem…');
+            statusEl.textContent = '';
+            pollServer();
+        }
+    }, 1000);
+
+    function pollServer() {
+        let attempts = 0;
+        const maxAttempts = 60;
+        const interval = setInterval(async () => {
+            attempts++;
+            try {
+                const resp = await fetch('/api/auth/verify', { method: 'GET', cache: 'no-store' });
+                if (resp.ok || resp.status === 401) {
+                    clearInterval(interval);
+                    overlay.classList.remove('visible');
+                    setTimeout(() => {
+                        overlay.remove();
+                        window.location.reload();
+                    }, 400);
+                    return;
+                }
+            } catch {}
+            if (attempts >= maxAttempts) {
+                clearInterval(interval);
+                statusEl.textContent = t('Nie udało się połączyć. Odśwież stronę ręcznie.');
+            } else {
+                statusEl.textContent = `${t('Próba połączenia…')} (${attempts}/${maxAttempts})`;
+            }
+        }, 2000);
+    }
+}
+
+
+// ─────────────────────────── User Menu ───────────────────────────
+
+let userMenuOpen = false;
+
+function closeUserMenu() {
+    userMenuOpen = false;
+    document.getElementById('user-menu').classList.add('hidden');
+    document.getElementById('user-btn').classList.remove('active');
+}
+
+document.getElementById('user-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    userMenuOpen = !userMenuOpen;
+    document.getElementById('user-menu').classList.toggle('hidden', !userMenuOpen);
+    document.getElementById('user-btn').classList.toggle('active', userMenuOpen);
+    // Close other panels
+    notifPanelOpen = false;
+    document.getElementById('notif-panel').classList.add('hidden');
+    document.getElementById('notifications-btn').classList.remove('active');
+});
+
+document.getElementById('btn-logout').addEventListener('click', async () => {
+    try { await api('/auth/logout', { method: 'POST' }); } catch {}
+    showLogin();
+    closeUserMenu();
+});
+
+document.getElementById('btn-about').addEventListener('click', () => {
+    closeUserMenu();
+    openAbout();
+});
+
+// ── Sudo mode (always-on for admin) ──
+function _updateSudoUI() {
+    // Sudo is always active for admin users, no toggle needed
+    NAS.sudoMode = !!(NAS.user && NAS.user.role === 'admin');
+}
+
+function openAbout() {
+    const win = createWindow('about', {
+        title: t('O systemie'),
+        icon: 'fa-info-circle',
+        iconColor: '#3b82f6',
+        width: 520,
+        height: 560,
+        minWidth: 380,
+        minHeight: 400,
+        content: `
+            <div class="about-content">
+                <div class="about-header">
+                    <div class="about-logo"><i class="fas fa-server"></i></div>
+                    <div class="about-header-text">
+                        <div class="about-name">${NAS.nasName}</div>
+                        <div class="about-version" id="about-version-label">EthOS</div>
+                        <div class="about-motto" style="font-size:11px;color:var(--text-muted);font-style:italic;margin-top:2px">Your Desktop, Anywhere</div>
+                        <div class="about-build" id="about-build-date"></div>
+                    </div>
+                </div>
+                <div class="about-tabs">
+                    <button class="about-tab active" data-tab="info">${t('Informacje')}</button>
+                    <button class="about-tab" data-tab="changelog">${t('Historia zmian')}</button>
+                </div>
+                <div class="about-tab-content" id="about-tab-info">
+                    <div class="about-info">
+                        <div class="dash-info-row">
+                            <span class="dash-info-label">${t('Platforma')}</span>
+                            <span class="dash-info-value">Docker + Flask</span>
+                        </div>
+                        <div class="dash-info-row">
+                            <span class="dash-info-label">Frontend</span>
+                            <span class="dash-info-value">Vanilla JS</span>
+                        </div>
+                        <div class="dash-info-row">
+                            <span class="dash-info-label">Backend</span>
+                            <span class="dash-info-value">Python 3.12 + gevent</span>
+                        </div>
+                        <div class="dash-info-row">
+                            <span class="dash-info-label">${t('Komunikacja')}</span>
+                            <span class="dash-info-value">Socket.IO (realtime)</span>
+                        </div>
+                        <div class="dash-info-row">
+                            <span class="dash-info-label">${t('Licencja')}</span>
+                            <span class="dash-info-value">MIT</span>
+                        </div>
+                    </div>
+                    <div class="about-footer">
+                        <span>${t('Zaprojektowane z')} <i class="fas fa-heart" style="color:#ef4444;font-size:11px"></i> ${t('przez Marcina')}</span>
+                    </div>
+                </div>
+                <div class="about-tab-content hidden" id="about-tab-changelog">
+                    <div class="about-changelog" id="about-changelog-list">
+                        <div style="padding:24px;text-align:center;color:var(--text-muted)">
+                            <i class="fas fa-spinner fa-spin"></i> ${t('Ładowanie...')}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `
+    });
+
+    const body = document.getElementById('win-body-about');
+
+    // Tab switching
+    body.querySelectorAll('.about-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            body.querySelectorAll('.about-tab').forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            body.querySelectorAll('.about-tab-content').forEach(c => c.classList.add('hidden'));
+            body.querySelector(`#about-tab-${tab.dataset.tab}`).classList.remove('hidden');
+        });
+    });
+
+    // Load version info
+    api('/system/version').then(data => {
+        if (!data || data.error) return;
+
+        const verLabel = body.querySelector('#about-version-label');
+        if (verLabel) verLabel.textContent = `EthOS v${data.version}${data.codename ? ' "' + data.codename + '"' : ''}`;
+
+        const buildDate = body.querySelector('#about-build-date');
+        if (buildDate && data.build_date) {
+            const d = new Date(data.build_date);
+            buildDate.textContent = `Build ${d.toLocaleDateString(getLocale(), { year: 'numeric', month: 'long', day: 'numeric' })}`;
+        }
+
+        const clList = body.querySelector('#about-changelog-list');
+        if (clList && data.changelog && data.changelog.length) {
+            clList.innerHTML = data.changelog.map((entry, i) => `
+                <div class="cl-entry${i === 0 ? ' cl-latest' : ''}">
+                    <div class="cl-entry-header">
+                        <div class="cl-version-badge${i === 0 ? ' cl-current' : ''}">v${entry.version}</div>
+                        <div class="cl-entry-meta">
+                            <div class="cl-entry-title">${entry.title}</div>
+                            <div class="cl-entry-date">${entry.date}</div>
+                        </div>
+                    </div>
+                    <ul class="cl-changes">
+                        ${entry.changes.map(c => `<li>${c}</li>`).join('')}
+                    </ul>
+                </div>
+            `).join('');
+        }
+    });
+}
+
+// Close panels on outside click
+document.addEventListener('click', (e) => {
+    if (notifPanelOpen && !e.target.closest('.notif-panel') && !e.target.closest('#notifications-btn')) {
+        notifPanelOpen = false;
+        document.getElementById('notif-panel').classList.add('hidden');
+        document.getElementById('notifications-btn').classList.remove('active');
+    }
+    if (userMenuOpen && !e.target.closest('.user-menu') && !e.target.closest('#user-btn')) {
+        closeUserMenu();
+    }
+    if (powerMenuOpen && !e.target.closest('.power-menu') && !e.target.closest('#power-btn')) {
+        closePowerMenu();
+    }
+    // Deselect desktop icons
+    if (e.target.closest('.desktop-area') && !e.target.closest('.desktop-icon') && !e.target.closest('.window')) {
+        document.querySelectorAll('.desktop-icon.selected').forEach(i => i.classList.remove('selected'));
+    }
+});
+
+// ESC to close menu/panels
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        if (menuOpen) closeMainMenu();
+        if (notifPanelOpen) {
+            notifPanelOpen = false;
+            document.getElementById('notif-panel').classList.add('hidden');
+            document.getElementById('notifications-btn').classList.remove('active');
+        }
+        if (userMenuOpen) closeUserMenu();
+        if (powerMenuOpen) closePowerMenu();
+        // Close modal
+        document.querySelector('.modal-overlay')?.remove();
+    }
+});
+
+
+// ─────────────── File Operation Floating Progress (multi-channel) ────────────────
+
+// One progress bar per channel ('bg' = compress/download/transfer, 'fm' = copy/move/extract)
+const _fileopBars = {};   // channel -> { el, timer }
+
+function _ensureContainer() {
+    let c = document.getElementById('fileop-progress-container');
+    if (!c) {
+        c = document.createElement('div');
+        c.id = 'fileop-progress-container';
+        c.style.cssText = 'position:fixed;bottom:24px;right:24px;display:flex;flex-direction:column-reverse;gap:10px;z-index:9999;pointer-events:none;';
+        document.body.appendChild(c);
+    }
+    return c;
+}
+
+function _createBarEl(ch) {
+    const el = document.createElement('div');
+    el.className = 'fileop-progress-float';
+    el.dataset.channel = ch;
+    el.style.pointerEvents = 'auto';
+    el.innerHTML = `
+        <div class="fileop-header">
+            <span class="fileop-title"><i class="fas fa-spinner fa-spin"></i><span class="fileop-label"></span></span>
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span class="fileop-pct"></span>
+                <button class="fileop-pause-btn fileop-action-btn fileop-action-warn" title="Wstrzymaj / Wznów" aria-label="Wstrzymaj lub wznów operację" style="display:none;"><i class="fas fa-pause"></i></button>
+                <button class="fileop-cancel-btn fileop-action-btn fileop-action-danger" title="Anuluj operację" aria-label="Anuluj operację" style="display:none;"><i class="fas fa-times"></i></button>
+            </div>
+        </div>
+        <div class="fileop-track"><div class="fileop-fill"></div></div>
+        <div class="fileop-detail"></div>
+    `;
+    el.querySelector('.fileop-cancel-btn').addEventListener('click', async () => {
+        try {
+            const r = await api('/files/cancel-operation', { method: 'POST', body: JSON.stringify({ channel: ch }), headers: { 'Content-Type': 'application/json' } });
+            if (r.ok || r.cancelled) {
+                const btn = el.querySelector('.fileop-cancel-btn');
+                if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>'; }
+            }
+        } catch (e) { /* ignore */ }
+    });
+    el.querySelector('.fileop-pause-btn').addEventListener('click', async () => {
+        try {
+            const r = await api('/files/pause-operation', { method: 'POST', body: JSON.stringify({ channel: ch }), headers: { 'Content-Type': 'application/json' } });
+            if (r && typeof r.paused !== 'undefined') {
+                _updatePauseState(r.paused, ch);
+            }
+        } catch (e) { /* ignore */ }
+    });
+    return el;
+}
+
+function showFileOpProgress(data) {
+    const ch = data.channel || 'bg';
+    let bar = _fileopBars[ch];
+    if (bar && bar.timer) { clearTimeout(bar.timer); bar.timer = null; }
+
+    const container = _ensureContainer();
+    if (!bar || !bar.el) {
+        const el = _createBarEl(ch);
+        container.appendChild(el);
+        bar = { el, timer: null };
+        _fileopBars[ch] = bar;
+    }
+    const el = bar.el;
+
+    const opLabels = { copy: t('Kopiowanie'), move: t('Przenoszenie'), compress: t('Kompresja'), extract: t('Rozpakowywanie'), download: t('Pobieranie ZIP'), upload: t('Przesyłanie'), transfer: t('Transfer do NAS') };
+    const pct = data.percent || 0;
+
+    el.querySelector('.fileop-label').textContent = opLabels[data.operation] || t('Operacja');
+    el.querySelector('.fileop-pct').textContent = Math.round(pct) + '%';
+    el.querySelector('.fileop-fill').style.width = pct + '%';
+    el.querySelector('.fileop-detail').textContent =
+        data.operation === 'transfer' && data._transfer_detail
+        ? data._transfer_detail
+        : `${data.done}/${data.total}` + (data.current_file ? ` — ${data.current_file}` : '');
+
+    // Show cancel + pause buttons for pausable operations
+    const pausableOps = ['transfer', 'download', 'compress'];
+    const cancelBtn = el.querySelector('.fileop-cancel-btn');
+    const pauseBtn = el.querySelector('.fileop-pause-btn');
+    if (cancelBtn) {
+        cancelBtn.style.display = pausableOps.includes(data.operation) ? '' : 'none';
+    }
+    if (pauseBtn) {
+        pauseBtn.style.display = pausableOps.includes(data.operation) ? '' : 'none';
+    }
+
+    el.classList.remove('fileop-done', 'fileop-error');
+    el.classList.add('fileop-active');
+
+    NAS.taskProgress.upsert({
+        id: `fileop:${ch}`,
+        source: t('Menedżer plików'),
+        title: opLabels[data.operation] || t('Operacja plikowa'),
+        percent: typeof pct === 'number' ? pct : null,
+        message: data.current_file || '',
+        action: { app: 'file-manager' },
+        status: 'running',
+    });
+}
+
+function _updatePauseState(paused, ch) {
+    ch = ch || 'bg';
+    const bar = _fileopBars[ch];
+    if (!bar || !bar.el) return;
+    const el = bar.el;
+    const pauseBtn = el.querySelector('.fileop-pause-btn');
+    const fill = el.querySelector('.fileop-fill');
+    if (pauseBtn) {
+        pauseBtn.innerHTML = paused ? '<i class="fas fa-play"></i>' : '<i class="fas fa-pause"></i>';
+        pauseBtn.title = paused ? t('Wznów') : t('Wstrzymaj');
+    }
+    if (fill) {
+        fill.style.background = paused ? '#eab308' : '';
+    }
+    const detail = el.querySelector('.fileop-detail');
+    if (detail && paused) {
+        detail.textContent = t('Wstrzymano');
+    }
+}
+
+function finishFileOpProgress(success, data) {
+    const ch = (data && data.channel) || 'bg';
+    const bar = _fileopBars[ch];
+    if (!bar || !bar.el) return;
+    const el = bar.el;
+
+    el.classList.remove('fileop-active');
+    el.classList.add(success ? 'fileop-done' : 'fileop-error');
+
+    const icon = success ? 'fa-check-circle' : 'fa-times-circle';
+    const msg = data?.message || (success ? t('Zakończono') : t('Błąd'));
+    el.querySelector('.fileop-header .fileop-title').innerHTML =
+        `<i class="fas ${icon}"></i><span>${msg}</span>`;
+    el.querySelector('.fileop-pct').textContent = success ? '100%' : '';
+    el.querySelector('.fileop-fill').style.width = success ? '100%' : '0';
+    el.querySelector('.fileop-fill').style.background = '';
+    el.querySelector('.fileop-detail').textContent = '';
+
+    // Hide control buttons when done
+    const cancelBtn = el.querySelector('.fileop-cancel-btn');
+    const pauseBtn = el.querySelector('.fileop-pause-btn');
+    if (cancelBtn) cancelBtn.style.display = 'none';
+    if (pauseBtn) pauseBtn.style.display = 'none';
+
+    bar.timer = setTimeout(() => {
+        if (bar.el) {
+            bar.el.classList.add('fileop-removing');
+            setTimeout(() => {
+                if (bar.el) { bar.el.remove(); }
+                delete _fileopBars[ch];
+            }, 300);
+        }
+    }, 4000);
+
+    NAS.taskProgress.finish(`fileop:${ch}`, success, msg);
+}
+
+
+// ─────────────── Restore active file-op progress on page load ────────────────
+
+async function _checkActiveFileOp() {
+    try {
+        const st = await api('/files/operation-status');
+        if (!st) return;
+
+        // Multi-channel: check each channel for active progress
+        const channels = st.channels || {};
+        for (const [ch, info] of Object.entries(channels)) {
+            if (info.active && info.progress) {
+                const prog = { ...info.progress, channel: ch };
+                showFileOpProgress(prog);
+                if (info.paused) _updatePauseState(true, ch);
+            }
+        }
+        // Fallback for old single-slot format
+        if (!Object.keys(channels).length && st.active && st.progress) {
+            showFileOpProgress(st.progress);
+            if (st.paused) _updatePauseState(true, 'bg');
+        }
+
+        // If there are pending downloads ready (ZIP completed while page was away), trigger them
+        if (st.pending_downloads && st.pending_downloads.length) {
+            for (const pd of st.pending_downloads) {
+                toast(`ZIP gotowy: ${pd.name}`, 'success');
+                // Trigger browser download via hidden iframe
+                const iframe = document.createElement('iframe');
+                iframe.style.display = 'none';
+                iframe.src = `/api/files/download-zip/${pd.download_id}`;
+                document.body.appendChild(iframe);
+                setTimeout(() => iframe.remove(), 30000);
+            }
+        }
+    } catch {
+        // ignore — server may still be starting
+    }
+}
+
+// ─────────────────────────── Socket.IO ───────────────────────────
+
+function connectSocket() {
+    try {
+        // Clean up old socket listeners to prevent stacking on reconnect
+        if (NAS.socket) {
+            NAS.socket.off();
+            NAS.socket.disconnect();
+        }
+        NAS.socket = io({ transports: ['websocket', 'polling'] });
+        NAS.socket.on('system_stats', (data) => {
+            NAS.stats = data;
+            // Update taskbar stats
+            document.querySelector('#stat-cpu span').textContent = Math.round(data.cpu) + '%';
+            document.querySelector('#stat-ram span').textContent = Math.round(data.memory_percent) + '%';
+            document.querySelector('#stat-net span').textContent = formatSpeed(data.net_down);
+
+            // Color coding
+            const cpuEl = document.getElementById('stat-cpu');
+            cpuEl.style.color = data.cpu > 80 ? '#ef4444' : data.cpu > 50 ? '#eab308' : '';
+            const ramEl = document.getElementById('stat-ram');
+            ramEl.style.color = data.memory_percent > 80 ? '#ef4444' : data.memory_percent > 50 ? '#eab308' : '';
+        });
+
+        // Backup events → refresh notification badge
+        NAS.socket.on('backup_complete', () => {
+            loadNotifications();
+        });
+        NAS.socket.on('backup_error', () => {
+            loadNotifications();
+        });
+        NAS.socket.on('backup_progress', () => {
+            if (!NAS._lastBackupNotifRefresh || Date.now() - NAS._lastBackupNotifRefresh > 10000) {
+                NAS._lastBackupNotifRefresh = Date.now();
+                loadNotifications();
+            }
+        });
+
+        // File operation events → floating progress bar + notification badge
+        NAS.socket.on('fileop_progress', (data) => {
+            showFileOpProgress(data);
+            if (!NAS._lastFileopNotifRefresh || Date.now() - NAS._lastFileopNotifRefresh > 5000) {
+                NAS._lastFileopNotifRefresh = Date.now();
+                loadNotifications();
+            }
+        });
+        NAS.socket.on('fileop_transfer_detail', (data) => {
+            // Enhanced progress display for remote transfers with byte-level info
+            showFileOpProgress({
+                operation: 'transfer',
+                current_file: data.current_file,
+                done: data.files_sent,
+                total: data.total_files,
+                percent: data.percent,
+                _transfer_detail: `${data.sent_fmt} / ${data.total_fmt} — ${data.current_file || ''}`
+            });
+        });
+        NAS.socket.on('fileop_complete', (data) => {
+            finishFileOpProgress(true, data);
+            loadNotifications();
+        });
+        NAS.socket.on('fileop_error', (data) => {
+            finishFileOpProgress(false, data);
+            loadNotifications();
+        });
+
+        // App Store install progress -> global stacked tasks
+        NAS.socket.on('appstore_install_progress', (data) => {
+            if (!data || !data.task_id) return;
+            const stageLabels = {
+                prepare: t('Przygotowywanie'),
+                pull: t('Pobieranie obrazów'),
+                start: t('Uruchamianie'),
+                done: t('Zakończono'),
+                error: t('Błąd'),
+            };
+            const id = `appstore:${data.task_id}`;
+            const title = data.app_id ? `App Store: ${data.app_id}` : 'App Store';
+            const message = data.message || stageLabels[data.stage] || '';
+            if (data.stage === 'done') {
+                NAS.taskProgress.upsert({ id, source: 'App Store', title, percent: 100, message, action: { app: 'app-store' }, status: 'running' });
+                NAS.taskProgress.finish(id, true, message);
+                return;
+            }
+            if (data.stage === 'error') {
+                NAS.taskProgress.upsert({ id, source: 'App Store', title, percent: data.percent || null, message, action: { app: 'app-store' }, status: 'running' });
+                NAS.taskProgress.finish(id, false, message);
+                return;
+            }
+            NAS.taskProgress.upsert({
+                id,
+                source: 'App Store',
+                title,
+                percent: typeof data.percent === 'number' ? data.percent : null,
+                message,
+                action: { app: 'app-store' },
+                status: 'running',
+            });
+        });
+        NAS.socket.on('fileop_paused', (data) => {
+            _updatePauseState(data.paused, data.channel || 'bg');
+        });
+
+        // ── USB hotplug events ──
+        NAS.socket.on('usb_connected', (data) => {
+            const label = data.label || data.dev;
+            const size = data.size ? ` (${data.size})` : '';
+            toast(`${t('USB podłączony:')} ${label}${size}`, 'success');
+            loadNotifications();
+        });
+        NAS.socket.on('usb_disconnected', (data) => {
+            toast(`${t('USB odłączony:')} /dev/${data.dev}`, 'warning');
+            loadNotifications();
+        });
+
+        // ── Duplicate scan events → global tracking + notifications ──
+        NAS._dupScan = NAS._dupScan || { running: false, phase: '', groups: 0, scanned: 0, total: 0 };
+
+        NAS.socket.on('dup_progress', (data) => {
+            NAS._dupScan.running = true;
+            NAS._dupScan.phase = data.phase || '';
+            NAS._dupScan.scanned = data.scanned || 0;
+            NAS._dupScan.total = data.total || 0;
+            // Throttled notif refresh
+            if (!NAS._lastDupNotifRefresh || Date.now() - NAS._lastDupNotifRefresh > 5000) {
+                NAS._lastDupNotifRefresh = Date.now();
+                loadNotifications();
+            }
+        });
+        NAS.socket.on('dup_new_group', (data) => {
+            NAS._dupScan.groups = data.total_groups || (NAS._dupScan.groups + 1);
+        });
+        NAS.socket.on('dup_complete', (data) => {
+            NAS._dupScan.running = false;
+            NAS._dupScan.phase = 'done';
+            NAS._dupScan.completeData = data;
+            loadNotifications();
+            toast(`${t('Duplikaty:')} ${data.groups} ${t('grup')} (${data.duplicates} ${t('plików')}, ${formatBytes(data.size)})`, 'success');
+        });
+        NAS.socket.on('dup_cancelled', (data) => {
+            NAS._dupScan.running = false;
+            NAS._dupScan.phase = 'cancelled';
+            NAS._dupScan.cancelData = data;
+            loadNotifications();
+            toast(t('Skanowanie duplikatów anulowane'), 'info');
+        });
+        NAS.socket.on('dup_error', (data) => {
+            NAS._dupScan.running = false;
+            NAS._dupScan.phase = 'error';
+            NAS._dupScan.errorData = data;
+            loadNotifications();
+            toast(t('Błąd skanowania duplikatów:') + ' ' + (data.error || ''), 'error');
+        });
+    } catch {
+        // Reconnect later
+        setTimeout(connectSocket, 5000);
+    }
+}
+
+
+// ─────────────────────────── Desktop Init ───────────────────────────
+
+let desktopInitialized = false;
+
+async function initDesktop() {
+    if (desktopInitialized) return;
+    desktopInitialized = true;
+
+    document.getElementById('taskbar-hostname');
+    document.getElementById('login-hostname').textContent = NAS.nasName;
+
+    // Show logged-in username in user menu
+    const umName = document.getElementById('um-username');
+    if (umName && NAS.user) {
+        const uname = NAS.user.username || 'admin';
+        umName.textContent = uname.charAt(0).toUpperCase() + uname.slice(1);
+    }
+
+    // Show/hide sudo toggle for admin users
+    _updateSudoUI();
+
+    // Load apps
+    try {
+        NAS.apps = await api('/apps');
+    } catch {
+        NAS.apps = [];
+    }
+
+    // Load desktop icon preferences
+    try {
+        const dPrefs = await api('/desktop-apps');
+        NAS.desktopAppIds = dPrefs.app_ids || null;
+    } catch {
+        NAS.desktopAppIds = null;
+    }
+
+    renderDesktopIcons();
+    renderMenuGrid();
+    connectSocket();
+    loadNotifications();
+    _checkActiveFileOp();
+
+    // Autostart Sticky Notes if enabled
+    if (localStorage.getItem('sn_autostart') === '1') {
+        setTimeout(() => {
+            const snApp = NAS.apps.find(a => a.id === 'sticky-notes');
+            if (snApp && !document.getElementById('sn-panel')) openApp(snApp);
+        }, 500);
+    }
+
+    // Periodic notification check
+    let _notifInterval = setInterval(loadNotifications, 60000);
+
+    // Pause timers when tab is hidden (save CPU/battery)
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+            clearInterval(_clockInterval);
+            clearInterval(_notifInterval);
+        } else {
+            _clockInterval = setInterval(updateClocks, 1000);
+            _notifInterval = setInterval(loadNotifications, 60000);
+            updateClocks();
+            loadNotifications();
+        }
+    });
+}
+
+
+// ─────────────────────────── Modal Dialog Utility ───────────────────────────
+
+function showModal(title, bodyHtml, buttons = []) {
+    return new Promise((resolve) => {
+        let resolved = false;
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        overlay.innerHTML = `
+            <div class="modal">
+                <div class="modal-header">${title}</div>
+                <div class="modal-body">${bodyHtml}</div>
+                <div class="modal-footer"></div>
+            </div>
+        `;
+        const modal = overlay.querySelector('.modal');
+        const footer = overlay.querySelector('.modal-footer');
+
+        function cleanup(val) {
+            if (resolved) return;
+            resolved = true;
+            document.removeEventListener('keydown', onKeyDown);
+            if (overlay.parentNode) overlay.remove();
+            resolve(val);
+        }
+
+        buttons.forEach((btnDef) => {
+            const btn = document.createElement('button');
+            btn.className = `btn ${btnDef.cls || btnDef.class || ''}`;
+            btn.textContent = btnDef.label;
+            btn.addEventListener('click', async () => {
+                if (typeof btnDef.action === 'function') {
+                    try { await btnDef.action(modal); } catch (_) {}
+                }
+                cleanup(btnDef.value !== undefined ? btnDef.value : (typeof btnDef.action === 'function' ? btnDef.label : null));
+            });
+            footer.appendChild(btn);
+        });
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) cleanup(null);
+        });
+
+        const allBtns = footer.querySelectorAll('button');
+        const confirmBtn = allBtns.length ? allBtns[allBtns.length - 1] : null;
+        const input = overlay.querySelector('input');
+
+        function onKeyDown(e) {
+            if (e.key === 'Escape') { e.preventDefault(); cleanup(null); }
+            else if (e.key === 'Enter' && confirmBtn) { e.preventDefault(); confirmBtn.click(); }
+        }
+
+        document.body.appendChild(overlay);
+        document.addEventListener('keydown', onKeyDown);
+        if (input) {
+            input.focus();
+        } else if (confirmBtn) {
+            confirmBtn.focus();
+        }
+    });
+}
+
+async function promptDialog(title, label, defaultValue = '') {
+    let inputValue = defaultValue;
+    const result = await showModal(title, `
+        <label class="modal-label">${label}</label>
+        <input class="modal-input" id="prompt-input" value="${defaultValue}">
+    `, [
+        { label: t('Anuluj'), value: null },
+        { label: t('OK'), cls: 'btn-primary', action: (modal) => {
+            inputValue = modal.querySelector('#prompt-input')?.value || '';
+        }, value: '__OK__' }
+    ]);
+    return result === '__OK__' ? inputValue : null;
+}
+
+async function confirmDialog(titleOrMsg, messageOrCallback) {
+    // Support both: confirmDialog(title, message) -> bool  AND  confirmDialog(message, callback)
+    if (typeof messageOrCallback === 'function') {
+        const ok = await showModal(t('Potwierdzenie'), `<p style="color:var(--text-secondary)">${titleOrMsg}</p>`, [
+            { label: t('Anuluj'), value: false },
+            { label: t('Potwierdź'), cls: 'btn-danger', value: true }
+        ]);
+        if (ok) await messageOrCallback();
+        return ok;
+    }
+    return await showModal(titleOrMsg, `<p style="color:var(--text-secondary)">${messageOrCallback}</p>`, [
+        { label: t('Anuluj'), value: false },
+        { label: t('Potwierdź'), cls: 'btn-danger', value: true }
+    ]);
+}
+
+
+// ─────────────────────────── Init ───────────────────────────
+
+document.addEventListener('DOMContentLoaded', async () => {
+    // Load saved language BEFORE any UI renders
+    await initI18n();
+    translateDOM(document);
+
+    if (await checkSetupNeeded()) {
+        showSetupWizard();
+    } else {
+        tryAutoLogin();
+    }
+});

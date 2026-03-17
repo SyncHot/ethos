@@ -1,0 +1,208 @@
+"""
+EthOS — Resources Monitor Blueprint
+System monitoring with WebSocket real-time updates and history.
+Migrated from standalone resources app.
+"""
+
+import os
+import time
+from flask import Blueprint, jsonify, request
+
+from blueprints.monitor import (
+    get_cpu_info, get_ram_info, get_gpu_info, get_disk_info,
+    get_network_info, get_processes, kill_process, get_usb_devices,
+    get_system_info, get_docker_containers, docker_action,
+    detect_gpu_hardware
+)
+from blueprints.resources_db import (
+    init_db as init_resources_db, save_cpu_data, save_ram_data,
+    save_gpu_data, save_disk_data, save_network_data, save_process_data,
+    save_usb_data, save_docker_data, get_history, cleanup_old_data
+)
+
+resources_bp = Blueprint('resources', __name__, url_prefix='/api/resources')
+
+COLLECT_INTERVAL = int(os.environ.get('COLLECT_INTERVAL', 3))       # fast: CPU, RAM, network
+COLLECT_INTERVAL_SLOW = int(os.environ.get('COLLECT_INTERVAL_SLOW', 15))  # slow: disks, docker, USB, processes
+CLEANUP_INTERVAL = int(os.environ.get('CLEANUP_INTERVAL', 3600))
+DATA_RETENTION_DAYS = int(os.environ.get('DATA_RETENTION_DAYS', 7))
+
+
+# ---- REST API ----
+
+@resources_bp.route('/system')
+def api_system():
+    return jsonify(get_system_info())
+
+
+@resources_bp.route('/cpu')
+def api_cpu():
+    return jsonify(get_cpu_info())
+
+
+@resources_bp.route('/ram')
+def api_ram():
+    return jsonify(get_ram_info())
+
+
+@resources_bp.route('/gpu')
+def api_gpu():
+    return jsonify(get_gpu_info())
+
+
+@resources_bp.route('/gpu/detect')
+def api_gpu_detect():
+    return jsonify(detect_gpu_hardware())
+
+
+@resources_bp.route('/disks')
+def api_disks():
+    return jsonify(get_disk_info())
+
+
+@resources_bp.route('/network')
+def api_network():
+    return jsonify(get_network_info())
+
+
+@resources_bp.route('/processes')
+def api_processes():
+    sort_by = request.args.get('sort', 'cpu')
+    limit = int(request.args.get('limit', 30))
+    return jsonify(get_processes(sort_by, limit))
+
+
+@resources_bp.route('/processes/kill', methods=['POST'])
+def api_kill_process():
+    data = request.get_json()
+    pid = data.get('pid')
+    signal = data.get('signal', 'TERM')
+    if pid is None:
+        return jsonify({'success': False, 'message': 'PID required'}), 400
+    result = kill_process(int(pid), signal)
+    return jsonify(result)
+
+
+@resources_bp.route('/usb')
+def api_usb():
+    return jsonify(get_usb_devices())
+
+
+@resources_bp.route('/docker')
+def api_docker():
+    return jsonify(get_docker_containers())
+
+
+@resources_bp.route('/docker/action', methods=['POST'])
+def api_docker_action():
+    data = request.get_json()
+    container_id = data.get('container_id')
+    action = data.get('action', 'stop')
+    if not container_id:
+        return jsonify({'success': False, 'message': 'container_id required'}), 400
+    result = docker_action(container_id, action)
+    return jsonify(result)
+
+
+@resources_bp.route('/history/<table>')
+def api_history(table):
+    allowed = ['cpu_history', 'ram_history', 'gpu_history', 'disk_history', 'network_history', 'process_history', 'docker_history']
+    if table not in allowed:
+        return jsonify({'error': 'Invalid table'}), 400
+    hours = int(request.args.get('hours', 1))
+    limit = int(request.args.get('limit', 500))
+    return jsonify(get_history(table, hours, limit))
+
+
+@resources_bp.route('/all')
+def api_all():
+    return jsonify({
+        'system': get_system_info(),
+        'cpu': get_cpu_info(),
+        'ram': get_ram_info(),
+        'gpu': get_gpu_info(),
+        'disks': get_disk_info(),
+        'network': get_network_info(),
+        'processes': get_processes('cpu', 30),
+        'usb': get_usb_devices(),
+        'docker': get_docker_containers()
+    })
+
+
+# ---- Background collector (called from main app) ----
+
+def resources_background_collector(socketio):
+    """Collect and broadcast data periodically. Called as a socketio background task.
+
+    Uses tiered intervals:
+    - Fast (every COLLECT_INTERVAL=3s): CPU, RAM, network — cheap psutil calls
+    - Slow (every COLLECT_INTERVAL_SLOW=15s): disks, docker, USB, processes, GPU — subprocess calls
+    """
+    last_cleanup = time.time()
+    last_slow = 0  # force slow collection on first tick
+
+    # Cached slow-changing data
+    _disks = []
+    _gpu = []
+    _processes = []
+    _usb = []
+    _docker = []
+
+    while True:
+        try:
+            now = time.time()
+            do_slow = (now - last_slow) >= COLLECT_INTERVAL_SLOW
+
+            # Fast — always collected (non-blocking, ~0ms each)
+            cpu = get_cpu_info()
+            ram = get_ram_info()
+            network = get_network_info()
+
+            # Slow — collected less frequently (subprocess calls)
+            if do_slow:
+                last_slow = now
+                _gpu = get_gpu_info()
+                _disks = get_disk_info()
+                _processes = get_processes('cpu', 30)
+                _usb = get_usb_devices()
+                _docker = get_docker_containers()
+
+            # Save to DB
+            try:
+                save_cpu_data(cpu)
+                save_ram_data(ram)
+                save_network_data(network)
+                if do_slow:
+                    if _gpu:
+                        save_gpu_data(_gpu)
+                    save_disk_data(_disks)
+                    save_process_data(_processes)
+                    save_usb_data(_usb)
+                    if _docker:
+                        save_docker_data(_docker)
+            except Exception as e:
+                print(f"Resources DB save error: {e}")
+
+            # Broadcast via WebSocket (always include latest cached slow data)
+            data = {
+                'cpu': cpu,
+                'ram': ram,
+                'gpu': _gpu,
+                'disks': _disks,
+                'network': network,
+                'processes': _processes,
+                'usb': _usb,
+                'docker': _docker,
+                'timestamp': now
+            }
+            socketio.emit('resources_update', data)
+
+            # Cleanup old data
+            if now - last_cleanup > CLEANUP_INTERVAL:
+                cleanup_old_data(DATA_RETENTION_DAYS)
+                last_cleanup = now
+
+        except Exception as e:
+            print(f"Resources collector error: {e}")
+
+        socketio.sleep(COLLECT_INTERVAL)

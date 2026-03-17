@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Pliki — EthOS</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0a0a0f;--bg2:#111118;--bg3:#1a1a24;--border:#1e1e2e;--accent:#8b5cf6;--text:#e2e8f0;--muted:#64748b;--danger:#ef4444}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;-webkit-tap-highlight-color:transparent;overflow:hidden;height:100vh;display:flex;flex-direction:column}
+.toolbar{display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg2);border-bottom:1px solid var(--border);flex-shrink:0}
+.toolbar .back-btn{background:none;border:none;color:var(--muted);font-size:20px;padding:6px 8px;cursor:pointer;border-radius:6px}
+.toolbar .back-btn:active{background:var(--bg3)}
+.breadcrumb{flex:1;display:flex;align-items:center;gap:4px;overflow-x:auto;white-space:nowrap;font-size:13px;color:var(--muted);scrollbar-width:none}
+.breadcrumb::-webkit-scrollbar{display:none}
+.breadcrumb span{cursor:pointer;padding:4px 6px;border-radius:4px;flex-shrink:0}
+.breadcrumb span:active{background:var(--bg3)}
+.breadcrumb span.current{color:var(--text);font-weight:600}
+.toolbar-actions{display:flex;gap:4px}
+.toolbar-actions button{background:none;border:none;color:var(--muted);font-size:16px;padding:8px;border-radius:6px;cursor:pointer}
+.toolbar-actions button:active{background:var(--bg3)}
+
+.search-bar{padding:8px 12px;background:var(--bg2);border-bottom:1px solid var(--border);display:none;flex-shrink:0}
+.search-bar.active{display:flex}
+.search-bar input{flex:1;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:8px;font-size:14px;outline:none}
+.search-bar input:focus{border-color:var(--accent)}
+.search-bar button{background:none;border:none;color:var(--muted);padding:8px;font-size:16px;cursor:pointer}
+
+.file-list{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.file-item{display:flex;align-items:center;gap:12px;padding:12px 16px;cursor:pointer;border-bottom:1px solid #ffffff08;transition:background .1s}
+.file-item:active{background:var(--bg3)}
+.file-item.selected{background:#8b5cf615}
+.file-icon{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
+.file-icon.dir{background:#f59e0b20;color:#f59e0b}
+.file-icon.img{background:#ec489920;color:#ec4899}
+.file-icon.vid{background:#8b5cf620;color:#8b5cf6}
+.file-icon.doc{background:#3b82f620;color:#3b82f6}
+.file-icon.arc{background:#22c55e20;color:#22c55e}
+.file-icon.oth{background:#64748b20;color:#64748b}
+.file-info{flex:1;min-width:0}
+.file-name{font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.file-meta{font-size:11px;color:var(--muted);margin-top:2px}
+.file-thumb{width:40px;height:40px;border-radius:8px;object-fit:cover}
+
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--muted);gap:12px}
+.empty i{font-size:48px;opacity:.3}
+.loader{display:flex;align-items:center;justify-content:center;padding:24px}
+.spinner{width:28px;height:28px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+.fab{position:fixed;bottom:20px;right:20px;width:56px;height:56px;border-radius:28px;background:linear-gradient(135deg,#8b5cf6,#6366f1);color:#fff;border:none;font-size:22px;box-shadow:0 4px 20px #0008;cursor:pointer;z-index:10;display:flex;align-items:center;justify-content:center}
+.fab:active{transform:scale(.92)}
+
+/* Action sheet */
+.action-sheet-overlay{position:fixed;inset:0;background:#00000088;z-index:100;display:none;align-items:flex-end;justify-content:center}
+.action-sheet-overlay.show{display:flex}
+.action-sheet{background:var(--bg2);border-radius:16px 16px 0 0;width:100%;max-width:500px;max-height:60vh;overflow-y:auto;padding:8px 0 env(safe-area-inset-bottom,16px)}
+.action-sheet-handle{width:36px;height:4px;background:var(--border);border-radius:2px;margin:8px auto 12px}
+.action-sheet-item{display:flex;align-items:center;gap:14px;padding:14px 20px;font-size:15px;color:var(--text);cursor:pointer}
+.action-sheet-item:active{background:var(--bg3)}
+.action-sheet-item i{width:20px;text-align:center;color:var(--muted);font-size:16px}
+.action-sheet-item.danger{color:var(--danger)}
+.action-sheet-item.danger i{color:var(--danger)}
+.action-sheet-sep{height:1px;background:var(--border);margin:4px 0}
+
+/* Image preview */
+.preview-overlay{position:fixed;inset:0;background:#000e;z-index:200;display:none;flex-direction:column}
+.preview-overlay.show{display:flex}
+.preview-toolbar{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;flex-shrink:0}
+.preview-toolbar .pv-name{font-size:14px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;margin:0 12px}
+.preview-toolbar button{background:none;border:none;color:var(--muted);font-size:18px;padding:8px;cursor:pointer}
+.preview-content{flex:1;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.preview-content img{max-width:100%;max-height:100%;object-fit:contain}
+.preview-content video{max-width:100%;max-height:100%}
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <button class="back-btn" id="btnBack"><i class="fa-solid fa-chevron-left"></i></button>
+  <div class="breadcrumb" id="breadcrumb"></div>
+  <div class="toolbar-actions">
+    <button id="btnSearch"><i class="fa-solid fa-magnifying-glass"></i></button>
+    <button id="btnRefresh"><i class="fa-solid fa-arrows-rotate"></i></button>
+  </div>
+</div>
+
+<div class="search-bar" id="searchBar">
+  <input type="text" id="searchInput" placeholder="Szukaj…">
+  <button id="btnSearchClose"><i class="fa-solid fa-xmark"></i></button>
+</div>
+
+<div class="file-list" id="fileList"></div>
+
+<button class="fab" id="fabUpload"><i class="fa-solid fa-plus"></i></button>
+
+<div class="action-sheet-overlay" id="actionSheet">
+  <div class="action-sheet" id="actionSheetContent"></div>
+</div>
+
+<div class="preview-overlay" id="previewOverlay">
+  <div class="preview-toolbar">
+    <button id="pvClose"><i class="fa-solid fa-xmark"></i></button>
+    <span class="pv-name" id="pvName"></span>
+    <button id="pvDownload"><i class="fa-solid fa-download"></i></button>
+  </div>
+  <div class="preview-content" id="pvContent"></div>
+</div>
+
+<script>
+const params = new URLSearchParams(location.search);
+const TOKEN = params.get('token') || '';
+const BASE = '';
+
+let currentPath = '/';
+let items = [];
+let searchQuery = '';
+
+// ── API ──
+async function apiFetch(path, opts = {}) {
+  const headers = { Authorization: 'Bearer ' + TOKEN, ...(opts.headers || {}) };
+  if (opts.body && typeof opts.body === 'object' && !(opts.body instanceof FormData)) {
+    headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(opts.body);
+  }
+  const r = await fetch(BASE + path, { ...opts, headers });
+  if (!r.ok) throw new Error(r.statusText);
+  return r.json();
+}
+function authUrl(u) { return u + (u.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(TOKEN); }
+
+// ── File icons ──
+function fileIcon(item) {
+  if (item.is_dir) return { icon: 'fa-folder', cls: 'dir' };
+  const ext = item.name.split('.').pop().toLowerCase();
+  const imgs = ['jpg','jpeg','png','gif','bmp','webp','svg','heic','heif','avif'];
+  const vids = ['mp4','mov','avi','mkv','webm','m4v','3gp'];
+  const docs = ['pdf','doc','docx','txt','xls','xlsx','ppt','pptx','odt','csv'];
+  const arcs = ['zip','tar','gz','rar','7z','bz2'];
+  if (imgs.includes(ext)) return { icon: 'fa-image', cls: 'img' };
+  if (vids.includes(ext)) return { icon: 'fa-film', cls: 'vid' };
+  if (docs.includes(ext)) return { icon: 'fa-file-lines', cls: 'doc' };
+  if (arcs.includes(ext)) return { icon: 'fa-file-zipper', cls: 'arc' };
+  return { icon: 'fa-file', cls: 'oth' };
+}
+
+function isImage(name) {
+  return /\.(jpg|jpeg|png|gif|bmp|webp|svg|heic|heif|avif)$/i.test(name);
+}
+function isVideo(name) {
+  return /\.(mp4|mov|avi|mkv|webm|m4v|3gp)$/i.test(name);
+}
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes/1024).toFixed(1) + ' KB';
+  if (bytes < 1073741824) return (bytes/1048576).toFixed(1) + ' MB';
+  return (bytes/1073741824).toFixed(2) + ' GB';
+}
+function formatDate(ts) {
+  return new Date(ts*1000).toLocaleDateString('pl-PL',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
+}
+
+// ── Navigation ──
+async function navigateTo(path) {
+  currentPath = path;
+  renderBreadcrumb();
+  const list = document.getElementById('fileList');
+  list.innerHTML = '<div class="loader"><div class="spinner"></div></div>';
+  try {
+    const data = await apiFetch('/api/files/list?path=' + encodeURIComponent(path));
+    items = data.items || data;
+    items.sort((a,b) => {
+      if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+      return a.name.localeCompare(b.name, 'pl');
+    });
+    renderList();
+  } catch(e) {
+    list.innerHTML = '<div class="empty"><i class="fa-solid fa-triangle-exclamation"></i><p>Błąd: '+e.message+'</p></div>';
+  }
+}
+
+function renderBreadcrumb() {
+  const bc = document.getElementById('breadcrumb');
+  const parts = currentPath.split('/').filter(Boolean);
+  let html = '<span data-path="/">/ Root</span>';
+  let acc = '';
+  parts.forEach((p, i) => {
+    acc += '/' + p;
+    const isCurrent = i === parts.length - 1;
+    html += '<i class="fa-solid fa-chevron-right" style="font-size:10px;color:var(--muted);flex-shrink:0"></i>';
+    html += `<span data-path="${acc}" class="${isCurrent?'current':''}">${p}</span>`;
+  });
+  bc.innerHTML = html;
+  bc.querySelectorAll('span').forEach(s => s.addEventListener('click', () => navigateTo(s.dataset.path)));
+  bc.scrollLeft = bc.scrollWidth;
+}
+
+function renderList() {
+  const list = document.getElementById('fileList');
+  let filtered = items;
+  if (searchQuery) {
+    const q = searchQuery.toLowerCase();
+    filtered = items.filter(i => i.name.toLowerCase().includes(q));
+  }
+  if (!filtered.length) {
+    list.innerHTML = '<div class="empty"><i class="fa-solid fa-folder-open"></i><p>Pusty folder</p></div>';
+    return;
+  }
+  list.innerHTML = filtered.map(item => {
+    const fi = fileIcon(item);
+    const fullPath = currentPath === '/' ? '/'+item.name : currentPath+'/'+item.name;
+    const thumbSrc = !item.is_dir && isImage(item.name) ? authUrl(`/api/files/preview?path=${encodeURIComponent(fullPath)}&w=80&h=80`) : '';
+    return `
+      <div class="file-item" data-name="${esc(item.name)}" data-isdir="${item.is_dir}">
+        ${thumbSrc
+          ? `<img class="file-thumb" src="${thumbSrc}" loading="lazy" alt="">`
+          : `<div class="file-icon ${fi.cls}"><i class="fa-solid ${fi.icon}"></i></div>`
+        }
+        <div class="file-info">
+          <div class="file-name">${esc(item.name)}</div>
+          <div class="file-meta">${item.is_dir ? 'Folder' : formatSize(item.size)} · ${formatDate(item.modified)}</div>
+        </div>
+      </div>`;
+  }).join('');
+
+  list.querySelectorAll('.file-item').forEach(el => {
+    el.addEventListener('click', () => {
+      const name = el.dataset.name;
+      const isDir = el.dataset.isdir === 'true';
+      if (isDir) {
+        navigateTo(currentPath === '/' ? '/'+name : currentPath+'/'+name);
+      } else {
+        previewFile(name);
+      }
+    });
+    el.addEventListener('contextmenu', e => { e.preventDefault(); showActions(el.dataset.name); });
+    // Long press for mobile
+    let timer;
+    el.addEventListener('touchstart', () => { timer = setTimeout(() => showActions(el.dataset.name), 500); }, {passive:true});
+    el.addEventListener('touchend', () => clearTimeout(timer), {passive:true});
+    el.addEventListener('touchmove', () => clearTimeout(timer), {passive:true});
+  });
+}
+
+function esc(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+
+// ── Preview ──
+function previewFile(name) {
+  const fullPath = currentPath === '/' ? '/'+name : currentPath+'/'+name;
+  const overlay = document.getElementById('previewOverlay');
+  const content = document.getElementById('pvContent');
+  document.getElementById('pvName').textContent = name;
+
+  if (isImage(name)) {
+    content.innerHTML = `<img src="${authUrl(`/api/files/download?path=${encodeURIComponent(fullPath)}`)}" alt="${esc(name)}">`;
+    overlay.classList.add('show');
+  } else if (isVideo(name)) {
+    content.innerHTML = `<video src="${authUrl(`/api/files/download?path=${encodeURIComponent(fullPath)}`)}" controls autoplay playsinline></video>`;
+    overlay.classList.add('show');
+  } else {
+    // Download other files
+    downloadFile(fullPath, name);
+  }
+
+  document.getElementById('pvDownload').onclick = () => downloadFile(fullPath, name);
+}
+
+function downloadFile(path, name) {
+  const a = document.createElement('a');
+  a.href = authUrl(`/api/files/download?path=${encodeURIComponent(path)}`);
+  a.download = name;
+  a.click();
+}
+
+// ── Action sheet ──
+function showActions(name) {
+  const item = items.find(i => i.name === name);
+  if (!item) return;
+  const fullPath = currentPath === '/' ? '/'+name : currentPath+'/'+name;
+  const gallerySources = window._gallerySources || [];
+  const isGallery = item.is_dir && gallerySources.some(s => s.path === fullPath);
+
+  let actions = [];
+  if (item.is_dir) {
+    actions.push({ icon: 'fa-folder-open', label: 'Otwórz', action: () => navigateTo(fullPath) });
+  } else {
+    actions.push({ icon: 'fa-eye', label: 'Podgląd', action: () => previewFile(name) });
+  }
+  actions.push({ icon: 'fa-download', label: 'Pobierz', action: () => downloadFile(fullPath, name) });
+  actions.push({ sep: true });
+  if (item.is_dir) {
+    if (isGallery) {
+      actions.push({ icon: 'fa-images', label: 'Usuń z galerii', cls: 'danger', action: async () => {
+        await apiFetch('/api/gallery/folders', { method:'DELETE', body:{path:fullPath} });
+        loadGallerySources();
+      }});
+    } else {
+      actions.push({ icon: 'fa-images', label: 'Oznacz jako multimedialny', action: async () => {
+        await apiFetch('/api/gallery/folders', { method:'POST', body:{path:fullPath, label:name} });
+        loadGallerySources();
+      }});
+    }
+  }
+  actions.push({ sep: true });
+  actions.push({ icon: 'fa-trash', label: 'Usuń', cls: 'danger', action: async () => {
+    if (confirm('Usunąć ' + name + '?')) {
+      await apiFetch('/api/files/delete', { method:'POST', body:{path:fullPath} });
+      navigateTo(currentPath);
+    }
+  }});
+
+  const sheet = document.getElementById('actionSheetContent');
+  sheet.innerHTML = '<div class="action-sheet-handle"></div>' +
+    `<div style="padding:8px 20px 4px;font-size:13px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(name)}</div>` +
+    actions.map(a => {
+      if (a.sep) return '<div class="action-sheet-sep"></div>';
+      return `<div class="action-sheet-item ${a.cls||''}" data-idx="${actions.indexOf(a)}"><i class="fa-solid ${a.icon}"></i>${a.label}</div>`;
+    }).join('');
+
+  sheet.querySelectorAll('.action-sheet-item').forEach(el => {
+    el.addEventListener('click', () => {
+      hideActions();
+      const idx = parseInt(el.dataset.idx);
+      if (actions[idx]?.action) actions[idx].action();
+    });
+  });
+
+  const overlay = document.getElementById('actionSheet');
+  overlay.classList.add('show');
+  overlay.addEventListener('click', e => { if (e.target === overlay) hideActions(); });
+}
+function hideActions() { document.getElementById('actionSheet').classList.remove('show'); }
+
+// ── Upload FAB ──
+document.getElementById('fabUpload').addEventListener('click', () => {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.multiple = true;
+  input.onchange = async () => {
+    const fd = new FormData();
+    for (const f of input.files) fd.append('files', f);
+    fd.append('path', currentPath);
+    try {
+      await fetch('/api/files/upload', { method:'POST', headers:{ Authorization:'Bearer '+TOKEN }, body:fd });
+      navigateTo(currentPath);
+    } catch(e) { alert('Błąd: '+e.message); }
+  };
+  input.click();
+});
+
+// ── Search ──
+document.getElementById('btnSearch').addEventListener('click', () => {
+  document.getElementById('searchBar').classList.add('active');
+  document.getElementById('searchInput').focus();
+});
+document.getElementById('btnSearchClose').addEventListener('click', () => {
+  document.getElementById('searchBar').classList.remove('active');
+  document.getElementById('searchInput').value = '';
+  searchQuery = '';
+  renderList();
+});
+document.getElementById('searchInput').addEventListener('input', e => {
+  searchQuery = e.target.value;
+  renderList();
+});
+
+// ── Back button ──
+document.getElementById('btnBack').addEventListener('click', () => {
+  if (currentPath === '/') {
+    if (window.AndroidBridge) window.AndroidBridge.goBack();
+    return;
+  }
+  const parent = currentPath.split('/').slice(0,-1).join('/') || '/';
+  navigateTo(parent);
+});
+document.getElementById('btnRefresh').addEventListener('click', () => navigateTo(currentPath));
+
+// ── Preview close ──
+document.getElementById('pvClose').addEventListener('click', () => {
+  document.getElementById('previewOverlay').classList.remove('show');
+  document.getElementById('pvContent').innerHTML = '';
+});
+
+// ── Gallery sources (for marking folders) ──
+async function loadGallerySources() {
+  try { window._gallerySources = await apiFetch('/api/gallery/folders'); } catch(e) { window._gallerySources = []; }
+}
+
+// ── Init ──
+loadGallerySources();
+navigateTo('/');
+
+// Back hardware key
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' || e.key === 'GoBack') {
+    if (document.getElementById('previewOverlay').classList.contains('show')) {
+      document.getElementById('previewOverlay').classList.remove('show');
+    } else if (currentPath !== '/') {
+      navigateTo(currentPath.split('/').slice(0,-1).join('/') || '/');
+    }
+  }
+});
+</script>
+</body>
+</html>

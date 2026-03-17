@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Galeria — EthOS</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0a0a0f;--bg2:#111118;--bg3:#1a1a24;--border:#1e1e2e;--accent:#ec4899;--text:#e2e8f0;--muted:#64748b}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;-webkit-tap-highlight-color:transparent;overflow:hidden;height:100vh;display:flex;flex-direction:column}
+
+/* Top bar */
+.topbar{display:flex;align-items:center;gap:6px;padding:8px 12px;background:var(--bg2);border-bottom:1px solid var(--border);flex-shrink:0}
+.topbar h1{font-size:16px;font-weight:700;flex:1;background:linear-gradient(135deg,#ec4899,#a855f7);-webkit-background-clip:text;-webkit-text-fill-color:transparent;white-space:nowrap}
+.topbar button{background:none;border:none;color:var(--muted);font-size:15px;padding:6px 8px;border-radius:6px;cursor:pointer;flex-shrink:0}
+.topbar button:active{background:var(--bg3)}
+
+/* Tabs */
+.tabs{display:flex;background:var(--bg2);border-bottom:1px solid var(--border);flex-shrink:0;padding:0 4px}
+.tab{flex:1;padding:8px 2px;text-align:center;font-size:10px;font-weight:600;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;transition:.2s;min-width:0;overflow:hidden}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.tab i{display:block;font-size:16px;margin-bottom:2px}
+.tab-label{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media(max-width:380px){.tab-label{display:none}.tab{padding:10px 2px}.tab i{margin-bottom:0}}
+
+/* Filter chips */
+.filters{display:flex;gap:6px;padding:6px 12px;flex-shrink:0;overflow-x:auto;scrollbar-width:none}
+.filters::-webkit-scrollbar{display:none}
+.chip{padding:5px 12px;border-radius:20px;font-size:11px;font-weight:600;color:var(--muted);background:var(--bg3);border:1px solid transparent;cursor:pointer;white-space:nowrap;flex-shrink:0}
+.chip.active{color:var(--accent);background:#ec489918;border-color:#ec489944}
+.chip:active{opacity:.7}
+
+/* Grid */
+.content{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:2px;padding:2px}
+.grid-item{position:relative;aspect-ratio:1;overflow:hidden;cursor:pointer;background:var(--bg3)}
+.grid-item img{width:100%;height:100%;object-fit:cover;display:block}
+.grid-item .vid-badge{position:absolute;bottom:6px;right:6px;background:#000a;padding:2px 6px;border-radius:4px;font-size:10px;color:#fff;display:flex;align-items:center;gap:4px}
+.grid-item .vid-badge i{font-size:8px}
+
+/* Albums */
+.albums{display:grid;grid-template-columns:repeat(2,1fr);gap:6px;padding:6px}
+.album-card{border-radius:10px;overflow:hidden;background:var(--bg3);cursor:pointer}
+.album-card:active{opacity:.85}
+.album-cover{aspect-ratio:4/3;position:relative}
+.album-cover img{width:100%;height:100%;object-fit:cover;display:block}
+.album-info{position:absolute;bottom:0;left:0;right:0;background:linear-gradient(transparent,#000c);padding:20px 8px 6px}
+.album-name{font-size:12px;font-weight:600;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.album-count{font-size:10px;color:#fff9}
+
+/* Timeline groups */
+.timeline-group{padding:0 8px;margin-bottom:6px}
+.timeline-header{font-size:13px;font-weight:700;color:var(--text);padding:10px 0 4px;position:sticky;top:0;background:var(--bg);z-index:2}
+.timeline-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:2px}
+.timeline-grid .grid-item{border-radius:4px}
+
+/* Empty/loader */
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--muted);gap:10px;padding:20px;text-align:center}
+.empty i{font-size:40px;opacity:.3}
+.empty p{margin:0;font-size:13px}
+.loader{display:flex;align-items:center;justify-content:center;padding:24px}
+.spinner{width:28px;height:28px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* Lightbox */
+.lightbox{position:fixed;inset:0;background:#000;z-index:100;display:none;flex-direction:column}
+.lightbox.show{display:flex}
+.lb-toolbar{display:flex;align-items:center;padding:8px 6px;background:#000c;position:absolute;top:0;left:0;right:0;z-index:2;gap:0}
+.lb-toolbar button{background:none;border:none;color:var(--text);font-size:16px;padding:6px;cursor:pointer;flex-shrink:0}
+.lb-toolbar .lb-name{flex:1;font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0 4px;min-width:0}
+.lb-toolbar .lb-counter{font-size:10px;color:var(--muted);flex-shrink:0;margin-right:4px}
+.lb-content{flex:1;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative}
+.lb-content img{max-width:100%;max-height:100%;object-fit:contain;user-select:none}
+.lb-content video{max-width:100%;max-height:100%}
+.lb-nav{position:absolute;top:50%;transform:translateY(-50%);background:#0008;border:none;color:#fff;width:40px;height:40px;border-radius:50%;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:3}
+.lb-prev{left:8px}
+.lb-next{right:8px}
+
+/* EXIF info drawer */
+.exif-drawer{position:absolute;bottom:0;left:0;right:0;background:var(--bg2);border-radius:16px 16px 0 0;max-height:50vh;overflow-y:auto;z-index:5;transform:translateY(100%);transition:transform .3s;padding:16px}
+.exif-drawer.show{transform:translateY(0)}
+.exif-drawer table{width:100%;font-size:12px}
+.exif-drawer td{padding:6px 8px;border-bottom:1px solid var(--border)}
+.exif-drawer td:first-child{color:var(--muted);white-space:nowrap;width:90px}
+
+/* Load more */
+.load-more{padding:16px;text-align:center}
+.load-more button{background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:10px 24px;border-radius:8px;font-size:13px;cursor:pointer}
+.load-more button:active{background:var(--accent);color:#fff}
+
+/* Swipe action hints */
+.swipe-hint{position:fixed;left:50%;transform:translateX(-50%);padding:12px 24px;border-radius:12px;font-size:14px;font-weight:700;z-index:110;pointer-events:none;opacity:0;transition:opacity .15s,transform .15s;display:flex;align-items:center;gap:8px}
+.swipe-hint.top{top:80px;background:#ef4444cc;color:#fff;transform:translateX(-50%) translateY(10px)}
+.swipe-hint.bottom{bottom:40px;background:#f59e0bcc;color:#fff;transform:translateX(-50%) translateY(-10px)}
+.swipe-hint.visible{opacity:1}
+.swipe-hint.top.visible{transform:translateX(-50%) translateY(0)}
+.swipe-hint.bottom.visible{transform:translateX(-50%) translateY(0)}
+.swipe-hint.confirm{animation:swipeConfirm .5s ease-out forwards}
+@keyframes swipeConfirm{0%{opacity:1;transform:translateX(-50%) scale(1)}50%{opacity:1;transform:translateX(-50%) scale(1.15)}100%{opacity:0;transform:translateX(-50%) scale(0.8)}}
+
+/* Delete animation */
+.lb-content.swipe-delete img,.lb-content.swipe-delete video{transition:transform .35s ease-out,opacity .35s;transform:translateY(-120vh);opacity:0}
+/* Favorite animation */
+.lb-content.swipe-fav img,.lb-content.swipe-fav video{transition:transform .35s ease-out,opacity .35s;transform:translateY(80vh);opacity:0}
+
+/* Favorite star in grid */
+.grid-item .fav-star{position:absolute;top:4px;right:4px;color:#f59e0b;font-size:12px;text-shadow:0 1px 3px #0008;z-index:1}
+
+/* Fav active in lightbox toolbar */
+.lb-toolbar button.is-fav{color:#f59e0b}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1><i class="fa-solid fa-images"></i> Galeria</h1>
+  <button id="btnSearch"><i class="fa-solid fa-magnifying-glass"></i></button>
+  <button id="btnRefresh"><i class="fa-solid fa-arrows-rotate"></i></button>
+</div>
+
+<div class="tabs">
+  <div class="tab active" data-view="grid"><i class="fa-solid fa-grid-2"></i><span class="tab-label">Wszystko</span></div>
+  <div class="tab" data-view="albums"><i class="fa-solid fa-folder-image"></i><span class="tab-label">Albumy</span></div>
+  <div class="tab" data-view="timeline"><i class="fa-solid fa-clock-rotate-left"></i><span class="tab-label">Czas</span></div>
+  <div class="tab" data-view="favorites"><i class="fa-solid fa-star"></i><span class="tab-label">Ulubione</span></div>
+</div>
+
+<div class="filters" id="filters">
+  <div class="chip active" data-type="all">Wszystko</div>
+  <div class="chip" data-type="image">Zdjęcia</div>
+  <div class="chip" data-type="video">Filmy</div>
+</div>
+
+<div class="content" id="content"></div>
+
+<div class="lightbox" id="lightbox">
+  <div class="lb-toolbar">
+    <button id="lbClose"><i class="fa-solid fa-xmark"></i></button>
+    <span class="lb-name" id="lbName"></span>
+    <span class="lb-counter" id="lbCounter"></span>
+    <button id="lbInfo"><i class="fa-solid fa-circle-info"></i></button>
+    <button id="lbFav"><i class="fa-regular fa-star"></i></button>
+    <button id="lbDelete"><i class="fa-solid fa-trash"></i></button>
+    <button id="lbDownload"><i class="fa-solid fa-download"></i></button>
+  </div>
+  <div class="lb-content" id="lbContent"></div>
+  <button class="lb-nav lb-prev" id="lbPrev"><i class="fa-solid fa-chevron-left"></i></button>
+  <button class="lb-nav lb-next" id="lbNext"><i class="fa-solid fa-chevron-right"></i></button>
+  <div class="exif-drawer" id="exifDrawer"></div>
+  <div class="swipe-hint top" id="swipeHintTop"><i class="fa-solid fa-trash"></i> Usuń</div>
+  <div class="swipe-hint bottom" id="swipeHintBottom"><i class="fa-solid fa-star"></i> Ulubione</div>
+</div>
+
+<script>
+const params = new URLSearchParams(location.search);
+const TOKEN = params.get('token') || '';
+const MONTHS = ['','Styczeń','Luty','Marzec','Kwiecień','Maj','Czerwiec','Lipiec','Sierpień','Wrzesień','Październik','Listopad','Grudzień'];
+
+let state = {
+  view: 'grid',
+  type: 'all',
+  items: [],
+  total: 0,
+  offset: 0,
+  PAGE: 60,
+  lbIdx: -1,
+  query: '',
+};
+
+async function apiFetch(path) {
+  const r = await fetch(path, { headers: { Authorization: 'Bearer ' + TOKEN } });
+  if (!r.ok) throw new Error(r.statusText);
+  return r.json();
+}
+function authUrl(u) { return u + (u.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(TOKEN); }
+
+// ── Grid view ──
+async function loadGrid(reset) {
+  if (reset) { state.items = []; state.offset = 0; state.total = 0; }
+  const content = document.getElementById('content');
+  if (reset) content.innerHTML = '<div class="loader"><div class="spinner"></div></div>';
+
+  const p = new URLSearchParams({ offset: state.offset, limit: state.PAGE, sort: 'date_desc', type: state.type });
+  if (state.query) p.set('q', state.query);
+  const data = await apiFetch('/api/gallery/scan?' + p);
+  state.total = data.total;
+  state.items.push(...data.items);
+
+  if (reset) content.innerHTML = '';
+  let grid = content.querySelector('.grid');
+  if (!grid) { grid = document.createElement('div'); grid.className = 'grid'; content.appendChild(grid); }
+
+  data.items.forEach((item, i) => {
+    const idx = state.offset + i;
+    const el = document.createElement('div');
+    el.className = 'grid-item';
+    const isVid = item.type === 'video';
+    const src = isVid
+      ? authUrl(`/api/gallery/video-thumb?path=${encodeURIComponent(item.path)}`)
+      : authUrl(`/api/files/preview?path=${encodeURIComponent(item.path)}&w=200&h=200`);
+    el.innerHTML = `<img loading="lazy" src="${src}" alt="">` +
+      (isVid ? '<div class="vid-badge"><i class="fa-solid fa-play"></i>Video</div>' : '');
+    el.addEventListener('click', () => openLightbox(idx));
+    grid.appendChild(el);
+  });
+
+  // Load more button
+  let lm = content.querySelector('.load-more');
+  if (lm) lm.remove();
+  if (state.items.length < state.total) {
+    lm = document.createElement('div');
+    lm.className = 'load-more';
+    lm.innerHTML = `<button>Załaduj więcej (${state.items.length}/${state.total})</button>`;
+    lm.querySelector('button').addEventListener('click', () => { state.offset += state.PAGE; loadGrid(false); });
+    content.appendChild(lm);
+  }
+
+  if (!state.items.length) {
+    content.innerHTML = '<div class="empty"><i class="fa-solid fa-images"></i><p>Brak mediów</p><p style="font-size:12px">Dodaj foldery w ustawieniach galerii</p></div>';
+  }
+}
+
+// ── Albums ──
+async function loadAlbums() {
+  const content = document.getElementById('content');
+  content.innerHTML = '<div class="loader"><div class="spinner"></div></div>';
+  const data = await apiFetch('/api/gallery/albums');
+  if (!data.length) { content.innerHTML = '<div class="empty"><i class="fa-solid fa-folder-open"></i><p>Brak albumów</p></div>'; return; }
+  content.innerHTML = '<div class="albums">' + data.map(a => `
+    <div class="album-card" data-path="${esc(a.path)}">
+      <div class="album-cover">
+        <img loading="lazy" src="${authUrl(`/api/files/preview?path=${encodeURIComponent(a.cover)}&w=400&h=300`)}" alt="">
+        <div class="album-info">
+          <div class="album-name">${esc(a.name)}</div>
+          <div class="album-count">${a.count} el.</div>
+        </div>
+      </div>
+    </div>
+  `).join('') + '</div>';
+
+  content.querySelectorAll('.album-card').forEach(el => {
+    el.addEventListener('click', () => {
+      // Switch to grid filtered by this album
+      state.view = 'grid';
+      state.type = 'all';
+      document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.view === 'grid'));
+      // Load with subfolder
+      loadAlbumGrid(el.dataset.path);
+    });
+  });
+}
+
+async function loadAlbumGrid(subfolder) {
+  state.items = []; state.offset = 0;
+  const content = document.getElementById('content');
+  content.innerHTML = '<div class="loader"><div class="spinner"></div></div>';
+
+  const p = new URLSearchParams({ offset:0, limit:state.PAGE, sort:'date_desc', type:'all', subfolder });
+  const data = await apiFetch('/api/gallery/scan?' + p);
+  state.total = data.total;
+  state.items = data.items;
+
+  content.innerHTML = '';
+  const grid = document.createElement('div'); grid.className = 'grid'; content.appendChild(grid);
+  data.items.forEach((item, i) => {
+    const el = document.createElement('div');
+    el.className = 'grid-item';
+    const isVid = item.type === 'video';
+    const src = isVid
+      ? authUrl(`/api/gallery/video-thumb?path=${encodeURIComponent(item.path)}`)
+      : authUrl(`/api/files/preview?path=${encodeURIComponent(item.path)}&w=200&h=200`);
+    el.innerHTML = `<img loading="lazy" src="${src}" alt="">`+(isVid?'<div class="vid-badge"><i class="fa-solid fa-play"></i></div>':'');
+    el.addEventListener('click', () => openLightbox(i));
+    grid.appendChild(el);
+  });
+  if (!data.items.length) content.innerHTML = '<div class="empty"><i class="fa-solid fa-images"></i><p>Pusty album</p></div>';
+}
+
+// ── Timeline ──
+async function loadTimeline() {
+  const content = document.getElementById('content');
+  content.innerHTML = '<div class="loader"><div class="spinner"></div></div>';
+  const data = await apiFetch('/api/gallery/timeline');
+  if (!data.length) { content.innerHTML = '<div class="empty"><i class="fa-solid fa-clock-rotate-left"></i><p>Brak danych</p></div>'; return; }
+
+  // Load items for each month group — just show first few
+  let html = '';
+  for (const g of data.slice(0, 24)) {
+    html += `<div class="timeline-group">
+      <div class="timeline-header">${MONTHS[g.month]} ${g.year} <span style="font-size:11px;color:var(--muted);font-weight:400">(${g.count})</span></div>
+      <div class="timeline-grid">
+        <div class="grid-item"><img loading="lazy" src="${authUrl(`/api/files/preview?path=${encodeURIComponent(g.cover)}&w=200&h=200`)}" alt=""></div>
+      </div>
+    </div>`;
+  }
+  content.innerHTML = html;
+}
+
+// ── Lightbox ──
+function openLightbox(idx) {
+  state.lbIdx = idx;
+  renderLightbox();
+}
+
+function renderLightbox() {
+  const lb = document.getElementById('lightbox');
+  const item = state.items[state.lbIdx];
+  if (!item) return;
+
+  const isVid = item.type === 'video';
+  const src = authUrl(`/api/files/download?path=${encodeURIComponent(item.path)}`);
+  document.getElementById('lbName').textContent = item.name;
+  document.getElementById('lbCounter').textContent = `${state.lbIdx+1}/${state.items.length}`;
+  document.getElementById('lbContent').innerHTML = isVid
+    ? `<video src="${src}" controls autoplay playsinline></video>`
+    : `<img src="${src}" alt="">`;
+
+  document.getElementById('lbPrev').style.display = state.lbIdx > 0 ? '' : 'none';
+  document.getElementById('lbNext').style.display = state.lbIdx < state.items.length-1 ? '' : 'none';
+  document.getElementById('exifDrawer').classList.remove('show');
+  lb.classList.add('show');
+  updateFavBtn();
+}
+
+async function updateFavBtn() {
+  const item = state.items[state.lbIdx];
+  if (!item) return;
+  const btn = document.getElementById('lbFav');
+  try {
+    const r = await apiFetch(`/api/gallery/favorites/check?path=${encodeURIComponent(item.path)}`);
+    btn.classList.toggle('is-fav', r.favorite);
+    btn.querySelector('i').className = r.favorite ? 'fa-solid fa-star' : 'fa-regular fa-star';
+  } catch(e) {}
+}
+
+async function toggleFavorite() {
+  const item = state.items[state.lbIdx];
+  if (!item) return;
+  const btn = document.getElementById('lbFav');
+  const isFav = btn.classList.contains('is-fav');
+  try {
+    await fetch(`/api/gallery/favorites`, {
+      method: isFav ? 'DELETE' : 'POST',
+      headers: { 'Authorization': 'Bearer '+TOKEN, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: item.path })
+    });
+    btn.classList.toggle('is-fav', !isFav);
+    btn.querySelector('i').className = !isFav ? 'fa-solid fa-star' : 'fa-regular fa-star';
+  } catch(e) {}
+}
+
+async function deleteCurrentItem() {
+  const item = state.items[state.lbIdx];
+  if (!item) return false;
+  try {
+    const r = await fetch('/api/files/delete', {
+      method: 'DELETE',
+      headers: { 'Authorization': 'Bearer '+TOKEN, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: item.path })
+    });
+    if (!r.ok) return false;
+    state.items.splice(state.lbIdx, 1);
+    state.total--;
+    if (!state.items.length) { closeLightbox(); reload(); return true; }
+    if (state.lbIdx >= state.items.length) state.lbIdx = state.items.length - 1;
+    renderLightbox();
+    return true;
+  } catch(e) { return false; }
+}
+
+function closeLightbox() {
+  document.getElementById('lightbox').classList.remove('show');
+  document.getElementById('lbContent').innerHTML = '';
+  document.getElementById('swipeHintTop').classList.remove('visible','confirm');
+  document.getElementById('swipeHintBottom').classList.remove('visible','confirm');
+}
+
+document.getElementById('lbClose').addEventListener('click', closeLightbox);
+document.getElementById('lbPrev').addEventListener('click', () => { if (state.lbIdx > 0) { state.lbIdx--; renderLightbox(); } });
+document.getElementById('lbNext').addEventListener('click', () => { if (state.lbIdx < state.items.length-1) { state.lbIdx++; renderLightbox(); } });
+document.getElementById('lbDownload').addEventListener('click', () => {
+  const item = state.items[state.lbIdx];
+  if (item) { const a=document.createElement('a'); a.href=authUrl(`/api/files/download?path=${encodeURIComponent(item.path)}`); a.download=item.name; a.click(); }
+});
+document.getElementById('lbFav').addEventListener('click', toggleFavorite);
+document.getElementById('lbDelete').addEventListener('click', async () => {
+  if (confirm('Usunąć to zdjęcie?')) {
+    await deleteCurrentItem();
+  }
+});
+
+// EXIF
+document.getElementById('lbInfo').addEventListener('click', async () => {
+  const drawer = document.getElementById('exifDrawer');
+  if (drawer.classList.contains('show')) { drawer.classList.remove('show'); return; }
+  const item = state.items[state.lbIdx];
+  if (!item) return;
+  drawer.innerHTML = '<div class="loader"><div class="spinner"></div></div>';
+  drawer.classList.add('show');
+  try {
+    const exif = await apiFetch(`/api/gallery/exif?path=${encodeURIComponent(item.path)}`);
+    const rows = [
+      ['Nazwa', item.name],
+      ['Rozmiar', formatSize(item.size)],
+      ['Data', new Date(item.modified*1000).toLocaleString('pl-PL')],
+      exif.width && ['Wymiary', exif.width+'×'+exif.height],
+      exif.Model && ['Aparat', exif.Model],
+      exif.ISOSpeedRatings && ['ISO', exif.ISOSpeedRatings],
+      exif.FNumber && ['Przysłona', 'f/'+exif.FNumber],
+      exif.FocalLength && ['Ogniskowa', exif.FocalLength+'mm'],
+      exif.gps && ['GPS', exif.gps.lat+', '+exif.gps.lon],
+    ].filter(Boolean);
+    drawer.innerHTML = '<div style="padding-bottom:4px;font-weight:600;color:var(--accent)"><i class="fa-solid fa-circle-info"></i> Informacje</div>' +
+      '<table>'+rows.map(([k,v])=>`<tr><td>${k}</td><td>${esc(String(v))}</td></tr>`).join('')+'</table>' +
+      (exif.gps ? `<a href="https://www.google.com/maps?q=${exif.gps.lat},${exif.gps.lon}" target="_blank" style="display:inline-block;margin-top:10px;color:#38bdf8;font-size:12px"><i class="fa-solid fa-map-location-dot"></i> Pokaż na mapie</a>` : '');
+  } catch(e) { drawer.innerHTML = '<p style="color:var(--muted)">Brak danych EXIF</p>'; }
+});
+
+// Swipe in lightbox — horizontal=nav, vertical up=delete, down=favorite
+let touchStartX = 0, touchStartY = 0, swipeActive = false;
+const SWIPE_THRESHOLD = 80;
+const hintTop = document.getElementById('swipeHintTop');
+const hintBottom = document.getElementById('swipeHintBottom');
+const lbContentEl = document.getElementById('lbContent');
+
+lbContentEl.addEventListener('touchstart', e => {
+  touchStartX = e.touches[0].clientX;
+  touchStartY = e.touches[0].clientY;
+  swipeActive = true;
+  hintTop.classList.remove('visible','confirm');
+  hintBottom.classList.remove('visible','confirm');
+}, {passive:true});
+
+lbContentEl.addEventListener('touchmove', e => {
+  if (!swipeActive) return;
+  const dy = e.touches[0].clientY - touchStartY;
+  const dx = e.touches[0].clientX - touchStartX;
+  // Only show hints for vertical swipes
+  if (Math.abs(dy) > 30 && Math.abs(dy) > Math.abs(dx)) {
+    if (dy < 0) {
+      // swiping up → delete hint
+      hintTop.classList.toggle('visible', Math.abs(dy) > SWIPE_THRESHOLD/2);
+      hintBottom.classList.remove('visible');
+      // Move image up slightly for visual feedback
+      const media = lbContentEl.querySelector('img,video');
+      if (media) media.style.transform = `translateY(${Math.max(dy/2, -80)}px)`;
+    } else {
+      // swiping down → favorite hint
+      hintBottom.classList.toggle('visible', dy > SWIPE_THRESHOLD/2);
+      hintTop.classList.remove('visible');
+      const media = lbContentEl.querySelector('img,video');
+      if (media) media.style.transform = `translateY(${Math.min(dy/2, 80)}px)`;
+    }
+  }
+}, {passive:true});
+
+lbContentEl.addEventListener('touchend', async e => {
+  if (!swipeActive) return;
+  swipeActive = false;
+  const dx = e.changedTouches[0].clientX - touchStartX;
+  const dy = e.changedTouches[0].clientY - touchStartY;
+  const media = lbContentEl.querySelector('img,video');
+  if (media) media.style.transform = '';
+
+  // Vertical swipe dominates
+  if (Math.abs(dy) > SWIPE_THRESHOLD && Math.abs(dy) > Math.abs(dx) * 1.2) {
+    if (dy < -SWIPE_THRESHOLD) {
+      // Swipe UP → Delete
+      hintTop.classList.add('confirm');
+      lbContentEl.classList.add('swipe-delete');
+      await new Promise(r => setTimeout(r, 350));
+      const ok = await deleteCurrentItem();
+      lbContentEl.classList.remove('swipe-delete');
+      hintTop.classList.remove('visible','confirm');
+      if (!ok && media) media.style.transform = '';
+    } else if (dy > SWIPE_THRESHOLD) {
+      // Swipe DOWN → Add to favorites
+      hintBottom.classList.add('confirm');
+      lbContentEl.classList.add('swipe-fav');
+      await toggleFavorite();
+      await new Promise(r => setTimeout(r, 400));
+      lbContentEl.classList.remove('swipe-fav');
+      hintBottom.classList.remove('visible','confirm');
+      // Re-render (to restore image position)
+      renderLightbox();
+    }
+  } else if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) {
+    // Horizontal swipe — navigate
+    if (dx > 0 && state.lbIdx > 0) { state.lbIdx--; renderLightbox(); }
+    else if (dx < 0 && state.lbIdx < state.items.length-1) { state.lbIdx++; renderLightbox(); }
+  }
+  hintTop.classList.remove('visible');
+  hintBottom.classList.remove('visible');
+}, {passive:true});
+
+// ── Favorites view ──
+async function loadFavorites() {
+  const content = document.getElementById('content');
+  content.innerHTML = '<div class="loader"><div class="spinner"></div></div>';
+  try {
+    const data = await apiFetch('/api/gallery/favorites');
+    state.items = data.items;
+    state.total = data.total;
+    if (!data.items.length) {
+      content.innerHTML = '<div class="empty"><i class="fa-solid fa-star"></i><p>Brak ulubionych</p><p style="font-size:12px">Przeciągnij zdjęcie w dół w podglądzie aby dodać</p></div>';
+      return;
+    }
+    content.innerHTML = '';
+    const grid = document.createElement('div'); grid.className = 'grid'; content.appendChild(grid);
+    data.items.forEach((item, i) => {
+      const el = document.createElement('div');
+      el.className = 'grid-item';
+      const isVid = item.type === 'video';
+      const src = isVid
+        ? authUrl(`/api/gallery/video-thumb?path=${encodeURIComponent(item.path)}`)
+        : authUrl(`/api/files/preview?path=${encodeURIComponent(item.path)}&w=200&h=200`);
+      el.innerHTML = `<img loading="lazy" src="${src}" alt=""><div class="fav-star"><i class="fa-solid fa-star"></i></div>` +
+        (isVid ? '<div class="vid-badge"><i class="fa-solid fa-play"></i>Video</div>' : '');
+      el.addEventListener('click', () => openLightbox(i));
+      grid.appendChild(el);
+    });
+  } catch(e) {
+    content.innerHTML = '<div class="empty"><i class="fa-solid fa-triangle-exclamation"></i><p>Błąd ładowania</p></div>';
+  }
+}
+
+// ── Tabs ──
+document.querySelectorAll('.tab').forEach(t => {
+  t.addEventListener('click', () => {
+    state.view = t.dataset.view;
+    document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === t));
+    document.getElementById('filters').style.display = (state.view === 'grid') ? '' : 'none';
+    reload();
+  });
+});
+
+// ── Filter chips ──
+document.querySelectorAll('.chip').forEach(c => {
+  c.addEventListener('click', () => {
+    state.type = c.dataset.type;
+    document.querySelectorAll('.chip').forEach(x => x.classList.toggle('active', x === c));
+    reload();
+  });
+});
+
+// ── Search ──
+let searchTimeout;
+document.getElementById('btnSearch').addEventListener('click', () => {
+  const q = prompt('Szukaj:', state.query || '');
+  if (q !== null) { state.query = q; reload(); }
+});
+document.getElementById('btnRefresh').addEventListener('click', () => reload());
+
+function reload() {
+  if (state.view === 'grid') loadGrid(true);
+  else if (state.view === 'albums') loadAlbums();
+  else if (state.view === 'timeline') loadTimeline();
+  else if (state.view === 'favorites') loadFavorites();
+}
+
+function esc(s) { const d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; }
+function formatSize(b) {
+  if(b<1024) return b+' B';
+  if(b<1048576) return (b/1024).toFixed(1)+' KB';
+  if(b<1073741824) return (b/1048576).toFixed(1)+' MB';
+  return (b/1073741824).toFixed(2)+' GB';
+}
+
+// ── Init ──
+loadGrid(true);
+</script>
+</body>
+</html>

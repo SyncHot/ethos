@@ -1,0 +1,1935 @@
+"""
+EthOS — Builder Blueprint
+Build releases and system images from the EthOS web panel.
+All heavy operations run on the host and stream progress via SSE.
+"""
+
+import json
+import logging
+import os
+import re
+import subprocess
+import threading
+import time
+import traceback
+import sys
+from datetime import date, datetime
+from flask import Blueprint, jsonify, request, Response, stream_with_context
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from host import host_run as _host_run_base, host_run_stream as _host_run_stream_base, \
+    app_path, data_path, log_path, q as _q
+from utils import load_json as _load_json, save_json as _save_json, fmt_bytes, register_pkg_routes
+
+builder_bp = Blueprint('builder', __name__, url_prefix='/api/builder')
+
+# ── Logging ──
+LOG_DIR = log_path()
+os.makedirs(LOG_DIR, exist_ok=True)
+
+_logger = logging.getLogger('builder')
+_logger.setLevel(logging.DEBUG)
+_fh = logging.FileHandler(os.path.join(LOG_DIR, 'builder.log'), encoding='utf-8')
+_fh.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
+_logger.addHandler(_fh)
+
+# ── Build State (persistent across SSE reconnects) ──
+_BUILD_STATE_FILE = data_path('builder_state.json')
+_MAX_STATE_LOGS = 500
+
+_build_state = {
+    'status': 'idle',       # idle | building | done | error
+    'build_type': '',       # 'release' | 'image'
+    'percent': 0,
+    'message': '',
+    'logs': [],
+    'start_time': 0,
+    'pid': 0,               # host PID of nsenter process
+    'result': None,         # {success, message, img, iso} on completion
+}
+_build_lock = threading.Lock()
+
+
+def _save_build_state():
+    """Persist build state to disk for crash recovery."""
+    try:
+        _save_json(_BUILD_STATE_FILE, _build_state)
+    except Exception:
+        pass
+
+
+def _load_build_state():
+    """Load build state from disk on startup."""
+    global _build_state
+    try:
+        saved = _load_json(_BUILD_STATE_FILE, None)
+        if saved is None:
+            return
+        if saved.get('status') == 'building':
+            pid = saved.get('pid', 0)
+            if pid and _is_pid_alive(pid):
+                _build_state.update(saved)
+            else:
+                saved['status'] = 'error'
+                saved['message'] = 'Build przerwany (proces zakończony)'
+                saved['result'] = {'success': False, 'message': 'Build przerwany po restarcie'}
+                _build_state.update(saved)
+        else:
+            _build_state.update(saved)
+    except Exception:
+        pass
+
+
+def _is_pid_alive(pid):
+    """Check if a PID is running on the host."""
+    if not pid or pid <= 0:
+        return False
+    try:
+        r = _host_run(f"kill -0 {pid} 2>/dev/null && echo alive", timeout=5)
+        return 'alive' in r.stdout
+    except Exception:
+        return False
+
+
+def _update_build(status=None, percent=None, message=None, log=None, result=None, pid=None):
+    """Thread-safe update of build state."""
+    with _build_lock:
+        if status is not None:
+            _build_state['status'] = status
+        if percent is not None:
+            _build_state['percent'] = percent
+        if message is not None:
+            _build_state['message'] = message
+        if log is not None:
+            _build_state['logs'].append(log)
+            if len(_build_state['logs']) > _MAX_STATE_LOGS:
+                _build_state['logs'] = _build_state['logs'][-_MAX_STATE_LOGS:]
+            _logger.info(log)
+        if result is not None:
+            _build_state['result'] = result
+        if pid is not None:
+            _build_state['pid'] = pid
+        if status:
+            _logger.info('[%s] %s', status, message or '')
+        _save_build_state()
+
+
+def _reset_build(build_type=''):
+    """Reset build state for a new build."""
+    with _build_lock:
+        _build_state.update({
+            'status': 'building',
+            'build_type': build_type,
+            'percent': 0,
+            'message': 'Rozpoczynanie...',
+            'logs': [],
+            'start_time': time.time(),
+            'pid': 0,
+            'result': None,
+        })
+        _save_build_state()
+
+
+# Load saved state on import
+_load_build_state()
+
+# ── Paths ──
+_HOST_NASOS_DIR = None
+
+
+def _get_host_nasos_dir():
+    """Get the host path to the nasos project directory."""
+    global _HOST_NASOS_DIR
+    if _HOST_NASOS_DIR:
+        return _HOST_NASOS_DIR
+    _HOST_NASOS_DIR = app_path()
+    return _HOST_NASOS_DIR
+
+
+# ── Host helpers ──
+
+def _host_run(cmd, timeout=60):
+    return _host_run_base(cmd, timeout=timeout)
+
+
+def _host_run_stream(cmd, track_pid=False):
+    stream = _host_run_stream_base(cmd)
+    if track_pid and hasattr(stream, 'pid') and stream.pid:
+        _update_build(pid=stream.pid)
+    for line in stream:
+        yield line
+
+
+def _sse(data):
+    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+# ═══════════════════════════════════════════════════════════
+#  API — Get current status / info
+# ═══════════════════════════════════════════════════════════
+
+@builder_bp.route('/info')
+def builder_info():
+    """Return version info, existing releases and images."""
+    nasos = _get_host_nasos_dir()
+
+    # Read version.json
+    version_data = {}
+    vf = app_path('backend/version.json')
+    if os.path.isfile(vf):
+        with open(vf) as f:
+            version_data = json.load(f)
+
+    # List existing releases
+    releases = []
+    releases_dir = data_path('releases')
+    host_releases_dir = f"{nasos}/installer/releases"
+    # Check both local and host paths
+    for rdir in [releases_dir, app_path('installer/releases')]:
+        pass  # we'll use host_run for this
+
+    r = _host_run(f"ls -la {nasos}/installer/releases/*.tar.gz 2>/dev/null | awk '{{print $5, $9}}'")
+    if r.returncode == 0 and r.stdout.strip():
+        for line in r.stdout.strip().splitlines():
+            parts = line.split(None, 1)
+            if len(parts) == 2:
+                size = int(parts[0]) if parts[0].isdigit() else 0
+                path = parts[1]
+                name = os.path.basename(path)
+                releases.append({'name': name, 'size': size, 'path': path})
+
+    # List latest.json
+    latest = None
+    r2 = _host_run(f"cat {nasos}/installer/releases/latest.json 2>/dev/null")
+    if r2.returncode == 0 and r2.stdout.strip():
+        try:
+            latest = json.loads(r2.stdout)
+        except Exception:
+            pass
+
+    # List existing images
+    images = []
+    r3 = _host_run(f"ls -la {nasos}/installer/images/ethos-*.img 2>/dev/null | awk '{{print $5, $6, $7, $8, $9}}'")
+    if r3.returncode == 0 and r3.stdout.strip():
+        for line in r3.stdout.strip().splitlines():
+            parts = line.split(None, 4)
+            if len(parts) >= 5:
+                size = int(parts[0]) if parts[0].isdigit() else 0
+                path = parts[4]
+                name = os.path.basename(path)
+                images.append({'name': name, 'size': size, 'path': path})
+
+    # Check available build scripts
+    scripts = []
+    for s in ['build-x86-image.sh', 'build-image.sh']:
+        r4 = _host_run(f"test -f {nasos}/installer/images/{s} && echo yes")
+        if r4.stdout.strip() == 'yes':
+            scripts.append(s)
+
+    # Images directory path for file manager
+    images_dir = f"{nasos}/installer/images"
+
+    return jsonify({
+        'version': version_data,
+        'releases': releases,
+        'latest': latest,
+        'images': images,
+        'scripts': scripts,
+        'nasos_dir': nasos,
+        'images_dir': images_dir,
+    })
+
+
+# ═══════════════════════════════════════════════════════════
+#  API — Build Status (for reconnecting clients)
+# ═══════════════════════════════════════════════════════════
+
+@builder_bp.route('/status')
+def build_status():
+    """Return current build state. Clients poll this to reconnect to running builds."""
+    with _build_lock:
+        # Check if 'building' process is still alive
+        if _build_state['status'] == 'building' and _build_state['pid']:
+            if not _is_pid_alive(_build_state['pid']):
+                _build_state['status'] = 'error'
+                _build_state['message'] = 'Build przerwany (proces zakończony)'
+                _build_state['result'] = {'success': False, 'message': 'Build przerwany'}
+                _save_build_state()
+        elapsed = 0
+        if _build_state['start_time'] and _build_state['status'] == 'building':
+            elapsed = int(time.time() - _build_state['start_time'])
+        since = request.args.get('since', 0, type=int)
+        logs = _build_state['logs'][since:] if since < len(_build_state['logs']) else []
+        return jsonify({
+            'status': _build_state['status'],
+            'build_type': _build_state['build_type'],
+            'percent': _build_state['percent'],
+            'message': _build_state['message'],
+            'logs': logs,
+            'log_total': len(_build_state['logs']),
+            'elapsed': elapsed,
+            'result': _build_state['result'],
+        })
+
+
+@builder_bp.route('/cancel', methods=['POST'])
+def cancel_build():
+    """Cancel a running build by killing its process tree."""
+    with _build_lock:
+        if _build_state['status'] != 'building':
+            return jsonify({'error': 'Brak aktywnego buildu'}), 400
+        pid = _build_state['pid']
+    if pid:
+        # Kill the whole process group
+        _host_run(f"kill -TERM -{pid} 2>/dev/null; sleep 1; kill -KILL -{pid} 2>/dev/null || kill -KILL {pid} 2>/dev/null", timeout=10)
+    _update_build(status='error', message='Anulowano przez użytkownika',
+                  result={'success': False, 'message': 'Build anulowany'})
+    return jsonify({'ok': True})
+
+
+@builder_bp.route('/dismiss', methods=['POST'])
+def dismiss_build():
+    """Reset build state back to idle (dismiss done/error result)."""
+    with _build_lock:
+        if _build_state['status'] == 'building':
+            return jsonify({'error': 'Build w toku — nie można odrzucić'}), 409
+        _build_state.update({
+            'status': 'idle',
+            'build_type': '',
+            'percent': 0,
+            'message': '',
+            'logs': [],
+            'pid': 0,
+            'result': None,
+        })
+        _save_build_state()
+    return jsonify({'ok': True})
+
+
+@builder_bp.route('/cache', methods=['GET'])
+def cache_info():
+    """Get build cache size."""
+    r = _host_run("du -sh /var/cache/ethos-builder/debootstrap /var/cache/ethos-builder/apt 2>/dev/null || echo '0\t-'")
+    lines = r.stdout.strip().splitlines()
+    sizes = {}
+    for l in lines:
+        parts = l.split('\t')
+        if len(parts) == 2:
+            key = 'debootstrap' if 'debootstrap' in parts[1] else ('apt' if 'apt' in parts[1] else parts[1])
+            sizes[key] = parts[0]
+    return jsonify({'cache': sizes})
+
+
+@builder_bp.route('/cache', methods=['DELETE'])
+def cache_clear():
+    """Clear build cache."""
+    _host_run("rm -rf /var/cache/ethos-builder/debootstrap/* /var/cache/ethos-builder/apt/*", timeout=30)
+    return jsonify({'ok': True, 'message': 'Cache wyczyszczony'})
+
+
+# ═══════════════════════════════════════════════════════════
+#  API — Build Release (SSE)
+# ═══════════════════════════════════════════════════════════
+
+@builder_bp.route('/release', methods=['POST'])
+def build_release():
+    """Build a release package. Streams progress via SSE."""
+    if _build_state['status'] == 'building':
+        return jsonify({'error': 'Build jest już w toku. Poczekaj na zakończenie lub anuluj.'}), 409
+    data = request.json or {}
+    bump = data.get('bump', '')  # patch, minor, major or empty
+    changelog_title = data.get('changelog_title', '').strip()
+    changelog_changes = data.get('changelog_changes', [])
+
+    nasos = _get_host_nasos_dir()
+    _reset_build('release')
+
+    def generate():
+        try:
+            yield _sse({'type': 'step', 'message': 'Odczytywanie wersji...', 'percent': 5})
+            _update_build(percent=5, message='Odczytywanie wersji...')
+
+            # Read current version
+            r = _host_run(f"cat {nasos}/backend/version.json")
+            if r.returncode != 0:
+                _update_build(status='error', message='Nie można odczytać version.json')
+                yield _sse({'type': 'done', 'success': False, 'message': 'Nie można odczytać version.json'})
+                return
+
+            try:
+                ver_data = json.loads(r.stdout)
+            except Exception:
+                _update_build(status='error', message='Błąd parsowania version.json')
+                yield _sse({'type': 'done', 'success': False, 'message': 'Błąd parsowania version.json'})
+                return
+
+            current = ver_data.get('version', '0.0.0')
+            yield _sse({'type': 'log', 'message': f'Aktualna wersja: {current}'})
+
+            # Bump version
+            if bump in ('patch', 'minor', 'major'):
+                parts = current.split('.')
+                maj, mi, pat = int(parts[0]), int(parts[1]), int(parts[2]) if len(parts) > 2 else 0
+                if bump == 'major':
+                    new_ver = f"{maj+1}.0.0"
+                elif bump == 'minor':
+                    new_ver = f"{maj}.{mi+1}.0"
+                else:
+                    new_ver = f"{maj}.{mi}.{pat+1}"
+            else:
+                new_ver = current
+
+            yield _sse({'type': 'step', 'message': f'Wersja release: {new_ver}', 'percent': 10})
+
+            # Update version.json if changed
+            if new_ver != current or changelog_title:
+                yield _sse({'type': 'log', 'message': 'Aktualizuję version.json...'})
+
+                ver_data['version'] = new_ver
+                ver_data['build_date'] = str(date.today())
+
+                if changelog_title:
+                    entry = {
+                        'version': new_ver,
+                        'date': str(date.today()),
+                        'title': changelog_title,
+                        'changes': changelog_changes if changelog_changes else [changelog_title],
+                    }
+                    cl = ver_data.get('changelog', [])
+                    cl.insert(0, entry)
+                    ver_data['changelog'] = cl
+
+                # Write updated version.json via host
+                import base64 as _b64
+                raw = json.dumps(ver_data, indent=2, ensure_ascii=False).encode('utf-8')
+                b64 = _b64.b64encode(raw).decode('ascii')
+                _host_run(f"echo '{b64}' | base64 -d > {_q(nasos + '/backend/version.json')}")
+                yield _sse({'type': 'log', 'message': f'version.json → {new_ver}'})
+
+            # Build release package
+            yield _sse({'type': 'step', 'message': 'Buduję pakiet release...', 'percent': 20})
+
+            pkg_name = f"ethos-{new_ver}"
+            build_dir = f"/tmp/ethos-release-web-$$"
+            releases_dir = f"{nasos}/installer/releases"
+
+            # The build-release.sh is interactive. We run equivalent steps directly.
+            script = f"""
+set -e
+BUILD_DIR="/tmp/ethos-release-web-{int(time.time())}"
+NASOS="{nasos}"
+PKG="{pkg_name}"
+RELEASES="{releases_dir}"
+
+rm -rf "$BUILD_DIR"
+mkdir -p "$BUILD_DIR/$PKG"/{{backend/blueprints,frontend/css,frontend/js/apps}}
+mkdir -p "$RELEASES"
+
+echo "STEP:25:Kopiowanie backend..."
+cp "$NASOS/backend/"*.py "$BUILD_DIR/$PKG/backend/"
+cp "$NASOS/backend/version.json" "$BUILD_DIR/$PKG/backend/"
+cp "$NASOS/backend/requirements.txt" "$BUILD_DIR/$PKG/backend/"
+cp "$NASOS/backend/blueprints/"*.py "$BUILD_DIR/$PKG/backend/blueprints/"
+touch "$BUILD_DIR/$PKG/backend/blueprints/__init__.py"
+
+echo "STEP:40:Kopiowanie frontend..."
+cp "$NASOS/frontend/index.html" "$BUILD_DIR/$PKG/frontend/"
+cp "$NASOS/frontend/share.html" "$BUILD_DIR/$PKG/frontend/" 2>/dev/null || true
+cp "$NASOS/frontend/css/"*.css "$BUILD_DIR/$PKG/frontend/css/"
+cp "$NASOS/frontend/js/"*.js "$BUILD_DIR/$PKG/frontend/js/"
+cp "$NASOS/frontend/js/apps/"*.js "$BUILD_DIR/$PKG/frontend/js/apps/"
+
+echo "STEP:50:Kopiowanie plików..."
+
+echo "STEP:60:Czyszczenie cache..."
+find "$BUILD_DIR" -type d -name "__pycache__" -exec rm -rf {{}} + 2>/dev/null || true
+find "$BUILD_DIR" -name "*.pyc" -delete 2>/dev/null || true
+
+echo "STEP:70:Tworzenie archiwum tar.gz..."
+cd "$BUILD_DIR"
+tar -czf "$RELEASES/$PKG.tar.gz" "$PKG/"
+
+echo "STEP:80:Generowanie manifest..."
+CHECKSUM=$(sha256sum "$RELEASES/$PKG.tar.gz" | awk '{{print $1}}')
+FILESIZE=$(stat -c%s "$RELEASES/$PKG.tar.gz")
+FILE_COUNT=$(tar -tzf "$RELEASES/$PKG.tar.gz" | wc -l)
+
+echo "STEP:90:Zapis latest.json..."
+cat > "$RELEASES/latest.json" << MANIFEST_EOF
+{{
+  "version": "{new_ver}",
+  "build_date": "$(date -I)",
+  "filename": "$PKG.tar.gz",
+  "size": $FILESIZE,
+  "sha256": "$CHECKSUM",
+  "min_version": "1.0.0"
+}}
+MANIFEST_EOF
+
+echo "STEP:100:Gotowe!"
+echo "RESULT_SIZE:$FILESIZE"
+echo "RESULT_FILES:$FILE_COUNT"
+echo "RESULT_SHA:$CHECKSUM"
+
+rm -rf "$BUILD_DIR"
+"""
+            result_info = {}
+            for line in _host_run_stream(script, track_pid=True):
+                line = line.rstrip('\n')
+                if line.startswith('__EXIT_CODE__:'):
+                    code = int(line.split(':')[1])
+                    if code == 0:
+                        size_h = _human_size(int(result_info.get('size', 0)))
+                        files = result_info.get('files', '?')
+                        msg = f'Release {new_ver} zbudowany! ({size_h}, {files} plików)'
+                        res = {'success': True, 'message': msg, 'version': new_ver}
+                        _update_build(status='done', percent=100, message=msg, result=res)
+                        yield _sse({
+                            'type': 'done', 'success': True, 'percent': 100,
+                            'message': msg,
+                            'version': new_ver,
+                        })
+                    else:
+                        msg = f'Błąd budowania (kod: {code})'
+                        _update_build(status='error', message=msg, result={'success': False, 'message': msg})
+                        yield _sse({'type': 'done', 'success': False, 'message': msg})
+                elif line.startswith('STEP:'):
+                    parts = line.split(':', 2)
+                    pct = int(parts[1]) if len(parts) > 1 else 0
+                    msg = parts[2] if len(parts) > 2 else ''
+                    _update_build(percent=pct, message=msg)
+                    yield _sse({'type': 'step', 'message': msg, 'percent': pct})
+                elif line.startswith('RESULT_SIZE:'):
+                    result_info['size'] = line.split(':')[1]
+                elif line.startswith('RESULT_FILES:'):
+                    result_info['files'] = line.split(':')[1]
+                elif line.startswith('RESULT_SHA:'):
+                    result_info['sha'] = line.split(':')[1]
+                elif line.strip():
+                    _update_build(log=line)
+                    yield _sse({'type': 'log', 'message': line})
+        except Exception as e:
+            msg = f'Wyjątek: {e}'
+            _update_build(status='error', message=msg, result={'success': False, 'message': msg})
+            yield _sse({'type': 'done', 'success': False, 'message': msg})
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype='text/event-stream',
+        headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'},
+    )
+
+
+# ═══════════════════════════════════════════════════════════
+#  API — Build Image (SSE)
+# ═══════════════════════════════════════════════════════════
+
+@builder_bp.route('/image', methods=['POST'])
+def build_image():
+    """Build a bootable system image in background thread."""
+    if _build_state['status'] == 'building':
+        return jsonify({'error': 'Build jest już w toku. Poczekaj na zakończenie lub anuluj.'}), 409
+    data = request.json or {}
+    image_type = data.get('type', 'x86')  # 'x86' or 'rpi'
+
+    nasos = _get_host_nasos_dir()
+
+    script_name = 'build-x86-image.sh' if image_type == 'x86' else 'build-image.sh'
+    script_path = f"{nasos}/installer/images/{script_name}"
+
+    # Verify script exists
+    r = _host_run(f"test -f {_q(script_path)} && echo yes")
+    if r.stdout.strip() != 'yes':
+        return jsonify({'error': f'Skrypt {script_name} nie istnieje'}), 404
+
+    _reset_build('image')
+
+    # Launch build in background thread so it survives SSE disconnects
+    t = threading.Thread(
+        target=_build_image_worker,
+        args=(nasos, script_name, script_path, image_type),
+        daemon=True,
+    )
+    t.start()
+
+    return jsonify({'ok': True, 'message': 'Build rozpoczęty'})
+
+
+def _build_image_worker(nasos, script_name, script_path, image_type):
+    """Background worker that runs the image build."""
+    try:
+
+        if image_type == 'rpi':
+            wrapper = _rpi_wrapper_script(nasos)
+        else:
+            wrapper = _x86_wrapper_script(nasos)
+
+        start_time = time.time()
+        result_info = {}
+
+        for line in _host_run_stream(wrapper, track_pid=True):
+            line = line.rstrip('\n')
+            if line.startswith('__EXIT_CODE__:'):
+                code = int(line.split(':')[1])
+                elapsed = time.time() - start_time
+                elapsed_m = int(elapsed // 60)
+                elapsed_s = int(elapsed % 60)
+                if code == 0:
+                    img_size = _human_size(int(result_info.get('img_size', 0)))
+                    msg = f'Obraz gotowy! IMG: {img_size}'
+                    msg += f' (czas: {elapsed_m}min {elapsed_s}s)'
+                    res = {
+                        'success': True, 'message': msg,
+                        'img': result_info.get('img_path', ''),
+                    }
+                    _update_build(status='done', percent=100, message=msg, result=res)
+                else:
+                    msg = f'Błąd budowania obrazu (kod: {code}, czas: {elapsed_m}min {elapsed_s}s)'
+                    _update_build(status='error', message=msg, result={'success': False, 'message': msg})
+            elif line.startswith('STEP:'):
+                parts = line.split(':', 2)
+                pct = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+                msg = parts[2] if len(parts) > 2 else ''
+                _update_build(percent=pct, message=msg)
+            elif line.startswith('RESULT_IMG:'):
+                p = line.split(':')
+                result_info['img_path'] = p[1] if len(p) > 1 else ''
+                result_info['img_size'] = p[2] if len(p) > 2 else '0'
+            elif line.startswith('LOG:'):
+                _update_build(log=line[4:])
+            elif line.strip():
+                _update_build(log=line)
+    except Exception as e:
+        msg = f'Wyjątek: {e}'
+        _update_build(status='error', message=msg, result={'success': False, 'message': msg})
+
+
+# ─────────────────────────────────────────────────────────
+#  RPi wrapper script — downloads RPi OS + injects EthOS
+# ─────────────────────────────────────────────────────────
+
+def _rpi_wrapper_script(nasos: str) -> str:
+    """Return bash wrapper script for building RPi image."""
+    return f"""
+set -e
+set -o pipefail
+export DEBIAN_FRONTEND=noninteractive
+
+NASOS="{nasos}"
+
+echo "STEP:2:Sprawdzanie zależności RPi..."
+for cmd in wget xz losetup parted openssl e2fsck resize2fs; do
+    if ! command -v "$cmd" &>/dev/null; then
+        echo "LOG:Instalacja brakujących narzędzi..."
+        dpkg --configure -a 2>/dev/null || true
+        apt-get update -qq
+        apt-get install -y -qq wget xz-utils mount parted openssl e2fsprogs util-linux 2>/dev/null || true
+        break
+    fi
+done
+echo "STEP:5:Zależności OK"
+
+VERSION=$(python3 -c "import json; print(json.load(open('$NASOS/backend/version.json'))['version'])" 2>/dev/null || echo '2.4.0')
+OUTPUT_IMG="$NASOS/installer/images/ethos-rpi.img"
+WORK_DIR="/tmp/ethos-rpi-build-web"
+MOUNT_BOOT="$WORK_DIR/boot"
+MOUNT_ROOT="$WORK_DIR/root"
+
+# RPi OS Lite 64-bit (Bookworm)
+RPI_CACHE="/var/cache/ethos-builder/rpi"
+mkdir -p "$RPI_CACHE"
+RPI_IMAGE_XZ="$RPI_CACHE/rpios-bookworm-arm64-lite.img.xz"
+RPI_IMAGE_RAW="$WORK_DIR/rpios.img"
+
+# Use latest available RPi OS Lite ARM64
+RPI_IMAGE_URL="https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2024-11-19/2024-11-19-raspios-bookworm-arm64-lite.img.xz"
+
+DEFAULT_USER="nasadmin"
+DEFAULT_HOSTNAME="ethos"
+USER_PASS="ethos"
+NAS_PORT="9000"
+
+LOOP_DEV=""
+
+cleanup() {{
+    sync 2>/dev/null || true
+    umount "$MOUNT_BOOT" 2>/dev/null || true
+    umount "$MOUNT_ROOT" 2>/dev/null || true
+    if [[ -n "${{LOOP_DEV:-}}" ]]; then
+        losetup -d "$LOOP_DEV" 2>/dev/null || true
+    fi
+    rm -rf "$WORK_DIR" 2>/dev/null || true
+}}
+trap cleanup EXIT
+
+# ── Step 1: Download RPi OS ──
+echo "STEP:8:Pobieranie Raspberry Pi OS Lite ARM64..."
+mkdir -p "$WORK_DIR" "$MOUNT_BOOT" "$MOUNT_ROOT"
+
+if [[ -f "$RPI_IMAGE_XZ" ]]; then
+    echo "LOG:Używam cache RPi OS ($(du -sh "$RPI_IMAGE_XZ" | cut -f1))"
+else
+    echo "LOG:Pobieranie RPi OS Lite Bookworm 64-bit..."
+    echo "LOG:URL: $RPI_IMAGE_URL"
+    wget -q --show-progress -O "$RPI_IMAGE_XZ" "$RPI_IMAGE_URL" 2>&1 | while IFS= read -r line; do
+        echo "LOG:$line"
+    done
+    if [[ ! -f "$RPI_IMAGE_XZ" ]] || [[ $(stat -c%s "$RPI_IMAGE_XZ" 2>/dev/null || echo 0) -lt 100000 ]]; then
+        echo "STEP:0:BŁĄD: Pobranie RPi OS nie powiodło się!"
+        exit 1
+    fi
+fi
+echo "STEP:25:RPi OS pobrane"
+
+# ── Step 2: Decompress ──
+echo "STEP:26:Rozpakowywanie RPi OS..."
+xz -dc "$RPI_IMAGE_XZ" > "$RPI_IMAGE_RAW"
+echo "LOG:Rozmiar rozpakowany: $(du -sh "$RPI_IMAGE_RAW" | cut -f1)"
+echo "STEP:35:RPi OS rozpakowane"
+
+# ── Step 3: Prepare image ──
+echo "STEP:36:Przygotowanie obrazu..."
+rm -f "$OUTPUT_IMG"
+cp "$RPI_IMAGE_RAW" "$OUTPUT_IMG"
+
+# Expand image by 2GB (room for EthOS + install data)
+echo "LOG:Rozszerzam obraz o 2 GB..."
+truncate -s +2G "$OUTPUT_IMG"
+
+LOOP_DEV=$(losetup --find --show --partscan "$OUTPUT_IMG")
+echo "LOG:Loop device: $LOOP_DEV"
+
+# Grow the root partition (partition 2 on RPi OS)
+parted -s "$LOOP_DEV" resizepart 2 100%
+partprobe "$LOOP_DEV"
+sleep 1
+
+e2fsck -f -y "${{LOOP_DEV}}p2" || true
+resize2fs "${{LOOP_DEV}}p2"
+
+# Mount partitions (RPi: p1=boot FAT32, p2=root ext4)
+mount "${{LOOP_DEV}}p2" "$MOUNT_ROOT"
+mount "${{LOOP_DEV}}p1" "$MOUNT_BOOT"
+
+echo "LOG:Obraz zamontowany (boot + root)"
+echo "STEP:42:Obraz gotowy"
+
+# ── Step 4: Configure system ──
+echo "STEP:43:Konfiguracja systemu..."
+
+# Enable SSH
+touch "$MOUNT_BOOT/ssh"
+echo "LOG:SSH włączone"
+
+# HDMI: force hotplug so display works even if connected after boot
+if [[ -f "$MOUNT_BOOT/config.txt" ]]; then
+    grep -q 'hdmi_force_hotplug=1' "$MOUNT_BOOT/config.txt" || \\
+        echo 'hdmi_force_hotplug=1' >> "$MOUNT_BOOT/config.txt"
+    grep -q 'enable_uart=1' "$MOUNT_BOOT/config.txt" || \\
+        echo 'enable_uart=1' >> "$MOUNT_BOOT/config.txt"
+    echo "LOG:config.txt: hdmi_force_hotplug + enable_uart"
+fi
+
+# cmdline.txt: ensure serial console, remove quiet (show boot messages)
+if [[ -f "$MOUNT_BOOT/cmdline.txt" ]]; then
+    grep -q 'console=serial0' "$MOUNT_BOOT/cmdline.txt" || \\
+        sed -i 's/console=tty1/console=serial0,115200 console=tty1/' "$MOUNT_BOOT/cmdline.txt"
+    # Remove 'quiet' so user sees boot messages on screen
+    sed -i 's/ quiet//' "$MOUNT_BOOT/cmdline.txt"
+    echo "LOG:cmdline.txt: serial console + quiet removed"
+fi
+
+# Create user (RPi OS Bookworm method)
+PASS_HASH=$(openssl passwd -6 "$USER_PASS")
+echo "${{DEFAULT_USER}}:${{PASS_HASH}}" > "$MOUNT_BOOT/userconf.txt"
+echo "LOG:Użytkownik $DEFAULT_USER skonfigurowany"
+
+# Set hostname
+echo "$DEFAULT_HOSTNAME" > "$MOUNT_ROOT/etc/hostname"
+sed -i "s/127.0.1.1.*/127.0.1.1\\t$DEFAULT_HOSTNAME/" "$MOUNT_ROOT/etc/hosts"
+echo "LOG:Hostname: $DEFAULT_HOSTNAME"
+
+# Sudoers
+echo "${{DEFAULT_USER}} ALL=(ALL) NOPASSWD:ALL" > "$MOUNT_ROOT/etc/sudoers.d/010_${{DEFAULT_USER}}"
+chmod 440 "$MOUNT_ROOT/etc/sudoers.d/010_${{DEFAULT_USER}}"
+
+# NetworkManager config — enable managed=true so NM controls WiFi
+# NO dns=dnsmasq yet (package not available on RPi at first boot;
+# firstboot.sh adds it after apt-get install dnsmasq)
+mkdir -p "$MOUNT_ROOT/etc/NetworkManager/conf.d"
+cat > "$MOUNT_ROOT/etc/NetworkManager/conf.d/00-ethos.conf" <<'NMCFG'
+[main]
+plugins=keyfile
+
+[ifupdown]
+managed=true
+
+[device]
+wifi.scan-rand-mac-address=no
+NMCFG
+
+# Auto-login on tty1 — so user sees EthOS status on screen
+mkdir -p "$MOUNT_ROOT/etc/systemd/system/getty@tty1.service.d"
+cat > "$MOUNT_ROOT/etc/systemd/system/getty@tty1.service.d/autologin.conf" <<AUTOLOGIN
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --autologin $DEFAULT_USER --noclear %I \\$TERM
+AUTOLOGIN
+
+# Login profile banner — shows EthOS status info after login
+mkdir -p "$MOUNT_ROOT/etc/profile.d"
+cat > "$MOUNT_ROOT/etc/profile.d/ethos-banner.sh" <<'BANNER'
+#!/bin/bash
+# Only on interactive login on tty1/tty
+[[ "$-" == *i* ]] || return
+echo ""
+echo "  ════════════════════════════════════════"
+echo "       EthOS NAS — First Boot"
+echo "  ════════════════════════════════════════"
+if systemctl is-active ethos-ap.service &>/dev/null; then
+    echo "  WiFi Hotspot: ethos (open, no password)"
+    echo "  Panel:        http://192.168.42.1:9000"
+elif systemctl is-active ethos.service &>/dev/null; then
+    IP=$(hostname -I 2>/dev/null | awk '{{print $1}}')
+    echo "  EthOS:  http://${{IP:-localhost}}:9000"
+else
+    echo "  Status: booting..."
+    echo "  Logs:   journalctl -u ethos-ap -u ethos-preboot -u ethos-firstboot -f"
+fi
+echo "  ════════════════════════════════════════"
+echo ""
+BANNER
+chmod +x "$MOUNT_ROOT/etc/profile.d/ethos-banner.sh"
+
+echo "STEP:50:System skonfigurowany"
+
+# ── Step 5: Inject EthOS ──
+echo "STEP:51:Wstrzykiwanie EthOS..."
+
+ETHOS_DIR="$MOUNT_ROOT/opt/ethos-installer"
+mkdir -p "$ETHOS_DIR"
+
+# Build installer package (tar.gz with backend+frontend+installer scripts)
+echo "LOG:Budowanie pakietu instalacyjnego..."
+INSTALLER_DIR="$NASOS/installer"
+PACKAGE_PATH="$INSTALLER_DIR/ethos-${{VERSION}}-installer.tar.gz"
+
+# Always rebuild the package to ensure latest code
+if [[ -f "$INSTALLER_DIR/build-package.sh" ]]; then
+    bash "$INSTALLER_DIR/build-package.sh" 2>&1 | while IFS= read -r line; do
+        echo "LOG:pkg: $line"
+    done
+    echo "LOG:Pakiet zbudowany"
+else
+    echo "LOG:UWAGA: brak build-package.sh — kopiuję pliki bezpośrednio"
+fi
+
+if [[ -f "$PACKAGE_PATH" ]]; then
+    echo "LOG:Wgrywam pakiet instalacyjny..."
+    tar -xzf "$PACKAGE_PATH" -C "$ETHOS_DIR/" --strip-components=1
+    echo "LOG:Pakiet EthOS wgrany do /opt/ethos-installer/"
+else
+    echo "LOG:Brak pakietu tar.gz — kopiuję backend/frontend bezpośrednio..."
+    mkdir -p "$ETHOS_DIR/app"
+    cp -r "$NASOS/backend" "$ETHOS_DIR/app/"
+    cp -r "$NASOS/frontend" "$ETHOS_DIR/app/"
+    rm -rf "$ETHOS_DIR/app/backend/__pycache__" "$ETHOS_DIR/app/backend/blueprints/__pycache__" 2>/dev/null || true
+fi
+
+echo "STEP:62:Pakiet EthOS wgrany"
+
+# ── Copy first-boot script ──
+echo "LOG:Kopiowanie firstboot.sh..."
+IMAGES_DIR="$NASOS/installer/images"
+cp "$IMAGES_DIR/firstboot.sh" "$ETHOS_DIR/firstboot.sh"
+chmod +x "$ETHOS_DIR/firstboot.sh"
+
+# ── Copy WiFi AP manager ──
+echo "LOG:Kopiowanie ethos-ap.sh..."
+cp "$IMAGES_DIR/ethos-ap.sh" "$ETHOS_DIR/ethos-ap.sh"
+chmod +x "$ETHOS_DIR/ethos-ap.sh"
+cp "$IMAGES_DIR/ethos-ap.sh" "$MOUNT_ROOT/usr/local/bin/ethos-ap"
+chmod +x "$MOUNT_ROOT/usr/local/bin/ethos-ap"
+
+# ── Copy mini-DHCP fallback (for AP without dnsmasq) ──
+echo "LOG:Kopiowanie mini-dhcp.py..."
+cp "$IMAGES_DIR/mini-dhcp.py" "$ETHOS_DIR/mini-dhcp.py"
+chmod +x "$ETHOS_DIR/mini-dhcp.py"
+
+# ── Copy pre-boot server ──
+echo "LOG:Kopiowanie preboot-server.py..."
+cp "$IMAGES_DIR/preboot-server.py" "$ETHOS_DIR/preboot-server.py"
+chmod +x "$ETHOS_DIR/preboot-server.py"
+
+# ── Copy diagnostic script (optional) ──
+if [[ -f "$IMAGES_DIR/ethos-diag.sh" ]]; then
+    cp "$IMAGES_DIR/ethos-diag.sh" "$MOUNT_ROOT/usr/local/bin/ethos-diag"
+    chmod +x "$MOUNT_ROOT/usr/local/bin/ethos-diag"
+    echo "LOG:ethos-diag.sh OK"
+fi
+
+echo "STEP:70:Skrypty skopiowane"
+
+# ── Install config ──
+cat > "$ETHOS_DIR/install.conf" <<INSTCFG
+ETHOS_USER="$DEFAULT_USER"
+ETHOS_HOSTNAME="$DEFAULT_HOSTNAME"
+ETHOS_APP_PASS="$USER_PASS"
+ETHOS_NAS_NAME="EthOS"
+ETHOS_PORT=$NAS_PORT
+ETHOS_SETUP_WIZARD=yes
+ETHOS_DEPLOY=native
+INSTCFG
+
+# ── Systemd services ──
+echo "STEP:72:Tworzenie serwisów systemd..."
+
+# WiFi AP auto-start service
+cat > "$MOUNT_ROOT/etc/systemd/system/ethos-ap.service" <<'APSVC'
+[Unit]
+Description=EthOS WiFi Hotspot (auto if no network)
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/ethos-ap auto
+ExecStop=/usr/local/bin/ethos-ap stop
+
+[Install]
+WantedBy=multi-user.target
+APSVC
+ln -sf /etc/systemd/system/ethos-ap.service \\
+    "$MOUNT_ROOT/etc/systemd/system/multi-user.target.wants/ethos-ap.service"
+
+# Pre-boot server service (headless WiFi config)
+cat > "$MOUNT_ROOT/etc/systemd/system/ethos-preboot.service" <<'PREBOOT'
+[Unit]
+Description=EthOS Pre-Boot Setup Server (WiFi config for headless)
+After=network.target NetworkManager.service
+Wants=NetworkManager.service
+Before=ethos-firstboot.service
+Conflicts=ethos.service
+ConditionPathExists=/opt/ethos-installer/preboot-server.py
+ConditionPathExists=!/opt/ethos/.installed
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/ethos-installer/preboot-server.py
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target
+PREBOOT
+ln -sf /etc/systemd/system/ethos-preboot.service \\
+    "$MOUNT_ROOT/etc/systemd/system/multi-user.target.wants/ethos-preboot.service"
+
+# First-boot installer service
+cat > "$MOUNT_ROOT/etc/systemd/system/ethos-firstboot.service" <<SVCUNIT
+[Unit]
+Description=EthOS First Boot Installer
+After=network.target ethos-preboot.service
+Wants=network.target
+ConditionPathExists=/opt/ethos-installer/firstboot.sh
+ConditionPathExists=!/opt/ethos/.installed
+ConditionPathExists=!/opt/ethos/.installer-mode
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/ethos-installer/firstboot.sh
+StandardOutput=journal+console
+StandardError=journal+console
+TimeoutStartSec=1800
+
+[Install]
+WantedBy=multi-user.target
+SVCUNIT
+ln -sf /etc/systemd/system/ethos-firstboot.service \\
+    "$MOUNT_ROOT/etc/systemd/system/multi-user.target.wants/ethos-firstboot.service"
+
+echo "STEP:80:Serwisy utworzone"
+
+# ── MOTD ──
+cat > "$MOUNT_ROOT/etc/motd" <<MOTD
+
+  ════════════════════════════════════════
+       EthOS NAS v$VERSION (RPi)
+    Panel: http://IP:$NAS_PORT
+    Status: systemctl status ethos
+  ════════════════════════════════════════
+
+MOTD
+
+# ── Note: packages (dnsmasq, rfkill, python3-venv, etc.) ──
+# are installed by firstboot.sh on the RPi itself (native ARM64)
+# No chroot with qemu needed during build
+echo "LOG:Pakiety zostaną zainstalowane przy pierwszym uruchomieniu RPi"
+
+echo "LOG:Wykorzystanie dysku w obrazie:"
+du -sh "$MOUNT_ROOT"/* 2>/dev/null | sort -rh | head -8 || true
+df -h "$MOUNT_ROOT" 2>/dev/null | tail -1 || true
+
+echo "STEP:85:EthOS wstrzyknięty"
+
+# ── Step 6: Finalize ──
+echo "STEP:86:Finalizacja..."
+sync
+
+umount "$MOUNT_BOOT" 2>/dev/null || true
+umount "$MOUNT_ROOT" 2>/dev/null || true
+losetup -d "$LOOP_DEV" 2>/dev/null || true
+LOOP_DEV=""
+
+rm -rf "$WORK_DIR" 2>/dev/null || true
+
+# Results
+IMG_SIZE=$(stat -c%s "$OUTPUT_IMG" 2>/dev/null || echo 0)
+echo "STEP:100:Obraz RPi gotowy!"
+echo "RESULT_IMG:$OUTPUT_IMG:$IMG_SIZE"
+"""
+
+
+# ─────────────────────────────────────────────────────────
+#  x86 wrapper script — debootstrap + GRUB
+# ─────────────────────────────────────────────────────────
+
+def _x86_wrapper_script(nasos: str) -> str:
+    """Return bash wrapper script for building x86 image."""
+    return f"""
+set -e
+set -o pipefail
+export DEBIAN_FRONTEND=noninteractive
+
+NASOS="{nasos}"
+
+# Check dependencies
+echo "STEP:2:Sprawdzanie zależności..."
+for cmd in debootstrap parted mkfs.ext4 mkfs.vfat grub-install; do
+    if ! command -v "$cmd" &>/dev/null; then
+        echo "STEP:3:Instalacja zależności..."
+        apt-get update -qq
+        apt-get install -y -qq debootstrap parted dosfstools e2fsprogs \\
+            grub-pc-bin grub-efi-amd64-bin grub-common grub2-common \\
+            mtools xorriso isolinux debian-archive-keyring 2>/dev/null || true
+        break
+    fi
+done
+
+# Ensure debian-archive-keyring is present (needed on Ubuntu hosts)
+if [ ! -f /usr/share/keyrings/debian-archive-keyring.gpg ]; then
+    echo "LOG:Instalacja debian-archive-keyring..."
+    apt-get update -qq 2>/dev/null
+    apt-get install -y -qq debian-archive-keyring 2>/dev/null || true
+fi
+
+echo "STEP:5:Przygotowywanie środowiska..."
+
+# Source config from the script but override with our values
+VERSION=$(python3 -c "import json; print(json.load(open('$NASOS/backend/version.json'))['version'])" 2>/dev/null || echo '2.4.0')
+FINAL_IMG="$NASOS/installer/images/ethos-x86.img"
+WORK_DIR="/tmp/ethos-x86-build-web"
+IMG_SIZE_GB=8
+DEBIAN_RELEASE="bookworm"
+DEFAULT_USER="nasadmin"
+DEFAULT_HOSTNAME="ethos"
+USER_PASS="ethos"
+NAS_PORT="9000"
+
+# ── Performance: use tmpfs (RAM) for build if enough memory ──
+TOTAL_RAM_MB=$(awk '/MemAvailable/{{print int($2/1024)}}' /proc/meminfo 2>/dev/null || echo 0)
+USE_TMPFS=0
+if [ "$TOTAL_RAM_MB" -gt 10000 ]; then
+    USE_TMPFS=1
+    echo "LOG:RAM dostępna: ${{TOTAL_RAM_MB}}MB — budowanie w tmpfs (RAM) dla prędkości"
+    mkdir -p "$WORK_DIR"
+    mount -t tmpfs -o size=${{IMG_SIZE_GB}}G,nr_inodes=0 tmpfs "$WORK_DIR"
+else
+    echo "LOG:RAM dostępna: ${{TOTAL_RAM_MB}}MB — za mało na tmpfs, budowanie na dysku"
+    mkdir -p "$WORK_DIR"
+fi
+OUTPUT_IMG="$WORK_DIR/ethos-x86.img"
+
+# ── Build cache directories (persist across builds) ──
+DEBOOTSTRAP_CACHE="/var/cache/ethos-builder/debootstrap"
+APT_CACHE="/var/cache/ethos-builder/apt"
+mkdir -p "$DEBOOTSTRAP_CACHE" "$APT_CACHE"
+
+# Cleanup function
+cleanup() {{
+    sync 2>/dev/null || true
+    # Unmount in reverse order, use lazy unmount for stubborn mounts
+    for m in var/cache/apt/archives boot/efi run sys proc dev/shm dev/pts dev; do
+        umount "$WORK_DIR/root/$m" 2>/dev/null || \
+            umount -l "$WORK_DIR/root/$m" 2>/dev/null || true
+    done
+    sleep 1
+    umount "$WORK_DIR/root" 2>/dev/null || \
+        umount -l "$WORK_DIR/root" 2>/dev/null || true
+    umount "$WORK_DIR/efi" 2>/dev/null || true
+    sleep 1
+    if [[ -n "${{LOOP_DEV:-}}" ]]; then
+        losetup -d "$LOOP_DEV" 2>/dev/null || true
+    fi
+    if [ "$USE_TMPFS" -eq 1 ]; then
+        umount "$WORK_DIR" 2>/dev/null || \
+            umount -l "$WORK_DIR" 2>/dev/null || true
+    fi
+    rm -rf "$WORK_DIR" 2>/dev/null || true
+}}
+trap cleanup EXIT
+
+# ── Step 1: Create disk image ──
+echo "STEP:8:Tworzenie obrazu dysku (${{IMG_SIZE_GB}}GB)..."
+mkdir -p "$WORK_DIR"/{{root,efi}}
+rm -f "$OUTPUT_IMG" "$FINAL_IMG"
+truncate -s "${{IMG_SIZE_GB}}G" "$OUTPUT_IMG"
+
+LOOP_DEV=$(losetup --find --show --partscan "$OUTPUT_IMG")
+echo "LOG:Loop device: $LOOP_DEV"
+
+parted -s "$LOOP_DEV" mklabel gpt
+parted -s "$LOOP_DEV" mkpart ESP fat32 1MiB 257MiB
+parted -s "$LOOP_DEV" set 1 esp on
+parted -s "$LOOP_DEV" mkpart primary 257MiB 258MiB
+parted -s "$LOOP_DEV" set 2 bios_grub on
+parted -s "$LOOP_DEV" mkpart primary ext4 258MiB 100%
+partprobe "$LOOP_DEV"; sleep 1
+
+mkfs.vfat -F32 "${{LOOP_DEV}}p1"
+mkfs.ext4 -q -L "ethos-root" "${{LOOP_DEV}}p3"
+
+mount "${{LOOP_DEV}}p3" "$WORK_DIR/root"
+mkdir -p "$WORK_DIR/root/boot/efi"
+mount "${{LOOP_DEV}}p1" "$WORK_DIR/root/boot/efi"
+
+echo "STEP:14:Obraz dysku utworzony"
+
+# ── Step 2: Debootstrap ──
+echo "STEP:15:Debootstrap — instalacja minimalna Debian (to potrwa kilka minut)..."
+PKG_COUNT=0
+if [ -d "$DEBOOTSTRAP_CACHE" ] && [ "$(ls -A "$DEBOOTSTRAP_CACHE" 2>/dev/null)" ]; then
+    echo "LOG:Używam cache debootstrap ($(du -sh "$DEBOOTSTRAP_CACHE" | cut -f1))"
+fi
+debootstrap --cache-dir="$DEBOOTSTRAP_CACHE" --variant=minbase --include=\\
+systemd,systemd-sysv,dbus,\\
+linux-image-amd64,\\
+grub-pc-bin,grub-efi-amd64-bin,grub-efi-amd64,grub-common,grub2-common,\\
+efibootmgr,\\
+sudo,openssh-server,curl,ca-certificates,gnupg,lsb-release,\\
+iproute2,iputils-ping,\\
+bash,locales,console-setup,\\
+python3,python3-minimal,\\
+dosfstools,e2fsprogs,parted,util-linux,\\
+rsync,smartmontools,\\
+cryptsetup,\\
+usbutils,pciutils,lm-sensors,\\
+avahi-daemon,libnss-mdns,\\
+kmod,udev \\
+    "$DEBIAN_RELEASE" "$WORK_DIR/root" http://deb.debian.org/debian 2>&1 | \\
+    while IFS= read -r line; do
+        if echo "$line" | grep -qE "^I: Retrieving"; then
+            PKG_COUNT=$((PKG_COUNT + 1))
+            if (( PKG_COUNT % 20 == 0 )); then
+                echo "LOG:Pobieranie pakietów... ($PKG_COUNT pobranych)"
+            fi
+        elif echo "$line" | grep -qE "^I: Validating"; then
+            echo "LOG:$line"
+        elif echo "$line" | grep -qE "^I: Extracting"; then
+            PKG_COUNT=$((PKG_COUNT + 1))
+            if (( PKG_COUNT % 30 == 0 )); then
+                echo "LOG:Rozpakowywanie... ($PKG_COUNT)"
+            fi
+        elif echo "$line" | grep -qE "^I: Unpacking|^I: Configuring"; then
+            echo "LOG:$line"
+        elif echo "$line" | grep -qE "^I: |^W: |^E: "; then
+            echo "LOG:$line"
+        fi
+    done
+
+# Verify debootstrap succeeded
+if [ ! -d "$WORK_DIR/root/dev" ] || [ ! -d "$WORK_DIR/root/etc" ]; then
+    echo "LOG:BŁĄD: debootstrap nie utworzył rootfs — sprawdź logi"
+    echo "STEP:45:Debootstrap nie powiódł się"
+    exit 1
+fi
+
+echo "STEP:45:Debian zainstalowany. Konfiguracja systemu..."
+
+# ── Step 3: Configure system ──
+ROOT="$WORK_DIR/root"
+echo "LOG:Bind mount /dev, /proc, /sys, /run..."
+mount --bind /dev "$ROOT/dev"
+mount --bind /dev/pts "$ROOT/dev/pts"
+mount --bind /dev/shm "$ROOT/dev/shm" 2>/dev/null || true
+mount -t proc proc "$ROOT/proc"
+mount -t sysfs sysfs "$ROOT/sys"
+mount -t tmpfs tmpfs "$ROOT/run"
+
+# Bind-mount apt cache for faster rebuilds
+mkdir -p "$ROOT/var/cache/apt/archives"
+mount --bind "$APT_CACHE" "$ROOT/var/cache/apt/archives"
+echo "LOG:Apt cache bind-mounted ($(du -sh "$APT_CACHE" 2>/dev/null | cut -f1) cached)"
+
+# DNS for chroot — essential for apt-get
+# Host resolv.conf may be systemd-resolved stub (127.0.0.53) which won't work in chroot
+if [ -f /run/systemd/resolve/resolv.conf ]; then
+    cp /run/systemd/resolve/resolv.conf "$ROOT/etc/resolv.conf"
+    echo "LOG:DNS: skopiowano resolv.conf z hosta"
+else
+    echo "nameserver 8.8.8.8" > "$ROOT/etc/resolv.conf"
+    echo "nameserver 1.1.1.1" >> "$ROOT/etc/resolv.conf"
+    echo "LOG:DNS: użyto 8.8.8.8 / 1.1.1.1"
+fi
+
+# Fix any broken packages left by debootstrap (polkitd etc.)
+echo "LOG:Naprawianie pakietów po debootstrap..."
+chroot "$ROOT" dpkg --configure -a 2>&1 | tail -3 || true
+chroot "$ROOT" bash -c 'DEBIAN_FRONTEND=noninteractive apt --fix-broken install -y' 2>&1 | tail -3 || true
+echo "LOG:Pakiety naprawione"
+
+# Install network-manager in chroot (needs systemd bind-mounts for polkitd)
+echo "LOG:Instalacja network-manager w chroocie..."
+chroot "$ROOT" apt-get update -qq 2>&1 | tail -3 || true
+chroot "$ROOT" bash -c 'DEBIAN_FRONTEND=noninteractive apt-get install -y -qq network-manager dbus-user-session' 2>&1 | tail -5 || echo "LOG:network-manager install issue"
+
+echo "LOG:Tworzenie fstab, hostname, locale..."
+ROOT_UUID=$(blkid -s UUID -o value "${{LOOP_DEV}}p3")
+EFI_UUID=$(blkid -s UUID -o value "${{LOOP_DEV}}p1")
+
+if [ -z "$ROOT_UUID" ]; then
+    echo "LOG:ERROR: Nie udało się odczytać UUID partycji root (${{LOOP_DEV}}p3)"
+    exit 1
+fi
+if [ -z "$EFI_UUID" ]; then
+    echo "LOG:ERROR: Nie udało się odczytać UUID partycji EFI (${{LOOP_DEV}}p1)"
+    exit 1
+fi
+
+cat > "$ROOT/etc/fstab" <<FSTAB
+UUID=$ROOT_UUID  /          ext4  noatime,errors=remount-ro  0 1
+UUID=$EFI_UUID   /boot/efi  vfat  umask=0077         0 1
+/swapfile        none       swap  sw                 0 0
+FSTAB
+
+echo "$DEFAULT_HOSTNAME" > "$ROOT/etc/hostname"
+
+# ── Swap file (4 GB) ──
+echo "LOG:Tworzenie swap file..."
+fallocate -l 4G "$ROOT/swapfile"
+chmod 600 "$ROOT/swapfile"
+mkswap "$ROOT/swapfile" >/dev/null
+
+# ── I/O tuning for low-power NAS hardware ──
+echo "LOG:Konfiguracja I/O tuning..."
+cat > "$ROOT/etc/sysctl.d/99-ethos-io-tuning.conf" <<'IOTUNE'
+# EthOS I/O tuning — smaller dirty page limits = frequent small flushes
+# instead of large stalls that freeze the system during copy/unzip
+vm.dirty_ratio = 5
+vm.dirty_background_ratio = 3
+vm.swappiness = 10
+vm.dirty_expire_centisecs = 1500
+vm.dirty_writeback_centisecs = 300
+IOTUNE
+cat > "$ROOT/etc/hosts" <<HOSTS
+127.0.0.1   localhost
+127.0.1.1   $DEFAULT_HOSTNAME
+::1         localhost ip6-localhost ip6-loopback
+HOSTS
+
+echo "en_US.UTF-8 UTF-8" > "$ROOT/etc/locale.gen"
+echo "pl_PL.UTF-8 UTF-8" >> "$ROOT/etc/locale.gen"
+chroot "$ROOT" locale-gen >/dev/null 2>&1
+echo 'LANG=en_US.UTF-8' > "$ROOT/etc/default/locale"
+ln -sf /usr/share/zoneinfo/Europe/Warsaw "$ROOT/etc/localtime"
+
+cat > "$ROOT/etc/apt/sources.list" <<APT
+deb http://deb.debian.org/debian $DEBIAN_RELEASE main contrib non-free non-free-firmware
+deb http://deb.debian.org/debian $DEBIAN_RELEASE-updates main contrib non-free non-free-firmware
+deb http://security.debian.org/debian-security $DEBIAN_RELEASE-security main contrib non-free non-free-firmware
+deb http://deb.debian.org/debian $DEBIAN_RELEASE-backports main contrib non-free non-free-firmware
+APT
+
+echo "LOG:Tworzenie użytkownika $DEFAULT_USER..."
+PASS_HASH=$(openssl passwd -6 "$USER_PASS")
+chroot "$ROOT" useradd -m -s /bin/bash -G sudo -p "$PASS_HASH" "$DEFAULT_USER"
+echo "${{DEFAULT_USER}} ALL=(ALL) NOPASSWD:ALL" > "$ROOT/etc/sudoers.d/010_${{DEFAULT_USER}}"
+chmod 440 "$ROOT/etc/sudoers.d/010_${{DEFAULT_USER}}"
+chroot "$ROOT" groupadd -f nasosadmin
+chroot "$ROOT" groupadd -f nasos
+chroot "$ROOT" usermod -aG nasosadmin,nasos "$DEFAULT_USER"
+chroot "$ROOT" systemctl enable ssh
+chroot "$ROOT" systemctl enable NetworkManager
+chroot "$ROOT" systemctl disable networking 2>/dev/null || true
+chroot "$ROOT" systemctl enable avahi-daemon 2>/dev/null || true
+chroot "$ROOT" systemctl enable serial-getty@ttyS0.service 2>/dev/null || true
+
+# ── USB automount (devmon/udevil) ──
+echo "LOG:Konfiguracja devmon USB automount..."
+chroot "$ROOT" bash -c 'id devmon &>/dev/null || useradd -r -s /usr/sbin/nologin -d /media/devmon devmon' 2>/dev/null || true
+mkdir -p "$ROOT/media/devmon"
+chroot "$ROOT" chown devmon:root /media/devmon
+chroot "$ROOT" chmod 755 /media/devmon
+cat > "$ROOT/etc/systemd/system/devmon@.service" <<'DEVMONSVC'
+[Unit]
+Description=devmon USB automounter for %i
+After=local-fs.target
+
+[Service]
+Type=simple
+User=%i
+ExecStart=/usr/bin/devmon --no-gui
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+DEVMONSVC
+ln -sf /etc/systemd/system/devmon@.service "$ROOT/etc/systemd/system/multi-user.target.wants/devmon@devmon.service"
+echo "LOG:devmon USB automount OK"
+
+# NetworkManager config for AP shared mode (dnsmasq) and WiFi scan
+mkdir -p "$ROOT/etc/NetworkManager/conf.d"
+cat > "$ROOT/etc/NetworkManager/conf.d/00-ethos.conf" <<'NMCFG'
+[main]
+dns=dnsmasq
+
+[device]
+wifi.scan-rand-mac-address=no
+NMCFG
+# Lock root account — random password + lock
+ROOT_PASS=$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 24)
+chroot "$ROOT" bash -c "echo \"root:${{ROOT_PASS}}\" | chpasswd"
+chroot "$ROOT" passwd -l root
+
+# ── Branding: /etc/os-release ──
+cat > "$ROOT/etc/os-release" <<OSREL
+PRETTY_NAME="EthOS v${{VERSION}}"
+NAME="EthOS"
+VERSION_ID="${{VERSION}}"
+VERSION="${{VERSION}}"
+ID=ethos
+ID_LIKE=debian
+HOME_URL="https://ethos.local"
+OSREL
+
+cat > "$ROOT/etc/issue" <<'ISSUE'
+EthOS \\n \\l
+
+ISSUE
+echo "EthOS" > "$ROOT/etc/issue.net"
+
+# ── GRUB defaults (so update-grub keeps EthOS name) ──
+cat > "$ROOT/etc/default/grub" <<GRUBDEF
+GRUB_DEFAULT=0
+GRUB_TIMEOUT=3
+GRUB_DISTRIBUTOR="EthOS"
+GRUB_CMDLINE_LINUX_DEFAULT="quiet net.ifnames=0 biosdevname=0"
+GRUB_CMDLINE_LINUX=""
+GRUBDEF
+
+echo "STEP:52:System skonfigurowany"
+
+# ── Step 4: GRUB ──
+echo "STEP:53:Instalacja GRUB (BIOS + UEFI)..."
+
+echo "LOG:apt-get update w chroocie..."
+chroot "$ROOT" apt-get update -qq 2>&1 | tail -3 || true
+echo "LOG:Instalacja pakietów GRUB..."
+chroot "$ROOT" bash -c 'DEBIAN_FRONTEND=noninteractive apt-get install -y -qq grub-efi-amd64 grub-pc-bin grub-common efibootmgr' 2>&1 | tail -5 || true
+
+echo "LOG:GRUB BIOS install..."
+chroot "$ROOT" grub-install --target=i386-pc --boot-directory=/boot "$LOOP_DEV" 2>/dev/null || \\
+    grub-install --target=i386-pc --boot-directory="$ROOT/boot" "$LOOP_DEV" 2>/dev/null || \\
+    echo "LOG:BIOS grub-install warning (UEFI ok)"
+
+mkdir -p "$ROOT/boot/efi/EFI/BOOT"
+echo "LOG:GRUB UEFI install..."
+chroot "$ROOT" grub-install --target=x86_64-efi --efi-directory=/boot/efi \\
+    --boot-directory=/boot --removable --no-nvram 2>/dev/null || {{
+    echo "STEP:0:BŁĄD: UEFI grub-install nie powiódł się!"; exit 1;
+}}
+
+KERN=$(ls "$ROOT/boot/vmlinuz-"* 2>/dev/null | sort -V | tail -1 | sed "s|$ROOT||")
+INITRD=$(ls "$ROOT/boot/initrd.img-"* 2>/dev/null | sort -V | tail -1 | sed "s|$ROOT||")
+
+mkdir -p "$ROOT/boot/grub"
+cat > "$ROOT/boot/grub/grub.cfg" <<GRUBCFG
+set timeout=3
+set default=0
+insmod part_gpt
+insmod ext2
+insmod gzio
+menuentry "EthOS v${{VERSION}}" {{
+    search --no-floppy --fs-uuid --set=root ${{ROOT_UUID}}
+    linux ${{KERN}} root=UUID=${{ROOT_UUID}} ro quiet net.ifnames=0 biosdevname=0 fsck.repair=preen
+    initrd ${{INITRD}}
+}}
+menuentry "EthOS v${{VERSION}} (recovery)" {{
+    search --no-floppy --fs-uuid --set=root ${{ROOT_UUID}}
+    linux ${{KERN}} root=UUID=${{ROOT_UUID}} ro single nomodeset fsck.repair=preen
+    initrd ${{INITRD}}
+}}
+GRUBCFG
+
+cp "$ROOT/boot/grub/grub.cfg" "$ROOT/boot/efi/EFI/BOOT/grub.cfg"
+
+echo "STEP:60:GRUB zainstalowany"
+
+# From here on, individual failures should not abort the whole build
+set +e
+
+# ── Step 5: Instalacja zależności (native) ──
+echo "STEP:61:Instalacja zależności..."
+echo "LOG:apt-get update in chroot..."
+chroot "$ROOT" apt-get update -qq 2>&1 | tail -3 || echo "LOG:apt-get update failed but continuing"
+
+echo "LOG:Instalacja minimalnych pakietów..."
+chroot "$ROOT" apt-get install -y -qq \
+    python3 python3-pip python3-venv \
+    avahi-daemon \
+    wpasupplicant dnsmasq rfkill \
+    cloud-guest-utils \
+    udevil udisks2 \
+    zstd cron \
+    2>&1 | tail -10 || echo "LOG:Niektóre pakiety pominięte"
+
+echo "LOG:Instalacja firmware..."
+chroot "$ROOT" apt-get install -y -qq \
+    firmware-atheros firmware-realtek firmware-brcm80211 \
+    firmware-misc-nonfree firmware-linux-nonfree bluez firmware-intel-sound \
+    2>&1 | tail -10 || echo "LOG:Niektóre firmware pominięte"
+
+# All other packages (storage tools, sensors, printer, archives, etc.)
+# are installed lazily by EthOS (ensure_dep) when user enables features.
+
+echo "STEP:73:Instalacja kernela i firmware z backports..."
+
+# First clean apt cache to free space before big installs
+chroot "$ROOT" apt-get clean 2>/dev/null || true
+echo "LOG:Disk usage before backports:"
+df -h "$ROOT" 2>/dev/null | tail -1 || true
+
+echo "LOG:Instalacja linux-image-amd64 z backports..."
+chroot "$ROOT" apt-get install -y -qq -t ${{DEBIAN_RELEASE}}-backports linux-image-amd64 2>&1 | tail -5 || echo "LOG:Backports kernel pominięty"
+
+# Remove OLD kernel to save ~200MB and avoid initramfs for 2 kernels
+OLD_KERN=$(ls "$ROOT/boot/vmlinuz-"* 2>/dev/null | sort -V | head -1 | sed 's|.*/vmlinuz-||')
+NEW_KERN=$(ls "$ROOT/boot/vmlinuz-"* 2>/dev/null | sort -V | tail -1 | sed 's|.*/vmlinuz-||')
+if [[ -n "$OLD_KERN" && -n "$NEW_KERN" && "$OLD_KERN" != "$NEW_KERN" ]]; then
+    echo "LOG:Usuwam stary kernel $OLD_KERN (zostaje $NEW_KERN)"
+    chroot "$ROOT" apt-get remove -y --purge "linux-image-$OLD_KERN" 2>&1 | tail -3 || true
+    rm -f "$ROOT/boot/vmlinuz-$OLD_KERN" "$ROOT/boot/initrd.img-$OLD_KERN" "$ROOT/boot/System.map-$OLD_KERN" "$ROOT/boot/config-$OLD_KERN" 2>/dev/null
+    rm -rf "$ROOT/lib/modules/$OLD_KERN" 2>/dev/null
+    echo "LOG:Stary kernel usunięty"
+fi
+
+echo "LOG:Instalacja firmware-iwlwifi z backports..."
+chroot "$ROOT" apt-get install -y -qq -t ${{DEBIAN_RELEASE}}-backports firmware-iwlwifi 2>&1 | tail -5 || echo "LOG:Backports iwlwifi pominięty"
+echo "LOG:Instalacja firmware-realtek z backports..."
+chroot "$ROOT" apt-get install -y -qq -t ${{DEBIAN_RELEASE}}-backports firmware-realtek 2>&1 | tail -5 || echo "LOG:Backports realtek pominięty"
+echo "LOG:Instalacja firmware-misc-nonfree z backports..."
+chroot "$ROOT" apt-get install -y -qq -t ${{DEBIAN_RELEASE}}-backports firmware-misc-nonfree 2>&1 | tail -5 || echo "LOG:Backports misc pominięty"
+
+# Disable standalone dnsmasq (NM uses its own for AP mode)
+chroot "$ROOT" systemctl disable dnsmasq 2>/dev/null || true
+chroot "$ROOT" systemctl mask dnsmasq 2>/dev/null || true
+
+# Install rfkill (needed for WiFi unblock)
+chroot "$ROOT" apt-get install -y -qq rfkill 2>/dev/null || true
+
+# Clean apt cache before initramfs rebuild to maximize free space
+chroot "$ROOT" apt-get clean 2>/dev/null || true
+rm -rf "$ROOT/var/lib/apt/lists/"* 2>/dev/null || true
+echo "LOG:Disk usage before initramfs:"
+df -h "$ROOT" 2>/dev/null | tail -1 || true
+
+# Rebuild initramfs with firmware (only for the new kernel)
+echo "LOG:Przebudowa initramfs..."
+if [[ -n "$NEW_KERN" ]]; then
+    chroot "$ROOT" update-initramfs -u -k "$NEW_KERN" 2>&1 | tail -5 || echo "LOG:initramfs update failed"
+else
+    chroot "$ROOT" update-initramfs -u -k all 2>/dev/null || echo "LOG:initramfs update failed"
+fi
+
+echo "STEP:75:Zależności zainstalowane"
+
+# ── Step 6: Inject EthOS (cały pakiet) ──
+echo "STEP:76:Wstrzykiwanie EthOS..."
+
+ETHOS_DIR="$ROOT/opt/ethos"
+mkdir -p "$ETHOS_DIR"/{{data,backups,logs,uploads,cups-config}}
+
+# ── Kopiowanie CAŁEGO backend/ ──
+echo "LOG:Kopiowanie backend..."
+cp -r "$NASOS/backend" "$ETHOS_DIR/"
+rm -rf "$ETHOS_DIR/backend/__pycache__" "$ETHOS_DIR/backend/blueprints/__pycache__"
+rm -f "$ETHOS_DIR/backend/blueprints/"*.bak 2>/dev/null || true
+
+# ── Kopiowanie CAŁEGO frontend/ ──
+echo "LOG:Kopiowanie frontend..."
+cp -r "$NASOS/frontend" "$ETHOS_DIR/"
+
+# ── CUPS config ──
+if [[ -d "$NASOS/cups-config" ]]; then
+    cp -r "$NASOS/cups-config/"* "$ETHOS_DIR/cups-config/" 2>/dev/null || true
+fi
+
+# ── Installer scripts (do przyszłych aktualizacji) ──
+mkdir -p "$ETHOS_DIR/installer/images"
+cp "$NASOS/installer/"*.sh         "$ETHOS_DIR/installer/"     2>/dev/null || true
+cp "$NASOS/installer/images/"*.sh     "$ETHOS_DIR/installer/images/" 2>/dev/null || true
+
+# ── Czyszczenie cache z kopiowanego kodu ──
+find "$ETHOS_DIR" -type d -name "__pycache__" -exec rm -rf {{}} + 2>/dev/null || true
+find "$ETHOS_DIR" -name "*.pyc" -delete 2>/dev/null || true
+
+echo "LOG:Pliki skopiowane — $(du -sh "$ETHOS_DIR" | awk '{{print $1}}')"
+
+# ── Python venv + environment file ──
+echo "LOG:Tworzenie Python venv..."
+# Install build deps needed by some pip packages (pyudev needs libudev-dev)
+chroot "$ROOT" apt-get install -y -qq libudev-dev libffi-dev 2>&1 | tail -3 || echo "LOG:build deps issue"
+chroot "$ROOT" python3 -m venv /opt/ethos/venv 2>&1 | tail -3 || echo "LOG:venv creation issue"
+echo "LOG:pip install requirements..."
+chroot "$ROOT" /opt/ethos/venv/bin/pip install --no-cache-dir -r /opt/ethos/backend/requirements.txt 2>&1 | tail -15 || echo "LOG:pip install issue"
+# Verify critical imports work
+chroot "$ROOT" /opt/ethos/venv/bin/python -c "import flask; import psutil; import gevent; import pyudev; print('OK: all imports')" 2>&1 || echo "LOG:UWAGA: Brak niektórych modułów Python!"
+
+# Remove build deps no longer needed (saves ~50MB)
+chroot "$ROOT" apt-get remove -y --purge libudev-dev libffi-dev 2>&1 | tail -3 || true
+chroot "$ROOT" apt-get autoremove -y -qq 2>&1 | tail -3 || true
+
+cat > "$ETHOS_DIR/ethos.env" <<ENVFILE
+NAS_NAME=EthOS
+PORT=$NAS_PORT
+ETHOS_ROOT=/opt/ethos
+BACKUP_DIR=/opt/ethos/backups
+ENVFILE
+
+cat > "$ETHOS_DIR/start.sh" <<'MGMT_STARTSH'
+#!/bin/bash
+sudo systemctl start ethos
+echo "EthOS uruchomiony"
+MGMT_STARTSH
+
+cat > "$ETHOS_DIR/stop.sh" <<'MGMT_STOPSH'
+#!/bin/bash
+sudo systemctl stop ethos
+echo "EthOS zatrzymany"
+MGMT_STOPSH
+
+cat > "$ETHOS_DIR/rebuild.sh" <<'MGMT_REBSH'
+#!/bin/bash
+cd "$(dirname "$0")"
+./venv/bin/pip install --quiet --no-cache-dir -r backend/requirements.txt
+sudo systemctl restart ethos
+echo "EthOS przebudowany i uruchomiony"
+MGMT_REBSH
+
+chmod +x "$ETHOS_DIR"/{{start,stop,rebuild}}.sh
+
+# ── install.conf ──
+cat > "$ETHOS_DIR/install.conf" <<INSTCFG
+ETHOS_USER="$DEFAULT_USER"
+ETHOS_HOSTNAME="$DEFAULT_HOSTNAME"
+ETHOS_NAS_NAME="EthOS"
+ETHOS_PORT=$NAS_PORT
+ETHOS_SETUP_WIZARD=yes
+INSTCFG
+
+# ── Installer-mode marker: USB is an installer, not a live OS ──
+touch "$ETHOS_DIR/.installer-mode"
+echo "LOG:Installer-mode marker created"
+
+# ── WiFi AP script ──
+echo "LOG:Kopiowanie ethos-ap.sh..."
+cp "$NASOS/installer/images/ethos-ap.sh" "$ROOT/usr/local/bin/ethos-ap"
+chmod +x "$ROOT/usr/local/bin/ethos-ap"
+if [[ ! -f "$ROOT/usr/local/bin/ethos-ap" ]]; then
+    echo "LOG:BŁĄD — ethos-ap nie skopiowany!"
+    ls -la "$NASOS/installer/images/ethos-ap.sh" 2>&1 || true
+    exit 1
+fi
+echo "LOG:ethos-ap.sh OK"
+
+# ── Firstboot script (kopia ze źródła — obsługuje oba tryby) ──
+echo "LOG:Kopiowanie firstboot.sh..."
+cp "$NASOS/installer/images/firstboot.sh" "$ROOT/opt/ethos-firstboot.sh"
+chmod +x "$ROOT/opt/ethos-firstboot.sh"
+if [[ ! -f "$ROOT/opt/ethos-firstboot.sh" ]]; then
+    echo "LOG:BŁĄD — firstboot.sh nie skopiowany!"
+    exit 1
+fi
+echo "LOG:firstboot.sh OK"
+
+# ── Diagnostic script ──
+echo "LOG:Kopiowanie ethos-diag.sh..."
+if [[ -f "$NASOS/installer/images/ethos-diag.sh" ]]; then
+    cp "$NASOS/installer/images/ethos-diag.sh" "$ROOT/usr/local/bin/ethos-diag"
+    chmod +x "$ROOT/usr/local/bin/ethos-diag"
+    echo "LOG:ethos-diag OK"
+else
+    echo "LOG:OSTRZEŻENIE — brak ethos-diag.sh (pomijam)"
+fi
+
+# ── Firstboot systemd service ──
+cat > "$ROOT/etc/systemd/system/ethos-firstboot.service" <<SVCUNIT
+[Unit]
+Description=EthOS First Boot Installer
+After=network.target ethos-preboot.service
+Wants=network.target
+ConditionPathExists=/opt/ethos-firstboot.sh
+ConditionPathExists=!/opt/ethos/.installed
+ConditionPathExists=!/opt/ethos/.installer-mode
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/ethos-firstboot.sh
+StandardOutput=journal+console
+StandardError=journal+console
+TimeoutStartSec=1800
+[Install]
+WantedBy=multi-user.target
+SVCUNIT
+ln -sf /etc/systemd/system/ethos-firstboot.service "$ROOT/etc/systemd/system/multi-user.target.wants/ethos-firstboot.service"
+
+# WiFi AP service
+cat > "$ROOT/etc/systemd/system/ethos-ap.service" <<'APSVC'
+[Unit]
+Description=EthOS WiFi Hotspot (auto if no network)
+After=NetworkManager.service
+Wants=NetworkManager.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/ethos-ap auto
+ExecStop=/usr/local/bin/ethos-ap stop
+[Install]
+WantedBy=multi-user.target
+APSVC
+ln -sf /etc/systemd/system/ethos-ap.service "$ROOT/etc/systemd/system/multi-user.target.wants/ethos-ap.service"
+
+# Pre-boot setup server (headless WiFi config)
+mkdir -p "$ROOT/opt/ethos-installer"
+echo "LOG:Kopiowanie preboot-server.py z $NASOS/installer/images/ do $ROOT/opt/ethos-installer/"
+if [[ -f "$NASOS/installer/images/preboot-server.py" ]]; then
+    cp "$NASOS/installer/images/preboot-server.py" "$ROOT/opt/ethos-installer/preboot-server.py"
+    chmod +x "$ROOT/opt/ethos-installer/preboot-server.py"
+    echo "LOG:preboot-server.py skopiowany OK"
+else
+    echo "LOG:BŁĄD — brak pliku źródłowego preboot-server.py w $NASOS/installer/images/"
+    echo "LOG:Zawartość $NASOS/installer/images/:"
+    ls -la "$NASOS/installer/images/" 2>&1 || true
+fi
+# Verify file landed in chroot
+if [[ ! -f "$ROOT/opt/ethos-installer/preboot-server.py" ]]; then
+    echo "LOG:KRYTYCZNY BŁĄD — preboot-server.py nie istnieje w obrazie!"
+    exit 1
+fi
+
+cat > "$ROOT/etc/systemd/system/ethos-preboot.service" <<'PREBOOT'
+[Unit]
+Description=EthOS Pre-Boot Setup Server
+After=network.target NetworkManager.service
+Wants=NetworkManager.service
+Before=ethos-firstboot.service
+Conflicts=ethos.service
+ConditionPathExists=/opt/ethos-installer/preboot-server.py
+ConditionPathExists=!/opt/ethos/.installed
+StartLimitIntervalSec=60
+StartLimitBurst=5
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/ethos-installer/preboot-server.py
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=5
+[Install]
+WantedBy=multi-user.target
+PREBOOT
+ln -sf /etc/systemd/system/ethos-preboot.service "$ROOT/etc/systemd/system/multi-user.target.wants/ethos-preboot.service"
+
+# Set multi-user as default (headless — no kiosk, access via hotspot + browser)
+mkdir -p "$ROOT/etc/systemd/system/multi-user.target.wants"
+chroot "$ROOT" systemctl set-default multi-user.target 2>/dev/null || true
+
+# ── ethos.service (pre-create — firstboot.sh enables + starts it after stopping preboot) ──
+# NOTE: Do NOT add After=ethos-firstboot.service — it causes deadlock!
+# (firstboot is Type=oneshot and calls systemctl restart ethos from within itself)
+cat > "$ROOT/etc/systemd/system/ethos.service" <<SVCETHOS
+[Unit]
+Description=EthOS NAS
+After=network.target
+Wants=network.target
+Conflicts=ethos-preboot.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/ethos
+EnvironmentFile=/opt/ethos/ethos.env
+ExecStartPre=/bin/mkdir -p /opt/ethos/data /opt/ethos/logs /opt/ethos/backups /opt/ethos/uploads
+ExecStart=/opt/ethos/venv/bin/python /opt/ethos/backend/app.py
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
+SVCETHOS
+# NOTE: Do NOT enable here — firstboot.sh enables after stopping preboot (port 9000 conflict)
+
+# ── Auto-login on tty1 as nasadmin (NOT root) during first boot ──
+# After setup wizard completes, firstboot removes this override
+mkdir -p "$ROOT/etc/systemd/system/getty@tty1.service.d"
+cat > "$ROOT/etc/systemd/system/getty@tty1.service.d/override.conf" <<AUTOLOGIN
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --autologin $DEFAULT_USER --noclear %I \$TERM
+AUTOLOGIN
+
+# ── .bash_profile for nasadmin — show setup info on console ──
+cat > "$ROOT/home/$DEFAULT_USER/.bash_profile" <<'USERPROFILE'
+#!/bin/bash
+# EthOS first-boot console banner
+if [ ! -f /opt/ethos/.installed ]; then
+    clear
+    echo ""
+    echo "  ======================================================="
+    echo "              EthOS — Pierwszy start"
+    echo "  ======================================================="
+    echo ""
+    echo "  System sie konfiguruje..."
+    echo ""
+    IP=$(hostname -I 2>/dev/null | awk '{{print $1}}')
+    if [ -n "$IP" ]; then
+    echo "  =>  http://${{IP}}:9000"
+    else
+    echo "  Brak sieci — polacz sie z hotspot WiFi:"
+    echo "    SSID:  ethos  (bez hasla)"
+    echo "    Adres: http://192.168.42.1:9000"
+    echo ""
+    echo "  Lub podlacz kabel Ethernet."
+    fi
+    echo ""
+    echo "  Kreator pomoze Ci ustawic:"
+    echo "    - Polaczenie z siecia WiFi"
+    echo "    - Konto administratora"
+    echo "    - Dysk danych"
+    echo ""
+    echo "  ======================================================="
+    echo ""
+    while [ -z "$IP" ]; do
+        sleep 15
+        IP=$(hostname -I 2>/dev/null | awk '{{print $1}}')
+        if [ -n "$IP" ]; then
+            echo "  Siec dostepna: http://${{IP}}:9000"
+            echo ""
+        fi
+    done
+fi
+USERPROFILE
+chown $(chroot "$ROOT" id -u $DEFAULT_USER):$(chroot "$ROOT" id -g $DEFAULT_USER) "$ROOT/home/$DEFAULT_USER/.bash_profile"
+
+echo "STEP:85:EthOS wstrzyknięty"
+
+# ── Step 7: Cleanup & finalize ──
+echo "STEP:86:Finalizacja..."
+# Unmount apt cache BEFORE cleaning (it's bind-mounted to host cache)
+umount "$ROOT/var/cache/apt/archives" 2>/dev/null || true
+chroot "$ROOT" apt-get clean 2>/dev/null || true
+rm -rf "$ROOT/var/lib/apt/lists/"* 2>/dev/null || true
+rm -rf "$ROOT/var/cache/apt/"*.bin 2>/dev/null || true
+rm -rf "$ROOT/tmp/"* 2>/dev/null || true
+rm -rf "$ROOT/var/tmp/"* 2>/dev/null || true
+rm -rf "$ROOT/var/log/"*.gz "$ROOT/var/log/"*.1 2>/dev/null || true
+# Clear pip cache that may have leaked
+rm -rf "$ROOT/root/.cache" 2>/dev/null || true
+# Only search /opt and /usr — skip mounted /proc, /sys, /dev
+find "$ROOT/opt" "$ROOT/usr" -type d -name "__pycache__" -exec rm -rf {{}} + 2>/dev/null || true
+# Remove .pyc files (regenerated on import)
+find "$ROOT/opt" -name '*.pyc' -delete 2>/dev/null || true
+truncate -s 0 "$ROOT/etc/machine-id" 2>/dev/null || true
+rm -f "$ROOT/var/lib/dbus/machine-id"
+# Log final image usage
+echo "LOG:Wykorzystanie dysku w obrazie:"
+du -sh "$ROOT"/* 2>/dev/null | sort -rh | head -10 || true
+df -h "$ROOT" 2>/dev/null || true
+
+sync
+
+for m in boot/efi run sys proc dev/shm dev/pts dev; do
+    umount "$ROOT/$m" 2>/dev/null || \
+        umount -l "$ROOT/$m" 2>/dev/null || true
+done
+sleep 1
+umount "$ROOT" 2>/dev/null || \
+    umount -l "$ROOT" 2>/dev/null || true
+
+echo "STEP:90:Finalizacja obrazu IMG..."
+
+losetup -d "$LOOP_DEV" 2>/dev/null || true
+LOOP_DEV=""
+
+# Move image from tmpfs to persistent storage
+if [ "$USE_TMPFS" -eq 1 ] && [ -f "$OUTPUT_IMG" ]; then
+    echo "LOG:Kopiowanie obrazu z RAM na dysk ($FINAL_IMG)..."
+    cp "$OUTPUT_IMG" "$FINAL_IMG"
+    rm -f "$OUTPUT_IMG"
+    OUTPUT_IMG="$FINAL_IMG"
+    echo "LOG:Obraz przeniesiony na dysk"
+elif [ "$OUTPUT_IMG" != "$FINAL_IMG" ]; then
+    mv "$OUTPUT_IMG" "$FINAL_IMG" 2>/dev/null || cp "$OUTPUT_IMG" "$FINAL_IMG"
+    OUTPUT_IMG="$FINAL_IMG"
+fi
+
+# Results
+IMG_SIZE=$(stat -c%s "$OUTPUT_IMG" 2>/dev/null || echo 0)
+
+echo "STEP:100:Obraz gotowy!"
+echo "RESULT_IMG:$OUTPUT_IMG:$IMG_SIZE"
+"""
+
+
+# ═══════════════════════════════════════════════════════════
+#  API — Build Logs
+# ═══════════════════════════════════════════════════════════
+
+@builder_bp.route('/logs')
+def builder_logs():
+    """Return build log contents (last N lines)."""
+    lines_count = request.args.get('lines', 200, type=int)
+    log_file = os.path.join(LOG_DIR, 'builder.log')
+
+    if not os.path.isfile(log_file):
+        return jsonify({'log': '', 'lines': 0, 'size': 0})
+
+    size = os.path.getsize(log_file)
+    try:
+        with open(log_file, 'r', encoding='utf-8') as f:
+            all_lines = f.readlines()
+        tail = all_lines[-lines_count:] if len(all_lines) > lines_count else all_lines
+        return jsonify({
+            'log': ''.join(tail),
+            'lines': len(all_lines),
+            'size': size,
+        })
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 500
+
+
+@builder_bp.route('/logs/clear', methods=['POST'])
+def clear_logs():
+    """Clear the build log file."""
+    log_file = os.path.join(LOG_DIR, 'builder.log')
+    try:
+        with open(log_file, 'w') as f:
+            f.write('')
+        return jsonify({'ok': True})
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 500
+
+
+# ═══════════════════════════════════════════════════════════
+#  API — Delete release/image
+# ═══════════════════════════════════════════════════════════
+
+@builder_bp.route('/delete', methods=['POST'])
+def delete_artifact():
+    """Delete one or more release packages / image files."""
+    data = request.json or {}
+    # Support both single path and array of paths
+    paths = data.get('paths') or []
+    single = data.get('path', '').strip()
+    if single and not paths:
+        paths = [single]
+
+    if not paths:
+        return jsonify({'error': 'Brak ścieżek'}), 400
+
+    nasos = _get_host_nasos_dir()
+    allowed_root = os.path.realpath(nasos + '/installer')
+
+    deleted = []
+    errors = []
+    for p in paths:
+        p = str(p).strip()
+        if not p:
+            continue
+        real = os.path.realpath(p)
+        if not real.startswith(allowed_root + '/'):
+            errors.append(f'{os.path.basename(p)}: niedozwolona ścieżka')
+            continue
+        r = _host_run(f"rm -f {_q(real)}")
+        if r.returncode == 0:
+            deleted.append(os.path.basename(p))
+        else:
+            errors.append(f'{os.path.basename(p)}: nie udało się usunąć')
+
+    return jsonify({'ok': True, 'deleted': deleted, 'errors': errors})
+
+
+# ═══════════════════════════════════════════════════════════
+#  API — Download image/release file
+# ═══════════════════════════════════════════════════════════
+
+@builder_bp.route('/download')
+def download_artifact():
+    """Stream an image or release file for download."""
+    from flask import send_file as _send
+    path = request.args.get('path', '').strip()
+    if not path:
+        return jsonify({'error': 'Brak ścieżki'}), 400
+
+    nasos = _get_host_nasos_dir()
+    # Security: resolve symlinks/.. before checking prefix
+    allowed_root = os.path.realpath(nasos + '/installer')
+    real_check = os.path.realpath(path)
+    if not real_check.startswith(allowed_root + '/'):
+        return jsonify({'error': 'Niedozwolona ścieżka'}), 403
+
+    # Try direct path first (native mode), then Docker container mapping
+    if os.path.isfile(path):
+        real_path = path
+    else:
+        real_path = path.replace('/home/', '/data/home/', 1)
+
+    if not os.path.isfile(real_path):
+        return jsonify({'error': 'Plik nie istnieje'}), 404
+
+    filename = os.path.basename(path)
+    return _send(real_path, as_attachment=True, download_name=filename)
+
+
+def _human_size(b):
+    return fmt_bytes(b)
+
+
+# ── Package: install / uninstall / status ──
+
+def _builder_on_uninstall(wipe):
+    """Kill active build process on uninstall."""
+    with _build_lock:
+        if _build_state['status'] == 'building':
+            pid = _build_state['pid']
+            if pid:
+                _host_run(f"kill -TERM -{pid} 2>/dev/null; sleep 1; kill -KILL -{pid} 2>/dev/null || kill -KILL {pid} 2>/dev/null", timeout=10)
+            _build_state.update({
+                'status': 'idle', 'build_type': '', 'percent': 0,
+                'message': '', 'logs': [], 'pid': 0, 'result': None,
+            })
+            _save_build_state()
+    log.info('[builder] Processes stopped (uninstall, wipe=%s)', wipe)
+
+
+register_pkg_routes(
+    builder_bp,
+    install_message='Builder gotowy.',
+    wipe_files=[_BUILD_STATE_FILE],
+    wipe_dirs=[app_path('releases')],
+    on_uninstall=_builder_on_uninstall,
+)
