@@ -2986,3 +2986,4 @@ select.tk-input {
 .dash-toolbar-title i { font-size:13px; }
 .dash-spin i { animation: dash-rotate .6s ease; }
 @keyframes dash-rotate { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
+\n/* Nested ticket styles: child/epic */\n.tk-card-child { margin-left: 12px; border-left: 3px solid rgba(255,255,255,0.03); padding-left: 8px; opacity: 0.98; }\n.tk-epic-card { background: linear-gradient(90deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); border-left: 4px solid rgba(58,141,255,0.12); }\n
