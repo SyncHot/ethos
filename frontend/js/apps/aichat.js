@@ -1476,9 +1476,9 @@ window._aicOpenDashboard = function () {
         root.innerHTML = '<div class="aic-loading"><i class="fas fa-spinner fa-spin"></i> ' + t('Ładowanie…') + '</div>';
         // Load fresh health + hardware data
         Promise.all([
-            _aicFetch('/api/aichat/health').then(function (r) { return r.json(); }),
-            _aicFetch('/api/aichat/hardware').then(function (r) { return r.json(); }),
-            _aicFetch('/api/aichat/models/benchmark').then(function (r) { return r.json(); }),
+            _aicFetch('/api/aichat/health').then(function (r) { return r.json(); }).catch(function () { return { score: 0, grade: '?', details: [] }; }),
+            _aicFetch('/api/aichat/hardware').then(function (r) { return r.json(); }).catch(function () { return {}; }),
+            _aicFetch('/api/aichat/models/benchmark').then(function (r) { return r.json(); }).catch(function () { return { benchmark: null }; }),
         ]).then(function (results) {
             _aic.health = results[0];
             _aic.dashHw = results[1];
@@ -1537,10 +1537,18 @@ function _aicRenderDashboard(root) {
             '</div>' +
         '</div>';
     } else {
-        benchHtml = '<div class="aic-dash-no-bench">' +
-            '<p>' + t('Brak wyników benchmarku') + '</p>' +
-            '<button class="aic-btn-primary" onclick="window._aicDashRunBench()"><i class="fas fa-play"></i> ' + t('Uruchom benchmark') + '</button>' +
-        '</div>';
+        var isRemote = _aic.cfg && _aic.cfg.provider && _aic.cfg.provider !== 'local';
+        if (isRemote) {
+            benchHtml = '<div class="aic-dash-no-bench">' +
+                '<p><i class="fas fa-cloud"></i> ' + t('Benchmark niedostępny dla zdalnego API') + ' (' + _aicEsc((_aic.cfg || {}).provider || '') + ')</p>' +
+                '<p class="aic-field-hint">' + t('Benchmark mierzy lokalny model. Przełącz na lokalny model, aby uruchomić benchmark.') + '</p>' +
+            '</div>';
+        } else {
+            benchHtml = '<div class="aic-dash-no-bench">' +
+                '<p>' + t('Brak wyników benchmarku') + '</p>' +
+                '<button class="aic-btn-primary" onclick="window._aicDashRunBench()"><i class="fas fa-play"></i> ' + t('Uruchom benchmark') + '</button>' +
+            '</div>';
+        }
     }
 
     // Hardware summary
@@ -1591,19 +1599,22 @@ function _aicRenderDashboard(root) {
 
 window._aicDashRunBench = function () {
     var root = document.querySelector('.aic-root');
-    if (root) root.querySelector('.aic-dash-no-bench').innerHTML = '<div class="aic-wiz-loading"><i class="fas fa-spinner fa-spin"></i> ' + t('Benchmark…') + '</div>';
+    var noBench = root ? root.querySelector('.aic-dash-no-bench') : null;
+    if (noBench) noBench.innerHTML = '<div class="aic-wiz-loading"><i class="fas fa-spinner fa-spin"></i> ' + t('Benchmark…') + '</div>';
     _aicFetch('/api/aichat/models/benchmark', { method: 'POST', body: JSON.stringify({}) })
         .then(function (r) { return r.json(); }).then(function (d) {
             if (d.error) {
-                if (typeof showToast === 'function') showToast(d.error, 'error');
+                showToast(d.error, 'error');
             } else {
                 _aic.dashBench = d;
-                if (typeof showToast === 'function') showToast(t('Benchmark zakończony') + ': ' + d.tps + ' tok/s', 'success');
+                showToast(t('Benchmark zakończony') + ': ' + d.tps + ' tok/s', 'success');
             }
             var root2 = document.querySelector('.aic-root');
             if (root2) _aicRenderDashboard(root2);
         }).catch(function (err) {
-            if (typeof showToast === 'function') showToast(t('Błąd benchmarku'), 'error');
+            showToast(t('Błąd benchmarku: ') + err.message, 'error');
+            var root2 = document.querySelector('.aic-root');
+            if (root2) _aicRenderDashboard(root2);
         });
 };
 
