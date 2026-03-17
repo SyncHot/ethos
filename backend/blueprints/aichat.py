@@ -135,17 +135,118 @@ _CONFIG_DEFAULTS = {
     'max_tokens': 768,              # N150-safe default
     'temperature': 0.7,
     'system_prompt': 'Jesteś domowym asystentem NAS EthOS. Odpowiadaj krótko i konkretnie. '
-                     'Twoim zadaniem jest pomaganie użytkownikowi w przeglądaniu galerii zdjęć, '
-                     'wyszukiwaniu plików i odpowiadaniu na pytania na podstawie jego danych. '
-                     'Masz dostęp do bazy wiedzy użytkownika (RAG) — fragmenty dokumentów '
-                     'i metadane zdjęć są automatycznie dołączane jako kontekst. '
-                     'Zawsze powoływaj się na źródła: "Źródło: [nazwa_pliku]". '
-                     'ZAKAZ pisania kodu programistycznego. '
+                     'Twoim zadaniem jest pomaganie użytkownikowi w zarządzaniu systemem NAS, '
+                     'przeglądaniu galerii zdjęć, wyszukiwaniu plików i zarządzaniu projektami. '
+                     'Masz dostęp do narzędzi: create_ticket (tworzenie zadań w Kanban), '
+                     'list_tickets (sprawdzanie stanu tablicy). '
+                     'Gdy użytkownik zgłasza problem lub prosi o zadanie — użyj create_ticket. '
+                     'Masz dostęp do bazy wiedzy użytkownika (RAG). '
                      'Odpowiadaj po polsku, chyba że użytkownik pisze w innym języku.',
     'workspace': '',                # default workspace path for file browsing
     'rag_enabled': True,            # auto RAG context injection
     'rag_top_k': 3,                 # max context fragments (keep low for N150 prefill speed)
 }
+
+# ── AI Tools (function calling) ──────────────────────────────────
+
+TICKET_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "create_ticket",
+            "description": "Tworzy nowy ticket w systemie Kanban EthOS. Użyj gdy użytkownik prosi o stworzenie zadania, zgłasza problem lub sugeruje ulepszenie.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Krótki tytuł ticketa, prefixowany tagiem np. [FE], [BE], [DevOps]"},
+                    "description": {"type": "string", "description": "Szczegółowy opis problemu lub zadania"},
+                    "priority": {"type": "string", "enum": ["critical", "high", "medium", "low"], "description": "Priorytet ticketa"},
+                    "column": {"type": "string", "enum": ["Backlog", "Do zrobienia"], "description": "Kolumna docelowa, domyślnie Backlog"},
+                },
+                "required": ["title", "description", "priority"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_tickets",
+            "description": "Pobiera listę ticketów z tablicy Kanban. Użyj do sprawdzenia stanu projektu.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "column": {"type": "string", "description": "Filtruj po kolumnie (opcjonalne)"},
+                },
+            }
+        }
+    },
+]
+
+
+def _execute_tool(tool_name, args, username):
+    """Execute an AI tool and return result string."""
+    from blueprints.tickets import _load, _save, _gen_id, _now, _find_project
+    import threading
+
+    if tool_name == 'create_ticket':
+        data = _load()
+        # Find first copilot-enabled project or first project the user owns
+        project = None
+        for p in data.get('projects', []):
+            if p.get('copilot_enabled') and username in p.get('members', []):
+                project = p
+                break
+        if not project:
+            for p in data.get('projects', []):
+                if username in p.get('members', []):
+                    project = p
+                    break
+        if not project:
+            return "Brak dostępnych projektów. Utwórz projekt w systemie ticketów."
+
+        now = _now()
+        ticket = {
+            'id': _gen_id('t_'),
+            'title': args.get('title', 'Nowy ticket'),
+            'description': args.get('description', ''),
+            'project_id': project['id'],
+            'column': args.get('column', 'Backlog'),
+            'priority': args.get('priority', 'medium'),
+            'assignee': '',
+            'reporter': username,
+            'labels': [],
+            'comments': [],
+            'order': 0,
+            'created': now,
+            'updated': now,
+        }
+        data['tickets'].append(ticket)
+        _save(data)
+
+        # Emit socket event if available
+        from blueprints.tickets import _emit
+        _emit('ticket_created', project['id'], {'ticket': ticket})
+
+        return f"Ticket utworzony: [{ticket['priority'].upper()}] {ticket['title']} (id: {ticket['id']}, projekt: {project['name']}, kolumna: {ticket['column']})"
+
+    elif tool_name == 'list_tickets':
+        data = _load()
+        col_filter = args.get('column', '')
+        results = []
+        for p in data.get('projects', []):
+            if username not in p.get('members', []):
+                continue
+            tickets = [t for t in data.get('tickets', []) if t['project_id'] == p['id']]
+            if col_filter:
+                tickets = [t for t in tickets if t['column'] == col_filter]
+            for t in tickets:
+                results.append(f"[{t['column']}] [{t['priority'].upper()}] {t['title']} (id: {t['id']})")
+        if not results:
+            return "Brak ticketów" + (f" w kolumnie '{col_filter}'" if col_filter else "")
+        return f"Znaleziono {len(results)} ticketów:\n" + "\n".join(results)
+
+    return f"Nieznane narzędzie: {tool_name}"
+
 
 # ── Config helpers ─────────────────────────────────────────────────
 
@@ -665,13 +766,15 @@ def chat():
 
             else:
                 # ── REMOTE API (OpenAI / Azure / Custom) ──
-                body = json.dumps({
+                api_body = {
                     'model': cfg['model'],
                     'messages': api_messages,
                     'max_tokens': int(cfg.get('max_tokens', 4096)),
                     'temperature': float(cfg.get('temperature', 0.7)),
                     'stream': True,
-                }).encode('utf-8')
+                    'tools': TICKET_TOOLS,
+                }
+                body = json.dumps(api_body).encode('utf-8')
 
                 headers = {
                     'Content-Type': 'application/json',
@@ -679,37 +782,100 @@ def chat():
                 }
 
                 endpoint = cfg.get('endpoint', _CONFIG_DEFAULTS['endpoint'])
-                req = urllib.request.Request(endpoint, data=body, headers=headers, method='POST')
-                ctx = ssl.create_default_context()
 
-                resp = urllib.request.urlopen(req, context=ctx, timeout=120)
+                # Tool call loop — may need multiple rounds
+                max_tool_rounds = 5
+                for _round in range(max_tool_rounds):
+                    req = urllib.request.Request(endpoint, data=json.dumps(api_body).encode('utf-8'),
+                                                headers=headers, method='POST')
+                    ctx = ssl.create_default_context()
+                    resp = urllib.request.urlopen(req, context=ctx, timeout=120)
 
-                buf = b''
-                while True:
-                    chunk = resp.read(4096)
-                    if not chunk:
-                        break
-                    buf += chunk
-                    while b'\n' in buf:
-                        line_bytes, buf = buf.split(b'\n', 1)
-                        line = line_bytes.decode('utf-8', errors='replace').strip()
-                        if not line:
-                            continue
-                        if line == 'data: [DONE]':
+                    buf = b''
+                    tool_calls_acc = {}  # {index: {id, name, arguments_str}}
+                    round_content = ''
+
+                    while True:
+                        chunk = resp.read(4096)
+                        if not chunk:
                             break
-                        if line.startswith('data: '):
-                            json_str = line[6:]
-                            try:
-                                obj = json.loads(json_str)
-                                delta = obj.get('choices', [{}])[0].get('delta', {})
-                                content = delta.get('content', '')
-                                if content:
-                                    full_response += content
-                                    yield f"data: {json.dumps({'type': 'token', 'content': content})}\n\n"
-                            except (json.JSONDecodeError, IndexError, KeyError):
-                                pass
+                        buf += chunk
+                        while b'\n' in buf:
+                            line_bytes, buf = buf.split(b'\n', 1)
+                            line = line_bytes.decode('utf-8', errors='replace').strip()
+                            if not line:
+                                continue
+                            if line == 'data: [DONE]':
+                                break
+                            if line.startswith('data: '):
+                                json_str = line[6:]
+                                try:
+                                    obj = json.loads(json_str)
+                                    delta = obj.get('choices', [{}])[0].get('delta', {})
+                                    content = delta.get('content', '')
+                                    if content:
+                                        round_content += content
+                                        full_response += content
+                                        yield f"data: {json.dumps({'type': 'token', 'content': content})}\n\n"
 
-                resp.close()
+                                    # Accumulate tool calls
+                                    for tc in delta.get('tool_calls', []):
+                                        idx = tc.get('index', 0)
+                                        if idx not in tool_calls_acc:
+                                            tool_calls_acc[idx] = {'id': '', 'name': '', 'arguments': ''}
+                                        if tc.get('id'):
+                                            tool_calls_acc[idx]['id'] = tc['id']
+                                        fn = tc.get('function', {})
+                                        if fn.get('name'):
+                                            tool_calls_acc[idx]['name'] = fn['name']
+                                        if fn.get('arguments'):
+                                            tool_calls_acc[idx]['arguments'] += fn['arguments']
+                                except (json.JSONDecodeError, IndexError, KeyError):
+                                    pass
+
+                    resp.close()
+
+                    if not tool_calls_acc:
+                        break  # No tool calls — normal response, done
+
+                    # Execute tool calls
+                    # Add assistant message with tool_calls to conversation
+                    assistant_tc_msg = {'role': 'assistant', 'content': round_content or None, 'tool_calls': []}
+                    for idx in sorted(tool_calls_acc.keys()):
+                        tc = tool_calls_acc[idx]
+                        assistant_tc_msg['tool_calls'].append({
+                            'id': tc['id'],
+                            'type': 'function',
+                            'function': {'name': tc['name'], 'arguments': tc['arguments']}
+                        })
+                    api_body['messages'].append(assistant_tc_msg)
+
+                    for idx in sorted(tool_calls_acc.keys()):
+                        tc = tool_calls_acc[idx]
+                        try:
+                            tool_args = json.loads(tc['arguments'])
+                        except json.JSONDecodeError:
+                            tool_args = {}
+
+                        tool_name = tc['name']
+                        tool_msg = '\n🔧 *' + tool_name + '*...'
+                        yield f"data: {json.dumps({'type': 'token', 'content': tool_msg})}\n\n"
+                        full_response += tool_msg
+
+                        result = _execute_tool(tool_name, tool_args, username)
+
+                        result_msg = ' ✅\n> ' + result + '\n\n'
+                        yield f"data: {json.dumps({'type': 'token', 'content': result_msg})}\n\n"
+                        full_response += result_msg
+
+                        api_body['messages'].append({
+                            'role': 'tool',
+                            'tool_call_id': tc['id'],
+                            'content': result,
+                        })
+
+                    # Continue loop — model will generate final response after tool results
+                    api_body['stream'] = True
 
             # ── Save assistant response ──
             if full_response:
