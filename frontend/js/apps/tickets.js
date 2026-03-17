@@ -38,12 +38,24 @@ const PRIORITY_ICONS = {
     low: '🟢',
 };
 
+const TICKET_TYPES = {
+    task:    { icon: 'fa-check-square', color: '#4c9aff', label: 'Task' },
+    bug:     { icon: 'fa-bug',          color: '#ef4444', label: 'Bug' },
+    epic:    { icon: 'fa-bolt',         color: '#6554c0', label: 'Epic' },
+    subtask: { icon: 'fa-minus-square', color: '#36b37e', label: 'Subtask' },
+};
+
 const LABEL_COLORS = [
     '#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6',
     '#ec4899', '#06b6d4', '#f97316', '#14b8a6', '#6366f1',
 ];
 
 const DEFAULT_COLUMNS = ['Backlog', 'Do zrobienia', 'W trakcie', 'Review', 'Gotowe'];
+
+function _tkTypeIcon(type) {
+    const t = TICKET_TYPES[type] || TICKET_TYPES.task;
+    return `<i class="fas ${t.icon}" style="color:${t.color};font-size:12px;" title="${t.label}"></i>`;
+}
 
 /* ═══════════════════════════ MODAL HELPER ═══════════════════════════ */
 
@@ -607,6 +619,7 @@ async function renderTickets(body, launchOpts) {
             const group = document.createElement('div');
             group.className = 'tk-epic-group';
             group.style.setProperty('--epic-color', color);
+            group.dataset.id = epicTk.id;
 
             // Epic card
             const epicCard = document.createElement('div');
@@ -623,6 +636,7 @@ async function renderTickets(body, launchOpts) {
 
             epicCard.innerHTML = `
                 <div class="tk-card-header">
+                    ${_tkTypeIcon('epic')}
                     <span class="tk-priority-dot" style="background:${prioColor};" title="${_escHtml(PRIORITY_LABELS[epicTk.priority] || epicTk.priority)}"></span>
                     <span class="tk-card-title">${_escHtml(epicTk.title)}</span>
                 </div>
@@ -685,6 +699,7 @@ async function renderTickets(body, launchOpts) {
 
                     childCard.innerHTML = `
                         <div class="tk-card-header">
+                            ${_tkTypeIcon(ch.type || 'subtask')}
                             <span class="tk-subtask-icon${isDone ? ' done' : ''}" style="--epic-color:${color};">
                                 ${isDone ? '<i class="fas fa-check"></i>' : ''}
                             </span>
@@ -730,6 +745,7 @@ async function renderTickets(body, launchOpts) {
 
             card.innerHTML = `
                 <div class="tk-card-header">
+                    ${_tkTypeIcon(tk.type)}
                     <span class="tk-priority-dot" style="background:${prioColor};" title="${_escHtml(PRIORITY_LABELS[tk.priority] || tk.priority)}"></span>
                     <span class="tk-card-title">${_escHtml(tk.title)}</span>
                 </div>
@@ -801,22 +817,54 @@ async function renderTickets(body, launchOpts) {
                 e.preventDefault();
                 e.dataTransfer.dropEffect = 'move';
                 colBody.classList.add('tk-column-dragover');
+
+                // Show drop indicator between cards
+                colBody.querySelectorAll('.tk-drop-indicator').forEach(el => el.remove());
+                const draggables = [...colBody.querySelectorAll('.tk-card, .tk-epic-group')];
+                let insertBefore = null;
+                for (const card of draggables) {
+                    const rect = card.getBoundingClientRect();
+                    const midY = rect.top + rect.height / 2;
+                    if (e.clientY < midY) { insertBefore = card; break; }
+                }
+                const indicator = document.createElement('div');
+                indicator.className = 'tk-drop-indicator';
+                if (insertBefore) {
+                    colBody.insertBefore(indicator, insertBefore);
+                } else {
+                    colBody.appendChild(indicator);
+                }
             });
 
             colBody.addEventListener('dragleave', (e) => {
                 if (!colBody.contains(e.relatedTarget)) {
                     colBody.classList.remove('tk-column-dragover');
+                    colBody.querySelectorAll('.tk-drop-indicator').forEach(el => el.remove());
                 }
             });
 
             colBody.addEventListener('drop', (e) => {
                 e.preventDefault();
                 colBody.classList.remove('tk-column-dragover');
+                colBody.querySelectorAll('.tk-drop-indicator').forEach(el => el.remove());
                 try {
                     const payload = JSON.parse(e.dataTransfer.getData('text/plain'));
                     if (payload.id) {
-                        const targetCards = colBody.querySelectorAll('.tk-card, .tk-epic-card');
-                        let order = targetCards.length;
+                        // Calculate drop position based on mouse Y
+                        const draggables = [...colBody.querySelectorAll('.tk-card, .tk-epic-group')];
+                        let order = draggables.length;
+                        for (let i = 0; i < draggables.length; i++) {
+                            const rect = draggables[i].getBoundingClientRect();
+                            const midY = rect.top + rect.height / 2;
+                            if (e.clientY < midY) {
+                                // Skip self — don't count own card in position
+                                const cardId = draggables[i].dataset.id ||
+                                    (draggables[i].querySelector('.tk-epic-card') || {}).dataset?.id;
+                                if (cardId === payload.id) continue;
+                                order = i;
+                                break;
+                            }
+                        }
                         moveTicket(payload.id, colName, order);
                     }
                 } catch (_) { /* ignore bad data */ }
@@ -862,11 +910,21 @@ async function renderTickets(body, launchOpts) {
                 </div>
                 <div class="tk-form-row">
                     <div class="tk-form-group">
+                        <label>${t('Typ')}</label>
+                        <select id="tk-tf-type" class="tk-input">
+                            ${Object.entries(TICKET_TYPES).map(([k, v]) =>
+                                `<option value="${k}" ${k === 'task' ? 'selected' : ''}>${v.label}</option>`
+                            ).join('')}
+                        </select>
+                    </div>
+                    <div class="tk-form-group">
                         <label>${t('Kolumna')}</label>
                         <select id="tk-tf-column" class="tk-input">
                             ${columns.map((c, i) => `<option value="${_escHtml(c)}" ${i === 0 ? 'selected' : ''}>${_escHtml(c)}</option>`).join('')}
                         </select>
                     </div>
+                </div>
+                <div class="tk-form-row">
                     <div class="tk-form-group">
                         <label>${t('Priorytet')}</label>
                         <select id="tk-tf-priority" class="tk-input">
@@ -875,8 +933,6 @@ async function renderTickets(body, launchOpts) {
                             ).join('')}
                         </select>
                     </div>
-                </div>
-                <div class="tk-form-row">
                     <div class="tk-form-group">
                         <label>${t('Przypisany')}</label>
                         <select id="tk-tf-assignee" class="tk-input">
@@ -884,10 +940,10 @@ async function renderTickets(body, launchOpts) {
                             ${members.map(m => `<option value="${_escHtml(m)}">${_escHtml(m)}</option>`).join('')}
                         </select>
                     </div>
-                    <div class="tk-form-group">
-                        <label>${t('Etykiety')} <small>(${t('przecinek')})</small></label>
-                        <input type="text" id="tk-tf-labels" class="tk-input" placeholder="bug, backend, urgent" />
-                    </div>
+                </div>
+                <div class="tk-form-group">
+                    <label>${t('Etykiety')} <small>(${t('przecinek')})</small></label>
+                    <input type="text" id="tk-tf-labels" class="tk-input" placeholder="bug, backend, urgent" />
                 </div>
             </div>
         `;
@@ -899,6 +955,7 @@ async function renderTickets(body, launchOpts) {
             createTicket({
                 title,
                 description: modal.querySelector('#tk-tf-desc').value.trim(),
+                type: modal.querySelector('#tk-tf-type').value,
                 column: modal.querySelector('#tk-tf-column').value,
                 priority: modal.querySelector('#tk-tf-priority').value,
                 assignee: modal.querySelector('#tk-tf-assignee').value,
@@ -947,11 +1004,21 @@ async function renderTickets(body, launchOpts) {
                 </div>
                 <div class="tk-form-row">
                     <div class="tk-form-group">
+                        <label>${t('Typ')}</label>
+                        <select id="tk-df-type" class="tk-input">
+                            ${Object.entries(TICKET_TYPES).map(([k, v]) =>
+                                `<option value="${k}" ${k === (ticket.type || 'task') ? 'selected' : ''}>${v.label}</option>`
+                            ).join('')}
+                        </select>
+                    </div>
+                    <div class="tk-form-group">
                         <label>${t('Kolumna')}</label>
                         <select id="tk-df-column" class="tk-input">
                             ${columns.map(c => `<option value="${_escHtml(c)}" ${c === ticket.column ? 'selected' : ''}>${_escHtml(c)}</option>`).join('')}
                         </select>
                     </div>
+                </div>
+                <div class="tk-form-row">
                     <div class="tk-form-group">
                         <label>${t('Priorytet')}</label>
                         <select id="tk-df-priority" class="tk-input">
@@ -1007,6 +1074,7 @@ async function renderTickets(body, launchOpts) {
                 updateTicket(ticket.id, {
                     title,
                     description: modal.querySelector('#tk-df-desc').value.trim(),
+                    type: modal.querySelector('#tk-df-type').value,
                     column: modal.querySelector('#tk-df-column').value,
                     priority: modal.querySelector('#tk-df-priority').value,
                     assignee: modal.querySelector('#tk-df-assignee').value,

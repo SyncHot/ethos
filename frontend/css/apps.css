@@ -3088,3 +3088,15 @@ select.tk-input {
   flex-shrink: 0; margin-top: 1px;
 }
 .tk-subtask-icon.done { background: var(--epic-color, #6554c0); color: #fff; }
+
+/* ── Drop indicator for in-column reordering ── */
+.tk-drop-indicator {
+  height: 3px;
+  background: #4c9aff;
+  border-radius: 2px;
+  margin: 2px 0;
+  pointer-events: none;
+  box-shadow: 0 0 6px rgba(76,154,255,0.5);
+  transition: opacity 0.15s;
+}
+.tk-column-dragover { background: rgba(76,154,255,0.04) !important; }
