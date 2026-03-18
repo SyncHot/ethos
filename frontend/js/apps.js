@@ -3200,30 +3200,7 @@ function renderFM(body, state) {
     const _fmList = body.querySelector('#fm-file-list');
     const _itemSel = '.fm-file-item, .fm-grid-item, .fm-thumb-item';
 
-    // Mobile Long Press for Context Menu
-    let _longPressTimer;
-    const _LONG_PRESS_DURATION = 500;
 
-    _fmList.addEventListener('touchstart', (e) => {
-        const el = e.target.closest(_itemSel);
-        if (!el) return;
-        _longPressTimer = setTimeout(() => {
-            // Trigger context menu
-            const rect = el.getBoundingClientRect();
-            // Select item if not selected
-            const name = el.dataset.name;
-            if (!state.selected.has(name)) {
-                state.selected.clear();
-                state.selected.add(name);
-                state.lastClickedIndex = parseInt(el.dataset.idx);
-                updateSelection();
-            }
-            showFMContextMenu(e.touches[0].clientX, e.touches[0].clientY);
-        }, _LONG_PRESS_DURATION);
-    }, { passive: true });
-
-    _fmList.addEventListener('touchend', () => clearTimeout(_longPressTimer));
-    _fmList.addEventListener('touchmove', () => clearTimeout(_longPressTimer));
 
     _fmList.addEventListener('click', (e) => {
         // Checkbox click
