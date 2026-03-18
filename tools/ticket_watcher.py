@@ -43,6 +43,23 @@ COMPLEXITY_MODEL_MAP = {
     },
 }
 
+SONNET_RATE_LIMIT_FALLBACK_MODEL = {
+    "model": "gpt-5.3-codex",
+    "label": "GPT-5.3-Codex (xhigh fallback)",
+    "reason": "Fallback when Sonnet rate limit is reached",
+    "reasoning_effort": "xhigh",
+}
+
+RATE_LIMIT_MARKERS = [
+    "rate limit",
+    "rate-limit",
+    "too many requests",
+    "429",
+    "quota exceeded",
+    "usage limit",
+    "try again later",
+]
+
 # ── Agent type → lessons & skills ────────────────────────────────────────
 AGENT_MAP = {
     "FE/UX":   {"lessons": "FE_LESSONS_LEARNED.md",     "skills": "frontend, CSS, JS, UX",
@@ -68,7 +85,8 @@ def login():
                       json={"username": "marcin", "password": "pluton2303"}, verify=False)
     r.raise_for_status()
     token = r.json().get("token", "")
-    with open(TOKEN_FILE, "w") as f:
+    fd = os.open(TOKEN_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
         f.write(token)
     return token
 
@@ -82,7 +100,11 @@ def get_token():
 def headers():
     return {"Authorization": f"Bearer {get_token()}", "Content-Type": "application/json"}
 
+_last_auth_refresh = 0
+_AUTH_REFRESH_COOLDOWN = 300  # seconds between empty-queue auth retries
+
 def api(method, path, body=None):
+    global _last_auth_refresh
     fn = requests.get if method == "GET" else (requests.post if method == "POST" else requests.put)
     kw = {"headers": headers(), "verify": False}
     if body: kw["json"] = body
@@ -93,10 +115,10 @@ def api(method, path, body=None):
         r = fn(f"{BASE}{path}", **kw)
     r.raise_for_status()
     data = r.json()
-    # Detect silent auth failure: ticket endpoints return empty when token is
-    # expired because the auth guard doesn't cover /api/tickets/.
-    # If we get an empty queue/projects, refresh token and retry once.
-    if path == "/tickets/copilot/queue" and data.get("total", -1) == 0:
+    # Detect silent auth failure: retry only if cooldown has elapsed
+    if (path == "/tickets/copilot/queue" and data.get("total", -1) == 0
+            and time.time() - _last_auth_refresh > _AUTH_REFRESH_COOLDOWN):
+        _last_auth_refresh = time.time()
         login()
         kw["headers"] = headers()
         r = fn(f"{BASE}{path}", **kw)
@@ -138,8 +160,11 @@ def clear_executing():
 
 def get_executing():
     if os.path.exists(LOCK_FILE):
-        with open(LOCK_FILE) as f:
-            return json.load(f)
+        try:
+            with open(LOCK_FILE) as f:
+                return json.load(f)
+        except (json.JSONDecodeError, ValueError):
+            return None
     return None
 
 def pid_alive(pid):
@@ -168,6 +193,48 @@ def cleanup_stale_lock():
             pass
     print(f"STALE_LOCK_CLEARED | {tid} | PID {pid}", flush=True)
     clear_executing()
+
+
+def resume_in_progress_tickets():
+    """On startup (auto mode), move 'W trakcie' tickets back to 'Do zrobienia' so they get re-queued."""
+    try:
+        data = poll_queue()
+        queue = data.get("queue", [])
+        in_progress = [t for t in queue if t["column"] == "W trakcie"]
+        if not in_progress:
+            return
+        print(f"RESUME | Found {len(in_progress)} ticket(s) stuck in 'W trakcie' — re-queuing", flush=True)
+        for ticket in in_progress:
+            tid = ticket["id"]
+            try:
+                move_ticket(tid, "Do zrobienia")
+                add_comment(tid, "[copilot] Watcher zrestartowany — ticket wraca do kolejki do ponownego wykonania.")
+                print(f"RESUME | {tid} | '{ticket['title']}' moved back to 'Do zrobienia'", flush=True)
+            except Exception as e:
+                print(f"RESUME_ERROR | {tid} | {e}", flush=True)
+    except Exception as e:
+        print(f"RESUME_POLL_ERROR | {e}", flush=True)
+
+
+def _log_indicates_rate_limit(log_file):
+    """Best-effort detection of provider/API rate limit from Copilot log output."""
+    if not log_file or log_file == "?" or not os.path.isfile(log_file):
+        return False
+    try:
+        with open(log_file, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()[-20000:].lower()
+        return any(marker in content for marker in RATE_LIMIT_MARKERS)
+    except Exception:
+        return False
+
+
+def _should_fallback_from_sonnet(model_info, log_file):
+    if not isinstance(model_info, dict):
+        return False
+    model = str(model_info.get("model", "")).lower()
+    if not model.startswith("claude-sonnet"):
+        return False
+    return _log_indicates_rate_limit(log_file)
 
 # ── Agent detection ──────────────────────────────────────────────────────
 
@@ -228,6 +295,11 @@ MAX_AUTOPILOT = {
     "complex": 25,
     "medium": 15,
     "simple": 8,
+}
+MAX_EXECUTION_SECS = {
+    "complex": 2400,   # 40 min
+    "medium": 1200,    # 20 min
+    "simple": 600,     # 10 min
 }
 
 def build_qa_prompt(ticket):
@@ -383,7 +455,7 @@ def execute_via_copilot(ticket, agent, info, model_info, docs_context):
     # Ensure log dir exists
     os.makedirs(COPILOT_LOG_DIR, exist_ok=True)
     log_file = os.path.join(COPILOT_LOG_DIR, f"{tid}_{int(time.time())}.log")
-    prompt_file = os.path.join(COPILOT_LOG_DIR, f"{tid}_prompt.txt")
+    prompt_file = os.path.join(COPILOT_LOG_DIR, f"{tid}_{int(time.time())}_prompt.txt")
 
     prompt = build_copilot_prompt(ticket, agent, info, model_info, docs_context)
 
@@ -399,6 +471,9 @@ def execute_via_copilot(ticket, agent, info, model_info, docs_context):
         "--allow-all",
         "--max-autopilot-continues", str(MAX_AUTOPILOT.get(ticket.get("complexity", "medium"), 15)),
     ]
+    reasoning_effort = model_info.get("reasoning_effort")
+    if reasoning_effort:
+        cmd.extend(["--reasoning-effort", str(reasoning_effort)])
 
     print(f"COPILOT_START | {tid} | model={model} | log={log_file}", flush=True)
 
@@ -422,6 +497,13 @@ def execute_via_copilot(ticket, agent, info, model_info, docs_context):
         proc._log_fh = lf
         proc._log_file = log_file
         proc._prompt_file = prompt_file
+        proc._model_info = model_info
+        proc._ticket_ctx = {
+            "ticket": ticket,
+            "agent": agent,
+            "info": info,
+            "docs_context": docs_context,
+        }
 
         # Store PID in lock for monitoring
         with open(LOCK_FILE, "w") as f:
@@ -481,6 +563,13 @@ def auto_start_ticket(ticket):
 
     # Launch Copilot CLI to actually solve the ticket
     proc = execute_via_copilot(ticket, agent, info, model_info, docs_context)
+    if proc is None:
+        print(f"LAUNCH_FAILED | {tid} | Copilot failed to start — returning ticket to queue", flush=True)
+        clear_executing()
+        try:
+            move_ticket(tid, "Do zrobienia")
+        except Exception as me:
+            print(f"MOVE_ERROR | {tid} | {me}", flush=True)
     return tid, proc
 
 # ── Main loop ────────────────────────────────────────────────────────────
@@ -500,6 +589,10 @@ def main():
 
     # Clean up stale lock from previous watcher instance
     cleanup_stale_lock()
+
+    # Re-queue any tickets left stranded in 'W trakcie' from a previous run
+    if args.auto:
+        resume_in_progress_tickets()
 
     prev_state = {}
     api_fail_count = 0
@@ -551,12 +644,85 @@ def main():
                         except Exception as me:
                             print(f"MOVE_ERROR | {active_ticket_id} | {me}", flush=True)
                     else:
+                        model_info = {}
+                        if isinstance(executing, dict):
+                            model_info = executing.get("model") or {}
+                        if (not model_info) and hasattr(active_proc, "_model_info"):
+                            model_info = active_proc._model_info
+
+                        if _should_fallback_from_sonnet(model_info, log_file):
+                            fallback = dict(SONNET_RATE_LIMIT_FALLBACK_MODEL)
+                            print(
+                                f"\nRATE_LIMIT_FALLBACK | {active_ticket_id} | "
+                                f"{model_info.get('model', '?')} -> {fallback['model']} "
+                                f"(reasoning={fallback['reasoning_effort']})",
+                                flush=True,
+                            )
+                            add_comment(
+                                active_ticket_id,
+                                f"[copilot] Wykryto rate limit modelu Sonnet. "
+                                f"Automatyczny retry na {fallback['model']} "
+                                f"(reasoning: {fallback['reasoning_effort']}).",
+                            )
+                            ctx = getattr(active_proc, "_ticket_ctx", None)
+                            if ctx:
+                                retry_proc = execute_via_copilot(
+                                    ctx["ticket"],
+                                    ctx["agent"],
+                                    ctx["info"],
+                                    fallback,
+                                    ctx["docs_context"],
+                                )
+                                if retry_proc is not None:
+                                    active_proc = retry_proc
+                                    continue
+                                add_comment(
+                                    active_ticket_id,
+                                    f"[copilot] Retry fallback na {fallback['model']} nie powiódł się.",
+                                )
+
                         print(f"\nCOPILOT_FAILED | {active_ticket_id} | exit={retcode} | log={log_file}", flush=True)
                         add_comment(active_ticket_id,
                             f"[copilot] Copilot zakończył z błędem (exit {retcode}). Log: {log_file}")
+                        try:
+                            move_ticket(active_ticket_id, "Do zrobienia")
+                            print(f"MOVED_TO_TODO | {active_ticket_id} (failed, needs rework)", flush=True)
+                        except Exception as me:
+                            print(f"MOVE_ERROR | {active_ticket_id} | {me}", flush=True)
                     clear_executing()
                     active_proc = None
                     active_ticket_id = None
+
+            # --- Timeout check for DEV process ---
+            if active_proc is not None and active_proc.poll() is None:
+                executing = get_executing()
+                if executing:
+                    started = executing.get("started", 0)
+                    ticket_ctx = getattr(active_proc, "_ticket_ctx", {})
+                    complexity = ticket_ctx.get("ticket", {}).get("complexity", "medium") if ticket_ctx else "medium"
+                    max_secs = MAX_EXECUTION_SECS.get(complexity, MAX_EXECUTION_SECS["medium"])
+                    elapsed = time.time() - started
+                    if elapsed > max_secs:
+                        log_file = executing.get("log_file", "?")
+                        print(f"\nTIMEOUT | {active_ticket_id} | {elapsed:.0f}s > {max_secs}s | killing PID {active_proc.pid}", flush=True)
+                        try:
+                            active_proc.terminate()
+                            try: active_proc.wait(timeout=5)
+                            except subprocess.TimeoutExpired: active_proc.kill()
+                        except OSError:
+                            pass
+                        if hasattr(active_proc, '_log_fh'):
+                            try: active_proc._log_fh.close()
+                            except: pass
+                        add_comment(active_ticket_id,
+                            f"[copilot] Przekroczono limit czasu ({max_secs}s). Ticket wraca do kolejki. Log: {log_file}")
+                        try:
+                            move_ticket(active_ticket_id, "Do zrobienia")
+                        except Exception as me:
+                            print(f"MOVE_ERROR | {active_ticket_id} | {me}", flush=True)
+                        clear_executing()
+                        active_proc = None
+                        active_ticket_id = None
 
             # --- Detect dead QA process ---
             if qa_proc is not None and qa_proc.poll() is None:
@@ -658,7 +824,8 @@ def main():
                 print(f"DONE | {rid} removed from queue", flush=True)
 
             # --- AUTO MODE: pick and start DEV ticket ---
-            if args.auto and todo and not is_executing() and active_proc is None:
+            # Don't start a new ticket if anything is still in "W trakcie"
+            if args.auto and todo and not is_executing() and active_proc is None and not in_progress:
                 prio_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
                 todo.sort(key=lambda t: prio_order.get(t["priority"], 99))
                 active_ticket_id, active_proc = auto_start_ticket(todo[0])
@@ -680,6 +847,8 @@ def main():
                 if active_proc and active_proc.poll() is None:
                     pid = active_proc.pid
                     active_proc.terminate()
+                    try: active_proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired: active_proc.kill()
                     if hasattr(active_proc, '_log_fh'):
                         try: active_proc._log_fh.close()
                         except: pass
@@ -694,6 +863,8 @@ def main():
                 if qa_proc and qa_proc.poll() is None:
                     pid = qa_proc.pid
                     qa_proc.terminate()
+                    try: qa_proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired: qa_proc.kill()
                     if hasattr(qa_proc, '_log_fh'):
                         try: qa_proc._log_fh.close()
                         except: pass
