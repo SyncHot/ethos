@@ -74,6 +74,10 @@ function renderDownloadManager(body, launchOpts) {
         .dlm-chart-title{color:var(--text-secondary);font-weight:600;font-size:11px;display:flex;align-items:center;gap:6px}
         .dlm-chart-footer span{white-space:nowrap}
         .dlm-speed-chart svg{width:100%;height:48px}
+        .dlm-draggable{cursor:grab}
+        .dlm-draggable:active{cursor:grabbing}
+        .dlm-item.dlm-drag-over{border-top:2px solid #10b981;transition:border-top .1s}
+        .dlm-item.dlm-dragging{opacity:0.5;background:rgba(255,255,255,0.05)}
         </style>
         <div class="dlm dl-layout-row">
             <div class="dlm-sidebar">
@@ -833,7 +837,7 @@ function renderDownloadManager(body, launchOpts) {
             : _dlmEsc(dl.filename || _dlmShortUrl(dl.url));
 
         return `
-            <div class="dlm-item dlm-status-${dl.status}" data-id="${dl.id}">
+            <div class="dlm-item dlm-status-${dl.status}${isMovable ? ' dlm-draggable' : ''}" data-id="${dl.id}"${isMovable ? ' draggable="true"' : ''}>
                 <div class="dlm-item-icon">${icon}</div>
                 <div class="dlm-item-info">
                     <div class="dlm-item-name" title="${_dlmEsc(dl.filename || dl.url)}">${nameDisplay}</div>
@@ -1132,6 +1136,61 @@ function renderDownloadManager(body, launchOpts) {
             }
         });
     }
+
+    // ─── Drag & Drop Reorder ───
+    function _initDragAndDrop() {
+        const list = body.querySelector('#dlm-list');
+        if (!list) return;
+
+        let draggedItem = null;
+
+        list.addEventListener('dragstart', (e) => {
+            const item = e.target.closest('.dlm-draggable');
+            if (!item) return;
+            draggedItem = item;
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', item.dataset.id);
+            setTimeout(() => item.classList.add('dlm-dragging'), 0);
+        });
+
+        list.addEventListener('dragend', (e) => {
+            const item = e.target.closest('.dlm-draggable');
+            if (item) item.classList.remove('dlm-dragging');
+            draggedItem = null;
+            list.querySelectorAll('.dlm-drag-over').forEach(el => el.classList.remove('dlm-drag-over'));
+        });
+
+        list.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            const item = e.target.closest('.dlm-draggable');
+            if (item && item !== draggedItem) {
+                list.querySelectorAll('.dlm-drag-over').forEach(el => el.classList.remove('dlm-drag-over'));
+                item.classList.add('dlm-drag-over');
+            }
+        });
+
+        list.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            const target = e.target.closest('.dlm-draggable');
+            list.querySelectorAll('.dlm-drag-over').forEach(el => el.classList.remove('dlm-drag-over'));
+
+            if (draggedItem && target && draggedItem !== target) {
+                // Move in DOM (optimistic)
+                list.insertBefore(draggedItem, target);
+                
+                // Collect IDs
+                const movableIds = Array.from(list.querySelectorAll('.dlm-draggable')).map(el => el.dataset.id);
+                
+                // Send to backend
+                await api('/downloads/reorder', {
+                    method: 'POST', 
+                    body: { ordered_ids: movableIds }
+                });
+                loadDownloads();
+            }
+        });
+    }
+    _initDragAndDrop();
 
     async function loadDownloads() {
         const res = await api('/downloads/list');

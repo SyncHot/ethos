@@ -2362,8 +2362,36 @@ def retry_download():
 
 @downloads_bp.route('/api/downloads/reorder', methods=['POST'])
 def reorder_download():
-    """Move a download up in priority."""
+    """Move a download up in priority or reorder multiple."""
     data = request.get_json(force=True)
+
+    # Bulk reorder
+    if 'ordered_ids' in data:
+        ordered_ids = data['ordered_ids']
+        if not isinstance(ordered_ids, list):
+            return jsonify({'error': 'Invalid format'}), 400
+        
+        with _lock:
+            # Assign priorities: top item gets highest priority
+            total = len(ordered_ids)
+            updates = []
+            for i, dl_id in enumerate(ordered_ids):
+                dl = _downloads.get(dl_id)
+                if dl and dl['status'] in ('pending', 'paused'):
+                    # Priority = total - index (so first item has 'total', last has 1)
+                    new_prio = total - i
+                    if dl.get('priority') != new_prio:
+                        dl['priority'] = new_prio
+                        updates.append(dl)
+            
+            if updates:
+                _save_state()
+                # Notify clients about changes
+                for dl in updates:
+                    _emit('dl:update', _sanitize(dl))
+                    
+        return jsonify({'ok': True})
+
     dl_id = data.get('id', '')
     direction = data.get('direction', 'up')  # 'up' = higher priority, 'down' = lower
     with _lock:
