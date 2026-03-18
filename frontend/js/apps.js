@@ -1753,12 +1753,22 @@ function renderFM(body, state) {
                     return;
                 }
             }
+            const oldPath = state.path;
             state.path = data.path;
             state._lastRealPath = data.path;  // remember for dup scanner
             state.items = data.items;
             state.selected.clear();
+
+            // Restore focus if going up
             state.focusedIndex = -1;
-            state.lastClickedIndex = -1;
+            if (oldPath && oldPath.startsWith(state.path) && oldPath !== state.path) {
+                const rel = oldPath.slice(state.path.length).replace(/^\//, '');
+                const folderName = rel.split('/')[0];
+                const idx = state.items.findIndex(i => i.name === folderName);
+                if (idx >= 0) state.focusedIndex = idx;
+            }
+            state.lastClickedIndex = state.focusedIndex;
+            
             // Reset pagination, search, dir sizes on navigation
             state.page = 0;
             state.searchResults = null;
@@ -3190,6 +3200,31 @@ function renderFM(body, state) {
     const _fmList = body.querySelector('#fm-file-list');
     const _itemSel = '.fm-file-item, .fm-grid-item, .fm-thumb-item';
 
+    // Mobile Long Press for Context Menu
+    let _longPressTimer;
+    const _LONG_PRESS_DURATION = 500;
+
+    _fmList.addEventListener('touchstart', (e) => {
+        const el = e.target.closest(_itemSel);
+        if (!el) return;
+        _longPressTimer = setTimeout(() => {
+            // Trigger context menu
+            const rect = el.getBoundingClientRect();
+            // Select item if not selected
+            const name = el.dataset.name;
+            if (!state.selected.has(name)) {
+                state.selected.clear();
+                state.selected.add(name);
+                state.lastClickedIndex = parseInt(el.dataset.idx);
+                updateSelection();
+            }
+            showFMContextMenu(e.touches[0].clientX, e.touches[0].clientY);
+        }, _LONG_PRESS_DURATION);
+    }, { passive: true });
+
+    _fmList.addEventListener('touchend', () => clearTimeout(_longPressTimer));
+    _fmList.addEventListener('touchmove', () => clearTimeout(_longPressTimer));
+
     _fmList.addEventListener('click', (e) => {
         // Checkbox click
         const cbLabel = e.target.closest('.fm-checkbox-label');
@@ -3391,57 +3426,189 @@ function renderFM(body, state) {
 
     // Keyboard shortcuts
     body.closest('.window').addEventListener('keydown', (e) => {
-        // Ctrl+F — focus search (always available)
-        if (e.ctrlKey && e.key === 'f') {
+        // Ctrl+F — focus search
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
             e.preventDefault();
             body.querySelector('#fm-search-input').focus();
             return;
         }
-        // Escape in search input — clear search
-        if (e.key === 'Escape' && e.target === body.querySelector('#fm-search-input')) {
-            body.querySelector('#fm-search-clear').click();
-            e.target.blur();
-            return;
-        }
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-
-        // ─── Arrow key navigation ───
-        // Left arrow = go to parent folder; Right arrow = enter selected folder
-        if (e.key === 'ArrowLeft' && !e.shiftKey && state.searchResults === null) {
-            e.preventDefault();
-            if (isRegularPath() && !isAtHomeRoot()) {
-                const parent = state.path.split('/').slice(0, -1).join('/') || (state.sudoMode ? '/' : state.homePath);
-                navigateTo(parent);
+        // Escape — clear search or selection
+        if (e.key === 'Escape') {
+            if (document.activeElement === body.querySelector('#fm-search-input')) {
+                body.querySelector('#fm-search-clear').click();
+                document.activeElement.blur();
+            } else {
+                clearSelection();
             }
             return;
         }
-        if (e.key === 'ArrowRight' && !e.shiftKey) {
+        
+        if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
+
+        // Ctrl+A — Select All
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
+            e.preventDefault();
+            const allItems = state.searchResults !== null ? state.searchResults : state.items;
+            state.selected.clear();
+            allItems.forEach(i => state.selected.add(i.name));
+            updateSelection();
+            return;
+        }
+
+        // Delete
+        if (e.key === 'Delete') {
+            if (state.selected.size > 0) deleteSelected();
+            return;
+        }
+
+        // Enter — Open
+        if (e.key === 'Enter') {
+             e.preventDefault();
+             if (state.selected.size === 1) {
+                 const name = [...state.selected][0];
+                 const item = state.items.find(i => i.name === name);
+                 if (item) {
+                     if (item.is_dir) navigateTo(itemFullPath(item));
+                     else previewFile(item.name);
+                 }
+             } else if (state.focusedIndex >= 0) {
+                 const allItems = state.searchResults !== null ? state.searchResults : state.items;
+                 const sorted = sortItems(allItems);
+                 const item = sorted[state.focusedIndex];
+                 if (item) {
+                     if (item.is_dir) navigateTo(itemFullPath(item));
+                     else previewFile(item.name);
+                 }
+             }
+             return;
+        }
+
+        // Space — Toggle Selection
+        if (e.key === ' ' || e.key === 'Spacebar') {
             e.preventDefault();
             if (state.focusedIndex >= 0) {
-                const _arAll = state.searchResults !== null ? state.searchResults : state.items;
-                const _arSorted = sortItems(_arAll);
-                const _arItem = _arSorted[state.focusedIndex];
-                if (_arItem && _arItem.is_dir) navigateTo(itemFullPath(_arItem));
+                const allItems = state.searchResults !== null ? state.searchResults : state.items;
+                const sorted = sortItems(allItems);
+                const item = sorted[state.focusedIndex];
+                if (item) {
+                    if (state.selected.has(item.name)) state.selected.delete(item.name);
+                    else state.selected.add(item.name);
+                    state.lastClickedIndex = state.focusedIndex;
+                    updateSelection();
+                    // Ensure focus remains
+                    setFocusedIndex(state.focusedIndex);
+                }
             }
             return;
         }
 
-        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        // Backspace — Go Up
+        if (e.key === 'Backspace') {
+             e.preventDefault();
+             if (isRegularPath() && !isAtHomeRoot()) {
+                 const parent = state.path.split('/').slice(0, -1).join('/') || (state.sudoMode ? '/' : state.homePath);
+                 navigateTo(parent);
+             }
+             return;
+        }
+
+        // F2 — Rename
+        if (e.key === 'F2') {
             e.preventDefault();
-            // Focus the list container so screen readers follow aria-activedescendant
+            if (state.selected.size === 1) {
+                renameSelected();
+            }
+            return;
+        }
+
+        // F5 or Ctrl+R — Refresh
+        if (e.key === 'F5' || ((e.ctrlKey || e.metaKey) && (e.key === 'r' || e.key === 'R'))) {
+            e.preventDefault();
+            navigateTo(state.path);
+            return;
+        }
+
+        // Ctrl+N — New Folder
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'n' || e.key === 'N')) {
+            e.preventDefault();
+            createNewFolder();
+            return;
+        }
+
+        // Clipboard
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) {
+            e.preventDefault();
+            clipboardCopy();
+            return;
+        }
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'x' || e.key === 'X')) {
+            e.preventDefault();
+            clipboardCut();
+            return;
+        }
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'v' || e.key === 'V')) {
+            e.preventDefault();
+            clipboardPaste();
+            return;
+        }
+
+        // Arrow Navigation
+        if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+            e.preventDefault();
             body.querySelector('#fm-file-list').focus({ preventScroll: true });
+            
             const allItems = state.searchResults !== null ? state.searchResults : state.items;
             const sorted = sortItems(allItems);
-            const total = sorted.length;
-            if (!total) return;
-            let newIdx;
-            if (state.focusedIndex < 0) {
-                newIdx = e.key === 'ArrowDown' ? 0 : total - 1;
+            if (!sorted.length) return;
+
+            let newIdx = state.focusedIndex;
+            if (newIdx < 0) newIdx = 0;
+
+            if (state.viewMode === 'list') {
+                 if (e.key === 'ArrowUp') newIdx--;
+                 else if (e.key === 'ArrowDown') newIdx++;
+                 else if (e.key === 'ArrowLeft') {
+                     // Go to parent
+                     if (isRegularPath() && !isAtHomeRoot()) {
+                         const parent = state.path.split('/').slice(0, -1).join('/') || (state.sudoMode ? '/' : state.homePath);
+                         navigateTo(parent);
+                         return;
+                     }
+                 }
+                 else if (e.key === 'ArrowRight') {
+                      // Enter folder
+                      const item = sorted[newIdx];
+                      if (item && item.is_dir) {
+                          navigateTo(itemFullPath(item));
+                          return;
+                      }
+                 }
             } else {
-                newIdx = e.key === 'ArrowDown'
-                    ? Math.min(state.focusedIndex + 1, total - 1)
-                    : Math.max(state.focusedIndex - 1, 0);
+                 // Grid/Thumb view
+                 const list = body.querySelector('#fm-file-list');
+                 const items = Array.from(list.querySelectorAll('.fm-grid-item, .fm-thumb-item'));
+                 if (!items.length) return;
+                 
+                 // Robust column calculation by checking y-offset
+                 const firstTop = items[0].getBoundingClientRect().top;
+                 let cols = 0;
+                 for (const it of items) {
+                     if (Math.abs(it.getBoundingClientRect().top - firstTop) < 5) cols++;
+                     else break;
+                 }
+                 cols = Math.max(1, cols);
+                 
+                 if (e.key === 'ArrowLeft') newIdx--;
+                 else if (e.key === 'ArrowRight') newIdx++;
+                 else if (e.key === 'ArrowUp') newIdx -= cols;
+                 else if (e.key === 'ArrowDown') newIdx += cols;
             }
+
+            // Clamp
+            if (newIdx < 0) newIdx = 0;
+            if (newIdx >= sorted.length) newIdx = sorted.length - 1;
+
+            // Update selection
             if (e.shiftKey) {
                 const anchor = state.lastClickedIndex >= 0 ? state.lastClickedIndex : (state.focusedIndex >= 0 ? state.focusedIndex : 0);
                 const start = Math.min(anchor, newIdx);
@@ -3457,81 +3624,65 @@ function renderFM(body, state) {
                     state.lastClickedIndex = newIdx;
                 }
             }
+            
             setFocusedIndex(newIdx);
             updateSelection();
+            
+            // Scroll into view
+            const targetEl = body.querySelector(`#fm-item-${newIdx}`);
+            if (targetEl) targetEl.scrollIntoView({ block: 'nearest' });
             return;
         }
 
+        // Home/End
         if (e.key === 'Home') {
             e.preventDefault();
             const allItems = state.searchResults !== null ? state.searchResults : state.items;
             const sorted = sortItems(allItems);
             if (!sorted.length) return;
+            // Similar logic...
+            const newIdx = 0;
             if (e.shiftKey) {
                 const anchor = state.lastClickedIndex >= 0 ? state.lastClickedIndex : 0;
                 state.selected.clear();
                 for (let i = 0; i <= anchor; i++) {
-                    if (sorted[i]) state.selected.add(sorted[i].name);
+                     if (sorted[i]) state.selected.add(sorted[i].name);
                 }
-            } else if (!e.ctrlKey && !e.metaKey) {
+            } else if (!e.ctrlKey) {
                 state.selected.clear();
-                if (sorted[0]) { state.selected.add(sorted[0].name); state.lastClickedIndex = 0; }
+                state.selected.add(sorted[0].name);
+                state.lastClickedIndex = 0;
             }
-            setFocusedIndex(0);
+            setFocusedIndex(newIdx);
             updateSelection();
+            body.querySelector(`#fm-item-${newIdx}`)?.scrollIntoView({ block: 'nearest' });
             return;
         }
-
+        
         if (e.key === 'End') {
             e.preventDefault();
             const allItems = state.searchResults !== null ? state.searchResults : state.items;
             const sorted = sortItems(allItems);
             if (!sorted.length) return;
-            const last = sorted.length - 1;
-            if (e.shiftKey) {
+            const newIdx = sorted.length - 1;
+             if (e.shiftKey) {
                 const anchor = state.lastClickedIndex >= 0 ? state.lastClickedIndex : 0;
                 state.selected.clear();
-                for (let i = anchor; i <= last; i++) {
-                    if (sorted[i]) state.selected.add(sorted[i].name);
+                for (let i = anchor; i <= newIdx; i++) {
+                     if (sorted[i]) state.selected.add(sorted[i].name);
                 }
-            } else if (!e.ctrlKey && !e.metaKey) {
+            } else if (!e.ctrlKey) {
                 state.selected.clear();
-                if (sorted[last]) { state.selected.add(sorted[last].name); state.lastClickedIndex = last; }
+                state.selected.add(sorted[newIdx].name);
+                state.lastClickedIndex = newIdx;
             }
-            setFocusedIndex(last);
+            setFocusedIndex(newIdx);
             updateSelection();
+            body.querySelector(`#fm-item-${newIdx}`)?.scrollIntoView({ block: 'nearest' });
             return;
         }
 
-        if (e.key === 'Enter' && state.focusedIndex >= 0) {
-            e.preventDefault();
-            const allItems = state.searchResults !== null ? state.searchResults : state.items;
-            const sorted = sortItems(allItems);
-            const item = sorted[state.focusedIndex];
-            if (item) {
-                if (item.is_dir) navigateTo(itemFullPath(item));
-                else previewFile(item.name);
-            }
-            return;
-        }
-
-        if (e.key === ' ' && state.focusedIndex >= 0) {
-            e.preventDefault();
-            const allItems = state.searchResults !== null ? state.searchResults : state.items;
-            const sorted = sortItems(allItems);
-            const item = sorted[state.focusedIndex];
-            if (item) {
-                if (state.selected.has(item.name)) state.selected.delete(item.name);
-                else state.selected.add(item.name);
-                state.lastClickedIndex = state.focusedIndex;
-                updateSelection();
-            }
-            return;
-        }
-
-        if (e.key === 'Delete') deleteSelected();
-        if (e.key === 'F2') renameSelected();
-        if (e.key === 'F5') navigateTo(state.path);
+        if (e.ctrlKey && e.shiftKey && e.key === 'S') { e.preventDefault(); calcDirSizes(); }
         if (e.key === 'F1') { e.preventDefault(); showFMShortcutsHelp(); }
         if (e.key === 'Backspace') {
             e.preventDefault();
@@ -3540,23 +3691,6 @@ function renderFM(body, state) {
                 navigateTo(parent);
             }
         }
-        if (e.key === 'PageDown') {
-            e.preventDefault();
-            const allItems = state.searchResults !== null ? state.searchResults : state.items;
-            const totalPages = Math.ceil(allItems.length / state.pageSize);
-            if (state.page < totalPages - 1) { state.page++; renderFileList(); body.querySelector('#fm-file-list').scrollTop = 0; }
-        }
-        if (e.key === 'PageUp') {
-            e.preventDefault();
-            if (state.page > 0) { state.page--; renderFileList(); body.querySelector('#fm-file-list').scrollTop = 0; }
-        }
-        if (e.ctrlKey && e.key === 'a') { e.preventDefault(); selectAll(); }
-        if (e.ctrlKey && e.key === 'c') { e.preventDefault(); clipboardCopy(); }
-        if (e.ctrlKey && e.key === 'x') { e.preventDefault(); clipboardCut(); }
-        if (e.ctrlKey && e.key === 'v') { e.preventDefault(); clipboardPaste(); }
-        if (e.ctrlKey && e.key === 'n') { e.preventDefault(); createNewFolder(); }
-        if (e.ctrlKey && e.key === 'u') { e.preventDefault(); uploadFiles(); }
-        if (e.key === 'Escape') { clearSelection(); }
     });
 
     // ─── Keyboard Shortcuts Help ───
@@ -3946,6 +4080,108 @@ function renderFM(body, state) {
         }
     });
 
+    // ─── Drag Selection (Rubber Band) ───
+    function initDragSelection() {
+        let isDragging = false;
+        let startX, startY;
+        let initialSelection = new Set();
+        const box = document.createElement('div');
+        box.className = 'fm-selection-box';
+        box.style.display = 'none';
+        
+        const list = body.querySelector('#fm-file-list');
+        if (!list) return;
+        
+        if (getComputedStyle(list).position === 'static') {
+            list.style.position = 'relative';
+        }
+        list.appendChild(box);
+
+        function onMouseDown(e) {
+            if (e.button !== 0) return;
+            if (e.target.closest('.fm-file-item, .fm-grid-item, .fm-thumb-item, .fm-checkbox-label, a, button, input')) return;
+            // Allow starting drag on the list background
+            if (!list.contains(e.target) && e.target !== list) return;
+
+            e.preventDefault();
+            
+            if (!box.isConnected) list.appendChild(box);
+
+            isDragging = true;
+            initialSelection = new Set(state.selected);
+            
+            const listRect = list.getBoundingClientRect();
+            startX = e.clientX - listRect.left + list.scrollLeft;
+            startY = e.clientY - listRect.top + list.scrollTop;
+            
+            box.style.left = startX + 'px';
+            box.style.top = startY + 'px';
+            box.style.width = '0px';
+            box.style.height = '0px';
+            box.style.display = 'block';
+
+            if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
+                state.selected.clear();
+                updateSelection();
+            }
+
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+        }
+
+        function onMouseMove(e) {
+            if (!isDragging) return;
+            
+            const listRect = list.getBoundingClientRect();
+            const currentX = e.clientX - listRect.left + list.scrollLeft;
+            const currentY = e.clientY - listRect.top + list.scrollTop;
+
+            const width = Math.abs(currentX - startX);
+            const height = Math.abs(currentY - startY);
+            const left = Math.min(currentX, startX);
+            const top = Math.min(currentY, startY);
+
+            box.style.width = width + 'px';
+            box.style.height = height + 'px';
+            box.style.left = left + 'px';
+            box.style.top = top + 'px';
+
+            const boxRect = box.getBoundingClientRect();
+            const items = list.querySelectorAll('.fm-file-item, .fm-grid-item, .fm-thumb-item');
+            
+            const inBox = new Set();
+            items.forEach(item => {
+                const itemRect = item.getBoundingClientRect();
+                const intersect = !(boxRect.left > itemRect.right || 
+                                  boxRect.right < itemRect.left || 
+                                  boxRect.top > itemRect.bottom || 
+                                  boxRect.bottom < itemRect.top);
+                if (intersect) inBox.add(item.dataset.name);
+            });
+
+            if (e.ctrlKey || e.metaKey) {
+                // Union initial + inBox
+                state.selected = new Set([...initialSelection, ...inBox]);
+            } else {
+                // Just inBox
+                state.selected = inBox;
+            }
+            updateSelection();
+        }
+
+        function onMouseUp(e) {
+            if (isDragging) {
+                isDragging = false;
+                box.style.display = 'none';
+                document.removeEventListener('mousemove', onMouseMove);
+                document.removeEventListener('mouseup', onMouseUp);
+            }
+        }
+
+        list.addEventListener('mousedown', onMouseDown);
+    }
+    initDragSelection();
+
     // ─── Disk Analytics Panel ───
     const anaPanel = body.querySelector('#fm-ana-panel');
     const anaState = { path: '/', entries: [], files: [], totalSize: 0, history: [], activeTab: 'dirs', loading: false };
@@ -4090,6 +4326,100 @@ function renderFM(body, state) {
 
     // Expose navigateTo for external callers (notifications, etc.)
     body._fmNavigateTo = navigateTo;
+
+    // ─── Marquee Selection (Drag Select) ───
+    function initMarqueeSelection() {
+        const list = body.querySelector('#fm-file-list');
+        if (!list) return;
+
+        let selectionBox = null;
+        let startX, startY;
+        let initialSelected;
+        
+        const onMouseMove = (e) => {
+            if (!selectionBox) return;
+
+            const currentX = e.clientX;
+            const currentY = e.clientY;
+
+            const x = Math.min(startX, currentX);
+            const y = Math.min(startY, currentY);
+            const w = Math.abs(currentX - startX);
+            const h = Math.abs(currentY - startY);
+
+            selectionBox.style.left = x + 'px';
+            selectionBox.style.top = y + 'px';
+            selectionBox.style.width = w + 'px';
+            selectionBox.style.height = h + 'px';
+
+            const boxRect = selectionBox.getBoundingClientRect();
+            const items = list.querySelectorAll('.fm-file-item, .fm-grid-item, .fm-thumb-item');
+            
+            state.selected = new Set(initialSelected);
+            let changed = false;
+
+            items.forEach(item => {
+                const itemRect = item.getBoundingClientRect();
+                if (rectsIntersect(boxRect, itemRect)) {
+                    state.selected.add(item.dataset.name);
+                    changed = true;
+                }
+            });
+            
+            if (changed || state.selected.size !== initialSelected.size) {
+                updateSelection(); 
+            }
+        };
+
+        const onMouseUp = (e) => {
+             if (selectionBox) selectionBox.remove();
+             selectionBox = null;
+             document.removeEventListener('mousemove', onMouseMove);
+             document.removeEventListener('mouseup', onMouseUp);
+        };
+
+        list.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            if (e.target.closest('.fm-file-item, .fm-grid-item, .fm-thumb-item')) return;
+            if (e.target.closest('.fm-checkbox-label')) return;
+            // Ignore if clicking scrollbar
+            if (e.target === list && e.offsetX > list.clientWidth) return;
+
+            e.preventDefault(); // prevent text selection
+            
+            startX = e.clientX;
+            startY = e.clientY;
+
+            if (!e.ctrlKey && !e.metaKey) {
+                state.selected.clear();
+                updateSelection();
+                initialSelected = new Set();
+            } else {
+                initialSelected = new Set(state.selected);
+            }
+
+            selectionBox = document.createElement('div');
+            selectionBox.className = 'fm-selection-box';
+            selectionBox.style.left = startX + 'px';
+            selectionBox.style.top = startY + 'px';
+            selectionBox.style.width = '0px';
+            selectionBox.style.height = '0px';
+            document.body.appendChild(selectionBox);
+
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+        });
+    }
+
+    function rectsIntersect(r1, r2) {
+        return !(r2.left > r1.right || 
+                 r2.right < r1.left || 
+                 r2.top > r1.bottom || 
+                 r2.bottom < r1.top);
+    }
+    
+    // Initialize Marquee
+    initMarqueeSelection();
 }
 
 
