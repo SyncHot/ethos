@@ -1208,8 +1208,9 @@ function renderFM(body, state) {
         if (singleItem && singleItem.is_dir) {
              items.push({ icon: 'fa-images', label: t('Pokaż w Galerii'), action: 'open-gallery-folder' });
         }
+        const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg', 'ico'];
         const ext = singleItem ? singleItem.name.split('.').pop().toLowerCase() : '';
-        if (singleItem && !singleItem.is_dir && IMAGE_EXTS.includes(ext)) {
+        if (singleItem && !singleItem.is_dir && imageExts.includes(ext)) {
              items.push({ icon: 'fa-image', label: t('Pokaż w Galerii'), action: 'open-gallery-file' });
         }
 
