@@ -653,7 +653,8 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
                         e.stopPropagation();
                         const path = btn.dataset.path;
                         const folder = path.substring(0, path.lastIndexOf('/')) || '/';
-                        openApp('file-manager', { path: folder });
+                        const filename = path.split('/').pop();
+                        openApp('file-manager', { path: folder, select: filename });
                     });
                 });
 

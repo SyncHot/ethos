@@ -14,6 +14,7 @@ AppRegistry['file-manager'] = function (appDef, launchOpts) {
     const defaultHomePath = NAS.user?.home_path || `/home/${NAS.user?.username || 'home'}`;
     const sudoMode = !!(NAS.sudoMode || NAS.user?.sudo_mode);
     const requestedPath = launchOpts?.path;
+    const initialSelect = launchOpts?.select;
     const defaultPath = defaultHomePath;
     const initialPath = (!requestedPath || requestedPath === '/') ? defaultPath : requestedPath;
 
@@ -35,6 +36,7 @@ AppRegistry['file-manager'] = function (appDef, launchOpts) {
         homePath: defaultHomePath,
         sudoMode,
         path: initialPath,
+        initialSelect,
         history: [initialPath],
         historyIndex: 0,
         items: [],
@@ -1194,6 +1196,7 @@ function renderFM(body, state) {
         if (selCount > 0) {
             const dlLabel = selCount > 1 ? t('Pobierz') + ` (${selCount}) jako ZIP` : (singleItem?.is_dir ? t('Pobierz folder jako ZIP') : t('Pobierz'));
             items.push({ icon: 'fa-download', label: dlLabel, action: 'download' });
+            items.push({ icon: 'fa-network-wired', label: t('Prześlij do NAS'), action: 'send-to-nas' });
         }
 
         items.push({ sep: true });
@@ -1338,8 +1341,8 @@ function renderFM(body, state) {
 
         menu.innerHTML = items.map(item => {
             if (item.sep) return '<div class="app-divider"></div>';
-            const color = item.cls === 'danger' ? 'var(--danger)' : item.cls === 'accent' ? 'var(--accent)' : 'var(--text-primary)';
-            const iconColor = item.cls === 'danger' ? 'var(--danger)' : item.cls === 'accent' ? 'var(--accent)' : 'var(--text-muted)';
+            const color = item.cls === 'danger' ? 'var(--danger)' : item.cls === 'accent' ? 'var(--accent)' : item.cls === 'accent-purple' ? 'var(--accent-purple)' : 'var(--text-primary)';
+            const iconColor = item.cls === 'danger' ? 'var(--danger)' : item.cls === 'accent' ? 'var(--accent)' : item.cls === 'accent-purple' ? 'var(--accent-purple)' : 'var(--text-muted)';
             return `<button data-action="${item.action}" class="app-ctx-btn" style="color:${color}" onmouseover="this.style.background='rgba(255,255,255,0.06)'" onmouseout="this.style.background='none'">
                 <i class="fas ${item.icon} app-icon-fixed" style="color:${iconColor}"></i>
                 ${item.label}
@@ -1360,11 +1363,19 @@ function renderFM(body, state) {
                 case 'download': downloadSelected(); break;
                 case 'rename': renameSelected(); break;
                 case 'delete': deleteSelected(); break;
+                case 'send-to-nas': {
+                    const paths = [...state.selected].map(name => {
+                        const it = state.items.find(i => i.name === name);
+                        return it ? itemFullPath(it) : null;
+                    }).filter(Boolean);
+                    openApp('naslink', { tab: 'transfer', paths });
+                    break;
+                }
                 case 'open-gallery-folder':
                     if (singleItem) openApp('gallery', { folder: itemFullPath(singleItem) });
                     break;
                 case 'open-gallery-file':
-                    openApp('gallery', { folder: state.path });
+                    openApp('gallery', { folder: state.path, file: itemFullPath(singleItem) });
                     break;
                 case 'copy': clipboardCopy(); break;
                 case 'cut': clipboardCut(); break;
@@ -4377,7 +4388,18 @@ function renderFM(body, state) {
     loadPhotoFavorites();
     loadSambaShares();
     _fmLoadGallerySources();
-    navigateTo(state.path);
+    navigateTo(state.path).then(() => {
+        if (state.initialSelect) {
+            state.selected.clear();
+            state.selected.add(state.initialSelect);
+            renderFileList();
+            setTimeout(() => {
+                const itemEl = body.querySelector(`.fm-file-item[data-name="${CSS.escape(state.initialSelect)}"]`);
+                if (itemEl) itemEl.scrollIntoView({block: 'center', behavior: 'smooth'});
+            }, 100);
+            state.initialSelect = null;
+        }
+    });
 
     // Expose navigateTo for external callers (notifications, etc.)
     body._fmNavigateTo = navigateTo;

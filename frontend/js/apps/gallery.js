@@ -2,15 +2,13 @@
    EthOS  —  Gallery  (state-of-the-art photo & video gallery)
    ═══════════════════════════════════════════════════════════════════ */
 AppRegistry['gallery'] = function (appDef, launchOpts) {
-  // Support launchOpts.folder to open gallery pre-filtered to a specific source folder
-  const _initFolder = launchOpts?.folder || '';
   createWindow('gallery', {
     title: t('Galeria'),
     icon: 'fa-solid fa-images',
     iconColor: '#ec4899',
     width: 1280,
     height: 820,
-    onRender: body => renderGallery(body, _initFolder),
+    onRender: body => renderGallery(body, launchOpts),
   });
 };
 
@@ -42,7 +40,9 @@ const GAL = {
 };
 
 /* ━━━━  ENTRY  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
-async function renderGallery(body, initFolder) {
+async function renderGallery(body, launchOpts) {
+  const initFolder = launchOpts?.folder || '';
+  const initFile = launchOpts?.file || null;
   GAL.root = body;
   GAL.items = [];
   GAL.offset = 0;
@@ -208,8 +208,13 @@ async function renderGallery(body, initFolder) {
   // Load sources then initial data
   await _galLoadSources();
   _galLoadCustomAlbums();
-  _galReload();
+  await _galReload();
   _galInitDragDrop();
+  
+  if (initFile) {
+      const idx = GAL.items.findIndex(i => i.path === initFile);
+      if (idx !== -1) _galOpenLightbox(idx);
+  }
 }
 
 /* ━━━━  SOURCES  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */

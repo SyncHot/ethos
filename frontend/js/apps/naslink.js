@@ -44,6 +44,7 @@ function _nlCleanup() {
 
 function _nlRender(body, launchOpts) {
     let tab = launchOpts?.tab || 'dashboard';
+    let initPaths = launchOpts?.paths || [];
     let servers = [];
     let transferHistory = [];
     let snapshots = [];
@@ -606,7 +607,7 @@ function _nlRender(body, launchOpts) {
                         <div class="nl-form-row nl-form-full">
                             <label>Pliki / foldery źródłowe</label>
                             <div class="nl-row">
-                                <input id="nl-tf-paths" style="flex:1;" placeholder="${t('/ścieżka/do/pliku, /inna/ścieżka (oddziel przecinkiem)')}">
+                                <input id="nl-tf-paths" value="${initPaths.length ? _nlEsc(initPaths.join(', ')) : ''}" style="flex:1;" placeholder="${t('/ścieżka/do/pliku, /inna/ścieżka (oddziel przecinkiem)')}">
                                 <button class="nl-btn" id="nl-tf-browse" title="Przeglądaj"><i class="fas fa-folder-open"></i></button>
                             </div>
                             <div class="nl-hint">Podaj ścieżki do plików/folderów oddzielone przecinkiem, lub kliknij <i class="fas fa-folder-open"></i> aby wybrać z dysku.</div>
@@ -640,6 +641,14 @@ function _nlRender(body, launchOpts) {
         // Server change → update remote path
         const serverSelect = content.querySelector('#nl-tf-server');
         const destInput = content.querySelector('#nl-tf-dest');
+        const pathsInput = content.querySelector('#nl-tf-paths');
+
+        if (pathsInput) {
+            pathsInput.addEventListener('input', () => {
+                initPaths = pathsInput.value.split(',').map(s => s.trim()).filter(s => s);
+            });
+        }
+
         if (serverSelect && destInput) {
             serverSelect.addEventListener('change', () => {
                 const srv = servers.find(s => s.id === serverSelect.value);
