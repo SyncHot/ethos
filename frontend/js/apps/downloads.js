@@ -1346,22 +1346,7 @@ function renderDownloadManager(body, launchOpts) {
 
 // ─── Helpers ───
 
-function _dlmNotify(title, body, icon) {
-    if (!("Notification" in window)) return;
-    
-    // Default icon if not provided
-    if (!icon) icon = '/favicon.ico'; // Fallback to favicon
 
-    if (Notification.permission === "granted") {
-        new Notification(title, { body, icon });
-    } else if (Notification.permission !== "denied") {
-        Notification.requestPermission().then(permission => {
-            if (permission === "granted") {
-                new Notification(title, { body, icon });
-            }
-        });
-    }
-}
 
 function _dlmEsc(str) {
     if (!str) return '';
@@ -1388,12 +1373,7 @@ function _dlmShortUrl(url) {
     }
 }
 
-function _dlmFormatBytes(bytes) {
-    if (!bytes || bytes <= 0) return '0 B';
-    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(1024));
-    return (bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
-}
+
 
 function _dlmFormatSpeed(bps) {
     if (!bps || bps <= 0) return '';
