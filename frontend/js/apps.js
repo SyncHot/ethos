@@ -2869,9 +2869,9 @@ function renderFM(body, state) {
             const updateOct = () => {
                 let oct = 0;
                 checkboxes.forEach(cb => {
-                    if (cb.checked) oct += parseInt(cb.dataset.val);
+                    if (cb.checked) oct += parseInt(cb.dataset.val, 8);
                 });
-                octInput.value = '0' + oct.toString(10);
+                octInput.value = '0' + oct.toString(8);
             };
             
             checkboxes.forEach(cb => cb.addEventListener('change', updateOct));
