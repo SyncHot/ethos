@@ -1289,6 +1289,15 @@ input, button, select, textarea { font-family: inherit; font-size: inherit; }
     padding: 16px 8px;
     align-content: start;
 }
+@media (max-width: 480px) {
+    .fm-file-list.fm-thumb-view {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+    }
+    .fm-thumb-item, .fm-grid-item {
+        padding: 8px 4px;
+    }
+}
 .fm-thumb-item {
     display: flex;
     flex-direction: column;

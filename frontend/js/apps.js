@@ -185,7 +185,7 @@ function renderFM(body, state) {
                     <div class="fm-list-header" id="fm-list-header">
                         <span class="fm-col-checkbox">
                             <label class="fm-checkbox-label" id="fm-header-select-all" title="Zaznacz wszystko">
-                                <input type="checkbox" id="fm-header-cb">
+                                <input type="checkbox" id="fm-header-cb" aria-label="Zaznacz wszystkie pliki">
                                 <span class="fm-cb-custom"></span>
                             </label>
                         </span>
@@ -3228,22 +3228,79 @@ function renderFM(body, state) {
 
         let processed = true;
         
+        const getCols = () => {
+            if (state.viewMode === 'list') return 1;
+            const items = _fmList.querySelectorAll('.fm-grid-item, .fm-thumb-item');
+            if (items.length < 2) return 1;
+            
+            // Robust way: find first item on the next row
+            const firstTop = items[0].getBoundingClientRect().top;
+            for (let i = 1; i < items.length; i++) {
+                if (items[i].getBoundingClientRect().top > firstTop + 10) {
+                    return i;
+                }
+            }
+            return items.length; // All items on one row
+        };
+
+        const handleMove = (newIdx) => {
+            if (newIdx < 0) newIdx = 0;
+            if (newIdx >= total) newIdx = total - 1;
+
+            if (e.shiftKey) {
+                // Range selection
+                if (state.lastClickedIndex === -1) state.lastClickedIndex = state.focusedIndex;
+                const start = Math.min(state.lastClickedIndex, newIdx);
+                const end = Math.max(state.lastClickedIndex, newIdx);
+                
+                // If not holding Ctrl, Shift+Arrow usually clears previous discontinuous selections
+                if (!e.ctrlKey && !e.metaKey) state.selected.clear();
+                
+                const sorted = sortItems(_allItems);
+                for (let i = start; i <= end; i++) {
+                    if (sorted[i]) state.selected.add(sorted[i].name);
+                }
+                updateSelection();
+            } else {
+                // Move anchor if not selecting
+                state.lastClickedIndex = newIdx;
+                
+                // Optional: If you want standard desktop behavior (moving focus selects item), uncomment:
+                // if (!e.ctrlKey && !e.metaKey) {
+                //     state.selected.clear();
+                //     const sorted = sortItems(_allItems);
+                //     if (sorted[newIdx]) state.selected.add(sorted[newIdx].name);
+                //     updateSelection();
+                // }
+            }
+            state.focusedIndex = newIdx;
+        };
+
         switch(e.key) {
             case 'ArrowDown':
-            case 'ArrowRight':
-                state.focusedIndex++;
-                if (state.focusedIndex >= total) state.focusedIndex = total - 1;
+                handleMove(state.focusedIndex + getCols());
                 break;
             case 'ArrowUp':
+                handleMove(state.focusedIndex - getCols());
+                break;
+            case 'ArrowRight':
+                handleMove(state.focusedIndex + 1);
+                break;
             case 'ArrowLeft':
-                state.focusedIndex--;
-                if (state.focusedIndex < 0) state.focusedIndex = 0;
+                handleMove(state.focusedIndex - 1);
                 break;
             case 'Home':
-                state.focusedIndex = 0;
+                handleMove(0);
                 break;
             case 'End':
-                state.focusedIndex = total - 1;
+                handleMove(total - 1);
+                break;
+            case 'Backspace':
+                if (state.selected.size === 0 || document.activeElement === _fmList) {
+                   // Go Up
+                   const upBtn = body.querySelector('#fm-up');
+                   if (upBtn && !upBtn.disabled) upBtn.click();
+                }
                 break;
             case 'Enter':
                 if (state.focusedIndex >= 0) {
@@ -3336,16 +3393,19 @@ function renderFM(body, state) {
         const name = el.dataset.name;
         const idx = parseInt(el.dataset.idx);
 
+        // Mobile/Touch: if in selection mode, behave like Ctrl-click
+        const isMultiSelect = e.ctrlKey || e.metaKey || state.selectMode;
+
         if (e.shiftKey && state.lastClickedIndex >= 0) {
             const _allItems = state.searchResults !== null ? state.searchResults : state.items;
             const sorted = sortItems(_allItems);
             const start = Math.min(state.lastClickedIndex, idx);
             const end = Math.max(state.lastClickedIndex, idx);
-            if (!e.ctrlKey && !e.metaKey) state.selected.clear();
+            if (!isMultiSelect) state.selected.clear();
             for (let i = start; i <= end; i++) {
                 if (sorted[i]) state.selected.add(sorted[i].name);
             }
-        } else if (e.ctrlKey || e.metaKey) {
+        } else if (isMultiSelect) {
             if (state.selected.has(name)) state.selected.delete(name);
             else state.selected.add(name);
         } else {
