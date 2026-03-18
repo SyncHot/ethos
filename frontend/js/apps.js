@@ -2880,7 +2880,7 @@ function renderFM(body, state) {
                 let val = parseInt(octInput.value, 8);
                 if (isNaN(val)) return;
                 checkboxes.forEach(cb => {
-                    const mask = parseInt(cb.dataset.val);
+                    const mask = parseInt(cb.dataset.val, 8);
                     cb.checked = (val & mask) !== 0;
                 });
             });
