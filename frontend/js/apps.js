@@ -3305,6 +3305,8 @@ function renderFM(body, state) {
                 }
                 break;
             case 'Enter':
+                e.stopPropagation();
+                e.preventDefault();
                 if (state.focusedIndex >= 0) {
                     const sorted = sortItems(_allItems);
                     const item = sorted[state.focusedIndex];
@@ -3316,6 +3318,7 @@ function renderFM(body, state) {
                 break;
             case ' ': // Space to toggle selection
                 if (state.focusedIndex >= 0) {
+                    e.stopPropagation();
                     e.preventDefault(); // prevent scroll
                     const sorted = sortItems(_allItems);
                     const item = sorted[state.focusedIndex];
@@ -3329,12 +3332,15 @@ function renderFM(body, state) {
                 break;
             case 'a':
                 if (e.ctrlKey || e.metaKey) {
+                    e.stopPropagation();
                     e.preventDefault();
                     state.selected = new Set(_allItems.map(i => i.name));
                     updateSelection();
                 } else processed = false;
                 break;
             case 'Delete':
+                e.stopPropagation();
+                e.preventDefault();
                 if (state.selected.size > 0) deleteSelected();
                 else if (state.focusedIndex >= 0) {
                      // Delete focused item if nothing selected? Or select focused and delete?
@@ -3348,6 +3354,7 @@ function renderFM(body, state) {
 
         if (processed) {
             if (e.key.startsWith('Arrow') || e.key === 'Home' || e.key === 'End') {
+                e.stopPropagation();
                 e.preventDefault();
                 // Ensure page change if focused item is not on current page
                 const newPage = Math.floor(state.focusedIndex / state.pageSize);
