@@ -3202,6 +3202,87 @@ function renderFM(body, state) {
 
 
 
+    _fmList.addEventListener('keydown', (e) => {
+        // Keyboard navigation
+        const _allItems = state.searchResults !== null ? state.searchResults : state.items;
+        const total = _allItems.length;
+        if (total === 0) return;
+
+        let processed = true;
+        
+        switch(e.key) {
+            case 'ArrowDown':
+            case 'ArrowRight':
+                state.focusedIndex++;
+                if (state.focusedIndex >= total) state.focusedIndex = total - 1;
+                break;
+            case 'ArrowUp':
+            case 'ArrowLeft':
+                state.focusedIndex--;
+                if (state.focusedIndex < 0) state.focusedIndex = 0;
+                break;
+            case 'Home':
+                state.focusedIndex = 0;
+                break;
+            case 'End':
+                state.focusedIndex = total - 1;
+                break;
+            case 'Enter':
+                if (state.focusedIndex >= 0) {
+                    const sorted = sortItems(_allItems);
+                    const item = sorted[state.focusedIndex];
+                    if (item) {
+                        if (item.is_dir) navigateTo(itemFullPath(item));
+                        else previewFile(item.name);
+                    }
+                }
+                break;
+            case ' ': // Space to toggle selection
+                if (state.focusedIndex >= 0) {
+                    e.preventDefault(); // prevent scroll
+                    const sorted = sortItems(_allItems);
+                    const item = sorted[state.focusedIndex];
+                    if (item) {
+                        if (state.selected.has(item.name)) state.selected.delete(item.name);
+                        else state.selected.add(item.name);
+                        state.lastClickedIndex = state.focusedIndex;
+                        updateSelection();
+                    }
+                }
+                break;
+            case 'a':
+                if (e.ctrlKey || e.metaKey) {
+                    e.preventDefault();
+                    state.selected = new Set(_allItems.map(i => i.name));
+                    updateSelection();
+                } else processed = false;
+                break;
+            case 'Delete':
+                if (state.selected.size > 0) deleteSelected();
+                else if (state.focusedIndex >= 0) {
+                     // Delete focused item if nothing selected? Or select focused and delete?
+                     // Standard behavior: if selection empty, delete focused?
+                     // Let's stick to deleting selection. User can select with Space first.
+                }
+                break;
+            default:
+                processed = false;
+        }
+
+        if (processed) {
+            if (e.key.startsWith('Arrow') || e.key === 'Home' || e.key === 'End') {
+                e.preventDefault();
+                // Ensure page change if focused item is not on current page
+                const newPage = Math.floor(state.focusedIndex / state.pageSize);
+                if (newPage !== state.page) {
+                    state.page = newPage;
+                    renderFileList();
+                }
+                setFocusedIndex(state.focusedIndex);
+            }
+        }
+    });
+
     _fmList.addEventListener('click', (e) => {
         // Checkbox click
         const cbLabel = e.target.closest('.fm-checkbox-label');

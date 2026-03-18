@@ -1984,6 +1984,40 @@
 .dkr-modal-body-form { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .dkr-btn-file { font-size: 12px; padding: 4px 10px; margin: 0; cursor: pointer; }
 .dkr-compose-flex { min-height: 300px; flex: 1; }
+.dkr-logs-btn {
+    background: none; border: 1px solid rgba(139,92,246,0.3); color: #a78bfa;
+    border-radius: var(--r-sm); padding: 4px 8px; cursor: pointer; font-size: 12px;
+    transition: all var(--transition);
+}
+.dkr-logs-btn:hover { background: rgba(139,92,246,0.15); color: #c4b5fd; }
+.dkr-compose-editor {
+    background: #1e1e2e; color: #cdd6f4; font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+.dkr-env-masked { color: var(--text-muted); font-style: italic; cursor: pointer; }
+.dkr-env-masked:hover { color: var(--text-primary); }
+.dkr-env-reveal-btn {
+    background: none; border: none; color: var(--text-muted); cursor: pointer;
+    font-size: 11px; padding: 1px 4px; border-radius: 3px; margin-left: 4px;
+}
+.dkr-env-reveal-btn:hover { color: var(--text-primary); background: rgba(255,255,255,0.05); }
+.dkr-yaml-status {
+    font-size: 11px; padding: 2px 8px; border-radius: 10px; display: inline-flex;
+    align-items: center; gap: 4px; font-weight: 500;
+}
+.dkr-yaml-status.valid { background: rgba(34,197,94,0.15); color: var(--success); }
+.dkr-yaml-status.invalid { background: rgba(239,68,68,0.15); color: var(--danger); }
+.dkr-yaml-status.unchecked { background: rgba(148,163,184,0.15); color: var(--text-muted); }
+.dkr-warn-banner {
+    background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.3);
+    color: var(--warning); border-radius: var(--r-sm); padding: 8px 12px;
+    font-size: 12px; display: flex; align-items: flex-start; gap: 8px;
+}
+.dkr-warn-banner i { margin-top: 2px; flex-shrink: 0; }
+.dkr-readonly-notice {
+    background: rgba(148,163,184,0.1); border: 1px solid rgba(148,163,184,0.2);
+    color: var(--text-muted); border-radius: var(--r-sm); padding: 6px 12px;
+    font-size: 12px; display: flex; align-items: center; gap: 6px;
+}
 
 /* ── App Store specific ── */
 .as-modal-body-form { padding: 20px; display: flex; flex-direction: column; gap: 14px; }
@@ -3167,3 +3201,41 @@ select.tk-input {
   transition: opacity 0.15s;
 }
 .tk-column-dragover { background: rgba(76,154,255,0.04) !important; }
+
+/* FM Selection Box (Marquee) */
+.fm-selection-box {
+    position: absolute;
+    border: 1px solid var(--accent);
+    background: rgba(139, 92, 246, 0.2); /* Accent color with opacity */
+    z-index: 9999;
+    pointer-events: none;
+}
+
+/* FM Mobile Improvements */
+@media (max-width: 768px) {
+    #fm-sort-label { display: none; }
+    .fm-toolbar-btn { padding: 10px; } /* Larger touch targets */
+    
+    /* Hide less critical buttons */
+    #fm-shortcuts-btn, 
+    #fm-upload-folder, 
+    #fm-analyze { 
+        display: none !important; 
+    }
+    
+    /* Improve breadcrumb scrolling */
+    .fm-breadcrumb {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        mask-image: linear-gradient(to right, black 90%, transparent 100%);
+    }
+
+    /* Adjust toolbar layout */
+    .fm-toolbar {
+        gap: 2px;
+        padding: 4px;
+        overflow-x: auto;
+    }
+
+    .fm-view-switcher { display: none; } /* Hide view switcher to save space, default view usually fine */
+}

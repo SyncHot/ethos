@@ -73,6 +73,18 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .preview-content{flex:1;display:flex;align-items:center;justify-content:center;overflow:hidden}
 .preview-content img{max-width:100%;max-height:100%;object-fit:contain}
 .preview-content video{max-width:100%;max-height:100%}
+
+.file-checkbox{width:40px;height:40px;display:none;align-items:center;justify-content:center;flex-shrink:0}
+.file-checkbox input{width:20px;height:20px;accent-color:var(--accent)}
+body.select-mode .file-checkbox{display:flex}
+body.select-mode .file-icon{display:none}
+body.select-mode .fab{display:none}
+
+.selection-bar{position:fixed;bottom:0;left:0;right:0;background:var(--bg2);padding:12px;display:flex;justify-content:space-around;transform:translateY(100%);transition:transform .2s;border-top:1px solid var(--border);z-index:50}
+.selection-bar.show{transform:translateY(0)}
+.selection-bar button{background:none;border:none;color:var(--text);font-size:12px;display:flex;flex-direction:column;align-items:center;gap:6px}
+.selection-bar button i{font-size:18px}
+.selection-bar button.danger{color:var(--danger)}
 </style>
 </head>
 <body>
@@ -82,6 +94,7 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
   <div class="breadcrumb" id="breadcrumb"></div>
   <div class="toolbar-actions">
     <button id="btnSearch"><i class="fa-solid fa-magnifying-glass"></i></button>
+    <button id="btnSelect"><i class="fa-regular fa-square-check"></i></button>
     <button id="btnRefresh"><i class="fa-solid fa-arrows-rotate"></i></button>
   </div>
 </div>
@@ -92,6 +105,13 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 </div>
 
 <div class="file-list" id="fileList"></div>
+
+<div class="selection-bar" id="selectionBar">
+  <button id="selCount">0</button>
+  <button id="selDownload"><i class="fa-solid fa-download"></i> Pobierz</button>
+  <button id="selDelete" class="danger"><i class="fa-solid fa-trash"></i> Usuń</button>
+  <button id="selCancel"><i class="fa-solid fa-xmark"></i> Anuluj</button>
+</div>
 
 <button class="fab" id="fabUpload"><i class="fa-solid fa-plus"></i></button>
 
@@ -116,6 +136,8 @@ const BASE = '';
 let currentPath = '/';
 let items = [];
 let searchQuery = '';
+let selectMode = false;
+let selected = new Set();
 
 // ── API ──
 async function apiFetch(path, opts = {}) {
@@ -211,8 +233,10 @@ function renderList() {
     const fi = fileIcon(item);
     const fullPath = currentPath === '/' ? '/'+item.name : currentPath+'/'+item.name;
     const thumbSrc = !item.is_dir && isImage(item.name) ? authUrl(`/api/files/preview?path=${encodeURIComponent(fullPath)}&w=80&h=80`) : '';
+    const isSel = selected.has(item.name);
     return `
-      <div class="file-item" data-name="${esc(item.name)}" data-isdir="${item.is_dir}">
+      <div class="file-item${isSel?' selected':''}" data-name="${esc(item.name)}" data-isdir="${item.is_dir}">
+        <div class="file-checkbox"><input type="checkbox" ${isSel?'checked':''} readonly></div>
         ${thumbSrc
           ? `<img class="file-thumb" src="${thumbSrc}" loading="lazy" alt="">`
           : `<div class="file-icon ${fi.cls}"><i class="fa-solid ${fi.icon}"></i></div>`
@@ -225,8 +249,15 @@ function renderList() {
   }).join('');
 
   list.querySelectorAll('.file-item').forEach(el => {
-    el.addEventListener('click', () => {
+    el.addEventListener('click', (e) => {
       const name = el.dataset.name;
+      if (selectMode) {
+        if (selected.has(name)) selected.delete(name);
+        else selected.add(name);
+        renderList(); // Re-render to update UI
+        updateSelectionBar();
+        return;
+      }
       const isDir = el.dataset.isdir === 'true';
       if (isDir) {
         navigateTo(currentPath === '/' ? '/'+name : currentPath+'/'+name);
@@ -234,14 +265,71 @@ function renderList() {
         previewFile(name);
       }
     });
-    el.addEventListener('contextmenu', e => { e.preventDefault(); showActions(el.dataset.name); });
+    el.addEventListener('contextmenu', e => { 
+        e.preventDefault(); 
+        if (!selectMode) showActions(el.dataset.name); 
+    });
     // Long press for mobile
     let timer;
-    el.addEventListener('touchstart', () => { timer = setTimeout(() => showActions(el.dataset.name), 500); }, {passive:true});
+    el.addEventListener('touchstart', () => { 
+        timer = setTimeout(() => {
+            if (!selectMode) {
+                // Enter select mode on long press
+                toggleSelectMode(true);
+                selected.add(el.dataset.name);
+                renderList();
+                updateSelectionBar();
+            }
+        }, 600); 
+    }, {passive:true});
     el.addEventListener('touchend', () => clearTimeout(timer), {passive:true});
     el.addEventListener('touchmove', () => clearTimeout(timer), {passive:true});
   });
 }
+
+function updateSelectionBar() {
+    document.getElementById('selCount').innerText = selected.size;
+    const bar = document.getElementById('selectionBar');
+    if (selectMode) bar.classList.add('show');
+    else bar.classList.remove('show');
+}
+
+function toggleSelectMode(force) {
+    selectMode = force !== undefined ? force : !selectMode;
+    if (selectMode) {
+        document.body.classList.add('select-mode');
+        document.getElementById('btnSelect').innerHTML = '<i class="fa-solid fa-check"></i>';
+    } else {
+        document.body.classList.remove('select-mode');
+        document.getElementById('btnSelect').innerHTML = '<i class="fa-regular fa-square-check"></i>';
+        selected.clear();
+        document.getElementById('selectionBar').classList.remove('show');
+    }
+    renderList();
+}
+
+document.getElementById('btnSelect').addEventListener('click', () => toggleSelectMode());
+
+document.getElementById('selCancel').addEventListener('click', () => toggleSelectMode(false));
+
+document.getElementById('selDelete').addEventListener('click', async () => {
+    if (!selected.size) return;
+    if (!confirm(`Usunąć ${selected.size} elementów?`)) return;
+    for (const name of selected) {
+        const fullPath = currentPath === '/' ? '/'+name : currentPath+'/'+name;
+        try { await apiFetch('/api/files/delete', { method:'POST', body:{path:fullPath} }); } catch {}
+    }
+    toggleSelectMode(false);
+    navigateTo(currentPath);
+});
+
+document.getElementById('selDownload').addEventListener('click', () => {
+    selected.forEach(name => {
+         const fullPath = currentPath === '/' ? '/'+name : currentPath+'/'+name;
+         downloadFile(fullPath, name);
+    });
+    toggleSelectMode(false);
+});
 
 function esc(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
 
