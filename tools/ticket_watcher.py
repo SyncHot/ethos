@@ -32,8 +32,8 @@ COMPLEXITY_MODEL_MAP = {
         "reason": "Deep repo-wide reasoning and architectural autonomy",
     },
     "medium": {
-        "model": "gemini-3.1-pro",
-        "label": "Gemini 3.1 Pro (Reliability)",
+        "model": "gemini-3-pro-preview",
+        "label": "Gemini 3 Pro (Reliability)",
         "reason": "Best handling of system tools and QA protocols",
     },
     "simple": {
@@ -45,10 +45,33 @@ COMPLEXITY_MODEL_MAP = {
 
 # ── Model routing: ordered fallback chains per complexity ─────────────────
 MODEL_ROUTING = {
-    "complex": ["gpt-5.1-codex-max", "claude-opus-4.6", "gemini-3.1-pro"],
-    "medium":  ["gemini-3.1-pro", "claude-sonnet-4.6", "gpt-5.1-codex-mini"],
-    "simple":  ["gpt-5.1-codex-mini", "gemini-3-flash", "grok-code-fast"],
+    "complex": ["gpt-5.1-codex-max", "claude-opus-4.6", "gemini-3-pro-preview"],
+    "medium":  ["gemini-3-pro-preview", "claude-sonnet-4.6", "gpt-5.1-codex-mini"],
+    "simple":  ["gpt-5.1-codex-mini", "gpt-5-mini", "gpt-4.1"],
 }
+
+# All available Copilot CLI models, ranked by capability (best first).
+# Used as last-resort fallback pool when the routing chain is exhausted.
+ALL_AVAILABLE_MODELS = [
+    "gpt-5.1-codex-max",
+    "claude-opus-4.6",
+    "gpt-5.3-codex",
+    "gpt-5.2-codex",
+    "gpt-5.4",
+    "claude-sonnet-4.6",
+    "claude-sonnet-4.5",
+    "gemini-3-pro-preview",
+    "gpt-5.2",
+    "gpt-5.1-codex",
+    "gpt-5.1",
+    "claude-opus-4.5",
+    "claude-sonnet-4",
+    "claude-haiku-4.5",
+    "gpt-5.4-mini",
+    "gpt-5.1-codex-mini",
+    "gpt-5-mini",
+    "gpt-4.1",
+]
 
 RATE_LIMIT_MARKERS = [
     "rate limit",
@@ -159,13 +182,14 @@ def add_comment(tid, text):
 def is_executing():
     return os.path.exists(LOCK_FILE)
 
-def set_executing(tid, model_info=None, retry_count=0):
+def set_executing(tid, model_info=None, retry_count=0, tried_models=None):
     with open(LOCK_FILE, "w") as f:
         json.dump({
             "ticket_id": tid,
             "started": time.time(),
             "model": model_info,
             "retry_count": retry_count,
+            "tried_models": tried_models or [],
         }, f)
 
 def clear_executing():
@@ -272,25 +296,38 @@ def _should_fallback_from_sonnet(model_info, log_file):
     return failure in ("rate_limit", "server_error")
 
 
-def _get_next_fallback(model_info, complexity):
-    """Return the next model in the routing chain, or None if exhausted."""
+def _get_next_fallback(model_info, complexity, tried_models=None):
+    """Return the next model to try. First walks the routing chain, then ALL_AVAILABLE_MODELS."""
     if not isinstance(model_info, dict):
         return None
     current = model_info.get("model", "")
+    tried = set(tried_models or [])
+    tried.add(current)
+
+    # 1) Try the routing chain for this complexity
     chain = MODEL_ROUTING.get(complexity, MODEL_ROUTING.get("medium", []))
     try:
         idx = chain.index(current)
     except ValueError:
         idx = -1
-    next_idx = idx + 1
-    if next_idx >= len(chain):
-        return None
-    next_model = chain[next_idx]
-    return {
-        "model": next_model,
-        "label": f"{next_model} (fallback #{next_idx})",
-        "reason": f"Failover from {current}",
-    }
+    for i in range(idx + 1, len(chain)):
+        if chain[i] not in tried:
+            return {
+                "model": chain[i],
+                "label": f"{chain[i]} (routing fallback)",
+                "reason": f"Failover from {current}",
+            }
+
+    # 2) Routing chain exhausted — scan all available models for one not yet tried
+    for m in ALL_AVAILABLE_MODELS:
+        if m not in tried:
+            return {
+                "model": m,
+                "label": f"{m} (global fallback)",
+                "reason": f"All routing models exhausted, best available fallback from {current}",
+            }
+
+    return None
 
 # ── Agent detection ──────────────────────────────────────────────────────
 
@@ -709,8 +746,10 @@ def main():
                             model_info = active_proc._model_info
 
                         retry_count = 0
+                        tried_models = []
                         if isinstance(executing, dict):
                             retry_count = executing.get("retry_count", 0)
+                            tried_models = executing.get("tried_models", [])
 
                         failure_type = _classify_failure(log_file)
                         ctx = getattr(active_proc, "_ticket_ctx", None)
@@ -734,7 +773,7 @@ def main():
                                 )
                                 time.sleep(backoff)
                                 if ctx:
-                                    set_executing(active_ticket_id, model_info, retry_count + 1)
+                                    set_executing(active_ticket_id, model_info, retry_count + 1, tried_models)
                                     retry_proc = execute_via_copilot(
                                         ctx["ticket"], ctx["agent"], ctx["info"],
                                         model_info, ctx["docs_context"],
@@ -744,11 +783,13 @@ def main():
                                         retried = True
                             if not retried:
                                 # Exhausted retries on this model → switch provider
-                                fallback = _get_next_fallback(model_info, complexity)
+                                tried_models = list(set(tried_models + [current_model]))
+                                fallback = _get_next_fallback(model_info, complexity, tried_models)
                                 if fallback and ctx:
                                     print(
                                         f"\nPROVIDER_SWITCH | {active_ticket_id} | "
-                                        f"{current_model} -> {fallback['model']} (rate limit, retries exhausted)",
+                                        f"{current_model} -> {fallback['model']} "
+                                        f"(rate limit, retries exhausted) | tried: {tried_models}",
                                         flush=True,
                                     )
                                     add_comment(
@@ -756,7 +797,7 @@ def main():
                                         f"[system] Przekroczono limity API dla modelu {current_model} "
                                         f"({MAX_RETRIES_SAME_MODEL}x). Przełączam na {fallback['model']}.",
                                     )
-                                    set_executing(active_ticket_id, fallback, 0)
+                                    set_executing(active_ticket_id, fallback, 0, tried_models)
                                     retry_proc = execute_via_copilot(
                                         ctx["ticket"], ctx["agent"], ctx["info"],
                                         fallback, ctx["docs_context"],
@@ -770,11 +811,13 @@ def main():
 
                         elif failure_type == "server_error":
                             # 5xx: immediate failover to next provider
-                            fallback = _get_next_fallback(model_info, complexity)
+                            tried_models = list(set(tried_models + [current_model]))
+                            fallback = _get_next_fallback(model_info, complexity, tried_models)
                             if fallback and ctx:
                                 print(
                                     f"\nSERVER_ERROR_FAILOVER | {active_ticket_id} | "
-                                    f"{current_model} -> {fallback['model']} (5xx immediate failover)",
+                                    f"{current_model} -> {fallback['model']} "
+                                    f"(5xx immediate failover) | tried: {tried_models}",
                                     flush=True,
                                 )
                                 add_comment(
@@ -782,7 +825,7 @@ def main():
                                     f"[system] Błąd serwera modelu {current_model} (5xx). "
                                     f"Natychmiastowe przełączenie na {fallback['model']}.",
                                 )
-                                set_executing(active_ticket_id, fallback, 0)
+                                set_executing(active_ticket_id, fallback, 0, tried_models)
                                 retry_proc = execute_via_copilot(
                                     ctx["ticket"], ctx["agent"], ctx["info"],
                                     fallback, ctx["docs_context"],
@@ -798,9 +841,11 @@ def main():
                             continue
 
                         # All retries/fallbacks exhausted or unknown failure
-                        print(f"\nCOPILOT_FAILED | {active_ticket_id} | exit={retcode} | type={failure_type} | log={log_file}", flush=True)
+                        tried_str = ", ".join(tried_models) if tried_models else current_model
+                        print(f"\nCOPILOT_FAILED | {active_ticket_id} | exit={retcode} | type={failure_type} | tried: [{tried_str}] | log={log_file}", flush=True)
                         add_comment(active_ticket_id,
-                            f"[copilot] Copilot zakończył z błędem (exit {retcode}, {failure_type}). Log: {log_file}")
+                            f"[copilot] Copilot zakończył z błędem (exit {retcode}, {failure_type}). "
+                            f"Wypróbowane modele: [{tried_str}]. Log: {log_file}")
                         try:
                             move_ticket(active_ticket_id, "Do zrobienia")
                             print(f"MOVED_TO_TODO | {active_ticket_id} (failed, needs rework)", flush=True)
