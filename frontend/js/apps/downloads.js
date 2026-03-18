@@ -1267,6 +1267,14 @@ function renderDownloadManager(body, launchOpts) {
     function onDlUpdate(data) {
         const idx = downloads.findIndex(d => d.id === data.id);
         if (idx >= 0) {
+            // Check for error transition
+            const old = downloads[idx];
+            if (data.status === 'failed' && old.status !== 'failed') {
+                 _dlmNotify(
+                    t('Błąd pobierania'),
+                    `${data.filename}\n${data.error || t('Nieznany błąd')}`
+                );
+            }
             downloads[idx] = data;
         } else {
             downloads.unshift(data);
@@ -1295,6 +1303,22 @@ function renderDownloadManager(body, launchOpts) {
 
     function onPkgUpdate(data) {
         if (data?.id) {
+            // Check for extraction status transition
+            const old = packages[data.id];
+            if (old) {
+                 if (data.status === 'extracted' && old.status !== 'extracted') {
+                     _dlmNotify(
+                        t('Ekstrakcja zakończona'),
+                        `${t('Pakiet')}: ${data.name || data.id}`
+                     );
+                 } else if (data.status === 'extract_failed' && old.status !== 'extract_failed') {
+                      _dlmNotify(
+                        t('Błąd ekstrakcji'),
+                        `${t('Pakiet')}: ${data.name || data.id}\n${data.extract_error || ''}`
+                     );
+                 }
+            }
+
             packages[data.id] = data;
             if (!_updatePackageInPlace(data)) {
                 renderDownloads();
@@ -1312,6 +1336,14 @@ function renderDownloadManager(body, launchOpts) {
     function onDlCompleted(data) {
         if (data?.filename) {
             toast(`Pobrano: ${data.filename}`, 'success');
+            
+            // Native notification
+            const size = data.filesize ? _dlmFormatBytes(data.filesize) : '';
+            const time = new Date().toLocaleTimeString();
+            _dlmNotify(
+                t('Pobieranie zakończone'), 
+                `${data.filename}\n${t('Rozmiar')}: ${size}\n${t('Czas')}: ${time}`
+            );
         }
     }
 
@@ -1340,11 +1372,31 @@ function renderDownloadManager(body, launchOpts) {
     }
 
     // ─── Init ───
+    if ("Notification" in window && Notification.permission === "default") {
+        Notification.requestPermission();
+    }
     loadConfig();
     loadDownloads();
 }
 
 // ─── Helpers ───
+
+function _dlmNotify(title, body, icon) {
+    if (!("Notification" in window)) return;
+    
+    // Default icon if not provided
+    if (!icon) icon = '/favicon.ico'; // Fallback to favicon
+
+    if (Notification.permission === "granted") {
+        new Notification(title, { body, icon });
+    } else if (Notification.permission !== "denied") {
+        Notification.requestPermission().then(permission => {
+            if (permission === "granted") {
+                new Notification(title, { body, icon });
+            }
+        });
+    }
+}
 
 function _dlmEsc(str) {
     if (!str) return '';
