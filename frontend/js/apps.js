@@ -3265,13 +3265,13 @@ function renderFM(body, state) {
                 // Move anchor if not selecting
                 state.lastClickedIndex = newIdx;
                 
-                // Optional: If you want standard desktop behavior (moving focus selects item), uncomment:
-                // if (!e.ctrlKey && !e.metaKey) {
-                //     state.selected.clear();
-                //     const sorted = sortItems(_allItems);
-                //     if (sorted[newIdx]) state.selected.add(sorted[newIdx].name);
-                //     updateSelection();
-                // }
+                // Standard desktop behavior: moving focus selects item (unless Ctrl is held)
+                if (!e.ctrlKey && !e.metaKey) {
+                    state.selected.clear();
+                    const sorted = sortItems(_allItems);
+                    if (sorted[newIdx]) state.selected.add(sorted[newIdx].name);
+                    updateSelection();
+                }
             }
             state.focusedIndex = newIdx;
         };
@@ -3341,11 +3341,17 @@ function renderFM(body, state) {
             case 'Delete':
                 e.stopPropagation();
                 e.preventDefault();
-                if (state.selected.size > 0) deleteSelected();
-                else if (state.focusedIndex >= 0) {
-                     // Delete focused item if nothing selected? Or select focused and delete?
-                     // Standard behavior: if selection empty, delete focused?
-                     // Let's stick to deleting selection. User can select with Space first.
+                if (state.selected.size > 0) {
+                    deleteSelected();
+                } else if (state.focusedIndex >= 0) {
+                     // Delete focused item if nothing selected
+                     const sorted = sortItems(_allItems);
+                     const item = sorted[state.focusedIndex];
+                     if (item) {
+                         state.selected.add(item.name);
+                         updateSelection();
+                         deleteSelected();
+                     }
                 }
                 break;
             default:

@@ -6214,3 +6214,57 @@ textarea:disabled,
 .ux-folder-icon {
     color: var(--accent-orange);
 }
+
+/* ═══ Mobile File Manager Improvements ═══ */
+@media (max-width: 768px) {
+    .fm-toolbar {
+        overflow-x: auto;
+        padding: 8px;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none; /* Firefox */
+    }
+    .fm-toolbar::-webkit-scrollbar { display: none; } /* Chrome/Safari */
+    
+    /* Optimize List View for Mobile */
+    .fm-list-header { display: none !important; }
+    
+    .fm-file-list.fm-list-view .fm-file-item {
+        padding: 10px 8px;
+        height: auto; /* Allow height to adapt */
+    }
+    
+    .fm-file-list.fm-list-view .fm-file-name {
+        flex: 1;
+        min-width: 0;
+        font-size: 14px;
+    }
+    
+    .fm-file-list.fm-list-view .fm-file-size {
+        width: auto;
+        flex: 0 0 auto;
+        margin-left: 8px;
+        font-size: 11px;
+        opacity: 0.7;
+    }
+    
+    .fm-file-list.fm-list-view .fm-file-date,
+    .fm-file-list.fm-list-view .fm-file-perms {
+        display: none !important;
+    }
+
+    /* Adjust checkbox size for touch */
+    .fm-checkbox-label {
+        padding: 4px;
+    }
+    .fm-cb-custom {
+        width: 20px;
+        height: 20px;
+    }
+    
+    /* Adjust grid view gap */
+    .fm-file-list.fm-grid-view {
+        gap: 8px;
+        padding: 8px;
+        grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    }
+}
