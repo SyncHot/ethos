@@ -3535,6 +3535,13 @@ function renderFM(body, state) {
             return;
         }
 
+        // Ctrl+U — Upload
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'u' || e.key === 'U')) {
+            e.preventDefault();
+            uploadFiles();
+            return;
+        }
+
         // Clipboard
         if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) {
             e.preventDefault();
@@ -3552,8 +3559,8 @@ function renderFM(body, state) {
             return;
         }
 
-        // Arrow Navigation
-        if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+        // Arrow Navigation & Paging
+        if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown'].includes(e.key)) {
             e.preventDefault();
             body.querySelector('#fm-file-list').focus({ preventScroll: true });
             
@@ -3567,6 +3574,8 @@ function renderFM(body, state) {
             if (state.viewMode === 'list') {
                  if (e.key === 'ArrowUp') newIdx--;
                  else if (e.key === 'ArrowDown') newIdx++;
+                 else if (e.key === 'PageUp') newIdx -= 10;
+                 else if (e.key === 'PageDown') newIdx += 10;
                  else if (e.key === 'ArrowLeft') {
                      // Go to parent
                      if (isRegularPath() && !isAtHomeRoot()) {
@@ -3602,6 +3611,8 @@ function renderFM(body, state) {
                  else if (e.key === 'ArrowRight') newIdx++;
                  else if (e.key === 'ArrowUp') newIdx -= cols;
                  else if (e.key === 'ArrowDown') newIdx += cols;
+                 else if (e.key === 'PageUp') newIdx -= (cols * 5);
+                 else if (e.key === 'PageDown') newIdx += (cols * 5);
             }
 
             // Clamp
@@ -4080,107 +4091,7 @@ function renderFM(body, state) {
         }
     });
 
-    // ─── Drag Selection (Rubber Band) ───
-    function initDragSelection() {
-        let isDragging = false;
-        let startX, startY;
-        let initialSelection = new Set();
-        const box = document.createElement('div');
-        box.className = 'fm-selection-box';
-        box.style.display = 'none';
-        
-        const list = body.querySelector('#fm-file-list');
-        if (!list) return;
-        
-        if (getComputedStyle(list).position === 'static') {
-            list.style.position = 'relative';
-        }
-        list.appendChild(box);
 
-        function onMouseDown(e) {
-            if (e.button !== 0) return;
-            if (e.target.closest('.fm-file-item, .fm-grid-item, .fm-thumb-item, .fm-checkbox-label, a, button, input')) return;
-            // Allow starting drag on the list background
-            if (!list.contains(e.target) && e.target !== list) return;
-
-            e.preventDefault();
-            
-            if (!box.isConnected) list.appendChild(box);
-
-            isDragging = true;
-            initialSelection = new Set(state.selected);
-            
-            const listRect = list.getBoundingClientRect();
-            startX = e.clientX - listRect.left + list.scrollLeft;
-            startY = e.clientY - listRect.top + list.scrollTop;
-            
-            box.style.left = startX + 'px';
-            box.style.top = startY + 'px';
-            box.style.width = '0px';
-            box.style.height = '0px';
-            box.style.display = 'block';
-
-            if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
-                state.selected.clear();
-                updateSelection();
-            }
-
-            document.addEventListener('mousemove', onMouseMove);
-            document.addEventListener('mouseup', onMouseUp);
-        }
-
-        function onMouseMove(e) {
-            if (!isDragging) return;
-            
-            const listRect = list.getBoundingClientRect();
-            const currentX = e.clientX - listRect.left + list.scrollLeft;
-            const currentY = e.clientY - listRect.top + list.scrollTop;
-
-            const width = Math.abs(currentX - startX);
-            const height = Math.abs(currentY - startY);
-            const left = Math.min(currentX, startX);
-            const top = Math.min(currentY, startY);
-
-            box.style.width = width + 'px';
-            box.style.height = height + 'px';
-            box.style.left = left + 'px';
-            box.style.top = top + 'px';
-
-            const boxRect = box.getBoundingClientRect();
-            const items = list.querySelectorAll('.fm-file-item, .fm-grid-item, .fm-thumb-item');
-            
-            const inBox = new Set();
-            items.forEach(item => {
-                const itemRect = item.getBoundingClientRect();
-                const intersect = !(boxRect.left > itemRect.right || 
-                                  boxRect.right < itemRect.left || 
-                                  boxRect.top > itemRect.bottom || 
-                                  boxRect.bottom < itemRect.top);
-                if (intersect) inBox.add(item.dataset.name);
-            });
-
-            if (e.ctrlKey || e.metaKey) {
-                // Union initial + inBox
-                state.selected = new Set([...initialSelection, ...inBox]);
-            } else {
-                // Just inBox
-                state.selected = inBox;
-            }
-            updateSelection();
-        }
-
-        function onMouseUp(e) {
-            if (isDragging) {
-                isDragging = false;
-                box.style.display = 'none';
-                document.removeEventListener('mousemove', onMouseMove);
-                document.removeEventListener('mouseup', onMouseUp);
-            }
-        }
-
-        list.addEventListener('mousedown', onMouseDown);
-    }
-    initDragSelection();
 
     // ─── Disk Analytics Panel ───
     const anaPanel = body.querySelector('#fm-ana-panel');
