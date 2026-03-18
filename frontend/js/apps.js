@@ -363,6 +363,9 @@ function renderFM(body, state) {
                 <button class="fm-tree-item fm-shared-with-me-btn${state.path === '/__shared_with_me__' ? ' active' : ''}" data-path="/__shared_with_me__">
                     <i class="fas fa-share-alt app-icon-share"></i> Udostępnione mi
                 </button>
+                <button class="fm-tree-item" onclick="openApp('naslink')">
+                    <i class="fas fa-network-wired" style="color:#8b5cf6"></i> Transfer NAS
+                </button>
             </div>
             <div class="fm-sidebar-divider"></div>
             ${state.sudoMode ? `<button class="fm-tree-item${state.path === '/' ? ' active' : ''}" data-path="/">
@@ -1198,6 +1201,15 @@ function renderFM(body, state) {
         // Select all
         items.push({ icon: 'fa-check-double', label: t('Zaznacz wszystko'), action: 'selectall' });
 
+        // Open in Gallery
+        if (singleItem && singleItem.is_dir) {
+             items.push({ icon: 'fa-images', label: t('Pokaż w Galerii'), action: 'open-gallery-folder' });
+        }
+        const ext = singleItem ? singleItem.name.split('.').pop().toLowerCase() : '';
+        if (singleItem && !singleItem.is_dir && IMAGE_EXTS.includes(ext)) {
+             items.push({ icon: 'fa-image', label: t('Pokaż w Galerii'), action: 'open-gallery-file' });
+        }
+
         items.push({ sep: true });
 
         // Copy / Cut
@@ -1348,6 +1360,12 @@ function renderFM(body, state) {
                 case 'download': downloadSelected(); break;
                 case 'rename': renameSelected(); break;
                 case 'delete': deleteSelected(); break;
+                case 'open-gallery-folder':
+                    if (singleItem) openApp('gallery', { folder: itemFullPath(singleItem) });
+                    break;
+                case 'open-gallery-file':
+                    openApp('gallery', { folder: state.path });
+                    break;
                 case 'copy': clipboardCopy(); break;
                 case 'cut': clipboardCut(); break;
                 case 'paste': clipboardPaste(); break;
@@ -2704,7 +2722,7 @@ function renderFM(body, state) {
             toast(t('Nie udało się załadować listy serwerów'), 'error'); return;
         }
         if (!servers.length) {
-            toast(t('Brak skonfigurowanych serwerów NAS. Dodaj serwer SSH w ustawieniach Backupu.'), 'warning');
+            toast(t('Brak skonfigurowanych serwerów. Dodaj serwer w Ustawieniach > Zdalne serwery.'), 'warning');
             return;
         }
 

@@ -620,7 +620,8 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
                                             <div class="fm-dup-file-info">
                                                 <div class="fm-dup-file-name">${file.name}${isFirst ? ` <span class="fm-dup-keep-badge">${t('oryginał')}</span>` : ''}</div>
                                                 <div class="fm-dup-file-meta">
-                                                    <span title="${file.path}"><i class="fas fa-folder-open"></i> ${file.path}</span>
+                                                    <button class="fm-dup-open-fm" data-path="${file.path}" title="${t('Pokaż w Menedżerze plików')}"><i class="fas fa-folder-open"></i></button>
+                                                    <span title="${file.path}">${file.path}</span>
                                                     <span>${formatBytes(file.size)}</span>
                                                     <span><i class="fas fa-calendar"></i> ${formatDate(file.modified)}</span>
                                                 </div>
@@ -646,6 +647,16 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
                 return allItems;
             }
             content.querySelectorAll('.fm-dup-group').forEach(gEl => {
+                // Wire "Show in FM" buttons
+                gEl.querySelectorAll('.fm-dup-open-fm').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        const path = btn.dataset.path;
+                        const folder = path.substring(0, path.lastIndexOf('/')) || '/';
+                        openApp('file-manager', { path: folder });
+                    });
+                });
+
                 const gi = parseInt(gEl.dataset.group);
                 const group = groups[gi];
                 if (!group) return;
