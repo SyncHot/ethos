@@ -27,27 +27,27 @@ API_FAIL_THRESHOLD = 3  # consecutive API failures before considering outage
 # Maps to Copilot CLI --model flag values
 COMPLEXITY_MODEL_MAP = {
     "complex": {
-        "model": "claude-opus-4.6",
-        "label": "Opus (premium)",
-        "reason": "Deep reasoning required for complex tasks",
+        "model": "gpt-5.1-codex-max",
+        "label": "GPT-5.1 Codex Max (Agent Mode)",
+        "reason": "Deep repo-wide reasoning and architectural autonomy",
     },
     "medium": {
-        "model": "claude-sonnet-4.6",
-        "label": "Sonnet (balanced)",
-        "reason": "Good balance of quality and speed",
+        "model": "gemini-3.1-pro",
+        "label": "Gemini 3.1 Pro (Reliability)",
+        "reason": "Best handling of system tools and QA protocols",
     },
     "simple": {
-        "model": "claude-haiku-4.5",
-        "label": "Haiku (fast)",
-        "reason": "Fast execution for straightforward tasks",
+        "model": "gpt-5.1-codex-mini",
+        "label": "Codex Mini (Efficiency)",
+        "reason": "Fast and cheap for straightforward logic",
     },
 }
 
-SONNET_RATE_LIMIT_FALLBACK_MODEL = {
-    "model": "gpt-5.3-codex",
-    "label": "GPT-5.3-Codex (xhigh fallback)",
-    "reason": "Fallback when Sonnet rate limit is reached",
-    "reasoning_effort": "xhigh",
+# ── Model routing: ordered fallback chains per complexity ─────────────────
+MODEL_ROUTING = {
+    "complex": ["gpt-5.1-codex-max", "claude-opus-4.6", "gemini-3.1-pro"],
+    "medium":  ["gemini-3.1-pro", "claude-sonnet-4.6", "gpt-5.1-codex-mini"],
+    "simple":  ["gpt-5.1-codex-mini", "gemini-3-flash", "grok-code-fast"],
 }
 
 RATE_LIMIT_MARKERS = [
@@ -229,12 +229,31 @@ def _log_indicates_rate_limit(log_file):
 
 
 def _should_fallback_from_sonnet(model_info, log_file):
+    """Check if the current model failed due to rate limit and a fallback exists."""
     if not isinstance(model_info, dict):
         return False
-    model = str(model_info.get("model", "")).lower()
-    if not model.startswith("claude-sonnet"):
-        return False
     return _log_indicates_rate_limit(log_file)
+
+
+def _get_next_fallback(model_info, complexity):
+    """Return the next model in the routing chain, or None if exhausted."""
+    if not isinstance(model_info, dict):
+        return None
+    current = model_info.get("model", "")
+    chain = MODEL_ROUTING.get(complexity, MODEL_ROUTING.get("medium", []))
+    try:
+        idx = chain.index(current)
+    except ValueError:
+        idx = -1
+    next_idx = idx + 1
+    if next_idx >= len(chain):
+        return None
+    next_model = chain[next_idx]
+    return {
+        "model": next_model,
+        "label": f"{next_model} (fallback #{next_idx})",
+        "reason": f"Fallback from {current} (rate limit / failure)",
+    }
 
 # ── Agent detection ──────────────────────────────────────────────────────
 
@@ -583,7 +602,9 @@ def main():
     mode = "AUTO" if args.auto else "WATCH"
     print(f"Ticket Watcher | interval={args.interval}s | mode={mode}", flush=True)
     print(f"Monitoring copilot-enabled projects via /copilot/queue", flush=True)
-    print(f"Model mapping: complex→Opus, medium→Sonnet, simple→Haiku", flush=True)
+    print(f"Model mapping: complex→{COMPLEXITY_MODEL_MAP['complex']['model']}, medium→{COMPLEXITY_MODEL_MAP['medium']['model']}, simple→{COMPLEXITY_MODEL_MAP['simple']['model']}", flush=True)
+    routing_str = ", ".join(f"{k}: {' → '.join(v)}" for k, v in MODEL_ROUTING.items())
+    print(f"Fallback routing: {routing_str}", flush=True)
     print(f"QA agent: Sonnet | Flow: Dev→QA→Review (fail→Do zrobienia)", flush=True)
     print(f"Copilot CLI: {COPILOT_BIN}", flush=True)
 
@@ -651,35 +672,35 @@ def main():
                             model_info = active_proc._model_info
 
                         if _should_fallback_from_sonnet(model_info, log_file):
-                            fallback = dict(SONNET_RATE_LIMIT_FALLBACK_MODEL)
-                            print(
-                                f"\nRATE_LIMIT_FALLBACK | {active_ticket_id} | "
-                                f"{model_info.get('model', '?')} -> {fallback['model']} "
-                                f"(reasoning={fallback['reasoning_effort']})",
-                                flush=True,
-                            )
-                            add_comment(
-                                active_ticket_id,
-                                f"[copilot] Wykryto rate limit modelu Sonnet. "
-                                f"Automatyczny retry na {fallback['model']} "
-                                f"(reasoning: {fallback['reasoning_effort']}).",
-                            )
                             ctx = getattr(active_proc, "_ticket_ctx", None)
-                            if ctx:
-                                retry_proc = execute_via_copilot(
-                                    ctx["ticket"],
-                                    ctx["agent"],
-                                    ctx["info"],
-                                    fallback,
-                                    ctx["docs_context"],
+                            complexity = ctx["ticket"].get("complexity", "medium") if ctx else "medium"
+                            fallback = _get_next_fallback(model_info, complexity)
+                            if fallback:
+                                print(
+                                    f"\nRATE_LIMIT_FALLBACK | {active_ticket_id} | "
+                                    f"{model_info.get('model', '?')} -> {fallback['model']}",
+                                    flush=True,
                                 )
-                                if retry_proc is not None:
-                                    active_proc = retry_proc
-                                    continue
                                 add_comment(
                                     active_ticket_id,
-                                    f"[copilot] Retry fallback na {fallback['model']} nie powiódł się.",
+                                    f"[copilot] Rate limit / błąd modelu {model_info.get('model', '?')}. "
+                                    f"Automatyczny retry na {fallback['model']}.",
                                 )
+                                if ctx:
+                                    retry_proc = execute_via_copilot(
+                                        ctx["ticket"],
+                                        ctx["agent"],
+                                        ctx["info"],
+                                        fallback,
+                                        ctx["docs_context"],
+                                    )
+                                    if retry_proc is not None:
+                                        active_proc = retry_proc
+                                        continue
+                                    add_comment(
+                                        active_ticket_id,
+                                        f"[copilot] Retry fallback na {fallback['model']} nie powiódł się.",
+                                    )
 
                         print(f"\nCOPILOT_FAILED | {active_ticket_id} | exit={retcode} | log={log_file}", flush=True)
                         add_comment(active_ticket_id,
