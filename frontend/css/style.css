@@ -2543,6 +2543,24 @@ input, button, select, textarea { font-family: inherit; font-size: inherit; }
     text-overflow: ellipsis;
     white-space: nowrap;
 }
+.fm-dup-open-fm {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0 4px;
+    font-size: 11px;
+    opacity: 0.7;
+    transition: all var(--transition-fast);
+}
+.fm-dup-open-fm:hover {
+    opacity: 1;
+    color: var(--text-primary);
+}
+.fm-dup-open-fm i {
+    opacity: 1; /* Override generic meta icon styles */
+    font-size: 11px;
+}
 
 /* ═══ Rename inline ═══ */
 .fm-rename-input {
