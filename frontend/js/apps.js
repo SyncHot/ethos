@@ -3295,13 +3295,6 @@ function renderFM(body, state) {
             case 'End':
                 handleMove(total - 1);
                 break;
-            case 'Backspace':
-                if (state.selected.size === 0 || document.activeElement === _fmList) {
-                   // Go Up
-                   const upBtn = body.querySelector('#fm-up');
-                   if (upBtn && !upBtn.disabled) upBtn.click();
-                }
-                break;
             case 'Enter':
                 if (state.focusedIndex >= 0) {
                     const sorted = sortItems(_allItems);
@@ -3831,13 +3824,6 @@ function renderFM(body, state) {
 
         if (e.ctrlKey && e.shiftKey && e.key === 'S') { e.preventDefault(); calcDirSizes(); }
         if (e.key === 'F1') { e.preventDefault(); showFMShortcutsHelp(); }
-        if (e.key === 'Backspace') {
-            e.preventDefault();
-            if (isRegularPath() && !isAtHomeRoot()) {
-                const parent = state.path.split('/').slice(0, -1).join('/') || (state.sudoMode ? '/' : state.homePath);
-                navigateTo(parent);
-            }
-        }
     });
 
     // ─── Keyboard Shortcuts Help ───
