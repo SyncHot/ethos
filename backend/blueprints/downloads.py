@@ -49,7 +49,7 @@ TORRENT_CACHE_DIR = os.path.join(DATA_DIR, 'torrent_cache')
 
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 5  # seconds, exponential: 5, 10, 20
-MAX_HISTORY = 200  # keep last N history entries
+MAX_HISTORY = 1000  # keep last N history entries
 
 # Transient error patterns worth retrying
 _TRANSIENT_ERRORS = (
@@ -574,6 +574,24 @@ def _state_saver_loop():
                 _flush_state()
             except Exception:
                 pass
+
+
+def _load_history(limit=None, username=None):
+    """Return persisted download history filtered by user."""
+    try:
+        with _history_lock:
+            if os.path.isfile(DOWNLOADS_HISTORY_FILE):
+                with open(DOWNLOADS_HISTORY_FILE) as f:
+                    history = json.load(f)
+            else:
+                history = []
+    except Exception:
+        history = []
+    if username:
+        history = [h for h in history if h.get('user', '') == username or not h.get('user')]
+    if limit:
+        history = history[-limit:]
+    return history
 
 
 def _emit(event, data):
@@ -1985,9 +2003,42 @@ def download_stats():
         pending = sum(1 for d in _my if d['status'] == 'pending')
         total_bytes = sum(d.get('downloaded', 0) for d in _my
                          if d['status'] == 'completed')
-        current_speed = sum(d.get('speed', 0) for d in _my
-                           if d['status'] == 'downloading')
+        current_speed = 0
+        for d in _my:
+            if d['status'] == 'downloading':
+                current_speed += d.get('speed', 0)
+            elif d['status'] == 'torrent_downloading':
+                current_speed += d.get('torrent_speed', 0)
         my_pkgs = sum(1 for p in _packages.values() if not me or p.get('user', '') == me or not p.get('user'))
+    history = _load_history(username=me)
+    now = time.time()
+    periods = {
+        'today': now - 86400,
+        'week': now - 7 * 86400,
+        'month': now - 30 * 86400,
+    }
+    bytes_by_period = {k: 0 for k in periods}
+    counts = {'completed': 0, 'failed': 0, 'cancelled': 0}
+    total_bytes_hist = 0
+    total_duration = 0.0
+    for h in history:
+        event = h.get('event')
+        ts = h.get('timestamp', 0) or 0
+        size = h.get('filesize', 0) or 0
+        duration = h.get('duration', 0) or 0
+        if event == 'completed':
+            counts['completed'] += 1
+            total_bytes_hist += size
+            if duration > 0:
+                total_duration += duration
+            for key, cutoff in periods.items():
+                if ts >= cutoff:
+                    bytes_by_period[key] += size
+        elif event == 'failed':
+            counts['failed'] += 1
+        elif event == 'cancelled':
+            counts['cancelled'] += 1
+    avg_speed = int(total_bytes_hist / total_duration) if total_duration > 0 else 0
     return jsonify({
         'ok': True,
         'stats': {
@@ -1996,7 +2047,13 @@ def download_stats():
             'total_bytes_downloaded': total_bytes,
             'current_speed': current_speed,
             'packages': my_pkgs,
-        }
+        },
+        'metrics': {
+            'bytes': {**bytes_by_period, 'all_time': total_bytes_hist},
+            'counts': counts,
+            'average_speed': avg_speed,
+            'history_entries': len(history),
+        },
     })
 
 
@@ -2004,17 +2061,7 @@ def download_stats():
 def download_history():
     """Return download history log."""
     me = _get_username()
-    try:
-        if os.path.isfile(DOWNLOADS_HISTORY_FILE):
-            with open(DOWNLOADS_HISTORY_FILE) as f:
-                history = json.load(f)
-        else:
-            history = []
-    except Exception:
-        history = []
-    # Filter by user
-    if me:
-        history = [h for h in history if h.get('user', '') == me or not h.get('user')]
+    history = _load_history(username=me)
     # Return in reverse chronological order
     history.reverse()
     limit = request.args.get('limit', 50, type=int)
@@ -2233,14 +2280,19 @@ def add_torrent_file():
 def cancel_download():
     data = request.get_json(force=True)
     dl_id = data.get('id', '')
+    to_log = False
     with _lock:
         dl = _downloads.get(dl_id)
         if not dl:
             return jsonify({'error': 'Not found'}), 404
         if dl['status'] in ('downloading', 'resolving', 'pending', 'paused',
                             'torrent_uploading', 'torrent_downloading'):
+            if dl['status'] != 'cancelled':
+                to_log = True
             dl['status'] = 'cancelled'
             _save_state()
+    if to_log and dl:
+        _log_history(dl, 'cancelled')
     _emit('dl:update', _sanitize(dl))
     return jsonify({'ok': True})
 
@@ -2337,14 +2389,19 @@ def reorder_download():
 def remove_download():
     data = request.get_json(force=True)
     dl_id = data.get('id', '')
+    to_log = False
     with _lock:
         dl = _downloads.pop(dl_id, None)
         if not dl:
             return jsonify({'error': 'Not found'}), 404
         if dl['status'] in ('downloading', 'resolving', 'paused',
                             'torrent_uploading', 'torrent_downloading'):
+            if dl.get('status') != 'cancelled':
+                to_log = True
             dl['status'] = 'cancelled'
         _save_state()
+    if to_log and dl:
+        _log_history(dl, 'cancelled')
     _emit('dl:removed', {'id': dl_id})
     return jsonify({'ok': True})
 

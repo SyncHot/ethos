@@ -41,6 +41,12 @@ function renderDownloadManager(body, launchOpts) {
     let downloads = [];
     let config = {};
     let filterText = '';
+    let metricsCache = {};
+    const speedSamples = [];
+    const SPEED_WINDOW_MS = 10 * 60 * 1000;
+    const SPEED_SAMPLE_MS = 5000;
+    let speedSampleTimer = null;
+    let statsTimer = null;
 
     body.innerHTML = `
         <style>
@@ -49,7 +55,25 @@ function renderDownloadManager(body, launchOpts) {
         .dlm-nav:hover{background:var(--bg-hover,rgba(255,255,255,.04));color:var(--text-primary,#e2e8f0)}
         .dlm-nav.active{background:var(--bg-hover,rgba(255,255,255,.06));color:#10b981;border-left-color:#10b981;font-weight:600}
         .dlm-nav i{width:16px;text-align:center;font-size:12px}
-        .dlm-sidebar-stats{padding:10px 18px;font-size:11px;color:var(--text-muted);border-top:1px solid var(--border);margin-top:auto}
+        .dlm-sidebar-stats{padding:12px 14px 14px 14px;font-size:11px;color:var(--text-muted);border-top:1px solid var(--border);margin-top:auto;display:flex;flex-direction:column;gap:8px}
+        .dlm-stats-header{display:flex;align-items:center;justify-content:space-between;gap:8px}
+        .dlm-stats-title{font-size:12px;color:var(--text-secondary);font-weight:600;display:flex;align-items:center;gap:6px}
+        .dlm-stats-bar-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;color:var(--text-secondary)}
+        .dlm-stats-chip{background:rgba(255,255,255,0.06);border:1px solid var(--border);border-radius:10px;padding:4px 8px;color:var(--text-primary);font-weight:600;font-size:11px;white-space:nowrap}
+        .dlm-stats-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:6px}
+        .dlm-stat-box{background:var(--bg-hover,rgba(255,255,255,.03));border:1px solid var(--border);border-radius:8px;padding:6px 8px}
+        .dlm-stat-label{color:var(--text-muted);font-size:10px;text-transform:uppercase;letter-spacing:.4px}
+        .dlm-stat-value{color:var(--text-primary);font-weight:600;font-size:12px;margin-top:2px;word-break:break-all}
+        .dlm-stat-counts{display:flex;flex-wrap:wrap;gap:6px}
+        .dlm-stat-pill{border-radius:10px;padding:4px 8px;font-weight:600;font-size:11px;border:1px solid var(--border);background:var(--bg-hover,rgba(255,255,255,.02));color:var(--text-secondary);display:flex;align-items:center;gap:6px}
+        .dlm-stat-pill.success{color:#10b981;border-color:rgba(16,185,129,0.4);background:rgba(16,185,129,0.08)}
+        .dlm-stat-pill.danger{color:#f87171;border-color:rgba(248,113,113,0.35);background:rgba(248,113,113,0.06)}
+        .dlm-stat-pill.muted{color:var(--text-muted)}
+        .dlm-speed-chart{border:1px solid var(--border);border-radius:8px;padding:6px 8px;display:flex;flex-direction:column;gap:6px;background:var(--bg-hover,rgba(255,255,255,.02))}
+        .dlm-chart-header,.dlm-chart-footer{display:flex;align-items:center;justify-content:space-between;font-size:10px;color:var(--text-muted)}
+        .dlm-chart-title{color:var(--text-secondary);font-weight:600;font-size:11px;display:flex;align-items:center;gap:6px}
+        .dlm-chart-footer span{white-space:nowrap}
+        .dlm-speed-chart svg{width:100%;height:48px}
         </style>
         <div class="dlm dl-layout-row">
             <div class="dlm-sidebar">
@@ -57,7 +81,47 @@ function renderDownloadManager(body, launchOpts) {
                 <div class="dlm-nav" data-tab="history"><i class="fas fa-history"></i> Historia</div>
                 <div class="dlm-nav" data-tab="settings"><i class="fas fa-cog"></i> Ustawienia</div>
                 <div class="dlm-sidebar-stats">
-                    <span id="dlm-stats-bar"></span>
+                    <div class="dlm-stats-header">
+                        <div>
+                            <div class="dlm-stats-title"><i class="fas fa-chart-bar"></i> Statystyki</div>
+                            <div class="dlm-stats-bar-row" id="dlm-stats-bar"></div>
+                        </div>
+                        <div class="dlm-stats-chip" id="dlm-avg-speed">Śr.: —</div>
+                    </div>
+                    <div class="dlm-stats-grid">
+                        <div class="dlm-stat-box">
+                            <div class="dlm-stat-label">Dziś</div>
+                            <div class="dlm-stat-value" id="dlm-bytes-today">—</div>
+                        </div>
+                        <div class="dlm-stat-box">
+                            <div class="dlm-stat-label">7 dni</div>
+                            <div class="dlm-stat-value" id="dlm-bytes-week">—</div>
+                        </div>
+                        <div class="dlm-stat-box">
+                            <div class="dlm-stat-label">30 dni</div>
+                            <div class="dlm-stat-value" id="dlm-bytes-month">—</div>
+                        </div>
+                        <div class="dlm-stat-box">
+                            <div class="dlm-stat-label">Łącznie</div>
+                            <div class="dlm-stat-value" id="dlm-bytes-all">—</div>
+                        </div>
+                    </div>
+                    <div class="dlm-stat-counts">
+                        <span class="dlm-stat-pill success" id="dlm-count-completed"><i class="fas fa-check"></i>0</span>
+                        <span class="dlm-stat-pill danger" id="dlm-count-failed"><i class="fas fa-times"></i>0</span>
+                        <span class="dlm-stat-pill muted" id="dlm-count-cancelled"><i class="fas fa-ban"></i>0</span>
+                    </div>
+                    <div class="dlm-speed-chart">
+                        <div class="dlm-chart-header">
+                            <span class="dlm-chart-title"><i class="fas fa-wave-square"></i> Prędkość (10 min)</span>
+                            <span id="dlm-speed-current">Aktualnie: —</span>
+                        </div>
+                        <svg id="dlm-speed-chart" viewBox="0 0 180 48" preserveAspectRatio="none"></svg>
+                        <div class="dlm-chart-footer">
+                            <span id="dlm-speed-avg-sample">Śr. (okno): —</span>
+                            <span id="dlm-speed-avg-total">Śr. pobierania: —</span>
+                        </div>
+                    </div>
                 </div>
             </div>
             <div class="dl-main-panel">
@@ -702,16 +766,20 @@ function renderDownloadManager(body, launchOpts) {
             return;
         }
         list.innerHTML = res.history.map(h => {
-            const icon = h.event === 'completed'
+            const isCompleted = h.event === 'completed';
+            const isCancelled = h.event === 'cancelled';
+            const icon = isCompleted
                 ? '<i class="fas fa-check-circle dl-icon-success"></i>'
-                : '<i class="fas fa-times-circle dl-icon-danger"></i>';
+                : isCancelled
+                    ? '<i class="fas fa-ban dl-icon-amber"></i>'
+                    : '<i class="fas fa-times-circle dl-icon-danger"></i>';
             const date = new Date(h.timestamp * 1000);
             const dateStr = date.toLocaleString(getLocale(), { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
             const size = h.filesize ? _dlmFormatBytes(h.filesize) : '';
             const duration = h.duration > 0 ? _dlmFormatEta(Math.round(h.duration)) : '';
             const torrentBadge = h.is_torrent ? '<i class="fas fa-magnet dl-icon-torrent-sm"></i>' : '';
             return `
-                <div class="dlm-item dlm-status-${h.event === 'completed' ? 'completed' : 'failed'}">
+                <div class="dlm-item dlm-status-${isCompleted ? 'completed' : (isCancelled ? 'cancelled' : 'failed')}">
                     <div class="dlm-item-icon">${icon}</div>
                     <div class="dlm-item-info">
                         <div class="dlm-item-name">${torrentBadge}${_dlmEsc(h.filename || h.url)}</div>
@@ -720,6 +788,7 @@ function renderDownloadManager(body, launchOpts) {
                             ${size ? `<span>${size}</span>` : ''}
                             ${duration ? `<span>${duration}</span>` : ''}
                             ${h.error ? `<span class="dlm-item-error" title="${_dlmEsc(h.error)}">${_dlmEsc(h.error)}</span>` : ''}
+                            ${isCancelled ? `<span class="dlm-item-warn" style="color:var(--text-secondary);">Anulowano</span>` : ''}
                         </div>
                     </div>
                     <div class="dlm-item-actions">
@@ -1080,19 +1149,126 @@ function renderDownloadManager(body, launchOpts) {
         }
     }
 
+    function _aggregateSpeed() {
+        return downloads.reduce((sum, d) => {
+            if (d.status === 'downloading') return sum + (d.speed || 0);
+            if (d.status === 'torrent_downloading') return sum + (d.torrent_speed || 0);
+            return sum;
+        }, 0);
+    }
+
     function _updateStatsBar() {
         const bar = body.querySelector('#dlm-stats-bar');
         if (!bar) return;
         const active = downloads.filter(d => ['downloading', 'resolving', 'torrent_downloading', 'torrent_uploading'].includes(d.status)).length;
         const pending = downloads.filter(d => d.status === 'pending').length;
         const completed = downloads.filter(d => d.status === 'completed').length;
-        const speed = downloads.reduce((s, d) => s + (d.status === 'downloading' ? (d.speed || 0) : 0), 0);
+        const speed = _aggregateSpeed();
         let parts = [];
         if (active) parts.push(`<span class="dl-stat-active"><i class="fas fa-arrow-down"></i> ${active}</span>`);
         if (pending) parts.push(`<span class="dl-stat-pending"><i class="fas fa-clock"></i> ${pending}</span>`);
         if (completed) parts.push(`<span class="dl-stat-completed"><i class="fas fa-check"></i> ${completed}</span>`);
         if (speed > 0) parts.push(`<span class="dl-stat-speed">${_dlmFormatSpeed(speed)}</span>`);
         bar.innerHTML = parts.join(' ');
+        _recordSpeedSample(speed);
+        _updateSpeedLegend(speed, _calcSampleAverage(), metricsCache?.average_speed || 0);
+    }
+
+    function _calcSampleAverage() {
+        if (!speedSamples.length) return 0;
+        return speedSamples.reduce((sum, p) => sum + (p.v || 0), 0) / speedSamples.length;
+    }
+
+    function _recordSpeedSample(currentSpeed = null) {
+        const now = Date.now();
+        const speed = currentSpeed !== null ? currentSpeed : _aggregateSpeed();
+        if (!speedSamples.length || now - speedSamples[speedSamples.length - 1].t >= 3000) {
+            speedSamples.push({ t: now, v: speed });
+        } else {
+            speedSamples[speedSamples.length - 1] = { t: now, v: speed };
+        }
+        const cutoff = now - SPEED_WINDOW_MS;
+        while (speedSamples.length && speedSamples[0].t < cutoff) speedSamples.shift();
+        _renderSpeedChart();
+    }
+
+    function _renderSpeedChart() {
+        const svg = body.querySelector('#dlm-speed-chart');
+        if (!svg) return;
+        const width = 180;
+        const height = 48;
+        svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+        if (!speedSamples.length) {
+            svg.innerHTML = `<text x="6" y="${height / 2}" fill="var(--text-muted)">brak danych</text>`;
+            _updateSpeedLegend(_aggregateSpeed(), 0, metricsCache?.average_speed || 0);
+            return;
+        }
+        const samples = speedSamples.slice();
+        const minT = samples[0].t;
+        const maxT = samples[samples.length - 1].t || minT + 1;
+        const span = Math.max(maxT - minT, 1);
+        const maxV = Math.max(...samples.map(s => s.v), 1);
+        const points = samples.map(s => {
+            const x = ((s.t - minT) / span) * width;
+            const y = height - ((s.v / maxV) * (height - 6)) - 3;
+            return `${x.toFixed(2)},${Math.max(0, y).toFixed(2)}`;
+        }).join(' ');
+        svg.innerHTML = `
+            <polyline points="${points}" fill="none" stroke="#10b981" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"></polyline>
+            <line x1="0" y1="${height - 1}" x2="${width}" y2="${height - 1}" stroke="var(--border)" stroke-width="0.5"></line>
+        `;
+        const currentVal = samples[samples.length - 1].v || 0;
+        _updateSpeedLegend(currentVal, _calcSampleAverage(), metricsCache?.average_speed || 0);
+    }
+
+    function _updateSpeedLegend(current, sampleAvg, overallAvg) {
+        const curEl = body.querySelector('#dlm-speed-current');
+        if (curEl) curEl.textContent = `Aktualnie: ${current > 0 ? _dlmFormatSpeed(current) : '—'}`;
+        const sampleEl = body.querySelector('#dlm-speed-avg-sample');
+        if (sampleEl) sampleEl.textContent = `Śr. (okno): ${sampleAvg > 0 ? _dlmFormatSpeed(sampleAvg) : '—'}`;
+        const overallEl = body.querySelector('#dlm-speed-avg-total');
+        if (overallEl) overallEl.textContent = overallAvg > 0 ? _dlmFormatSpeed(overallAvg) : '—';
+    }
+
+    function _renderStatsPanel(metrics = {}) {
+        metricsCache = metrics || {};
+        const bytes = metricsCache.bytes || {};
+        const counts = metricsCache.counts || {};
+        const avgSpeed = metricsCache.average_speed || 0;
+        const setText = (sel, val) => {
+            const el = body.querySelector(sel);
+            if (el) el.textContent = val;
+        };
+        setText('#dlm-bytes-today', bytes.today ? _dlmFormatBytes(bytes.today) : '—');
+        setText('#dlm-bytes-week', bytes.week ? _dlmFormatBytes(bytes.week) : '—');
+        setText('#dlm-bytes-month', bytes.month ? _dlmFormatBytes(bytes.month) : '—');
+        setText('#dlm-bytes-all', bytes.all_time ? _dlmFormatBytes(bytes.all_time) : '—');
+        setText('#dlm-avg-speed', `Śr.: ${avgSpeed ? _dlmFormatSpeed(avgSpeed) : '—'}`);
+        const completedEl = body.querySelector('#dlm-count-completed');
+        if (completedEl) completedEl.innerHTML = `<i class="fas fa-check"></i>${counts.completed || 0}`;
+        const failedEl = body.querySelector('#dlm-count-failed');
+        if (failedEl) failedEl.innerHTML = `<i class="fas fa-times"></i>${counts.failed || 0}`;
+        const cancelledEl = body.querySelector('#dlm-count-cancelled');
+        if (cancelledEl) cancelledEl.innerHTML = `<i class="fas fa-ban"></i>${counts.cancelled || 0}`;
+        _updateSpeedLegend(_aggregateSpeed(), _calcSampleAverage(), avgSpeed || 0);
+        _renderSpeedChart();
+    }
+
+    async function loadStats() {
+        const res = await api('/downloads/stats');
+        if (res.ok) {
+            _renderStatsPanel(res.metrics || {});
+        }
+    }
+
+    function _startTimers() {
+        if (!statsTimer) statsTimer = setInterval(loadStats, 20000);
+        if (!speedSampleTimer) speedSampleTimer = setInterval(() => _recordSpeedSample(), SPEED_SAMPLE_MS);
+    }
+
+    function _stopTimers() {
+        if (statsTimer) { clearInterval(statsTimer); statsTimer = null; }
+        if (speedSampleTimer) { clearInterval(speedSampleTimer); speedSampleTimer = null; }
     }
 
     // ─── Socket.IO real-time updates ───
@@ -1285,6 +1461,9 @@ function renderDownloadManager(body, launchOpts) {
             _updatePackageInPlace(packages[data.package_id]);
         }
         _updateStatsBar();
+        if (['completed', 'failed', 'cancelled'].includes(data.status)) {
+            loadStats();
+        }
     }
 
     function onDlRemoved(data) {
@@ -1335,6 +1514,7 @@ function renderDownloadManager(body, launchOpts) {
                 NAS.socket.off('dl:package_removed', onPkgRemoved);
                 NAS.socket.off('dl:completed', onDlCompleted);
             }
+            _stopTimers();
             if (origClose) origClose();
         };
     }
@@ -1342,6 +1522,9 @@ function renderDownloadManager(body, launchOpts) {
     // ─── Init ───
     loadConfig();
     loadDownloads();
+    loadStats();
+    _recordSpeedSample();
+    _startTimers();
 }
 
 // ─── Helpers ───
