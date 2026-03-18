@@ -182,7 +182,7 @@ def add_comment(tid, text):
 def is_executing():
     return os.path.exists(LOCK_FILE)
 
-def set_executing(tid, model_info=None, retry_count=0, tried_models=None):
+def set_executing(tid, model_info=None, retry_count=0, tried_models=None, qa_cycle=0):
     with open(LOCK_FILE, "w") as f:
         json.dump({
             "ticket_id": tid,
@@ -190,6 +190,7 @@ def set_executing(tid, model_info=None, retry_count=0, tried_models=None):
             "model": model_info,
             "retry_count": retry_count,
             "tried_models": tried_models or [],
+            "qa_cycle": qa_cycle,
         }, f)
 
 def clear_executing():
@@ -394,6 +395,7 @@ MAX_EXECUTION_SECS = {
     "medium": 1200,    # 20 min
     "simple": 600,     # 10 min
 }
+MAX_QA_CYCLES = 3  # max dev→QA round-trips before giving up
 
 def build_qa_prompt(ticket):
     """Build a QA review prompt — Copilot checks if implementation meets requirements and docs."""
@@ -540,7 +542,44 @@ Be focused and efficient. Do not read docs that aren't relevant to the task."""
     return prompt
 
 
-def execute_via_copilot(ticket, agent, info, model_info, docs_context):
+def build_rework_prompt(ticket, agent, info, model_info, docs_context, qa_reason, qa_cycle):
+    """Build a prompt for the dev agent to fix issues found by QA."""
+    tid = ticket["id"]
+    title = ticket["title"]
+    desc = ticket.get("description", "")
+    doc_list = '\n'.join(f'   - /opt/ethos/docs/{d}' for d in info.get('docs', []))
+
+    prompt = f"""You are an EthOS {agent} agent. A QA review found issues with your previous implementation. Fix them.
+
+TICKET: {tid}
+Title: {title}
+{f'Description: {desc}' if desc else ''}
+
+QA CYCLE: {qa_cycle}/{MAX_QA_CYCLES}
+
+❌ QA FAILURE REASON:
+{qa_reason}
+
+PROJECT: /opt/ethos/ (Flask backend + vanilla JS frontend)
+REFERENCE DOCS (consult only when relevant):
+{doc_list}
+
+WORKFLOW:
+1. Read the QA failure reason above carefully
+2. Check recent git commits to see what was changed: git --no-pager log --oneline -10
+3. Review the relevant source files and identify the issues QA reported
+4. Fix the issues — be precise, address every point from the QA feedback
+5. Test if possible (restart ethos if backend changes: sudo systemctl restart ethos)
+6. Commit: git add <files> && git commit -m "[{tid}] fix: QA cycle {qa_cycle} — <description>"
+7. Push: sudo -u marcin git push
+
+IMPORTANT: Focus ONLY on fixing the QA issues. Do not refactor or change unrelated code.
+The ticket will go through QA again after your fixes."""
+
+    return prompt
+
+
+def execute_via_copilot(ticket, agent, info, model_info, docs_context, override_prompt=None):
     """Launch Copilot CLI in non-interactive mode to solve the ticket."""
     tid = ticket["id"]
     model = model_info["model"]
@@ -550,7 +589,7 @@ def execute_via_copilot(ticket, agent, info, model_info, docs_context):
     log_file = os.path.join(COPILOT_LOG_DIR, f"{tid}_{int(time.time())}.log")
     prompt_file = os.path.join(COPILOT_LOG_DIR, f"{tid}_{int(time.time())}_prompt.txt")
 
-    prompt = build_copilot_prompt(ticket, agent, info, model_info, docs_context)
+    prompt = override_prompt or build_copilot_prompt(ticket, agent, info, model_info, docs_context)
 
     # Write prompt to temp file to avoid shell escaping issues
     with open(prompt_file, "w") as pf:
@@ -598,7 +637,8 @@ def execute_via_copilot(ticket, agent, info, model_info, docs_context):
             "docs_context": docs_context,
         }
 
-        # Store PID in lock for monitoring
+        # Store PID in lock for monitoring (preserve qa_cycle from set_executing)
+        existing = get_executing() or {}
         with open(LOCK_FILE, "w") as f:
             json.dump({
                 "ticket_id": tid,
@@ -606,6 +646,7 @@ def execute_via_copilot(ticket, agent, info, model_info, docs_context):
                 "model": model_info,
                 "copilot_pid": proc.pid,
                 "log_file": log_file,
+                "qa_cycle": existing.get("qa_cycle", 0),
             }, f)
 
         print(f"COPILOT_RUNNING | {tid} | PID={proc.pid}", flush=True)
@@ -665,6 +706,44 @@ def auto_start_ticket(ticket):
             print(f"MOVE_ERROR | {tid} | {me}", flush=True)
     return tid, proc
 
+
+def auto_rework_ticket(ticket, qa_reason, qa_cycle):
+    """Re-launch dev agent to fix QA issues. Ticket stays in W trakcie."""
+    tid = ticket["id"]
+    title = ticket["title"]
+    agent = detect_agent(title, ticket.get("labels", []))
+    info = AGENT_MAP.get(agent, AGENT_MAP["General"])
+    model_info = select_model(ticket)
+    complexity = ticket.get("complexity", "medium")
+    docs_context = load_docs_context(agent)
+
+    set_executing(tid, model_info, qa_cycle=qa_cycle)
+
+    print(f"\n{'='*70}", flush=True)
+    print(f"REWORK | {tid} | {agent} | QA cycle {qa_cycle}/{MAX_QA_CYCLES}", flush=True)
+    print(f"Title: {title}", flush=True)
+    print(f"QA reason: {qa_reason[:200]}", flush=True)
+    print(f"Model: {model_info['model']} ({model_info['label']})", flush=True)
+    print(f"{'='*70}", flush=True)
+
+    add_comment(tid,
+        f"[copilot] Rozpoczynam poprawki po QA (cykl {qa_cycle}/{MAX_QA_CYCLES}).\n"
+        f"Agent: {agent} | Model: {model_info['model']}\n"
+        f"QA feedback: {qa_reason[:500]}")
+
+    rework_prompt = build_rework_prompt(ticket, agent, info, model_info, docs_context, qa_reason, qa_cycle)
+    proc = execute_via_copilot(ticket, agent, info, model_info, docs_context, override_prompt=rework_prompt)
+    if proc is None:
+        print(f"REWORK_LAUNCH_FAILED | {tid} | Copilot failed to start", flush=True)
+        clear_executing()
+        try:
+            move_ticket(tid, "Do zrobienia")
+            add_comment(tid, f"[system] Nie udało się uruchomić agenta do poprawek. Ticket wraca do kolejki.")
+        except Exception as me:
+            print(f"MOVE_ERROR | {tid} | {me}", flush=True)
+    return tid, proc
+
+
 # ── Main loop ────────────────────────────────────────────────────────────
 
 def main():
@@ -679,7 +758,7 @@ def main():
     print(f"Model mapping: complex→{COMPLEXITY_MODEL_MAP['complex']['model']}, medium→{COMPLEXITY_MODEL_MAP['medium']['model']}, simple→{COMPLEXITY_MODEL_MAP['simple']['model']}", flush=True)
     routing_str = ", ".join(f"{k}: {' → '.join(v)}" for k, v in MODEL_ROUTING.items())
     print(f"Fallback routing: {routing_str}", flush=True)
-    print(f"QA agent: Sonnet | Flow: Dev→QA→Review (fail→Do zrobienia)", flush=True)
+    print(f"QA agent: Sonnet | Flow: Dev→QA→Review (fail→Rework→QA, max {MAX_QA_CYCLES} cycles)", flush=True)
     print(f"Copilot CLI: {COPILOT_BIN}", flush=True)
 
     # Clean up stale lock from previous watcher instance
@@ -697,6 +776,8 @@ def main():
     # QA process tracking (separate from dev)
     qa_proc = None
     qa_ticket_id = None
+    # QA cycle tracking per ticket {ticket_id: cycle_count}
+    qa_cycles = {}
 
     while True:
         try:
@@ -729,7 +810,13 @@ def main():
                     executing = get_executing()
                     log_file = executing.get("log_file", "?") if executing else "?"
                     if retcode == 0:
-                        print(f"\nCOPILOT_DONE | {active_ticket_id} | exit=0 | log={log_file}", flush=True)
+                        # Preserve qa_cycle from lock file before clearing
+                        qa_cycle_for_ticket = 0
+                        if isinstance(executing, dict):
+                            qa_cycle_for_ticket = executing.get("qa_cycle", 0)
+                        qa_cycles[active_ticket_id] = qa_cycle_for_ticket
+
+                        print(f"\nCOPILOT_DONE | {active_ticket_id} | exit=0 | qa_cycle={qa_cycle_for_ticket} | log={log_file}", flush=True)
                         add_comment(active_ticket_id,
                             f"[copilot] Zakończyłem pracę nad ticketem (exit 0). Log: {log_file}")
                         # Move to QA (not Review — QA agent will verify first)
@@ -910,19 +997,47 @@ def main():
                     if verdict == "pass":
                         print(f"\nQA_PASS | {qa_ticket_id} | {reason}", flush=True)
                         add_comment(qa_ticket_id, f"[qa] ✅ QA PASSED: {reason}")
+                        qa_cycles.pop(qa_ticket_id, None)
                         try:
                             move_ticket(qa_ticket_id, "Review")
                             print(f"MOVED_TO_REVIEW | {qa_ticket_id}", flush=True)
                         except Exception as me:
                             print(f"MOVE_ERROR | {qa_ticket_id} | {me}", flush=True)
                     elif verdict == "fail":
-                        print(f"\nQA_FAIL | {qa_ticket_id} | {reason}", flush=True)
-                        add_comment(qa_ticket_id, f"[qa] ❌ QA FAILED: {reason}")
-                        try:
-                            move_ticket(qa_ticket_id, "Do zrobienia")
-                            print(f"MOVED_TO_TODO | {qa_ticket_id} (QA failed, needs rework)", flush=True)
-                        except Exception as me:
-                            print(f"MOVE_ERROR | {qa_ticket_id} | {me}", flush=True)
+                        current_qa_cycle = qa_cycles.get(qa_ticket_id, 0) + 1
+                        qa_cycles[qa_ticket_id] = current_qa_cycle
+
+                        print(f"\nQA_FAIL | {qa_ticket_id} | cycle {current_qa_cycle}/{MAX_QA_CYCLES} | {reason}", flush=True)
+                        add_comment(qa_ticket_id,
+                            f"[qa] ❌ QA FAILED (cykl {current_qa_cycle}/{MAX_QA_CYCLES}): {reason}")
+
+                        if current_qa_cycle < MAX_QA_CYCLES and active_proc is None:
+                            # Move to W trakcie and launch rework agent
+                            try:
+                                move_ticket(qa_ticket_id, "W trakcie")
+                                print(f"MOVED_TO_REWORK | {qa_ticket_id} | launching dev agent for fixes", flush=True)
+                            except Exception as me:
+                                print(f"MOVE_ERROR | {qa_ticket_id} | {me}", flush=True)
+
+                            # Find full ticket data for rework
+                            qa_ticket_data = next((t for t in queue if t["id"] == qa_ticket_id), None)
+                            if qa_ticket_data:
+                                active_ticket_id, active_proc = auto_rework_ticket(
+                                    qa_ticket_data, reason, current_qa_cycle)
+                            else:
+                                print(f"REWORK_SKIP | {qa_ticket_id} | ticket data not found in queue", flush=True)
+                        else:
+                            # Max cycles reached or dev agent busy — back to Do zrobienia
+                            if current_qa_cycle >= MAX_QA_CYCLES:
+                                add_comment(qa_ticket_id,
+                                    f"[system] Osiągnięto limit cykli QA ({MAX_QA_CYCLES}). "
+                                    f"Ticket wymaga interwencji manualnej.")
+                                print(f"QA_MAX_CYCLES | {qa_ticket_id} | {MAX_QA_CYCLES} cycles exhausted", flush=True)
+                            try:
+                                move_ticket(qa_ticket_id, "Do zrobienia")
+                                print(f"MOVED_TO_TODO | {qa_ticket_id} (QA failed, needs manual rework)", flush=True)
+                            except Exception as me:
+                                print(f"MOVE_ERROR | {qa_ticket_id} | {me}", flush=True)
                     else:
                         print(f"\nQA_UNKNOWN | {qa_ticket_id} | exit={retcode} | verdict={verdict} | {reason}", flush=True)
                         add_comment(qa_ticket_id,
