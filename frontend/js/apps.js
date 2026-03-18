@@ -45,6 +45,7 @@ AppRegistry['file-manager'] = function (appDef, launchOpts) {
         clipboard: null,       // { mode: 'copy'|'cut', paths: [...], basePath: '...' }
         lastClickedIndex: -1,  // for shift-click range selection
         focusedIndex: -1,      // keyboard-focused item index
+        selectMode: false,     // mobile select mode
         sambaShares: [],       // [{ name, path, ... }] loaded from backend
         favorites: [],         // [{ path, label }]
         photoFavorites: [],    // ['/path/to/img.jpg', ...]
@@ -125,7 +126,7 @@ function renderFM(body, state) {
     body.innerHTML = `
         <div class="fm">
             <div class="fm-toolbar">
-                <button class="fm-toolbar-btn fm-sidebar-toggle" id="fm-sidebar-toggle" title="Nawigacja" aria-label="Pokaż/ukryj panel nawigacji"><i class="fas fa-bars"></i></button>
+                <button class="fm-toolbar-btn fm-sidebar-toggle" id="fm-sidebar-toggle" title="Nawigacja" aria-label="Pokaż/ukryj panel nawigacji" aria-expanded="false"><i class="fas fa-bars"></i></button>
                 <button class="fm-toolbar-btn" id="fm-back" title="Wstecz" aria-label="Wstecz"><i class="fas fa-arrow-left"></i></button>
                 <button class="fm-toolbar-btn" id="fm-forward" title="Dalej" aria-label="Dalej"><i class="fas fa-arrow-right"></i></button>
                 <button class="fm-toolbar-btn" id="fm-up" title="Folder nadrzędny" aria-label="Folder nadrzędny"><i class="fas fa-arrow-up"></i></button>
@@ -138,6 +139,7 @@ function renderFM(body, state) {
                 <button class="fm-toolbar-btn" id="fm-upload-folder" title="Prześlij folder" aria-label="Prześlij folder"><i class="fas fa-folder"></i><i class="fas fa-arrow-up fm-folder-upload-arrow"></i></button>
                 <button class="fm-toolbar-btn" id="fm-download" title="Pobierz zaznaczone" aria-label="Pobierz zaznaczone"><i class="fas fa-download"></i></button>
                 <button class="fm-toolbar-btn" id="fm-delete" title="Do kosza (Delete)" aria-label="Przenieś do kosza"><i class="fas fa-trash"></i></button>
+                <button class="fm-toolbar-btn fm-select-mode-btn" id="fm-select-mode-btn" title="Tryb zaznaczania" aria-label="Tryb zaznaczania" aria-pressed="false"><i class="fas fa-check-square"></i></button>
                 <div class="fm-toolbar-sep"></div>
                 <div class="fm-view-switcher" id="fm-view-switcher" role="group" aria-label="Tryb widoku">
                     <button class="fm-view-btn" data-view="list" title="Widok listy" aria-label="Widok listy"><i class="fas fa-list"></i></button>
@@ -145,7 +147,7 @@ function renderFM(body, state) {
                     <button class="fm-view-btn" data-view="thumb" title="Miniatury" aria-label="Widok miniatur"><i class="fas fa-th-large"></i></button>
                 </div>
                 <div class="fm-sort-dropdown" id="fm-sort-dropdown">
-                    <button class="fm-toolbar-btn" id="fm-sort-btn" title="Sortuj">
+                    <button class="fm-toolbar-btn" id="fm-sort-btn" title="Sortuj" aria-expanded="false" aria-haspopup="listbox" aria-controls="fm-sort-menu">
                         <i class="fas fa-sort-amount-down-alt"></i>
                         <span id="fm-sort-label">Nazwa</span>
                         <i class="fas fa-chevron-down app-chevron-tiny"></i>
@@ -162,6 +164,7 @@ function renderFM(body, state) {
                 </div>
                 <div class="fm-toolbar-sep"></div>
                 <button class="fm-toolbar-btn" id="fm-analyze" title="Analiza dysku" aria-label="Analiza dysku"><i class="fas fa-chart-pie"></i></button>
+                <button class="fm-toolbar-btn fm-shortcuts-btn" id="fm-shortcuts-btn" title="Skróty klawiszowe (F1)" aria-label="Skróty klawiszowe"><i class="fas fa-keyboard"></i></button>
                 <div class="fm-toolbar-sep"></div>
                 <div class="fm-search-box" id="fm-search-box" role="search">
                     <i class="fas fa-search fm-search-icon" aria-hidden="true"></i>
@@ -187,10 +190,10 @@ function renderFM(body, state) {
                             </label>
                         </span>
                         <span class="fm-header-columns" id="fm-header-columns">
-                            <span data-sort="name">Nazwa <i class="fas fa-sort"></i></span>
-                            <span data-sort="size">Rozmiar <i class="fas fa-sort"></i></span>
-                            <span data-sort="modified">Data modyfikacji <i class="fas fa-sort"></i></span>
-                            <span data-sort="permissions">Prawa</span>
+                            <span data-sort="name" aria-sort="ascending" role="columnheader" tabindex="0">Nazwa <i class="fas fa-sort"></i></span>
+                            <span data-sort="size" aria-sort="none" role="columnheader" tabindex="0">Rozmiar <i class="fas fa-sort"></i></span>
+                            <span data-sort="modified" aria-sort="none" role="columnheader" tabindex="0">Data modyfikacji <i class="fas fa-sort"></i></span>
+                            <span data-sort="permissions" role="columnheader">Prawa</span>
                         </span>
                         <div class="fm-header-selection hidden" id="fm-header-selection">
                             <span class="fm-sel-count" id="fm-sel-count">0 zaznaczonych</span>
@@ -518,6 +521,8 @@ function renderFM(body, state) {
         list.setAttribute('tabindex', '0');
         list.setAttribute('aria-multiselectable', 'true');
         list.setAttribute('aria-label', t('Pliki i foldery'));
+        // Restore select mode class after re-render
+        list.classList.toggle('fm-select-mode', !!state.selectMode);
         const allItems = state.searchResults !== null ? state.searchResults : state.items;
         const sorted = sortItems(allItems);
 
@@ -1685,6 +1690,14 @@ function renderFM(body, state) {
     // (Duplicate Photo Finder is now a standalone app — see apps/duplicates.js)
 
     async function navigateTo(path) {
+        // Exit select mode on navigation
+        if (state.selectMode) {
+            state.selectMode = false;
+            const list = body.querySelector('#fm-file-list');
+            const btn = body.querySelector('#fm-select-mode-btn');
+            if (list) list.classList.remove('fm-select-mode');
+            if (btn) { btn.classList.remove('active'); btn.setAttribute('aria-pressed', 'false'); }
+        }
         try {
             let data;
             if (path === '/__photo_favorites__') {
@@ -1861,10 +1874,9 @@ function renderFM(body, state) {
 
         const allDone = () => {
             finishFileOpProgress(true, { channel: 'fm', message: `Przesłano ${total} plik(ów)` });
+            _fmPrefetchCache.delete(state.path);
             navigateTo(state.path);
         };
-
-        // Upload large files one by one using chunked upload to their proper subdirectory
         if (largeFiles.length > 0) {
             showFileOpProgress({ operation: 'upload', channel: 'fm', percent: 0, done: 0, total, current_file: largeFiles[0]?.name || '' });
             window._fileopUploadXhr = window._fileopUploadXhr || {};
@@ -1922,6 +1934,7 @@ function renderFM(body, state) {
 
         const allDone = () => {
             finishFileOpProgress(true, { channel: 'fm', message: `Przesłano ${total} plik(ów)` });
+            _fmPrefetchCache.delete(state.path);
             navigateTo(state.path);
         };
 
@@ -1993,7 +2006,24 @@ function renderFM(body, state) {
             xhr.addEventListener('load', () => {
                 delete (window._fileopUploadXhr || {})['fm'];
                 if (xhr.status >= 200 && xhr.status < 300) {
-                    onDone();
+                    let resp = null;
+                    try { resp = JSON.parse(xhr.responseText); } catch {}
+                    if (resp && resp.errors && resp.errors.length > 0) {
+                        // Partial success: some files uploaded, some failed
+                        const uploaded = (resp.uploaded || []).length;
+                        const failed = resp.errors.length;
+                        if (uploaded > 0) {
+                            // Show warning toast for failures but still refresh listing
+                            const firstErr = resp.errors[0].error;
+                            toast(`${t('Przesłano')} ${uploaded}, ${t('błąd')}: ${firstErr}`, 'warning');
+                            _fmPrefetchCache.delete(state.path);
+                            onDone();
+                        } else {
+                            finishFileOpProgress(false, { channel: 'fm', message: resp.errors[0].error || t('Błąd przesyłania') });
+                        }
+                    } else {
+                        onDone();
+                    }
                 } else if (xhr.status >= 500 && retriesLeft > 0) {
                     retriesLeft--;
                     setTimeout(attempt, 1500 * (_BATCH_MAX_RETRIES - retriesLeft));
@@ -3068,13 +3098,16 @@ function renderFM(body, state) {
     // Mobile sidebar toggle
     body.querySelector('#fm-sidebar-toggle')?.addEventListener('click', () => {
         const sidebar = body.querySelector('#fm-sidebar');
-        sidebar.classList.toggle('fm-sidebar-open');
+        const btn = body.querySelector('#fm-sidebar-toggle');
+        const isOpen = sidebar.classList.toggle('fm-sidebar-open');
+        btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
     });
     // Close sidebar when clicking outside on mobile
     body.querySelector('#fm-file-list')?.addEventListener('click', () => {
         const sidebar = body.querySelector('#fm-sidebar');
         if (sidebar.classList.contains('fm-sidebar-open') && window.innerWidth <= 600) {
             sidebar.classList.remove('fm-sidebar-open');
+            body.querySelector('#fm-sidebar-toggle')?.setAttribute('aria-expanded', 'false');
         }
     });
 
@@ -3093,15 +3126,26 @@ function renderFM(body, state) {
         // Update icon on button
         const icon = body.querySelector('#fm-sort-btn > i:first-child');
         if (icon) icon.className = state.sortAsc ? 'fas fa-sort-amount-up-alt' : 'fas fa-sort-amount-down-alt';
+        // Update aria-sort on column headers
+        body.querySelectorAll('#fm-header-columns span[data-sort]').forEach(span => {
+            if (span.dataset.sort === state.sortCol) {
+                span.setAttribute('aria-sort', state.sortAsc ? 'ascending' : 'descending');
+            } else {
+                span.setAttribute('aria-sort', 'none');
+            }
+        });
     }
     body.querySelector('#fm-sort-btn').addEventListener('click', (e) => {
         e.stopPropagation();
         const menu = body.querySelector('#fm-sort-menu');
-        menu.classList.toggle('hidden');
+        const sortBtn = body.querySelector('#fm-sort-btn');
+        const isHidden = menu.classList.toggle('hidden');
+        sortBtn.setAttribute('aria-expanded', !isHidden ? 'true' : 'false');
         // Close on outside click
         const closeMenu = (ev) => {
             if (!menu.contains(ev.target)) {
                 menu.classList.add('hidden');
+                sortBtn.setAttribute('aria-expanded', 'false');
                 document.removeEventListener('click', closeMenu);
             }
         };
@@ -3120,6 +3164,7 @@ function renderFM(body, state) {
         updateSortLabel();
         renderFileList();
         body.querySelector('#fm-sort-menu').classList.add('hidden');
+        body.querySelector('#fm-sort-btn').setAttribute('aria-expanded', 'false');
     });
     updateSortLabel();
 
@@ -3487,12 +3532,23 @@ function renderFM(body, state) {
         if (e.key === 'Delete') deleteSelected();
         if (e.key === 'F2') renameSelected();
         if (e.key === 'F5') navigateTo(state.path);
+        if (e.key === 'F1') { e.preventDefault(); showFMShortcutsHelp(); }
         if (e.key === 'Backspace') {
             e.preventDefault();
             if (isRegularPath() && !isAtHomeRoot()) {
                 const parent = state.path.split('/').slice(0, -1).join('/') || (state.sudoMode ? '/' : state.homePath);
                 navigateTo(parent);
             }
+        }
+        if (e.key === 'PageDown') {
+            e.preventDefault();
+            const allItems = state.searchResults !== null ? state.searchResults : state.items;
+            const totalPages = Math.ceil(allItems.length / state.pageSize);
+            if (state.page < totalPages - 1) { state.page++; renderFileList(); body.querySelector('#fm-file-list').scrollTop = 0; }
+        }
+        if (e.key === 'PageUp') {
+            e.preventDefault();
+            if (state.page > 0) { state.page--; renderFileList(); body.querySelector('#fm-file-list').scrollTop = 0; }
         }
         if (e.ctrlKey && e.key === 'a') { e.preventDefault(); selectAll(); }
         if (e.ctrlKey && e.key === 'c') { e.preventDefault(); clipboardCopy(); }
@@ -3502,6 +3558,185 @@ function renderFM(body, state) {
         if (e.ctrlKey && e.key === 'u') { e.preventDefault(); uploadFiles(); }
         if (e.key === 'Escape') { clearSelection(); }
     });
+
+    // ─── Keyboard Shortcuts Help ───
+    function showFMShortcutsHelp() {
+        const existing = body.querySelector('.fm-shortcuts-overlay');
+        if (existing) { existing.remove(); return; }
+        const overlay = document.createElement('div');
+        overlay.className = 'fm-shortcuts-overlay';
+        overlay.setAttribute('role', 'dialog');
+        overlay.setAttribute('aria-modal', 'true');
+        overlay.setAttribute('aria-label', 'Skróty klawiszowe');
+        overlay.innerHTML = `
+            <div class="fm-shortcuts-panel">
+                <div class="fm-shortcuts-header">
+                    <span><i class="fas fa-keyboard"></i> Skróty klawiszowe</span>
+                    <button class="fm-shortcuts-close" aria-label="Zamknij"><i class="fas fa-times"></i></button>
+                </div>
+                <div class="fm-shortcuts-body">
+                    <div class="fm-shortcuts-col">
+                        <div class="fm-shortcuts-section">Nawigacja</div>
+                        <div class="fm-shortcut-row"><kbd>↑</kbd><kbd>↓</kbd> <span>Poruszaj się po liście</span></div>
+                        <div class="fm-shortcut-row"><kbd>←</kbd> <span>Folder nadrzędny</span></div>
+                        <div class="fm-shortcut-row"><kbd>→</kbd> <span>Otwórz folder</span></div>
+                        <div class="fm-shortcut-row"><kbd>Enter</kbd> <span>Otwórz plik/folder</span></div>
+                        <div class="fm-shortcut-row"><kbd>Backspace</kbd> <span>Folder nadrzędny</span></div>
+                        <div class="fm-shortcut-row"><kbd>Home</kbd><kbd>End</kbd> <span>Pierwszy/ostatni</span></div>
+                        <div class="fm-shortcut-row"><kbd>PageUp</kbd><kbd>PageDown</kbd> <span>Strona wyników</span></div>
+                        <div class="fm-shortcut-row"><kbd>F5</kbd> <span>Odśwież</span></div>
+                    </div>
+                    <div class="fm-shortcuts-col">
+                        <div class="fm-shortcuts-section">Zaznaczanie</div>
+                        <div class="fm-shortcut-row"><kbd>Space</kbd> <span>Zaznacz/odznacz</span></div>
+                        <div class="fm-shortcut-row"><kbd>Ctrl+A</kbd> <span>Zaznacz wszystko</span></div>
+                        <div class="fm-shortcut-row"><kbd>Shift+↑↓</kbd> <span>Zaznacz zakres</span></div>
+                        <div class="fm-shortcut-row"><kbd>Shift+Home/End</kbd> <span>Zaznacz do końca</span></div>
+                        <div class="fm-shortcut-row"><kbd>Escape</kbd> <span>Odznacz wszystko</span></div>
+                        <div class="fm-shortcuts-section" style="margin-top:10px">Operacje</div>
+                        <div class="fm-shortcut-row"><kbd>Ctrl+C</kbd> <span>Kopiuj</span></div>
+                        <div class="fm-shortcut-row"><kbd>Ctrl+X</kbd> <span>Wytnij</span></div>
+                        <div class="fm-shortcut-row"><kbd>Ctrl+V</kbd> <span>Wklej</span></div>
+                        <div class="fm-shortcut-row"><kbd>Delete</kbd> <span>Do kosza</span></div>
+                        <div class="fm-shortcut-row"><kbd>F2</kbd> <span>Zmień nazwę</span></div>
+                        <div class="fm-shortcut-row"><kbd>Ctrl+N</kbd> <span>Nowy folder</span></div>
+                        <div class="fm-shortcut-row"><kbd>Ctrl+U</kbd> <span>Prześlij pliki</span></div>
+                        <div class="fm-shortcut-row"><kbd>Ctrl+F</kbd> <span>Wyszukaj</span></div>
+                        <div class="fm-shortcut-row"><kbd>F1</kbd> <span>Ten ekran pomocy</span></div>
+                    </div>
+                </div>
+            </div>
+        `;
+        overlay.querySelector('.fm-shortcuts-close').addEventListener('click', () => overlay.remove());
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+        overlay.addEventListener('keydown', (e) => { if (e.key === 'Escape') overlay.remove(); });
+        body.appendChild(overlay);
+        overlay.querySelector('.fm-shortcuts-close').focus();
+    }
+    body.querySelector('#fm-shortcuts-btn')?.addEventListener('click', showFMShortcutsHelp);
+
+    // ─── Mobile Select Mode ───
+    function setFMSelectMode(on) {
+        state.selectMode = on;
+        const list = body.querySelector('#fm-file-list');
+        const btn = body.querySelector('#fm-select-mode-btn');
+        list.classList.toggle('fm-select-mode', on);
+        if (btn) {
+            btn.classList.toggle('active', on);
+            btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+        }
+        if (!on) clearSelection();
+    }
+    body.querySelector('#fm-select-mode-btn')?.addEventListener('click', () => {
+        setFMSelectMode(!state.selectMode);
+    });
+
+    // ─── Mobile Long-Press to Select ───
+    {
+        const _fmList2 = body.querySelector('#fm-file-list');
+        const _itemSel2 = '.fm-file-item, .fm-grid-item, .fm-thumb-item';
+        let _lpTimer = null;
+        let _lpStartX = 0, _lpStartY = 0;
+        let _lpMoved = false;
+
+        _fmList2.addEventListener('touchstart', (e) => {
+            if (e.touches.length !== 1) return;
+            const el = e.target.closest(_itemSel2);
+            if (!el) return;
+            _lpStartX = e.touches[0].clientX;
+            _lpStartY = e.touches[0].clientY;
+            _lpMoved = false;
+            _lpTimer = setTimeout(() => {
+                if (_lpMoved) return;
+                // Long press: enter select mode and toggle this item
+                if (!state.selectMode) setFMSelectMode(true);
+                const name = el.dataset.name;
+                if (state.selected.has(name)) state.selected.delete(name);
+                else state.selected.add(name);
+                state.lastClickedIndex = parseInt(el.dataset.idx);
+                state.focusedIndex = state.lastClickedIndex;
+                updateSelection();
+                // Haptic feedback if available
+                if (navigator.vibrate) navigator.vibrate(30);
+            }, 500);
+        }, { passive: true });
+
+        _fmList2.addEventListener('touchmove', (e) => {
+            if (!_lpTimer) return;
+            const dx = Math.abs(e.touches[0].clientX - _lpStartX);
+            const dy = Math.abs(e.touches[0].clientY - _lpStartY);
+            if (dx > 8 || dy > 8) {
+                _lpMoved = true;
+                clearTimeout(_lpTimer);
+                _lpTimer = null;
+            }
+        }, { passive: true });
+
+        _fmList2.addEventListener('touchend', () => {
+            clearTimeout(_lpTimer);
+            _lpTimer = null;
+        }, { passive: true });
+
+        _fmList2.addEventListener('touchcancel', () => {
+            clearTimeout(_lpTimer);
+            _lpTimer = null;
+        }, { passive: true });
+
+        // In select mode, single tap toggles selection
+        _fmList2.addEventListener('click', (e) => {
+            if (!state.selectMode) return;
+            const el = e.target.closest(_itemSel2);
+            if (!el) return;
+            // Prevent default double-open behavior in select mode
+            e.stopImmediatePropagation();
+            const name = el.dataset.name;
+            if (state.selected.has(name)) state.selected.delete(name);
+            else state.selected.add(name);
+            state.lastClickedIndex = parseInt(el.dataset.idx);
+            state.focusedIndex = state.lastClickedIndex;
+            updateSelection();
+        }, true);
+    }
+
+    // ─── Mobile Swipe Navigation (back/forward) ───
+    {
+        const _fmMain = body.querySelector('.fm-main');
+        let _swStartX = 0, _swStartY = 0, _swMoved = false, _swOnItem = false;
+
+        _fmMain.addEventListener('touchstart', (e) => {
+            if (e.touches.length !== 1) return;
+            _swStartX = e.touches[0].clientX;
+            _swStartY = e.touches[0].clientY;
+            _swMoved = false;
+            // Only activate swipe from left/right edges (within 40px of edge) or anywhere
+            _swOnItem = !!e.target.closest('.fm-file-item, .fm-grid-item, .fm-thumb-item');
+        }, { passive: true });
+
+        _fmMain.addEventListener('touchmove', (e) => {
+            if (e.touches.length !== 1) return;
+            const dx = e.touches[0].clientX - _swStartX;
+            const dy = Math.abs(e.touches[0].clientY - _swStartY);
+            if (Math.abs(dx) > 10 && dy < Math.abs(dx)) _swMoved = true;
+        }, { passive: true });
+
+        _fmMain.addEventListener('touchend', (e) => {
+            if (!_swMoved) return;
+            const dx = e.changedTouches[0].clientX - _swStartX;
+            const dy = Math.abs(e.changedTouches[0].clientY - _swStartY);
+            const SWIPE_THRESHOLD = 80;
+            if (Math.abs(dx) < SWIPE_THRESHOLD || dy > Math.abs(dx) * 0.8) return;
+            // Swipe right = go back
+            if (dx > 0 && state.historyIndex > 0) {
+                state.historyIndex--;
+                navigateTo(state.history[state.historyIndex]);
+            }
+            // Swipe left = go forward
+            if (dx < 0 && state.historyIndex < state.history.length - 1) {
+                state.historyIndex++;
+                navigateTo(state.history[state.historyIndex]);
+            }
+        }, { passive: true });
+    }
 
     // ─── Search ───
     let _searchDebounce = null;
