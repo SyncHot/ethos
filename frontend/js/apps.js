@@ -3295,6 +3295,15 @@ function renderFM(body, state) {
             case 'End':
                 handleMove(total - 1);
                 break;
+            case 'Backspace':
+                e.stopPropagation();
+                e.preventDefault();
+                if (state.selected.size === 0 || document.activeElement === _fmList) {
+                   // Go Up
+                   const upBtn = body.querySelector('#fm-up');
+                   if (upBtn && !upBtn.disabled) upBtn.click();
+                }
+                break;
             case 'Enter':
                 if (state.focusedIndex >= 0) {
                     const sorted = sortItems(_allItems);
