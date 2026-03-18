@@ -1764,6 +1764,10 @@ async function _checkActiveFileOp() {
 
 // ─────────────────────────── Socket.IO ───────────────────────────
 
+// Persistent DLM notification state — survives DLM window close/reopen
+const _dlmNotifFailedIds = new Set();
+const _dlmNotifPkgStatus = new Map();
+
 function connectSocket() {
     try {
         // Clean up old socket listeners to prevent stacking on reconnect
@@ -1916,6 +1920,40 @@ function connectSocket() {
             NAS._dupScan.errorData = data;
             loadNotifications();
             toast(t('Błąd skanowania duplikatów:') + ' ' + (data.error || ''), 'error');
+        });
+
+        // DLM — persistent notifications (work even when DLM window is closed)
+        if ("Notification" in window && Notification.permission === "default") {
+            Notification.requestPermission();
+        }
+        NAS.socket.on('dl:completed', (data) => {
+            if (!data?.filename) return;
+            const size = data.filesize ? _dlmFormatBytes(data.filesize) : '';
+            const time = new Date().toLocaleTimeString();
+            _dlmNotify(
+                t('Pobieranie zakończone'),
+                `${data.filename}${size ? '\n' + t('Rozmiar') + ': ' + size : ''}\n${t('Czas')}: ${time}`
+            );
+        });
+        NAS.socket.on('dl:update', (data) => {
+            if (data?.status === 'failed' && data.id && !_dlmNotifFailedIds.has(data.id)) {
+                _dlmNotifFailedIds.add(data.id);
+                _dlmNotify(
+                    t('Błąd pobierania'),
+                    `${data.filename || ''}\n${data.error || t('Nieznany błąd')}`
+                );
+            }
+        });
+        NAS.socket.on('dl:package_update', (data) => {
+            if (!data?.id) return;
+            const prev = _dlmNotifPkgStatus.get(data.id);
+            if (data.status === 'extracted' && prev !== 'extracted') {
+                _dlmNotifPkgStatus.set(data.id, 'extracted');
+                _dlmNotify(t('Ekstrakcja zakończona'), `${t('Pakiet')}: ${data.name || data.id}`);
+            } else if (data.status === 'extract_failed' && prev !== 'extract_failed') {
+                _dlmNotifPkgStatus.set(data.id, 'extract_failed');
+                _dlmNotify(t('Błąd ekstrakcji'), `${t('Pakiet')}: ${data.name || data.id}\n${data.extract_error || ''}`);
+            }
         });
 
         // Tickets real-time events — dispatch to tickets app if open
