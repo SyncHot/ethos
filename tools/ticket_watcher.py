@@ -60,6 +60,19 @@ RATE_LIMIT_MARKERS = [
     "try again later",
 ]
 
+SERVER_ERROR_MARKERS = [
+    "500 internal server error",
+    "502 bad gateway",
+    "503 service unavailable",
+    "504 gateway timeout",
+    "server error",
+    "internal error",
+    "overloaded",
+]
+
+MAX_RETRIES_SAME_MODEL = 3      # retry same model N times with backoff before switching
+MAX_BACKOFF_SECS = 120          # cap exponential backoff at 2 min
+
 # ── Agent type → lessons & skills ────────────────────────────────────────
 AGENT_MAP = {
     "FE/UX":   {"lessons": "FE_LESSONS_LEARNED.md",     "skills": "frontend, CSS, JS, UX",
@@ -146,12 +159,13 @@ def add_comment(tid, text):
 def is_executing():
     return os.path.exists(LOCK_FILE)
 
-def set_executing(tid, model_info=None):
+def set_executing(tid, model_info=None, retry_count=0):
     with open(LOCK_FILE, "w") as f:
         json.dump({
             "ticket_id": tid,
             "started": time.time(),
             "model": model_info,
+            "retry_count": retry_count,
         }, f)
 
 def clear_executing():
@@ -217,22 +231,45 @@ def resume_in_progress_tickets():
 
 
 def _log_indicates_rate_limit(log_file):
-    """Best-effort detection of provider/API rate limit from Copilot log output."""
+    """Best-effort detection of provider/API rate limit (429) from Copilot log output."""
+    return _log_contains_markers(log_file, RATE_LIMIT_MARKERS)
+
+
+def _log_indicates_server_error(log_file):
+    """Best-effort detection of server errors (5xx) from Copilot log output."""
+    return _log_contains_markers(log_file, SERVER_ERROR_MARKERS)
+
+
+def _log_contains_markers(log_file, markers):
+    """Check if log file tail contains any of the given marker strings."""
     if not log_file or log_file == "?" or not os.path.isfile(log_file):
         return False
     try:
+        size = os.path.getsize(log_file)
         with open(log_file, "r", encoding="utf-8", errors="replace") as f:
-            content = f.read()[-20000:].lower()
-        return any(marker in content for marker in RATE_LIMIT_MARKERS)
+            if size > 20000:
+                f.seek(max(0, size - 20000))
+            content = f.read().lower()
+        return any(marker in content for marker in markers)
     except Exception:
         return False
 
 
+def _classify_failure(log_file):
+    """Classify failure type from log output. Returns 'rate_limit', 'server_error', or 'unknown'."""
+    if _log_indicates_rate_limit(log_file):
+        return "rate_limit"
+    if _log_indicates_server_error(log_file):
+        return "server_error"
+    return "unknown"
+
+
 def _should_fallback_from_sonnet(model_info, log_file):
-    """Check if the current model failed due to rate limit and a fallback exists."""
+    """Check if the current model failed due to rate limit or server error."""
     if not isinstance(model_info, dict):
         return False
-    return _log_indicates_rate_limit(log_file)
+    failure = _classify_failure(log_file)
+    return failure in ("rate_limit", "server_error")
 
 
 def _get_next_fallback(model_info, complexity):
@@ -252,7 +289,7 @@ def _get_next_fallback(model_info, complexity):
     return {
         "model": next_model,
         "label": f"{next_model} (fallback #{next_idx})",
-        "reason": f"Fallback from {current} (rate limit / failure)",
+        "reason": f"Failover from {current}",
     }
 
 # ── Agent detection ──────────────────────────────────────────────────────
@@ -671,40 +708,99 @@ def main():
                         if (not model_info) and hasattr(active_proc, "_model_info"):
                             model_info = active_proc._model_info
 
-                        if _should_fallback_from_sonnet(model_info, log_file):
-                            ctx = getattr(active_proc, "_ticket_ctx", None)
-                            complexity = ctx["ticket"].get("complexity", "medium") if ctx else "medium"
-                            fallback = _get_next_fallback(model_info, complexity)
-                            if fallback:
+                        retry_count = 0
+                        if isinstance(executing, dict):
+                            retry_count = executing.get("retry_count", 0)
+
+                        failure_type = _classify_failure(log_file)
+                        ctx = getattr(active_proc, "_ticket_ctx", None)
+                        complexity = ctx["ticket"].get("complexity", "medium") if ctx else "medium"
+                        current_model = model_info.get("model", "?") if isinstance(model_info, dict) else "?"
+                        retried = False
+
+                        if failure_type == "rate_limit":
+                            # 429: exponential backoff, retry same model up to MAX_RETRIES_SAME_MODEL
+                            if retry_count < MAX_RETRIES_SAME_MODEL:
+                                backoff = min(2 ** retry_count, MAX_BACKOFF_SECS)
                                 print(
-                                    f"\nRATE_LIMIT_FALLBACK | {active_ticket_id} | "
-                                    f"{model_info.get('model', '?')} -> {fallback['model']}",
+                                    f"\nRATE_LIMIT_429 | {active_ticket_id} | {current_model} | "
+                                    f"retry {retry_count + 1}/{MAX_RETRIES_SAME_MODEL} | backoff {backoff}s",
                                     flush=True,
                                 )
                                 add_comment(
                                     active_ticket_id,
-                                    f"[copilot] Rate limit / błąd modelu {model_info.get('model', '?')}. "
-                                    f"Automatyczny retry na {fallback['model']}.",
+                                    f"[system] Przekroczono limity API dla modelu {current_model}. "
+                                    f"Wznawiam pracę za {backoff}s (próba {retry_count + 1}/{MAX_RETRIES_SAME_MODEL}).",
                                 )
+                                time.sleep(backoff)
                                 if ctx:
+                                    set_executing(active_ticket_id, model_info, retry_count + 1)
                                     retry_proc = execute_via_copilot(
-                                        ctx["ticket"],
-                                        ctx["agent"],
-                                        ctx["info"],
-                                        fallback,
-                                        ctx["docs_context"],
+                                        ctx["ticket"], ctx["agent"], ctx["info"],
+                                        model_info, ctx["docs_context"],
                                     )
                                     if retry_proc is not None:
                                         active_proc = retry_proc
-                                        continue
+                                        retried = True
+                            if not retried:
+                                # Exhausted retries on this model → switch provider
+                                fallback = _get_next_fallback(model_info, complexity)
+                                if fallback and ctx:
+                                    print(
+                                        f"\nPROVIDER_SWITCH | {active_ticket_id} | "
+                                        f"{current_model} -> {fallback['model']} (rate limit, retries exhausted)",
+                                        flush=True,
+                                    )
                                     add_comment(
                                         active_ticket_id,
-                                        f"[copilot] Retry fallback na {fallback['model']} nie powiódł się.",
+                                        f"[system] Przekroczono limity API dla modelu {current_model} "
+                                        f"({MAX_RETRIES_SAME_MODEL}x). Przełączam na {fallback['model']}.",
                                     )
+                                    set_executing(active_ticket_id, fallback, 0)
+                                    retry_proc = execute_via_copilot(
+                                        ctx["ticket"], ctx["agent"], ctx["info"],
+                                        fallback, ctx["docs_context"],
+                                    )
+                                    if retry_proc is not None:
+                                        active_proc = retry_proc
+                                        retried = True
+                                    else:
+                                        add_comment(active_ticket_id,
+                                            f"[system] Fallback na {fallback['model']} nie powiódł się.")
 
-                        print(f"\nCOPILOT_FAILED | {active_ticket_id} | exit={retcode} | log={log_file}", flush=True)
+                        elif failure_type == "server_error":
+                            # 5xx: immediate failover to next provider
+                            fallback = _get_next_fallback(model_info, complexity)
+                            if fallback and ctx:
+                                print(
+                                    f"\nSERVER_ERROR_FAILOVER | {active_ticket_id} | "
+                                    f"{current_model} -> {fallback['model']} (5xx immediate failover)",
+                                    flush=True,
+                                )
+                                add_comment(
+                                    active_ticket_id,
+                                    f"[system] Błąd serwera modelu {current_model} (5xx). "
+                                    f"Natychmiastowe przełączenie na {fallback['model']}.",
+                                )
+                                set_executing(active_ticket_id, fallback, 0)
+                                retry_proc = execute_via_copilot(
+                                    ctx["ticket"], ctx["agent"], ctx["info"],
+                                    fallback, ctx["docs_context"],
+                                )
+                                if retry_proc is not None:
+                                    active_proc = retry_proc
+                                    retried = True
+                                else:
+                                    add_comment(active_ticket_id,
+                                        f"[system] Failover na {fallback['model']} nie powiódł się.")
+
+                        if retried:
+                            continue
+
+                        # All retries/fallbacks exhausted or unknown failure
+                        print(f"\nCOPILOT_FAILED | {active_ticket_id} | exit={retcode} | type={failure_type} | log={log_file}", flush=True)
                         add_comment(active_ticket_id,
-                            f"[copilot] Copilot zakończył z błędem (exit {retcode}). Log: {log_file}")
+                            f"[copilot] Copilot zakończył z błędem (exit {retcode}, {failure_type}). Log: {log_file}")
                         try:
                             move_ticket(active_ticket_id, "Do zrobienia")
                             print(f"MOVED_TO_TODO | {active_ticket_id} (failed, needs rework)", flush=True)
