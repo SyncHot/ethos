@@ -12,6 +12,7 @@ import json
 import os
 import stat as stat_lib
 import subprocess
+import threading as _threading
 from datetime import datetime
 
 from flask import g, jsonify, request, send_file
@@ -185,6 +186,18 @@ THUMB_CACHE_DIR = data_path('.thumb_cache')
 os.makedirs(THUMB_CACHE_DIR, exist_ok=True)
 THUMBS_DIR_NAME = '.thumbs'
 
+# Per-cache-key locks to prevent concurrent duplicate thumbnail generation
+_thumb_gen_locks: dict = {}
+_thumb_gen_locks_meta = _threading.Lock()
+
+
+def _thumb_gen_lock(cache_key: str):
+    """Return a per-key lock for thumbnail generation."""
+    with _thumb_gen_locks_meta:
+        if cache_key not in _thumb_gen_locks:
+            _thumb_gen_locks[cache_key] = _threading.Lock()
+        return _thumb_gen_locks[cache_key]
+
 
 def _thumb_cache_key(real_path, mtime, w, h):
     return hashlib.md5(f'{real_path}:{mtime}:{w}x{h}'.encode()).hexdigest()
@@ -203,8 +216,11 @@ def generate_thumbnail(real_path, w, h):
 
     Returns a Flask ``Response`` (send_file).  Falls back to the original
     file on any error.
+
+    Uses per-path locking to prevent duplicate generation under concurrency.
+    Applies EXIF auto-orientation so rotated photos display correctly.
     """
-    from PIL import Image
+    from PIL import Image, ImageOps
 
     try:
         mtime = os.path.getmtime(real_path)
@@ -224,23 +240,38 @@ def generate_thumbnail(real_path, w, h):
         if os.path.isfile(cache_path):
             return send_file(cache_path, mimetype='image/webp', max_age=86400)
 
-        # 3) Generate thumbnail
-        img = Image.open(real_path)
-        img.thumbnail((w * 2, h * 2), Image.LANCZOS)
-        buf = io.BytesIO()
-        img.save(buf, format='WEBP', quality=75)
-        thumb_bytes = buf.getvalue()
+        # 3) Acquire per-path lock to prevent duplicate generation
+        with _thumb_gen_lock(cache_key):
+            # Double-check after acquiring lock — another thread may have just created it
+            if os.path.isfile(local_path) and os.path.getmtime(local_path) >= mtime:
+                return send_file(local_path, mimetype='image/webp', max_age=86400)
+            if os.path.isfile(cache_path):
+                return send_file(cache_path, mimetype='image/webp', max_age=86400)
 
-        # Store in local .thumbs/ directory
-        try:
-            os.makedirs(thumbs_dir, exist_ok=True)
-            with open(local_path, 'wb') as lf:
-                lf.write(thumb_bytes)
-        except OSError:
-            with open(cache_path, 'wb') as cf:
-                cf.write(thumb_bytes)
-            with open(meta_path, 'w') as mf:
-                mf.write(os.path.realpath(real_path))
+            # 4) Generate thumbnail
+            img = Image.open(real_path)
+            # Use JPEG draft mode for faster decoding of large photos — PIL will
+            # choose the largest 1/2ⁿ subsampled decode that still exceeds the
+            # target dimensions, avoiding a full-resolution decode.
+            if getattr(img, 'format', None) == 'JPEG':
+                img.draft('RGB', (w * 2, h * 2))
+            # Apply EXIF orientation so rotated photos render correctly
+            img = ImageOps.exif_transpose(img)
+            img.thumbnail((w * 2, h * 2), Image.LANCZOS)
+            buf = io.BytesIO()
+            img.save(buf, format='WEBP', quality=75)
+            thumb_bytes = buf.getvalue()
+
+            # Store in local .thumbs/ directory (preferred) or fallback to central cache
+            try:
+                os.makedirs(thumbs_dir, exist_ok=True)
+                with open(local_path, 'wb') as lf:
+                    lf.write(thumb_bytes)
+            except OSError:
+                with open(cache_path, 'wb') as cf:
+                    cf.write(thumb_bytes)
+                with open(meta_path, 'w') as mf:
+                    mf.write(os.path.realpath(real_path))
 
         buf.seek(0)
         return send_file(buf, mimetype='image/webp', max_age=86400)

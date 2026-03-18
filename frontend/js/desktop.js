@@ -1088,8 +1088,11 @@ function openExternalApp(app) {
 
 function openBuiltinApp(app, launchOpts) {
     // Handled in apps.js via the global registry
-    if (typeof AppRegistry !== 'undefined' && AppRegistry[app.id]) {
-        AppRegistry[app.id](app, launchOpts);
+    const registry = (typeof window !== 'undefined' && window.AppRegistry)
+        ? window.AppRegistry
+        : (typeof AppRegistry !== 'undefined' ? AppRegistry : null);
+    if (registry && registry[app.id]) {
+        registry[app.id](app, launchOpts);
     } else {
         toast(t('Aplikacja nie jest jeszcze dostępna') + `: ${t(app.name)}`, 'warning');
     }
@@ -1585,6 +1588,13 @@ function _createBarEl(ch) {
     `;
     el.querySelector('.fileop-cancel-btn').addEventListener('click', async () => {
         try {
+            // If there's an active upload XHR for this channel, abort it directly
+            if (window._fileopUploadXhr && window._fileopUploadXhr[ch]) {
+                const xhr = window._fileopUploadXhr[ch];
+                delete window._fileopUploadXhr[ch];
+                xhr.abort();
+                return;
+            }
             const r = await api('/files/cancel-operation', { method: 'POST', body: JSON.stringify({ channel: ch }), headers: { 'Content-Type': 'application/json' } });
             if (r.ok || r.cancelled) {
                 const btn = el.querySelector('.fileop-cancel-btn');
@@ -1628,12 +1638,14 @@ function showFileOpProgress(data) {
         ? data._transfer_detail
         : `${data.done}/${data.total}` + (data.current_file ? ` — ${data.current_file}` : '');
 
-    // Show cancel + pause buttons for pausable operations
-    const pausableOps = ['transfer', 'download', 'compress'];
+    // Show cancel + pause buttons for applicable operations
+    const cancelableOps = ['transfer', 'download', 'compress', 'copy', 'move', 'extract', 'upload'];
+    const pausableOps = ['transfer', 'download', 'compress', 'copy', 'move'];
     const cancelBtn = el.querySelector('.fileop-cancel-btn');
     const pauseBtn = el.querySelector('.fileop-pause-btn');
     if (cancelBtn) {
-        cancelBtn.style.display = pausableOps.includes(data.operation) ? '' : 'none';
+        cancelBtn.style.display = cancelableOps.includes(data.operation) ? '' : 'none';
+        cancelBtn.disabled = false;
     }
     if (pauseBtn) {
         pauseBtn.style.display = pausableOps.includes(data.operation) ? '' : 'none';
@@ -1823,13 +1835,15 @@ function connectSocket() {
                 prepare: t('Przygotowywanie'),
                 pull: t('Pobieranie obrazów'),
                 start: t('Uruchamianie'),
+                verify: t('Weryfikacja'),
                 done: t('Zakończono'),
+                warning: t('Zakończono z ostrzeżeniami'),
                 error: t('Błąd'),
             };
             const id = `appstore:${data.task_id}`;
             const title = data.app_id ? `App Store: ${data.app_id}` : 'App Store';
             const message = data.message || stageLabels[data.stage] || '';
-            if (data.stage === 'done') {
+            if (data.stage === 'done' || data.stage === 'warning') {
                 NAS.taskProgress.upsert({ id, source: 'App Store', title, percent: 100, message, action: { app: 'app-store' }, status: 'running' });
                 NAS.taskProgress.finish(id, true, message);
                 return;

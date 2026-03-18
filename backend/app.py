@@ -25,6 +25,8 @@ import signal
 import errno
 import hashlib
 import pwd
+import grp as _grp
+import stat as _stat_mod
 from datetime import datetime, timedelta
 from functools import wraps
 import gevent
@@ -269,7 +271,7 @@ _migrate_global_to_per_user()
 
 @app.after_request
 def _no_cache_api(response):
-    """Prevent browser caching on all /api/ responses (except media streams)."""
+    """Prevent browser caching on all /api/ responses (except media streams and file downloads)."""
     if request.path.startswith('/api/'):
         # Allow caching for media preview (needed for video seeking / Range requests)
         is_media = request.path in ('/api/files/preview', '/api/files/trash/preview', '/api/gallery/stream') or \
@@ -280,6 +282,13 @@ def _no_cache_api(response):
                 response.headers['Accept-Ranges'] = 'bytes'
                 response.headers.pop('Pragma', None)
                 return response
+        # Allow caching for file downloads so browsers can use Range requests to resume
+        is_download = (request.path == '/api/files/download' or
+                       request.path.startswith('/api/files/download-zip/') and
+                       not request.path.endswith('/status'))
+        if is_download and response.status_code in (200, 206):
+            response.headers.pop('Pragma', None)
+            return response
         response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
         response.headers['Pragma'] = 'no-cache'
     return response
@@ -2588,33 +2597,69 @@ def _resume_interrupted_zip():
 def _cleanup_stale_ethos_tmp(data_root=None):
     """Remove leftover .ethos_tmp partial files from previous crash/abort.
 
-    Scans the data root for .ethos_tmp files older than 1 hour and removes them.
-    Also clears the upload temp directory.
+    Scans user home directories and mounted volumes for .ethos_tmp files older
+    than 1 hour and removes them.  Also clears stale upload chunk directories.
+
+    Note: data_root parameter is kept for backward compatibility but ignored;
+    scanning from DATA_ROOT='/' would walk the entire filesystem unnecessarily.
     """
+    cutoff = time.time() - 3600  # 1 hour
+
+    # Determine scan roots: user home directories and mounted volumes
+    scan_roots = []
     try:
-        if data_root is None:
-            from utils import DATA_ROOT as _dr
-            data_root = _dr
-        cutoff = time.time() - 3600  # 1 hour
-        for dirpath, _dirs, files in os.walk(data_root):
-            for fn in files:
-                if fn.endswith('.ethos_tmp') or fn.endswith('.ethos_upload_tmp'):
-                    fp = os.path.join(dirpath, fn)
-                    try:
-                        if os.path.getmtime(fp) < cutoff:
-                            os.remove(fp)
-                    except OSError:
-                        pass
+        scan_roots.append('/home')
+        # Also scan data-disk home if configured
+        try:
+            dd = _get_data_disk()
+            if dd:
+                home_on_dd = os.path.join(dd, 'home')
+                if os.path.isdir(home_on_dd) and home_on_dd not in scan_roots:
+                    scan_roots.append(home_on_dd)
+        except Exception:
+            pass
+        # Mounted volumes where user files might exist
+        for mnt in ('/media', '/mnt'):
+            if os.path.isdir(mnt):
+                scan_roots.append(mnt)
     except Exception:
         pass
+
+    def _scan_dir(start_path):
+        try:
+            for dirpath, dirs, files in os.walk(start_path):
+                for fn in files:
+                    if fn.endswith('.ethos_tmp') or fn.endswith('.ethos_upload_tmp') or fn.endswith('.ethos_mv_tmp'):
+                        fp = os.path.join(dirpath, fn)
+                        try:
+                            if os.path.getmtime(fp) < cutoff:
+                                os.remove(fp)
+                        except OSError:
+                            pass
+                # Clean up stale .ethos_tmp_dir and .ethos_mv_tmp_dir partial directory copies
+                for dn in list(dirs):
+                    if dn.endswith('.ethos_tmp_dir') or dn.endswith('.ethos_mv_tmp_dir'):
+                        dp = os.path.join(dirpath, dn)
+                        try:
+                            if os.path.getmtime(dp) < cutoff:
+                                shutil.rmtree(dp, ignore_errors=True)
+                                dirs.remove(dn)
+                        except OSError:
+                            pass
+        except Exception:
+            pass
+
+    for root in scan_roots:
+        _scan_dir(root)
+
     # Also prune stale upload chunk dirs
     try:
         if os.path.isdir(_UPLOAD_TMP_DIR):
-            cutoff = time.time() - _UPLOAD_SESSION_TTL
+            chunk_cutoff = time.time() - _UPLOAD_SESSION_TTL
             for entry in os.scandir(_UPLOAD_TMP_DIR):
                 if entry.is_dir():
                     try:
-                        if entry.stat().st_mtime < cutoff:
+                        if entry.stat().st_mtime < chunk_cutoff:
                             shutil.rmtree(entry.path, ignore_errors=True)
                     except OSError:
                         pass
@@ -3026,6 +3071,38 @@ FOLDER_PASSWORDS_FILE = _data_path('folder_passwords.json')
 _unlocked_folders = {}  # token -> set of unlocked folder paths
 _uf_lock = _threading.Lock()
 
+# Brute-force protection for folder unlock (per token, keyed by token+path)
+_folder_unlock_attempts = {}  # key -> {'count': int, 'first': float, 'locked_until': float}
+_folder_unlock_lock = _threading.Lock()
+_FU_MAX_ATTEMPTS = 5
+_FU_ATTEMPT_WINDOW = 120   # 2 minutes
+_FU_LOCKOUT_TIME = 300     # 5 minute lockout
+
+FOLDER_PASSWORD_MIN_LENGTH = 4
+
+
+def _mode_to_symbolic(mode):
+    """Convert numeric stat mode to symbolic string like 'rwxr-xr-x'."""
+    flags = [
+        (_stat_mod.S_IRUSR, 'r'), (_stat_mod.S_IWUSR, 'w'), (_stat_mod.S_IXUSR, 'x'),
+        (_stat_mod.S_IRGRP, 'r'), (_stat_mod.S_IWGRP, 'w'), (_stat_mod.S_IXGRP, 'x'),
+        (_stat_mod.S_IROTH, 'r'), (_stat_mod.S_IWOTH, 'w'), (_stat_mod.S_IXOTH, 'x'),
+    ]
+    return ''.join(c if mode & f else '-' for f, c in flags)
+
+
+def _get_owner_group(st):
+    """Return (owner_name, group_name) strings from a stat result."""
+    try:
+        owner = pwd.getpwuid(st.st_uid).pw_name
+    except (KeyError, AttributeError):
+        owner = str(st.st_uid)
+    try:
+        group = _grp.getgrgid(st.st_gid).gr_name
+    except (KeyError, AttributeError):
+        group = str(st.st_gid)
+    return owner, group
+
 def _load_folder_passwords():
     return _load_json(FOLDER_PASSWORDS_FILE, {})
 
@@ -3118,14 +3195,19 @@ def folder_password_set():
     data = request.get_json(force=True)
     path = data.get('path', '').rstrip('/') or '/'
     password = data.get('password', '')
-    if not password or len(password) < 1:
-        return jsonify({'error': 'Hasło nie może być puste'}), 400
+    if not password or len(password) < FOLDER_PASSWORD_MIN_LENGTH:
+        return jsonify({'error': f'Hasło musi mieć minimum {FOLDER_PASSWORD_MIN_LENGTH} znaki'}), 400
     real = safe_path(path)
     if not real or not os.path.isdir(real):
         return jsonify({'error': 'Folder nie istnieje'}), 404
+    cur = get_current_user()
+    username = cur['username'] if cur else 'unknown'
     passwords = _load_folder_passwords()
+    is_update = path in passwords
     passwords[path] = _hash_folder_password(password)
     _save_folder_passwords(passwords)
+    action = 'Zmieniono hasło folderu' if is_update else 'Ustawiono hasło folderu'
+    elog('security', 'info', f'{action}: {path}', {'user': username, 'path': path})
     return jsonify({'ok': True})
 
 
@@ -3139,8 +3221,12 @@ def folder_password_remove():
     passwords = _load_folder_passwords()
     if path not in passwords:
         return jsonify({'error': 'Folder nie jest chroniony'}), 404
+    cur = get_current_user()
+    username = cur['username'] if cur else 'unknown'
     # Verify current password
     if not _verify_folder_password(password, passwords[path]):
+        elog('security', 'warning', f'Nieudana próba usunięcia hasła folderu: {path}',
+             {'user': username, 'path': path})
         return jsonify({'error': 'Nieprawidłowe hasło'}), 403
     del passwords[path]
     _save_folder_passwords(passwords)
@@ -3148,6 +3234,7 @@ def folder_password_remove():
     with _uf_lock:
         for s in _unlocked_folders.values():
             s.discard(path)
+    elog('security', 'info', f'Usunięto hasło folderu: {path}', {'user': username, 'path': path})
     return jsonify({'ok': True})
 
 
@@ -3161,11 +3248,44 @@ def folder_unlock():
     passwords = _load_folder_passwords()
     if path not in passwords:
         return jsonify({'error': 'Folder nie jest chroniony'}), 404
-    if not _verify_folder_password(password, passwords[path]):
-        return jsonify({'error': 'Nieprawidłowe hasło'}), 403
+
     token = get_token()
+    cur = get_current_user()
+    username = cur['username'] if cur else 'unknown'
+    fu_key = f'{token}:{path}'
+    now = time.time()
+
+    # Check brute-force lockout
+    with _folder_unlock_lock:
+        attempt = _folder_unlock_attempts.get(fu_key)
+        if attempt:
+            if now < attempt.get('locked_until', 0):
+                remaining = int(attempt['locked_until'] - now)
+                elog('security', 'warning',
+                     f'Folder zablokowany przed atakiem brute-force: {path}',
+                     {'user': username, 'path': path, 'remaining_s': remaining})
+                return jsonify({'error': f'Zbyt wiele prób. Odczekaj {remaining}s'}), 429
+            if now - attempt.get('first', now) > _FU_ATTEMPT_WINDOW:
+                _folder_unlock_attempts.pop(fu_key, None)
+
+    if not _verify_folder_password(password, passwords[path]):
+        with _folder_unlock_lock:
+            attempt = _folder_unlock_attempts.get(fu_key, {'count': 0, 'first': now, 'locked_until': 0})
+            attempt['count'] += 1
+            if attempt['count'] >= _FU_MAX_ATTEMPTS:
+                attempt['locked_until'] = now + _FU_LOCKOUT_TIME
+                attempt['count'] = 0
+            _folder_unlock_attempts[fu_key] = attempt
+        elog('security', 'warning', f'Nieudane odblokowanie folderu: {path}',
+             {'user': username, 'path': path})
+        return jsonify({'error': 'Nieprawidłowe hasło'}), 403
+
+    # Successful unlock — clear attempts and record
+    with _folder_unlock_lock:
+        _folder_unlock_attempts.pop(fu_key, None)
     with _uf_lock:
         _unlocked_folders.setdefault(token, set()).add(path)
+    elog('security', 'info', f'Odblokowano folder: {path}', {'user': username, 'path': path})
     return jsonify({'ok': True})
 
 
@@ -3176,13 +3296,87 @@ def folder_lock():
     data = request.get_json(force=True)
     path = data.get('path', '').rstrip('/') or '/'
     token = get_token()
+    cur = get_current_user()
+    username = cur['username'] if cur else 'unknown'
     with _uf_lock:
         if token in _unlocked_folders:
             _unlocked_folders[token].discard(path)
+    elog('security', 'info', f'Zablokowano folder: {path}', {'user': username, 'path': path})
     return jsonify({'ok': True})
 
 
-# ─── Favorites (per-user) ────────────────────────────────────
+# ─── File Permissions ─────────────────────────────────────────
+
+@app.route('/api/files/permissions')
+@require_auth
+def files_get_permissions():
+    """GET /api/files/permissions?path=<path>
+    Returns detailed permissions info: symbolic mode, octal, owner, group.
+    """
+    path = request.args.get('path', '')
+    if not path:
+        return jsonify({'error': 'Brak ścieżki'}), 400
+    real = safe_path(path)
+    if not real or not os.path.exists(real):
+        return jsonify({'error': 'Plik nie istnieje'}), 404
+    try:
+        st = os.stat(real)
+        owner, group = _get_owner_group(st)
+        return jsonify({
+            'path': path,
+            'permissions': oct(st.st_mode)[-3:],
+            'permissions_symbolic': _mode_to_symbolic(st.st_mode),
+            'permissions_octal': oct(st.st_mode & 0o7777),
+            'owner': owner,
+            'group': group,
+            'uid': st.st_uid,
+            'gid': st.st_gid,
+            'is_dir': os.path.isdir(real),
+        })
+    except OSError as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/files/chmod', methods=['POST'])
+@require_auth
+def files_chmod():
+    """POST /api/files/chmod — Change file/folder permissions.
+    Body: { path, mode }  where mode is an octal string like '755' or '644'.
+    Admin only.
+    """
+    cur = get_current_user()
+    if not cur or cur.get('role') != 'admin':
+        return jsonify({'error': 'Wymagane uprawnienia administratora'}), 403
+    data = request.get_json(force=True)
+    path = data.get('path', '')
+    mode_str = data.get('mode', '')
+    if not path or not mode_str:
+        return jsonify({'error': 'Brak ścieżki lub trybu'}), 400
+    # Validate mode: must be 3-4 octal digits
+    if not re.match(r'^[0-7]{3,4}$', mode_str):
+        return jsonify({'error': 'Nieprawidłowy tryb uprawnień (np. 755, 644)'}), 400
+    real = safe_path(path)
+    if not real or not os.path.exists(real):
+        return jsonify({'error': 'Plik nie istnieje'}), 404
+    try:
+        new_mode = int(mode_str, 8)
+        os.chmod(real, new_mode)
+        st = os.stat(real)
+        owner, group = _get_owner_group(st)
+        username = cur['username']
+        elog('security', 'info', f'Zmieniono uprawnienia: {path} → {mode_str}',
+             {'user': username, 'path': path, 'mode': mode_str})
+        return jsonify({
+            'ok': True,
+            'permissions': oct(st.st_mode)[-3:],
+            'permissions_symbolic': _mode_to_symbolic(st.st_mode),
+            'owner': owner,
+            'group': group,
+        })
+    except PermissionError:
+        return jsonify({'error': 'Brak uprawnień do zmiany uprawnień pliku'}), 403
+    except OSError as e:
+        return jsonify({'error': str(e)}), 500
 _FAVORITES_GLOBAL = _data_path('favorites.json')  # legacy, used for migration
 
 def _favorites_file():
@@ -3380,11 +3574,15 @@ def files_list():
             if os.path.isdir(home_dir):
                 try:
                     st = os.stat(home_dir)
+                    _owner, _group = _get_owner_group(st)
                     items.append({
                         'name': me,
                         'is_dir': True, 'is_link': False,
                         'size': 0, 'modified': st.st_mtime,
                         'permissions': oct(st.st_mode)[-3:],
+                        'permissions_symbolic': _mode_to_symbolic(st.st_mode),
+                        'owner': _owner,
+                        'group': _group,
                         'home': True,
                         'home_path': home_dir,
                     })
@@ -3460,13 +3658,17 @@ def files_list():
                 continue
             try:
                 stat = entry.stat(follow_symlinks=False)
+                owner, group = _get_owner_group(stat)
                 item_data = {
                     'name': entry.name,
                     'is_dir': entry.is_dir(),
                     'is_link': entry.is_symlink(),
                     'size': stat.st_size if not entry.is_dir() else 0,
                     'modified': stat.st_mtime,
-                    'permissions': oct(stat.st_mode)[-3:]
+                    'permissions': oct(stat.st_mode)[-3:],
+                    'permissions_symbolic': _mode_to_symbolic(stat.st_mode),
+                    'owner': owner,
+                    'group': group,
                 }
                 # Mark protected dirs with locked flag
                 if entry.is_dir():
@@ -3482,7 +3684,8 @@ def files_list():
                     'is_link': False,
                     'size': 0,
                     'modified': 0,
-                    'permissions': '---'
+                    'permissions': '---',
+                    'permissions_symbolic': '---------',
                 })
     except PermissionError:
         return jsonify({'error': 'Brak uprawnień'}), 403
@@ -3747,7 +3950,10 @@ def files_download():
     blocked = _require_folder_access(path)
     if blocked is not None:
         return blocked
-    return send_file(real_path, as_attachment=True)
+    resp = send_file(real_path, as_attachment=True, conditional=True)
+    # Advertise byte-range support so browsers can resume interrupted downloads (HTTP 206)
+    resp.headers['Accept-Ranges'] = 'bytes'
+    return resp
 
 
 @app.route('/api/files/download-zip', methods=['POST'])
@@ -4230,7 +4436,8 @@ def files_upload():
 _upload_sessions = {}          # session_id → session_dict
 _upload_sessions_lock = _threading.Lock()
 _UPLOAD_SESSION_TTL = 3600     # 1 hour — stale sessions are cleaned up
-_UPLOAD_TMP_DIR = '/tmp/ethos_uploads'
+# Use persistent storage so sessions survive server restarts (/tmp is tmpfs and cleared on reboot)
+_UPLOAD_TMP_DIR = '/opt/ethos/uploads/chunks'
 
 def _upload_session_tmpdir(session_id):
     return os.path.join(_UPLOAD_TMP_DIR, session_id)
@@ -4247,6 +4454,69 @@ def _upload_sessions_prune():
         except Exception: pass
         with _upload_sessions_lock:
             _upload_sessions.pop(sid, None)
+
+def _persist_upload_session(session):
+    """Save upload session metadata to disk so it survives app restarts."""
+    tmpdir = session.get('tmpdir', '')
+    if not tmpdir:
+        return
+    meta = {k: v for k, v in session.items() if k != 'uploaded_chunks'}
+    try:
+        _save_json(os.path.join(tmpdir, 'session.json'), meta)
+    except Exception:
+        pass
+
+def _restore_upload_sessions():
+    """Scan upload tmpdir for persisted sessions and restore them into memory.
+
+    Rebuilds uploaded_chunks by checking which chunk files actually exist on disk.
+    Called once at startup so clients can resume interrupted chunked uploads.
+    """
+    if not os.path.isdir(_UPLOAD_TMP_DIR):
+        return
+    restored = 0
+    now = time.monotonic()
+    try:
+        for entry in os.scandir(_UPLOAD_TMP_DIR):
+            if not entry.is_dir():
+                continue
+            session_file = os.path.join(entry.path, 'session.json')
+            if not os.path.isfile(session_file):
+                continue
+            try:
+                session = _load_json(session_file, None)
+                if not session or not isinstance(session, dict):
+                    continue
+                session_id = session.get('session_id', '')
+                if not session_id:
+                    continue
+                # Skip sessions older than TTL (created_at is monotonic so use mtime as fallback)
+                created_at = session.get('created_at', 0)
+                mtime = entry.stat().st_mtime
+                age = time.time() - mtime
+                if age > _UPLOAD_SESSION_TTL:
+                    continue
+                # Rebuild uploaded_chunks from actual chunk files on disk
+                num_chunks = session.get('num_chunks', 0)
+                tmpdir = session.get('tmpdir', entry.path)
+                existing_chunks = [
+                    i for i in range(num_chunks)
+                    if os.path.isfile(os.path.join(tmpdir, f'chunk_{i:06d}'))
+                ]
+                session['uploaded_chunks'] = existing_chunks
+                session['tmpdir'] = tmpdir
+                # created_at in restored sessions is wall-clock offset; set to now minus age
+                session['created_at'] = now - age
+                with _upload_sessions_lock:
+                    if session_id not in _upload_sessions:
+                        _upload_sessions[session_id] = session
+                        restored += 1
+            except Exception:
+                pass
+    except Exception:
+        pass
+    if restored:
+        elog('files', 'info', f'Przywrócono {restored} sesji przesyłania po restarcie')
 
 
 @app.route('/api/files/upload-chunk-init', methods=['POST'])
@@ -4304,6 +4574,9 @@ def files_upload_chunk_init():
     with _upload_sessions_lock:
         _upload_sessions[session_id] = session
 
+    # Persist session metadata to disk so it survives app restarts
+    _persist_upload_session(session)
+
     return jsonify({'session_id': session_id, 'uploaded_chunks': [], 'num_chunks': num_chunks})
 
 
@@ -4312,13 +4585,14 @@ def files_upload_chunk_init():
 def files_upload_chunk():
     """Upload a single chunk for a resumable upload session.
 
-    Form fields: session_id, chunk_index
+    Form fields: session_id, chunk_index, checksum (optional SHA-256 hex of this chunk)
     File: 'chunk' — the binary data
     Returns: {ok: true, uploaded_chunks: [...]}
     """
     session_id = request.form.get('session_id', '')
     chunk_index = request.form.get('chunk_index', type=int)
     chunk_file = request.files.get('chunk')
+    expected_checksum = request.form.get('checksum', '')  # optional SHA-256 of this chunk
 
     if chunk_index is None or not chunk_file:
         return jsonify({'error': 'Brak danych'}), 400
@@ -4335,6 +4609,18 @@ def files_upload_chunk():
     tmp_chunk = chunk_path + '.tmp'
     try:
         chunk_file.save(tmp_chunk)
+        # Verify SHA-256 checksum if provided
+        if expected_checksum:
+            import hashlib as _hashlib
+            sha = _hashlib.sha256()
+            with open(tmp_chunk, 'rb') as cf:
+                for buf in iter(lambda: cf.read(65536), b''):
+                    sha.update(buf)
+            actual = sha.hexdigest()
+            if actual != expected_checksum.lower():
+                try: os.remove(tmp_chunk)
+                except OSError: pass
+                return jsonify({'error': f'Błąd integralności fragmentu {chunk_index}: niezgodność sumy kontrolnej'}), 400
         os.replace(tmp_chunk, chunk_path)
     except Exception as e:
         try: os.remove(tmp_chunk)
@@ -4371,10 +4657,11 @@ def files_upload_complete():
     """Finalize a chunked upload: assemble chunks into the destination file.
 
     Body: {session_id}
-    Returns: {ok: true, filename}
+    Returns: {ok: true, filename, sha256 (if verify_checksum was requested)}
     """
     data = request.json or {}
     session_id = data.get('session_id', '')
+    verify_checksum = bool(data.get('verify_checksum', False))  # optional: compute SHA-256 of assembled file
 
     with _upload_sessions_lock:
         session = _upload_sessions.get(session_id)
@@ -4397,8 +4684,11 @@ def files_upload_complete():
 
     dest_file = os.path.join(real_path, filename)
     tmp_dest = dest_file + '.ethos_upload_tmp'
+    file_sha256 = None
 
     try:
+        import hashlib as _hashlib
+        sha = _hashlib.sha256() if verify_checksum else None
         with open(tmp_dest, 'wb') as out:
             for i in range(num_chunks):
                 chunk_path = os.path.join(tmpdir, f'chunk_{i:06d}')
@@ -4408,6 +4698,10 @@ def files_upload_complete():
                         if not buf:
                             break
                         out.write(buf)
+                        if sha:
+                            sha.update(buf)
+        if sha:
+            file_sha256 = sha.hexdigest()
         os.replace(tmp_dest, dest_file)
         _chown_to_user(dest_file, username)
     except Exception as e:
@@ -4425,7 +4719,10 @@ def files_upload_complete():
     elog('files', 'info', f'Przesłano (chunked) {filename} do {dest_path}')
     _listdir_cache_invalidate(dest_path)
     _dirsize_cache_invalidate(real_path)
-    return jsonify({'ok': True, 'filename': filename})
+    result = {'ok': True, 'filename': filename}
+    if file_sha256:
+        result['sha256'] = file_sha256
+    return jsonify(result)
 
 
 @app.route('/api/files/upload-abort', methods=['POST'])
@@ -5673,6 +5970,47 @@ def files_rename():
         return jsonify({'error': str(e)}), 500
 
 
+def _atomic_move(src, target):
+    """Move *src* to *target* atomically.
+
+    For same-filesystem moves, uses os.rename which is atomic.
+    For cross-filesystem moves, copies to a temp file first, then atomically
+    replaces the target, and finally removes the source.  This ensures that
+    a crash between any step leaves data intact (source still exists or target
+    is already written).
+    """
+    try:
+        os.rename(src, target)
+    except OSError as e:
+        import errno as _errno
+        if e.errno != _errno.EXDEV:
+            raise
+        # Cross-device move: copy → atomic replace → remove source
+        if os.path.isdir(src):
+            tmp_target = target + '.ethos_mv_tmp_dir'
+            try:
+                shutil.copytree(src, tmp_target)
+                _chown_recursive(tmp_target)
+                os.rename(tmp_target, target)
+                shutil.rmtree(src)
+            except Exception:
+                shutil.rmtree(tmp_target, ignore_errors=True)
+                raise
+        else:
+            tmp_target = target + '.ethos_mv_tmp'
+            try:
+                shutil.copy2(src, tmp_target)
+                _chown_to_user(tmp_target)
+                os.replace(tmp_target, target)
+                os.remove(src)
+            except Exception:
+                try:
+                    os.remove(tmp_target)
+                except OSError:
+                    pass
+                raise
+
+
 @app.route('/api/files/move', methods=['POST'])
 @require_auth
 def files_move():
@@ -5686,7 +6024,8 @@ def files_move():
         dest_user = data.get('dest', '').rstrip('/')
         new_user_path = dest_user + '/' + os.path.basename(old_user_path)
 
-        shutil.move(src, dest)
+        target = os.path.join(dest, os.path.basename(src))
+        _atomic_move(src, target)
 
         # Migrate folder passwords for moved folder
         _migrate_folder_passwords(old_user_path, new_user_path)
@@ -5803,7 +6142,14 @@ def files_copy():
             continue
         try:
             if os.path.isdir(real_src):
-                shutil.copytree(real_src, target)
+                # Atomic directory copy: write to temp dir, then rename
+                tmp_target = target + '.ethos_tmp_dir'
+                try:
+                    shutil.copytree(real_src, tmp_target)
+                    os.rename(tmp_target, target)
+                except Exception:
+                    shutil.rmtree(tmp_target, ignore_errors=True)
+                    raise
                 _chown_recursive(target)
             else:
                 tmp_target = target + '.ethos_tmp'
@@ -5945,7 +6291,7 @@ def files_move_multi():
             skipped.append(base_name)
             continue
         try:
-            shutil.move(real_src, target)
+            _atomic_move(real_src, target)
             _chown_recursive(target)
             moved.append(base_name)
             # Migrate folder passwords
@@ -6013,7 +6359,7 @@ def _bg_move(resolved_sources, dest_dir, total, on_conflict='rename', dest_user_
                 gevent.sleep(0)
                 continue
             try:
-                shutil.move(real_src, target)
+                _atomic_move(real_src, target)
                 _chown_recursive(target, _bg_username)
                 done += item_count
                 moved.append(base_name)
@@ -8187,8 +8533,10 @@ if __name__ == '__main__':
     gevent.spawn_later(8, _resume_interrupted_copy)
     # Resume interrupted move (if any)
     gevent.spawn_later(9, _resume_interrupted_move)
+    # Restore persisted chunked upload sessions so clients can resume after restart
+    gevent.spawn_later(10, _restore_upload_sessions)
     # Clean up leftover partial files from previous crash/abort
-    gevent.spawn_later(10, _cleanup_stale_ethos_tmp)
+    gevent.spawn_later(11, _cleanup_stale_ethos_tmp)
     # Pre-warm listing cache for all user home directories (background, low priority)
     gevent.spawn_later(12, _bg_prewarm_home_listing)
 

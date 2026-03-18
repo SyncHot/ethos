@@ -3,7 +3,8 @@
    File Manager, Dashboard, Docker Manager
    ═══════════════════════════════════════════════════════════ */
 
-const AppRegistry = {};
+window.AppRegistry = window.AppRegistry || {};
+const AppRegistry = window.AppRegistry;
 
 // ═══════════════════════════════════════════════════════════
 //  FILE MANAGER
@@ -43,6 +44,7 @@ AppRegistry['file-manager'] = function (appDef, launchOpts) {
         dragActive: false,
         clipboard: null,       // { mode: 'copy'|'cut', paths: [...], basePath: '...' }
         lastClickedIndex: -1,  // for shift-click range selection
+        focusedIndex: -1,      // keyboard-focused item index
         sambaShares: [],       // [{ name, path, ... }] loaded from backend
         favorites: [],         // [{ path, label }]
         photoFavorites: [],    // ['/path/to/img.jpg', ...]
@@ -55,6 +57,12 @@ AppRegistry['file-manager'] = function (appDef, launchOpts) {
         searchResults: null,   // null = not searching, [] = no results
         // Folder sizes
         dirSizes: {},          // { '/path': size }
+        // Background dir-size job tracking
+        _dirSizeJobs: {},      // { '/path': 'job_id' } for pending jobs
+        _dirSizePollTimer: null,    // setTimeout handle for polling
+        _dirSizePollInterval: 1500, // current poll interval (ms), grows with backoff
+        // Lazy thumbnail IntersectionObserver
+        _thumbObserver: null,
     };
 
     createWindow('file-manager', {
@@ -67,6 +75,41 @@ AppRegistry['file-manager'] = function (appDef, launchOpts) {
     });
 };
 
+// ── FM listing prefetch cache (hover-prefetch optimisation) ──
+const _fmPrefetchCache = new Map(); // path → { data, ts }
+const _FM_PREFETCH_TTL = 25000;     // 25 s — slightly shorter than server cache TTL
+
+function _fmPregenerateThumbs(path) {
+    if (!path || path.startsWith('/__')) return;
+    api('/files/pregenerate-thumbs', { method: 'POST', body: { path, w: 120, h: 120 } })
+        .catch(() => {});  // fire-and-forget background pre-generation
+}
+
+// ── FM thumbnail concurrency limiter ──
+// Avoids opening hundreds of simultaneous HTTP connections for thumbnails.
+const _FM_THUMB_CONCURRENCY = 4;
+let _fmThumbActive = 0;
+const _fmThumbQueue = [];
+
+function _fmThumbLoadNext() {
+    while (_fmThumbActive < _FM_THUMB_CONCURRENCY && _fmThumbQueue.length) {
+        const { img, src } = _fmThumbQueue.shift();
+        if (!img.isConnected || img.src) continue;  // skip detached / already loaded imgs
+        _fmThumbActive++;
+        const onDone = () => { _fmThumbActive--; _fmThumbLoadNext(); };
+        img.onload = onDone;
+        img.onerror = onDone;
+        img.src = src;
+        img.removeAttribute('data-src');
+        img.classList.remove('fm-thumb-lazy');
+    }
+}
+
+function _fmThumbEnqueue(img, src) {
+    _fmThumbQueue.push({ img, src });
+    _fmThumbLoadNext();
+}
+
 function renderFM(body, state) {
     // View mode state
     if (!state.viewMode) {
@@ -77,27 +120,29 @@ function renderFM(body, state) {
         localStorage.setItem('fmViewMode', mode);
         renderFileList();
         updateViewModeButtons();
+        if (mode === 'thumb') _fmPregenerateThumbs(state.path);
     }
     body.innerHTML = `
         <div class="fm">
             <div class="fm-toolbar">
-                <button class="fm-toolbar-btn" id="fm-back" title="Wstecz"><i class="fas fa-arrow-left"></i></button>
-                <button class="fm-toolbar-btn" id="fm-forward" title="Dalej"><i class="fas fa-arrow-right"></i></button>
-                <button class="fm-toolbar-btn" id="fm-up" title="Folder nadrzędny"><i class="fas fa-arrow-up"></i></button>
-                <button class="fm-toolbar-btn" id="fm-refresh" title="Odśwież"><i class="fas fa-sync-alt"></i></button>
+                <button class="fm-toolbar-btn fm-sidebar-toggle" id="fm-sidebar-toggle" title="Nawigacja" aria-label="Pokaż/ukryj panel nawigacji"><i class="fas fa-bars"></i></button>
+                <button class="fm-toolbar-btn" id="fm-back" title="Wstecz" aria-label="Wstecz"><i class="fas fa-arrow-left"></i></button>
+                <button class="fm-toolbar-btn" id="fm-forward" title="Dalej" aria-label="Dalej"><i class="fas fa-arrow-right"></i></button>
+                <button class="fm-toolbar-btn" id="fm-up" title="Folder nadrzędny" aria-label="Folder nadrzędny"><i class="fas fa-arrow-up"></i></button>
+                <button class="fm-toolbar-btn" id="fm-refresh" title="Odśwież" aria-label="Odśwież"><i class="fas fa-sync-alt"></i></button>
                 <div class="fm-toolbar-sep"></div>
-                <div class="fm-breadcrumb" id="fm-breadcrumb"></div>
+                <div class="fm-breadcrumb" id="fm-breadcrumb" aria-label="Ścieżka nawigacji" role="navigation"></div>
                 <div class="fm-toolbar-sep"></div>
-                <button class="fm-toolbar-btn" id="fm-newfolder" title="Nowy folder"><i class="fas fa-folder-plus"></i></button>
-                <button class="fm-toolbar-btn" id="fm-upload" title="Prześlij pliki"><i class="fas fa-upload"></i></button>
-                <button class="fm-toolbar-btn" id="fm-upload-folder" title="Prześlij folder"><i class="fas fa-folder"></i><i class="fas fa-arrow-up fm-folder-upload-arrow"></i></button>
-                <button class="fm-toolbar-btn" id="fm-download" title="Pobierz"><i class="fas fa-download"></i></button>
-                <button class="fm-toolbar-btn" id="fm-delete" title="Do kosza"><i class="fas fa-trash"></i></button>
+                <button class="fm-toolbar-btn" id="fm-newfolder" title="Nowy folder (Ctrl+N)" aria-label="Nowy folder"><i class="fas fa-folder-plus"></i></button>
+                <button class="fm-toolbar-btn" id="fm-upload" title="Prześlij pliki (Ctrl+U)" aria-label="Prześlij pliki"><i class="fas fa-upload"></i></button>
+                <button class="fm-toolbar-btn" id="fm-upload-folder" title="Prześlij folder" aria-label="Prześlij folder"><i class="fas fa-folder"></i><i class="fas fa-arrow-up fm-folder-upload-arrow"></i></button>
+                <button class="fm-toolbar-btn" id="fm-download" title="Pobierz zaznaczone" aria-label="Pobierz zaznaczone"><i class="fas fa-download"></i></button>
+                <button class="fm-toolbar-btn" id="fm-delete" title="Do kosza (Delete)" aria-label="Przenieś do kosza"><i class="fas fa-trash"></i></button>
                 <div class="fm-toolbar-sep"></div>
-                <div class="fm-view-switcher" id="fm-view-switcher">
-                    <button class="fm-view-btn" data-view="list" title="Widok listy"><i class="fas fa-list"></i></button>
-                    <button class="fm-view-btn" data-view="grid" title="Widok ikon"><i class="fas fa-th"></i></button>
-                    <button class="fm-view-btn" data-view="thumb" title="Miniatury"><i class="fas fa-th-large"></i></button>
+                <div class="fm-view-switcher" id="fm-view-switcher" role="group" aria-label="Tryb widoku">
+                    <button class="fm-view-btn" data-view="list" title="Widok listy" aria-label="Widok listy"><i class="fas fa-list"></i></button>
+                    <button class="fm-view-btn" data-view="grid" title="Widok ikon" aria-label="Widok ikon"><i class="fas fa-th"></i></button>
+                    <button class="fm-view-btn" data-view="thumb" title="Miniatury" aria-label="Widok miniatur"><i class="fas fa-th-large"></i></button>
                 </div>
                 <div class="fm-sort-dropdown" id="fm-sort-dropdown">
                     <button class="fm-toolbar-btn" id="fm-sort-btn" title="Sortuj">
@@ -116,12 +161,12 @@ function renderFM(body, state) {
                     </div>
                 </div>
                 <div class="fm-toolbar-sep"></div>
-                <button class="fm-toolbar-btn" id="fm-analyze" title="Analiza dysku"><i class="fas fa-chart-pie"></i></button>
+                <button class="fm-toolbar-btn" id="fm-analyze" title="Analiza dysku" aria-label="Analiza dysku"><i class="fas fa-chart-pie"></i></button>
                 <div class="fm-toolbar-sep"></div>
-                <div class="fm-search-box" id="fm-search-box">
-                    <i class="fas fa-search fm-search-icon"></i>
-                    <input type="text" id="fm-search-input" placeholder="Szukaj..." autocomplete="off">
-                    <button class="fm-search-clear hidden" id="fm-search-clear" title="Wyczyść"><i class="fas fa-times"></i></button>
+                <div class="fm-search-box" id="fm-search-box" role="search">
+                    <i class="fas fa-search fm-search-icon" aria-hidden="true"></i>
+                    <input type="text" id="fm-search-input" placeholder="Szukaj..." autocomplete="off" aria-label="Szukaj plików">
+                    <button class="fm-search-clear hidden" id="fm-search-clear" title="Wyczyść" aria-label="Wyczyść wyszukiwanie"><i class="fas fa-times"></i></button>
                 </div>
             </div>
             <!-- Clipboard indicator -->
@@ -164,7 +209,7 @@ function renderFM(body, state) {
                         <span class="fm-page-info" id="fm-page-info"></span>
                         <button class="fm-page-btn" id="fm-page-next" title="Następna strona"><i class="fas fa-chevron-right"></i></button>
                     </div>
-                    <div class="fm-statusbar" id="fm-statusbar"></div>
+                    <div class="fm-statusbar" id="fm-statusbar" aria-live="polite" aria-atomic="true"></div>
                     <!-- Disk analytics panel (hidden) -->
                     <div class="fm-ana-panel fm-ana-overlay hidden" id="fm-ana-panel">
                         <div class="fm-ana-header">
@@ -468,6 +513,11 @@ function renderFM(body, state) {
 
     function renderFileList() {
         const list = body.querySelector('#fm-file-list');
+        // Set ARIA attributes on list container
+        list.setAttribute('role', 'listbox');
+        list.setAttribute('tabindex', '0');
+        list.setAttribute('aria-multiselectable', 'true');
+        list.setAttribute('aria-label', t('Pliki i foldery'));
         const allItems = state.searchResults !== null ? state.searchResults : state.items;
         const sorted = sortItems(allItems);
 
@@ -517,25 +567,26 @@ function renderFM(body, state) {
                 const idx = pageStart + localIdx;
                 const icon = getFileIcon(item);
                 const selected = state.selected.has(item.name);
+                const focused = idx === state.focusedIndex;
                 const share = getShareForItem(item);
                 const sharedBadge = share ? ` <span class="fm-shared-badge" title="Udostępniony jako: ${share.name}"><i class="fas fa-share-alt"></i></span>` : '';
-                const galBadge = item.is_dir && state.gallerySources.some(s => s.path === itemFullPath(item)) ? ' <span class="fm-shared-badge" title="Folder multimedialny" class="app-icon-gallery"><i class="fas fa-images"></i></span>' : '';
+                const galBadge = item.is_dir && state.gallerySources.some(s => s.path === itemFullPath(item)) ? ' <span class="fm-shared-badge app-icon-gallery" title="Folder multimedialny"><i class="fas fa-images"></i></span>' : '';
                 const lockBadge = item.protected ? ` <span class="fm-shared-badge" title="${item.locked ? t('Folder chroniony hasłem (zablokowany)') : t('Folder chroniony hasłem (odblokowany)')}" style="color:${item.locked ? 'var(--danger)' : 'var(--success, #22c55e)'}"><i class="fas ${item.locked ? 'fa-lock' : 'fa-lock-open'}"></i></span>` : '';
                 return `
-                    <div class="fm-file-item${selected ? ' selected' : ''}" data-name="${item.name}" data-isdir="${item.is_dir}" data-idx="${idx}"${item.path ? ` data-path="${item.path}"` : ''}>
+                    <div class="fm-file-item${selected ? ' selected' : ''}${focused ? ' fm-focused' : ''}" id="fm-item-${idx}" role="option" aria-selected="${selected}" data-name="${item.name}" data-isdir="${item.is_dir}" data-idx="${idx}"${item.path ? ` data-path="${item.path}"` : ''}>
                         <div class="fm-col-checkbox">
-                            <label class="fm-checkbox-label" data-cb-name="${item.name}">
+                            <label class="fm-checkbox-label" data-cb-name="${item.name}" aria-label="Zaznacz ${item.name}">
                                 <input type="checkbox" ${selected ? 'checked' : ''}>
                                 <span class="fm-cb-custom"></span>
                             </label>
                         </div>
                         <div class="fm-file-name">
-                            <i class="fas ${icon}" ${item.locked ? 'class="app-text-danger"' : ''}></i>
+                            <i class="fas ${icon}${item.locked ? ' app-text-danger' : ''}" aria-hidden="true"></i>
                             <span>${item.name}</span>${_searchPath(item)}${lockBadge}${sharedBadge}${galBadge}
                         </div>
                         <div class="fm-file-size">${_dirSize(item)}</div>
                         <div class="fm-file-date">${formatDate(item.modified)}</div>
-                        <div class="fm-file-perms">${item.permissions || ''}</div>
+                        <div class="fm-file-perms" title="${item.permissions_symbolic || item.permissions || ''}${item.owner ? ` | ${item.owner}:${item.group}` : ''}">${item.permissions_symbolic || item.permissions || ''}</div>
                     </div>
                 `;
             }).join('');
@@ -545,16 +596,17 @@ function renderFM(body, state) {
                 const idx = pageStart + localIdx;
                 const icon = getFileIcon(item);
                 const selected = state.selected.has(item.name);
+                const focused = idx === state.focusedIndex;
                 const share = getShareForItem(item);
                 const sharedBadge = share ? ` <span class="fm-shared-badge" title="Udostępniony jako: ${share.name}"><i class="fas fa-share-alt"></i></span>` : '';
-                const galBadge = item.is_dir && state.gallerySources.some(s => s.path === itemFullPath(item)) ? ' <span class="fm-shared-badge" title="Folder multimedialny" class="app-icon-gallery"><i class="fas fa-images"></i></span>' : '';
+                const galBadge = item.is_dir && state.gallerySources.some(s => s.path === itemFullPath(item)) ? ' <span class="fm-shared-badge app-icon-gallery" title="Folder multimedialny"><i class="fas fa-images"></i></span>' : '';
                 const lockBadge = item.protected ? ` <span class="fm-shared-badge" title="${item.locked ? 'Zablokowany' : 'Odblokowany'}" style="color:${item.locked ? 'var(--danger)' : 'var(--success, #22c55e)'}"><i class="fas ${item.locked ? 'fa-lock' : 'fa-lock-open'}"></i></span>` : '';
                 return `
-                    <div class="fm-grid-item${selected ? ' selected' : ''}" data-name="${item.name}" data-isdir="${item.is_dir}" data-idx="${idx}"${item.path ? ` data-path="${item.path}"` : ''}>
-                        <div class="fm-grid-icon"><i class="fas ${icon}" ${item.locked ? 'class="app-text-danger"' : ''}></i></div>
+                    <div class="fm-grid-item${selected ? ' selected' : ''}${focused ? ' fm-focused' : ''}" id="fm-item-${idx}" role="option" aria-selected="${selected}" data-name="${item.name}" data-isdir="${item.is_dir}" data-idx="${idx}"${item.path ? ` data-path="${item.path}"` : ''}>
+                        <div class="fm-grid-icon"><i class="fas ${icon}${item.locked ? ' app-text-danger' : ''}" aria-hidden="true"></i></div>
                         <div class="fm-grid-label">${item.name}${lockBadge}${sharedBadge}${galBadge}</div>
                         <div class="fm-grid-checkbox">
-                            <label class="fm-checkbox-label" data-cb-name="${item.name}">
+                            <label class="fm-checkbox-label" data-cb-name="${item.name}" aria-label="Zaznacz ${item.name}">
                                 <input type="checkbox" ${selected ? 'checked' : ''}>
                                 <span class="fm-cb-custom"></span>
                             </label>
@@ -568,25 +620,26 @@ function renderFM(body, state) {
                 const idx = pageStart + localIdx;
                 const isImage = /\.(jpg|jpeg|png|gif|bmp|webp|svg|ico)$/i.test(item.name);
                 const selected = state.selected.has(item.name);
+                const focused = idx === state.focusedIndex;
                 const share = getShareForItem(item);
                 const sharedBadge = share ? ` <span class="fm-shared-badge" title="Udostępniony jako: ${share.name}"><i class="fas fa-share-alt"></i></span>` : '';
-                const galBadge = item.is_dir && state.gallerySources.some(s => s.path === itemFullPath(item)) ? ' <span class="fm-shared-badge" title="Folder multimedialny" class="app-icon-gallery"><i class="fas fa-images"></i></span>' : '';
+                const galBadge = item.is_dir && state.gallerySources.some(s => s.path === itemFullPath(item)) ? ' <span class="fm-shared-badge app-icon-gallery" title="Folder multimedialny"><i class="fas fa-images"></i></span>' : '';
                 const lockBadge = item.protected ? ` <span class="fm-shared-badge" title="${item.locked ? 'Zablokowany' : 'Odblokowany'}" style="color:${item.locked ? 'var(--danger)' : 'var(--success, #22c55e)'}"><i class="fas ${item.locked ? 'fa-lock' : 'fa-lock-open'}"></i></span>` : '';
                 let thumbHtml = '';
                 if (isImage && !item.is_dir) {
-                    // Use preview endpoint for images
+                    // Lazy-loaded image: src will be set by IntersectionObserver
                     const imgSrc = `/api/files/preview?path=${encodeURIComponent(itemFullPath(item))}&w=120&h=120`;
-                    thumbHtml = `<img src="${imgSrc}" class="fm-thumb-img" alt="${item.name}">`;
+                    thumbHtml = `<img data-src="${imgSrc}" class="fm-thumb-img fm-thumb-lazy" alt="${item.name}">`;
                 } else {
                     const icon = getFileIcon(item);
-                    thumbHtml = `<div class="fm-thumb-icon"><i class="fas ${icon}" ${item.locked ? 'class="app-text-danger"' : ''}></i></div>`;
+                    thumbHtml = `<div class="fm-thumb-icon"><i class="fas ${icon}${item.locked ? ' app-text-danger' : ''}" aria-hidden="true"></i></div>`;
                 }
                 return `
-                    <div class="fm-thumb-item${selected ? ' selected' : ''}" data-name="${item.name}" data-isdir="${item.is_dir}" data-idx="${idx}"${item.path ? ` data-path="${item.path}"` : ''}>
+                    <div class="fm-thumb-item${selected ? ' selected' : ''}${focused ? ' fm-focused' : ''}" id="fm-item-${idx}" role="option" aria-selected="${selected}" data-name="${item.name}" data-isdir="${item.is_dir}" data-idx="${idx}"${item.path ? ` data-path="${item.path}"` : ''}>
                         <div class="fm-thumb-preview">${thumbHtml}</div>
                         <div class="fm-thumb-label">${item.name}${lockBadge}${sharedBadge}${galBadge}</div>
                         <div class="fm-thumb-checkbox">
-                            <label class="fm-checkbox-label" data-cb-name="${item.name}">
+                            <label class="fm-checkbox-label" data-cb-name="${item.name}" aria-label="Zaznacz ${item.name}">
                                 <input type="checkbox" ${selected ? 'checked' : ''}>
                                 <span class="fm-cb-custom"></span>
                             </label>
@@ -634,6 +687,39 @@ function renderFM(body, state) {
         }
         updateSortLabel();
 
+        // ── Lazy thumbnail loading via IntersectionObserver ──
+        if (state.viewMode === 'thumb') {
+            // Disconnect previous observer if any
+            if (state._thumbObserver) {
+                state._thumbObserver.disconnect();
+                state._thumbObserver = null;
+            }
+            const lazyImgs = list.querySelectorAll('img.fm-thumb-lazy');
+            if (lazyImgs.length > 0) {
+                const obs = new IntersectionObserver((entries) => {
+                    entries.forEach(entry => {
+                        if (entry.isIntersecting) {
+                            const img = entry.target;
+                            if (img.dataset.src) {
+                                // Use concurrency-limited loader to avoid hundreds of parallel requests
+                                _fmThumbEnqueue(img, img.dataset.src);
+                            }
+                            obs.unobserve(img);
+                        }
+                    });
+                }, { root: list, rootMargin: '200px', threshold: 0 });
+                lazyImgs.forEach(img => obs.observe(img));
+                state._thumbObserver = obs;
+            }
+        } else if (state._thumbObserver) {
+            state._thumbObserver.disconnect();
+            state._thumbObserver = null;
+        }
+
+        // Update aria-activedescendant for keyboard focus
+        const activeId = state.focusedIndex >= 0 ? `fm-item-${state.focusedIndex}` : '';
+        list.setAttribute('aria-activedescendant', activeId);
+
     }
 
     /* ─── Lightweight selection update (no DOM rebuild) ─── */
@@ -644,6 +730,7 @@ function renderFM(body, state) {
             const name = el.dataset.name;
             const isSelected = state.selected.has(name);
             el.classList.toggle('selected', isSelected);
+            el.setAttribute('aria-selected', isSelected ? 'true' : 'false');
             const cb = el.querySelector('input[type="checkbox"]');
             if (cb) cb.checked = isSelected;
         });
@@ -685,6 +772,22 @@ function renderFM(body, state) {
             header.classList.remove('fm-header-selecting');
         }
         updateClipboardBar();
+    }
+
+    /* ─── Keyboard focus indicator (roving highlight) ─── */
+    function setFocusedIndex(idx, scrollIntoView = true) {
+        state.focusedIndex = idx;
+        const list = body.querySelector('#fm-file-list');
+        const itemSel = '.fm-file-item, .fm-grid-item, .fm-thumb-item';
+        const activeId = idx >= 0 ? `fm-item-${idx}` : '';
+        list.setAttribute('aria-activedescendant', activeId);
+        list.querySelectorAll(itemSel).forEach(el => {
+            const isActive = parseInt(el.dataset.idx) === idx;
+            el.classList.toggle('fm-focused', isActive);
+            if (isActive && scrollIntoView) {
+                el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            }
+        });
     }
 
     function updateClipboardBar() {
@@ -1167,9 +1270,19 @@ function renderFM(body, state) {
             const galPath = itemFullPath(singleItem);
             const isGal = state.gallerySources && state.gallerySources.some(s => s.path === galPath);
             if (isGal) {
+                items.push({ icon: 'fa-images', label: t('Otwórz w galerii'), action: 'gallery-open', cls: 'accent' });
                 items.push({ icon: 'fa-images', label: t('Usuń z galerii'), action: 'gallery-remove', cls: 'accent' });
             } else {
                 items.push({ icon: 'fa-images', label: t('Oznacz jako multimedialny'), action: 'gallery-add', cls: 'accent' });
+            }
+        }
+
+        // Open image/video file in gallery
+        if (singleItem && !singleItem.is_dir) {
+            const _fmExt = singleItem.name.split('.').pop().toLowerCase();
+            const _fmMediaExts = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg', 'mp4', 'webm', 'mkv', 'avi', 'mov'];
+            if (_fmMediaExts.includes(_fmExt)) {
+                items.push({ icon: 'fa-images', label: t('Otwórz w galerii'), action: 'open-in-gallery', cls: 'accent' });
             }
         }
 
@@ -1191,6 +1304,12 @@ function renderFM(body, state) {
             } else {
                 items.push({ icon: 'fa-lock', label: t('Zabezpiecz hasłem'), action: 'folder-pw-set', cls: 'accent' });
             }
+        }
+
+        // Properties — single item
+        if (singleItem) {
+            items.push({ sep: true });
+            items.push({ icon: 'fa-info-circle', label: t('Właściwości'), action: 'properties' });
         }
 
         // Delete
@@ -1263,6 +1382,13 @@ function renderFM(body, state) {
                     } catch (e) { toast(t('Błąd: ') + (e.message || e), 'error'); }
                     break;
                 }
+                case 'gallery-open': {
+                    const goItem = [...state.selected][0];
+                    const goPath = itemFullPath(goItem);
+                    const galApp = NAS.apps?.find(a => a.id === 'gallery') || { id: 'gallery', type: 'builtin' };
+                    openApp(galApp, { folder: goPath });
+                    break;
+                }
                 case 'gallery-remove': {
                     const gr = [...state.selected][0];
                     const grPath = itemFullPath(gr);
@@ -1282,8 +1408,9 @@ function renderFM(body, state) {
                 }
                 case 'folder-pw-set': {
                     const fpPath = itemFullPath([...state.selected][0]);
-                    const pw = await promptDialog(t('Zabezpiecz hasłem'), t('Podaj hasło dla folderu:'));
+                    const pw = await promptDialog(t('Zabezpiecz hasłem'), t('Podaj hasło dla folderu (min. 4 znaki):'));
                     if (!pw) break;
+                    if (pw.length < 4) { toast(t('Hasło musi mieć minimum 4 znaki'), 'error'); break; }
                     const pw2 = await promptDialog(t('Potwierdź hasło'), t('Powtórz hasło:'));
                     if (pw !== pw2) { toast(t('Hasła nie są identyczne'), 'error'); break; }
                     const setRes = await api('/files/folder-password', { method: 'POST', body: { path: fpPath, password: pw } });
@@ -1302,18 +1429,25 @@ function renderFM(body, state) {
                 }
                 case 'folder-unlock': {
                     const fuPath = itemFullPath([...state.selected][0]);
-                    const upw = await promptDialog('Odblokuj folder', t('Podaj hasło:'));
+                    const upw = await promptDialog(t('Odblokuj folder'), t('Podaj hasło:'));
                     if (!upw) break;
                     const ulRes = await api('/files/folder-unlock', { method: 'POST', body: { path: fuPath, password: upw } });
-                    if (ulRes.ok) { toast('Folder odblokowany', 'success'); navigateTo(state.path); }
+                    if (ulRes.ok) { toast(t('Folder odblokowany'), 'success'); navigateTo(state.path); }
                     else toast(ulRes.error || t('Nieprawidłowe hasło'), 'error');
                     break;
                 }
                 case 'folder-lock': {
                     const flPath = itemFullPath([...state.selected][0]);
                     const lkRes = await api('/files/folder-lock', { method: 'POST', body: { path: flPath } });
-                    if (lkRes.ok) { toast('Folder zablokowany', 'success'); navigateTo(state.path); }
+                    if (lkRes.ok) { toast(t('Folder zablokowany'), 'success'); navigateTo(state.path); }
                     else toast(lkRes.error || t('Błąd'), 'error');
+                    break;
+                }
+                case 'properties': {
+                    const propItem = singleItem;
+                    if (!propItem) break;
+                    const propPath = itemFullPath(propItem);
+                    await showPropertiesDialog(propItem, propPath);
                     break;
                 }
                 case 'transfer-remote': transferToRemoteNAS(); break;
@@ -1586,10 +1720,17 @@ function renderFM(body, state) {
                 await renderTrashView();
                 return;
             } else {
-                data = await api(`/files/list?path=${encodeURIComponent(path)}`);
+                // Use hover-prefetched listing if available and fresh (avoids redundant request)
+                const _prefetched = _fmPrefetchCache.get(path);
+                if (_prefetched && (Date.now() - _prefetched.ts) < _FM_PREFETCH_TTL) {
+                    data = _prefetched.data;
+                    _fmPrefetchCache.delete(path);  // consume the cached entry
+                } else {
+                    data = await api(`/files/list?path=${encodeURIComponent(path)}`);
+                }
                 // Handle locked folder response
                 if (data.locked) {
-                    const pw = await promptDialog('Folder chroniony', t('Podaj hasło aby otworzyć:'));
+                    const pw = await promptDialog(t('Folder chroniony'), t('Podaj hasło aby otworzyć:'));
                     if (!pw) return;
                     const unlockResult = await api('/files/folder-unlock', { method: 'POST', body: { path: data.protected_path || path, password: pw } });
                     if (unlockResult.ok) {
@@ -1603,10 +1744,19 @@ function renderFM(body, state) {
             state._lastRealPath = data.path;  // remember for dup scanner
             state.items = data.items;
             state.selected.clear();
+            state.focusedIndex = -1;
+            state.lastClickedIndex = -1;
             // Reset pagination, search, dir sizes on navigation
             state.page = 0;
             state.searchResults = null;
             state.dirSizes = {};
+            // Stop any previous background dir-size polling
+            if (state._dirSizePollTimer) {
+                clearTimeout(state._dirSizePollTimer);
+                state._dirSizePollTimer = null;
+            }
+            state._dirSizeJobs = {};
+            state._dirSizePollInterval = 1500;
             const si = body.querySelector('#fm-search-input');
             if (si) { si.value = ''; }
             const sc = body.querySelector('#fm-search-clear');
@@ -1623,6 +1773,10 @@ function renderFM(body, state) {
             renderSidebar();
             renderFileList();
             updateNavButtons();
+            // Auto-start background dir-size calculation for directories
+            startBgDirSizes();
+            // Pre-generate thumbnails in background if already in thumb view
+            if (state.viewMode === 'thumb') _fmPregenerateThumbs(state.path);
         } catch (err) {
             toast(t('Nie można otworzyć folderu'), 'error');
         }
@@ -1696,86 +1850,322 @@ function renderFM(body, state) {
         input.click();
     }
 
-    function _doUploadWithPaths(files) {
-        const form = new FormData();
-        form.append('path', state.path);
-        for (const f of files) {
-            form.append('files', f);
-            // Preserve relative paths for folder structure
-            form.append('rel_paths', f.webkitRelativePath || f.name);
+    async function _doUploadWithPaths(files) {
+        const filesArr = Array.from(files);
+        const total = filesArr.length;
+        // Separate large files (need chunked upload) from small ones (batch)
+        const largeFiles = filesArr.filter(f => f.size >= _CHUNK_THRESHOLD);
+        const smallFiles = filesArr.filter(f => f.size < _CHUNK_THRESHOLD);
+        let done = 0;
+        let cancelled = false;
+
+        const allDone = () => {
+            finishFileOpProgress(true, { channel: 'fm', message: `Przesłano ${total} plik(ów)` });
+            navigateTo(state.path);
+        };
+
+        // Upload large files one by one using chunked upload to their proper subdirectory
+        if (largeFiles.length > 0) {
+            showFileOpProgress({ operation: 'upload', channel: 'fm', percent: 0, done: 0, total, current_file: largeFiles[0]?.name || '' });
+            window._fileopUploadXhr = window._fileopUploadXhr || {};
+            window._fileopUploadXhr['fm'] = { abort: () => { cancelled = true; } };
+
+            for (const f of largeFiles) {
+                if (cancelled) break;
+                // Compute destination directory from relative path (e.g. "Photos/2024/beach.jpg" → destDir includes "Photos/2024")
+                const relPath = (f.webkitRelativePath || f.name).replace(/\\/g, '/');
+                const parts = relPath.split('/').filter(p => p && p !== '..');
+                let destDir = state.path.replace(/\/$/, '');
+                if (parts.length > 1) {
+                    destDir = destDir + '/' + parts.slice(0, -1).join('/');
+                }
+
+                const overallPct = Math.round(done / total * 100);
+                showFileOpProgress({ operation: 'upload', channel: 'fm', percent: overallPct, done, total, current_file: f.name });
+                const ok = await _doChunkedUpload(f, destDir, (pct) => {
+                    const pctNow = Math.min(99, Math.round((done / total + pct / 100 / total) * 100));
+                    showFileOpProgress({ operation: 'upload', channel: 'fm', percent: pctNow, done, total, current_file: `${f.name} — ${pct}%` });
+                }, () => cancelled, true /* create_dir */);
+
+                if (ok === 'abort') {
+                    cancelled = true;
+                    delete (window._fileopUploadXhr || {})['fm'];
+                    finishFileOpProgress(false, { channel: 'fm', message: t('Przerwano') });
+                    return;
+                }
+                if (ok) done++;
+            }
+            delete (window._fileopUploadXhr || {})['fm'];
         }
 
-        const xhr = new XMLHttpRequest();
-        showFileOpProgress({ operation: 'upload', channel: 'fm', percent: 0, done: 0, total: files.length, current_file: files[0]?.name || '' });
+        if (cancelled) return;
 
-        xhr.upload.addEventListener('progress', (e) => {
-            if (e.lengthComputable) {
-                const pct = Math.round(e.loaded / e.total * 100);
-                const done = Math.min(Math.round(e.loaded / (e.total / files.length)), files.length);
-                showFileOpProgress({ operation: 'upload', channel: 'fm', percent: pct, done, total: files.length, current_file: `${formatBytes(e.loaded)} / ${formatBytes(e.total)}` });
-            }
-        });
+        if (smallFiles.length === 0) {
+            allDone();
+            return;
+        }
 
-        xhr.addEventListener('load', () => {
-            if (xhr.status >= 200 && xhr.status < 300) {
-                finishFileOpProgress(true, { channel: 'fm', message: `Przesłano ${files.length} plik(ów)` });
-                navigateTo(state.path);
-            } else {
-                let msg = t('Błąd przesyłania');
-                try { msg = JSON.parse(xhr.responseText).error || msg; } catch {}
-                finishFileOpProgress(false, { channel: 'fm', message: msg });
-            }
-        });
-
-        xhr.addEventListener('error', () => {
-            finishFileOpProgress(false, { channel: 'fm', message: t('Błąd sieci') });
-        });
-
-        xhr.open('POST', '/api/files/upload');
-        if (NAS.token) xhr.setRequestHeader('Authorization', `Bearer ${NAS.token}`);
-        xhr.send(form);
+        // Batch upload small files, preserving relative paths for folder structure
+        const smallRelPaths = smallFiles.map(f => f.webkitRelativePath || f.name);
+        _doUploadBatch(smallFiles, total, allDone, done, smallRelPaths);
     }
 
+    const _CHUNK_THRESHOLD = 10 * 1024 * 1024; // 10 MB — use chunked upload for larger files
+    const _CHUNK_SIZE = 5 * 1024 * 1024;        // 5 MB chunks
+    const _CHUNK_MAX_RETRIES = 3;
+
     function _doUpload(files) {
-        const form = new FormData();
-        form.append('path', state.path);
-        let totalSize = 0;
-        for (const f of files) { form.append('files', f); totalSize += f.size; }
+        const largeFiles = Array.from(files).filter(f => f.size >= _CHUNK_THRESHOLD);
+        const smallFiles = Array.from(files).filter(f => f.size < _CHUNK_THRESHOLD);
+        const total = files.length;
+        let done = 0;
 
-        const xhr = new XMLHttpRequest();
-        // Show progress using the existing fileop floating bar
-        showFileOpProgress({ operation: 'upload', channel: 'fm', percent: 0, done: 0, total: files.length, current_file: files[0]?.name || '' });
+        const allDone = () => {
+            finishFileOpProgress(true, { channel: 'fm', message: `Przesłano ${total} plik(ów)` });
+            navigateTo(state.path);
+        };
 
-        xhr.upload.addEventListener('progress', (e) => {
-            if (e.lengthComputable) {
-                const pct = Math.round(e.loaded / e.total * 100);
-                const done = Math.min(Math.round(e.loaded / (e.total / files.length)), files.length);
-                showFileOpProgress({ operation: 'upload', channel: 'fm', percent: pct, done, total: files.length, current_file: `${formatBytes(e.loaded)} / ${formatBytes(e.total)}` });
+        // Upload all files, chunked for large ones, then regular for small
+        if (largeFiles.length === 0) {
+            // All small files — single XHR for efficiency
+            _doUploadBatch(smallFiles, total, allDone);
+            return;
+        }
+
+        // Mixed: upload large files one by one (chunked), then batch small ones
+        let cancelled = false;
+
+        const uploadNext = async (idx) => {
+            if (cancelled) return;
+            if (idx >= largeFiles.length) {
+                // Done with large files, now batch-upload small ones
+                if (smallFiles.length === 0) { allDone(); return; }
+                _doUploadBatch(smallFiles, total, allDone, done);
+                return;
             }
-        });
+            const f = largeFiles[idx];
+            showFileOpProgress({ operation: 'upload', channel: 'fm', percent: Math.round(done / total * 100), done, total, current_file: f.name });
+            const ok = await _doChunkedUpload(f, state.path, (pct) => {
+                const overallPct = Math.round((done / total * 100) + pct / total);
+                showFileOpProgress({ operation: 'upload', channel: 'fm', percent: Math.min(99, overallPct), done, total, current_file: `${f.name} — ${pct}%` });
+            }, () => cancelled);
+            if (ok === 'abort') { cancelled = true; finishFileOpProgress(false, { channel: 'fm', message: t('Przerwano') }); return; }
+            if (ok) { done++; }
+            await uploadNext(idx + 1);
+        };
 
-        xhr.addEventListener('load', () => {
-            if (xhr.status >= 200 && xhr.status < 300) {
-                finishFileOpProgress(true, { channel: 'fm', message: `Przesłano ${files.length} plik(ów)` });
-                navigateTo(state.path);
-            } else {
-                let msg = t('Błąd przesyłania');
-                try { msg = JSON.parse(xhr.responseText).error || msg; } catch {}
-                finishFileOpProgress(false, { channel: 'fm', message: msg });
+        showFileOpProgress({ operation: 'upload', channel: 'fm', percent: 0, done: 0, total, current_file: largeFiles[0]?.name || '' });
+        // Store cancel hook for large file uploads
+        window._fileopUploadXhr = window._fileopUploadXhr || {};
+        window._fileopUploadXhr['fm'] = { abort: () => { cancelled = true; } };
+        uploadNext(0).finally(() => {
+            delete (window._fileopUploadXhr || {})['fm'];
+        });
+    }
+
+    function _doUploadBatch(files, totalOverall, onDone, startDone = 0, relPaths = null) {
+        if (files.length === 0) { onDone(); return; }
+        const _BATCH_MAX_RETRIES = 2;
+        let retriesLeft = _BATCH_MAX_RETRIES;
+
+        const attempt = () => {
+            const form = new FormData();
+            form.append('path', state.path);
+            for (let i = 0; i < files.length; i++) {
+                form.append('files', files[i]);
+                if (relPaths && relPaths[i]) form.append('rel_paths', relPaths[i]);
             }
-        });
 
-        xhr.addEventListener('error', () => {
-            finishFileOpProgress(false, { channel: 'fm', message: t('Błąd sieci') });
-        });
+            const xhr = new XMLHttpRequest();
+            window._fileopUploadXhr = window._fileopUploadXhr || {};
+            window._fileopUploadXhr['fm'] = xhr;
+            showFileOpProgress({ operation: 'upload', channel: 'fm', percent: Math.round(startDone / totalOverall * 100), done: startDone, total: totalOverall, current_file: files[0]?.name || '' });
 
-        xhr.addEventListener('abort', () => {
-            finishFileOpProgress(false, { channel: 'fm', message: 'Przerwano' });
-        });
+            xhr.upload.addEventListener('progress', (e) => {
+                if (e.lengthComputable) {
+                    const batchPct = e.loaded / e.total;
+                    const overallPct = Math.round((startDone + batchPct * files.length) / totalOverall * 100);
+                    const doneSoFar = startDone + Math.min(Math.round(batchPct * files.length), files.length);
+                    showFileOpProgress({ operation: 'upload', channel: 'fm', percent: Math.min(99, overallPct), done: doneSoFar, total: totalOverall, current_file: `${formatBytes(e.loaded)} / ${formatBytes(e.total)}` });
+                }
+            });
 
-        xhr.open('POST', '/api/files/upload');
-        if (NAS.token) xhr.setRequestHeader('Authorization', `Bearer ${NAS.token}`);
-        xhr.send(form);
+            xhr.addEventListener('load', () => {
+                delete (window._fileopUploadXhr || {})['fm'];
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    onDone();
+                } else if (xhr.status >= 500 && retriesLeft > 0) {
+                    retriesLeft--;
+                    setTimeout(attempt, 1500 * (_BATCH_MAX_RETRIES - retriesLeft));
+                } else {
+                    let msg = t('Błąd przesyłania');
+                    try { msg = JSON.parse(xhr.responseText).error || msg; } catch {}
+                    finishFileOpProgress(false, { channel: 'fm', message: msg });
+                }
+            });
+
+            xhr.addEventListener('error', () => {
+                delete (window._fileopUploadXhr || {})['fm'];
+                if (retriesLeft > 0) {
+                    retriesLeft--;
+                    setTimeout(attempt, 1500 * (_BATCH_MAX_RETRIES - retriesLeft));
+                } else {
+                    finishFileOpProgress(false, { channel: 'fm', message: t('Błąd sieci') });
+                }
+            });
+
+            xhr.addEventListener('abort', () => {
+                delete (window._fileopUploadXhr || {})['fm'];
+                finishFileOpProgress(false, { channel: 'fm', message: t('Przerwano') });
+            });
+
+            xhr.open('POST', '/api/files/upload');
+            if (NAS.token) xhr.setRequestHeader('Authorization', `Bearer ${NAS.token}`);
+            xhr.send(form);
+        };
+
+        attempt();
+    }
+
+    async function _doChunkedUpload(file, destPath, onProgress, isCancelled, createDir = false) {
+        /**
+         * Upload a single large file in chunks with retry and resume support.
+         * createDir: if true, create destination directory if missing (for folder uploads).
+         * Returns true on success, false on error, 'abort' if cancelled.
+         */
+        const numChunks = Math.max(1, Math.ceil(file.size / _CHUNK_SIZE));
+        const MAX_SESSION_RESTARTS = 1; // allow one full restart on session expiry
+
+        async function _initSession() {
+            const init = await api('/files/upload-chunk-init', {
+                method: 'POST',
+                body: { path: destPath, filename: file.name, size: file.size, chunk_size: _CHUNK_SIZE, create_dir: createDir }
+            });
+            if (init.error) throw new Error(init.error);
+            return { sessionId: init.session_id, uploadedChunks: init.uploaded_chunks || [] };
+        }
+
+        // Initialize session
+        let sessionId;
+        let uploadedChunks = [];
+        let sessionRestarts = 0;
+        try {
+            ({ sessionId, uploadedChunks } = await _initSession());
+        } catch (e) {
+            toast(t('Błąd inicjalizacji przesyłania') + ': ' + (e.message || e), 'error');
+            return false;
+        }
+
+        // Upload missing chunks
+        for (let i = 0; i < numChunks; i++) {
+            if (isCancelled && isCancelled()) {
+                // Abort session server-side
+                try { await api('/files/upload-abort', { method: 'POST', body: { session_id: sessionId } }); } catch {}
+                return 'abort';
+            }
+            if (uploadedChunks.includes(i)) {
+                // Already uploaded (resume)
+                if (onProgress) onProgress(Math.round((i + 1) / numChunks * 100));
+                continue;
+            }
+
+            const start = i * _CHUNK_SIZE;
+            const end = Math.min(start + _CHUNK_SIZE, file.size);
+            const chunk = file.slice(start, end);
+
+            // Compute SHA-256 checksum for integrity verification
+            let chunkChecksum = '';
+            try {
+                const buf = await chunk.arrayBuffer();
+                const hash = await crypto.subtle.digest('SHA-256', buf);
+                chunkChecksum = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+            } catch {
+                chunkChecksum = ''; // crypto.subtle not available (non-HTTPS) — skip checksum
+            }
+
+            let retries = 0;
+            let chunkOk = false;
+            while (retries < _CHUNK_MAX_RETRIES && !chunkOk) {
+                if (isCancelled && isCancelled()) {
+                    try { await api('/files/upload-abort', { method: 'POST', body: { session_id: sessionId } }); } catch {}
+                    return 'abort';
+                }
+                try {
+                    const form = new FormData();
+                    form.append('session_id', sessionId);
+                    form.append('chunk_index', i);
+                    form.append('chunk', chunk, file.name);
+                    if (chunkChecksum) form.append('checksum', chunkChecksum);
+                    const res = await new Promise((resolve, reject) => {
+                        const xhr = new XMLHttpRequest();
+                        window._fileopUploadXhr = window._fileopUploadXhr || {};
+                        window._fileopUploadXhr['fm'] = xhr;
+                        xhr.addEventListener('load', () => {
+                            delete (window._fileopUploadXhr || {})['fm'];
+                            try { resolve(JSON.parse(xhr.responseText)); } catch { resolve({ error: 'parse error' }); }
+                        });
+                        xhr.addEventListener('error', () => {
+                            delete (window._fileopUploadXhr || {})['fm'];
+                            reject(new Error('network'));
+                        });
+                        xhr.addEventListener('abort', () => {
+                            delete (window._fileopUploadXhr || {})['fm'];
+                            reject(new Error('abort'));
+                        });
+                        xhr.open('POST', '/api/files/upload-chunk');
+                        if (NAS.token) xhr.setRequestHeader('Authorization', `Bearer ${NAS.token}`);
+                        xhr.send(form);
+                    });
+                    if (res.ok) {
+                        uploadedChunks = res.uploaded_chunks || uploadedChunks;
+                        chunkOk = true;
+                    } else if (res.expired) {
+                        // Session expired (e.g. server restart) — restart with a new session once
+                        if (sessionRestarts < MAX_SESSION_RESTARTS) {
+                            sessionRestarts++;
+                            try {
+                                ({ sessionId, uploadedChunks } = await _initSession());
+                                i = -1; // restart chunk loop (for-loop will i++ to 0)
+                            } catch (e) {
+                                toast(t('Błąd inicjalizacji przesyłania') + ': ' + (e.message || e), 'error');
+                                return false;
+                            }
+                            break; // break retry loop, restart outer for-loop
+                        }
+                        toast(t('Sesja przesyłania wygasła'), 'error');
+                        return false;
+                    } else {
+                        throw new Error(res.error || 'chunk error');
+                    }
+                } catch (e) {
+                    if (e.message === 'abort') return 'abort';
+                    retries++;
+                    if (retries >= _CHUNK_MAX_RETRIES) {
+                        toast(`Błąd przesyłania fragmentu ${i + 1}/${numChunks}: ${e.message}`, 'error');
+                        try { await api('/files/upload-abort', { method: 'POST', body: { session_id: sessionId } }); } catch {}
+                        return false;
+                    }
+                    // Wait before retry
+                    await new Promise(r => setTimeout(r, 1000 * retries));
+                }
+            }
+            if (onProgress) onProgress(Math.round((i + 1) / numChunks * 100));
+        }
+
+        // Finalize
+        try {
+            const fin = await api('/files/upload-complete', { method: 'POST', body: { session_id: sessionId, verify_checksum: true } });
+            if (fin.error) {
+                if (!fin.missing_chunks) {
+                    toast(t('Błąd finalizacji przesyłania') + ': ' + fin.error, 'error');
+                }
+                return false;
+            }
+            return true;
+        } catch (e) {
+            toast(t('Błąd finalizacji przesyłania') + ': ' + (e.message || e), 'error');
+            return false;
+        }
     }
 
     async function downloadSelected() {
@@ -1804,7 +2194,8 @@ function renderFM(body, state) {
                 body: { sources: paths }
             });
             if (r.error) { toast(r.error, 'error'); return; }
-            toast(r.message || 'Przygotowywanie archiwum ZIP…', 'info');
+            // Show initial progress bar immediately (socket.io updates will follow)
+            showFileOpProgress({ operation: 'download', channel: 'bg', percent: 0, done: 0, total: 1, current_file: t('Przygotowywanie archiwum…') });
             // Poll for readiness, then trigger browser download
             if (r.download_id) {
                 _pollDownloadReady(r.download_id);
@@ -1821,7 +2212,7 @@ function renderFM(body, state) {
             attempts++;
             if (attempts > maxAttempts) {
                 clearInterval(iv);
-                toast('Timeout przygotowania archiwum', 'error');
+                finishFileOpProgress(false, { channel: 'bg', message: t('Timeout przygotowania archiwum') });
                 return;
             }
             try {
@@ -1837,6 +2228,9 @@ function renderFM(body, state) {
                     document.body.appendChild(iframe);
                     setTimeout(() => { try { iframe.remove(); } catch(e) {} }, 120000);
                     toast(`Pobieranie ${r.name || 'archiwum'} rozpoczęte`, 'success');
+                } else if (r.error) {
+                    clearInterval(iv);
+                    finishFileOpProgress(false, { channel: 'bg', message: r.error });
                 }
             } catch(e) {
                 // network error — keep trying
@@ -1989,6 +2383,7 @@ function renderFM(body, state) {
         try {
             if (mode === 'copy') {
                 const r = await api('/files/copy', { method: 'POST', body: { sources: paths, dest, on_conflict: onConflict } });
+                if (r.error) { toast(r.error, 'error'); return; }
                 if (r.async) {
                     toast(r.message || 'Kopiowanie w tle…', 'info');
                     state.clipboard = null;
@@ -2003,6 +2398,7 @@ function renderFM(body, state) {
                 if (r.errors && r.errors.length) toast(r.errors.join('; '), 'warning');
             } else {
                 const r = await api('/files/move-multi', { method: 'POST', body: { sources: paths, dest, on_conflict: onConflict } });
+                if (r.error) { toast(r.error, 'error'); return; }
                 if (r.async) {
                     toast(r.message || 'Przenoszenie w tle…', 'info');
                     state.clipboard = null;
@@ -2018,8 +2414,8 @@ function renderFM(body, state) {
                 state.clipboard = null;
             }
             navigateTo(state.path);
-        } catch {
-            toast(t('Błąd operacji'), 'error');
+        } catch (e) {
+            toast(t('Błąd operacji') + (e?.message ? ': ' + e.message : ''), 'error');
         }
     }
 
@@ -2157,6 +2553,103 @@ function renderFM(body, state) {
     }
 
     // ─── Transfer to remote NAS ───
+
+    // ─── File Properties Dialog ───────────────────────────────────────────────
+
+    async function showPropertiesDialog(item, itemPath) {
+        const isAdmin = NAS.user?.role === 'admin';
+        let perms = {};
+        try {
+            perms = await api(`/files/permissions?path=${encodeURIComponent(itemPath)}`);
+        } catch (e) {
+            perms = {
+                permissions: item.permissions || '',
+                permissions_symbolic: item.permissions_symbolic || '',
+                owner: item.owner || '',
+                group: item.group || '',
+            };
+        }
+
+        const overlay = document.createElement('div');
+        overlay.className = 'app-modal-overlay';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9999;display:flex;align-items:center;justify-content:center';
+
+        const dialog = document.createElement('div');
+        dialog.className = 'app-modal';
+        dialog.style.cssText = 'background:var(--bg-surface,#1e1e2e);border:1px solid var(--border,#333);border-radius:12px;padding:24px;min-width:360px;max-width:480px;width:90vw;box-shadow:0 8px 32px rgba(0,0,0,0.5)';
+
+        const symPerm = perms.permissions_symbolic || item.permissions_symbolic || '';
+        const octPerm = perms.permissions || item.permissions || '';
+        const owner = perms.owner || item.owner || '—';
+        const group = perms.group || item.group || '—';
+
+        const chmodSection = isAdmin ? `
+            <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border,#333)">
+                <div style="font-weight:600;margin-bottom:8px;color:var(--text-primary)">${t('Zmień uprawnienia')} <span style="font-size:0.75em;color:var(--text-muted)">(tylko admin)</span></div>
+                <div style="display:flex;gap:8px;align-items:center">
+                    <input id="fm-chmod-input" type="text" value="${octPerm}" maxlength="4" pattern="[0-7]{3,4}"
+                        placeholder="755"
+                        style="width:80px;padding:6px 10px;background:var(--bg-base,#181825);border:1px solid var(--border,#444);border-radius:6px;color:var(--text-primary);font-family:monospace;font-size:1em">
+                    <button id="fm-chmod-apply" class="app-btn app-btn-primary" style="padding:6px 16px">${t('Zastosuj')}</button>
+                    <span id="fm-chmod-status" style="font-size:0.85em;color:var(--text-muted)"></span>
+                </div>
+                <div style="font-size:0.78em;color:var(--text-muted);margin-top:6px">${t('Podaj 3-4 cyfry ósemkowe, np. 755, 644, 700')}</div>
+            </div>
+        ` : '';
+
+        dialog.innerHTML = `
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+                <i class="fas ${item.is_dir ? 'fa-folder' : 'fa-file'}" style="font-size:1.5em;color:var(--accent)"></i>
+                <div style="font-size:1.1em;font-weight:600;word-break:break-all">${item.name}</div>
+            </div>
+            <table style="width:100%;border-collapse:collapse;font-size:0.92em">
+                <tr><td style="color:var(--text-muted);padding:4px 0;width:120px">${t('Typ')}</td><td style="color:var(--text-primary)">${item.is_dir ? t('Folder') : t('Plik')}</td></tr>
+                <tr><td style="color:var(--text-muted);padding:4px 0">${t('Uprawnienia')}</td><td style="font-family:monospace;color:var(--text-primary)">${symPerm} <span style="color:var(--text-muted)">(${octPerm})</span></td></tr>
+                <tr><td style="color:var(--text-muted);padding:4px 0">${t('Właściciel')}</td><td style="color:var(--text-primary)">${owner}${group !== '—' ? ':' + group : ''}</td></tr>
+                ${!item.is_dir ? `<tr><td style="color:var(--text-muted);padding:4px 0">${t('Rozmiar')}</td><td style="color:var(--text-primary)">${typeof fmtBytes !== 'undefined' ? fmtBytes(item.size) : item.size + ' B'}</td></tr>` : ''}
+                <tr><td style="color:var(--text-muted);padding:4px 0">${t('Zmieniony')}</td><td style="color:var(--text-primary)">${formatDate(item.modified)}</td></tr>
+                ${item.protected ? `<tr><td style="color:var(--text-muted);padding:4px 0">${t('Ochrona')}</td><td style="color:${item.locked ? 'var(--danger)' : 'var(--success,#22c55e)'}"><i class="fas ${item.locked ? 'fa-lock' : 'fa-lock-open'}"></i> ${item.locked ? t('Zablokowany') : t('Odblokowany')}</td></tr>` : ''}
+            </table>
+            ${chmodSection}
+            <div style="margin-top:20px;text-align:right">
+                <button id="fm-props-close" class="app-btn" style="padding:8px 20px">${t('Zamknij')}</button>
+            </div>
+        `;
+
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        const close = () => overlay.remove();
+        overlay.querySelector('#fm-props-close').addEventListener('click', close);
+        overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
+        if (isAdmin) {
+            overlay.querySelector('#fm-chmod-apply').addEventListener('click', async () => {
+                const modeVal = overlay.querySelector('#fm-chmod-input').value.trim();
+                const statusEl = overlay.querySelector('#fm-chmod-status');
+                if (!/^[0-7]{3,4}$/.test(modeVal)) {
+                    statusEl.style.color = 'var(--danger)';
+                    statusEl.textContent = t('Nieprawidłowy format (np. 755)');
+                    return;
+                }
+                try {
+                    const res = await api('/files/chmod', { method: 'POST', body: { path: itemPath, mode: modeVal } });
+                    if (res.ok) {
+                        statusEl.style.color = 'var(--success,#22c55e)';
+                        statusEl.textContent = `✓ ${res.permissions_symbolic || modeVal}`;
+                        toast(t('Uprawnienia zmienione'), 'success');
+                        navigateTo(state.path);
+                    } else {
+                        statusEl.style.color = 'var(--danger)';
+                        statusEl.textContent = res.error || t('Błąd');
+                    }
+                } catch (e) {
+                    statusEl.style.color = 'var(--danger)';
+                    statusEl.textContent = t('Błąd');
+                }
+            });
+        }
+    }
 
     async function transferToRemoteNAS() {
         const paths = getSelectedPaths();
@@ -2572,6 +3065,19 @@ function renderFM(body, state) {
     });
     updateViewModeButtons();
 
+    // Mobile sidebar toggle
+    body.querySelector('#fm-sidebar-toggle')?.addEventListener('click', () => {
+        const sidebar = body.querySelector('#fm-sidebar');
+        sidebar.classList.toggle('fm-sidebar-open');
+    });
+    // Close sidebar when clicking outside on mobile
+    body.querySelector('#fm-file-list')?.addEventListener('click', () => {
+        const sidebar = body.querySelector('#fm-sidebar');
+        if (sidebar.classList.contains('fm-sidebar-open') && window.innerWidth <= 600) {
+            sidebar.classList.remove('fm-sidebar-open');
+        }
+    });
+
     // Sort dropdown logic
     const sortLabels = { name: t('Nazwa'), size: t('Rozmiar'), modified: t('Data mod.'), permissions: t('Prawa') };
     function updateSortLabel() {
@@ -2649,7 +3155,10 @@ function renderFM(body, state) {
             if (state.selected.has(name)) state.selected.delete(name);
             else state.selected.add(name);
             const el = cbLabel.closest(_itemSel);
-            if (el) state.lastClickedIndex = parseInt(el.dataset.idx);
+            if (el) {
+                state.lastClickedIndex = parseInt(el.dataset.idx);
+                state.focusedIndex = state.lastClickedIndex;
+            }
             updateSelection();
             return;
         }
@@ -2659,6 +3168,7 @@ function renderFM(body, state) {
             // Click on empty space — deselect all
             state.selected.clear();
             state.lastClickedIndex = -1;
+            state.focusedIndex = -1;
             updateSelection();
             return;
         }
@@ -2671,12 +3181,13 @@ function renderFM(body, state) {
         const idx = parseInt(el.dataset.idx);
 
         if (e.shiftKey && state.lastClickedIndex >= 0) {
-            const sorted = sortItems(state.items);
+            const _allItems = state.searchResults !== null ? state.searchResults : state.items;
+            const sorted = sortItems(_allItems);
             const start = Math.min(state.lastClickedIndex, idx);
             const end = Math.max(state.lastClickedIndex, idx);
             if (!e.ctrlKey && !e.metaKey) state.selected.clear();
             for (let i = start; i <= end; i++) {
-                state.selected.add(sorted[i].name);
+                if (sorted[i]) state.selected.add(sorted[i].name);
             }
         } else if (e.ctrlKey || e.metaKey) {
             if (state.selected.has(name)) state.selected.delete(name);
@@ -2686,6 +3197,12 @@ function renderFM(body, state) {
             state.selected.add(name);
         }
         state.lastClickedIndex = idx;
+        state.focusedIndex = idx;
+        // Update focused visual indicator without scroll (user clicked, already visible)
+        const list = body.querySelector('#fm-file-list');
+        list.querySelectorAll('.fm-focused').forEach(el => el.classList.remove('fm-focused'));
+        el.classList.add('fm-focused');
+        list.setAttribute('aria-activedescendant', `fm-item-${idx}`);
         updateSelection();
     });
 
@@ -2811,35 +3328,14 @@ function renderFM(body, state) {
             }
             await Promise.all(promises);
             if (allFiles.length) {
-                // Upload with relative paths
-                const form = new FormData();
-                form.append('path', state.path);
-                for (const f of allFiles) {
-                    form.append('files', f);
-                    form.append('rel_paths', f._relPath || f.name);
-                }
-                const xhr = new XMLHttpRequest();
-                showFileOpProgress({ operation: 'upload', channel: 'fm', percent: 0, done: 0, total: allFiles.length, current_file: allFiles[0]?.name || '' });
-                xhr.upload.addEventListener('progress', (ev) => {
-                    if (ev.lengthComputable) {
-                        const pct = Math.round(ev.loaded / ev.total * 100);
-                        showFileOpProgress({ operation: 'upload', channel: 'fm', percent: pct, done: Math.round(pct / 100 * allFiles.length), total: allFiles.length, current_file: `${formatBytes(ev.loaded)} / ${formatBytes(ev.total)}` });
+                // Attach relative paths as webkitRelativePath-compatible property
+                // and delegate to _doUploadWithPaths which handles chunked upload for large files
+                allFiles.forEach(f => {
+                    if (!f.webkitRelativePath && f._relPath) {
+                        Object.defineProperty(f, 'webkitRelativePath', { value: f._relPath, configurable: true });
                     }
                 });
-                xhr.addEventListener('load', () => {
-                    if (xhr.status >= 200 && xhr.status < 300) {
-                        finishFileOpProgress(true, { channel: 'fm', message: `Przesłano ${allFiles.length} plik(ów)` });
-                        navigateTo(state.path);
-                    } else {
-                        let msg = t('Błąd przesyłania');
-                        try { msg = JSON.parse(xhr.responseText).error || msg; } catch {}
-                        finishFileOpProgress(false, { channel: 'fm', message: msg });
-                    }
-                });
-                xhr.addEventListener('error', () => finishFileOpProgress(false, { channel: 'fm', message: t('Błąd sieci') }));
-                xhr.open('POST', '/api/files/upload');
-                if (NAS.token) xhr.setRequestHeader('Authorization', `Bearer ${NAS.token}`);
-                xhr.send(form);
+                _doUploadWithPaths(allFiles);
             }
         } else {
             const files = e.dataTransfer.files;
@@ -2850,7 +3346,7 @@ function renderFM(body, state) {
 
     // Keyboard shortcuts
     body.closest('.window').addEventListener('keydown', (e) => {
-        // Ctrl+F — focus search
+        // Ctrl+F — focus search (always available)
         if (e.ctrlKey && e.key === 'f') {
             e.preventDefault();
             body.querySelector('#fm-search-input').focus();
@@ -2862,7 +3358,132 @@ function renderFM(body, state) {
             e.target.blur();
             return;
         }
-        if (e.target.tagName === 'INPUT') return;
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+        // ─── Arrow key navigation ───
+        // Left arrow = go to parent folder; Right arrow = enter selected folder
+        if (e.key === 'ArrowLeft' && !e.shiftKey && state.searchResults === null) {
+            e.preventDefault();
+            if (isRegularPath() && !isAtHomeRoot()) {
+                const parent = state.path.split('/').slice(0, -1).join('/') || (state.sudoMode ? '/' : state.homePath);
+                navigateTo(parent);
+            }
+            return;
+        }
+        if (e.key === 'ArrowRight' && !e.shiftKey) {
+            e.preventDefault();
+            if (state.focusedIndex >= 0) {
+                const _arAll = state.searchResults !== null ? state.searchResults : state.items;
+                const _arSorted = sortItems(_arAll);
+                const _arItem = _arSorted[state.focusedIndex];
+                if (_arItem && _arItem.is_dir) navigateTo(itemFullPath(_arItem));
+            }
+            return;
+        }
+
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            // Focus the list container so screen readers follow aria-activedescendant
+            body.querySelector('#fm-file-list').focus({ preventScroll: true });
+            const allItems = state.searchResults !== null ? state.searchResults : state.items;
+            const sorted = sortItems(allItems);
+            const total = sorted.length;
+            if (!total) return;
+            let newIdx;
+            if (state.focusedIndex < 0) {
+                newIdx = e.key === 'ArrowDown' ? 0 : total - 1;
+            } else {
+                newIdx = e.key === 'ArrowDown'
+                    ? Math.min(state.focusedIndex + 1, total - 1)
+                    : Math.max(state.focusedIndex - 1, 0);
+            }
+            if (e.shiftKey) {
+                const anchor = state.lastClickedIndex >= 0 ? state.lastClickedIndex : (state.focusedIndex >= 0 ? state.focusedIndex : 0);
+                const start = Math.min(anchor, newIdx);
+                const end = Math.max(anchor, newIdx);
+                state.selected.clear();
+                for (let i = start; i <= end; i++) {
+                    if (sorted[i]) state.selected.add(sorted[i].name);
+                }
+            } else if (!e.ctrlKey && !e.metaKey) {
+                state.selected.clear();
+                if (sorted[newIdx]) {
+                    state.selected.add(sorted[newIdx].name);
+                    state.lastClickedIndex = newIdx;
+                }
+            }
+            setFocusedIndex(newIdx);
+            updateSelection();
+            return;
+        }
+
+        if (e.key === 'Home') {
+            e.preventDefault();
+            const allItems = state.searchResults !== null ? state.searchResults : state.items;
+            const sorted = sortItems(allItems);
+            if (!sorted.length) return;
+            if (e.shiftKey) {
+                const anchor = state.lastClickedIndex >= 0 ? state.lastClickedIndex : 0;
+                state.selected.clear();
+                for (let i = 0; i <= anchor; i++) {
+                    if (sorted[i]) state.selected.add(sorted[i].name);
+                }
+            } else if (!e.ctrlKey && !e.metaKey) {
+                state.selected.clear();
+                if (sorted[0]) { state.selected.add(sorted[0].name); state.lastClickedIndex = 0; }
+            }
+            setFocusedIndex(0);
+            updateSelection();
+            return;
+        }
+
+        if (e.key === 'End') {
+            e.preventDefault();
+            const allItems = state.searchResults !== null ? state.searchResults : state.items;
+            const sorted = sortItems(allItems);
+            if (!sorted.length) return;
+            const last = sorted.length - 1;
+            if (e.shiftKey) {
+                const anchor = state.lastClickedIndex >= 0 ? state.lastClickedIndex : 0;
+                state.selected.clear();
+                for (let i = anchor; i <= last; i++) {
+                    if (sorted[i]) state.selected.add(sorted[i].name);
+                }
+            } else if (!e.ctrlKey && !e.metaKey) {
+                state.selected.clear();
+                if (sorted[last]) { state.selected.add(sorted[last].name); state.lastClickedIndex = last; }
+            }
+            setFocusedIndex(last);
+            updateSelection();
+            return;
+        }
+
+        if (e.key === 'Enter' && state.focusedIndex >= 0) {
+            e.preventDefault();
+            const allItems = state.searchResults !== null ? state.searchResults : state.items;
+            const sorted = sortItems(allItems);
+            const item = sorted[state.focusedIndex];
+            if (item) {
+                if (item.is_dir) navigateTo(itemFullPath(item));
+                else previewFile(item.name);
+            }
+            return;
+        }
+
+        if (e.key === ' ' && state.focusedIndex >= 0) {
+            e.preventDefault();
+            const allItems = state.searchResults !== null ? state.searchResults : state.items;
+            const sorted = sortItems(allItems);
+            const item = sorted[state.focusedIndex];
+            if (item) {
+                if (state.selected.has(item.name)) state.selected.delete(item.name);
+                else state.selected.add(item.name);
+                state.lastClickedIndex = state.focusedIndex;
+                updateSelection();
+            }
+            return;
+        }
+
         if (e.key === 'Delete') deleteSelected();
         if (e.key === 'F2') renameSelected();
         if (e.key === 'F5') navigateTo(state.path);
@@ -2873,25 +3494,13 @@ function renderFM(body, state) {
                 navigateTo(parent);
             }
         }
-        if (e.ctrlKey && e.key === 'a') {
-            e.preventDefault();
-            selectAll();
-        }
-        if (e.ctrlKey && e.key === 'c') {
-            e.preventDefault();
-            clipboardCopy();
-        }
-        if (e.ctrlKey && e.key === 'x') {
-            e.preventDefault();
-            clipboardCut();
-        }
-        if (e.ctrlKey && e.key === 'v') {
-            e.preventDefault();
-            clipboardPaste();
-        }
-        if (e.key === 'Escape') {
-            clearSelection();
-        }
+        if (e.ctrlKey && e.key === 'a') { e.preventDefault(); selectAll(); }
+        if (e.ctrlKey && e.key === 'c') { e.preventDefault(); clipboardCopy(); }
+        if (e.ctrlKey && e.key === 'x') { e.preventDefault(); clipboardCut(); }
+        if (e.ctrlKey && e.key === 'v') { e.preventDefault(); clipboardPaste(); }
+        if (e.ctrlKey && e.key === 'n') { e.preventDefault(); createNewFolder(); }
+        if (e.ctrlKey && e.key === 'u') { e.preventDefault(); uploadFiles(); }
+        if (e.key === 'Escape') { clearSelection(); }
     });
 
     // ─── Search ───
@@ -2947,6 +3556,89 @@ function renderFM(body, state) {
     });
 
     // ─── Folder sizes ───
+
+    // Update only the size cells for known dir sizes (avoids full DOM rebuild)
+    function _updateDirSizesInPlace(newSizes) {
+        if (!newSizes || !Object.keys(newSizes).length) return;
+        if (state.viewMode !== 'list') return;  // only list view shows size column
+        const list = body.querySelector('#fm-file-list');
+        if (!list) return;
+        const dirItems = list.querySelectorAll('.fm-file-item[data-isdir="true"]');
+        for (const el of dirItems) {
+            const fullPath = itemFullPath({ name: el.dataset.name, is_dir: true });
+            if (fullPath in newSizes) {
+                const sizeCell = el.querySelector('.fm-file-size');
+                if (sizeCell) sizeCell.textContent = formatBytes(newSizes[fullPath]);
+            }
+        }
+    }
+
+    // Background dir-size: start async calculation, poll until done
+    async function startBgDirSizes() {
+        const dirs = state.items.filter(i => i.is_dir);
+        if (!dirs.length) return;
+        const paths = dirs.map(d => itemFullPath(d)).filter(p => !(p in state.dirSizes));
+        if (!paths.length) return;
+        state._dirSizePollInterval = 1500;  // reset backoff
+        try {
+            const data = await api('/files/dir-sizes-start', { method: 'POST', body: { paths } });
+            if (!data || data.error) return;
+            // Apply immediately available cached results (partial DOM update)
+            if (data.cached && Object.keys(data.cached).length) {
+                Object.assign(state.dirSizes, data.cached);
+                _updateDirSizesInPlace(data.cached);
+            }
+            // Set up polling for pending jobs
+            if (data.jobs && Object.keys(data.jobs).length) {
+                Object.assign(state._dirSizeJobs, data.jobs);
+                if (!state._dirSizePollTimer) {
+                    state._dirSizePollTimer = setTimeout(pollBgDirSizes, state._dirSizePollInterval);
+                }
+            }
+        } catch {
+            // silently ignore — background operation
+        }
+    }
+
+    async function pollBgDirSizes() {
+        state._dirSizePollTimer = null;
+        if (!Object.keys(state._dirSizeJobs).length) return;
+        try {
+            const data = await api('/files/dir-sizes-result', { method: 'POST', body: { jobs: state._dirSizeJobs } });
+            if (!data || data.error) return;
+            if (data.sizes && Object.keys(data.sizes).length) {
+                Object.assign(state.dirSizes, data.sizes);
+                // Remove completed jobs
+                for (const path of Object.keys(data.sizes)) {
+                    delete state._dirSizeJobs[path];
+                }
+                // Partial DOM update instead of full rebuild
+                _updateDirSizesInPlace(data.sizes);
+                // Reset backoff when we get results
+                state._dirSizePollInterval = 1500;
+            } else {
+                // No new results — apply exponential backoff (1.5s → 3s → 6s → 10s max)
+                state._dirSizePollInterval = Math.min((state._dirSizePollInterval || 1500) * 2, 10000);
+            }
+            // Remove paths that have no pending jobs (server discarded)
+            if (data.pending) {
+                const pendingSet = new Set(data.pending);
+                for (const path of Object.keys(state._dirSizeJobs)) {
+                    if (!pendingSet.has(path)) delete state._dirSizeJobs[path];
+                }
+            }
+            if (Object.keys(state._dirSizeJobs).length) {
+                state._dirSizePollTimer = setTimeout(pollBgDirSizes, state._dirSizePollInterval);
+            }
+        } catch {
+            // silently ignore — retry with backoff
+            state._dirSizePollInterval = Math.min((state._dirSizePollInterval || 1500) * 2, 10000);
+            if (Object.keys(state._dirSizeJobs).length) {
+                state._dirSizePollTimer = setTimeout(pollBgDirSizes, state._dirSizePollInterval);
+            }
+        }
+    }
+
     async function calcDirSizes() {
         const dirs = state.items.filter(i => i.is_dir);
         if (!dirs.length) { toast(t('Brak folderów'), 'info'); return; }
@@ -2982,6 +3674,33 @@ function renderFM(body, state) {
                 sizeCell.textContent = formatBytes(state.dirSizes[fp] || 0);
             }
         } catch { sizeCell.textContent = 'err'; }
+    }, true);
+
+    // ── Hover-prefetch: pre-load listing when user hovers a folder for 300 ms ──
+    body.querySelector('#fm-file-list').addEventListener('mouseover', (e) => {
+        const item = e.target.closest('[data-isdir="true"]');
+        if (!item || item._prefetchTimer !== undefined) return;
+        item._prefetchTimer = setTimeout(() => {
+            delete item._prefetchTimer;
+            const name = item.dataset.name;
+            const folderItem = state.items.find(i => i.name === name && i.is_dir);
+            if (!folderItem) return;
+            const fp = itemFullPath(folderItem);
+            const cached = _fmPrefetchCache.get(fp);
+            if (cached && (Date.now() - cached.ts) < _FM_PREFETCH_TTL) return;
+            // Pre-fetch listing in background and store in cache
+            api(`/files/list?path=${encodeURIComponent(fp)}`)
+                .then(d => { if (d && !d.error) _fmPrefetchCache.set(fp, { data: d, ts: Date.now() }); })
+                .catch(() => {});
+            // Also pre-populate server listing cache for subdirs
+            api('/files/preload-cache', { method: 'POST', body: { path: fp } }).catch(() => {});
+        }, 300);
+    }, true);
+    body.querySelector('#fm-file-list').addEventListener('mouseout', (e) => {
+        const item = e.target.closest('[data-isdir="true"]');
+        if (!item || item._prefetchTimer === undefined) return;
+        clearTimeout(item._prefetchTimer);
+        delete item._prefetchTimer;
     }, true);
 
     // Ctrl+Shift+S to calculate all dir sizes
@@ -3451,6 +4170,7 @@ AppRegistry['docker-manager'] = function (appDef) {
 };
 
 function renderDockerManager(body) {
+    const isAdmin = NAS.user?.role === 'admin';
     const S = {
         tab: 'containers',
         containers: [],
@@ -3459,8 +4179,8 @@ function renderDockerManager(body) {
         systemInfo: null,
         filter: '',
         selectedContainer: null,
-        detailTab: 'logs', // logs | inspect | stats
-        _intervals: [],    // track all setInterval IDs for cleanup
+        detailTab: 'logs',
+        _intervals: [],
     };
 
     // Helper: track intervals and clear stale ones
@@ -3470,13 +4190,44 @@ function renderDockerManager(body) {
     // Helper: escape HTML to prevent XSS from Docker names
     function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
 
+    // Helper: check if env var name looks sensitive
+    function isSensitiveEnv(name) {
+        return /password|secret|key|token|api_key|apikey|private|credential/i.test(name);
+    }
+
+    // Helper: basic YAML syntax validation (checks structure, not full parse)
+    function validateYaml(text) {
+        if (!text || !text.trim()) return { valid: false, error: t('Pusta treść') };
+        const lines = text.split('\n');
+        let hasServices = false;
+        let inBlock = false;
+        const warnings = [];
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith('#') || !trimmed) continue;
+            // Check for tabs (YAML forbids tabs for indentation)
+            if (/^\t/.test(line)) return { valid: false, error: t('YAML nie może używać tabulatorów — użyj spacji') };
+            // Detect services key
+            if (/^services\s*:/.test(trimmed)) hasServices = true;
+            // Detect dangerous directives
+            if (/^\s*privileged\s*:\s*true/i.test(line)) warnings.push(t('Tryb privileged — pełny dostęp do hosta'));
+            if (/^\s*network_mode\s*:\s*["']?host["']?/i.test(line)) warnings.push(t('network_mode: host — kontener widzi sieć hosta'));
+            if (/^\s*pid\s*:\s*["']?host["']?/i.test(line)) warnings.push(t('pid: host — kontener widzi procesy hosta'));
+            if (/^\s*cap_add\s*:/i.test(line)) inBlock = true;
+            if (inBlock && /SYS_ADMIN|NET_ADMIN|ALL/i.test(trimmed)) warnings.push(t('Niebezpieczna capability: ') + trimmed.replace(/^-\s*/, ''));
+            if (inBlock && /^\S/.test(line)) inBlock = false;
+        }
+        if (!hasServices) return { valid: false, error: t('Brak sekcji "services" — wymagana w docker-compose') };
+        return { valid: true, warnings };
+    }
+
     body.innerHTML = `
         <div class="dkr">
             <div class="dkr-sidebar">
-                <div class="dkr-nav-item active" data-tab="containers"><i class="fas fa-box"></i> Kontenery</div>
-                <div class="dkr-nav-item" data-tab="projects"><i class="fas fa-layer-group"></i> Projekty</div>
-                <div class="dkr-nav-item" data-tab="images"><i class="fas fa-clone"></i> Obrazy</div>
-                <div class="dkr-nav-item" data-tab="system"><i class="fas fa-server"></i> System</div>
+                <div class="dkr-nav-item active" data-tab="containers"><i class="fas fa-box"></i> ${t('Kontenery')}</div>
+                <div class="dkr-nav-item" data-tab="projects"><i class="fas fa-layer-group"></i> ${t('Projekty')}</div>
+                <div class="dkr-nav-item" data-tab="images"><i class="fas fa-clone"></i> ${t('Obrazy')}</div>
+                <div class="dkr-nav-item" data-tab="system"><i class="fas fa-server"></i> ${t('System')}</div>
             </div>
             <div class="dkr-main" id="dkr-main"></div>
         </div>
@@ -3514,28 +4265,31 @@ function renderDockerManager(body) {
     function renderContainersTab() {
         if (S.selectedContainer) { renderContainerDetail(); return; }
         main.innerHTML = `
+            ${!isAdmin ? '<div class="dkr-readonly-notice"><i class="fas fa-info-circle"></i> ' + t('Tryb tylko do odczytu — wymagane uprawnienia administratora') + '</div>' : ''}
             <div class="dkr-toolbar">
-                <span class="dkr-toolbar-title"><i class="fas fa-box"></i> Kontenery <span class="dkr-badge" id="dkr-cnt-count">0</span></span>
-                <input class="dkr-filter" id="dkr-filter" placeholder="Filtruj..." value="${S.filter}">
-                <button class="dkr-btn" id="dkr-refresh"><i class="fas fa-sync-alt"></i></button>
+                <span class="dkr-toolbar-title"><i class="fas fa-box"></i> ${t('Kontenery')} <span class="dkr-badge" id="dkr-cnt-count">0</span></span>
+                <input class="dkr-filter" id="dkr-filter" placeholder="${t('Filtruj...')}" value="${esc(S.filter)}">
+                <button class="dkr-btn" id="dkr-refresh" title="${t('Odśwież')}"><i class="fas fa-sync-alt"></i></button>
             </div>
             <div class="dkr-table-wrap">
                 <table class="dkr-table">
                     <thead><tr>
                         <th class="app-col-icon"></th>
-                        <th>Nazwa</th>
-                        <th>Obraz</th>
-                        <th>Projekt</th>
-                        <th>Status</th>
-                        <th class="app-col-actions">Akcje</th>
+                        <th>${t('Nazwa')}</th>
+                        <th>${t('Obraz')}</th>
+                        <th>${t('Projekt')}</th>
+                        <th>${t('Status')}</th>
+                        ${isAdmin ? `<th class="app-col-actions">${t('Akcje')}</th>` : ''}
                     </tr></thead>
                     <tbody id="dkr-ct-body"></tbody>
                 </table>
             </div>
         `;
+        let filterDebounce;
         main.querySelector('#dkr-filter').addEventListener('input', e => {
             S.filter = e.target.value.toLowerCase();
-            fillContainersTable();
+            clearTimeout(filterDebounce);
+            filterDebounce = setTimeout(fillContainersTable, 200);
         });
         main.querySelector('#dkr-refresh').addEventListener('click', async () => {
             await loadContainers();
@@ -3563,14 +4317,14 @@ function renderDockerManager(body) {
                 <td class="dkr-muted dkr-ellipsis" title="${esc(c.image)}">${esc(c.image)}</td>
                 <td>${c.project ? `<span class="dkr-project-badge">${esc(c.project)}</span>` : '<span class="dkr-muted">—</span>'}</td>
                 <td class="dkr-status-text">${esc(c.status)}</td>
-                <td class="dkr-actions">
-                    ${!isRun ? btn('start','fa-play','Uruchom','success') : ''}
-                    ${isRun ? btn('stop','fa-stop','Zatrzymaj','warning') : ''}
-                    ${isRun ? btn('restart','fa-redo','Restartuj','info') : ''}
-                    ${isRun && !isPaused ? btn('pause','fa-pause','Wstrzymaj','') : ''}
+                ${isAdmin ? `<td class="dkr-actions">
+                    ${!isRun ? btn('start','fa-play',t('Uruchom'),'success') : ''}
+                    ${isRun ? btn('stop','fa-stop',t('Zatrzymaj'),'warning') : ''}
+                    ${isRun ? btn('restart','fa-redo',t('Restartuj'),'info') : ''}
+                    ${isRun && !isPaused ? btn('pause','fa-pause',t('Wstrzymaj'),'') : ''}
                     ${isPaused ? btn('unpause','fa-play',t('Wznów'),'') : ''}
                     ${btn('remove','fa-trash',t('Usuń'),'danger')}
-                </td>
+                </td>` : ''}
             </tr>`;
         }).join('');
 
@@ -3582,7 +4336,7 @@ function renderDockerManager(body) {
                 const id = row.dataset.id;
                 const name = row.dataset.name;
                 const action = b.dataset.action;
-                if (action === 'remove' && !confirm(`Usunąć kontener ${name}?`)) return;
+                if (action === 'remove' && !confirm(t('Usunąć kontener') + ` ${name}?`)) return;
                 try {
                     await api(`/docker/containers/${id}/action`, { method: 'POST', body: { action } });
                     toast(`${name}: ${action}`, 'success');
@@ -3608,19 +4362,19 @@ function renderDockerManager(body) {
 
     // ─── CONTAINER DETAIL ───
     async function renderContainerDetail() {
-        clearAllIntervals(); // stop any previous detail timers
+        clearAllIntervals();
         const cid = S.selectedContainer;
         main.innerHTML = `
             <div class="dkr-toolbar">
-                <button class="dkr-btn" id="dkr-back"><i class="fas fa-arrow-left"></i> Powrót</button>
-                <span class="dkr-toolbar-title" id="dkr-detail-title">Ładowanie...</span>
+                <button class="dkr-btn" id="dkr-back"><i class="fas fa-arrow-left"></i> ${t('Powrót')}</button>
+                <span class="dkr-toolbar-title" id="dkr-detail-title">${t('Ładowanie...')}</span>
                 <div class="dkr-detail-tabs">
-                    <button class="dkr-tab-btn active" data-dt="logs">Logi</button>
-                    <button class="dkr-tab-btn" data-dt="inspect">Szczegóły</button>
-                    <button class="dkr-tab-btn" data-dt="stats">Zasoby</button>
+                    <button class="dkr-tab-btn active" data-dt="logs">${t('Logi')}</button>
+                    <button class="dkr-tab-btn" data-dt="inspect">${t('Szczegóły')}</button>
+                    <button class="dkr-tab-btn" data-dt="stats">${t('Zasoby')}</button>
                 </div>
             </div>
-            <div class="dkr-detail-body" id="dkr-detail-body"><div class="dkr-loading"><i class="fas fa-spinner fa-spin"></i> Ładowanie...</div></div>
+            <div class="dkr-detail-body" id="dkr-detail-body"><div class="dkr-loading"><i class="fas fa-spinner fa-spin"></i> ${t('Ładowanie...')}</div></div>
         `;
         main.querySelector('#dkr-back').addEventListener('click', () => {
             S.selectedContainer = null;
@@ -3661,15 +4415,15 @@ function renderDockerManager(body) {
         db.innerHTML = `
             <div class="dkr-logs-toolbar">
                 <select class="dkr-select" id="dkr-log-lines">
-                    <option value="100">100 linii</option>
-                    <option value="200" selected>200 linii</option>
-                    <option value="500">500 linii</option>
-                    <option value="1000">1000 linii</option>
-                    <option value="5000">5000 linii</option>
+                    <option value="100">100 ${t('linii')}</option>
+                    <option value="200" selected>200 ${t('linii')}</option>
+                    <option value="500">500 ${t('linii')}</option>
+                    <option value="1000">1000 ${t('linii')}</option>
+                    <option value="5000">5000 ${t('linii')}</option>
                 </select>
-                <input class="dkr-filter" id="dkr-log-search" placeholder="Szukaj w logach...">
-                <button class="dkr-btn" id="dkr-log-refresh"><i class="fas fa-sync-alt"></i></button>
-                <label class="dkr-check"><input type="checkbox" id="dkr-log-follow" checked> Auto-scroll</label>
+                <input class="dkr-filter" id="dkr-log-search" placeholder="${t('Szukaj w logach...')}">
+                <button class="dkr-btn" id="dkr-log-refresh" title="${t('Odśwież')}"><i class="fas fa-sync-alt"></i></button>
+                <label class="dkr-check"><input type="checkbox" id="dkr-log-follow" checked> ${t('Auto-scroll')}</label>
             </div>
             <pre class="dkr-logs" id="dkr-logs"></pre>
         `;
@@ -3708,34 +4462,51 @@ function renderDockerManager(body) {
         db.innerHTML = `
             <div class="dkr-inspect">
                 <div class="dkr-inspect-section">
-                    <h3>Ogólne</h3>
+                    <h3>${t('Ogólne')}</h3>
                     <div class="dkr-kv"><span>ID</span><span>${info.id}</span></div>
-                    <div class="dkr-kv"><span>Obraz</span><span>${info.image}</span></div>
-                    <div class="dkr-kv"><span>Polecenie</span><span><code>${info.command || info.entrypoint || '—'}</code></span></div>
-                    <div class="dkr-kv"><span>Utworzony</span><span>${info.created ? new Date(info.created).toLocaleString('pl') : '—'}</span></div>
-                    <div class="dkr-kv"><span>Status</span><span><span class="dkr-dot ${s.status}"></span> ${s.status} (PID: ${s.pid})</span></div>
-                    <div class="dkr-kv"><span>Polityka restartu</span><span>${info.restart_policy?.Name || '—'}</span></div>
-                    <div class="dkr-kv"><span>Tryb sieci</span><span>${info.network_mode}</span></div>
-                    <div class="dkr-kv"><span>Uprzywilejowany</span><span>${info.privileged ? 'Tak' : 'Nie'}</span></div>
+                    <div class="dkr-kv"><span>${t('Obraz')}</span><span>${info.image}</span></div>
+                    <div class="dkr-kv"><span>${t('Polecenie')}</span><span><code>${info.command || info.entrypoint || '—'}</code></span></div>
+                    <div class="dkr-kv"><span>${t('Utworzony')}</span><span>${info.created ? new Date(info.created).toLocaleString('pl') : '—'}</span></div>
+                    <div class="dkr-kv"><span>${t('Status')}</span><span><span class="dkr-dot ${s.status}"></span> ${s.status} (PID: ${s.pid})</span></div>
+                    <div class="dkr-kv"><span>${t('Polityka restartu')}</span><span>${info.restart_policy?.Name || '—'}</span></div>
+                    <div class="dkr-kv"><span>${t('Tryb sieci')}</span><span>${info.network_mode}</span></div>
+                    <div class="dkr-kv"><span>${t('Uprzywilejowany')}</span><span>${info.privileged ? t('Tak') : t('Nie')}</span></div>
                 </div>
-                ${info.ports.length ? `<div class="dkr-inspect-section"><h3>Porty</h3>${info.ports.map(p =>
+                ${info.ports.length ? `<div class="dkr-inspect-section"><h3>${t('Porty')}</h3>${info.ports.map(p =>
                     `<div class="dkr-kv"><span>${p.host}</span><span>→ ${p.container}</span></div>`
                 ).join('')}</div>` : ''}
-                ${info.mounts.length ? `<div class="dkr-inspect-section"><h3>Wolumeny</h3>${info.mounts.map(m =>
+                ${info.mounts.length ? `<div class="dkr-inspect-section"><h3>${t('Wolumeny')}</h3>${info.mounts.map(m =>
                     `<div class="dkr-kv"><span>${m.source}</span><span>→ ${m.destination} ${m.rw ? '' : '(RO)'}</span></div>`
                 ).join('')}</div>` : ''}
-                ${info.networks.length ? `<div class="dkr-inspect-section"><h3>Sieci</h3>${info.networks.map(n =>
+                ${info.networks.length ? `<div class="dkr-inspect-section"><h3>${t('Sieci')}</h3>${info.networks.map(n =>
                     `<div class="dkr-kv"><span>${n.name}</span><span>${n.ip || '—'}</span></div>`
                 ).join('')}</div>` : ''}
                 <div class="dkr-inspect-section">
-                    <h3>Zmienne środowiskowe <small>(${info.env.length})</small></h3>
+                    <h3>${t('Zmienne środowiskowe')} <small>(${info.env.length})</small></h3>
                     <div class="dkr-env-list">${info.env.map(e => {
                         const [k,...v] = e.split('=');
-                        return `<div class="dkr-kv"><span>${k}</span><span>${v.join('=')}</span></div>`;
+                        const val = v.join('=');
+                        const sensitive = isSensitiveEnv(k);
+                        return `<div class="dkr-kv"><span>${esc(k)}</span><span>${sensitive
+                            ? `<span class="dkr-env-masked" data-val="${esc(val)}" title="${t('Kliknij aby odsłonić')}">••••••••</span>`
+                            : esc(val)
+                        }</span></div>`;
                     }).join('')}</div>
                 </div>
             </div>
         `;
+        // Click to reveal masked env vars
+        db.querySelectorAll('.dkr-env-masked').forEach(el => {
+            el.addEventListener('click', () => {
+                if (el.dataset.revealed === 'true') {
+                    el.textContent = '••••••••';
+                    el.dataset.revealed = 'false';
+                } else {
+                    el.textContent = el.dataset.val;
+                    el.dataset.revealed = 'true';
+                }
+            });
+        });
     }
 
     async function renderStatsPanel(db, cid) {
@@ -3797,7 +4568,7 @@ function renderDockerManager(body) {
                     <div class="dkr-project-card" data-project="${esc(p.name)}">
                         <div class="dkr-project-header">
                             <div class="dkr-project-info">
-                                <span class="dkr-project-name"><i class="fas fa-layer-group"></i> ${esc(p.name)}${isProt ? ' <i class="fas fa-shield-alt" title="Projekt chroniony" class="app-shield-icon"></i>' : ''}</span>
+                                <span class="dkr-project-name"><i class="fas fa-layer-group"></i> ${esc(p.name)}${isProt ? ' <i class="fas fa-shield-alt app-shield-icon" title="Projekt chroniony"></i>' : ''}</span>
                                 <span class="dkr-project-status ${statusCls}">${statusLabel}</span>
                                 <span class="dkr-muted">${p.running}/${p.total} kontenerów</span>
                             </div>
@@ -3918,7 +4689,7 @@ function renderDockerManager(body) {
                         <button class="dkr-btn" id="dkr-plogs-refresh"><i class="fas fa-sync-alt"></i></button>
                         <label class="dkr-check"><input type="checkbox" id="dkr-plogs-follow" checked> Auto-scroll</label>
                     </div>
-                    <pre class="dkr-logs" id="dkr-plogs" class="app-flex-fill"></pre>
+                    <pre class="dkr-logs app-flex-fill" id="dkr-plogs"></pre>
                 </div>
             </div>
         `;
@@ -4011,7 +4782,7 @@ function renderDockerManager(body) {
                 <div class="dkr-modal-body dkr-modal-body-form">
                     <div>
                         <label class="app-form-label">${t('Nazwa projektu')}</label>
-                        <input class="dkr-filter" id="dkr-create-name" placeholder="moj-projekt" class="app-input-full">
+                        <input class="dkr-filter app-input-full" id="dkr-create-name" placeholder="moj-projekt">
                     </div>
                     <div class="app-flex-col">
                         <div class="app-row-between">
@@ -4021,7 +4792,7 @@ function renderDockerManager(body) {
                                 <input type="file" id="dkr-create-file" accept=".yml,.yaml" class="hidden">
                             </label>
                         </div>
-                        <textarea class="dkr-compose-editor" id="dkr-create-content" spellcheck="false" class="dkr-compose-flex">version: '3'
+                        <textarea class="dkr-compose-editor dkr-compose-flex" id="dkr-create-content" spellcheck="false">version: '3'
 
 services:
   app:
@@ -5054,6 +5825,7 @@ function renderEventLog(body) {
         storage: { icon: 'fa-hdd', label: 'Dyski', color: '#10b981' },
         network: { icon: 'fa-network-wired', label: t('Sieć'), color: '#0ea5e9' },
         printer: { icon: 'fa-print', label: 'Druk', color: '#ef4444' },
+        security: { icon: 'fa-shield-halved', label: t('Bezpieczeństwo'), color: '#a855f7' },
         error: { icon: 'fa-exclamation-triangle', label: t('Błąd'), color: '#ef4444' },
     };
 
@@ -5440,8 +6212,9 @@ function renderAppStore(body) {
                 <div class="as-card-tagline">${app.tagline || app.description || ''}</div>
                 <div class="as-card-footer">
                     ${app.repo_name ? `<span class="as-card-repo">${app.repo_name}</span>` : ''}
-                    ${app.port_map ? `<a class="as-card-port" href="http://${location.hostname}:${app.port_map}" target="_blank" rel="noopener" title="Otwórz :${app.port_map}">:${app.port_map}</a>` : ''}
-                    ${app.installed ? '<span class="as-badge-installed">Zainstalowana</span>' : ''}
+                    ${(app.host_ports && app.host_ports.length) ? `<a class="as-card-port" href="http://${location.hostname}:${app.host_ports[0]}" target="_blank" rel="noopener" title="Port :${app.host_ports[0]}">:${app.host_ports[0]}</a>` : (app.port_map ? `<a class="as-card-port" href="http://${location.hostname}:${app.port_map}" target="_blank" rel="noopener" title="Otwórz :${app.port_map}">:${app.port_map}</a>` : '')}
+                    ${app.service_count > 1 ? `<span class="as-card-svc" title="${app.service_count} serwisów"><i class="fas fa-layer-group"></i> ${app.service_count}</span>` : ''}
+                    ${app.installed ? `<span class="as-badge-installed">${t('Zainstalowana')}</span>` : ''}
                 </div>
             `;
             card.addEventListener('click', () => showDetail(app.id));
@@ -5457,9 +6230,11 @@ function renderAppStore(body) {
         if (!app) return;
 
         let compose = '';
+        let composeAdaptWarnings = [];
         try {
             const r = await api('/appstore/compose/' + appId);
             compose = r.compose || '';
+            composeAdaptWarnings = r.adapt_warnings || [];
         } catch (_) {}
 
         const overlay = document.createElement('div');
@@ -5476,6 +6251,12 @@ function renderAppStore(body) {
 
         const isInstalling = S.installing === appId;
 
+        const tipsHtml = app.tips ? `<div class="as-detail-tips"><i class="fas fa-info-circle"></i> ${app.tips}</div>` : '';
+        const portsHtml = (app.host_ports && app.host_ports.length)
+            ? app.host_ports.map(p => `<a class="as-port-link" href="http://${location.hostname}:${p}" target="_blank" rel="noopener">:${p}</a>`).join(' ')
+            : (app.port_map ? `<a class="as-port-link" href="http://${location.hostname}:${app.port_map}" target="_blank" rel="noopener">:${app.port_map}</a>` : '');
+        const svcCountHtml = app.service_count > 1 ? `<div class="as-meta-item"><strong>${t('Serwisy')}:</strong> ${app.service_count}</div>` : '';
+
         modal.innerHTML = `
             <div class="as-modal-header">
                 ${iconHtml}
@@ -5487,32 +6268,36 @@ function renderAppStore(body) {
                 <button class="as-modal-close">&times;</button>
             </div>
             <div class="as-modal-body">
+                ${tipsHtml}
                 <div class="as-detail-section">
                     <div class="as-detail-tagline">${app.tagline || ''}</div>
                     <div class="as-detail-desc">${app.description || ''}</div>
                 </div>
                 <div class="as-detail-meta">
-                    ${app.image ? `<div class="as-meta-item"><strong>Obraz:</strong> ${app.image}</div>` : ''}
-                    ${app.port_map ? `<div class="as-meta-item"><strong>Port:</strong> <a class="as-port-link" href="http://${location.hostname}:${app.port_map}" target="_blank" rel="noopener">${app.port_map} <i class="fas fa-external-link-alt"></i></a></div>` : ''}
+                    ${app.image ? `<div class="as-meta-item"><strong>${t('Obraz')}:</strong> ${app.image}</div>` : ''}
+                    ${portsHtml ? `<div class="as-meta-item"><strong>${t('Porty')}:</strong> ${portsHtml}</div>` : ''}
                     ${app.architectures?.length ? `<div class="as-meta-item"><strong>Arch:</strong> ${app.architectures.join(', ')}</div>` : ''}
-                    ${app.category ? `<div class="as-meta-item"><strong>Kategoria:</strong> ${app.category}</div>` : ''}
+                    ${app.category ? `<div class="as-meta-item"><strong>${t('Kategoria')}:</strong> ${app.category}</div>` : ''}
+                    ${svcCountHtml}
                 </div>
                 ${compose ? `
                 <div class="as-detail-section">
                     <div class="as-compose-label-row">
                         <span class="as-compose-label">Docker Compose:</span>
-                        <button class="as-compose-reset" title="Przywróć oryginał"><i class="fas fa-undo"></i> Reset</button>
+                        <button class="as-compose-reset" title="${t('Przywróć oryginał')}"><i class="fas fa-undo"></i> Reset</button>
                     </div>
                     <textarea class="as-compose-editor" spellcheck="false">${compose.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</textarea>
                 </div>` : ''}
+                <div class="as-validation-area hidden"></div>
             </div>
             <div class="as-modal-footer">
                 ${app.installed
-                    ? `<button class="as-btn as-btn-danger as-uninstall-btn"><i class="fas fa-trash"></i> Odinstaluj</button>
-                       <span class="as-badge-installed-lg">Zainstalowana</span>`
+                    ? `<button class="as-btn as-btn-danger as-uninstall-btn"><i class="fas fa-trash"></i> ${t('Odinstaluj')}</button>
+                       <button class="as-btn as-btn-reinstall as-reinstall-btn"><i class="fas fa-sync-alt"></i> ${t('Aktualizuj')}</button>
+                       <span class="as-badge-installed-lg">${t('Zainstalowana')}</span>`
                     : `<div class="as-install-area">
                         <button class="as-btn as-btn-install as-install-btn">
-                            <i class="fas fa-download"></i> Zainstaluj
+                            <i class="fas fa-download"></i> ${t('Zainstaluj')}
                         </button>
                         <div class="as-progress-wrap hidden">
                             <div class="as-progress-header">
@@ -5549,10 +6334,34 @@ function renderAppStore(body) {
         if (installBtn) {
             installBtn.addEventListener('click', async () => {
                 installBtn.disabled = true;
-                installBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Instalowanie…';
+                installBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sprawdzanie…';
                 S.installing = appId;
                 const editorVal = composeEditor ? composeEditor.value : '';
                 const composeOverride = (editorVal && editorVal !== compose) ? editorVal : '';
+
+                /* Pre-install validation */
+                const validationArea = modal.querySelector('.as-validation-area');
+                try {
+                    const vr = await api('/appstore/validate', { method: 'POST', body: { app_id: appId, compose_override: composeOverride } });
+                    if (vr.errors && vr.errors.length) {
+                        if (validationArea) {
+                            validationArea.innerHTML = vr.errors.map(e => `<div class="as-val-error"><i class="fas fa-exclamation-circle"></i> ${e.message}</div>`).join('');
+                            validationArea.classList.remove('hidden');
+                        }
+                        installBtn.innerHTML = `<i class="fas fa-download"></i> ${t('Zainstaluj')}`;
+                        installBtn.disabled = false;
+                        S.installing = null;
+                        return;
+                    }
+                    if (vr.warnings && vr.warnings.length) {
+                        if (validationArea) {
+                            validationArea.innerHTML = vr.warnings.map(w => `<div class="as-val-warning"><i class="fas fa-exclamation-triangle"></i> ${w.message}</div>`).join('');
+                            validationArea.classList.remove('hidden');
+                        }
+                    }
+                } catch (_) { /* proceed even if validation endpoint fails */ }
+
+                installBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Instalowanie…';
 
                 /* show progress area */
                 const progressWrap = modal.querySelector('.as-progress-wrap');
@@ -5566,7 +6375,9 @@ function renderAppStore(body) {
                     prepare: 'Przygotowywanie…',
                     pull: t('Pobieranie obrazów…'),
                     start: 'Uruchamianie…',
+                    verify: t('Weryfikacja…'),
                     done: 'Gotowe!',
+                    warning: t('Uwaga'),
                     error: t('Błąd')
                 };
 
@@ -5596,6 +6407,14 @@ function renderAppStore(body) {
                         NAS.notify('Zainstalowano ' + (app.title || appId), 'success');
                         cleanup();
                         setTimeout(() => { overlay.remove(); renderGrid(); }, 1200);
+                    }
+                    if (data.stage === 'warning') {
+                        app.installed = true;
+                        S.installing = null;
+                        if (progressFill) progressFill.style.background = '#fbbf24';
+                        NAS.notify(data.message || (app.title || appId) + ' zainstalowana z ostrzeżeniami', 'warning');
+                        cleanup();
+                        setTimeout(() => { overlay.remove(); renderGrid(); }, 2500);
                     }
                 };
 
@@ -5638,6 +6457,43 @@ function renderAppStore(body) {
                     NAS.notify(t('Błąd odinstalowania: ') + e.message, 'error');
                     uninstallBtn.innerHTML = '<i class="fas fa-trash"></i> Odinstaluj';
                     uninstallBtn.disabled = false;
+                }
+            });
+        }
+
+        /* Reinstall / Update button */
+        const reinstallBtn = modal.querySelector('.as-reinstall-btn');
+        if (reinstallBtn) {
+            reinstallBtn.addEventListener('click', async () => {
+                if (!confirm(t('Zaktualizować') + ` ${app.title || appId}? ` + t('Kontenery zostaną zrestartowane.'))) return;
+                reinstallBtn.disabled = true;
+                reinstallBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Aktualizacja…');
+                const editorVal = composeEditor ? composeEditor.value : '';
+                const composeOverride = (editorVal && editorVal !== compose) ? editorVal : '';
+
+                const onProgress = (data) => {
+                    if (data.app_id !== appId) return;
+                    if (data.stage === 'done') {
+                        NAS.notify(t('Zaktualizowano ') + (app.title || appId), 'success');
+                        if (NAS.socket) NAS.socket.off('appstore_install_progress', onProgress);
+                        overlay.remove();
+                        renderGrid();
+                    } else if (data.stage === 'error') {
+                        NAS.notify(t('Błąd aktualizacji: ') + (data.message || ''), 'error');
+                        if (NAS.socket) NAS.socket.off('appstore_install_progress', onProgress);
+                        reinstallBtn.innerHTML = '<i class="fas fa-sync-alt"></i> ' + t('Aktualizuj');
+                        reinstallBtn.disabled = false;
+                    }
+                };
+                if (NAS.socket) NAS.socket.on('appstore_install_progress', onProgress);
+
+                try {
+                    await api('/appstore/reinstall', { method: 'POST', body: { app_id: appId, compose_override: composeOverride } });
+                } catch (e) {
+                    NAS.notify(t('Błąd aktualizacji: ') + e.message, 'error');
+                    if (NAS.socket) NAS.socket.off('appstore_install_progress', onProgress);
+                    reinstallBtn.innerHTML = '<i class="fas fa-sync-alt"></i> ' + t('Aktualizuj');
+                    reinstallBtn.disabled = false;
                 }
             });
         }
