@@ -166,6 +166,7 @@ function renderFM(body, state) {
                 </div>
                 <div class="fm-toolbar-sep"></div>
                 <button class="fm-toolbar-btn" id="fm-analyze" title="Analiza dysku" aria-label="Analiza dysku"><i class="fas fa-chart-pie"></i></button>
+                <button class="fm-toolbar-btn" id="fm-logs" title="Logi zdarzeń" aria-label="Logi zdarzeń"><i class="fas fa-history"></i></button>
                 <button class="fm-toolbar-btn fm-shortcuts-btn" id="fm-shortcuts-btn" title="Skróty klawiszowe (F1)" aria-label="Skróty klawiszowe"><i class="fas fa-keyboard"></i></button>
                 <div class="fm-toolbar-sep"></div>
                 <div class="fm-search-box" id="fm-search-box" role="search">
@@ -596,7 +597,10 @@ function renderFM(body, state) {
                         </div>
                         <div class="fm-file-size">${_dirSize(item)}</div>
                         <div class="fm-file-date">${formatDate(item.modified)}</div>
-                        <div class="fm-file-perms" title="${item.permissions_symbolic || item.permissions || ''}${item.owner ? ` | ${item.owner}:${item.group}` : ''}">${item.permissions_symbolic || item.permissions || ''}</div>
+                        <div class="fm-file-perms" title="${item.permissions_symbolic || item.permissions || ''}${item.owner ? ` | ${item.owner}:${item.group}` : ''}">
+                            <span style="font-family:monospace">${item.permissions_symbolic || ''}</span>
+                            <span style="opacity:0.6;font-size:0.85em;margin-left:6px">${item.permissions_octal || item.permissions || ''}</span>
+                        </div>
                     </div>
                 `;
             }).join('');
@@ -1455,7 +1459,49 @@ function renderFM(body, state) {
                 }
                 case 'folder-pw-remove': {
                     const frPath = itemFullPath([...state.selected][0]);
-                    const rpw = await promptDialog(t('Usuń hasło folderu'), t('Podaj aktualne hasło:'));
+                    const isAdmin = NAS.user?.role === 'admin';
+                    let rpw = '';
+                    if (isAdmin) {
+                        // Admin override check
+                        const override = await new Promise(resolve => {
+                            const overlay = document.createElement('div');
+                            overlay.className = 'app-modal-overlay';
+                            overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9999;display:flex;align-items:center;justify-content:center';
+                            overlay.innerHTML = `
+                                <div class="app-modal" style="background:var(--bg-surface,#1e1e2e);padding:20px;border-radius:10px;border:1px solid var(--border,#333);min-width:300px">
+                                    <h3 style="margin-top:0">${t('Usuń hasło folderu')}</h3>
+                                    <p>${t('Podaj aktualne hasło:')}</p>
+                                    <input type="password" id="pw-remove-input" class="app-input" style="width:100%;margin-bottom:10px" autofocus>
+                                    <div style="margin-bottom:15px">
+                                        <label style="display:flex;align-items:center;gap:8px;font-size:0.9em;color:var(--text-muted)">
+                                            <input type="checkbox" id="pw-admin-force"> ${t('Wymuś usunięcie (Admin)')}
+                                        </label>
+                                    </div>
+                                    <div style="display:flex;justify-content:flex-end;gap:10px">
+                                        <button id="pw-cancel" class="app-btn">${t('Anuluj')}</button>
+                                        <button id="pw-confirm" class="app-btn app-btn-primary">${t('Usuń')}</button>
+                                    </div>
+                                </div>
+                            `;
+                            document.body.appendChild(overlay);
+                            
+                            const inp = overlay.querySelector('#pw-remove-input');
+                            const forceCb = overlay.querySelector('#pw-admin-force');
+                            
+                            const close = (res) => { overlay.remove(); resolve(res); };
+                            overlay.querySelector('#pw-cancel').onclick = () => close(null);
+                            overlay.querySelector('#pw-confirm').onclick = () => close({ pw: inp.value, force: forceCb.checked });
+                            inp.onkeydown = e => { if(e.key === 'Enter') close({ pw: inp.value, force: forceCb.checked }); };
+                        });
+                        
+                        if (!override) break;
+                        const rmRes = await api('/files/folder-password', { method: 'DELETE', body: { path: frPath, password: override.pw, force: override.force } });
+                        if (rmRes.ok) { toast(t('Hasło usunięte'), 'success'); navigateTo(state.path); }
+                        else toast(rmRes.error || t('Nieprawidłowe hasło'), 'error');
+                        break;
+                    }
+                    
+                    rpw = await promptDialog(t('Usuń hasło folderu'), t('Podaj aktualne hasło:'));
                     if (!rpw) break;
                     const rmRes = await api('/files/folder-password', { method: 'DELETE', body: { path: frPath, password: rpw } });
                     if (rmRes.ok) { toast(t('Hasło usunięte'), 'success'); navigateTo(state.path); }
@@ -2622,7 +2668,90 @@ function renderFM(body, state) {
         }
     }
 
+    // ─── Logs Dialog ──────────────────────────────────────────────────────────
+
+    async function showLogsDialog(path) {
+        const overlay = document.createElement('div');
+        overlay.className = 'app-modal-overlay';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9999;display:flex;align-items:center;justify-content:center';
+        
+        const dialog = document.createElement('div');
+        dialog.className = 'app-modal';
+        dialog.style.cssText = 'background:var(--bg-surface,#1e1e2e);border:1px solid var(--border,#333);border-radius:12px;padding:20px;width:700px;max-width:95vw;height:80vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,0.5)';
+        
+        dialog.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+                <h3 style="margin:0;font-size:1.2em"><i class="fas fa-history"></i> ${t('Dziennik zdarzeń plików')}</h3>
+                <button class="app-btn-icon" id="fm-logs-close"><i class="fas fa-times"></i></button>
+            </div>
+            <div style="display:flex;gap:10px;margin-bottom:12px">
+                <input type="text" id="fm-logs-search" placeholder="${t('Szukaj...')}" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border,#444);background:var(--bg-base,#181825);color:var(--text-primary)">
+                <select id="fm-logs-filter" style="padding:8px;border-radius:6px;border:1px solid var(--border,#444);background:var(--bg-base,#181825);color:var(--text-primary)">
+                    <option value="">${t('Wszystkie')}</option>
+                    <option value="files" selected>${t('Operacje plików')}</option>
+                    <option value="security">${t('Bezpieczeństwo')}</option>
+                    <option value="error">${t('Błędy')}</option>
+                </select>
+                <button id="fm-logs-refresh" class="app-btn"><i class="fas fa-sync-alt"></i></button>
+            </div>
+            <div id="fm-logs-list" style="flex:1;overflow-y:auto;border:1px solid var(--border,#333);border-radius:6px;background:var(--bg-base,#0f0f15);padding:8px;font-family:monospace;font-size:0.9em">
+                <div style="padding:20px;text-align:center;color:var(--text-muted)">${t('Ładowanie...')}</div>
+            </div>
+        `;
+        
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+        
+        const close = () => overlay.remove();
+        overlay.querySelector('#fm-logs-close').onclick = close;
+        overlay.onclick = e => { if (e.target === overlay) close(); };
+        
+        const listEl = overlay.querySelector('#fm-logs-list');
+        const searchInput = overlay.querySelector('#fm-logs-search');
+        const filterSelect = overlay.querySelector('#fm-logs-filter');
+        const refreshBtn = overlay.querySelector('#fm-logs-refresh');
+        
+        async function loadLogs() {
+            listEl.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-muted)">${t('Ładowanie...')}</div>`;
+            try {
+                const search = searchInput.value.trim();
+                const category = filterSelect.value;
+                const url = `/api/eventlog?limit=100&category=${category}&search=${encodeURIComponent(search)}`;
+                const res = await api(url);
+                if (!res.events || !res.events.length) {
+                    listEl.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-muted)">${t('Brak zdarzeń')}</div>`;
+                    return;
+                }
+                
+                listEl.innerHTML = res.events.map(e => {
+                    const time = e.time || new Date(e.ts * 1000).toLocaleString();
+                    const color = e.level === 'error' ? '#ef4444' : e.level === 'warning' ? '#eab308' : '#a6accd';
+                    const icon = e.level === 'error' ? 'fa-exclamation-circle' : e.level === 'warning' ? 'fa-exclamation-triangle' : 'fa-info-circle';
+                    return `
+                        <div style="display:flex;gap:10px;padding:8px;border-bottom:1px solid var(--border,#222);align-items:start">
+                            <div style="color:var(--text-muted);white-space:nowrap;width:140px;font-size:0.85em">${time}</div>
+                            <div style="color:${color};width:20px;text-align:center"><i class="fas ${icon}"></i></div>
+                            <div style="flex:1;word-break:break-word">
+                                <div style="font-weight:500">${escapeHtml(e.message)}</div>
+                                ${e.details ? `<div style="font-size:0.85em;color:var(--text-muted);margin-top:4px;white-space:pre-wrap">${escapeHtml(JSON.stringify(e.details, null, 2))}</div>` : ''}
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } catch (e) {
+                listEl.innerHTML = `<div style="padding:20px;text-align:center;color:var(--danger)">${t('Błąd ładowania logów')}</div>`;
+            }
+        }
+        
+        refreshBtn.onclick = loadLogs;
+        searchInput.onkeydown = e => { if(e.key === 'Enter') loadLogs(); };
+        filterSelect.onchange = loadLogs;
+        
+        loadLogs();
+    }
+
     // ─── Transfer to remote NAS ───
+
 
     // ─── File Properties Dialog ───────────────────────────────────────────────
 
@@ -2646,24 +2775,63 @@ function renderFM(body, state) {
 
         const dialog = document.createElement('div');
         dialog.className = 'app-modal';
-        dialog.style.cssText = 'background:var(--bg-surface,#1e1e2e);border:1px solid var(--border,#333);border-radius:12px;padding:24px;min-width:360px;max-width:480px;width:90vw;box-shadow:0 8px 32px rgba(0,0,0,0.5)';
+        dialog.style.cssText = 'background:var(--bg-surface,#1e1e2e);border:1px solid var(--border,#333);border-radius:12px;padding:24px;min-width:420px;max-width:500px;width:90vw;box-shadow:0 8px 32px rgba(0,0,0,0.5)';
 
         const symPerm = perms.permissions_symbolic || item.permissions_symbolic || '';
         const octPerm = perms.permissions || item.permissions || '';
         const owner = perms.owner || item.owner || '—';
         const group = perms.group || item.group || '—';
-
-        const chmodSection = isAdmin ? `
-            <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border,#333)">
-                <div style="font-weight:600;margin-bottom:8px;color:var(--text-primary)">${t('Zmień uprawnienia')} <span style="font-size:0.75em;color:var(--text-muted)">(tylko admin)</span></div>
-                <div style="display:flex;gap:8px;align-items:center">
-                    <input id="fm-chmod-input" type="text" value="${octPerm}" maxlength="4" pattern="[0-7]{3,4}"
-                        placeholder="755"
-                        style="width:80px;padding:6px 10px;background:var(--bg-base,#181825);border:1px solid var(--border,#444);border-radius:6px;color:var(--text-primary);font-family:monospace;font-size:1em">
-                    <button id="fm-chmod-apply" class="app-btn app-btn-primary" style="padding:6px 16px">${t('Zastosuj')}</button>
-                    <span id="fm-chmod-status" style="font-size:0.85em;color:var(--text-muted)"></span>
+        
+        // Helper to generate checkboxes for permissions
+        const getPermChecks = (oct) => {
+            const p = parseInt(oct || '0', 8);
+            const check = (mask) => (p & mask) ? 'checked' : '';
+            return `
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:center;margin:10px 0;font-size:0.9em">
+                    <div></div><div>R</div><div>W</div><div>X</div>
+                    <div style="text-align:left">${t('Właściciel')}</div>
+                    <div><input type="checkbox" class="perm-cb" data-val="400" ${check(0o400)} ${!isAdmin ? 'disabled' : ''}></div>
+                    <div><input type="checkbox" class="perm-cb" data-val="200" ${check(0o200)} ${!isAdmin ? 'disabled' : ''}></div>
+                    <div><input type="checkbox" class="perm-cb" data-val="100" ${check(0o100)} ${!isAdmin ? 'disabled' : ''}></div>
+                    
+                    <div style="text-align:left">${t('Grupa')}</div>
+                    <div><input type="checkbox" class="perm-cb" data-val="40" ${check(0o040)} ${!isAdmin ? 'disabled' : ''}></div>
+                    <div><input type="checkbox" class="perm-cb" data-val="20" ${check(0o020)} ${!isAdmin ? 'disabled' : ''}></div>
+                    <div><input type="checkbox" class="perm-cb" data-val="10" ${check(0o010)} ${!isAdmin ? 'disabled' : ''}></div>
+                    
+                    <div style="text-align:left">${t('Inni')}</div>
+                    <div><input type="checkbox" class="perm-cb" data-val="4" ${check(0o004)} ${!isAdmin ? 'disabled' : ''}></div>
+                    <div><input type="checkbox" class="perm-cb" data-val="2" ${check(0o002)} ${!isAdmin ? 'disabled' : ''}></div>
+                    <div><input type="checkbox" class="perm-cb" data-val="1" ${check(0o001)} ${!isAdmin ? 'disabled' : ''}></div>
                 </div>
-                <div style="font-size:0.78em;color:var(--text-muted);margin-top:6px">${t('Podaj 3-4 cyfry ósemkowe, np. 755, 644, 700')}</div>
+            `;
+        };
+
+        const chmodSection = `
+            <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border,#333)">
+                <div style="font-weight:600;margin-bottom:8px;color:var(--text-primary)">${t('Uprawnienia')} ${!isAdmin ? '<span style="font-size:0.75em;color:var(--text-muted)">(tylko do odczytu)</span>' : ''}</div>
+                ${getPermChecks(octPerm)}
+                <div style="display:flex;align-items:center;gap:10px;margin-top:10px">
+                    <span style="font-size:0.9em;color:var(--text-muted)">Octal:</span>
+                    <input id="fm-chmod-input" type="text" value="${octPerm}" maxlength="4" pattern="[0-7]{3,4}"
+                        style="width:60px;padding:4px 8px;background:var(--bg-base,#181825);border:1px solid var(--border,#444);border-radius:4px;color:var(--text-primary);font-family:monospace" ${!isAdmin ? 'disabled' : ''}>
+                </div>
+            </div>
+        `;
+        
+        const chownSection = isAdmin ? `
+            <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border,#333)">
+                 <div style="font-weight:600;margin-bottom:8px;color:var(--text-primary)">${t('Właściciel')}</div>
+                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                    <div>
+                        <label style="font-size:0.8em;color:var(--text-muted)">User</label>
+                        <input id="fm-chown-user" type="text" value="${owner}" style="width:100%;padding:6px;background:var(--bg-base,#181825);border:1px solid var(--border,#444);border-radius:4px;color:var(--text-primary)">
+                    </div>
+                    <div>
+                        <label style="font-size:0.8em;color:var(--text-muted)">Group</label>
+                        <input id="fm-chown-group" type="text" value="${group}" style="width:100%;padding:6px;background:var(--bg-base,#181825);border:1px solid var(--border,#444);border-radius:4px;color:var(--text-primary)">
+                    </div>
+                 </div>
             </div>
         ` : '';
 
@@ -2674,15 +2842,16 @@ function renderFM(body, state) {
             </div>
             <table style="width:100%;border-collapse:collapse;font-size:0.92em">
                 <tr><td style="color:var(--text-muted);padding:4px 0;width:120px">${t('Typ')}</td><td style="color:var(--text-primary)">${item.is_dir ? t('Folder') : t('Plik')}</td></tr>
-                <tr><td style="color:var(--text-muted);padding:4px 0">${t('Uprawnienia')}</td><td style="font-family:monospace;color:var(--text-primary)">${symPerm} <span style="color:var(--text-muted)">(${octPerm})</span></td></tr>
-                <tr><td style="color:var(--text-muted);padding:4px 0">${t('Właściciel')}</td><td style="color:var(--text-primary)">${owner}${group !== '—' ? ':' + group : ''}</td></tr>
-                ${!item.is_dir ? `<tr><td style="color:var(--text-muted);padding:4px 0">${t('Rozmiar')}</td><td style="color:var(--text-primary)">${typeof fmtBytes !== 'undefined' ? fmtBytes(item.size) : item.size + ' B'}</td></tr>` : ''}
+                <tr><td style="color:var(--text-muted);padding:4px 0">${t('Rozmiar')}</td><td style="color:var(--text-primary)">${typeof fmtBytes !== 'undefined' ? fmtBytes(item.size) : item.size + ' B'}</td></tr>
                 <tr><td style="color:var(--text-muted);padding:4px 0">${t('Zmieniony')}</td><td style="color:var(--text-primary)">${formatDate(item.modified)}</td></tr>
+                ${!isAdmin ? `<tr><td style="color:var(--text-muted);padding:4px 0">${t('Właściciel')}</td><td style="color:var(--text-primary)">${owner}:${group}</td></tr>` : ''}
                 ${item.protected ? `<tr><td style="color:var(--text-muted);padding:4px 0">${t('Ochrona')}</td><td style="color:${item.locked ? 'var(--danger)' : 'var(--success,#22c55e)'}"><i class="fas ${item.locked ? 'fa-lock' : 'fa-lock-open'}"></i> ${item.locked ? t('Zablokowany') : t('Odblokowany')}</td></tr>` : ''}
             </table>
             ${chmodSection}
-            <div style="margin-top:20px;text-align:right">
+            ${chownSection}
+            <div style="margin-top:20px;text-align:right;display:flex;gap:10px;justify-content:flex-end">
                 <button id="fm-props-close" class="app-btn" style="padding:8px 20px">${t('Zamknij')}</button>
+                ${isAdmin ? `<button id="fm-props-save" class="app-btn app-btn-primary" style="padding:8px 20px">${t('Zapisz')}</button>` : ''}
             </div>
         `;
 
@@ -2694,28 +2863,51 @@ function renderFM(body, state) {
         overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
 
         if (isAdmin) {
-            overlay.querySelector('#fm-chmod-apply').addEventListener('click', async () => {
-                const modeVal = overlay.querySelector('#fm-chmod-input').value.trim();
-                const statusEl = overlay.querySelector('#fm-chmod-status');
-                if (!/^[0-7]{3,4}$/.test(modeVal)) {
-                    statusEl.style.color = 'var(--danger)';
-                    statusEl.textContent = t('Nieprawidłowy format (np. 755)');
-                    return;
+            const checkboxes = overlay.querySelectorAll('.perm-cb');
+            const octInput = overlay.querySelector('#fm-chmod-input');
+            
+            const updateOct = () => {
+                let oct = 0;
+                checkboxes.forEach(cb => {
+                    if (cb.checked) oct += parseInt(cb.dataset.val);
+                });
+                octInput.value = '0' + oct.toString(10);
+            };
+            
+            checkboxes.forEach(cb => cb.addEventListener('change', updateOct));
+            
+            octInput.addEventListener('input', () => {
+                let val = parseInt(octInput.value, 8);
+                if (isNaN(val)) return;
+                checkboxes.forEach(cb => {
+                    const mask = parseInt(cb.dataset.val);
+                    cb.checked = (val & mask) !== 0;
+                });
+            });
+
+            overlay.querySelector('#fm-props-save').addEventListener('click', async () => {
+                const modeVal = octInput.value.trim();
+                const newUser = overlay.querySelector('#fm-chown-user')?.value.trim();
+                const newGroup = overlay.querySelector('#fm-chown-group')?.value.trim();
+                
+                let success = true;
+                
+                // chmod
+                if (modeVal !== octPerm) {
+                     const r = await api('/files/chmod', { method: 'POST', body: { path: itemPath, mode: modeVal } });
+                     if (!r.ok && !r.permissions) { toast(r.error || t('Błąd uprawnień'), 'error'); success = false; }
                 }
-                try {
-                    const res = await api('/files/chmod', { method: 'POST', body: { path: itemPath, mode: modeVal } });
-                    if (res.ok) {
-                        statusEl.style.color = 'var(--success,#22c55e)';
-                        statusEl.textContent = `✓ ${res.permissions_symbolic || modeVal}`;
-                        toast(t('Uprawnienia zmienione'), 'success');
-                        navigateTo(state.path);
-                    } else {
-                        statusEl.style.color = 'var(--danger)';
-                        statusEl.textContent = res.error || t('Błąd');
-                    }
-                } catch (e) {
-                    statusEl.style.color = 'var(--danger)';
-                    statusEl.textContent = t('Błąd');
+                
+                // chown
+                if (newUser !== owner || newGroup !== group) {
+                     const r = await api('/files/chown', { method: 'POST', body: { path: itemPath, owner: newUser, group: newGroup } });
+                     if (r.error) { toast(r.error || t('Błąd właściciela'), 'error'); success = false; }
+                }
+                
+                if (success) {
+                    toast(t('Zapisano zmiany'), 'success');
+                    close();
+                    if (state.path) renderFileList(); // refresh list
                 }
             });
         }
@@ -3117,6 +3309,7 @@ function renderFM(body, state) {
             navigateTo(parent);
         }
     });
+    body.querySelector('#fm-logs').addEventListener('click', () => showLogsDialog(state.path));
     body.querySelector('#fm-refresh').addEventListener('click', () => navigateTo(state.path));
     body.querySelector('#fm-newfolder').addEventListener('click', createNewFolder);
     body.querySelector('#fm-upload').addEventListener('click', uploadFiles);

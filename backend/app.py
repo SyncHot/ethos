@@ -42,7 +42,7 @@ _sys.path.insert(0, os.path.dirname(__file__))
 from host import NATIVE_MODE, host_run as _host_run_base, host_run_stream as _host_run_stream_base, nsenter_args, \
     app_path as _app_path, data_path as _data_path, user_data_path as _user_data_path, ETHOS_ROOT, \
     get_data_disk as _get_data_disk, get_user_home as _get_user_home, ensure_user_home_structure as _ensure_user_home_structure, \
-    get_photo_folders as _get_photo_folders
+    get_photo_folders as _get_photo_folders, fs_call_with_timeout as _fs_call
 from utils import load_json as _load_json, save_json as _save_json, \
     safe_path as _safe_path_util, fmt_bytes, DATA_ROOT, \
     generate_thumbnail, THUMB_CACHE_DIR, THUMBS_DIR_NAME, \
@@ -2600,6 +2600,9 @@ def _cleanup_stale_ethos_tmp(data_root=None):
     Scans user home directories and mounted volumes for .ethos_tmp files older
     than 1 hour and removes them.  Also clears stale upload chunk directories.
 
+    Each scan root is offloaded to a real OS thread via fs_call_with_timeout
+    so that a hung mount cannot block the gevent event loop.
+
     Note: data_root parameter is kept for backward compatibility but ignored;
     scanning from DATA_ROOT='/' would walk the entire filesystem unnecessarily.
     """
@@ -2650,7 +2653,12 @@ def _cleanup_stale_ethos_tmp(data_root=None):
             pass
 
     for root in scan_roots:
-        _scan_dir(root)
+        try:
+            _fs_call(_scan_dir, root, timeout=30)
+        except TimeoutError:
+            print(f'[cleanup] Skipping hung path: {root}')
+        except Exception:
+            pass
 
     # Also prune stale upload chunk dirs
     try:
@@ -3078,7 +3086,7 @@ _FU_MAX_ATTEMPTS = 5
 _FU_ATTEMPT_WINDOW = 120   # 2 minutes
 _FU_LOCKOUT_TIME = 300     # 5 minute lockout
 
-FOLDER_PASSWORD_MIN_LENGTH = 4
+FOLDER_PASSWORD_MIN_LENGTH = 8
 
 
 def _mode_to_symbolic(mode):
@@ -3196,7 +3204,10 @@ def folder_password_set():
     path = data.get('path', '').rstrip('/') or '/'
     password = data.get('password', '')
     if not password or len(password) < FOLDER_PASSWORD_MIN_LENGTH:
-        return jsonify({'error': f'Hasło musi mieć minimum {FOLDER_PASSWORD_MIN_LENGTH} znaki'}), 400
+        return jsonify({'error': f'Hasło musi mieć minimum {FOLDER_PASSWORD_MIN_LENGTH} znaków'}), 400
+    # Complexity check: at least one letter and one number
+    if not any(c.isalpha() for c in password) or not any(c.isdigit() for c in password):
+        return jsonify({'error': 'Hasło musi zawierać litery i cyfry'}), 400
     real = safe_path(path)
     if not real or not os.path.isdir(real):
         return jsonify({'error': 'Folder nie istnieje'}), 404
@@ -3223,11 +3234,19 @@ def folder_password_remove():
         return jsonify({'error': 'Folder nie jest chroniony'}), 404
     cur = get_current_user()
     username = cur['username'] if cur else 'unknown'
-    # Verify current password
+    # Verify current password (unless admin override)
+    is_admin = cur and cur.get('role') == 'admin'
+    force = data.get('force', False)
+    
     if not _verify_folder_password(password, passwords[path]):
-        elog('security', 'warning', f'Nieudana próba usunięcia hasła folderu: {path}',
-             {'user': username, 'path': path})
-        return jsonify({'error': 'Nieprawidłowe hasło'}), 403
+        # Allow admin to force remove without correct password
+        if is_admin and force:
+            elog('security', 'warning', f'Wymuszone usunięcie hasła folderu przez admina: {path}',
+                 {'user': username, 'path': path})
+        else:
+            elog('security', 'warning', f'Nieudana próba usunięcia hasła folderu: {path}',
+                 {'user': username, 'path': path})
+            return jsonify({'error': 'Nieprawidłowe hasło'}), 403
     del passwords[path]
     _save_folder_passwords(passwords)
     # Remove from all unlock sessions
@@ -3352,6 +3371,11 @@ def files_chmod():
     mode_str = data.get('mode', '')
     if not path or not mode_str:
         return jsonify({'error': 'Brak ścieżki lub trybu'}), 400
+
+    blocked = _require_folder_access(path)
+    if blocked is not None:
+        return blocked
+
     # Validate mode: must be 3-4 octal digits
     if not re.match(r'^[0-7]{3,4}$', mode_str):
         return jsonify({'error': 'Nieprawidłowy tryb uprawnień (np. 755, 644)'}), 400
@@ -3392,6 +3416,64 @@ def _load_favorites():
 
 def _save_favorites(favs):
     _save_json(_favorites_file(), favs)
+
+
+@app.route('/api/files/chown', methods=['POST'])
+@require_auth
+def files_chown():
+    """POST /api/files/chown — Change file/folder owner/group.
+    Body: { path, owner, group }
+    Admin only.
+    """
+    cur = get_current_user()
+    if not cur or cur.get('role') != 'admin':
+        return jsonify({'error': 'Wymagane uprawnienia administratora'}), 403
+    data = request.get_json(force=True)
+    path = data.get('path', '')
+    owner = data.get('owner', '')
+    group = data.get('group', '')
+    if not path:
+        return jsonify({'error': 'Brak ścieżki'}), 400
+    if not owner and not group:
+        return jsonify({'error': 'Brak właściciela lub grupy'}), 400
+
+    blocked = _require_folder_access(path)
+    if blocked is not None:
+        return blocked
+
+    real = safe_path(path)
+    if not real or not os.path.exists(real):
+        return jsonify({'error': 'Plik nie istnieje'}), 404
+
+    try:
+        uid = -1
+        gid = -1
+        if owner:
+            try:
+                uid = pwd.getpwnam(owner).pw_uid
+            except KeyError:
+                return jsonify({'error': f'Użytkownik {owner} nie istnieje'}), 400
+        if group:
+            try:
+                gid = _grp.getgrnam(group).gr_gid
+            except KeyError:
+                return jsonify({'error': f'Grupa {group} nie istnieje'}), 400
+
+        os.chown(real, uid, gid)
+        st = os.stat(real)
+        new_owner, new_group = _get_owner_group(st)
+        username = cur['username']
+        elog('security', 'info', f'Zmieniono właściciela: {path} → {new_owner}:{new_group}',
+             {'user': username, 'path': path, 'owner': new_owner, 'group': new_group})
+        return jsonify({
+            'ok': True,
+            'owner': new_owner,
+            'group': new_group
+        })
+    except PermissionError:
+        return jsonify({'error': 'Brak uprawnień'}), 403
+    except OSError as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/files/favorites')
@@ -3581,6 +3663,8 @@ def files_list():
                         'size': 0, 'modified': st.st_mtime,
                         'permissions': oct(st.st_mode)[-3:],
                         'permissions_symbolic': _mode_to_symbolic(st.st_mode),
+                        'can_read': os.access(home_dir, os.R_OK),
+                        'can_write': os.access(home_dir, os.W_OK),
                         'owner': _owner,
                         'group': _group,
                         'home': True,
@@ -3596,7 +3680,10 @@ def files_list():
     if real_path and '/media/' in real_path:
         wake_path = real_path
         if wake_path:
-            try_wake_path(wake_path)
+            try:
+                _fs_call(try_wake_path, wake_path, timeout=10)
+            except TimeoutError:
+                return jsonify({'error': 'Dysk nie odpowiada — spróbuj ponownie za chwilę'}), 504
 
     if not real_path or not os.path.isdir(real_path):
         return jsonify({'error': 'Nieprawidłowa ścieżka'}), 400
@@ -3648,8 +3735,17 @@ def files_list():
             pass
 
     items = []
+    _on_external = '/media/' in real_path or '/mnt/' in real_path
+
+    def _do_scandir():
+        return sorted(os.scandir(real_path), key=lambda e: (not e.is_dir(), e.name.lower()))
+
     try:
-        for entry in sorted(os.scandir(real_path), key=lambda e: (not e.is_dir(), e.name.lower())):
+        if _on_external:
+            dir_entries = _fs_call(_do_scandir, timeout=10)
+        else:
+            dir_entries = _do_scandir()
+        for entry in dir_entries:
             # Hide per-drive trash directories and .thumbs directories
             if entry.name in ('.trash', '.thumbs') and entry.is_dir():
                 continue
@@ -3667,6 +3763,9 @@ def files_list():
                     'modified': stat.st_mtime,
                     'permissions': oct(stat.st_mode)[-3:],
                     'permissions_symbolic': _mode_to_symbolic(stat.st_mode),
+                    'permissions_octal': oct(stat.st_mode & 0o7777),
+                    'can_read': os.access(entry.path, os.R_OK),
+                    'can_write': os.access(entry.path, os.W_OK),
                     'owner': owner,
                     'group': group,
                 }
@@ -3689,6 +3788,8 @@ def files_list():
                 })
     except PermissionError:
         return jsonify({'error': 'Brak uprawnień'}), 403
+    except TimeoutError:
+        return jsonify({'error': 'Dysk nie odpowiada — spróbuj ponownie za chwilę'}), 504
 
     if _cache_key:
         _listdir_cache_set(_cache_key, items, mtime=_dir_mtime)
@@ -3953,6 +4054,13 @@ def files_download():
     resp = send_file(real_path, as_attachment=True, conditional=True)
     # Advertise byte-range support so browsers can resume interrupted downloads (HTTP 206)
     resp.headers['Accept-Ranges'] = 'bytes'
+    
+    # Log download start (only for full files, not partial ranges to avoid spam)
+    if 'Range' not in request.headers:
+        cur = get_current_user()
+        username = cur['username'] if cur else 'unknown'
+        elog('files', 'info', f'Pobieranie pliku: {path}', {'user': username, 'path': path, 'size': os.path.getsize(real_path)})
+        
     return resp
 
 
@@ -4390,6 +4498,7 @@ def files_upload():
     rel_paths = request.form.getlist('rel_paths')  # optional: relative paths for folder uploads
 
     uploaded = []
+    errors = []
     for idx, f in enumerate(files):
         # Use relative path if provided (folder upload), else just filename
         if rel_paths and idx < len(rel_paths) and rel_paths[idx]:
@@ -4401,7 +4510,11 @@ def files_upload():
             # Create intermediate directories
             if len(parts) > 1:
                 subdir = os.path.join(real_path, *parts[:-1])
-                os.makedirs(subdir, exist_ok=True)
+                try:
+                    os.makedirs(subdir, exist_ok=True)
+                except PermissionError:
+                    errors.append({'name': f.filename, 'error': 'Brak uprawnień do zapisu'})
+                    continue
                 # chown intermediate dirs
                 cur = real_path
                 for p in parts[:-1]:
@@ -4416,17 +4529,31 @@ def files_upload():
         try:
             f.save(tmp_filepath)
             os.replace(tmp_filepath, filepath)
-        except Exception:
+        except PermissionError:
             try: os.remove(tmp_filepath)
             except OSError: pass
-            raise
+            errors.append({'name': f.filename, 'error': 'Brak uprawnień do zapisu'})
+            continue
+        except OSError as e:
+            try: os.remove(tmp_filepath)
+            except OSError: pass
+            if e.errno == errno.ENOSPC:
+                errors.append({'name': f.filename, 'error': 'Brak miejsca na dysku'})
+            else:
+                errors.append({'name': f.filename, 'error': f'Błąd zapisu: {e.strerror}'})
+            continue
         _chown_to_user(filepath)
         uploaded.append(os.path.relpath(filepath, real_path))
     if uploaded:
         elog('files', 'info', f'Przesłano {len(uploaded)} plik(ów) do {path}', {'files': uploaded[:20]})
         _listdir_cache_invalidate(path)
         _dirsize_cache_invalidate(real_path)
-    return jsonify({'uploaded': uploaded})
+    if errors and not uploaded:
+        # All files failed — return error status
+        first_err = errors[0]['error']
+        status = 403 if first_err == 'Brak uprawnień do zapisu' else 507 if 'miejsca' in first_err else 500
+        return jsonify({'error': first_err, 'errors': errors}), status
+    return jsonify({'uploaded': uploaded, 'errors': errors})
 
 
 # ── Chunked / resumable upload ──────────────────────────────────────────────
@@ -4753,6 +4880,11 @@ def files_mkdir():
     real_path = safe_path(data.get('path', ''))
     if not real_path:
         return jsonify({'error': 'Nieprawidłowa ścieżka'}), 400
+
+    blocked = _require_folder_access(data.get('path', ''))
+    if blocked is not None:
+        return blocked
+
     try:
         os.makedirs(real_path, exist_ok=True)
         _chown_to_user(real_path)
@@ -5074,8 +5206,17 @@ def files_delete():
     deleted = []
     errors = []
     meta = _load_trash_meta()
+    
+    # Track deleted items for logging
+    deleted_log = []
 
     for p in paths:
+        # Security check
+        blocked = _require_folder_access(p)
+        if blocked is not None:
+            errors.append(f'Brak dostępu: {p} (folder chroniony)')
+            continue
+
         real_path = safe_path(p)
         if not real_path:
             errors.append(f'Nieprawidłowa ścieżka: {p}')
@@ -5949,6 +6090,10 @@ def files_rename():
     if not old or not new_name or '/' in new_name:
         return jsonify({'error': 'Nieprawidłowe parametry'}), 400
 
+    blocked = _require_folder_access(data.get('path', ''))
+    if blocked is not None:
+        return blocked
+
     new_path = os.path.join(os.path.dirname(old), new_name)
     try:
         # Compute user-visible paths for folder password migration
@@ -6019,6 +6164,14 @@ def files_move():
     dest = safe_path(data.get('dest', ''))
     if not src or not dest:
         return jsonify({'error': 'Nieprawidłowe parametry'}), 400
+
+    blocked = _require_folder_access(data.get('src', ''))
+    if blocked is not None:
+        return blocked
+    blocked = _require_folder_access(data.get('dest', ''))
+    if blocked is not None:
+        return blocked
+
     try:
         old_user_path = data.get('src', '').rstrip('/')
         dest_user = data.get('dest', '').rstrip('/')
@@ -6034,8 +6187,10 @@ def files_move():
         _listdir_cache_invalidate(data.get('src', ''))
         _listdir_cache_invalidate(data.get('dest', ''))
 
+        elog('files', 'info', f'Przeniesiono: {os.path.basename(src)} → {data.get("dest", "")}')
         return jsonify({'ok': True})
     except Exception as e:
+        elog('files', 'error', f'Błąd przenoszenia: {str(e)}')
         return jsonify({'error': str(e)}), 500
 
 
@@ -6100,6 +6255,15 @@ def files_copy():
     if not os.path.isdir(dest_dir):
         return jsonify({'error': 'Cel nie jest folderem'}), 400
 
+    # Security check: check destination and all sources
+    blocked = _require_folder_access(data.get('dest', ''))
+    if blocked is not None:
+        return blocked
+    for s in sources:
+        blocked = _require_folder_access(s)
+        if blocked is not None:
+            return blocked
+
     # Resolve sources first
     resolved = []
     for src_path in sources:
@@ -6162,6 +6326,12 @@ def files_copy():
 
     _listdir_cache_invalidate(data.get('dest', ''))
     _dirsize_cache_invalidate(dest_dir)
+
+    if copied:
+        cur = get_current_user()
+        username = cur['username'] if cur else 'unknown'
+        elog('files', 'info', f'Skopiowano {len(copied)} plików do {data.get("dest", "")}', {'user': username, 'files': copied})
+
     return jsonify({'copied': copied, 'skipped': skipped, 'errors': errors})
 
 
@@ -6249,6 +6419,15 @@ def files_move_multi():
     if not os.path.isdir(dest_dir):
         return jsonify({'error': 'Cel nie jest folderem'}), 400
 
+    # Security check: check destination and all sources
+    blocked = _require_folder_access(data.get('dest', ''))
+    if blocked is not None:
+        return blocked
+    for s in sources:
+        blocked = _require_folder_access(s)
+        if blocked is not None:
+            return blocked
+
     # Resolve sources
     resolved = []
     for src_path in sources:
@@ -6305,6 +6484,12 @@ def files_move_multi():
     for src_path in sources:
         _listdir_cache_invalidate(src_path)
         _dirsize_cache_invalidate(os.path.dirname(safe_path(src_path) or ''))
+
+    if moved:
+        cur = get_current_user()
+        username = cur['username'] if cur else 'unknown'
+        elog('files', 'info', f'Przeniesiono {len(moved)} plików do {data.get("dest", "")}', {'user': username, 'files': moved})
+
     return jsonify({'moved': moved, 'skipped': skipped, 'errors': errors})
 
 
@@ -8447,10 +8632,13 @@ def _watchdog_ticker():
 
 def _watchdog_monitor():
     """Runs in a REAL OS thread (not gevent).  Checks if the event-loop
-    ticker has advanced recently.  If it hasn't moved for >60 s the
-    process is killed so systemd can restart it cleanly."""
+    ticker has advanced recently.  If it hasn't moved for >30 s a warning
+    is logged; if it exceeds 90 s the process is killed so systemd can
+    restart it cleanly."""
     import signal as _signal
-    STALL_LIMIT = 60  # seconds without event-loop tick
+    WARN_LIMIT = 30   # seconds — log a warning
+    STALL_LIMIT = 90  # seconds — hard kill
+    _warned = [False]
     while True:
         _time.sleep(10)  # real OS sleep, not gevent
         last = _watchdog_last_tick[0]
@@ -8465,6 +8653,14 @@ def _watchdog_monitor():
             except Exception:
                 pass
             os._exit(1)  # hard exit — systemd will restart
+        elif stall > WARN_LIMIT and not _warned[0]:
+            _warned[0] = True
+            try:
+                print(f'[watchdog] Event loop nie odpowiada od {stall:.0f}s', flush=True)
+            except Exception:
+                pass
+        elif stall <= WARN_LIMIT:
+            _warned[0] = False
 
 
 # ─────────────────────────── Main ───────────────────────────
@@ -8474,6 +8670,17 @@ if __name__ == '__main__':
     init_resources_db()
     init_backup(socketio)
     init_eventlog(socketio)
+
+    # SIGTERM handler — log shutdown before dying (e.g. systemd restart)
+    def _sigterm_handler(signum, frame):
+        try:
+            elog('system', 'warning', 'EthOS zatrzymany (SIGTERM/shutdown)',
+                 details={'source': 'signal', 'pid': os.getpid()})
+        except Exception:
+            pass
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, _sigterm_handler)
 
     # Start background tasks
     socketio.start_background_task(background_stats)
