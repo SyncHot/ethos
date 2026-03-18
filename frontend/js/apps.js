@@ -364,7 +364,7 @@ function renderFM(body, state) {
                     <i class="fas fa-share-alt app-icon-share"></i> Udostępnione mi
                 </button>
                 <button class="fm-tree-item" onclick="openApp('naslink')">
-                    <i class="fas fa-network-wired" style="color:#8b5cf6"></i> Transfer NAS
+                    <i class="fas fa-network-wired app-icon-violet"></i> Transfer NAS
                 </button>
             </div>
             <div class="fm-sidebar-divider"></div>

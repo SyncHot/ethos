@@ -1812,6 +1812,7 @@
 .app-icon-gallery { color: #ec4899; }
 .app-icon-share   { color: #3b82f6; }
 .app-icon-purple  { color: #a78bfa; }
+.app-icon-violet  { color: var(--accent-purple); }
 .app-icon-amber   { color: #f59e0b; }
 .app-icon-accent  { color: var(--accent); }
 .app-icon-success { color: var(--success, #22c55e); }
