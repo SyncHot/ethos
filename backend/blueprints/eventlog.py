@@ -2,6 +2,12 @@
 EthOS — Event Log (Dziennik zdarzeń)
 Centralized event logging system for debugging and monitoring.
 Logs to file + exposes API for the frontend viewer app.
+
+Endpoints:
+  GET  /api/eventlog                   — list events (filterable)
+  POST /api/eventlog                   — log event externally (agents, ticket_watcher)
+  POST /api/eventlog/clear             — clear all events
+  GET  /api/eventlog/stats             — counts by category/level
 """
 
 import os
@@ -30,7 +36,7 @@ _socketio = None
 
 LEVELS = ('debug', 'info', 'warning', 'error')
 CATEGORIES = ('system', 'files', 'backup', 'docker', 'storage',
-              'network', 'printer', 'error')
+              'network', 'printer', 'security', 'error')
 
 
 def init_eventlog(socketio_instance):
@@ -38,7 +44,29 @@ def init_eventlog(socketio_instance):
     _socketio = socketio_instance
     os.makedirs(LOG_DIR, exist_ok=True)
     _load_recent()
-    log('system', 'info', 'EthOS uruchomiony')
+
+    startup_details = {'pid': os.getpid()}
+
+    # Find last shutdown event to calculate downtime
+    with _lock:
+        events_copy = list(_events)
+    for ev in reversed(events_copy):
+        if (ev.get('category') == 'system' and ev.get('level') == 'warning'
+                and 'zatrzymany' in ev.get('message', '')):
+            shutdown_ts = ev.get('ts', 0)
+            if shutdown_ts:
+                elapsed = int(time.time() - shutdown_ts)
+                h, rem = divmod(elapsed, 3600)
+                m, s = divmod(rem, 60)
+                if h:
+                    startup_details['downtime'] = f'{h}h {m}m {s}s'
+                elif m:
+                    startup_details['downtime'] = f'{m}m {s}s'
+                else:
+                    startup_details['downtime'] = f'{s}s'
+            break
+
+    log('system', 'info', 'EthOS uruchomiony', details=startup_details)
 
 
 def _load_recent():
@@ -122,6 +150,28 @@ def log(category, level, message, details=None):
 
 
 # ─── API ─────────────────────────────────────────────────────
+
+@eventlog_bp.route('/api/eventlog', methods=['POST'])
+def eventlog_create():
+    """POST /api/eventlog — log an event from external callers (e.g. ticket_watcher, agents)
+    Body: {"category": "system", "level": "warning", "message": "...", "detail": {...}}
+    """
+    data = request.get_json(silent=True) or {}
+    category = data.get('category', 'system')
+    level = data.get('level', 'info')
+    message = data.get('message', '').strip()
+    detail = data.get('detail') or data.get('details')
+
+    if not message:
+        return jsonify({'error': 'message is required'}), 400
+    if category not in CATEGORIES:
+        category = 'system'
+    if level not in LEVELS:
+        level = 'info'
+
+    log(category, level, message, details=detail)
+    return jsonify({'ok': True}), 201
+
 
 @eventlog_bp.route('/api/eventlog')
 def eventlog_list():

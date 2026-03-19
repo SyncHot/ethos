@@ -10,7 +10,7 @@ import subprocess
 import re
 import sys
 from functools import wraps
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, g
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from host import host_run as _host_run_base, host_path, NATIVE_MODE, check_dep, ensure_dep, \
@@ -49,6 +49,23 @@ def _require_docker(f):
             return jsonify({'error': 'Docker nie jest zainstalowany lub uruchomiony'}), 503
         return f(*args, **kwargs)
     return decorated
+
+
+def _require_admin(f):
+    """Decorator: return 403 if the current user is not an admin."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if getattr(g, 'role', None) != 'admin':
+            return jsonify({'error': 'Brak uprawnień — wymagana rola administratora'}), 403
+        return f(*args, **kwargs)
+    return decorated
+
+
+# Container actions that mutate or destroy — require admin role
+_DESTRUCTIVE_CONTAINER_ACTIONS = {'stop', 'kill', 'remove'}
+
+# Project (compose) actions that stop or tear down services — require admin role
+_DESTRUCTIVE_PROJECT_ACTIONS = {'down', 'stop'}
 
 
 def _sanitize_shell_arg(value):
@@ -164,6 +181,9 @@ def container_action(container_id):
     action = data.get('action', '')
     if action not in ('start', 'stop', 'restart', 'pause', 'unpause', 'remove', 'kill'):
         return jsonify({'error': 'Nieprawidłowa akcja'}), 400
+
+    if action in _DESTRUCTIVE_CONTAINER_ACTIONS and getattr(g, 'role', None) != 'admin':
+        return jsonify({'error': 'Brak uprawnień — tylko administrator może wykonać tę akcję'}), 403
 
     cmd_map = {'remove': 'rm'}
     cmd = cmd_map.get(action, action)
@@ -392,6 +412,9 @@ def project_action(project_name):
     action = data.get('action', '')
     if action not in ('up', 'down', 'restart', 'pull', 'build', 'stop', 'start'):
         return jsonify({'error': 'Nieprawidłowa akcja'}), 400
+
+    if action in _DESTRUCTIVE_PROJECT_ACTIONS and getattr(g, 'role', None) != 'admin':
+        return jsonify({'error': 'Brak uprawnień — tylko administrator może wykonać tę akcję'}), 403
 
     # Protect critical projects from destructive actions
     if project_name in _PROTECTED_PROJECTS and action in ('down', 'stop', 'remove'):

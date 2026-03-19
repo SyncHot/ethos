@@ -59,8 +59,8 @@ const LABEL_COLORS = [
 const DEFAULT_COLUMNS = ['Backlog', 'Do zrobienia', 'W trakcie', 'Review', 'Gotowe'];
 
 function _tkTypeIcon(type) {
-    const t = TICKET_TYPES[type] || TICKET_TYPES.task;
-    return `<i class="fas ${t.icon}" style="color:${t.color};font-size:12px;" title="${t.label}"></i>`;
+    const info = TICKET_TYPES[type] || TICKET_TYPES.task;
+    return `<i class="fas ${info.icon}" style="color:${info.color};font-size:12px;" title="${info.label}"></i>`;
 }
 
 /* ═══════════════════════════ MODAL HELPER ═══════════════════════════ */
@@ -122,6 +122,11 @@ function tkLabelColor(label) {
     return LABEL_COLORS[Math.abs(hash) % LABEL_COLORS.length];
 }
 
+function _shortId(id) {
+    // t_006c13830d66 → #006c13
+    return '#' + (id || '').replace(/^t_/, '').slice(0, 6);
+}
+
 /* ═══════════════════════════ MAIN RENDER ═══════════════════════════ */
 
 async function renderTickets(body, launchOpts) {
@@ -135,6 +140,7 @@ async function renderTickets(body, launchOpts) {
     let filterAssignee = '';
     let filterPriority = '';
     let filterSearch = '';
+    let watcherExecuting = null;  // { executing, ticket_id, model, elapsed, ... }
 
     /* ── root container ── */
     body.innerHTML = '<div class="tk-app"><div class="tk-loading" style="padding:2rem;text-align:center;"><i class="fas fa-spinner fa-spin"></i> ' + t('Ładowanie...') + '</div></div>';
@@ -149,7 +155,7 @@ async function renderTickets(body, launchOpts) {
             return;
         }
         if (ev.project_id !== currentProject.id) return;
-        loadTickets(currentProject.id).then(() => renderBoard());
+        Promise.all([loadTickets(currentProject.id), loadWatcherState()]).then(() => renderBoard());
     };
 
     /* ── navigation ── */
@@ -165,7 +171,7 @@ async function renderTickets(body, launchOpts) {
 
     async function showBoard(project) {
         currentProject = project;
-        await loadTickets(project.id);
+        await Promise.all([loadTickets(project.id), loadWatcherState()]);
         renderBoard();
     }
 
@@ -209,6 +215,15 @@ async function renderTickets(body, launchOpts) {
         } catch (e) {
             toast(t('Błąd ładowania ticketów'), 'error');
             tickets = [];
+        }
+    }
+
+    async function loadWatcherState() {
+        try {
+            const data = await api('/tickets/watcher/executing');
+            watcherExecuting = data && data.executing ? data : null;
+        } catch (e) {
+            watcherExecuting = null;
         }
     }
 
@@ -541,10 +556,10 @@ async function renderTickets(body, launchOpts) {
     /* ═══════════════════ KANBAN BOARD VIEW ═══════════════════ */
 
     function getFilteredTickets() {
-        return tickets.filter(t => {
-            if (filterAssignee && t.assignee !== filterAssignee) return false;
-            if (filterPriority && t.priority !== filterPriority) return false;
-            if (filterSearch && !t.title.toLowerCase().includes(filterSearch.toLowerCase())) return false;
+        return tickets.filter(tk => {
+            if (filterAssignee && tk.assignee !== filterAssignee) return false;
+            if (filterPriority && tk.priority !== filterPriority) return false;
+            if (filterSearch && !tk.title.toLowerCase().includes(filterSearch.toLowerCase())) return false;
             return true;
         });
     }
@@ -567,6 +582,7 @@ async function renderTickets(body, launchOpts) {
                 <button class="tk-btn tk-btn-primary" id="tk-new-ticket">
                     <i class="fas fa-plus"></i> ${t('Ticket')}
                 </button>
+                ${currentProject.copilot_enabled ? '<button class="tk-act-btn" id="tk-watcher-btn" title="Ticket Watcher"><i class="fas fa-tower-broadcast"></i></button>' : ''}
                 <button class="tk-act-btn" id="tk-project-settings" title="${t('Ustawienia')}">
                     <i class="fas fa-sliders"></i>
                 </button>
@@ -646,6 +662,7 @@ async function renderTickets(body, launchOpts) {
                     ${_tkTypeIcon('epic')}
                     <span class="tk-priority-dot" style="background:${prioColor};" title="${_escHtml(PRIORITY_LABELS[epicTk.priority] || epicTk.priority)}"></span>
                     <span class="tk-card-title">${_escHtml(epicTk.title)}</span>
+                    <span class="tk-ticket-id">${_shortId(epicTk.id)}</span>
                     <span class="tk-complexity-badge" style="background:${epicCompInfo.color};" title="${t('Złożoność')}: ${_escHtml(epicCompInfo.label)}">${_escHtml(epicCompInfo.label[0])}</span>
                 </div>
                 <div class="tk-epic-badge">
@@ -661,6 +678,14 @@ async function renderTickets(body, launchOpts) {
                 ${epicTk.assignee ? '<div class="tk-card-assignee"><i class="fas fa-user"></i> ' + _escHtml(epicTk.assignee) + '</div>' : ''}
                 ${labelsHtml ? '<div class="tk-card-labels">' + labelsHtml + '</div>' : ''}
             `;
+
+            if (watcherExecuting && watcherExecuting.ticket_id === epicTk.id) {
+                epicCard.classList.add('tk-agent-active');
+                const badge = document.createElement('div');
+                badge.className = 'tk-agent-badge';
+                badge.innerHTML = '<i class="fas fa-robot"></i> ' + _escHtml(watcherExecuting.model_label || watcherExecuting.model || 'agent');
+                epicCard.appendChild(badge);
+            }
 
             // Toggle collapse
             epicCard.querySelector('.tk-epic-toggle').addEventListener('click', (e) => {
@@ -717,6 +742,14 @@ async function renderTickets(body, launchOpts) {
                         ${cLabelsHtml ? '<div class="tk-card-labels">' + cLabelsHtml + '</div>' : ''}
                     `;
 
+                    if (watcherExecuting && watcherExecuting.ticket_id === ch.id) {
+                        childCard.classList.add('tk-agent-active');
+                        const badge = document.createElement('div');
+                        badge.className = 'tk-agent-badge';
+                        badge.innerHTML = '<i class="fas fa-robot"></i> ' + _escHtml(watcherExecuting.model_label || watcherExecuting.model || 'agent');
+                        childCard.appendChild(badge);
+                    }
+
                     childCard.addEventListener('dragstart', (e) => {
                         e.dataTransfer.setData('text/plain', JSON.stringify({ id: ch.id, fromColumn: colName }));
                         childCard.classList.add('tk-card-dragging');
@@ -759,9 +792,18 @@ async function renderTickets(body, launchOpts) {
                     <span class="tk-card-title">${_escHtml(tk.title)}</span>
                     <span class="tk-complexity-badge" style="background:${compInfo.color};" title="${t('Złożoność')}: ${_escHtml(compInfo.label)}">${_escHtml(compInfo.label[0])}</span>
                 </div>
+                <span class="tk-ticket-id">${_shortId(tk.id)}</span>
                 ${tk.assignee ? '<div class="tk-card-assignee"><i class="fas fa-user"></i> ' + _escHtml(tk.assignee) + '</div>' : ''}
                 ${labelsHtml ? '<div class="tk-card-labels">' + labelsHtml + '</div>' : ''}
             `;
+
+            if (watcherExecuting && watcherExecuting.ticket_id === tk.id) {
+                card.classList.add('tk-agent-active');
+                const badge = document.createElement('div');
+                badge.className = 'tk-agent-badge';
+                badge.innerHTML = '<i class="fas fa-robot"></i> ' + _escHtml(watcherExecuting.model_label || watcherExecuting.model || 'agent');
+                card.appendChild(badge);
+            }
 
             card.addEventListener('dragstart', (e) => {
                 e.dataTransfer.setData('text/plain', JSON.stringify({ id: tk.id, fromColumn: tk.column }));
@@ -887,6 +929,8 @@ async function renderTickets(body, launchOpts) {
         app.querySelector('#tk-back').onclick = () => showProjectList();
         app.querySelector('#tk-new-ticket').onclick = () => showCreateTicketModal();
         app.querySelector('#tk-project-settings').onclick = () => showProjectModal(currentProject);
+        const watcherBtn = app.querySelector('#tk-watcher-btn');
+        if (watcherBtn) watcherBtn.onclick = () => showWatcherModal();
 
         app.querySelector('#tk-f-assignee').onchange = (e) => {
             filterAssignee = e.target.value;
@@ -896,9 +940,11 @@ async function renderTickets(body, launchOpts) {
             filterPriority = e.target.value;
             renderBoard();
         };
+        let _searchDebounce = null;
         app.querySelector('#tk-f-search').oninput = (e) => {
             filterSearch = e.target.value;
-            renderBoard();
+            clearTimeout(_searchDebounce);
+            _searchDebounce = setTimeout(() => renderBoard(), 250);
         };
     }
 
@@ -989,6 +1035,12 @@ async function renderTickets(body, launchOpts) {
     /* ═══════════════════ TICKET DETAIL MODAL ═══════════════════ */
 
     async function showTicketDetail(ticket) {
+        /* Show a lightweight loading indicator while fetching */
+        const loadingOverlay = document.createElement('div');
+        loadingOverlay.className = 'modal-overlay';
+        loadingOverlay.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;"><div class="tk-loading"><i class="fas fa-spinner fa-spin" style="font-size:1.5rem;"></i></div></div>';
+        document.body.appendChild(loadingOverlay);
+
         const columns = currentProject.columns || DEFAULT_COLUMNS;
         const members = currentProject.members || [];
         const ticketComments = await loadComments(ticket.id);
@@ -1010,11 +1062,15 @@ async function renderTickets(body, launchOpts) {
         const commentsHTML = ticketComments.map(c => {
             const ts = c.created || c.created_at;
             const timeStr = ts ? new Date(ts * 1000).toLocaleString('pl', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '';
+            const canDelete = (c.author || c.user) === (NAS.user?.username) || NAS.user?.role === 'admin';
             return `
-            <div class="tk-comment">
+            <div class="tk-comment" data-comment-id="${_escHtml(c.id || '')}">
                 <div class="tk-comment-header">
                     <strong>${_escHtml(c.author || c.user || 'unknown')}</strong>
-                    <span class="tk-comment-date">${timeStr}</span>
+                    <span style="display:flex;align-items:center;gap:6px;">
+                        <span class="tk-comment-date">${timeStr}</span>
+                        ${canDelete ? '<button class="tk-comment-delete" data-cid="' + _escHtml(c.id || '') + '" title="' + t('Usuń') + '"><i class="fas fa-trash"></i></button>' : ''}
+                    </span>
                 </div>
                 <div class="tk-comment-body">${_escHtml(c.text || c.body || '')}</div>
             </div>`;
@@ -1094,6 +1150,34 @@ async function renderTickets(body, launchOpts) {
                     </button>
                 </div>
 
+                ${(() => {
+                    const isActive = watcherExecuting && watcherExecuting.ticket_id === ticket.id;
+                    const modelList = copilotLogs.map(l => l.model).filter(Boolean);
+                    const uniqueModels = [...new Set(modelList)];
+                    if (!isActive && !uniqueModels.length) return '';
+                    let s = '<div class="tk-agent-section" style="margin-top:16px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.1);">';
+                    s += '<label><i class="fas fa-robot" style="margin-right:4px;"></i> ' + t('Agent Copilot') + '</label>';
+                    if (isActive) {
+                        const elapsed = watcherExecuting.elapsed ? Math.round(watcherExecuting.elapsed / 60) + ' min' : '';
+                        const qaCycle = watcherExecuting.qa_cycle || 0;
+                        s += '<div class="tk-agent-status-live">';
+                        s += '<span class="tk-agent-pulse">●</span> ';
+                        s += '<strong>' + t('Agent pracuje') + '</strong>';
+                        s += ' — ' + _escHtml(watcherExecuting.model_label || watcherExecuting.model || '');
+                        if (elapsed) s += ' · ' + elapsed;
+                        if (qaCycle > 0) s += ' · QA #' + qaCycle;
+                        s += '</div>';
+                    }
+                    if (uniqueModels.length) {
+                        s += '<div class="tk-model-history">';
+                        s += '<span class="tk-model-history-label">' + t('Modele') + ':</span> ';
+                        s += uniqueModels.map(m => '<span class="tk-model-tag">' + _escHtml(m) + '</span>').join(' ');
+                        s += '</div>';
+                    }
+                    s += '</div>';
+                    return s;
+                })()}
+
                 ${copilotLogs.length ? `
                 <div class="tk-copilot-logs-section" style="margin-top:16px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.1);">
                     <label><i class="fas fa-robot" style="margin-right:4px;"></i> Copilot Logs (${copilotLogs.length}) <span id="tk-log-live" class="tk-log-live-badge" style="display:none;">● LIVE</span></label>
@@ -1103,8 +1187,9 @@ async function renderTickets(body, launchOpts) {
                             const label = (log.type === 'qa' ? '🔍 QA' : '🤖 Dev') + ' ' +
                                 d.toLocaleString('pl', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
                             const sizeKB = (log.size / 1024).toFixed(1);
+                            const modelTag = log.model ? ' <span class="tk-log-model">' + _escHtml(log.model) + '</span>' : '';
                             return '<button class="tk-log-tab' + (i === 0 ? ' active' : '') + '" data-filename="' +
-                                _escHtml(log.filename) + '" data-idx="' + i + '">' + label + ' <span class="tk-log-size">' + sizeKB + 'KB</span></button>';
+                                _escHtml(log.filename) + '" data-idx="' + i + '">' + label + modelTag + ' <span class="tk-log-size">' + sizeKB + 'KB</span></button>';
                         }).join('')}
                     </div>
                     <div class="tk-log-viewer" id="tk-log-viewer">
@@ -1115,8 +1200,10 @@ async function renderTickets(body, launchOpts) {
             </div>
         `;
 
+        loadingOverlay.remove();
+
         const overlay = tkShowModal(
-            PRIORITY_ICONS[ticket.priority] + ' ' + _escHtml(ticket.title),
+            PRIORITY_ICONS[ticket.priority] + ' <span class="tk-ticket-id">' + _shortId(ticket.id) + '</span> ' + _escHtml(ticket.title),
             html,
             t('Zapisz'),
             (modal) => {
@@ -1190,7 +1277,13 @@ async function renderTickets(body, launchOpts) {
         });
 
         /* ── comments ── */
-        overlay.querySelector('#tk-df-send-comment').onclick = async () => {
+        let _commentCount = ticketComments.length;
+        function _updateCommentCount() {
+            const lbl = overlay.querySelector('.tk-comments-section > label');
+            if (lbl) lbl.textContent = t('Komentarze') + ' (' + _commentCount + ')';
+        }
+
+        const _sendComment = async () => {
             const textarea = overlay.querySelector('#tk-df-new-comment');
             const text = textarea.value.trim();
             if (!text) return;
@@ -1198,6 +1291,7 @@ async function renderTickets(body, launchOpts) {
             const ok = await addComment(ticket.id, text);
             if (ok) {
                 textarea.value = '';
+                await loadTickets(currentProject.id);
                 const list = overlay.querySelector('#tk-df-comments');
                 const emptyMsg = list.querySelector('.tk-empty-col');
                 if (emptyMsg) emptyMsg.remove();
@@ -1213,9 +1307,37 @@ async function renderTickets(body, launchOpts) {
                 `;
                 list.appendChild(div);
                 list.scrollTop = list.scrollHeight;
+                _commentCount++;
+                _updateCommentCount();
                 toast(t('Komentarz dodany'), 'success');
             }
         };
+        overlay.querySelector('#tk-df-send-comment').onclick = _sendComment;
+        overlay.querySelector('#tk-df-new-comment').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                _sendComment();
+            }
+        });
+
+        /* ── comment deletion ── */
+        overlay.querySelector('#tk-df-comments').addEventListener('click', async (e) => {
+            const btn = e.target.closest('.tk-comment-delete');
+            if (!btn) return;
+            const cid = btn.dataset.cid;
+            if (!cid) return;
+            try {
+                await api('/tickets/tickets/' + ticket.id + '/comments/' + cid, { method: 'DELETE' });
+                const row = btn.closest('.tk-comment');
+                if (row) row.remove();
+                _commentCount--;
+                _updateCommentCount();
+                await loadTickets(currentProject.id);
+                toast(t('Komentarz usunięty'), 'success');
+            } catch (err) {
+                toast(t('Błąd usuwania komentarza'), 'error');
+            }
+        });
 
         /* ── copilot log tabs ── */
         const logTabs = overlay.querySelector('#tk-log-tabs');
@@ -1223,6 +1345,15 @@ async function renderTickets(body, launchOpts) {
         let _logPollTimer = null;
         let _logOffset = 0;
         let _logFilename = null;
+
+        /* Clean up log polling when modal is removed from DOM */
+        const _cleanupObserver = new MutationObserver(() => {
+            if (!document.body.contains(overlay)) {
+                if (_logPollTimer) { clearInterval(_logPollTimer); _logPollTimer = null; }
+                _cleanupObserver.disconnect();
+            }
+        });
+        _cleanupObserver.observe(document.body, { childList: true });
 
         if (logTabs && logViewer) {
             const loadLog = async (filename) => {
@@ -1279,6 +1410,86 @@ async function renderTickets(body, launchOpts) {
             const firstTab = logTabs.querySelector('.tk-log-tab');
             if (firstTab) loadLog(firstTab.dataset.filename);
         }
+    }
+
+    /* ═══════════════════ WATCHER MODAL ═══════════════════ */
+
+    function showWatcherModal() {
+        const html = `
+            <div class="tk-form">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+                    <i class="fas fa-tower-broadcast" style="font-size:16px;"></i>
+                    <span style="font-weight:600;">Ticket Watcher</span>
+                    <span id="tk-wm-status" class="tk-watcher-badge" style="font-size:11px;padding:2px 8px;border-radius:10px;margin-left:auto;">…</span>
+                </div>
+                <div id="tk-wm-exec" style="margin-bottom:12px;"></div>
+                <div style="display:flex;gap:6px;">
+                    <button type="button" class="tk-btn tk-btn-sm" id="tk-wm-start"><i class="fas fa-play"></i> Start</button>
+                    <button type="button" class="tk-btn tk-btn-sm" id="tk-wm-stop"><i class="fas fa-stop"></i> Stop</button>
+                    <button type="button" class="tk-btn tk-btn-sm" id="tk-wm-restart"><i class="fas fa-rotate"></i> Restart</button>
+                </div>
+                <small id="tk-wm-detail" style="opacity:.6;margin-top:8px;display:block;"></small>
+            </div>
+        `;
+
+        const overlay = tkShowModal(t('Ticket Watcher'), html, t('Zamknij'), () => {});
+
+        const statusBadge = overlay.querySelector('#tk-wm-status');
+        const detailEl = overlay.querySelector('#tk-wm-detail');
+        const execEl = overlay.querySelector('#tk-wm-exec');
+
+        async function refreshStatus() {
+            try {
+                const s = await api('/tickets/watcher/status');
+                const running = s.active === 'active';
+                statusBadge.textContent = running ? 'running' : s.active;
+                statusBadge.style.background = running ? '#22c55e' : '#ef4444';
+                statusBadge.style.color = '#fff';
+                const pid = s.pid && s.pid !== '0' ? ` · PID ${s.pid}` : '';
+                const since = s.since ? ` · ${s.since}` : '';
+                detailEl.textContent = `${s.state}/${s.substate}${pid}${since}`;
+            } catch (e) {
+                statusBadge.textContent = 'error';
+                statusBadge.style.background = '#666';
+                detailEl.textContent = String(e);
+            }
+
+            // Also show executing info
+            try {
+                const ex = await api('/tickets/watcher/executing');
+                if (ex && ex.executing) {
+                    const elapsed = ex.elapsed ? Math.round(ex.elapsed / 60) + ' min' : '';
+                    const tk = tickets.find(t2 => t2.id === ex.ticket_id);
+                    const title = tk ? _escHtml(tk.title) : ex.ticket_id;
+                    execEl.innerHTML = '<div class="tk-agent-status-live"><span class="tk-agent-pulse">●</span> ' +
+                        '<strong>' + _escHtml(ex.model_label || ex.model || '') + '</strong>' +
+                        ' — ' + title +
+                        (elapsed ? ' · ' + elapsed : '') +
+                        (ex.qa_cycle > 0 ? ' · QA #' + ex.qa_cycle : '') +
+                        '</div>';
+                } else {
+                    execEl.innerHTML = '<div style="font-size:12px;opacity:0.5;">' + t('Brak aktywnego zadania') + '</div>';
+                }
+            } catch (e) { execEl.innerHTML = ''; }
+        }
+        refreshStatus();
+
+        async function doAction(action) {
+            const btn = overlay.querySelector('#tk-wm-' + action);
+            if (btn) btn.disabled = true;
+            try {
+                const r = await api('/tickets/watcher/control', { method: 'POST', body: { action } });
+                toast(`Ticket Watcher: ${action} → ${r.active}`, 'success');
+            } catch (e) {
+                toast(`Ticket Watcher ${action} failed: ${e}`, 'error');
+            }
+            await refreshStatus();
+            if (btn) btn.disabled = false;
+        }
+
+        overlay.querySelector('#tk-wm-start').onclick = () => doAction('start');
+        overlay.querySelector('#tk-wm-stop').onclick = () => doAction('stop');
+        overlay.querySelector('#tk-wm-restart').onclick = () => doAction('restart');
     }
 
     /* ═══════════════════ INIT ═══════════════════ */

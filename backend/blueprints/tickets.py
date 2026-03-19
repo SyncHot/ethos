@@ -8,6 +8,7 @@ import re
 import glob
 import time
 import uuid
+import subprocess
 import threading
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -682,6 +683,23 @@ def copilot_queue():
 
 COPILOT_LOG_DIR = '/opt/ethos/logs/copilot_tickets'
 WATCHER_LOG_FILE = '/opt/ethos/logs/ticket_watcher_new.log'
+WATCHER_LOCK_FILE = '/tmp/.ethos_watcher_executing'
+
+
+def _parse_log_model(filepath):
+    """Extract model name from a copilot log header line (=== Model: xxx ===)."""
+    try:
+        with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
+            for line in f:
+                if line.startswith('=== Model:'):
+                    m = re.search(r'Model:\s*(\S+)', line)
+                    if m:
+                        return m.group(1)
+                if not line.startswith('==='):
+                    break
+    except Exception:
+        pass
+    return None
 
 @tickets_bp.route('/tickets/<ticket_id>/copilot-logs', methods=['GET'])
 def copilot_logs(ticket_id):
@@ -703,15 +721,20 @@ def copilot_logs(ticket_id):
     for f in files:
         name = os.path.basename(f)
         is_qa = '_qa_' in name
+        is_prompt = '_prompt' in name
+        if is_prompt:
+            continue  # skip prompt dump files
         try:
             ts = int(re.search(r'_(\d{10,})', name).group(1))
         except (AttributeError, ValueError):
             ts = int(os.path.getmtime(f))
+        model = _parse_log_model(f)
         logs.append({
             'filename': name,
             'type': 'qa' if is_qa else 'dev',
             'timestamp': ts,
             'size': os.path.getsize(f),
+            'model': model,
         })
 
     return jsonify({'logs': logs})
@@ -755,5 +778,137 @@ def copilot_log_content(ticket_id, filename):
             'size': file_size,
             'offset': file_size,
         })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ── Ticket Watcher service control ───────────────────────────────────────
+
+_WATCHER_UNIT = 'ethos-ticket-watcher.service'
+
+@tickets_bp.route('/watcher/status', methods=['GET'])
+def watcher_status():
+    """Return current status of the ticket watcher systemd service."""
+    if not g.username:
+        return jsonify({'error': 'Unauthorized'}), 401
+    try:
+        active = subprocess.run(
+            ['systemctl', 'is-active', _WATCHER_UNIT],
+            capture_output=True, text=True, timeout=5
+        ).stdout.strip()
+        enabled = subprocess.run(
+            ['systemctl', 'is-enabled', _WATCHER_UNIT],
+            capture_output=True, text=True, timeout=5
+        ).stdout.strip()
+        # Get uptime / last status line
+        result = subprocess.run(
+            ['systemctl', 'show', _WATCHER_UNIT,
+             '--property=ActiveState,SubState,ActiveEnterTimestamp,MainPID'],
+            capture_output=True, text=True, timeout=5
+        )
+        props = {}
+        for line in result.stdout.strip().splitlines():
+            if '=' in line:
+                k, v = line.split('=', 1)
+                props[k] = v
+        return jsonify({
+            'active': active,
+            'enabled': enabled,
+            'pid': props.get('MainPID', ''),
+            'state': props.get('ActiveState', ''),
+            'substate': props.get('SubState', ''),
+            'since': props.get('ActiveEnterTimestamp', ''),
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@tickets_bp.route('/watcher/executing', methods=['GET'])
+def watcher_executing():
+    """Return current execution state from the watcher lock file."""
+    if not g.username:
+        return jsonify({'error': 'Unauthorized'}), 401
+    if not os.path.isfile(WATCHER_LOCK_FILE):
+        return jsonify({'executing': False})
+    try:
+        import json as _json
+        with open(WATCHER_LOCK_FILE, 'r') as f:
+            lock = _json.load(f)
+        tid = lock.get('ticket_id', '')
+        model_info = lock.get('model') or {}
+        started = lock.get('started', 0)
+        elapsed = time.time() - started if started else 0
+        pid = lock.get('copilot_pid')
+        # Check if the process is actually alive
+        alive = False
+        if pid:
+            try:
+                os.kill(pid, 0)
+                alive = True
+            except (ProcessLookupError, OSError):
+                pass
+        return jsonify({
+            'executing': alive,
+            'ticket_id': tid,
+            'model': model_info.get('model', '') if isinstance(model_info, dict) else '',
+            'model_label': model_info.get('label', '') if isinstance(model_info, dict) else '',
+            'started': started,
+            'elapsed': round(elapsed),
+            'pid': pid,
+            'qa_cycle': lock.get('qa_cycle', 0),
+            'log_file': os.path.basename(lock.get('log_file', '')),
+        })
+    except Exception:
+        return jsonify({'executing': False})
+
+
+@tickets_bp.route('/watcher/control', methods=['POST'])
+def watcher_control():
+    """Start, stop, or restart the ticket watcher service."""
+    if not g.username:
+        return jsonify({'error': 'Unauthorized'}), 401
+    data = request.get_json(silent=True) or {}
+    action = data.get('action', '')
+    if action not in ('start', 'stop', 'restart'):
+        return jsonify({'error': 'Invalid action. Use start, stop, or restart.'}), 400
+    try:
+        result = subprocess.run(
+            ['sudo', 'systemctl', action, _WATCHER_UNIT],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode != 0:
+            return jsonify({'error': result.stderr.strip() or f'{action} failed'}), 500
+        # Brief wait for state to settle
+        time.sleep(0.5)
+        # Return fresh status
+        active = subprocess.run(
+            ['systemctl', 'is-active', _WATCHER_UNIT],
+            capture_output=True, text=True, timeout=5
+        ).stdout.strip()
+        return jsonify({'ok': True, 'action': action, 'active': active})
+    except subprocess.TimeoutExpired:
+        return jsonify({'error': f'{action} timed out'}), 504
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+_PREFLIGHT_SCRIPT = '/opt/ethos/tools/preflight_check.py'
+
+@tickets_bp.route('/preflight', methods=['GET'])
+def preflight_check():
+    """Run preflight validation before service restart."""
+    if not g.username:
+        return jsonify({'error': 'Unauthorized'}), 401
+    quick = request.args.get('quick', '').lower() in ('1', 'true', 'yes')
+    cmd = [sys.executable, _PREFLIGHT_SCRIPT, '--json']
+    if quick:
+        cmd.append('--quick')
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        import json as _json
+        data = _json.loads(r.stdout)
+        return jsonify(data), 200 if data.get('passed') else 422
+    except subprocess.TimeoutExpired:
+        return jsonify({'error': 'Preflight timed out'}), 504
     except Exception as e:
         return jsonify({'error': str(e)}), 500

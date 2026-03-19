@@ -2497,6 +2497,10 @@
   transition: background var(--transition-fast), border-color var(--transition-fast);
 }
 .tk-btn:hover { background: var(--bg-hover); }
+.tk-btn-small, .tk-btn-sm {
+  padding: 4px 10px;
+  font-size: 12px;
+}
 .tk-btn-primary {
   background: var(--accent);
   color: #fff;
@@ -2504,6 +2508,13 @@
 }
 .tk-btn-primary:hover { filter: brightness(1.1); }
 .tk-btn-back { padding: 6px 10px; margin-right: var(--space-xs); }
+.tk-board-title {
+  font-weight: 600;
+  font-size: 15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .tk-search {
   background: var(--bg-deep);
   border: 1px solid var(--border);
@@ -2540,6 +2551,18 @@
   transform: translateY(-2px);
   border-color: var(--accent);
 }
+.tk-project-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.tk-project-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
 .tk-project-color {
   position: absolute;
   left: 0; top: 0; bottom: 0;
@@ -2574,6 +2597,16 @@
   font-weight: 600;
 }
 .tk-project-actions { display: flex; gap: 4px; margin-top: 12px; padding-left: 8px; }
+.tk-project-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-muted);
+}
 
 /* ─── Kanban Board ─── */
 .tk-board {
@@ -2602,6 +2635,11 @@
   font-weight: 600;
   font-size: 13px;
   border-bottom: 1px solid var(--border);
+}
+.tk-column-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .tk-column-count {
   background: var(--overlay-3);
@@ -2641,6 +2679,12 @@
 .tk-card-dragging {
   opacity: 0.4;
   transform: rotate(2deg);
+}
+.tk-card-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 2px;
 }
 .tk-card-title {
   font-size: 13px;
@@ -2814,6 +2858,21 @@
   margin-bottom: 4px;
 }
 .tk-comment-author { font-weight: 600; color: var(--text); }
+.tk-comment-body { font-size: 13px; white-space: pre-wrap; line-height: 1.5; }
+.tk-comment-date { font-size: 10px; color: var(--text-muted); }
+.tk-comment-delete {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 10px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+.tk-comment:hover .tk-comment-delete { opacity: 1; }
+.tk-comment-delete:hover { color: #ef4444; }
 .tk-comment-text { font-size: 13px; white-space: pre-wrap; line-height: 1.5; }
 .tk-comment-input { display: flex; gap: 8px; margin-top: 8px; }
 .tk-comment-input .tk-modal-textarea { min-height: 60px; flex: 1; }
@@ -2873,12 +2932,87 @@
   50% { opacity: 0.3; }
 }
 
+/* ─── Agent Active Badge on Cards ─── */
+.tk-agent-active {
+  border-color: rgba(34,197,94,0.5);
+  box-shadow: 0 0 8px rgba(34,197,94,0.2);
+}
+.tk-agent-badge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 3px 8px;
+  border-radius: var(--r-sm);
+  font-size: 11px;
+  font-weight: 600;
+  color: #22c55e;
+  background: rgba(34,197,94,0.1);
+  animation: tk-pulse 1.5s ease-in-out infinite;
+}
+.tk-agent-badge i { font-size: 12px; }
+
+/* ─── Agent Status in Detail Modal ─── */
+.tk-agent-section label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+.tk-agent-status-live {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: var(--r-sm);
+  background: rgba(34,197,94,0.08);
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+.tk-agent-pulse {
+  color: #22c55e;
+  font-size: 14px;
+  animation: tk-pulse 1.5s ease-in-out infinite;
+}
+.tk-model-history {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.tk-model-history-label {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.tk-model-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--r-sm);
+  background: var(--overlay-2);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+.tk-log-model {
+  opacity: 0.6;
+  font-size: 10px;
+  margin-left: 2px;
+}
+
 /* ─── Empty States ─── */
 .tk-empty {
   text-align: center;
   padding: 60px 20px;
   color: var(--text-muted);
   font-size: 14px;
+}
+.tk-empty-col {
+  text-align: center;
+  padding: 20px 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+  opacity: 0.6;
 }
 .tk-empty i {
   font-size: 48px;
@@ -2902,6 +3036,43 @@
   border-top: 1px solid var(--border);
   margin: 12px 0;
 }
+
+/* ─── Tickets: Detail extras ─── */
+.tk-loading {
+  padding: 2rem;
+  text-align: center;
+  color: var(--text-muted);
+}
+.tk-comments-list {
+  max-height: 300px;
+  overflow-y: auto;
+}
+.tk-comments-section label { display: block; font-weight: 600; margin-bottom: 6px; }
+.tk-labels-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 24px;
+}
+.tk-label-removable {
+  cursor: default;
+}
+.tk-label-removable i {
+  cursor: pointer;
+  margin-left: 4px;
+  opacity: 0.7;
+  font-size: 9px;
+}
+.tk-label-removable i:hover { opacity: 1; }
+.tk-ticket-id {
+  font-size: 10px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  color: var(--text-muted);
+  opacity: 0.7;
+  user-select: all;
+}
+.tk-detail-form { max-width: 100%; }
+.tk-detail-meta { font-size: 0.8rem; opacity: 0.6; }
 
 
 /* ─── Tickets: Form Styles ─── */

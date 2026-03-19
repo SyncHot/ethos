@@ -11,6 +11,12 @@ import os
 import subprocess
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+
+# Thread pool for filesystem calls that may block on stale/hung mounts.
+# Used by fs_call_with_timeout() so that blocking kernel I/O (D-state)
+# does not freeze the gevent event loop.
+_fs_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix='fs')
 
 # ── Always native mode ──
 NATIVE_MODE = True
@@ -43,13 +49,40 @@ def q(s):
 def host_run(cmd, timeout=30, cwd=None):
     """Run a shell command on the host.
 
-    Returns subprocess.CompletedProcess with .stdout, .stderr, .returncode
+    Executes in _fs_executor so that even if the command enters
+    uninterruptible disk sleep (D-state), the gevent event loop is not
+    blocked.  Returns subprocess.CompletedProcess with .stdout, .stderr,
+    .returncode.
     """
     if cwd:
         cmd = f"cd {q(cwd)} && {cmd}"
     full_cmd = f"bash -c {q(cmd)}"
 
-    return subprocess.run(full_cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+    def _run():
+        return subprocess.run(full_cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+
+    future = _fs_executor.submit(_run)
+    try:
+        return future.result(timeout=timeout + 5)
+    except FuturesTimeoutError:
+        future.cancel()
+        cp = subprocess.CompletedProcess(full_cmd, returncode=-1, stdout='', stderr='host_run timed out')
+        return cp
+
+
+def fs_call_with_timeout(func, *args, timeout=5):
+    """Run *func(*args)* in a real OS thread with a timeout.
+
+    Use this to wrap any blocking filesystem call (os.scandir, os.walk,
+    os.stat, shutil.*, …) that might hang on a stale or sleeping mount.
+    Raises TimeoutError if the call doesn't complete in time.
+    """
+    future = _fs_executor.submit(func, *args)
+    try:
+        return future.result(timeout=timeout)
+    except FuturesTimeoutError:
+        future.cancel()
+        raise TimeoutError(f"Filesystem operation timed out after {timeout}s")
 
 
 class _StreamWithPid:

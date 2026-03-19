@@ -2359,6 +2359,20 @@ def _clear_copy_task():
     except OSError:
         pass
 
+def _safe_exists(path, timeout=3):
+    """os.path.exists via thread pool – won't D-state on sleeping drives."""
+    try:
+        return _fs_call(os.path.exists, path, timeout=timeout)
+    except (TimeoutError, Exception):
+        return False
+
+def _safe_isdir(path, timeout=3):
+    """os.path.isdir via thread pool – won't D-state on sleeping drives."""
+    try:
+        return _fs_call(os.path.isdir, path, timeout=timeout)
+    except (TimeoutError, Exception):
+        return False
+
 def _resume_interrupted_copy():
     """Check for a persisted copy task and restart it after server reboot."""
     task = _load_json(COPY_RESUME_FILE, None)
@@ -2373,11 +2387,11 @@ def _resume_interrupted_copy():
     if time.time() - started > 86400:
         _clear_copy_task()
         return
-    if not resolved or not dest_dir or not os.path.isdir(dest_dir):
+    if not resolved or not dest_dir or not _safe_isdir(dest_dir):
         _clear_copy_task()
         return
 
-    valid = [p for p in resolved if os.path.exists(p)]
+    valid = [p for p in resolved if _safe_exists(p)]
     if not valid:
         _clear_copy_task()
         return
@@ -2441,12 +2455,12 @@ def _resume_interrupted_move():
     if time.time() - started > 86400:
         _clear_move_task()
         return
-    if not resolved or not dest_dir or not os.path.isdir(dest_dir):
+    if not resolved or not dest_dir or not _safe_isdir(dest_dir):
         _clear_move_task()
         return
 
     # For moves, only resume sources that still exist (not yet moved)
-    valid = [p for p in resolved if os.path.exists(p)]
+    valid = [p for p in resolved if _safe_exists(p)]
     if not valid:
         _clear_move_task()
         return
@@ -2516,7 +2530,7 @@ def _resume_interrupted_compress():
         return
 
     # Verify at least one source still exists
-    valid = [p for p in resolved if os.path.exists(p)]
+    valid = [p for p in resolved if _safe_exists(p)]
     if not valid:
         _clear_compress_task()
         return
@@ -2529,7 +2543,7 @@ def _resume_interrupted_compress():
 
     # Remove partial archives from previous attempt (both final and temp paths)
     for p in (archive_path, archive_path + '.ethos_archive_tmp'):
-        if os.path.exists(p):
+        if _safe_exists(p):
             try: os.remove(p)
             except: pass
 
@@ -2568,7 +2582,7 @@ def _resume_interrupted_zip():
         return
 
     # Verify at least one source still exists
-    valid = [p for p in resolved if os.path.exists(p)]
+    valid = [p for p in resolved if _safe_exists(p)]
     if not valid:
         _clear_zip_task()
         return
@@ -2617,7 +2631,7 @@ def _cleanup_stale_ethos_tmp(data_root=None):
             dd = _get_data_disk()
             if dd:
                 home_on_dd = os.path.join(dd, 'home')
-                if os.path.isdir(home_on_dd) and home_on_dd not in scan_roots:
+                if _safe_isdir(home_on_dd) and home_on_dd not in scan_roots:
                     scan_roots.append(home_on_dd)
         except Exception:
             pass
@@ -3345,7 +3359,7 @@ def files_get_permissions():
             'path': path,
             'permissions': oct(st.st_mode)[-3:],
             'permissions_symbolic': _mode_to_symbolic(st.st_mode),
-            'permissions_octal': oct(st.st_mode & 0o7777),
+            'permissions_octal': '0' + oct(st.st_mode & 0o7777)[2:],
             'owner': owner,
             'group': group,
             'uid': st.st_uid,
@@ -3763,7 +3777,7 @@ def files_list():
                     'modified': stat.st_mtime,
                     'permissions': oct(stat.st_mode)[-3:],
                     'permissions_symbolic': _mode_to_symbolic(stat.st_mode),
-                    'permissions_octal': oct(stat.st_mode & 0o7777),
+                    'permissions_octal': '0' + oct(stat.st_mode & 0o7777)[2:],
                     'can_read': os.access(entry.path, os.R_OK),
                     'can_write': os.access(entry.path, os.W_OK),
                     'owner': owner,
@@ -7270,8 +7284,13 @@ def _resume_interrupted_transfer():
     for p in resolved:
         # Only allow absolute paths and ensure they actually exist
         rp = os.path.realpath(p)
-        if rp and os.path.isabs(rp) and os.path.exists(rp):
-            valid.append(rp)
+        if rp and os.path.isabs(rp):
+            try:
+                exists = _fs_call(os.path.exists, rp, timeout=3)
+            except TimeoutError:
+                exists = False
+            if exists:
+                valid.append(rp)
     if not valid:
         _clear_transfer_task()
         return

@@ -32,16 +32,49 @@ async function api(path, options = {}) {
 
 // ─────────────────────────── Toast ───────────────────────────
 
+const TOAST_ICONS = {
+    success: 'fa-check-circle',
+    error: 'fa-exclamation-circle',
+    warning: 'fa-exclamation-triangle',
+    info: 'fa-info-circle',
+};
+
+function _dismissToastElement(el) {
+    if (!el || el.classList.contains('removing')) return;
+    el.classList.add('removing');
+    setTimeout(() => el.remove(), 300);
+}
+
 function toast(message, type = 'info') {
-    const icons = { success: 'fa-check-circle', error: 'fa-exclamation-circle', warning: 'fa-exclamation-triangle', info: 'fa-info-circle' };
+    const iconClass = TOAST_ICONS[type] || TOAST_ICONS.info;
     const el = document.createElement('div');
     el.className = `toast ${type}`;
-    el.innerHTML = `<i class="fas ${icons[type] || icons.info}"></i><span>${message}</span>`;
+    el.innerHTML = `<i class="fas ${iconClass}"></i><span>${message}</span>`;
     document.getElementById('toast-container').appendChild(el);
-    setTimeout(() => {
-        el.classList.add('removing');
-        setTimeout(() => el.remove(), 300);
-    }, 3500);
+    setTimeout(() => _dismissToastElement(el), 3500);
+}
+
+function toastWithAction(message, type = 'info', actionLabel, actionFn) {
+    const iconClass = TOAST_ICONS[type] || TOAST_ICONS.info;
+    const el = document.createElement('div');
+    el.className = `toast ${type} toast-action`;
+    el.innerHTML = `<i class="fas ${iconClass}"></i><span>${message}</span>`;
+    if (actionLabel) {
+        const btn = document.createElement('button');
+        btn.className = 'toast-action-btn';
+        btn.type = 'button';
+        btn.textContent = actionLabel;
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (typeof actionFn === 'function') {
+                try { actionFn(); } catch (err) { console.error(err); }
+            }
+            _dismissToastElement(el);
+        });
+        el.appendChild(btn);
+    }
+    document.getElementById('toast-container').appendChild(el);
+    setTimeout(() => _dismissToastElement(el), 3500);
 }
 
 // ───────────────────── Global Task Progress Stack ─────────────────────
@@ -1927,13 +1960,23 @@ function connectSocket() {
             Notification.requestPermission();
         }
         NAS.socket.on('dl:completed', (data) => {
-            if (!data?.filename) return;
+            if (!data) return;
+            const filename = data.filename || t('Pobrane pliki');
             const size = data.filesize ? _dlmFormatBytes(data.filesize) : '';
             const time = new Date().toLocaleTimeString();
             _dlmNotify(
                 t('Pobieranie zakończone'),
-                `${data.filename}${size ? '\n' + t('Rozmiar') + ': ' + size : ''}\n${t('Czas')}: ${time}`
+                `${filename}${size ? '\n' + t('Rozmiar') + ': ' + size : ''}\n${t('Czas')}: ${time}`
             );
+            const toastMessage = `${t('Pobieranie zakończone')}: ${filename}${size ? ` (${size})` : ''}`;
+            const folder = data.folder || data.dest_path || data.dest_dir || '';
+            if (folder) {
+                toastWithAction(toastMessage, 'success', t('Otwórz folder'), () => {
+                    openApp('file-manager', { path: folder });
+                });
+            } else {
+                toast(toastMessage, 'success');
+            }
         });
         NAS.socket.on('dl:update', (data) => {
             if (data?.status === 'failed' && data.id && !_dlmNotifFailedIds.has(data.id)) {
