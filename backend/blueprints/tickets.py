@@ -10,12 +10,14 @@ import time
 import uuid
 import subprocess
 import threading
+import random
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from flask import Blueprint, request, jsonify, g
 from host import data_path as _data_path
 from utils import load_json as _load_json, save_json as _save_json
+from ethos_packages_data import _ETHOS_PACKAGES
 
 tickets_bp = Blueprint('tickets', __name__, url_prefix='/api/tickets')
 
@@ -912,3 +914,72 @@ def preflight_check():
         return jsonify({'error': 'Preflight timed out'}), 504
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+@tickets_bp.route('/projects/<project_id>/bug-hunt', methods=['POST'])
+def bug_hunt(project_id):
+    # Filter candidates: non-docker Ethos packages
+    candidates = [p for p in _ETHOS_PACKAGES if p['id'] != 'docker-manager']
+    if not candidates:
+        return jsonify({'error': 'No suitable packages found'}), 500
+
+    target_app = random.choice(candidates)
+    
+    with _lock:
+        data = _load()
+        project = _find_project(data, project_id)
+        if not project:
+            return jsonify({'error': 'Project not found'}), 404
+        if not _is_member(project):
+            return jsonify({'error': 'Access denied'}), 403
+
+        target_column = project['columns'][0] if project.get('columns') else 'Backlog'
+        
+        labels = ['FE', 'Backend', 'ux', 'UI', 'security']
+        created_tickets = []
+        now = _now()
+        
+        for i in range(5):
+            ticket_type = 'bug'
+            priority = random.choice(VALID_PRIORITIES)
+            complexity = random.choice(VALID_COMPLEXITIES)
+            
+            title = f"Znajdź bug #{i+1} w aplikacji {target_app['name']}"
+            desc = (f"Automatyczny ticket poszukiwania bugów dla aplikacji: {target_app['name']}\n"
+                    f"Opis aplikacji: {target_app['description']}\n\n"
+                    f"Zadanie: Znajdź błąd w tej aplikacji. Skup się na obszarach: {', '.join(labels)}.")
+
+            tid = _gen_id('t_')
+            # Simple check for collision (unlikely with uuid hex)
+            
+            ticket = {
+                'id': tid,
+                'project_id': project_id,
+                'title': title,
+                'description': desc,
+                'column': target_column,
+                'priority': priority,
+                'assignee': g.username,
+                'type': ticket_type,
+                'complexity': complexity,
+                'reporter': g.username,
+                'labels': labels,
+                'comments': [],
+                'order': 0, # Put at top
+                'created': now,
+                'updated': now,
+            }
+            
+            # Shift existing tickets down
+            for t in data['tickets']:
+                if t['project_id'] == project_id and t['column'] == target_column:
+                    t['order'] = t.get('order', 0) + 1
+                    
+            data['tickets'].append(ticket)
+            created_tickets.append(ticket)
+            
+        _save(data)
+
+    for t in created_tickets:
+        _emit('ticket_created', project_id, {'ticket': t})
+
+    return jsonify({'ok': True, 'count': len(created_tickets), 'app': target_app['name']}), 201

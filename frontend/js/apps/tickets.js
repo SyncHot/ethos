@@ -676,67 +676,37 @@ async function renderTickets(body, launchOpts) {
     /* ── Find 5 Bugs Button Helper ── */
     async function findFiveBugs() {
         try {
-            toast(t('Szukanie aplikacji...'), 'info');
-            const catalog = await api('/appstore/catalog');
-            if (!catalog || !catalog.length) {
-                toast(t('Brak aplikacji w katalogu'), 'error');
-                return;
-            }
+            toast(t('Szukanie projektu ETHOS...'), 'info');
             
-            // Prefer 'Ethos' category apps; fall back to full catalog if none exist
-            const ethosApps = catalog.filter(app => (app.category || '').toLowerCase() === 'ethos');
-            const appPool = ethosApps.length ? ethosApps : catalog;
+            // Ensure we have the latest project list to find ETHOS
+            if (!projects.length) await loadProjects();
             
-            // Random app
-            const randomApp = appPool[Math.floor(Math.random() * appPool.length)];
-            
-            // Find target project (ETHOS) or current
             let targetProject = projects.find(p => p.name === 'ETHOS');
             if (!targetProject) {
                 console.warn('Projekt ETHOS nie znaleziony, używam bieżącego');
                 targetProject = currentProject;
+                if (!targetProject) {
+                     toast(t('Nie wybrano projektu'), 'error');
+                     return;
+                }
             }
+
+            toast(t('Generowanie ticketów...'), 'info');
+            const res = await api(`/tickets/projects/${targetProject.id}/bug-hunt`, { method: 'POST' });
             
-            // Random attributes
-            const priorities = Object.keys(PRIORITY_LABELS);
-            const complexities = Object.keys(COMPLEXITY_LEVELS);
-            const randomPriority = priorities[Math.floor(Math.random() * priorities.length)];
-            const randomComplexity = complexities[Math.floor(Math.random() * complexities.length)];
-
-            // Agent: QA testing / bug-hunting task → General agent
-            const suggestedAgent = 'General';
-
-            // Check if column exists, default to first one or Backlog
-            let targetColumn = 'Backlog';
-            const cols = targetProject.columns || DEFAULT_COLUMNS;
-            if (!cols.includes(targetColumn)) {
-                targetColumn = cols[0];
+            if (res.ok) {
+                toast(t(`Utworzono ${res.count} ticketów dla aplikacji: ${res.app}`), 'success');
+                // Refresh if we are viewing that project
+                if (currentProject && currentProject.id === targetProject.id) {
+                    await loadTickets(currentProject.id);
+                    renderBoard();
+                }
             }
-
-            const appName = randomApp.title || randomApp.name || randomApp.repo_id;
-            const payload = {
-                title: `Znajdź 5 bugów w ${appName}`,
-                description: `Aplikacja: ${appName}\nOpis: ${randomApp.description || 'Brak opisu'}\nRepo: ${randomApp.repo_id}\n\nZadanie: Przetestuj aplikację i znajdź co najmniej 5 błędów. Opisz każdy bug: tytuł, kroki reprodukcji, oczekiwany vs rzeczywisty wynik.\n\nSugerowany agent: ${suggestedAgent} (testowanie, bug hunting)`,
-                type: 'bug',
-                priority: randomPriority,
-                complexity: randomComplexity,
-                assignee: 'copilot',
-                column: targetColumn,
-                labels: ['FE', 'Backend', 'ux', 'UI', 'security']
-            };
-
-            await api(`/tickets/projects/${targetProject.id}/tickets`, {
-                method: 'POST',
-                body: payload
-            });
-
-            toast(t('Utworzono ticket dla: ') + (randomApp.title || randomApp.name), 'success');
-            
-            // Reload if we are on the target project board
-            if (currentProject.id === targetProject.id) {
-                await loadTickets(currentProject.id);
-                renderBoard();
-            }
+        } catch (e) {
+            console.error(e);
+            toast(t('Błąd: ') + e.message, 'error');
+        }
+    }
             
         } catch (e) {
             console.error(e);
