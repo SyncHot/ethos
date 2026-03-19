@@ -5185,7 +5185,7 @@ function renderDockerManager(body) {
         badge.textContent = S.filtered.length;
         
         // Reset scroll on filter change if needed, but only if triggered by filter input
-        // For now, let's just render.
+        if (wrap) wrap.scrollTop = 0;
         renderVirtualChunk();
     }
 
@@ -5569,8 +5569,7 @@ function renderDockerManager(body) {
             // Compose file viewer
             wrap.querySelectorAll('.dkr-compose-btn').forEach(b => {
                 b.addEventListener('click', () => {
-                    // Assuming openComposeEditor is available in scope
-                    if (typeof openComposeEditor === 'function') openComposeEditor(b.dataset.project);
+                    openComposeEditor(b.dataset.project);
                 });
             });
 
@@ -5578,13 +5577,20 @@ function renderDockerManager(body) {
             wrap.querySelectorAll('.dkr-delete-proj-btn').forEach(b => {
                 b.addEventListener('click', async () => {
                     const project = b.dataset.project;
-                    if (!confirm(t('Usunąć projekt') + ` ${project}?`)) return;
+                    if (!await confirmDialog(t('Usunąć projekt'), t('Czy na pewno usunąć projekt') + ` <b>${project}</b>? ` + t('Tej operacji nie można cofnąć.'))) return;
+                    
+                    b.disabled = true;
+                    b.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
                     try {
                         await api(`/docker/projects/${project}`, { method: 'DELETE' });
                         toast(`Projekt ${project} usunięty`, 'success');
                         await loadProjects();
                         fillProjects();
-                    } catch (err) { toast(`Błąd usuwania projektu ${project}`, 'error'); }
+                    } catch (err) { 
+                        toast(`Błąd usuwania projektu ${project}`, 'error');
+                        b.disabled = false;
+                        b.innerHTML = '<i class="fas fa-trash-alt"></i>';
+                    }
                 });
             });
 
