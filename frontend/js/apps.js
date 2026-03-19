@@ -7335,7 +7335,7 @@ function renderAppStore(body) {
         const validateVolInput = (el, val) => {
              const warningEl = el.nextElementSibling;
              if (!warningEl) return;
-             if (!val) return;
+             if (!val) { warningEl.textContent = ''; warningEl.classList.add('hidden'); return; }
              const sensitive = ['/', '/usr', '/etc', '/var', '/boot', '/proc', '/sys', '/dev'];
              if (sensitive.some(s => val === s || val.startsWith(s + '/'))) {
                  warningEl.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Ścieżka systemowa!';
