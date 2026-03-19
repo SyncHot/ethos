@@ -15,6 +15,8 @@ import time
 import threading
 import uuid
 import urllib.request
+import tempfile
+import logging
 import sys
 from flask import Blueprint, request, jsonify, g
 
@@ -23,6 +25,8 @@ from host import host_run as _host_run_base, NATIVE_MODE, data_path, check_dep, 
 from utils import load_json as _load_json, save_json as _save_json, run_host, \
     find_compose_project_names as _find_compose_project_names, \
     docker_available as _docker_available_util
+
+log = logging.getLogger('appstore')
 
 appstore_bp = Blueprint('appstore', __name__, url_prefix='/api/appstore')
 
@@ -54,6 +58,10 @@ CACHE_MAX_AGE = 3600 * 6  # 6 hours
 HOST_COMPOSE_ROOT = '/home/marcin/docker'
 CONTAINER_COMPOSE_ROOT = '/home/marcin/docker'
 APPDATA_ROOT = '/home/marcin/docker/_appdata'
+
+# Default resource limits applied if service has none
+DEFAULT_MEM_LIMIT = '2g'
+DEFAULT_RESTART_POLICY = 'unless-stopped'
 
 
 def _apps_root():
@@ -115,14 +123,20 @@ def _safe_compose_dir(app_id):
 
 
 def _validate_compose_policy(compose_text):
-    """Reject dangerous compose options and host bind mounts outside allowed roots."""
+    """Reject dangerous compose options and host bind mounts outside allowed roots.
+
+    This is the final safety gate — it catches options that were not stripped by
+    _adapt_compose (e.g., manually edited compose_override content).  Error
+    messages are intentionally actionable so they can be shown directly to the
+    user at install time.
+    """
     try:
         data = yaml.safe_load(compose_text)
     except Exception:
-        return 'Nieprawidłowa składnia compose YAML'
+        return 'Nieprawidlowa skladnia compose YAML — sprawdz formatowanie pliku'
 
     if not isinstance(data, dict):
-        return 'Nieprawidłowy plik compose'
+        return 'Nieprawidlowy plik compose — brak struktury YAML'
     services = data.get('services', {})
     if not isinstance(services, dict) or not services:
         return 'Compose nie zawiera sekcji services'
@@ -140,23 +154,56 @@ def _validate_compose_policy(compose_text):
         if not path:
             return None
         rp = os.path.realpath(path)
-        if rp == '/var/run/docker.sock':
-            return 'Bind mount docker.sock jest zabroniony'
+
+        # Explicitly disallow sensitive system paths
+        sensitive_roots = ['/', '/boot', '/dev', '/etc', '/lib', '/proc', '/sys', '/usr', '/var/lib/docker']
+        for s_root in sensitive_roots:
+             if rp == s_root or rp.startswith(s_root + os.sep):
+                 return (f'Montowanie sciezki systemowej "{s_root}" jest zabronione ze wzgledow bezpieczenstwa')
+
+        if rp in ['/var/run/docker.sock', '/run/docker.sock']:
+            return ('Montowanie docker.sock jest niedozwolone ze wzgledow '
+                    'bezpieczenstwa (daje pelny dostep do hosta)')
+
         if not _path_allowed(path):
-            return f'Bind mount poza dozwolonym zakresem: {path}'
+            return (f'Sciezka montowania "{path}" jest poza dozwolonym obszarem. '
+                    f'Uzywaj sciezek wzglednych (./data) lub zmiennych AppID — '
+                    f'zostana automatycznie przepisane do bezpiecznej lokalizacji')
         return None
 
     for svc_name, svc in services.items():
         if not isinstance(svc, dict):
             continue
         if svc.get('privileged') is True:
-            return f'Serwis {svc_name}: privileged=true jest zabronione'
+            return (f'Serwis {svc_name}: privileged=true jest niedozwolone. '
+                    f'Usunieto automatycznie podczas adaptacji — jesli widzisz ten '
+                    f'blad, zresetuj compose do wartosci domyslnych')
         if svc.get('cap_add'):
-            return f'Serwis {svc_name}: cap_add jest zabronione'
+            return (f'Serwis {svc_name}: cap_add jest niedozwolone. '
+                    f'Usunieto automatycznie podczas adaptacji — zresetuj compose '
+                    f'do wartosci domyslnych')
         if svc.get('devices'):
-            return f'Serwis {svc_name}: devices jest zabronione'
+            return (f'Serwis {svc_name}: devices jest niedozwolone. '
+                    f'Usunieto automatycznie podczas adaptacji — zresetuj compose '
+                    f'do wartosci domyslnych')
         if str(svc.get('network_mode', '')).strip().lower() == 'host':
-            return f'Serwis {svc_name}: network_mode=host jest zabronione'
+            return (f'Serwis {svc_name}: network_mode=host jest niedozwolone. '
+                    f'Usunieto automatycznie podczas adaptacji — zresetuj compose '
+                    f'do wartosci domyslnych')
+        if str(svc.get('pid', '')).strip().lower() == 'host':
+            return (f'Serwis {svc_name}: pid=host jest niedozwolone. '
+                    f'Usunieto automatycznie podczas adaptacji — zresetuj compose '
+                    f'do wartosci domyslnych')
+        if str(svc.get('ipc', '')).strip().lower() == 'host':
+            return (f'Serwis {svc_name}: ipc=host jest niedozwolone. '
+                    f'Usunieto automatycznie podczas adaptacji — zresetuj compose '
+                    f'do wartosci domyslnych')
+        if str(svc.get('userns_mode', '')).strip().lower() == 'host':
+            return (f'Serwis {svc_name}: userns_mode=host jest niedozwolone.')
+        if svc.get('cgroup_parent'):
+            return (f'Serwis {svc_name}: cgroup_parent jest niedozwolone.')
+        if svc.get('security_opt'):
+            return (f'Serwis {svc_name}: security_opt jest niedozwolone.')
 
         for vol in (svc.get('volumes') or []):
             if isinstance(vol, str):
@@ -174,6 +221,7 @@ def _validate_compose_policy(compose_text):
                     return f'Serwis {svc_name}: {err}'
 
     return None
+
 
 # Default repositories
 DEFAULT_REPOS = [
@@ -292,8 +340,51 @@ def _download_repo(repo):
     return repo_dir
 
 
+def _get_system_tz():
+    """Detect host timezone, default to UTC."""
+    try:
+        if os.path.islink('/etc/localtime'):
+            target = os.readlink('/etc/localtime')
+            if '/zoneinfo/' in target:
+                return target.split('/zoneinfo/')[-1]
+        if os.path.isfile('/etc/timezone'):
+            with open('/etc/timezone') as f:
+                tz = f.read().strip()
+                if tz:
+                    return tz
+    except Exception:
+        pass
+    return 'UTC'
+
+
+def _extract_ports_from_services(services):
+    """Extract published host ports from compose services."""
+    ports = set()
+    if not isinstance(services, dict):
+        return ports
+    for svc in services.values():
+        if not isinstance(svc, dict):
+            continue
+        for port_entry in (svc.get('ports') or []):
+            p = str(port_entry)
+            # Formats: "8080:80", "8080:80/tcp", "127.0.0.1:8080:80"
+            parts = p.split(':')
+            try:
+                if len(parts) >= 2:
+                    host_port = parts[-2].split('/')[-1].strip()
+                    if host_port.isdigit():
+                        ports.add(int(host_port))
+                elif len(parts) == 1:
+                    hp = parts[0].split('/')[0].strip()
+                    if hp.isdigit():
+                        ports.add(int(hp))
+            except (ValueError, IndexError):
+                pass
+    return ports
+
+
 def _parse_compose_metadata(compose_path):
-    """Parse x-casaos metadata from a docker-compose.yml."""
+    """Parse x-casaos metadata and service info from a docker-compose.yml."""
     try:
         with open(compose_path, 'r') as f:
             data = yaml.safe_load(f)
@@ -313,6 +404,14 @@ def _parse_compose_metadata(compose_path):
         tag_obj = casaos.get('tagline', {})
         tagline = tag_obj.get('en_us', '') if isinstance(tag_obj, dict) else str(tag_obj)
 
+        tips_obj = casaos.get('tips', {})
+        tips = ''
+        if isinstance(tips_obj, dict):
+            before = tips_obj.get('before_install', {})
+            tips = before.get('en_us', '') if isinstance(before, dict) else str(before)
+        elif tips_obj:
+            tips = str(tips_obj)
+
         icon = casaos.get('icon', '')
         category = casaos.get('category', 'Uncategorized')
         port_map = casaos.get('port_map', '')
@@ -320,6 +419,10 @@ def _parse_compose_metadata(compose_path):
         developer = casaos.get('developer', '')
         main_service = casaos.get('main', '')
         thumbnail = casaos.get('thumbnail', '')
+        screenshots = casaos.get('screenshot_link', [])
+        if isinstance(screenshots, str):
+            screenshots = [screenshots] if screenshots else []
+        store_app_id = casaos.get('store_app_id', '')
 
         image = ''
         services = data.get('services', {})
@@ -330,6 +433,22 @@ def _parse_compose_metadata(compose_path):
 
         if '@sha256:' in image:
             image = image.split('@sha256:')[0]
+
+        # Extract service-level metadata
+        service_count = len(services) if isinstance(services, dict) else 0
+        all_images = []
+        for svc in (services.values() if isinstance(services, dict) else []):
+            if isinstance(svc, dict) and svc.get('image'):
+                img = svc['image']
+                if '@sha256:' in img:
+                    img = img.split('@sha256:')[0]
+                all_images.append(img)
+
+        # Extract host ports from service port mappings
+        host_ports = sorted(_extract_ports_from_services(services))
+
+        # Detect named volumes
+        top_volumes = list((data.get('volumes') or {}).keys()) if isinstance(data.get('volumes'), dict) else []
 
         return {
             'title': title,
@@ -342,6 +461,13 @@ def _parse_compose_metadata(compose_path):
             'developer': developer,
             'image': image,
             'thumbnail': thumbnail,
+            'tips': tips,
+            'screenshots': screenshots,
+            'store_app_id': store_app_id,
+            'service_count': service_count,
+            'all_images': all_images,
+            'host_ports': host_ports,
+            'named_volumes': top_volumes,
         }
     except Exception:
         return None
@@ -402,6 +528,12 @@ def _build_catalog_for_repo(repo_root, repo_id, repo_name):
             'compose_path': compose_file,
             'repo_id': repo_id,
             'repo_name': repo_name,
+            'tips': meta.get('tips', ''),
+            'screenshots': meta.get('screenshots', []),
+            'service_count': meta.get('service_count', 1),
+            'all_images': meta.get('all_images', []),
+            'host_ports': meta.get('host_ports', []),
+            'named_volumes': meta.get('named_volumes', []),
         })
 
     return catalog
@@ -439,29 +571,81 @@ def _build_full_catalog():
     return deduped, errors
 
 
+def _save_catalog_atomic(catalog):
+    """Write catalog JSON atomically (tmp file + rename)."""
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=CACHE_DIR, suffix='.json.tmp')
+    try:
+        with os.fdopen(fd, 'w') as f:
+            json.dump(catalog, f)
+        os.replace(tmp_path, CATALOG_FILE)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
 def _get_catalog(force_refresh=False):
-    """Get (possibly cached) catalog."""
+    """Get (possibly cached) catalog. Implements stale-while-revalidate."""
     with _catalog_lock:
         if not force_refresh and os.path.isfile(CATALOG_FILE):
             mtime = os.path.getmtime(CATALOG_FILE)
-            if time.time() - mtime < CACHE_MAX_AGE:
+            age = time.time() - mtime
+            if age < CACHE_MAX_AGE:
                 try:
                     with open(CATALOG_FILE) as f:
                         return json.load(f)
                 except Exception:
                     pass
+            # Stale but usable — serve stale, trigger background refresh
+            if age < CACHE_MAX_AGE * 2:
+                try:
+                    with open(CATALOG_FILE) as f:
+                        stale = json.load(f)
+                    _trigger_background_refresh()
+                    return stale
+                except Exception:
+                    pass
 
         try:
             catalog, _errors = _build_full_catalog()
-            os.makedirs(CACHE_DIR, exist_ok=True)
-            with open(CATALOG_FILE, 'w') as f:
-                json.dump(catalog, f)
+            if _errors:
+                log.warning('Catalog build errors: %s', _errors)
+            _save_catalog_atomic(catalog)
             return catalog
-        except Exception:
+        except Exception as e:
+            log.error('Catalog build failed: %s', e)
             if os.path.isfile(CATALOG_FILE):
                 with open(CATALOG_FILE) as f:
                     return json.load(f)
             return []
+
+
+_bg_refresh_running = False
+
+def _trigger_background_refresh():
+    """Refresh catalog in a background thread (stale-while-revalidate)."""
+    global _bg_refresh_running
+    if _bg_refresh_running:
+        return
+    _bg_refresh_running = True
+
+    def _do_refresh():
+        global _bg_refresh_running
+        try:
+            catalog, _ = _build_full_catalog()
+            with _catalog_lock:
+                _save_catalog_atomic(catalog)
+            log.info('Background catalog refresh complete: %d apps', len(catalog))
+        except Exception as e:
+            log.error('Background catalog refresh failed: %s', e)
+        finally:
+            _bg_refresh_running = False
+
+    t = threading.Thread(target=_do_refresh, daemon=True)
+    t.start()
 
 
 def _get_installed_apps():
@@ -470,27 +654,216 @@ def _get_installed_apps():
 
 
 def _adapt_compose(compose_text, app_id):
-    """Adapt a CasaOS compose file for our environment."""
+    """Adapt a CasaOS compose file for our environment.
+
+    Handles CasaOS-specific variables, path rewrites, resource defaults,
+    strips non-standard metadata keys, and removes unsafe options.
+
+    Returns:
+        (adapted_text, adapt_warnings) — adapted_text is the modified YAML
+        string; adapt_warnings is a list of human-readable strings describing
+        each unsafe option that was automatically removed.
+    """
+    adapt_warnings = []
     appdata = f'{_apps_root()}/{app_id}'
+
+    # Replace CasaOS path/variable patterns
     text = compose_text.replace('/DATA/AppData/$AppID', appdata)
-    text = re.sub(r'\$AppID', app_id, text)
+    text = text.replace('/DATA/AppData/${AppID}', appdata)
+    text = re.sub(r'\$\{?AppID\}?', app_id, text)
+
+    # System-level variable substitutions
+    tz = _get_system_tz()
+    text = re.sub(r'\$\{?TZ\}?', tz, text)
+    uid = str(os.getuid())
+    gid = str(os.getgid())
+    text = re.sub(r'\$\{?PUID\}?', uid, text)
+    text = re.sub(r'\$\{?PGID\}?', gid, text)
+    text = re.sub(r'\$\{?WEBUI_PORT\}?', '', text)
+
+    # Unsafe per-service keys that grant excess host privileges
+    _UNSAFE_KEYS = {
+        'privileged': 'tryb uprzywilejowany (privileged)',
+        'cap_add':    'dodatkowe uprawnienia linuksowe (cap_add)',
+        'devices':    'bezposredni dostep do urzadzen (devices)',
+    }
+    # Unsafe namespace-sharing modes (value must equal "host")
+    _UNSAFE_NS = {
+        'network_mode': 'network_mode=host',
+        'pid':          'pid=host',
+        'ipc':          'ipc=host',
+    }
 
     try:
         data = yaml.safe_load(text)
         if not data:
-            return text
+            return text, adapt_warnings
+
+        # Strip CasaOS metadata extensions
         data.pop('x-casaos', None)
+
         services = data.get('services', {})
         for svc_name in list(services.keys()):
-            services[svc_name].pop('x-casaos', None)
-        # Always remove top-level 'name' key — Docker Compose will use
-        # the directory name as the project name, which is what the
-        # project listing matches against.  Keeping a foreign name
-        # causes the project to show as "Zatrzymany" (0/0 containers).
+            svc = services[svc_name]
+            if not isinstance(svc, dict):
+                continue
+            svc.pop('x-casaos', None)
+
+            # Remove unsafe options — warn for each truthy value removed
+            for key, label in _UNSAFE_KEYS.items():
+                val = svc.pop(key, None)
+                # privileged=false / empty cap_add=[] are no-ops; skip warning
+                if val:
+                    adapt_warnings.append(
+                        f'Serwis "{svc_name}": automatycznie usunieto {label}'
+                    )
+
+            for key, label in _UNSAFE_NS.items():
+                if str(svc.get(key, '')).strip().lower() == 'host':
+                    svc.pop(key)
+                    adapt_warnings.append(
+                        f'Serwis "{svc_name}": automatycznie usunieto {label}'
+                    )
+
+            # Ensure restart policy is set
+            if 'restart' not in svc:
+                svc['restart'] = DEFAULT_RESTART_POLICY
+
+            # Add default memory limit if none specified
+            if not svc.get('mem_limit') and not svc.get('deploy'):
+                svc['mem_limit'] = DEFAULT_MEM_LIMIT
+
+            # Rewrite volume paths to safe locations
+            volumes = svc.get('volumes', [])
+            adapted_volumes = []
+            for vol in volumes:
+                if isinstance(vol, str):
+                    parts = vol.split(':', 1)
+                    left = parts[0].strip()
+                    rest = (':' + parts[1]) if len(parts) > 1 else ''
+                    if left.startswith('../'):
+                        # Strip all leading ../ sequences and anchor to appdata
+                        stripped = re.sub(r'^(\.\./)+', '', left)
+                        left = os.path.join(appdata, stripped)
+                        vol = left + rest
+                    elif left.startswith('./'):
+                        left = os.path.join(appdata, left[2:])
+                        vol = left + rest
+                    elif left.startswith('/DATA/'):
+                        left = left.replace('/DATA/', appdata + '/', 1)
+                        vol = left + rest
+                elif isinstance(vol, dict):
+                    src = vol.get('source', '')
+                    if isinstance(src, str):
+                        if src.startswith('../'):
+                            stripped = re.sub(r'^(\.\./)+', '', src)
+                            vol = dict(vol, source=os.path.join(appdata, stripped))
+                        elif src.startswith('./'):
+                            vol = dict(vol, source=os.path.join(appdata, src[2:]))
+                        elif src.startswith('/DATA/'):
+                            vol = dict(vol, source=src.replace('/DATA/', appdata + '/', 1))
+                adapted_volumes.append(vol)
+            if volumes:
+                svc['volumes'] = adapted_volumes
+
+            # Remove hostname/domainname that may conflict
+            svc.pop('hostname', None)
+            svc.pop('domainname', None)
+
+            # Add container name based on app_id for predictability
+            if 'container_name' not in svc:
+                if len(services) == 1:
+                    svc['container_name'] = app_id
+                else:
+                    svc['container_name'] = f'{app_id}-{svc_name}'
+
+        # Remove top-level 'name' key — Docker Compose will use
+        # the directory name as the project name
         data.pop('name', None)
-        return yaml.dump(data, default_flow_style=False, sort_keys=False, allow_unicode=True)
+
+        return yaml.dump(data, default_flow_style=False, sort_keys=False, allow_unicode=True), adapt_warnings
     except Exception:
-        return text
+        return text, adapt_warnings
+
+
+def _check_port_conflicts(compose_text):
+    """Check if ports in compose file conflict with running containers.
+
+    Returns list of conflict descriptions, empty if no conflicts.
+    """
+    conflicts = []
+    try:
+        data = yaml.safe_load(compose_text)
+        if not data or not isinstance(data, dict):
+            return conflicts
+
+        services = data.get('services', {})
+        needed_ports = _extract_ports_from_services(services)
+        if not needed_ports:
+            return conflicts
+
+        # Get ports used by running containers
+        out, _err, rc = _run_host(
+            "docker ps --format '{{.Ports}}' 2>/dev/null",
+            timeout=10
+        )
+        if rc != 0:
+            return conflicts
+
+        used_ports = set()
+        for line in out.strip().split('\n'):
+            for mapping in line.split(','):
+                mapping = mapping.strip()
+                # Format: 0.0.0.0:8080->80/tcp
+                m = re.search(r':(\d+)->', mapping)
+                if m:
+                    used_ports.add(int(m.group(1)))
+
+        for port in needed_ports:
+            if port in used_ports:
+                conflicts.append(f'Port {port} jest już zajęty przez inny kontener')
+    except Exception:
+        pass
+    return conflicts
+
+
+def _get_cache_stats():
+    """Return cache statistics."""
+    stats = {
+        'catalog_exists': os.path.isfile(CATALOG_FILE),
+        'catalog_age_seconds': None,
+        'catalog_size_bytes': None,
+        'catalog_app_count': None,
+        'repo_cache_count': 0,
+        'repo_cache_size_bytes': 0,
+        'cache_max_age': CACHE_MAX_AGE,
+    }
+    if stats['catalog_exists']:
+        try:
+            stats['catalog_age_seconds'] = int(time.time() - os.path.getmtime(CATALOG_FILE))
+            stats['catalog_size_bytes'] = os.path.getsize(CATALOG_FILE)
+            with open(CATALOG_FILE) as f:
+                stats['catalog_app_count'] = len(json.load(f))
+        except Exception:
+            pass
+
+    repos_dir = os.path.join(CACHE_DIR, 'repos')
+    if os.path.isdir(repos_dir):
+        total_size = 0
+        repo_count = 0
+        for entry in os.scandir(repos_dir):
+            if entry.is_dir():
+                repo_count += 1
+                for dirpath, _dirs, files in os.walk(entry.path):
+                    for f in files:
+                        try:
+                            total_size += os.path.getsize(os.path.join(dirpath, f))
+                        except OSError:
+                            pass
+        stats['repo_cache_count'] = repo_count
+        stats['repo_cache_size_bytes'] = total_size
+
+    return stats
 
 
 # ═══════════════════════════════════════════════════════════
@@ -659,6 +1032,29 @@ def refresh_catalog():
     return jsonify({'ok': True, 'count': len(cat), 'repos': len(repos_used)})
 
 
+@appstore_bp.route('/cache/stats')
+def cache_stats():
+    """Return cache statistics for monitoring."""
+    return jsonify(_get_cache_stats())
+
+
+@appstore_bp.route('/cache/clear', methods=['POST'])
+def cache_clear():
+    """Clear all cached data and force re-download on next request."""
+    deny = _require_admin()
+    if deny:
+        return deny
+    try:
+        if os.path.isfile(CATALOG_FILE):
+            os.remove(CATALOG_FILE)
+        repos_dir = os.path.join(CACHE_DIR, 'repos')
+        if os.path.isdir(repos_dir):
+            shutil.rmtree(repos_dir, ignore_errors=True)
+        return jsonify({'ok': True, 'message': 'Cache wyczyszczony'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @appstore_bp.route('/app/<path:app_id>')
 def app_detail(app_id):
     """Get details for a single app."""
@@ -681,6 +1077,80 @@ def app_detail(app_id):
     return jsonify(result)
 
 
+@appstore_bp.route('/validate', methods=['POST'])
+def validate_install():
+    """Pre-install validation: check port conflicts, policy, disk space."""
+    deny = _require_admin()
+    if deny:
+        return deny
+    if not _docker_available():
+        return jsonify({'error': 'Docker nie jest zainstalowany.'}), 503
+
+    data = request.json or {}
+    app_id = data.get('app_id', '').strip()
+    if not app_id:
+        return jsonify({'error': 'app_id required'}), 400
+
+    cat = _get_catalog()
+    app = next((a for a in cat if a['id'] == app_id), None)
+    if not app:
+        return jsonify({'error': 'App not found'}), 404
+
+    compose_override = data.get('compose_override', '').strip()
+    adapt_warnings = []
+    if compose_override:
+        adapted = compose_override
+    else:
+        compose_path = app.get('compose_path', '')
+        if not compose_path or not os.path.isfile(compose_path):
+            return jsonify({'error': 'Compose file missing'}), 500
+        with open(compose_path) as f:
+            raw = f.read()
+        adapted, adapt_warnings = _adapt_compose(raw, app_id)
+
+    warnings = []
+    errors = []
+
+    # Surface any options that were automatically stripped during adaptation
+    for w in adapt_warnings:
+        warnings.append({'type': 'adapt_removed', 'message': w})
+
+    # Policy check
+    policy_err = _validate_compose_policy(adapted)
+    if policy_err:
+        errors.append({'type': 'policy', 'message': policy_err})
+
+    # Port conflict check
+    port_conflicts = _check_port_conflicts(adapted)
+    for conflict in port_conflicts:
+        warnings.append({'type': 'port_conflict', 'message': conflict})
+
+    # Check if already installed
+    dir_name, _ = _safe_compose_dir(app_id)
+    if dir_name:
+        installed = _get_installed_apps()
+        if dir_name in installed:
+            warnings.append({'type': 'already_installed', 'message': f'{app_id} jest już zainstalowana'})
+
+    # Disk space check
+    try:
+        st = os.statvfs(_compose_root())
+        free_gb = (st.f_bavail * st.f_frsize) / (1024 ** 3)
+        if free_gb < 1.0:
+            errors.append({'type': 'disk_space', 'message': f'Za mało miejsca na dysku ({free_gb:.1f} GB wolnego)'})
+        elif free_gb < 5.0:
+            warnings.append({'type': 'disk_space', 'message': f'Niski poziom wolnego miejsca ({free_gb:.1f} GB)'})
+    except Exception:
+        pass
+
+    return jsonify({
+        'ok': len(errors) == 0,
+        'errors': errors,
+        'warnings': warnings,
+        'adapted_compose': adapted,
+    })
+
+
 def _bg_install(task_id, app_id, app_title, adapted, dir_name, host_app_dir, container_app_dir):
     """Background: write compose, pull, up — emit progress via SocketIO."""
     try:
@@ -688,8 +1158,21 @@ def _bg_install(task_id, app_id, app_title, adapted, dir_name, host_app_dir, con
         _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'prepare',
                         'percent': 5, 'message': 'Przygotowywanie plików…'})
         os.makedirs(container_app_dir, exist_ok=True)
-        with open(os.path.join(container_app_dir, 'docker-compose.yml'), 'w') as f:
-            f.write(adapted)
+
+        # Atomic write of compose file
+        compose_path = os.path.join(container_app_dir, 'docker-compose.yml')
+        fd, tmp_compose = tempfile.mkstemp(dir=container_app_dir, suffix='.yml.tmp')
+        try:
+            with os.fdopen(fd, 'w') as f:
+                f.write(adapted)
+            os.replace(tmp_compose, compose_path)
+        except Exception:
+            try:
+                os.unlink(tmp_compose)
+            except OSError:
+                pass
+            raise
+
         _run_host(f'mkdir -p {_apps_root()}/{dir_name}')
 
         # Step 2: Pull images (streaming)
@@ -734,11 +1217,35 @@ def _bg_install(task_id, app_id, app_title, adapted, dir_name, host_app_dir, con
                             'percent': 100, 'message': f'Błąd uruchamiania: {up_output[-300:]}'})
             return
 
-        # Done!
-        _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'done',
-                        'percent': 100, 'message': f'{app_title} zainstalowana!'})
+        # Step 4: Verify containers started
+        _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'verify',
+                        'percent': 95, 'message': 'Weryfikacja kontenerów…'})
+        time.sleep(2)
+        verify_out, _, verify_rc = _run_host(
+            'docker compose ps --format json', cwd=host_app_dir, timeout=15
+        )
+        running_ok = True
+        if verify_rc == 0 and verify_out.strip():
+            for line in verify_out.strip().split('\n'):
+                try:
+                    cinfo = json.loads(line)
+                    state = cinfo.get('State', '').lower()
+                    if state not in ('running', 'restarting'):
+                        running_ok = False
+                except (json.JSONDecodeError, AttributeError):
+                    pass
+
+        if not running_ok:
+            _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'warning',
+                            'percent': 100,
+                            'message': f'{app_title} zainstalowana, ale niektóre kontenery mogą wymagać konfiguracji.'})
+        else:
+            # Done!
+            _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'done',
+                            'percent': 100, 'message': f'{app_title} zainstalowana!'})
 
     except Exception as e:
+        log.error('Install %s failed: %s', app_id, e)
         _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'error',
                         'percent': 100, 'message': f'Błąd: {str(e)}'})
 
@@ -771,7 +1278,9 @@ def install_app():
             return jsonify({'error': 'Compose file missing'}), 500
         with open(compose_path) as f:
             raw = f.read()
-        adapted = _adapt_compose(raw, app_id)
+        adapted, adapt_warnings = _adapt_compose(raw, app_id)
+        if adapt_warnings:
+            log.info('Adapted compose for %s — removed unsafe options: %s', app_id, adapt_warnings)
 
     dir_name, safe_dir = _safe_compose_dir(app_id)
     if not dir_name:
@@ -796,6 +1305,87 @@ def install_app():
                     adapted, dir_name, host_app_dir, container_app_dir)
 
     return jsonify({'ok': True, 'task_id': task_id, 'message': 'Installation started'})
+
+
+@appstore_bp.route('/reinstall', methods=['POST'])
+def reinstall_app():
+    """Reinstall/update an app: stop, pull new images, start."""
+    deny = _require_admin(require_sudo=True)
+    if deny:
+        return deny
+    if not _docker_available():
+        return jsonify({'error': 'Docker nie jest zainstalowany.'}), 503
+    data = request.json or {}
+    app_id = data.get('app_id', '').strip()
+    if not app_id:
+        return jsonify({'error': 'app_id required'}), 400
+
+    dir_name, safe_dir = _safe_compose_dir(app_id)
+    if not dir_name:
+        return jsonify({'error': 'Nieprawidłowe app_id'}), 400
+
+    compose_file = os.path.join(safe_dir, 'docker-compose.yml')
+    if not os.path.isfile(compose_file):
+        return jsonify({'error': 'Aplikacja nie jest zainstalowana'}), 404
+
+    # If compose_override provided, update the compose file first
+    compose_override = data.get('compose_override', '').strip()
+    if compose_override:
+        policy_err = _validate_compose_policy(compose_override)
+        if policy_err:
+            return jsonify({'error': policy_err}), 400
+        fd, tmp_compose = tempfile.mkstemp(dir=safe_dir, suffix='.yml.tmp')
+        try:
+            with os.fdopen(fd, 'w') as f:
+                f.write(compose_override)
+            os.replace(tmp_compose, compose_file)
+        except Exception:
+            try:
+                os.unlink(tmp_compose)
+            except OSError:
+                pass
+            raise
+
+    cat = _get_catalog()
+    app = next((a for a in cat if a['id'] == app_id), None)
+    app_title = (app.get('title') if app else None) or app_id
+    task_id = str(uuid.uuid4())[:8]
+
+    def _bg_reinstall():
+        try:
+            _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'prepare',
+                            'percent': 5, 'message': 'Zatrzymywanie kontenerów…'})
+            _run_host_stream('docker compose down', cwd=safe_dir, timeout=120)
+
+            _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'pull',
+                            'percent': 20, 'message': 'Pobieranie nowych obrazów…'})
+            pull_out, pull_rc = _run_host_stream('docker compose pull', cwd=safe_dir, timeout=600)
+            if pull_rc != 0:
+                _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'error',
+                                'percent': 100, 'message': f'Błąd: {pull_out[-300:]}'})
+                return
+
+            _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'start',
+                            'percent': 80, 'message': 'Uruchamianie kontenerów…'})
+            up_out, up_rc = _run_host_stream('docker compose up -d', cwd=safe_dir, timeout=300)
+            if up_rc != 0:
+                _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'error',
+                                'percent': 100, 'message': f'Błąd: {up_out[-300:]}'})
+                return
+
+            _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'done',
+                            'percent': 100, 'message': f'{app_title} zaktualizowana!'})
+        except Exception as e:
+            log.error('Reinstall %s failed: %s', app_id, e)
+            _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'error',
+                            'percent': 100, 'message': f'Błąd: {str(e)}'})
+
+    if _socketio:
+        _socketio.start_background_task(_bg_reinstall)
+    else:
+        _bg_reinstall()
+
+    return jsonify({'ok': True, 'task_id': task_id, 'message': 'Reinstall started'})
 
 
 @appstore_bp.route('/uninstall', methods=['POST'])
@@ -844,5 +1434,5 @@ def get_compose(app_id):
 
     with open(compose_path) as f:
         raw = f.read()
-    adapted = _adapt_compose(raw, app_id)
-    return jsonify({'compose': adapted, 'compose_raw': raw})
+    adapted, adapt_warnings = _adapt_compose(raw, app_id)
+    return jsonify({'compose': adapted, 'compose_raw': raw, 'adapt_warnings': adapt_warnings})
