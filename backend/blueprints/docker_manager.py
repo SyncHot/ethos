@@ -32,6 +32,8 @@ _DEFAULT_COMPOSE_ROOT = '/home/marcin/docker'
 
 # Projects that cannot be stopped/deleted via the UI (self-protection)
 _PROTECTED_PROJECTS = {'nasos'}
+_SANDBOX_OVERRIDE_FILENAME = 'docker-compose.ethos-sandbox.yml'
+_DEFAULT_COMPOSE_OVERRIDES = ('docker-compose.override.yml', 'docker-compose.override.yaml')
 
 # Where compose projects live
 def _compose_root():
@@ -347,6 +349,106 @@ def _find_compose_projects():
     return _find_compose_projects_util(_compose_root())
 
 
+def _compose_files_for_project(project_path, main_filename, sandbox_override=None):
+    """Return compose file sequence (main, user overrides, sandbox override)."""
+    files = [main_filename]
+    for override in _DEFAULT_COMPOSE_OVERRIDES:
+        if os.path.isfile(os.path.join(project_path, override)):
+            files.append(override)
+    if sandbox_override:
+        files.append(os.path.basename(sandbox_override))
+    return files
+
+
+def _list_compose_services(project_path, compose_files):
+    """List services defined in compose files."""
+    file_args = ' '.join(f'-f {f}' for f in compose_files)
+    try:
+        out, err, rc = _run_host(f'docker compose {file_args} config --services', timeout=60, cwd=project_path)
+    except Exception as exc:  # noqa: BLE001
+        return [], f'Compose services error: {exc}'
+    if rc != 0:
+        return [], err.strip() or 'docker compose config failed'
+    services = [line.strip() for line in out.split('\n') if line.strip()]
+    return services, None
+
+
+def _policy_to_service_limits(policy):
+    """Translate sandbox policy into docker-compose service options."""
+    limits = {}
+
+    mem_limit = str(policy.get('mem_limit', '')).strip()
+    if mem_limit and mem_limit != '0':
+        limits['mem_limit'] = mem_limit
+
+    mem_reservation = str(policy.get('mem_reservation', '')).strip()
+    if mem_reservation and mem_reservation != '0':
+        limits['mem_reservation'] = mem_reservation
+
+    cpu_quota = policy.get('cpu_quota', 0)
+    try:
+        cpu_quota = float(cpu_quota)
+    except (TypeError, ValueError):
+        cpu_quota = 0
+    if cpu_quota > 0:
+        limits['cpus'] = round(cpu_quota / 100.0, 3)
+
+    pids_limit = policy.get('pids_limit', 0)
+    try:
+        pids_limit = int(pids_limit)
+    except (TypeError, ValueError):
+        pids_limit = 0
+    if pids_limit > 0:
+        limits['pids_limit'] = pids_limit
+
+    if policy.get('read_only_root'):
+        limits['read_only'] = True
+
+    if policy.get('no_new_privileges'):
+        limits['security_opt'] = ['no-new-privileges:true']
+
+    cap_drop = policy.get('cap_drop') or []
+    if cap_drop:
+        limits['cap_drop'] = cap_drop
+
+    cap_add = policy.get('cap_add') or []
+    if cap_add:
+        limits['cap_add'] = cap_add
+
+    return limits
+
+
+def _ensure_sandbox_override(project_name, project_path, main_filename):
+    """Create/update sandbox override compose file with enforced limits."""
+    policy = _get_sandbox_policy(project_name) or {}
+    compose_files = _compose_files_for_project(project_path, main_filename)
+    services, err = _list_compose_services(project_path, compose_files)
+    if err:
+        return None, f'Błąd odczytu usług compose: {err}'
+    if not services:
+        return None, 'Brak usług w pliku docker-compose'
+
+    limits = _policy_to_service_limits(policy)
+    if not limits:
+        return None, None
+
+    override = {'version': '3', 'services': {svc: dict(limits) for svc in services}}
+    override_path = os.path.join(project_path, _SANDBOX_OVERRIDE_FILENAME)
+
+    try:
+        try:
+            import yaml  # type: ignore
+            with open(override_path, 'w') as f:
+                yaml.safe_dump(override, f, sort_keys=False)
+        except ImportError:
+            with open(override_path, 'w') as f:
+                json.dump(override, f, indent=2)
+    except OSError as exc:
+        return None, f'Nie można zapisać pliku polityki sandbox: {exc}'
+
+    return override_path, None
+
+
 @docker_bp.route('/projects')
 @_require_docker
 def list_projects():
@@ -435,6 +537,14 @@ def project_action(project_name):
     # Use the real host path for docker compose (runs via nsenter on host)
     host_path = os.path.join(_compose_root(), project_name)
 
+    sandbox_override = None
+    compose_files = None
+    if action in ('up', 'start', 'restart'):
+        sandbox_override, err = _ensure_sandbox_override(project_name, host_path, project['compose_filename'])
+        if err:
+            return jsonify({'error': err}), 500
+        compose_files = _compose_files_for_project(host_path, project['compose_filename'], sandbox_override)
+
     cmd_map = {
         'up': 'docker compose up -d',
         'down': 'docker compose down',
@@ -446,6 +556,9 @@ def project_action(project_name):
     }
 
     cmd_str = cmd_map[action]
+    if compose_files:
+        files_arg = ' '.join(f'-f {f}' for f in compose_files)
+        cmd_str = f'docker compose {files_arg} up -d --force-recreate --remove-orphans'
     try:
         out, err, rc = _run_host(cmd_str, timeout=120, cwd=host_path)
         combined = (out + '\n' + err).strip()
