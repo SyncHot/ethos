@@ -3419,3 +3419,107 @@ select.tk-input {
 
     .fm-view-switcher { display: none; } /* Hide view switcher to save space, default view usually fine */
 }
+
+/* ─── Mobile / Responsive Board (Ticket t_3db53b8d5c87) ─── */
+@media (max-width: 768px) {
+    /* Horizontal Scroll Snap */
+    .tk-board {
+        scroll-snap-type: x mandatory;
+        padding: 0;
+        gap: 0;
+    }
+    
+    .tk-column {
+        scroll-snap-align: center;
+        min-width: 85vw;
+        max-width: 320px;
+        width: 85vw;
+        margin: 0 8px;
+        height: calc(100% - 16px);
+    }
+    
+    .tk-column:first-child { margin-left: 16px; }
+    .tk-column:last-child { margin-right: 16px; }
+
+    /* Compact Toolbar */
+    .tk-toolbar {
+        padding: 8px;
+        gap: 8px;
+    }
+    .tk-toolbar .tk-btn {
+        padding: 6px 10px;
+        font-size: 0; /* Hide text */
+    }
+    .tk-toolbar .tk-btn i {
+        font-size: 16px; /* Show icon */
+        margin: 0;
+    }
+    .tk-board-title {
+        font-size: 14px;
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    
+    /* Filter Bar Toggle */
+    .tk-filter-bar {
+        display: none;
+    }
+    .tk-filter-bar.visible {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        padding: 12px;
+        background: var(--bg-deep);
+        border-bottom: 1px solid var(--border);
+        animation: tk-slide-down 0.2s ease-out;
+    }
+    
+    @keyframes tk-slide-down {
+        from { opacity: 0; transform: translateY(-10px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+
+    .tk-filter-group {
+        margin-bottom: 8px;
+        width: 100%;
+        box-sizing: border-box;
+    }
+    .tk-search-wrap {
+        width: 100%;
+        box-sizing: border-box;
+    }
+    .tk-search-wrap .tk-search {
+        width: 100%;
+    }
+    
+    /* Touch Friendly Hitboxes */
+    .tk-card, .tk-epic-card {
+        padding: 14px;
+        user-select: none;
+        touch-action: pan-y;
+    }
+    
+    /* Dragging Visuals */
+    .tk-card-dragging-mobile {
+        position: fixed !important;
+        z-index: 9999 !important;
+        opacity: 0.9 !important;
+        pointer-events: none !important;
+        transform: scale(1.05);
+        box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+        width: 80vw !important;
+        left: 0;
+        top: 0;
+    }
+    
+    /* Mobile Toolbar Filter Button - Ensure visible */
+    #tk-mobile-filter-toggle {
+        display: inline-flex !important;
+    }
+}
+
+/* Ensure mobile toggle is hidden on desktop */
+#tk-mobile-filter-toggle {
+    display: none;
+}

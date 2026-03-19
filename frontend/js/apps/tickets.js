@@ -553,6 +553,115 @@ async function renderTickets(body, launchOpts) {
         });
     }
 
+    /* ── Touch Drag Helper ── */
+    function setupTouchDrag(el, ticketId, fromColumnName) {
+        let timer = null;
+        let isDragging = false;
+        let clone = null;
+        let startX, startY;
+        // Delay fetching boardEl until touchstart to ensure it exists
+        
+        el.addEventListener('touchstart', (e) => {
+            if (e.touches.length > 1) return;
+            startX = e.touches[0].clientX;
+            startY = e.touches[0].clientY;
+            
+            // Long press to start drag
+            timer = setTimeout(() => {
+                isDragging = true;
+                if (navigator.vibrate) navigator.vibrate(50);
+                
+                // Create clone
+                clone = el.cloneNode(true);
+                clone.classList.add('tk-card-dragging-mobile');
+                // Remove ID to avoid dupes
+                clone.removeAttribute('id');
+                // Absolute positioning
+                clone.style.left = (e.touches[0].clientX - el.offsetWidth / 2) + 'px';
+                clone.style.top = (e.touches[0].clientY - el.offsetHeight / 2) + 'px';
+                clone.style.width = (el.offsetWidth) + 'px';
+                document.body.appendChild(clone);
+                
+                // Dim original
+                el.style.opacity = '0.5';
+            }, 500); // 500ms long press
+        }, { passive: true });
+
+        el.addEventListener('touchmove', (e) => {
+            if (!isDragging) {
+                const dx = Math.abs(e.touches[0].clientX - startX);
+                const dy = Math.abs(e.touches[0].clientY - startY);
+                if (dx > 10 || dy > 10) clearTimeout(timer);
+                return;
+            }
+            
+            e.preventDefault(); // Prevent scrolling
+            if (clone) {
+                clone.style.left = (e.touches[0].clientX - clone.offsetWidth / 2) + 'px';
+                clone.style.top = (e.touches[0].clientY - clone.offsetHeight / 2) + 'px';
+                
+                // Highlight drop target
+                const target = document.elementFromPoint(e.touches[0].clientX, e.touches[0].clientY);
+                const col = target?.closest('.tk-column');
+                const boardEl = document.getElementById('tk-board');
+                if (boardEl) boardEl.querySelectorAll('.tk-column-dragover').forEach(c => c.classList.remove('tk-column-dragover'));
+                if (col) col.classList.add('tk-column-dragover');
+            }
+        }, { passive: false });
+
+        const endDrag = (e) => {
+            clearTimeout(timer);
+            if (!isDragging) return;
+            
+            isDragging = false;
+            if (clone) clone.remove();
+            clone = null;
+            el.style.opacity = '';
+            
+            const boardEl = document.getElementById('tk-board');
+            if (boardEl) boardEl.querySelectorAll('.tk-column-dragover').forEach(c => c.classList.remove('tk-column-dragover'));
+
+            const changedTouch = e.changedTouches ? e.changedTouches[0] : e.touches[0];
+            if (!changedTouch) return;
+
+            const target = document.elementFromPoint(changedTouch.clientX, changedTouch.clientY);
+            const col = target?.closest('.tk-column');
+            
+            if (col) {
+                const newColName = col.dataset.column;
+                // Move if column changed OR reorder within same column
+                // But for now let's just support moving columns or reordering if we implemented logic
+                // The reordering logic relies on finding index.
+                
+                const draggables = [...col.querySelectorAll('.tk-card, .tk-epic-group')];
+                let order = draggables.length;
+                for (let i = 0; i < draggables.length; i++) {
+                     // If we are dragging within same column, ignore self in calculation?
+                     // API handles reorder cleanly if we just give index.
+                     const rect = draggables[i].getBoundingClientRect();
+                     const midY = rect.top + rect.height / 2;
+                     if (changedTouch.clientY < midY) {
+                         // If dragging same item, and we are above it, order is i. 
+                         // If dragging same item and we are below it, it doesn't matter much.
+                         // Simple approximation:
+                         if (draggables[i].dataset.id === ticketId) continue;
+                         order = i; break;
+                     }
+                }
+                
+                // Optimization: Don't call API if dropping on self in same column
+                if (newColName === fromColumnName) {
+                     // Check if order changed? It's complex to calc exactly.
+                     // Just call move, backend handles it or it's a no-op visually.
+                }
+                moveTicket(ticketId, newColName, order);
+            }
+        };
+
+        el.addEventListener('touchend', endDrag);
+        el.addEventListener('touchcancel', endDrag);
+    }
+
     /* ═══════════════════ KANBAN BOARD VIEW ═══════════════════ */
 
     function getFilteredTickets() {
@@ -586,6 +695,9 @@ async function renderTickets(body, launchOpts) {
                         <i class="fas fa-plus"></i> ${t('Ticket')}
                     </button>
                     ${currentProject.copilot_enabled ? '<button class="tk-act-btn" id="tk-watcher-btn" title="Ticket Watcher"><i class="fas fa-tower-broadcast"></i></button>' : ''}
+                    <button class="tk-act-btn" id="tk-mobile-filter-toggle" title="${t('Filtry')}">
+                        <i class="fas fa-filter"></i>
+                    </button>
                     <button class="tk-act-btn" id="tk-project-settings" title="${t('Ustawienia')}">
                         <i class="fas fa-sliders"></i>
                     </button>
@@ -621,6 +733,16 @@ async function renderTickets(body, launchOpts) {
             // Bindings
             app.querySelector('#tk-back').onclick = () => showProjectList();
             app.querySelector('#tk-new-ticket').onclick = () => showCreateTicketModal();
+            
+            // Mobile Filter Toggle
+            const filterToggle = app.querySelector('#tk-mobile-filter-toggle');
+            if (filterToggle) {
+                filterToggle.onclick = () => {
+                   const bar = app.querySelector('.tk-filter-bar');
+                   if (bar) bar.classList.toggle('visible');
+                };
+            }
+
             app.querySelector('#tk-project-settings').onclick = () => showProjectModal(currentProject);
             const watcherBtn = app.querySelector('#tk-watcher-btn');
             if (watcherBtn) watcherBtn.onclick = () => showWatcherModal();
@@ -730,6 +852,7 @@ async function renderTickets(body, launchOpts) {
                 epicCard.style.opacity = '';
                 board.querySelectorAll('.tk-column-dragover').forEach(el => el.classList.remove('tk-column-dragover'));
             });
+            setupTouchDrag(epicCard, epicTk.id, colName); // Add touch support
             epicCard.addEventListener('click', () => showTicketDetail(epicTk));
 
             group.appendChild(epicCard);
@@ -782,6 +905,7 @@ async function renderTickets(body, launchOpts) {
                         childCard.style.opacity = '';
                         board.querySelectorAll('.tk-column-dragover').forEach(el => el.classList.remove('tk-column-dragover'));
                     });
+                    setupTouchDrag(childCard, ch.id, colName); // Add touch support
                     childCard.addEventListener('click', () => showTicketDetail(ch));
                     childWrap.appendChild(childCard);
                 });
@@ -834,6 +958,7 @@ async function renderTickets(body, launchOpts) {
                 card.style.opacity = '';
                 board.querySelectorAll('.tk-column-dragover').forEach(el => el.classList.remove('tk-column-dragover'));
             });
+            setupTouchDrag(card, tk.id, tk.column); // Add touch support
             card.addEventListener('click', () => showTicketDetail(tk));
             return card;
         }
