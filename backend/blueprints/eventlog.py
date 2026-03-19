@@ -66,6 +66,20 @@ def init_eventlog(socketio_instance):
                     startup_details['downtime'] = f'{s}s'
             break
 
+    # Check for restart trigger (e.g. from ticket watcher) in the last 5 minutes
+    now_ts = time.time()
+    for ev in reversed(events_copy):
+        if now_ts - ev.get('ts', 0) > 300:
+            break
+        if (ev.get('category') == 'system' and ev.get('level') == 'warning'
+                and ev.get('message') == 'Restart ethos z ticket watchera'):
+            details = ev.get('details') or {}
+            if 'reason' in details:
+                startup_details['reason'] = details['reason']
+            if 'ticket_id' in details:
+                startup_details['ticket_id'] = details['ticket_id']
+            break
+
     log('system', 'info', 'EthOS uruchomiony', details=startup_details)
 
 
