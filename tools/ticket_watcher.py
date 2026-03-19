@@ -19,6 +19,10 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# Codebase map generator — dynamic architecture reference for AI agents
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from codebase_map import generate as generate_codebase_map
+
 BASE = "http://localhost:9000/api"
 TOKEN_FILE = "/tmp/.ethos_orchestrator_token"
 LOCK_FILE = "/tmp/.ethos_watcher_executing"
@@ -615,6 +619,23 @@ _docs_cache = {}  # {doc_name: content}
 _docs_cache_time = 0
 _DOCS_CACHE_TTL = 600  # refresh docs from disk every 10 minutes
 
+# Codebase map cache — regenerated every 10 minutes or when stale
+_codebase_map_cache = ""
+_codebase_map_time = 0
+
+def get_codebase_map():
+    """Get the codebase map, regenerating if cache is stale (>10min)."""
+    global _codebase_map_cache, _codebase_map_time
+    now = time.time()
+    if now - _codebase_map_time > _DOCS_CACHE_TTL or not _codebase_map_cache:
+        try:
+            _codebase_map_cache = generate_codebase_map()
+            _codebase_map_time = now
+        except Exception as e:
+            print(f"CODEBASE_MAP_ERROR | {e}", flush=True)
+            _codebase_map_cache = ""
+    return _codebase_map_cache
+
 def load_docs_context(agent):
     """Load and return concatenated content of docs relevant to the agent type. Cached."""
     global _docs_cache, _docs_cache_time
@@ -808,6 +829,13 @@ def build_copilot_prompt(ticket, agent, info, model_info, docs_context):
 
     doc_list = '\n'.join(f'   - /opt/ethos/docs/{d}' for d in info.get('docs', []))
 
+    # Generate dynamic codebase map so agent knows where everything is
+    codebase_map = get_codebase_map()
+
+    map_section = ""
+    if codebase_map:
+        map_section = f"\nCODEBASE MAP (use this to locate files — do NOT explore from scratch):\n{codebase_map}\n"
+
     prompt = f"""You are an EthOS {agent} agent. Execute this ticket efficiently.
 
 TICKET: {tid}
@@ -816,11 +844,11 @@ Title: {title}
 {feedback}
 
 PROJECT: /opt/ethos/ (Flask backend + vanilla JS frontend)
-REFERENCE DOCS (consult only when relevant, do NOT read everything):
+{map_section}REFERENCE DOCS (consult only when relevant, do NOT read everything):
 {doc_list}
 
 WORKFLOW:
-1. Understand what needs to change — explore the relevant source files
+1. Use the codebase map above to locate the relevant files — open them directly
 2. Implement the solution
 3. Test if possible (restart ethos if backend changes):
    - First log the restart: curl -s -X POST http://localhost:9000/api/eventlog -H 'Content-Type: application/json' -d '{{"category":"system","level":"warning","message":"Restart ethos z ticket watchera","detail":{{"ticket_id":"{tid}","reason":"backend changes"}}}}'
