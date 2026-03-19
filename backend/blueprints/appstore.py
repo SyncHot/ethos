@@ -158,8 +158,8 @@ def _validate_compose_policy(compose_text):
         # Explicitly disallow sensitive system paths
         sensitive_roots = ['/', '/boot', '/dev', '/etc', '/lib', '/proc', '/sys', '/usr', '/var/lib/docker']
         for s_root in sensitive_roots:
-             if rp == s_root or rp.startswith(s_root + os.sep):
-                 return (f'Montowanie sciezki systemowej "{s_root}" jest zabronione ze wzgledow bezpieczenstwa')
+            if rp == s_root or rp.startswith(s_root + os.sep):
+                return (f'Montowanie sciezki systemowej "{s_root}" jest zabronione ze wzgledow bezpieczenstwa')
 
         if rp in ['/var/run/docker.sock', '/run/docker.sock']:
             return ('Montowanie docker.sock jest niedozwolone ze wzgledow '
@@ -206,10 +206,15 @@ def _validate_compose_policy(compose_text):
             return (f'Serwis {svc_name}: cgroup_parent jest niedozwolone. '
                     f'Usunieto automatycznie podczas adaptacji — zresetuj compose '
                     f'do wartosci domyslnych')
-        if svc.get('security_opt'):
-            return (f'Serwis {svc_name}: security_opt jest niedozwolone. '
-                    f'Usunieto automatycznie podczas adaptacji — zresetuj compose '
-                    f'do wartosci domyslnych')
+        sec_opts = svc.get('security_opt')
+        if sec_opts:
+            if isinstance(sec_opts, str):
+                sec_opts = [sec_opts]
+            for opt in sec_opts:
+                if str(opt).strip().lower() not in ('no-new-privileges', 'no-new-privileges:true'):
+                    return (f'Serwis {svc_name}: security_opt "{opt}" jest niedozwolone. '
+                            f'Usunieto automatycznie podczas adaptacji — zresetuj compose '
+                            f'do wartosci domyslnych')
 
         for vol in (svc.get('volumes') or []):
             if isinstance(vol, str):
@@ -692,7 +697,6 @@ def _adapt_compose(compose_text, app_id):
         'privileged':    'tryb uprzywilejowany (privileged)',
         'cap_add':       'dodatkowe uprawnienia linuksowe (cap_add)',
         'devices':       'bezposredni dostep do urzadzen (devices)',
-        'security_opt':  'opcje bezpieczenstwa (security_opt)',
         'cgroup_parent': 'nadrzedna grupa kontrolna (cgroup_parent)',
     }
     # Unsafe namespace-sharing modes (value must equal "host")
@@ -725,6 +729,31 @@ def _adapt_compose(compose_text, app_id):
                 if val:
                     adapt_warnings.append(
                         f'Serwis "{svc_name}": automatycznie usunieto {label}'
+                    )
+
+            # Handle security_opt separately (allow safe values)
+            raw_sec = svc.get('security_opt')
+            if raw_sec:
+                if isinstance(raw_sec, str):
+                    raw_sec = [raw_sec]
+                
+                safe_opts = []
+                removed_count = 0
+                
+                for opt in raw_sec:
+                    if str(opt).strip().lower() in ('no-new-privileges', 'no-new-privileges:true'):
+                        safe_opts.append(opt)
+                    else:
+                        removed_count += 1
+                
+                if safe_opts:
+                    svc['security_opt'] = safe_opts
+                else:
+                    svc.pop('security_opt', None)
+                
+                if removed_count > 0:
+                    adapt_warnings.append(
+                        f'Serwis "{svc_name}": automatycznie usunieto niebezpieczne opcje security_opt'
                     )
 
             for key, label in _UNSAFE_NS.items():

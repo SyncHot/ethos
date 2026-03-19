@@ -133,6 +133,7 @@ services:
         mock_apps_root.return_value = '/tmp/ethos/apps/_appdata'
         mock_compose_root.return_value = '/tmp/ethos/apps/compose'
 
+        # Unsafe option blocked
         unsafe_yaml = """
 services:
   app:
@@ -142,8 +143,25 @@ services:
 """
         result = _validate_compose_policy(unsafe_yaml)
         self.assertIsNotNone(result)
-        self.assertIn('security_opt jest niedozwolone', result)
+        self.assertIn('security_opt "seccomp:unconfined" jest niedozwolone', result)
         self.assertIn('zresetuj compose', result)
+
+    @patch('blueprints.appstore._apps_root')
+    @patch('blueprints.appstore._compose_root')
+    def test_safe_security_opt_allowed(self, mock_compose_root, mock_apps_root):
+        mock_apps_root.return_value = '/tmp/ethos/apps/_appdata'
+        mock_compose_root.return_value = '/tmp/ethos/apps/compose'
+
+        # Safe option allowed
+        safe_yaml = """
+services:
+  app:
+    image: nginx
+    security_opt:
+      - no-new-privileges:true
+"""
+        result = _validate_compose_policy(safe_yaml)
+        self.assertIsNone(result)
 
     @patch('blueprints.appstore._apps_root')
     @patch('blueprints.appstore._compose_root')
@@ -172,7 +190,7 @@ class TestAdaptComposeStripping(unittest.TestCase):
 
     @patch('blueprints.appstore._apps_root')
     @patch('blueprints.appstore._compose_root')
-    def test_security_opt_stripped(self, mock_compose_root, mock_apps_root):
+    def test_security_opt_filtered(self, mock_compose_root, mock_apps_root):
         mock_apps_root.return_value = '/tmp/ethos/apps/_appdata'
         mock_compose_root.return_value = '/tmp/ethos/apps/compose'
         from blueprints.appstore import _adapt_compose
@@ -183,10 +201,16 @@ services:
     image: nginx
     security_opt:
       - no-new-privileges:true
+      - seccomp:unconfined
 """
         adapted, warnings = _adapt_compose(yaml_in, 'testapp')
         data = yaml.safe_load(adapted)
-        self.assertNotIn('security_opt', data['services']['app'])
+        
+        # Safe option preserved
+        self.assertIn('security_opt', data['services']['app'])
+        self.assertEqual(data['services']['app']['security_opt'], ['no-new-privileges:true'])
+        
+        # Unsafe removed and warned
         self.assertTrue(any('security_opt' in w for w in warnings))
 
     @patch('blueprints.appstore._apps_root')
@@ -243,7 +267,13 @@ services:
     userns_mode: host
 """
         adapted, warnings = _adapt_compose(yaml_in, 'testapp')
-        self.assertEqual(3, len([w for w in warnings if any(k in w for k in ('security_opt', 'cgroup_parent', 'userns_mode'))]))
+        
+        # Check warnings for stripped unsafe items
+        self.assertTrue(any('cgroup_parent' in w for w in warnings))
+        self.assertTrue(any('userns_mode' in w for w in warnings))
+        # security_opt was safe, should NOT be warned
+        self.assertFalse(any('security_opt' in w for w in warnings))
+
         result = _validate_compose_policy(adapted)
         self.assertIsNone(result, f'Validation should pass after adapt, got: {result}')
 
