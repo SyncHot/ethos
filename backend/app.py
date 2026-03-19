@@ -457,6 +457,9 @@ def _blueprint_auth_guard():
         # Public gallery share links (no auth)
         if path.startswith('/api/gallery/shared/'):
             return
+        # Internal system events (localhost only, e.g. from ticket watcher)
+        if path == '/api/eventlog' and request.method == 'POST' and request.remote_addr in ('127.0.0.1', '::1'):
+            return
         # Internal RAG indexing endpoint (localhost only, used by cron)
         if path == '/api/aichat/rag/index-internal':
             return

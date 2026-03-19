@@ -565,7 +565,6 @@ async function renderTickets(body, launchOpts) {
     }
 
     function renderBoard() {
-        const _start = performance.now();
         const columns = currentProject.columns || DEFAULT_COLUMNS;
         const filtered = getFilteredTickets();
         const members = currentProject.members || [];
@@ -1011,8 +1010,6 @@ async function renderTickets(body, launchOpts) {
             if (!columns.includes(el.dataset.column)) el.remove();
         });
         
-        const _end = performance.now();
-        console.log(`renderBoard took ${_end - _start}ms`);
     }
 
     /* ═══════════════════ CREATE TICKET MODAL ═══════════════════ */
