@@ -122,6 +122,30 @@ def _safe_compose_dir(app_id):
     return dir_name, target
 
 
+def _is_safe_mount_path(path):
+    """Check if host path is safe to mount."""
+    if not path:
+        return True, None
+    rp = os.path.realpath(path)
+
+    # Explicitly disallow sensitive system paths
+    sensitive_roots = ['/', '/boot', '/dev', '/etc', '/lib', '/proc', '/sys', '/usr', '/var/lib/docker']
+    for s_root in sensitive_roots:
+        if rp == s_root or rp.startswith(s_root + os.sep):
+            return False, f'Montowanie sciezki systemowej "{s_root}" jest zabronione'
+
+    if rp in ['/var/run/docker.sock', '/run/docker.sock']:
+        return False, 'Montowanie docker.sock jest niedozwolone'
+
+    # Check allowed roots
+    allowed_roots = [os.path.realpath(_apps_root()), os.path.realpath(_compose_root())]
+    for root in allowed_roots:
+        if rp == root or rp.startswith(root + os.sep):
+            return True, None
+
+    return False, f'Sciezka montowania "{path}" jest poza dozwolonym obszarem'
+
+
 def _validate_compose_policy(compose_text):
     """Reject dangerous compose options and host bind mounts outside allowed roots.
 
@@ -141,95 +165,58 @@ def _validate_compose_policy(compose_text):
     if not isinstance(services, dict) or not services:
         return 'Compose nie zawiera sekcji services'
 
-    allowed_roots = [os.path.realpath(_apps_root()), os.path.realpath(_compose_root())]
-
-    def _path_allowed(p):
-        rp = os.path.realpath(p)
-        for root in allowed_roots:
-            if rp == root or rp.startswith(root + os.sep):
-                return True
-        return False
-
-    def _check_host_path(path):
-        if not path:
-            return None
-        rp = os.path.realpath(path)
-
-        # Explicitly disallow sensitive system paths
-        sensitive_roots = ['/', '/boot', '/dev', '/etc', '/lib', '/proc', '/sys', '/usr', '/var/lib/docker']
-        for s_root in sensitive_roots:
-            if rp == s_root or rp.startswith(s_root + os.sep):
-                return (f'Montowanie sciezki systemowej "{s_root}" jest zabronione ze wzgledow bezpieczenstwa')
-
-        if rp in ['/var/run/docker.sock', '/run/docker.sock']:
-            return ('Montowanie docker.sock jest niedozwolone ze wzgledow '
-                    'bezpieczenstwa (daje pelny dostep do hosta)')
-
-        if not _path_allowed(path):
-            return (f'Sciezka montowania "{path}" jest poza dozwolonym obszarem. '
-                    f'Uzywaj sciezek wzglednych (./data) lub zmiennych AppID — '
-                    f'zostana automatycznie przepisane do bezpiecznej lokalizacji')
-        return None
+    errors = []
 
     for svc_name, svc in services.items():
         if not isinstance(svc, dict):
             continue
+
+        # Check unsafe flags
         if svc.get('privileged') is True:
-            return (f'Serwis {svc_name}: privileged=true jest niedozwolone. '
-                    f'Usunieto automatycznie podczas adaptacji — jesli widzisz ten '
-                    f'blad, zresetuj compose do wartosci domyslnych')
+            errors.append(f'Serwis {svc_name}: privileged=true jest niedozwolone.')
+
         if svc.get('cap_add'):
-            return (f'Serwis {svc_name}: cap_add jest niedozwolone. '
-                    f'Usunieto automatycznie podczas adaptacji — zresetuj compose '
-                    f'do wartosci domyslnych')
+            errors.append(f'Serwis {svc_name}: cap_add jest niedozwolone.')
+
         if svc.get('devices'):
-            return (f'Serwis {svc_name}: devices jest niedozwolone. '
-                    f'Usunieto automatycznie podczas adaptacji — zresetuj compose '
-                    f'do wartosci domyslnych')
-        if str(svc.get('network_mode', '')).strip().lower() == 'host':
-            return (f'Serwis {svc_name}: network_mode=host jest niedozwolone. '
-                    f'Usunieto automatycznie podczas adaptacji — zresetuj compose '
-                    f'do wartosci domyslnych')
-        if str(svc.get('pid', '')).strip().lower() == 'host':
-            return (f'Serwis {svc_name}: pid=host jest niedozwolone. '
-                    f'Usunieto automatycznie podczas adaptacji — zresetuj compose '
-                    f'do wartosci domyslnych')
-        if str(svc.get('ipc', '')).strip().lower() == 'host':
-            return (f'Serwis {svc_name}: ipc=host jest niedozwolone. '
-                    f'Usunieto automatycznie podczas adaptacji — zresetuj compose '
-                    f'do wartosci domyslnych')
-        if str(svc.get('userns_mode', '')).strip().lower() == 'host':
-            return (f'Serwis {svc_name}: userns_mode=host jest niedozwolone. '
-                    f'Usunieto automatycznie podczas adaptacji — zresetuj compose '
-                    f'do wartosci domyslnych')
+            errors.append(f'Serwis {svc_name}: devices jest niedozwolone.')
+
         if svc.get('cgroup_parent'):
-            return (f'Serwis {svc_name}: cgroup_parent jest niedozwolone. '
-                    f'Usunieto automatycznie podczas adaptacji — zresetuj compose '
-                    f'do wartosci domyslnych')
+            errors.append(f'Serwis {svc_name}: cgroup_parent jest niedozwolone.')
+
+        # Check unsafe namespaces
+        for ns in ['network_mode', 'pid', 'ipc', 'userns_mode']:
+            if str(svc.get(ns, '')).strip().lower() == 'host':
+                errors.append(f'Serwis {svc_name}: {ns}=host jest niedozwolone.')
+
+        # Check security_opt
         sec_opts = svc.get('security_opt')
         if sec_opts:
             if isinstance(sec_opts, str):
                 sec_opts = [sec_opts]
             for opt in sec_opts:
                 if str(opt).strip().lower() not in ('no-new-privileges', 'no-new-privileges:true'):
-                    return (f'Serwis {svc_name}: security_opt "{opt}" jest niedozwolone. '
-                            f'Usunieto automatycznie podczas adaptacji — zresetuj compose '
-                            f'do wartosci domyslnych')
+                    errors.append(f'Serwis {svc_name}: security_opt "{opt}" jest niedozwolone.')
 
+        # Check volumes
         for vol in (svc.get('volumes') or []):
+            host_path = None
             if isinstance(vol, str):
                 left = vol.split(':', 1)[0].strip()
                 # Named docker volume (no slash) is safe.
                 if left and ('/' not in left) and not left.startswith('.'):
                     continue
                 host_path = left if left.startswith('/') else os.path.join(_compose_root(), left)
-                err = _check_host_path(host_path)
-                if err:
-                    return f'Serwis {svc_name}: {err}'
             elif isinstance(vol, dict) and str(vol.get('type', '')).lower() == 'bind':
-                err = _check_host_path(vol.get('source', ''))
-                if err:
-                    return f'Serwis {svc_name}: {err}'
+                host_path = vol.get('source', '')
+
+            if host_path:
+                is_safe, err_msg = _is_safe_mount_path(host_path)
+                if not is_safe:
+                    errors.append(f'Serwis {svc_name}: {err_msg}')
+
+    if errors:
+        return '\n'.join(errors)
 
     return None
 
@@ -775,10 +762,13 @@ def _adapt_compose(compose_text, app_id):
             volumes = svc.get('volumes', [])
             adapted_volumes = []
             for vol in volumes:
+                host_path_to_check = None
+                
                 if isinstance(vol, str):
                     parts = vol.split(':', 1)
                     left = parts[0].strip()
                     rest = (':' + parts[1]) if len(parts) > 1 else ''
+                    
                     if left.startswith('../'):
                         # Strip all leading ../ sequences and anchor to appdata
                         stripped = re.sub(r'^(\.\./)+', '', left)
@@ -790,17 +780,41 @@ def _adapt_compose(compose_text, app_id):
                     elif left.startswith('/DATA/'):
                         left = left.replace('/DATA/', appdata + '/', 1)
                         vol = left + rest
+                    
+                    # Determine path to check
+                    if left and ('/' not in left) and not left.startswith('.'):
+                        # Named volume, skip check
+                        pass
+                    else:
+                        host_path_to_check = left
+
                 elif isinstance(vol, dict):
                     src = vol.get('source', '')
                     if isinstance(src, str):
                         if src.startswith('../'):
                             stripped = re.sub(r'^(\.\./)+', '', src)
-                            vol = dict(vol, source=os.path.join(appdata, stripped))
+                            src = os.path.join(appdata, stripped)
+                            vol = dict(vol, source=src)
                         elif src.startswith('./'):
-                            vol = dict(vol, source=os.path.join(appdata, src[2:]))
+                            src = os.path.join(appdata, src[2:])
+                            vol = dict(vol, source=src)
                         elif src.startswith('/DATA/'):
-                            vol = dict(vol, source=src.replace('/DATA/', appdata + '/', 1))
+                            src = src.replace('/DATA/', appdata + '/', 1)
+                            vol = dict(vol, source=src)
+                        
+                        if str(vol.get('type', '')).lower() == 'bind':
+                            host_path_to_check = src
+                
+                if host_path_to_check:
+                    is_safe, err_msg = _is_safe_mount_path(host_path_to_check)
+                    if not is_safe:
+                        adapt_warnings.append(
+                            f'Serwis "{svc_name}": automatycznie usunieto wolumen {host_path_to_check} ({err_msg})'
+                        )
+                        continue
+
                 adapted_volumes.append(vol)
+            
             if volumes:
                 svc['volumes'] = adapted_volumes
 
