@@ -125,6 +125,15 @@ function renderFM(body, state) {
         updateViewModeButtons();
         if (mode === 'thumb') _fmPregenerateThumbs(state.path);
     }
+
+    function openDLMForFolder(targetPath) {
+        const destination = (targetPath || state.path || '/home').replace(/\/$/, '') || '/home';
+        if (destination.startsWith('/__')) {
+            toast(t('Nie można pobrać do tej lokalizacji'), 'warning');
+            return;
+        }
+        openApp('download-manager', { dest_dir: destination });
+    }
     body.innerHTML = `
         <div class="fm">
             <div class="fm-toolbar">
@@ -140,6 +149,7 @@ function renderFM(body, state) {
                 <button class="fm-toolbar-btn" id="fm-upload" title="Prześlij pliki (Ctrl+U)" aria-label="Prześlij pliki"><i class="fas fa-upload"></i></button>
                 <button class="fm-toolbar-btn" id="fm-upload-folder" title="Prześlij folder" aria-label="Prześlij folder"><i class="fas fa-folder"></i><i class="fas fa-arrow-up fm-folder-upload-arrow"></i></button>
                 <button class="fm-toolbar-btn" id="fm-download" title="Pobierz zaznaczone" aria-label="Pobierz zaznaczone"><i class="fas fa-download"></i></button>
+                <button class="fm-toolbar-btn" id="fm-download-here" title="${t('Pobierz tutaj')}" aria-label="${t('Pobierz do bieżącego folderu')}"><i class="fas fa-folder-open"></i></button>
                 <button class="fm-toolbar-btn" id="fm-delete" title="Do kosza (Delete)" aria-label="Przenieś do kosza"><i class="fas fa-trash"></i></button>
                 <button class="fm-toolbar-btn fm-select-mode-btn" id="fm-select-mode-btn" title="Tryb zaznaczania" aria-label="Tryb zaznaczania" aria-pressed="false"><i class="fas fa-check-square"></i></button>
                 <div class="fm-toolbar-sep"></div>
@@ -1366,6 +1376,12 @@ function renderFM(body, state) {
                     else if (item) previewFile(item.name);
                     break;
                 case 'download': downloadSelected(); break;
+                case 'dl-download-here': {
+                    if (singleItem && singleItem.is_dir) {
+                        openDLMForFolder(itemFullPath(singleItem));
+                    }
+                    break;
+                }
                 case 'rename': renameSelected(); break;
                 case 'delete': deleteSelected(); break;
                 case 'send-to-nas': {

@@ -48,6 +48,14 @@ function renderDownloadManager(body, launchOpts) {
     let speedSampleTimer = null;
     let statsTimer = null;
 
+    const forcedDestDir = (launchOpts?.dest_dir || '').trim();
+
+    function getEffectiveDestDir(isTorrent = false) {
+        if (forcedDestDir) return forcedDestDir;
+        if (isTorrent) return config.default_dir_torrent || config.default_dir || '/home';
+        return config.default_dir || '/home';
+    }
+
     body.innerHTML = `
         <style>
         .dlm-sidebar{width:180px;min-width:180px;background:var(--bg-secondary,#0f172a);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:8px 0;flex-shrink:0}
@@ -381,8 +389,10 @@ function renderDownloadManager(body, launchOpts) {
         const res = await api('/downloads/config');
         if (!res.ok) return;
         config = res.config;
-        body.querySelector('#dlm-default-dir').value = config.default_dir || '/home';
-        body.querySelector('#dlm-default-dir-torrent').value = config.default_dir_torrent || '/home';
+        const baseDir = config.default_dir || '/home';
+        const torrentDir = config.default_dir_torrent || baseDir;
+        body.querySelector('#dlm-default-dir').value = forcedDestDir || baseDir;
+        body.querySelector('#dlm-default-dir-torrent').value = forcedDestDir || torrentDir;
         body.querySelector('#dlm-watch-folder').value = config.watch_folder || '';
         body.querySelector('#dlm-watch-enabled').checked = !!config.watch_folder_enabled;
         body.querySelector('#dlm-overwrite-existing').checked = !!config.overwrite_existing;
@@ -466,9 +476,7 @@ function renderDownloadManager(body, launchOpts) {
         const hasMagnet = urls.some(u => u.startsWith('magnet:'));
 
         // Use torrent dir for magnets, HTTP dir for regular links
-        let destDir = hasMagnet
-            ? (config.default_dir_torrent || config.default_dir || '/home')
-            : (config.default_dir || '/home');
+        let destDir = getEffectiveDestDir(hasMagnet);
         const useDebrid = config.debrid_service && config.debrid_service !== 'none';
         const isMulti = urls.length > 1;
 
@@ -626,7 +634,7 @@ function renderDownloadManager(body, launchOpts) {
         if (!files.length) return;
         torrentFile.value = '';
 
-        let destDir = config.default_dir_torrent || config.default_dir || '/home';
+        let destDir = getEffectiveDestDir(true);
         const fileNames = files.map(f => _dlmEsc(f.name)).join(', ');
         const titleText = files.length === 1
             ? `Dodaj torrent: ${_dlmEsc(files[0].name)}`
@@ -1548,8 +1556,21 @@ function renderDownloadManager(body, launchOpts) {
     }
 
     function onDlCompleted(data) {
-        if (data?.filename) {
-            toast(`Pobrano: ${data.filename}`, 'success');
+        if (!data?.filename) return;
+        const folderPath = (data.folder || data.dest_dir || data.dest_path || '').trim();
+        const message = `Pobrano: ${data.filename}`;
+        if (folderPath) {
+            toastWithAction(
+                message,
+                'success',
+                t('Otwórz folder'),
+                () => {
+                    const app = NAS.apps?.find(a => a.id === 'file-manager');
+                    if (app) openApp(app, { path: folderPath });
+                }
+            );
+        } else {
+            toast(message, 'success');
         }
     }
 
