@@ -63,7 +63,7 @@ function renderDownloadManager(body, launchOpts) {
         .dlm-nav:hover{background:var(--bg-hover,rgba(255,255,255,.04));color:var(--text-primary,#e2e8f0)}
         .dlm-nav.active{background:var(--bg-hover,rgba(255,255,255,.06));color:#10b981;border-left-color:#10b981;font-weight:600}
         .dlm-nav i{width:16px;text-align:center;font-size:12px;flex-shrink:0}
-        .dlm-sidebar-stats{padding:12px 14px 14px 14px;font-size:11px;color:var(--text-muted);border-top:1px solid var(--border);margin-top:auto;display:flex;flex-direction:column;gap:8px}
+        .dlm-stats-panel{padding:18px 16px 16px 16px;font-size:12px;color:var(--text-muted);border:1px solid var(--border);border-radius:12px;background:var(--bg-secondary,#0f172a);display:flex;flex-direction:column;gap:12px;width:100%}
         .dlm-stats-header{display:flex;align-items:center;justify-content:space-between;gap:8px}
         .dlm-stats-title{font-size:12px;color:var(--text-secondary);font-weight:600;display:flex;align-items:center;gap:6px}
         .dlm-stats-bar-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;color:var(--text-secondary)}
@@ -90,15 +90,51 @@ function renderDownloadManager(body, launchOpts) {
             .dlm-sidebar{width:56px;min-width:56px}
             .dlm-nav{padding:14px 0;justify-content:center;font-size:0}
             .dlm-nav i{font-size:18px;width:auto;margin:0}
-            .dlm-sidebar-stats{display:none}
         }
         </style>
         <div class="dlm dl-layout-row">
             <div class="dlm-sidebar">
                 <div class="dlm-nav active" data-tab="downloads"><i class="fas fa-download"></i> Pobieranie</div>
                 <div class="dlm-nav" data-tab="history"><i class="fas fa-history"></i> Historia</div>
+                <div class="dlm-nav" data-tab="stats"><i class="fas fa-chart-line"></i> Statystyki</div>
                 <div class="dlm-nav" data-tab="settings"><i class="fas fa-cog"></i> Ustawienia</div>
-                <div class="dlm-sidebar-stats">
+            </div>
+            <div class="dl-main-panel">
+            <div class="dlm-content" id="dlm-tab-downloads">
+                <div class="dlm-add-bar">
+                    <div class="dlm-url-wrap">
+                        <textarea class="dlm-url-input" id="dlm-url-input" rows="1" placeholder="${t('Wklej linki (jeden na linię), magnet linki, lub linki do .torrent...')}">${launchOpts?.url ? _dlmEsc(launchOpts.url) : ''}</textarea>
+                        <span class="dlm-url-count" id="dlm-url-count"></span>
+                    </div>
+                    <div class="dlm-add-buttons">
+                        <button class="dlm-btn-add" id="dlm-add-btn"><i class="fas fa-plus"></i> Dodaj</button>
+                        <button class="dlm-btn-add dlm-btn-paste" id="dlm-paste-btn" title="Wklej ze schowka"><i class="fas fa-paste"></i></button>
+                        <button class="dlm-btn-add dlm-btn-torrent" id="dlm-torrent-btn" title="Dodaj plik .torrent"><i class="fas fa-magnet"></i></button>
+                    </div>
+                    <input type="file" id="dlm-torrent-file" accept=".torrent" multiple style="display:none">
+                </div>
+                <div class="dlm-toolbar">
+                    <div class="dlm-filter-wrap">
+                        <i class="fas fa-search"></i>
+                        <input type="text" class="dlm-filter-input" id="dlm-filter" placeholder="Filtruj...">
+                    </div>
+                    <div class="dlm-bulk-actions">
+                        <button class="dlm-btn-sm" id="dlm-pause-all" title="Wstrzymaj wszystkie aktywne"><i class="fas fa-pause"></i> Wstrzymaj</button>
+                        <button class="dlm-btn-sm" id="dlm-resume-all" title="Wznów wszystkie wstrzymane"><i class="fas fa-play"></i> Wznów</button>
+                        <button class="dlm-btn-sm" id="dlm-clear" title="Wyczyść zakończone"><i class="fas fa-broom"></i> Wyczyść</button>
+                    </div>
+                </div>
+                <div class="dlm-list" id="dlm-list">
+                    <div class="dlm-empty"><i class="fas fa-cloud-download-alt"></i><span>Brak pobierań</span></div>
+                </div>
+            </div>
+            <div class="dlm-content" id="dlm-tab-history" style="display:none;">
+                <div class="dlm-list" id="dlm-history-list">
+                    <div class="dlm-empty"><i class="fas fa-history"></i><span>Ładowanie historii...</span></div>
+                </div>
+            </div>
+            <div class="dlm-content" id="dlm-tab-stats" style="display:none;">
+                <div class="dlm-stats-panel">
                     <div class="dlm-stats-header">
                         <div>
                             <div class="dlm-stats-title"><i class="fas fa-chart-bar"></i> Statystyki</div>
@@ -140,40 +176,6 @@ function renderDownloadManager(body, launchOpts) {
                             <span id="dlm-speed-avg-total">Śr. pobierania: —</span>
                         </div>
                     </div>
-                </div>
-            </div>
-            <div class="dl-main-panel">
-            <div class="dlm-content" id="dlm-tab-downloads">
-                <div class="dlm-add-bar">
-                    <div class="dlm-url-wrap">
-                        <textarea class="dlm-url-input" id="dlm-url-input" rows="1" placeholder="${t('Wklej linki (jeden na linię), magnet linki, lub linki do .torrent...')}">${launchOpts?.url ? _dlmEsc(launchOpts.url) : ''}</textarea>
-                        <span class="dlm-url-count" id="dlm-url-count"></span>
-                    </div>
-                    <div class="dlm-add-buttons">
-                        <button class="dlm-btn-add" id="dlm-add-btn"><i class="fas fa-plus"></i> Dodaj</button>
-                        <button class="dlm-btn-add dlm-btn-paste" id="dlm-paste-btn" title="Wklej ze schowka"><i class="fas fa-paste"></i></button>
-                        <button class="dlm-btn-add dlm-btn-torrent" id="dlm-torrent-btn" title="Dodaj plik .torrent"><i class="fas fa-magnet"></i></button>
-                    </div>
-                    <input type="file" id="dlm-torrent-file" accept=".torrent" multiple style="display:none">
-                </div>
-                <div class="dlm-toolbar">
-                    <div class="dlm-filter-wrap">
-                        <i class="fas fa-search"></i>
-                        <input type="text" class="dlm-filter-input" id="dlm-filter" placeholder="Filtruj...">
-                    </div>
-                    <div class="dlm-bulk-actions">
-                        <button class="dlm-btn-sm" id="dlm-pause-all" title="Wstrzymaj wszystkie aktywne"><i class="fas fa-pause"></i> Wstrzymaj</button>
-                        <button class="dlm-btn-sm" id="dlm-resume-all" title="Wznów wszystkie wstrzymane"><i class="fas fa-play"></i> Wznów</button>
-                        <button class="dlm-btn-sm" id="dlm-clear" title="Wyczyść zakończone"><i class="fas fa-broom"></i> Wyczyść</button>
-                    </div>
-                </div>
-                <div class="dlm-list" id="dlm-list">
-                    <div class="dlm-empty"><i class="fas fa-cloud-download-alt"></i><span>Brak pobierań</span></div>
-                </div>
-            </div>
-            <div class="dlm-content" id="dlm-tab-history" style="display:none;">
-                <div class="dlm-list" id="dlm-history-list">
-                    <div class="dlm-empty"><i class="fas fa-history"></i><span>Ładowanie historii...</span></div>
                 </div>
             </div>
             <div class="dlm-content" id="dlm-tab-settings" style="display:none;">
@@ -307,15 +309,22 @@ function renderDownloadManager(body, launchOpts) {
     `;
 
     // Tab switching
+    const tabPanels = {
+        downloads: body.querySelector('#dlm-tab-downloads'),
+        history: body.querySelector('#dlm-tab-history'),
+        stats: body.querySelector('#dlm-tab-stats'),
+        settings: body.querySelector('#dlm-tab-settings'),
+    };
     body.querySelectorAll('.dlm-nav').forEach(tab => {
         tab.addEventListener('click', () => {
             body.querySelectorAll('.dlm-nav').forEach(t => t.classList.remove('active'));
             tab.classList.add('active');
             currentTab = tab.dataset.tab;
-            body.querySelector('#dlm-tab-downloads').style.display = currentTab === 'downloads' ? '' : 'none';
-            body.querySelector('#dlm-tab-history').style.display = currentTab === 'history' ? '' : 'none';
-            body.querySelector('#dlm-tab-settings').style.display = currentTab === 'settings' ? '' : 'none';
+            Object.entries(tabPanels).forEach(([key, panel]) => {
+                if (panel) panel.style.display = currentTab === key ? '' : 'none';
+            });
             if (currentTab === 'history') loadHistory();
+            if (currentTab === 'stats') loadStats();
         });
     });
 
