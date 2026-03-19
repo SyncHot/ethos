@@ -1213,10 +1213,6 @@ function renderFM(body, state) {
             items.push({ icon: 'fa-network-wired', label: t('Prześlij do NAS'), action: 'send-to-nas' });
         }
 
-        if (singleItem && singleItem.is_dir) {
-            items.push({ icon: 'fa-cloud-download-alt', label: t('Pobierz do tego folderu'), action: 'dl-download-here', cls: 'accent' });
-        }
-
         items.push({ sep: true });
 
         // Select all
@@ -2845,15 +2841,11 @@ function renderFM(body, state) {
                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
                     <div>
                         <label style="font-size:0.8em;color:var(--text-muted)">User</label>
-                        <select id="fm-chown-user" style="width:100%;padding:6px;background:var(--bg-base,#181825);border:1px solid var(--border,#444);border-radius:4px;color:var(--text-primary)">
-                            <option value="${owner}">${owner}</option>
-                        </select>
+                        <input id="fm-chown-user" type="text" value="${owner}" style="width:100%;padding:6px;background:var(--bg-base,#181825);border:1px solid var(--border,#444);border-radius:4px;color:var(--text-primary)">
                     </div>
                     <div>
                         <label style="font-size:0.8em;color:var(--text-muted)">Group</label>
-                        <select id="fm-chown-group" style="width:100%;padding:6px;background:var(--bg-base,#181825);border:1px solid var(--border,#444);border-radius:4px;color:var(--text-primary)">
-                            <option value="${group}">${group}</option>
-                        </select>
+                        <input id="fm-chown-group" type="text" value="${group}" style="width:100%;padding:6px;background:var(--bg-base,#181825);border:1px solid var(--border,#444);border-radius:4px;color:var(--text-primary)">
                     </div>
                  </div>
             </div>
@@ -2885,25 +2877,6 @@ function renderFM(body, state) {
         const close = () => overlay.remove();
         overlay.querySelector('#fm-props-close').addEventListener('click', close);
         overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
-
-        // Populate user/group selects from system users list
-        if (isAdmin) {
-            api('/users/list').then(res => {
-                const users = res.users || [];
-                const userSel = overlay.querySelector('#fm-chown-user');
-                const groupSel = overlay.querySelector('#fm-chown-group');
-                if (userSel && users.length) {
-                    const currentUser = userSel.value;
-                    userSel.innerHTML = users.map(u => `<option value="${u.username}"${u.username === currentUser ? ' selected' : ''}>${u.username}</option>`).join('');
-                }
-                if (groupSel && users.length) {
-                    const currentGroup = groupSel.value;
-                    // Build unique group list: ethos users + current group if not in list
-                    const groups = [...new Set([currentGroup, ...users.map(u => u.username)])].filter(Boolean);
-                    groupSel.innerHTML = groups.map(g => `<option value="${g}"${g === currentGroup ? ' selected' : ''}>${g}</option>`).join('');
-                }
-            }).catch(() => {});
-        }
 
         if (isAdmin) {
             const checkboxes = overlay.querySelectorAll('.perm-cb');
@@ -3358,13 +3331,6 @@ function renderFM(body, state) {
     body.querySelector('#fm-upload').addEventListener('click', uploadFiles);
     body.querySelector('#fm-upload-folder').addEventListener('click', uploadFolder);
     body.querySelector('#fm-download').addEventListener('click', downloadSelected);
-    body.querySelector('#fm-download-here').addEventListener('click', () => {
-        if (!isRegularPath()) {
-            toast(t('Nie można pobrać do tej lokalizacji'), 'warning');
-            return;
-        }
-        openDLMForFolder(state.path);
-    });
     body.querySelector('#fm-delete').addEventListener('click', deleteSelected);
 
     // View mode buttons
@@ -5181,6 +5147,7 @@ function renderDockerManager(body) {
 
         // Virtual scroll initialization
         S.virtual = { rowH: 45, padTop: 0, padBot: 0 }; 
+        S.filtered = []; // Initialize to empty array to prevent TypeError in renderVirtualChunk
         const wrap = main.querySelector('.dkr-table-wrap');
         let ticking = false;
         wrap.addEventListener('scroll', () => {
@@ -5226,6 +5193,7 @@ function renderDockerManager(body) {
         const tbody = main.querySelector('#dkr-ct-body');
         const wrap = main.querySelector('.dkr-table-wrap');
         if (!tbody || !wrap) return;
+        if (!S.filtered) S.filtered = []; // Safety check
 
         const rowH = 45; // Estimated row height
         const total = S.filtered.length;
