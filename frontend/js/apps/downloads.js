@@ -1351,8 +1351,10 @@ function renderDownloadManager(body, launchOpts) {
         const el = list.querySelector(`.dlm-item[data-id="${data.id}"]`);
         if (!el) return false;
 
-        // Update status class
+        // Update status class (preserve touch-swipe state)
+        const wasSwiped = el.classList.contains('dlm-swiped');
         el.className = `dlm-item dlm-status-${data.status}`;
+        if (wasSwiped) el.classList.add('dlm-swiped');
 
         // Create temp container to parse new HTML
         const tmp = document.createElement('div');
