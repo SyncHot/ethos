@@ -673,6 +673,76 @@ async function renderTickets(body, launchOpts) {
         });
     }
 
+    /* ── Find 5 Bugs Button Helper ── */
+    async function findFiveBugs() {
+        try {
+            toast(t('Szukanie aplikacji...'), 'info');
+            const catalog = await api('/appstore/catalog');
+            if (!catalog || !catalog.length) {
+                toast(t('Brak aplikacji w katalogu'), 'error');
+                return;
+            }
+            
+            // Random app
+            const randomApp = catalog[Math.floor(Math.random() * catalog.length)];
+            
+            // Find target project (ETHOS) or current
+            let targetProject = projects.find(p => p.name === 'ETHOS');
+            if (!targetProject) {
+                console.warn('Projekt ETHOS nie znaleziony, używam bieżącego');
+                targetProject = currentProject;
+            }
+            
+            // Random attributes
+            const priorities = Object.keys(PRIORITY_LABELS);
+            const complexities = Object.keys(COMPLEXITY_LEVELS);
+            
+            // Pick a random member from target project members
+            const targetMembers = targetProject.members || [];
+            const randomMember = targetMembers.length > 0 
+                ? targetMembers[Math.floor(Math.random() * targetMembers.length)] 
+                : null;
+                
+            const randomPriority = priorities[Math.floor(Math.random() * priorities.length)];
+            const randomComplexity = complexities[Math.floor(Math.random() * complexities.length)];
+            
+            // Check if column exists, default to first one or Backlog
+            let targetColumn = 'Backlog';
+            const cols = targetProject.columns || DEFAULT_COLUMNS;
+            if (!cols.includes(targetColumn)) {
+                targetColumn = cols[0];
+            }
+
+            const payload = {
+                title: `Znajdź 5 bugów w ${randomApp.title || randomApp.name || randomApp.repo_id}`,
+                description: `Aplikacja: ${randomApp.title || randomApp.name}\nOpis: ${randomApp.description || 'Brak opisu'}\nRepo: ${randomApp.repo_id}\n\nZadanie: Przetestuj aplikację i znajdź co najmniej 5 błędów.`,
+                type: 'bug',
+                priority: randomPriority,
+                complexity: randomComplexity,
+                assignee: randomMember,
+                column: targetColumn,
+                labels: ['bug-hunt', 'random-app']
+            };
+
+            await api(`/tickets/projects/${targetProject.id}/tickets`, {
+                method: 'POST',
+                body: payload
+            });
+
+            toast(t('Utworzono ticket dla: ') + (randomApp.title || randomApp.name), 'success');
+            
+            // Reload if we are on the target project board
+            if (currentProject.id === targetProject.id) {
+                await loadTickets(currentProject.id);
+                renderBoard();
+            }
+            
+        } catch (e) {
+            console.error(e);
+            toast(t('Błąd: ') + e.message, 'error');
+        }
+    }
+
     function renderBoard() {
         const columns = currentProject.columns || DEFAULT_COLUMNS;
         const filtered = getFilteredTickets();
@@ -693,6 +763,9 @@ async function renderTickets(body, launchOpts) {
                     <div style="flex:1;"></div>
                     <button class="tk-btn tk-btn-primary" id="tk-new-ticket">
                         <i class="fas fa-plus"></i> ${t('Ticket')}
+                    </button>
+                    <button class="tk-act-btn" id="tk-find-bugs-btn" title="${t('Znajdź 5 bugów')}">
+                        <i class="fas fa-bug"></i>
                     </button>
                     ${currentProject.copilot_enabled ? '<button class="tk-act-btn" id="tk-watcher-btn" title="Ticket Watcher"><i class="fas fa-tower-broadcast"></i></button>' : ''}
                     <button class="tk-act-btn" id="tk-mobile-filter-toggle" title="${t('Filtry')}">
@@ -733,6 +806,8 @@ async function renderTickets(body, launchOpts) {
             // Bindings
             app.querySelector('#tk-back').onclick = () => showProjectList();
             app.querySelector('#tk-new-ticket').onclick = () => showCreateTicketModal();
+            const findBugsBtn = app.querySelector('#tk-find-bugs-btn');
+            if (findBugsBtn) findBugsBtn.onclick = () => findFiveBugs();
             
             // Mobile Filter Toggle
             const filterToggle = app.querySelector('#tk-mobile-filter-toggle');
