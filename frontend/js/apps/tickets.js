@@ -696,16 +696,12 @@ async function renderTickets(body, launchOpts) {
             // Random attributes
             const priorities = Object.keys(PRIORITY_LABELS);
             const complexities = Object.keys(COMPLEXITY_LEVELS);
-            
-            // Pick a random member from target project members
-            const targetMembers = targetProject.members || [];
-            const randomMember = targetMembers.length > 0 
-                ? targetMembers[Math.floor(Math.random() * targetMembers.length)] 
-                : null;
-                
             const randomPriority = priorities[Math.floor(Math.random() * priorities.length)];
             const randomComplexity = complexities[Math.floor(Math.random() * complexities.length)];
-            
+
+            // Agent: QA testing / bug-hunting task → General agent
+            const suggestedAgent = 'General';
+
             // Check if column exists, default to first one or Backlog
             let targetColumn = 'Backlog';
             const cols = targetProject.columns || DEFAULT_COLUMNS;
@@ -713,15 +709,16 @@ async function renderTickets(body, launchOpts) {
                 targetColumn = cols[0];
             }
 
+            const appName = randomApp.title || randomApp.name || randomApp.repo_id;
             const payload = {
-                title: `Znajdź 5 bugów w ${randomApp.title || randomApp.name || randomApp.repo_id}`,
-                description: `Aplikacja: ${randomApp.title || randomApp.name}\nOpis: ${randomApp.description || 'Brak opisu'}\nRepo: ${randomApp.repo_id}\n\nZadanie: Przetestuj aplikację i znajdź co najmniej 5 błędów.`,
+                title: `Znajdź 5 bugów w ${appName}`,
+                description: `Aplikacja: ${appName}\nOpis: ${randomApp.description || 'Brak opisu'}\nRepo: ${randomApp.repo_id}\n\nZadanie: Przetestuj aplikację i znajdź co najmniej 5 błędów. Opisz każdy bug: tytuł, kroki reprodukcji, oczekiwany vs rzeczywisty wynik.\n\nSugerowany agent: ${suggestedAgent} (testowanie, bug hunting)`,
                 type: 'bug',
                 priority: randomPriority,
                 complexity: randomComplexity,
-                assignee: randomMember,
+                assignee: 'copilot',
                 column: targetColumn,
-                labels: ['bug-hunt', 'random-app']
+                labels: ['bug-hunt', 'random-app', 'qa']
             };
 
             await api(`/tickets/projects/${targetProject.id}/tickets`, {
