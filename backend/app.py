@@ -88,6 +88,7 @@ from blueprints.websites import websites_bp
 from blueprints.domains_manager import domains_mgr_bp
 from blueprints.stickynotes import notes_bp
 from blueprints.tickets import tickets_bp, init_tickets
+from blueprints.rockets import rockets_bp
 from blueprints.familyhub import familyhub_bp
 from blueprints.sharing import sharing_bp
 from blueprints.installer import installer_bp
@@ -143,6 +144,7 @@ app.register_blueprint(domains_mgr_bp)
 app.register_blueprint(installer_bp)
 app.register_blueprint(notes_bp)
 app.register_blueprint(tickets_bp)
+app.register_blueprint(rockets_bp)
 app.register_blueprint(familyhub_bp)
 app.register_blueprint(sharing_bp)
 init_appstore(socketio)
@@ -389,6 +391,7 @@ _API_TO_APP = {
     '/api/ssh/': 'ssh-manager',
     '/api/notes/': 'sticky-notes',
     '/api/tickets/': 'tickets',
+    '/api/rockets/': 'rockets',
     '/api/familyhub/': 'family-hub',
     '/api/sync/': 'naslink',
     '/api/update/': 'updates',
@@ -7724,6 +7727,15 @@ def get_apps():
             'type': 'builtin',
             'category': 'Narzędzia',
             'description': 'Tablica ogłoszeń, listy zakupów, zadania i kalendarz rodzinny'
+        },
+        {
+            'id': 'rockets',
+            'name': 'Rockets',
+            'icon': 'fa-rocket',
+            'color': '#ef4444',
+            'type': 'builtin',
+            'category': 'Narzędzia',
+            'description': 'Start your engines!'
         }
     ]
 
@@ -8461,6 +8473,12 @@ terminal_sessions = {}  # sid -> { 'fd': master_fd, 'pid': child_pid, 'greenlet'
 def terminal_users():
     """List system users that can run a shell (from the host)."""
     try:
+        # Check current user for filtering
+        token = get_token()
+        info = tokens.get(token)
+        current_user = info['username']
+        role = info.get('role', 'user')
+
         r = _host_run_base(
             "getent passwd | awk -F: '$7 ~ /bash|zsh|sh/ && $3 >= 0 {print $1 \":\" $6 \":\" $7}'",
             timeout=10
@@ -8471,8 +8489,13 @@ def terminal_users():
                 continue
             parts = line.split(':')
             if len(parts) >= 3:
+                username = parts[0]
+                # Non-admin users can only see themselves
+                if role != 'admin' and username != current_user:
+                    continue
+
                 users.append({
-                    'username': parts[0],
+                    'username': username,
                     'home': parts[1],
                     'shell': parts[2]
                 })
