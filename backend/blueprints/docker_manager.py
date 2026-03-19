@@ -18,6 +18,13 @@ from host import host_run as _host_run_base, host_path, NATIVE_MODE, check_dep, 
 from utils import docker_available as _docker_available_util, run_host, \
     find_compose_projects as _find_compose_projects_util, register_pkg_routes
 
+# Import sandbox policy helper — used to apply resource limits to containers
+try:
+    from blueprints.sandbox_policy import get_effective_policy as _get_sandbox_policy
+except ImportError:
+    def _get_sandbox_policy(_name):
+        return {}
+
 docker_bp = Blueprint('docker_mgr', __name__, url_prefix='/api/docker')
 
 # Fallback defaults when no data disk is configured
@@ -776,6 +783,23 @@ services:
         return jsonify({'ok': True, 'message': f'Projekt "{name}" utworzony', 'path': project_path})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+# ═══════════════════════════════════════════════════════════
+#  SANDBOX POLICY — convenience proxy endpoints
+# ═══════════════════════════════════════════════════════════
+
+@docker_bp.route('/projects/<project_name>/policy', methods=['GET'])
+@_require_admin
+def get_project_policy(project_name):
+    """Return the effective sandbox policy for a compose project.
+
+    Combines global defaults with any per-project override stored in
+    sandbox_policies.json. The result describes the resource constraints
+    that should be applied to containers belonging to this project.
+    """
+    policy = _get_sandbox_policy(project_name)
+    return jsonify({'project': project_name, 'policy': policy})
 
 
 # ── Package: uninstall / pkg-status ──

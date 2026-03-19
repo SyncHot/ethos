@@ -64,6 +64,7 @@ from blueprints.users import users_bp, _load_privileges
 from blueprints.network import network_bp
 from blueprints.eventlog import eventlog_bp, init_eventlog, log as elog
 from blueprints.docker_manager import docker_bp
+from blueprints.sandbox_policy import sandbox_bp
 from blueprints.appstore import appstore_bp, init_appstore
 from blueprints.gallery import gallery_bp
 from blueprints.editor import editor_bp
@@ -118,6 +119,7 @@ app.register_blueprint(users_bp)
 app.register_blueprint(network_bp)
 app.register_blueprint(eventlog_bp)
 app.register_blueprint(docker_bp)
+app.register_blueprint(sandbox_bp)
 app.register_blueprint(appstore_bp)
 app.register_blueprint(gallery_bp)
 app.register_blueprint(editor_bp)
