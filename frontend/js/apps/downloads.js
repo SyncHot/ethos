@@ -154,6 +154,7 @@ function renderDownloadManager(body, launchOpts) {
                         <select id="dlm-hist-source" class="dlm-select-sm">
                             <option value="">Wszystkie źródła</option>
                             <option value="torrent">Torrent</option>
+                            <option value="debrid">Debrid</option>
                             <option value="direct">Direct</option>
                         </select>
                     </div>
@@ -163,7 +164,13 @@ function renderDownloadManager(body, launchOpts) {
                             <option value="today">Dzisiaj</option>
                             <option value="week">Ostatni tydzień</option>
                             <option value="month">Ostatni miesiąc</option>
+                            <option value="range">Zakres dat...</option>
                         </select>
+                        <span id="dlm-hist-range-wrap" style="display:none;align-items:center;gap:4px;">
+                            <input type="date" id="dlm-hist-range-from" class="dlm-input-sm" style="width:130px;">
+                            <span style="color:var(--text-secondary);font-size:12px;">–</span>
+                            <input type="date" id="dlm-hist-range-to" class="dlm-input-sm" style="width:130px;">
+                        </span>
                         <button id="dlm-hist-clear-btn" class="dlm-btn-sm dlm-btn-danger"><i class="fas fa-trash"></i> Wyczyść...</button>
                         <div class="dlm-spacer"></div>
                         <div class="dlm-pagination-info" id="dlm-hist-page-info"></div>
@@ -834,6 +841,9 @@ function renderDownloadManager(body, launchOpts) {
         const statusSelect = body.querySelector('#dlm-hist-status');
         const sourceSelect = body.querySelector('#dlm-hist-source');
         const dateSelect = body.querySelector('#dlm-hist-date');
+        const rangeWrap = body.querySelector('#dlm-hist-range-wrap');
+        const rangeFrom = body.querySelector('#dlm-hist-range-from');
+        const rangeTo = body.querySelector('#dlm-hist-range-to');
 
         if (!list) return;
 
@@ -842,14 +852,20 @@ function renderDownloadManager(body, launchOpts) {
         const status = statusSelect?.value || '';
         const source = sourceSelect?.value || '';
         const dateFilter = dateSelect?.value || '';
-        
+
+        // Show/hide custom range inputs
+        if (rangeWrap) rangeWrap.style.display = dateFilter === 'range' ? 'flex' : 'none';
+
         let startTs = '';
         let endTs = '';
         const now = new Date();
         now.setHours(0,0,0,0); // midnight
-        
+
         if (dateFilter === 'today') {
             startTs = now.getTime();
+            const tomorrow = new Date(now);
+            tomorrow.setDate(now.getDate() + 1);
+            endTs = tomorrow.getTime();
         } else if (dateFilter === 'week') {
             const lastWeek = new Date(now);
             lastWeek.setDate(now.getDate() - 7);
@@ -858,6 +874,15 @@ function renderDownloadManager(body, launchOpts) {
             const lastMonth = new Date(now);
             lastMonth.setMonth(now.getMonth() - 1);
             startTs = lastMonth.getTime();
+        } else if (dateFilter === 'range') {
+            if (rangeFrom?.value) {
+                startTs = new Date(rangeFrom.value).getTime();
+            }
+            if (rangeTo?.value) {
+                const toDate = new Date(rangeTo.value);
+                toDate.setDate(toDate.getDate() + 1); // include the end day
+                endTs = toDate.getTime();
+            }
         }
 
         list.innerHTML = `<div class="dlm-empty"><i class="fas fa-spinner fa-spin"></i><span>${t('Ładowanie...')}</span></div>`;
@@ -990,6 +1015,14 @@ function renderDownloadManager(body, launchOpts) {
                         }
                     });
                 }
+            }
+        });
+
+        // Custom date range inputs
+        ['#dlm-hist-range-from', '#dlm-hist-range-to'].forEach(sel => {
+            const el = body.querySelector(sel);
+            if (el) {
+                el.addEventListener('change', () => { historyPage = 1; loadHistory(); });
             }
         });
         

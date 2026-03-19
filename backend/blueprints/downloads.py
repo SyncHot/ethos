@@ -9,7 +9,6 @@ from flask_socketio import SocketIO
 import os
 import json
 import time
-import datetime
 import uuid
 import threading
 import re
@@ -539,6 +538,7 @@ def _log_history(dl, event_type):
         'filesize': dl.get('downloaded', 0) or dl.get('filesize', 0),
         'dest_dir': dl.get('dest_dir', ''),
         'is_torrent': dl.get('is_torrent', False),
+        'use_debrid': dl.get('use_debrid', False),
         'event': event_type,
         'error': dl.get('error', '') if event_type == 'failed' else '',
         'timestamp': time.time(),
@@ -2099,7 +2099,9 @@ def download_history():
         if source == 'torrent':
             history = [h for h in history if h.get('is_torrent')]
         elif source == 'direct':
-            history = [h for h in history if not h.get('is_torrent')]
+            history = [h for h in history if not h.get('is_torrent') and not h.get('use_debrid')]
+        elif source == 'debrid':
+            history = [h for h in history if h.get('use_debrid') and not h.get('is_torrent')]
 
     if start_ts:
         history = [h for h in history if h.get('timestamp', 0) >= start_ts]
@@ -2125,10 +2127,11 @@ def download_history():
 
 @downloads_bp.route('/api/downloads/history/clear', methods=['POST'])
 def clear_history():
-    """Clear download history."""
+    """Clear download history for the current user."""
+    me = _get_username()
     data = request.get_json(force=True)
     older_than_days = data.get('older_than_days')
-    
+
     with _history_lock:
         if os.path.isfile(DOWNLOADS_HISTORY_FILE):
             try:
@@ -2138,16 +2141,17 @@ def clear_history():
                 history = []
         else:
             history = []
-            
+
         if older_than_days is not None:
             cutoff = time.time() - (int(older_than_days) * 86400)
-            history = [h for h in history if h.get('timestamp', 0) > cutoff]
+            # Keep entries that belong to other users OR are newer than cutoff for current user
+            history = [h for h in history if h.get('user') != me or h.get('timestamp', 0) > cutoff]
         else:
-            # Clear all
-            history = []
-            
+            # Remove only entries belonging to the current user
+            history = [h for h in history if h.get('user') != me]
+
         _atomic_write_json(DOWNLOADS_HISTORY_FILE, history)
-        
+
     return jsonify({'ok': True})
 
 
