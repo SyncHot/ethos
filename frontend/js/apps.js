@@ -7176,10 +7176,12 @@ function renderAppStore(body) {
 
         let compose = '';
         let composeAdaptWarnings = [];
+        let installConfig = null;
         try {
             const r = await api('/appstore/compose/' + appId);
             compose = r.compose || '';
             composeAdaptWarnings = r.adapt_warnings || [];
+            if (r.config) installConfig = JSON.parse(JSON.stringify(r.config));
         } catch (_) {}
 
         const overlay = document.createElement('div');
@@ -7194,13 +7196,62 @@ function renderAppStore(body) {
             ? `<img class="as-detail-icon" src="${iconUrl}" onerror="this.style.display='none'">`
             : '';
 
-        const isInstalling = S.installing === appId;
-
         const tipsHtml = app.tips ? `<div class="as-detail-tips"><i class="fas fa-info-circle"></i> ${app.tips}</div>` : '';
         const portsHtml = (app.host_ports && app.host_ports.length)
             ? app.host_ports.map(p => `<a class="as-port-link" href="http://${location.hostname}:${p}" target="_blank" rel="noopener">:${p}</a>`).join(' ')
             : (app.port_map ? `<a class="as-port-link" href="http://${location.hostname}:${app.port_map}" target="_blank" rel="noopener">:${app.port_map}</a>` : '');
         const svcCountHtml = app.service_count > 1 ? `<div class="as-meta-item"><strong>${t('Serwisy')}:</strong> ${app.service_count}</div>` : '';
+
+        const renderConfigSection = () => {
+            if (!installConfig || Object.keys(installConfig).length === 0) return '';
+            
+            let html = '<div class="as-config-section">';
+            html += `<div class="as-config-title"><i class="fas fa-sliders-h"></i> ${t('Konfiguracja')}</div>`;
+            
+            for (const [svcName, svc] of Object.entries(installConfig)) {
+                if (Object.keys(installConfig).length > 1) {
+                    html += `<div class="as-svc-header">${svcName}</div>`;
+                }
+                
+                // Ports
+                if (svc.ports && svc.ports.length) {
+                    html += `<table class="as-config-table">
+                        <thead><tr><th>${t('Port kontenera')}</th><th>${t('Port hosta')}</th></tr></thead>
+                        <tbody>`;
+                    svc.ports.forEach((p, idx) => {
+                        html += `<tr>
+                            <td>${p.container}${p.protocol !== 'tcp' ? '/'+p.protocol : ''}</td>
+                            <td>
+                                <input type="text" class="as-config-input as-port-input" 
+                                    data-svc="${svcName}" data-idx="${idx}" value="${p.host}" placeholder="Auto">
+                                <div class="as-config-warning hidden"></div>
+                            </td>
+                        </tr>`;
+                    });
+                    html += `</tbody></table>`;
+                }
+
+                // Volumes
+                if (svc.volumes && svc.volumes.length) {
+                    html += `<table class="as-config-table">
+                        <thead><tr><th>${t('Ścieżka w kontenerze')}</th><th>${t('Ścieżka na hoście')}</th></tr></thead>
+                        <tbody>`;
+                    svc.volumes.forEach((v, idx) => {
+                         html += `<tr>
+                            <td>${v.container} <span style="opacity:0.5;font-size:0.8em">(${v.mode})</span></td>
+                            <td>
+                                <input type="text" class="as-config-input as-vol-input" 
+                                    data-svc="${svcName}" data-idx="${idx}" value="${v.host}">
+                                <div class="as-config-warning hidden"></div>
+                            </td>
+                        </tr>`;
+                    });
+                    html += `</tbody></table>`;
+                }
+            }
+            html += '</div>';
+            return html;
+        };
 
         modal.innerHTML = `
             <div class="as-modal-header">
@@ -7225,6 +7276,7 @@ function renderAppStore(body) {
                     ${app.category ? `<div class="as-meta-item"><strong>${t('Kategoria')}:</strong> ${app.category}</div>` : ''}
                     ${svcCountHtml}
                 </div>
+                ${renderConfigSection()}
                 ${compose ? `
                 <div class="as-detail-section">
                     <div class="as-compose-label-row">
@@ -7262,6 +7314,61 @@ function renderAppStore(body) {
 
         modal.querySelector('.as-modal-close').addEventListener('click', () => overlay.remove());
 
+        /* Config Logic */
+        const validatePortInput = (el, val) => {
+            const warningEl = el.nextElementSibling;
+            if (!warningEl) return;
+            const port = parseInt(val);
+            if (!val) {
+                 warningEl.textContent = ''; warningEl.classList.add('hidden'); return;
+            }
+            if (port < 1024) {
+                warningEl.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Port < 1024 (wymaga root)';
+                warningEl.classList.remove('hidden');
+            } else {
+                warningEl.classList.add('hidden');
+            }
+        };
+
+        const validateVolInput = (el, val) => {
+             const warningEl = el.nextElementSibling;
+             if (!warningEl) return;
+             if (!val) return;
+             const sensitive = ['/', '/usr', '/etc', '/var', '/boot', '/proc', '/sys', '/dev'];
+             if (sensitive.some(s => val === s || val.startsWith(s + '/'))) {
+                 warningEl.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Ścieżka systemowa!';
+                 warningEl.classList.remove('hidden');
+             } else {
+                 warningEl.classList.add('hidden');
+             }
+        };
+
+        modal.querySelectorAll('.as-port-input').forEach(input => {
+            input.addEventListener('input', e => {
+                const svc = e.target.dataset.svc;
+                const idx = parseInt(e.target.dataset.idx);
+                const val = e.target.value;
+                if (installConfig[svc] && installConfig[svc].ports[idx]) {
+                    installConfig[svc].ports[idx].host = val;
+                    validatePortInput(e.target, val);
+                }
+            });
+            validatePortInput(input, input.value);
+        });
+
+        modal.querySelectorAll('.as-vol-input').forEach(input => {
+             input.addEventListener('input', e => {
+                const svc = e.target.dataset.svc;
+                const idx = parseInt(e.target.dataset.idx);
+                const val = e.target.value;
+                if (installConfig[svc] && installConfig[svc].volumes[idx]) {
+                    installConfig[svc].volumes[idx].host = val;
+                    validateVolInput(e.target, val);
+                }
+            });
+            validateVolInput(input, input.value);
+        });
+
         /* compose editor: reset button */
         const composeEditor = modal.querySelector('.as-compose-editor');
         const resetBtn = modal.querySelector('.as-compose-reset');
@@ -7269,6 +7376,9 @@ function renderAppStore(body) {
             resetBtn.addEventListener('click', () => {
                 composeEditor.value = compose;
                 composeEditor.classList.remove('as-compose-modified');
+                // Note: we don't reset config inputs here, maybe we should?
+                // Or maybe we should reload the config from backend?
+                // For now, let's keep them separate.
             });
             composeEditor.addEventListener('input', () => {
                 composeEditor.classList.toggle('as-compose-modified', composeEditor.value !== compose);
@@ -7287,7 +7397,10 @@ function renderAppStore(body) {
                 /* Pre-install validation */
                 const validationArea = modal.querySelector('.as-validation-area');
                 try {
-                    const vr = await api('/appstore/validate', { method: 'POST', body: { app_id: appId, compose_override: composeOverride } });
+                    const body = { app_id: appId, compose_override: composeOverride };
+                    if (installConfig) body.options_override = installConfig;
+                    
+                    const vr = await api('/appstore/validate', { method: 'POST', body });
                     if (vr.errors && vr.errors.length) {
                         if (validationArea) {
                             validationArea.innerHTML = vr.errors.map(e => `<div class="as-val-error"><i class="fas fa-exclamation-circle"></i> ${e.message}</div>`).join('');
@@ -7372,7 +7485,9 @@ function renderAppStore(body) {
                 }
 
                 try {
-                    const r = await api('/appstore/install', { method: 'POST', body: { app_id: appId, compose_override: composeOverride } });
+                    const body = { app_id: appId, compose_override: composeOverride };
+                    if (installConfig) body.options_override = installConfig;
+                    const r = await api('/appstore/install', { method: 'POST', body });
                     if (r.task_id) taskId = r.task_id;
                 } catch (e) {
                     installBtn.innerHTML = `<i class="fas fa-exclamation-triangle"></i> ${t('Błąd')}`;
@@ -7433,7 +7548,9 @@ function renderAppStore(body) {
                 if (NAS.socket) NAS.socket.on('appstore_install_progress', onProgress);
 
                 try {
-                    await api('/appstore/reinstall', { method: 'POST', body: { app_id: appId, compose_override: composeOverride } });
+                    const body = { app_id: appId, compose_override: composeOverride };
+                    if (installConfig) body.options_override = installConfig;
+                    await api('/appstore/reinstall', { method: 'POST', body });
                 } catch (e) {
                     toast(t('Błąd aktualizacji: ') + e.message, 'error');
                     if (NAS.socket) NAS.socket.off('appstore_install_progress', onProgress);

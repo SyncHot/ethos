@@ -684,12 +684,13 @@ def _extract_editable_config(compose_text):
 
                         # Preserve any IP binding prefix (e.g. "127.0.0.1" in "127.0.0.1:8080:80")
                         ip_binding = parts[-3] if len(parts) >= 3 else ''
+                        if ip_binding:
+                            host = f"{ip_binding}:{host}"
 
                         s_conf['ports'].append({
                             'host': host,
                             'container': container,
                             'protocol': proto,
-                            'ip_binding': ip_binding,
                             'original': p_str
                         })
                 except Exception:
@@ -758,12 +759,8 @@ def _apply_editable_config(compose_text, overrides):
                     host = p.get('host')
                     container = p.get('container')
                     proto = p.get('protocol', 'tcp')
-                    ip_binding = p.get('ip_binding', '')
                     if host and container:
-                        if ip_binding:
-                            entry = f"{ip_binding}:{host}:{container}"
-                        else:
-                            entry = f"{host}:{container}"
+                        entry = f"{host}:{container}"
                         if proto and proto != 'tcp':
                             entry += f"/{proto}"
                         new_ports.append(entry)
