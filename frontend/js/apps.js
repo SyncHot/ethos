@@ -7343,13 +7343,13 @@ function renderAppStore(body) {
                         if (progressFill) progressFill.classList.add('as-progress-error');
                         installBtn.innerHTML = `<i class="fas fa-exclamation-triangle"></i> ${t('Błąd')}`;
                         S.installing = null;
-                        NAS.notify(t('Błąd instalacji: ') + (data.message || ''), 'error');
+                        toast(t('Błąd instalacji: ') + (data.message || ''), 'error');
                         cleanup();
                     }
                     if (data.stage === 'done') {
                         app.installed = true;
                         S.installing = null;
-                        NAS.notify('Zainstalowano ' + (app.title || appId), 'success');
+                        toast('Zainstalowano ' + (app.title || appId), 'success');
                         cleanup();
                         setTimeout(() => { overlay.remove(); renderGrid(); }, 1200);
                     }
@@ -7357,7 +7357,7 @@ function renderAppStore(body) {
                         app.installed = true;
                         S.installing = null;
                         if (progressFill) progressFill.style.background = '#fbbf24';
-                        NAS.notify(data.message || (app.title || appId) + ' zainstalowana z ostrzeżeniami', 'warning');
+                        toast(data.message || (app.title || appId) + ' zainstalowana z ostrzeżeniami', 'warning');
                         cleanup();
                         setTimeout(() => { overlay.remove(); renderGrid(); }, 2500);
                     }
@@ -7379,7 +7379,7 @@ function renderAppStore(body) {
                     if (progressFill) { progressFill.style.width = '100%'; progressFill.classList.add('as-progress-error'); }
                     if (progressStage) progressStage.textContent = t('Błąd');
                     if (progressMsg) progressMsg.textContent = e.message || '';
-                    NAS.notify(t('Błąd instalacji: ') + e.message, 'error');
+                    toast(t('Błąd instalacji: ') + e.message, 'error');
                     S.installing = null;
                     cleanup();
                 }
@@ -7397,9 +7397,9 @@ function renderAppStore(body) {
                     app.installed = false;
                     overlay.remove();
                     renderGrid();
-                    NAS.notify('Odinstalowano ' + (app.title || appId), 'success');
+                    toast('Odinstalowano ' + (app.title || appId), 'success');
                 } catch (e) {
-                    NAS.notify(t('Błąd odinstalowania: ') + e.message, 'error');
+                    toast(t('Błąd odinstalowania: ') + e.message, 'error');
                     uninstallBtn.innerHTML = '<i class="fas fa-trash"></i> Odinstaluj';
                     uninstallBtn.disabled = false;
                 }
@@ -7419,12 +7419,12 @@ function renderAppStore(body) {
                 const onProgress = (data) => {
                     if (data.app_id !== appId) return;
                     if (data.stage === 'done') {
-                        NAS.notify(t('Zaktualizowano ') + (app.title || appId), 'success');
+                        toast(t('Zaktualizowano ') + (app.title || appId), 'success');
                         if (NAS.socket) NAS.socket.off('appstore_install_progress', onProgress);
                         overlay.remove();
                         renderGrid();
                     } else if (data.stage === 'error') {
-                        NAS.notify(t('Błąd aktualizacji: ') + (data.message || ''), 'error');
+                        toast(t('Błąd aktualizacji: ') + (data.message || ''), 'error');
                         if (NAS.socket) NAS.socket.off('appstore_install_progress', onProgress);
                         reinstallBtn.innerHTML = '<i class="fas fa-sync-alt"></i> ' + t('Aktualizuj');
                         reinstallBtn.disabled = false;
@@ -7435,7 +7435,7 @@ function renderAppStore(body) {
                 try {
                     await api('/appstore/reinstall', { method: 'POST', body: { app_id: appId, compose_override: composeOverride } });
                 } catch (e) {
-                    NAS.notify(t('Błąd aktualizacji: ') + e.message, 'error');
+                    toast(t('Błąd aktualizacji: ') + e.message, 'error');
                     if (NAS.socket) NAS.socket.off('appstore_install_progress', onProgress);
                     reinstallBtn.innerHTML = '<i class="fas fa-sync-alt"></i> ' + t('Aktualizuj');
                     reinstallBtn.disabled = false;
