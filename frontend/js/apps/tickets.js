@@ -683,8 +683,12 @@ async function renderTickets(body, launchOpts) {
                 return;
             }
             
+            // Prefer 'Ethos' category apps; fall back to full catalog if none exist
+            const ethosApps = catalog.filter(app => (app.category || '').toLowerCase() === 'ethos');
+            const appPool = ethosApps.length ? ethosApps : catalog;
+            
             // Random app
-            const randomApp = catalog[Math.floor(Math.random() * catalog.length)];
+            const randomApp = appPool[Math.floor(Math.random() * appPool.length)];
             
             // Find target project (ETHOS) or current
             let targetProject = projects.find(p => p.name === 'ETHOS');
@@ -718,7 +722,7 @@ async function renderTickets(body, launchOpts) {
                 complexity: randomComplexity,
                 assignee: 'copilot',
                 column: targetColumn,
-                labels: ['fe', 'Dec', 'ux', 'UI', 'security']
+                labels: ['FE', 'Backend', 'ux', 'UI', 'security']
             };
 
             await api(`/tickets/projects/${targetProject.id}/tickets`, {
