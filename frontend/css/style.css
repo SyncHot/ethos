@@ -1226,6 +1226,23 @@ input, button, select, textarea { font-family: inherit; font-size: inherit; }
 .toast.warning i { color: var(--warning); }
 .toast.info i    { color: var(--info); }
 
+.toast-action-btn {
+    margin-left: auto;
+    padding: 6px 10px;
+    border: none;
+    border-radius: var(--r-sm);
+    background: var(--accent);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background var(--transition-fast);
+}
+
+.toast-action-btn:hover {
+    background: var(--accent-hover);
+}
+
 /* ─── File Manager Views ─── */
 .fm-file-list.fm-list-view {
     display: flex;
