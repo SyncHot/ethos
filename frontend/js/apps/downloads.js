@@ -58,11 +58,11 @@ function renderDownloadManager(body, launchOpts) {
 
     body.innerHTML = `
         <style>
-        .dlm-sidebar{width:180px;min-width:180px;background:var(--bg-secondary,#0f172a);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:8px 0;flex-shrink:0}
-        .dlm-nav{padding:10px 18px;cursor:pointer;display:flex;align-items:center;gap:10px;font-size:13px;color:var(--text-secondary,#94a3b8);transition:.15s;border-left:3px solid transparent}
+        .dlm-sidebar{width:180px;min-width:180px;background:var(--bg-secondary,#0f172a);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:8px 0;flex-shrink:0;transition:width 0.2s}
+        .dlm-nav{padding:10px 18px;cursor:pointer;display:flex;align-items:center;gap:10px;font-size:13px;color:var(--text-secondary,#94a3b8);transition:.15s;border-left:3px solid transparent;overflow:hidden;white-space:nowrap}
         .dlm-nav:hover{background:var(--bg-hover,rgba(255,255,255,.04));color:var(--text-primary,#e2e8f0)}
         .dlm-nav.active{background:var(--bg-hover,rgba(255,255,255,.06));color:#10b981;border-left-color:#10b981;font-weight:600}
-        .dlm-nav i{width:16px;text-align:center;font-size:12px}
+        .dlm-nav i{width:16px;text-align:center;font-size:12px;flex-shrink:0}
         .dlm-sidebar-stats{padding:12px 14px 14px 14px;font-size:11px;color:var(--text-muted);border-top:1px solid var(--border);margin-top:auto;display:flex;flex-direction:column;gap:8px}
         .dlm-stats-header{display:flex;align-items:center;justify-content:space-between;gap:8px}
         .dlm-stats-title{font-size:12px;color:var(--text-secondary);font-weight:600;display:flex;align-items:center;gap:6px}
@@ -86,6 +86,12 @@ function renderDownloadManager(body, launchOpts) {
         .dlm-draggable:active{cursor:grabbing}
         .dlm-item.dlm-drag-over{border-top:2px solid #10b981;transition:border-top .1s}
         .dlm-item.dlm-dragging{opacity:0.5;background:rgba(255,255,255,0.05)}
+        @media (max-width: 768px) {
+            .dlm-sidebar{width:56px;min-width:56px}
+            .dlm-nav{padding:14px 0;justify-content:center;font-size:0}
+            .dlm-nav i{font-size:18px;width:auto;margin:0}
+            .dlm-sidebar-stats{display:none}
+        }
         </style>
         <div class="dlm dl-layout-row">
             <div class="dlm-sidebar">
@@ -507,7 +513,7 @@ function renderDownloadManager(body, launchOpts) {
         const overlay = document.createElement('div');
         overlay.className = 'modal-overlay';
         overlay.innerHTML = `
-            <div class="modal-box" style="width:520px;">
+            <div class="modal-box" style="width:90%;max-width:520px;">
                 <div class="modal-header"><span>${hasMagnet ? '<i class="fas fa-magnet dl-icon-mr"></i>' : ''}Dodaj pobieranie (${urls.length} ${urls.length === 1 ? 'link' : t('linków')})</span><button class="modal-close"><i class="fas fa-times"></i></button></div>
                 <div class="modal-body">
                     <div class="dlm-setting-row dl-form-row-mb">
@@ -1604,6 +1610,28 @@ function renderDownloadManager(body, launchOpts) {
     loadDownloads();
     loadStats();
     _recordSpeedSample();
+    // ─── Touch swipe support ───
+    function _setupSwipe() {
+        const list = body.querySelector('#dlm-list');
+        if (!list) return;
+        let startX = 0, current = null;
+        list.addEventListener('touchstart', e => {
+            const item = e.target.closest('.dlm-item');
+            if(item && !e.target.closest('.dlm-item-actions')) {
+                current = item;
+                startX = e.touches[0].clientX;
+            }
+        }, {passive: true});
+        list.addEventListener('touchend', e => {
+            if (!current) return;
+            const diff = startX - e.changedTouches[0].clientX;
+            if (diff > 50) current.classList.add('dlm-swiped');
+            else if (diff < -50) current.classList.remove('dlm-swiped');
+            current = null;
+        });
+    }
+    _setupSwipe();
+
     _startTimers();
 }
 

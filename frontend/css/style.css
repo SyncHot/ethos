@@ -5780,6 +5780,116 @@ a.dkr-port-link:hover {
 .dlm-info-success { font-size: 13px; color: #10b981; display: flex; align-items: center; gap: 6px; }
 .dlm-info-error { font-size: 13px; color: #ef4444; display: flex; align-items: center; gap: 6px; }
 
+/* Responsive adjustments for Download Manager */
+@media (max-width: 768px) {
+    .dlm-toolbar {
+        flex-wrap: wrap;
+        height: auto;
+        padding: 8px;
+        gap: 8px;
+    }
+    .dlm-filter-wrap {
+        min-width: 100%;
+        order: 2;
+        margin-top: 4px;
+    }
+    .dlm-bulk-actions {
+        flex: 1;
+        justify-content: flex-end;
+        order: 1;
+        width: 100%;
+        gap: 8px;
+    }
+    .dlm-btn-sm {
+        flex: 1;
+        justify-content: center;
+        padding: 8px 4px;
+        white-space: normal;
+        text-align: center;
+    }
+    .dlm-add-bar {
+        flex-direction: column;
+        align-items: stretch;
+        padding: 10px;
+    }
+    .dlm-url-wrap {
+        margin-bottom: 6px;
+        width: 100%;
+    }
+    .dlm-add-buttons {
+        width: 100%;
+        display: flex;
+        gap: 6px;
+    }
+    .dlm-btn-add {
+        flex: 1;
+        justify-content: center;
+    }
+    .dlm-item {
+        flex-wrap: wrap;
+        gap: 8px;
+        padding: 10px 8px;
+    }
+    .dlm-item-icon {
+        width: 20px;
+        font-size: 16px;
+    }
+    .dlm-item-info {
+        width: calc(100% - 36px); /* 20px icon + gap */
+    }
+    .dlm-item-actions {
+        width: 100%;
+        justify-content: flex-end;
+        padding-top: 8px;
+        border-top: 1px solid var(--border-light);
+        margin-top: 4px;
+        gap: 12px;
+        display: none;
+    }
+    .dlm-item.dlm-swiped .dlm-item-actions {
+        display: flex;
+    }
+    .dlm-item.dlm-swiped {
+        background: var(--bg-hover) !important;
+    }
+    .dlm-btn-icon {
+        width: 32px;
+        height: 32px;
+        background: var(--bg-hover); /* Make actionable area clearer */
+        border: 1px solid var(--border);
+    }
+    .dlm-progress-text {
+        font-size: 9px;
+        top: -12px;
+    }
+    .dlm-setting-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 6px;
+    }
+    .dlm-setting-row label {
+        min-width: auto;
+        font-weight: 600;
+        margin-bottom: 2px;
+    }
+    .dlm-path-picker {
+        width: 100%;
+    }
+    .dlm-key-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .dl-key-input-row {
+        width: 100%;
+        display: flex;
+        gap: 6px;
+    }
+    .dl-key-input-row input {
+        width: 0;
+        flex: 1;
+    }
+}
+
 /* ───────────────────────── AI Chat ───────────────────────── */
 .aic-root { display: flex; height: 100%; overflow: hidden; background: var(--bg-surface); }
 .aic-loading { display: flex; align-items: center; justify-content: center; width: 100%; color: var(--text-muted); gap: 8px; }
