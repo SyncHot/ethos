@@ -718,7 +718,7 @@ async function renderTickets(body, launchOpts) {
                 complexity: randomComplexity,
                 assignee: 'copilot',
                 column: targetColumn,
-                labels: ['bug-hunt', 'random-app', 'qa']
+                labels: ['fe', 'Dec', 'ux', 'UI', 'security']
             };
 
             await api(`/tickets/projects/${targetProject.id}/tickets`, {
