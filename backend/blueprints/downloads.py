@@ -1413,7 +1413,7 @@ def _download_worker(dl_id):
                     dl['dest_path'] = torrent_dest
                 _save_state()
             _emit('dl:update', _sanitize(dl))
-            _emit('dl:completed', {'id': dl['id'], 'filename': dl.get('filename', ''), 'filesize': dl.get('downloaded', 0)})
+            _emit('dl:completed', _dl_completed_payload(dl))
             _log_history(dl, 'completed')
             _flush_state()
 
@@ -1481,7 +1481,7 @@ def _download_worker(dl_id):
                     dl['retry_count'] = 0
                     _save_state()
                 _emit('dl:update', _sanitize(dl))
-                _emit('dl:completed', {'id': dl['id'], 'filename': dl.get('filename', ''), 'filesize': dl.get('downloaded', 0)})
+                _emit('dl:completed', _dl_completed_payload(dl))
                 _log_history(dl, 'completed')
                 _flush_state()
                 return
@@ -1584,6 +1584,19 @@ def _sanitize(dl):
         d['torrent_files_total'] = dl.get('torrent_files_total', 0)
         d['torrent_files_done'] = dl.get('torrent_files_done', 0)
     return d
+
+
+def _dl_completed_payload(dl):
+    """Build the payload sent with dl:completed events."""
+    folder = dl.get('dest_dir') or dl.get('dest_path') or ''
+    return {
+        'id': dl.get('id'),
+        'filename': dl.get('filename', ''),
+        'filesize': dl.get('downloaded', 0),
+        'folder': folder,
+        'dest_dir': dl.get('dest_dir', ''),
+        'dest_path': dl.get('dest_path', ''),
+    }
 
 
 # ─── Concurrent download manager ───
