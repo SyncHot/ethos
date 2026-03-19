@@ -3431,7 +3431,7 @@ select.tk-input {
     
     .tk-column {
         scroll-snap-align: center;
-        min-width: 85vw;
+        min-width: 280px;
         max-width: 320px;
         width: 85vw;
         margin: 0 8px;
