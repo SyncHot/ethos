@@ -86,6 +86,19 @@ function renderDownloadManager(body, launchOpts) {
         .dlm-draggable:active{cursor:grabbing}
         .dlm-item.dlm-drag-over{border-top:2px solid #10b981;transition:border-top .1s}
         .dlm-item.dlm-dragging{opacity:0.5;background:rgba(255,255,255,0.05)}
+        .dlm-hist-toolbar { padding: 12px; background: var(--bg-secondary); border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
+        .dlm-hist-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .dlm-input-sm, .dlm-select-sm { background: var(--bg-input,#1e293b); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; color: var(--text-primary); font-size: 13px; height: 32px; }
+        .dlm-input-sm:focus, .dlm-select-sm:focus { outline: none; border-color: var(--accent); }
+        .dlm-btn-sm { padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-surface); color: var(--text-primary); cursor: pointer; font-size: 12px; height: 32px; display: flex; align-items: center; gap: 6px; }
+        .dlm-btn-sm:hover { background: var(--bg-hover); }
+        .dlm-btn-danger { color: #ef4444; border-color: rgba(239, 68, 68, 0.3); }
+        .dlm-btn-danger:hover { background: rgba(239, 68, 68, 0.1); }
+        .dlm-spacer { flex: 1; }
+        .dlm-pagination-info { font-size: 13px; color: var(--text-secondary); margin: 0 8px; }
+        .dlm-btn-icon { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 6px; border: 1px solid transparent; background: transparent; color: var(--text-secondary); cursor: pointer; transition: 0.2s; }
+        .dlm-btn-icon:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-primary); }
+        .dlm-btn-icon:disabled { opacity: 0.5; cursor: default; }
         @media (max-width: 768px) {
             .dlm-sidebar{width:56px;min-width:56px}
             .dlm-nav{padding:14px 0;justify-content:center;font-size:0}
@@ -129,6 +142,35 @@ function renderDownloadManager(body, launchOpts) {
                 </div>
             </div>
             <div class="dlm-content" id="dlm-tab-history" style="display:none;">
+                <div class="dlm-hist-toolbar">
+                    <div class="dlm-hist-row">
+                        <input type="text" id="dlm-hist-q" placeholder="Szukaj (nazwa, URL)..." class="dlm-input-sm">
+                        <select id="dlm-hist-status" class="dlm-select-sm">
+                            <option value="">Wszystkie statusy</option>
+                            <option value="completed">Ukończone</option>
+                            <option value="failed">Błędy</option>
+                            <option value="cancelled">Anulowane</option>
+                        </select>
+                        <select id="dlm-hist-source" class="dlm-select-sm">
+                            <option value="">Wszystkie źródła</option>
+                            <option value="torrent">Torrent</option>
+                            <option value="direct">Direct</option>
+                        </select>
+                    </div>
+                    <div class="dlm-hist-row">
+                        <select id="dlm-hist-date" class="dlm-select-sm">
+                            <option value="">Cała historia</option>
+                            <option value="today">Dzisiaj</option>
+                            <option value="week">Ostatni tydzień</option>
+                            <option value="month">Ostatni miesiąc</option>
+                        </select>
+                        <button id="dlm-hist-clear-btn" class="dlm-btn-sm dlm-btn-danger"><i class="fas fa-trash"></i> Wyczyść...</button>
+                        <div class="dlm-spacer"></div>
+                        <div class="dlm-pagination-info" id="dlm-hist-page-info"></div>
+                        <button id="dlm-hist-prev" class="dlm-btn-icon" disabled><i class="fas fa-chevron-left"></i></button>
+                        <button id="dlm-hist-next" class="dlm-btn-icon" disabled><i class="fas fa-chevron-right"></i></button>
+                    </div>
+                </div>
                 <div class="dlm-list" id="dlm-history-list">
                     <div class="dlm-empty"><i class="fas fa-history"></i><span>Ładowanie historii...</span></div>
                 </div>
@@ -783,47 +825,201 @@ function renderDownloadManager(body, launchOpts) {
     });
 
     // ─── History ───
+    let historyPage = 1;
+    const historyLimit = 20;
+
     async function loadHistory() {
         const list = body.querySelector('#dlm-history-list');
+        const searchInput = body.querySelector('#dlm-hist-q');
+        const statusSelect = body.querySelector('#dlm-hist-status');
+        const sourceSelect = body.querySelector('#dlm-hist-source');
+        const dateSelect = body.querySelector('#dlm-hist-date');
+
         if (!list) return;
-        list.innerHTML = `<div class="dlm-empty"><i class="fas fa-spinner fa-spin"></i><span>${t('Ładowanie...')}</span></div>`;
-        const res = await api('/downloads/history?limit=100');
-        if (!res.ok || !res.history?.length) {
-            list.innerHTML = '<div class="dlm-empty"><i class="fas fa-history"></i><span>Brak historii</span></div>';
-            return;
+
+        // Build query
+        const q = searchInput?.value.trim() || '';
+        const status = statusSelect?.value || '';
+        const source = sourceSelect?.value || '';
+        const dateFilter = dateSelect?.value || '';
+        
+        let startTs = '';
+        let endTs = '';
+        const now = new Date();
+        now.setHours(0,0,0,0); // midnight
+        
+        if (dateFilter === 'today') {
+            startTs = now.getTime();
+        } else if (dateFilter === 'week') {
+            const lastWeek = new Date(now);
+            lastWeek.setDate(now.getDate() - 7);
+            startTs = lastWeek.getTime();
+        } else if (dateFilter === 'month') {
+            const lastMonth = new Date(now);
+            lastMonth.setMonth(now.getMonth() - 1);
+            startTs = lastMonth.getTime();
         }
-        list.innerHTML = res.history.map(h => {
-            const isCompleted = h.event === 'completed';
-            const isCancelled = h.event === 'cancelled';
-            const icon = isCompleted
-                ? '<i class="fas fa-check-circle dl-icon-success"></i>'
-                : isCancelled
-                    ? '<i class="fas fa-ban dl-icon-amber"></i>'
-                    : '<i class="fas fa-times-circle dl-icon-danger"></i>';
-            const date = new Date(h.timestamp * 1000);
-            const dateStr = date.toLocaleString(getLocale(), { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-            const size = h.filesize ? _dlmFormatBytes(h.filesize) : '';
-            const duration = h.duration > 0 ? _dlmFormatEta(Math.round(h.duration)) : '';
-            const torrentBadge = h.is_torrent ? '<i class="fas fa-magnet dl-icon-torrent-sm"></i>' : '';
-            return `
-                <div class="dlm-item dlm-status-${isCompleted ? 'completed' : (isCancelled ? 'cancelled' : 'failed')}">
-                    <div class="dlm-item-icon">${icon}</div>
-                    <div class="dlm-item-info">
-                        <div class="dlm-item-name">${torrentBadge}${_dlmEsc(h.filename || h.url)}</div>
-                        <div class="dlm-item-meta">
-                            <span>${dateStr}</span>
-                            ${size ? `<span>${size}</span>` : ''}
-                            ${duration ? `<span>${duration}</span>` : ''}
-                            ${h.error ? `<span class="dlm-item-error" title="${_dlmEsc(h.error)}">${_dlmEsc(h.error)}</span>` : ''}
-                            ${isCancelled ? `<span class="dlm-item-warn" style="color:var(--text-secondary);">Anulowano</span>` : ''}
+
+        list.innerHTML = `<div class="dlm-empty"><i class="fas fa-spinner fa-spin"></i><span>${t('Ładowanie...')}</span></div>`;
+        
+        const params = new URLSearchParams({
+            page: historyPage,
+            limit: historyLimit,
+            q: q,
+            status: status,
+            source: source,
+            start: startTs ? startTs / 1000 : '',
+            end: endTs ? endTs / 1000 : ''
+        });
+
+        try {
+            const res = await api('/downloads/history?' + params.toString());
+            
+            if (!res.ok || !res.history?.length) {
+                list.innerHTML = '<div class="dlm-empty"><i class="fas fa-history"></i><span>Brak wyników</span></div>';
+                updatePagination(0);
+                return;
+            }
+            
+            updatePagination(res.total || 0);
+
+            list.innerHTML = res.history.map(h => {
+                const isCompleted = h.event === 'completed';
+                const isCancelled = h.event === 'cancelled';
+                const icon = isCompleted
+                    ? '<i class="fas fa-check-circle dl-icon-success"></i>'
+                    : isCancelled
+                        ? '<i class="fas fa-ban dl-icon-amber"></i>'
+                        : '<i class="fas fa-times-circle dl-icon-danger"></i>';
+                const date = new Date(h.timestamp * 1000);
+                const dateStr = date.toLocaleString(getLocale(), { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+                const size = h.filesize ? _dlmFormatBytes(h.filesize) : '';
+                const duration = h.duration > 0 ? _dlmFormatEta(Math.round(h.duration)) : '';
+                const torrentBadge = h.is_torrent ? '<i class="fas fa-magnet dl-icon-torrent-sm"></i>' : '';
+                
+                // Escape attributes
+                const safeUrl = _dlmEsc(h.url).replace(/"/g, '&quot;');
+                const safeName = _dlmEsc(h.filename || '').replace(/"/g, '&quot;');
+                const safeDest = _dlmEsc(h.dest_dir || '').replace(/"/g, '&quot;');
+                const safeUrlCopy = safeUrl.replace(/'/g, "\\'");
+
+                return `
+                    <div class="dlm-item dlm-status-${isCompleted ? 'completed' : (isCancelled ? 'cancelled' : 'failed')}">
+                        <div class="dlm-item-icon">${icon}</div>
+                        <div class="dlm-item-info">
+                            <div class="dlm-item-name">${torrentBadge}${_dlmEsc(h.filename || h.url)}</div>
+                            <div class="dlm-item-meta">
+                                <span>${dateStr}</span>
+                                ${size ? `<span>${size}</span>` : ''}
+                                ${duration ? `<span>${duration}</span>` : ''}
+                                ${h.error ? `<span class="dlm-item-error" title="${_dlmEsc(h.error)}">${_dlmEsc(h.error)}</span>` : ''}
+                                ${isCancelled ? `<span class="dlm-item-warn" style="color:var(--text-secondary);">Anulowano</span>` : ''}
+                            </div>
                         </div>
-                    </div>
-                    <div class="dlm-item-actions">
-                        <button class="dlm-btn-icon" title="Kopiuj link" onclick="navigator.clipboard.writeText('${_dlmEsc(h.url).replace(/'/g, "\\'")}');if(typeof toast==='function')toast('Skopiowano','info')"><i class="fas fa-copy"></i></button>
-                    </div>
-                </div>`;
-        }).join('');
+                        <div class="dlm-item-actions">
+                            <button class="dlm-btn-icon" title="Kopiuj link" onclick="navigator.clipboard.writeText('${safeUrlCopy}');if(typeof toast==='function')toast('Skopiowano','info')"><i class="fas fa-copy"></i></button>
+                            <button class="dlm-btn-icon dlm-retry-btn" title="Pobierz ponownie" data-url="${safeUrl}" data-filename="${safeName}" data-dest="${safeDest}"><i class="fas fa-redo"></i></button>
+                        </div>
+                    </div>`;
+            }).join('');
+            
+            // Attach retry listeners
+            list.querySelectorAll('.dlm-retry-btn').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                    e.stopPropagation();
+                    const url = btn.dataset.url;
+                    const filename = btn.dataset.filename;
+                    const dest = btn.dataset.dest;
+                    
+                    if (!confirm(`Czy na pewno chcesz pobrać ponownie:\n${filename || url}?`)) return;
+                    
+                    const r = await api('/downloads/history/retry', {
+                        method: 'POST',
+                        body: JSON.stringify({ url, filename, dest_dir: dest })
+                    });
+                    
+                    if (r.ok) {
+                        toast('Dodano do pobierania', 'success');
+                    } else {
+                        toast('Błąd: ' + (r.error || 'Nieznany'), 'error');
+                    }
+                });
+            });
+
+        } catch (e) {
+            console.error(e);
+            list.innerHTML = '<div class="dlm-empty"><i class="fas fa-exclamation-triangle"></i><span>Błąd ładowania</span></div>';
+        }
     }
+
+    function updatePagination(total) {
+        const info = body.querySelector('#dlm-hist-page-info');
+        const prev = body.querySelector('#dlm-hist-prev');
+        const next = body.querySelector('#dlm-hist-next');
+        
+        if (!info || !prev || !next) return;
+        
+        const totalPages = Math.ceil(total / historyLimit) || 1;
+        info.textContent = `Strona ${historyPage} z ${totalPages} (${total})`;
+        
+        prev.disabled = historyPage <= 1;
+        next.disabled = historyPage >= totalPages;
+        
+        // Remove old listeners (cloning is a quick hack, or use one-time listeners and re-attach)
+        // Here we just re-assign onclick which overrides previous handler
+        prev.onclick = () => { if(historyPage > 1) { historyPage--; loadHistory(); } };
+        next.onclick = () => { if(historyPage < totalPages) { historyPage++; loadHistory(); } };
+    }
+    
+    // Attach filter listeners
+    setTimeout(() => {
+        ['#dlm-hist-q', '#dlm-hist-status', '#dlm-hist-source', '#dlm-hist-date'].forEach(sel => {
+            const el = body.querySelector(sel);
+            if (el) {
+                // Clear existing listeners not easily possible without removing element, but we can check if already attached
+                // Since renderDownloadManager runs once per open, this is okay.
+                el.addEventListener('change', () => {
+                    historyPage = 1; 
+                    loadHistory();
+                });
+                if (el.tagName === 'INPUT') {
+                    el.addEventListener('keyup', (e) => {
+                        if (e.key === 'Enter') {
+                            historyPage = 1;
+                            loadHistory();
+                        }
+                    });
+                }
+            }
+        });
+        
+        const clearBtn = body.querySelector('#dlm-hist-clear-btn');
+        if (clearBtn) {
+            clearBtn.addEventListener('click', async () => {
+                // Simple dialog for options
+                const days = prompt('Wpisz liczbę dni do zachowania (zostaw puste aby wyczyścić wszystko):', '30');
+                if (days === null) return; // cancelled
+                
+                const olderThan = days.trim() === '' ? null : parseInt(days);
+                if (olderThan !== null && isNaN(olderThan)) {
+                    toast('Nieprawidłowa liczba', 'error');
+                    return;
+                }
+
+                const r = await api('/downloads/history/clear', {
+                    method: 'POST',
+                    body: JSON.stringify({ older_than_days: olderThan })
+                });
+                if (r.ok) {
+                    toast('Historia wyczyszczona', 'success');
+                    historyPage = 1;
+                    loadHistory();
+                } else {
+                    toast('Błąd czyszczenia', 'error');
+                }
+            });
+        }
+    }, 500);
 
     // ─── Download list rendering ───
     let packages = {};  // package_id -> package info

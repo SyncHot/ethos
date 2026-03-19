@@ -9,6 +9,7 @@ from flask_socketio import SocketIO
 import os
 import json
 import time
+import datetime
 import uuid
 import threading
 import re
@@ -2072,13 +2073,136 @@ def download_stats():
 
 @downloads_bp.route('/api/downloads/history')
 def download_history():
-    """Return download history log."""
+    """Return download history log with search, filter, pagination."""
     me = _get_username()
     history = _load_history(username=me)
     # Return in reverse chronological order
     history.reverse()
+
+    # Filtering
+    q = request.args.get('q', '').lower()
+    status = request.args.get('status', '')
+    source = request.args.get('source', '')
+    start_ts = request.args.get('start', type=float)
+    end_ts = request.args.get('end', type=float)
+
+    if q:
+        history = [h for h in history if q in h.get('filename', '').lower() or q in h.get('url', '').lower()]
+
+    if status:
+        # status in history is 'event' (completed, failed, cancelled)
+        history = [h for h in history if h.get('event') == status]
+
+    if source:
+        # source: torrent, direct. Debrid logic is complex (uses direct URL but originated from magnet/link)
+        # simplistic check: is_torrent field
+        if source == 'torrent':
+            history = [h for h in history if h.get('is_torrent')]
+        elif source == 'direct':
+            history = [h for h in history if not h.get('is_torrent')]
+
+    if start_ts:
+        history = [h for h in history if h.get('timestamp', 0) >= start_ts]
+    if end_ts:
+        # end_ts is usually start of next day, so strictly less
+        history = [h for h in history if h.get('timestamp', 0) < end_ts]
+
+    total = len(history)
+    page = request.args.get('page', 1, type=int)
     limit = request.args.get('limit', 50, type=int)
-    return jsonify({'ok': True, 'history': history[:limit]})
+    
+    start_idx = (page - 1) * limit
+    end_idx = start_idx + limit
+    
+    return jsonify({
+        'ok': True, 
+        'history': history[start_idx:end_idx],
+        'total': total,
+        'page': page,
+        'limit': limit
+    })
+
+
+@downloads_bp.route('/api/downloads/history/clear', methods=['POST'])
+def clear_history():
+    """Clear download history."""
+    data = request.get_json(force=True)
+    older_than_days = data.get('older_than_days')
+    
+    with _history_lock:
+        if os.path.isfile(DOWNLOADS_HISTORY_FILE):
+            try:
+                with open(DOWNLOADS_HISTORY_FILE) as f:
+                    history = json.load(f)
+            except Exception:
+                history = []
+        else:
+            history = []
+            
+        if older_than_days is not None:
+            cutoff = time.time() - (int(older_than_days) * 86400)
+            history = [h for h in history if h.get('timestamp', 0) > cutoff]
+        else:
+            # Clear all
+            history = []
+            
+        _atomic_write_json(DOWNLOADS_HISTORY_FILE, history)
+        
+    return jsonify({'ok': True})
+
+
+@downloads_bp.route('/api/downloads/history/retry', methods=['POST'])
+def retry_history_download():
+    """Retry a download from history."""
+    data = request.get_json(force=True)
+    # We expect the frontend to pass the history item's details or we find it
+    # Ideally frontend sends the details needed to restart
+    url = data.get('url')
+    if not url:
+        return jsonify({'error': 'No URL provided'}), 400
+        
+    # Re-use add_download logic (simplified)
+    # We can invoke add_download logic by constructing a fake request or calling logic directly
+    # But since add_download is complex, let's just do the minimal insert
+    
+    dl_id = str(uuid.uuid4())[:8]
+    is_t = _is_torrent(url)
+    dest_dir = data.get('dest_dir')
+    
+    # If dest_dir not provided, use default
+    if not dest_dir:
+        _cfg = _load_config()
+        _default_key = 'default_dir_torrent' if is_t else 'default_dir'
+        dest_dir = _cfg.get(_default_key, '/home')
+
+    dl = {
+        'id': dl_id,
+        'url': url,
+        'filename': data.get('filename', ''),
+        'filesize': 0,
+        'downloaded': 0,
+        'progress': 0,
+        'speed': 0,
+        'status': 'pending',
+        'error': '',
+        'debrid_error': '',
+        'dest_dir': dest_dir,
+        'dest_path': '',
+        'use_debrid': True, # Default to true for retries
+        'added_at': time.time(),
+        'started_at': 0,
+        'completed_at': 0,
+        'is_torrent': is_t,
+        'package_id': '', # Detach from package on retry
+        'user': _get_username() or '',
+    }
+    
+    with _lock:
+        _downloads[dl_id] = dl
+        _save_state()
+        
+    _start_next()
+    return jsonify({'ok': True, 'id': dl_id})
 
 
 @downloads_bp.route('/api/downloads/list')
