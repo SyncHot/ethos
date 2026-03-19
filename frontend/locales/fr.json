@@ -940,4 +940,10 @@
   "Śr": "mer",
   "— Szukanie obrazów...": "— Recherche d'images...",
   "✗ BŁĄD: ": "✗ ERREUR : "
+,
+  "Port kontenera": "Port du conteneur",
+  "Port hosta": "Port hôte",
+  "Ścieżka w kontenerze": "Chemin dans le conteneur",
+  "Ścieżka na hoście": "Chemin sur l'hôte",
+  "Konfiguracja": "Configuration"
 }

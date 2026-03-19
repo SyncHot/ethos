@@ -939,5 +939,10 @@
   "Ścieżka np. /home/share": "Pfad z.B. /home/share",
   "Śr": "Mi",
   "— Szukanie obrazów...": "— Suche nach Bildern...",
-  "✗ BŁĄD: ": "✗ FEHLER: "
+  "✗ BŁĄD: ": "✗ FEHLER: ",
+  "Port kontenera": "Container-Port",
+  "Port hosta": "Host-Port",
+  "Ścieżka w kontenerze": "Pfad im Container",
+  "Ścieżka na hoście": "Pfad auf dem Host",
+  "Konfiguracja": "Konfiguration"
 }

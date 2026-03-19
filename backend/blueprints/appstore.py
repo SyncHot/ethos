@@ -651,6 +651,160 @@ def _get_installed_apps():
     return _find_compose_project_names(_compose_root())
 
 
+def _extract_editable_config(compose_text):
+    """Extract editable configuration (ports, volumes) from compose YAML."""
+    config = {}
+    try:
+        data = yaml.safe_load(compose_text)
+        if not data or not isinstance(data, dict):
+            return {}
+
+        services = data.get('services', {})
+        for name, svc in services.items():
+            if not isinstance(svc, dict):
+                continue
+
+            s_conf = {'ports': [], 'volumes': []}
+
+            # Ports — support "host:container", "ip:host:container", and "/proto" suffix
+            for p in (svc.get('ports') or []):
+                try:
+                    p_str = str(p)
+                    parts = p_str.split(':')
+                    if len(parts) >= 2:
+                        # Extract container port and protocol
+                        right = parts[-1]
+                        if '/' in right:
+                            container, proto = right.split('/', 1)
+                        else:
+                            container, proto = right, 'tcp'
+
+                        # Extract host port
+                        host = parts[-2]
+
+                        # Preserve any IP binding prefix (e.g. "127.0.0.1" in "127.0.0.1:8080:80")
+                        ip_binding = parts[-3] if len(parts) >= 3 else ''
+
+                        s_conf['ports'].append({
+                            'host': host,
+                            'container': container,
+                            'protocol': proto,
+                            'ip_binding': ip_binding,
+                            'original': p_str
+                        })
+                except Exception:
+                    pass
+
+            # Volumes — editable entries are those with an explicit host path (bind mounts).
+            # Standalone named-volume references (e.g. "mydata") have no host path to edit
+            # and are preserved verbatim by _apply_editable_config.
+            for v in (svc.get('volumes') or []):
+                try:
+                    v_str = ''
+                    if isinstance(v, str):
+                        v_str = v
+                    elif isinstance(v, dict) and v.get('type') == 'bind':
+                        v_str = f"{v.get('source')}:{v.get('target')}"
+
+                    if v_str:
+                        parts = v_str.split(':')
+                        if len(parts) >= 2:
+                            # host_path:container_path[:mode]
+                            host_path = parts[0]
+                            container_path = parts[1]
+                            mode = parts[2] if len(parts) > 2 else 'rw'
+
+                            s_conf['volumes'].append({
+                                'host': host_path,
+                                'container': container_path,
+                                'mode': mode,
+                                'original': v_str
+                            })
+                except Exception:
+                    pass
+
+            config[name] = s_conf
+
+    except Exception:
+        pass
+    return config
+
+
+def _apply_editable_config(compose_text, overrides):
+    """Apply configuration overrides (ports, volumes) to compose YAML."""
+    if not overrides or not isinstance(overrides, dict):
+        return compose_text
+
+    try:
+        data = yaml.safe_load(compose_text)
+        if not data or not isinstance(data, dict):
+            return compose_text
+
+        services = data.get('services', {})
+        modified = False
+
+        for name, conf in overrides.items():
+            if name not in services:
+                continue
+            svc = services[name]
+            if not isinstance(svc, dict):
+                continue
+
+            # Update ports — rebuild only the entries that came from the UI,
+            # preserving the original IP binding if one was present.
+            if 'ports' in conf and isinstance(conf['ports'], list):
+                new_ports = []
+                for p in conf['ports']:
+                    host = p.get('host')
+                    container = p.get('container')
+                    proto = p.get('protocol', 'tcp')
+                    ip_binding = p.get('ip_binding', '')
+                    if host and container:
+                        if ip_binding:
+                            entry = f"{ip_binding}:{host}:{container}"
+                        else:
+                            entry = f"{host}:{container}"
+                        if proto and proto != 'tcp':
+                            entry += f"/{proto}"
+                        new_ports.append(entry)
+                svc['ports'] = new_ports
+                modified = True
+
+            # Update volumes — rebuild editable (bind-mount) entries from the UI
+            # while preserving any standalone named-volume references that the UI
+            # never saw (they have no host path and cannot be edited).
+            if 'volumes' in conf and isinstance(conf['volumes'], list):
+                # Collect the original entries that were NOT extractable (standalone named volumes)
+                original_vols = svc.get('volumes') or []
+                preserved = []
+                for ov in original_vols:
+                    if isinstance(ov, str) and ':' not in ov:
+                        preserved.append(ov)
+                    elif isinstance(ov, dict) and ov.get('type') not in (None, 'bind'):
+                        preserved.append(ov)
+
+                new_vols = list(preserved)
+                for v in conf['volumes']:
+                    host = v.get('host')
+                    container = v.get('container')
+                    mode = v.get('mode', 'rw')
+                    if host and container:
+                        entry = f"{host}:{container}"
+                        if mode and mode != 'rw':
+                            entry += f":{mode}"
+                        new_vols.append(entry)
+                svc['volumes'] = new_vols
+                modified = True
+
+        if modified:
+            return yaml.dump(data, default_flow_style=False, sort_keys=False, allow_unicode=True)
+
+    except Exception:
+        pass
+
+    return compose_text
+
+
 def _adapt_compose(compose_text, app_id):
     """Adapt a CasaOS compose file for our environment.
 
@@ -1149,6 +1303,8 @@ def validate_install():
         return jsonify({'error': 'App not found'}), 404
 
     compose_override = data.get('compose_override', '').strip()
+    options_override = data.get('options_override')
+
     adapt_warnings = []
     if compose_override:
         adapted = compose_override
@@ -1159,6 +1315,9 @@ def validate_install():
         with open(compose_path) as f:
             raw = f.read()
         adapted, adapt_warnings = _adapt_compose(raw, app_id)
+    
+    if options_override:
+        adapted = _apply_editable_config(adapted, options_override)
 
     warnings = []
     errors = []
@@ -1321,6 +1480,7 @@ def install_app():
         return jsonify({'error': 'App not found'}), 404
 
     compose_override = data.get('compose_override', '').strip()
+    options_override = data.get('options_override')
 
     if compose_override:
         adapted = compose_override
@@ -1333,6 +1493,9 @@ def install_app():
         adapted, adapt_warnings = _adapt_compose(raw, app_id)
         if adapt_warnings:
             log.info('Adapted compose for %s — removed unsafe options: %s', app_id, adapt_warnings)
+
+    if options_override:
+        adapted = _apply_editable_config(adapted, options_override)
 
     dir_name, safe_dir = _safe_compose_dir(app_id)
     if not dir_name:
@@ -1382,14 +1545,25 @@ def reinstall_app():
 
     # If compose_override provided, update the compose file first
     compose_override = data.get('compose_override', '').strip()
-    if compose_override:
-        policy_err = _validate_compose_policy(compose_override)
+    options_override = data.get('options_override')
+
+    if compose_override or options_override:
+        if compose_override:
+            updated_compose = compose_override
+        else:
+            with open(compose_file) as f:
+                updated_compose = f.read()
+        
+        if options_override:
+            updated_compose = _apply_editable_config(updated_compose, options_override)
+
+        policy_err = _validate_compose_policy(updated_compose)
         if policy_err:
             return jsonify({'error': policy_err}), 400
         fd, tmp_compose = tempfile.mkstemp(dir=safe_dir, suffix='.yml.tmp')
         try:
             with os.fdopen(fd, 'w') as f:
-                f.write(compose_override)
+                f.write(updated_compose)
             os.replace(tmp_compose, compose_file)
         except Exception:
             try:
@@ -1487,4 +1661,5 @@ def get_compose(app_id):
     with open(compose_path) as f:
         raw = f.read()
     adapted, adapt_warnings = _adapt_compose(raw, app_id)
-    return jsonify({'compose': adapted, 'compose_raw': raw, 'adapt_warnings': adapt_warnings})
+    config = _extract_editable_config(adapted)
+    return jsonify({'compose': adapted, 'compose_raw': raw, 'adapt_warnings': adapt_warnings, 'config': config})

@@ -943,5 +943,10 @@
   "Ścieżka np. /home/share": "Path e.g. /home/share",
   "Śr": "Wed",
   "— Szukanie obrazów...": "— Searching for images...",
-  "✗ BŁĄD: ": "✗ ERROR: "
+  "✗ BŁĄD: ": "✗ ERROR: ",
+  "Port kontenera": "Container port",
+  "Port hosta": "Host port",
+  "Ścieżka w kontenerze": "Container path",
+  "Ścieżka na hoście": "Host path",
+  "Konfiguracja": "Configuration"
 }

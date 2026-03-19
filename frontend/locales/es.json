@@ -940,4 +940,10 @@
   "Śr": "Casarse",
   "— Szukanie obrazów...": "— Buscando imágenes...",
   "✗ BŁĄD: ": "✗ERROR: "
+,
+  "Port kontenera": "Puerto del contenedor",
+  "Port hosta": "Puerto del host",
+  "Ścieżka w kontenerze": "Ruta en el contenedor",
+  "Ścieżka na hoście": "Ruta en el host",
+  "Konfiguracja": "Configuración"
 }
