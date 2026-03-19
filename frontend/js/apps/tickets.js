@@ -707,12 +707,6 @@ async function renderTickets(body, launchOpts) {
             toast(t('Błąd: ') + e.message, 'error');
         }
     }
-            
-        } catch (e) {
-            console.error(e);
-            toast(t('Błąd: ') + e.message, 'error');
-        }
-    }
 
     function renderBoard() {
         const columns = currentProject.columns || DEFAULT_COLUMNS;
