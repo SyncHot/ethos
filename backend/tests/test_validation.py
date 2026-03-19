@@ -66,11 +66,12 @@ services:
       - /:/host
 """
         result = _validate_compose_policy(unsafe_yaml)
+        self.assertIsNotNone(result)
         # Should hit sensitive path check for /
-        if 'sciezki systemowej' in result:
-             pass
-        else:
-             self.assertIn('jest poza dozwolonym obszarem', result)
+        self.assertTrue(
+            'sciezki systemowej' in result or 'jest poza dozwolonym obszarem' in result,
+            f'Expected bind block error, got: {result}'
+        )
 
     @patch('blueprints.appstore._apps_root')
     @patch('blueprints.appstore._compose_root')
@@ -107,6 +108,7 @@ services:
         result = _validate_compose_policy(unsafe_yaml)
         self.assertIsNotNone(result)
         self.assertIn('userns_mode=host jest niedozwolone', result)
+        self.assertIn('zresetuj compose', result)
 
     @patch('blueprints.appstore._apps_root')
     @patch('blueprints.appstore._compose_root')
@@ -123,7 +125,8 @@ services:
         result = _validate_compose_policy(unsafe_yaml)
         self.assertIsNotNone(result)
         self.assertIn('cgroup_parent jest niedozwolone', result)
-            
+        self.assertIn('zresetuj compose', result)
+
     @patch('blueprints.appstore._apps_root')
     @patch('blueprints.appstore._compose_root')
     def test_security_opt_blocked(self, mock_compose_root, mock_apps_root):
@@ -140,6 +143,7 @@ services:
         result = _validate_compose_policy(unsafe_yaml)
         self.assertIsNotNone(result)
         self.assertIn('security_opt jest niedozwolone', result)
+        self.assertIn('zresetuj compose', result)
 
     @patch('blueprints.appstore._apps_root')
     @patch('blueprints.appstore._compose_root')
@@ -161,6 +165,88 @@ services:
             result = _validate_compose_policy(unsafe_yaml)
             self.assertIsNotNone(result)
             self.assertIn(f'Montowanie sciezki systemowej "{p}" jest zabronione', result)
+
+
+class TestAdaptComposeStripping(unittest.TestCase):
+    """Verify _adapt_compose auto-strips the new unsafe options."""
+
+    @patch('blueprints.appstore._apps_root')
+    @patch('blueprints.appstore._compose_root')
+    def test_security_opt_stripped(self, mock_compose_root, mock_apps_root):
+        mock_apps_root.return_value = '/tmp/ethos/apps/_appdata'
+        mock_compose_root.return_value = '/tmp/ethos/apps/compose'
+        from blueprints.appstore import _adapt_compose
+
+        yaml_in = """
+services:
+  app:
+    image: nginx
+    security_opt:
+      - no-new-privileges:true
+"""
+        adapted, warnings = _adapt_compose(yaml_in, 'testapp')
+        data = yaml.safe_load(adapted)
+        self.assertNotIn('security_opt', data['services']['app'])
+        self.assertTrue(any('security_opt' in w for w in warnings))
+
+    @patch('blueprints.appstore._apps_root')
+    @patch('blueprints.appstore._compose_root')
+    def test_cgroup_parent_stripped(self, mock_compose_root, mock_apps_root):
+        mock_apps_root.return_value = '/tmp/ethos/apps/_appdata'
+        mock_compose_root.return_value = '/tmp/ethos/apps/compose'
+        from blueprints.appstore import _adapt_compose
+
+        yaml_in = """
+services:
+  app:
+    image: nginx
+    cgroup_parent: /sys/fs/cgroup/system.slice
+"""
+        adapted, warnings = _adapt_compose(yaml_in, 'testapp')
+        data = yaml.safe_load(adapted)
+        self.assertNotIn('cgroup_parent', data['services']['app'])
+        self.assertTrue(any('cgroup_parent' in w for w in warnings))
+
+    @patch('blueprints.appstore._apps_root')
+    @patch('blueprints.appstore._compose_root')
+    def test_userns_mode_host_stripped(self, mock_compose_root, mock_apps_root):
+        mock_apps_root.return_value = '/tmp/ethos/apps/_appdata'
+        mock_compose_root.return_value = '/tmp/ethos/apps/compose'
+        from blueprints.appstore import _adapt_compose
+
+        yaml_in = """
+services:
+  app:
+    image: nginx
+    userns_mode: host
+"""
+        adapted, warnings = _adapt_compose(yaml_in, 'testapp')
+        data = yaml.safe_load(adapted)
+        self.assertNotIn('userns_mode', data['services']['app'])
+        self.assertTrue(any('userns_mode' in w for w in warnings))
+
+    @patch('blueprints.appstore._apps_root')
+    @patch('blueprints.appstore._compose_root')
+    def test_adapt_then_validate_passes(self, mock_compose_root, mock_apps_root):
+        """After _adapt_compose strips unsafe keys, _validate_compose_policy must pass."""
+        mock_apps_root.return_value = '/tmp/ethos/apps/_appdata'
+        mock_compose_root.return_value = '/tmp/ethos/apps/compose'
+        from blueprints.appstore import _adapt_compose
+
+        yaml_in = """
+services:
+  app:
+    image: nginx
+    security_opt:
+      - no-new-privileges:true
+    cgroup_parent: /sys/fs/cgroup/system.slice
+    userns_mode: host
+"""
+        adapted, warnings = _adapt_compose(yaml_in, 'testapp')
+        self.assertEqual(3, len([w for w in warnings if any(k in w for k in ('security_opt', 'cgroup_parent', 'userns_mode'))]))
+        result = _validate_compose_policy(adapted)
+        self.assertIsNone(result, f'Validation should pass after adapt, got: {result}')
+
 
 if __name__ == '__main__':
     unittest.main()

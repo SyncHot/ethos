@@ -199,11 +199,17 @@ def _validate_compose_policy(compose_text):
                     f'Usunieto automatycznie podczas adaptacji — zresetuj compose '
                     f'do wartosci domyslnych')
         if str(svc.get('userns_mode', '')).strip().lower() == 'host':
-            return (f'Serwis {svc_name}: userns_mode=host jest niedozwolone.')
+            return (f'Serwis {svc_name}: userns_mode=host jest niedozwolone. '
+                    f'Usunieto automatycznie podczas adaptacji — zresetuj compose '
+                    f'do wartosci domyslnych')
         if svc.get('cgroup_parent'):
-            return (f'Serwis {svc_name}: cgroup_parent jest niedozwolone.')
+            return (f'Serwis {svc_name}: cgroup_parent jest niedozwolone. '
+                    f'Usunieto automatycznie podczas adaptacji — zresetuj compose '
+                    f'do wartosci domyslnych')
         if svc.get('security_opt'):
-            return (f'Serwis {svc_name}: security_opt jest niedozwolone.')
+            return (f'Serwis {svc_name}: security_opt jest niedozwolone. '
+                    f'Usunieto automatycznie podczas adaptacji — zresetuj compose '
+                    f'do wartosci domyslnych')
 
         for vol in (svc.get('volumes') or []):
             if isinstance(vol, str):
@@ -683,15 +689,18 @@ def _adapt_compose(compose_text, app_id):
 
     # Unsafe per-service keys that grant excess host privileges
     _UNSAFE_KEYS = {
-        'privileged': 'tryb uprzywilejowany (privileged)',
-        'cap_add':    'dodatkowe uprawnienia linuksowe (cap_add)',
-        'devices':    'bezposredni dostep do urzadzen (devices)',
+        'privileged':    'tryb uprzywilejowany (privileged)',
+        'cap_add':       'dodatkowe uprawnienia linuksowe (cap_add)',
+        'devices':       'bezposredni dostep do urzadzen (devices)',
+        'security_opt':  'opcje bezpieczenstwa (security_opt)',
+        'cgroup_parent': 'nadrzedna grupa kontrolna (cgroup_parent)',
     }
     # Unsafe namespace-sharing modes (value must equal "host")
     _UNSAFE_NS = {
         'network_mode': 'network_mode=host',
         'pid':          'pid=host',
         'ipc':          'ipc=host',
+        'userns_mode':  'userns_mode=host',
     }
 
     try:
