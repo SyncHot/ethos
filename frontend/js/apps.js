@@ -7318,10 +7318,12 @@ function renderAppStore(body) {
         const validatePortInput = (el, val) => {
             const warningEl = el.nextElementSibling;
             if (!warningEl) return;
-            const port = parseInt(val);
             if (!val) {
                  warningEl.textContent = ''; warningEl.classList.add('hidden'); return;
             }
+            // Host field may be "ip:port" (e.g. "127.0.0.1:8080") — extract only the port number
+            const portStr = val.includes(':') ? val.split(':').pop() : val;
+            const port = parseInt(portStr);
             if (port < 1024) {
                 warningEl.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Port < 1024 (wymaga root)';
                 warningEl.classList.remove('hidden');
