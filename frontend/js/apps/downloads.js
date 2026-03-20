@@ -485,34 +485,34 @@ function renderDownloadManager(body, launchOpts) {
             div.dataset.index = index;
             
             // Path display
-            let pathDisplay = cat.path || (t('Domyślny folder') + '/' + cat.name);
+            let pathDisplay = _dlmEsc(cat.path || (t('Domyślny folder') + '/' + cat.name));
             
             div.innerHTML = `
                 <div class="dlm-cat-header">
-                    <span class="dlm-cat-name">${cat.name}</span>
+                    <span class="dlm-cat-name">${_dlmEsc(cat.name)}</span>
                     <div class="dlm-cat-actions">
                         <button class="dlm-btn-icon dlm-cat-edit" title="Edytuj"><i class="fas fa-edit"></i></button>
                         <button class="dlm-btn-icon dlm-cat-del" title="Usuń" ${cat.id === 'other' ? 'disabled' : ''}><i class="fas fa-trash-alt"></i></button>
                     </div>
                 </div>
                 <div class="dlm-cat-path"><i class="fas fa-folder-open"></i> ${pathDisplay}</div>
-                <div class="dlm-cat-exts">${(cat.extensions || []).join(', ')}</div>
+                <div class="dlm-cat-exts">${_dlmEsc((cat.extensions || []).join(', '))}</div>
                 
                 <div class="dlm-cat-edit-row" style="display:none;">
                     <div style="grid-column:1/-1">
                         <label style="font-size:11px;color:var(--text-muted)">Nazwa kategorii:</label>
-                        <input type="text" class="dlm-input-sm dlm-cat-name-input" value="${cat.name}" style="width:100%">
+                        <input type="text" class="dlm-input-sm dlm-cat-name-input" value="${_dlmEsc(cat.name)}" style="width:100%">
                     </div>
                     <div style="grid-column:1/-1">
                         <label style="font-size:11px;color:var(--text-muted)">Folder docelowy (pusty = domyślny):</label>
                         <div style="display:flex;gap:4px;">
-                            <input type="text" class="dlm-input-sm dlm-cat-path-input" value="${cat.path || ''}" style="flex:1">
+                            <input type="text" class="dlm-input-sm dlm-cat-path-input" value="${_dlmEsc(cat.path || '')}" style="flex:1">
                             <button class="dlm-btn-sm dlm-pick-cat-path"><i class="fas fa-folder"></i></button>
                         </div>
                     </div>
                     <div style="grid-column:1/-1">
                         <label style="font-size:11px;color:var(--text-muted)">Rozszerzenia (oddzielone przecinkami):</label>
-                        <input type="text" class="dlm-input-sm dlm-cat-exts-input" value="${(cat.extensions || []).join(', ')}" style="width:100%">
+                        <input type="text" class="dlm-input-sm dlm-cat-exts-input" value="${_dlmEsc((cat.extensions || []).join(', '))}" style="width:100%">
                     </div>
                     <div style="grid-column:1/-1;display:flex;justify-content:flex-end;gap:4px;margin-top:4px;">
                         <button class="dlm-btn-sm dlm-cat-save"><i class="fas fa-check"></i> OK</button>
@@ -1231,7 +1231,7 @@ function renderDownloadManager(body, launchOpts) {
             : _dlmEsc(dl.filename || _dlmShortUrl(dl.url));
 
         const cat = (config.categories || []).find(c => c.id === dl.category_id);
-        const catBadge = cat ? `<span class="dlm-stats-chip" style="font-size:10px;padding:2px 6px;margin-right:4px;border-color:var(--border);background:var(--bg-surface);color:var(--text-secondary);">${cat.name}</span>` : '';
+        const catBadge = cat ? `<span class="dlm-stats-chip" style="font-size:10px;padding:2px 6px;margin-right:4px;border-color:var(--border);background:var(--bg-surface);color:var(--text-secondary);">${_dlmEsc(cat.name)}</span>` : '';
 
         return `
             <div class="dlm-item dlm-status-${dl.status}${isMovable ? ' dlm-draggable' : ''}" data-id="${dl.id}"${isMovable ? ' draggable="true"' : ''}>

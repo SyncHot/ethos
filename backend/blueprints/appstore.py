@@ -26,6 +26,13 @@ from utils import load_json as _load_json, save_json as _save_json, run_host, \
     find_compose_project_names as _find_compose_project_names, \
     docker_available as _docker_available_util
 
+# Optional: sandbox policy for compose resource limits
+try:
+    from blueprints.sandbox_policy import get_effective_policy as _get_sandbox_policy
+except Exception:  # pragma: no cover - fallback when module not present
+    def _get_sandbox_policy(_name):
+        return {}
+
 log = logging.getLogger('appstore')
 
 appstore_bp = Blueprint('appstore', __name__, url_prefix='/api/appstore')
@@ -54,6 +61,7 @@ CACHE_DIR = '/tmp/appstore_cache'
 CATALOG_FILE = os.path.join(CACHE_DIR, 'catalog.json')
 REPOS_FILE = data_path('appstore_repos.json')
 CACHE_MAX_AGE = 3600 * 6  # 6 hours
+SANDBOX_OVERRIDE_FILENAME = 'docker-compose.ethos-sandbox.yml'
 
 HOST_COMPOSE_ROOT = '/home/marcin/docker'
 CONTAINER_COMPOSE_ROOT = '/home/marcin/docker'
@@ -86,6 +94,8 @@ def _compose_root():
     return HOST_COMPOSE_ROOT
 
 _catalog_lock = threading.Lock()
+_repo_locks = {}
+_repo_locks_guard = threading.Lock()
 _REPO_ID_RE = re.compile(r'^[a-z0-9][a-z0-9-]{0,29}$')
 _APP_DIR_RE = re.compile(r'^[a-z0-9][a-z0-9._-]{0,63}$')
 
@@ -319,23 +329,44 @@ def _download_repo(repo):
     if not repo_id:
         raise ValueError('Invalid repo id')
     repo_dir = os.path.join(CACHE_DIR, 'repos', repo_id)
-    zip_path = os.path.join(CACHE_DIR, f'{repo_id}.zip')
-
     os.makedirs(os.path.join(CACHE_DIR, 'repos'), exist_ok=True)
 
-    urllib.request.urlretrieve(repo['url'], zip_path)
+    with _repo_locks_guard:
+        lock = _repo_locks.setdefault(repo_id, threading.Lock())
 
-    if os.path.exists(repo_dir):
-        shutil.rmtree(repo_dir)
-    os.makedirs(repo_dir, exist_ok=True)
+    with lock:
+        fd, zip_path = tempfile.mkstemp(dir=CACHE_DIR, prefix=f'{repo_id}-', suffix='.zip')
+        os.close(fd)
+        tmp_extract_dir = tempfile.mkdtemp(dir=os.path.join(CACHE_DIR, 'repos'), prefix=f'{repo_id}-tmp-')
+        backup_dir = None
+        replaced = False
+        try:
+            urllib.request.urlretrieve(repo['url'], zip_path)
 
-    _safe_extract_zip(zip_path, repo_dir)
-    os.remove(zip_path)
+            _safe_extract_zip(zip_path, tmp_extract_dir)
+            os.remove(zip_path)
 
-    entries = os.listdir(repo_dir)
-    if len(entries) == 1 and os.path.isdir(os.path.join(repo_dir, entries[0])):
-        return os.path.join(repo_dir, entries[0])
-    return repo_dir
+            entries = os.listdir(tmp_extract_dir)
+            inner_dir = entries[0] if len(entries) == 1 and os.path.isdir(os.path.join(tmp_extract_dir, entries[0])) else None
+
+            if os.path.exists(repo_dir):
+                backup_dir = f"{repo_dir}.bak.{uuid.uuid4().hex[:8]}"
+                os.rename(repo_dir, backup_dir)
+
+            os.rename(tmp_extract_dir, repo_dir)
+            replaced = True
+
+            if backup_dir and os.path.exists(backup_dir):
+                shutil.rmtree(backup_dir, ignore_errors=True)
+
+            return os.path.join(repo_dir, inner_dir) if inner_dir else repo_dir
+        finally:
+            if not replaced and os.path.isdir(tmp_extract_dir):
+                shutil.rmtree(tmp_extract_dir, ignore_errors=True)
+            if os.path.isfile(zip_path):
+                os.remove(zip_path)
+            if not replaced and backup_dir and os.path.exists(backup_dir):
+                os.rename(backup_dir, repo_dir)
 
 
 def _get_system_tz():
@@ -453,12 +484,13 @@ def _parse_compose_metadata(compose_path):
             'description': desc,
             'tagline': tagline,
             'icon': icon,
+            'thumbnail': thumbnail,
             'category': category,
             'port_map': str(port_map),
             'architectures': archs,
             'developer': developer,
             'image': image,
-            'thumbnail': thumbnail,
+            'main_service': main_service,
             'tips': tips,
             'screenshots': screenshots,
             'store_app_id': store_app_id,
@@ -522,10 +554,13 @@ def _build_catalog_for_repo(repo_root, repo_id, repo_name):
             'architectures': meta['architectures'],
             'developer': meta['developer'],
             'image': meta['image'],
+            'thumbnail': meta.get('thumbnail', ''),
+            'main_service': meta.get('main_service', ''),
             'version': version,
             'compose_path': compose_file,
             'repo_id': repo_id,
             'repo_name': repo_name,
+            'store_app_id': meta.get('store_app_id', ''),
             'tips': meta.get('tips', ''),
             'screenshots': meta.get('screenshots', []),
             'service_count': meta.get('service_count', 1),
@@ -754,7 +789,19 @@ def _apply_editable_config(compose_text, overrides):
             # Update ports — rebuild only the entries that came from the UI,
             # preserving the original IP binding if one was present.
             if 'ports' in conf and isinstance(conf['ports'], list):
-                new_ports = []
+                original_ports = svc.get('ports') or []
+                preserved_ports = []
+                for p in original_ports:
+                    try:
+                        p_str = str(p)
+                        parts = p_str.split(':')
+                        # If extraction logic would fail or skip it, we preserve it.
+                        if len(parts) < 2:
+                            preserved_ports.append(p)
+                    except Exception:
+                        preserved_ports.append(p)
+
+                new_ports = list(preserved_ports)
                 for p in conf['ports']:
                     host = p.get('host')
                     container = p.get('container')
@@ -800,6 +847,96 @@ def _apply_editable_config(compose_text, overrides):
         pass
 
     return compose_text
+
+
+def _policy_to_service_limits(policy):
+    """Translate sandbox policy into docker-compose service options."""
+    limits = {}
+
+    mem_limit = str(policy.get('mem_limit', '')).strip()
+    if mem_limit and mem_limit != '0':
+        limits['mem_limit'] = mem_limit
+
+    mem_reservation = str(policy.get('mem_reservation', '')).strip()
+    if mem_reservation and mem_reservation != '0':
+        limits['mem_reservation'] = mem_reservation
+
+    cpu_quota = policy.get('cpu_quota', 0)
+    try:
+        cpu_quota = float(cpu_quota)
+    except (TypeError, ValueError):
+        cpu_quota = 0
+    if cpu_quota > 0:
+        limits['cpus'] = round(cpu_quota / 100.0, 3)
+
+    pids_limit = policy.get('pids_limit', 0)
+    try:
+        pids_limit = int(pids_limit)
+    except (TypeError, ValueError):
+        pids_limit = 0
+    if pids_limit > 0:
+        limits['pids_limit'] = pids_limit
+
+    if policy.get('read_only_root'):
+        limits['read_only'] = True
+
+    if policy.get('no_new_privileges'):
+        limits['security_opt'] = ['no-new-privileges:true']
+
+    cap_drop = policy.get('cap_drop') or []
+    if cap_drop:
+        limits['cap_drop'] = cap_drop
+
+    cap_add = policy.get('cap_add') or []
+    if cap_add:
+        limits['cap_add'] = cap_add
+
+    return limits
+
+
+def _compose_files_args(compose_files):
+    return ' '.join(f'-f {f}' for f in compose_files if f)
+
+
+def _list_compose_services(project_path, compose_files):
+    """List services defined in compose files (host context)."""
+    files_arg = _compose_files_args(compose_files)
+    try:
+        out, err, rc = _run_host(f'docker compose {files_arg} config --services', timeout=60, cwd=project_path)
+    except Exception as exc:  # noqa: BLE001
+        return [], f'Compose services error: {exc}'
+    if rc != 0:
+        return [], err.strip() or 'docker compose config failed'
+    services = [line.strip() for line in out.split('\n') if line.strip()]
+    return services, None
+
+
+def _ensure_sandbox_override(app_name, project_path, compose_filename):
+    """Create/update sandbox override compose file with enforced limits."""
+    policy = _get_sandbox_policy(app_name) or {}
+    if not policy:
+        return None, None
+
+    services, err = _list_compose_services(project_path, [compose_filename])
+    if err:
+        return None, err
+    if not services:
+        return None, 'Brak usług w pliku docker-compose'
+
+    limits = _policy_to_service_limits(policy)
+    if not limits:
+        return None, None
+
+    override = {'version': '3', 'services': {svc: dict(limits) for svc in services}}
+    override_path = os.path.join(project_path, SANDBOX_OVERRIDE_FILENAME)
+
+    try:
+        with open(override_path, 'w') as f:
+            yaml.safe_dump(override, f, sort_keys=False)
+    except OSError as exc:
+        return None, f'Nie można zapisać pliku polityki sandbox: {exc}'
+
+    return override_path, None
 
 
 def _adapt_compose(compose_text, app_id):
@@ -968,6 +1105,48 @@ def _adapt_compose(compose_text, app_id):
             
             if volumes:
                 svc['volumes'] = adapted_volumes
+
+            # Adapt env_file paths — anchor to appdata and drop unsafe locations
+            env_file = svc.get('env_file')
+            if env_file:
+                env_list = env_file if isinstance(env_file, list) else [env_file]
+                new_env_files = []
+                for env_entry in env_list:
+                    if not isinstance(env_entry, str):
+                        continue
+                    original_env = env_entry
+                    host_path_to_check = None
+
+                    if env_entry.startswith('../'):
+                        stripped = re.sub(r'^(\.\./)+', '', env_entry)
+                        env_entry = os.path.join(appdata, stripped)
+                    elif env_entry.startswith('./'):
+                        env_entry = os.path.join(appdata, env_entry[2:])
+                    elif env_entry.startswith('/DATA/'):
+                        env_entry = env_entry.replace('/DATA/', appdata + '/', 1)
+                    elif env_entry.startswith('/'):
+                        host_path_to_check = env_entry
+                    else:
+                        # Relative file — place it under appdata for safety
+                        env_entry = os.path.join(appdata, env_entry)
+
+                    if env_entry.startswith('/'):
+                        host_path_to_check = host_path_to_check or env_entry
+
+                    if host_path_to_check:
+                        is_safe, err_msg = _is_safe_mount_path(host_path_to_check)
+                        if not is_safe:
+                            adapt_warnings.append(
+                                f'Serwis "{svc_name}": env_file {original_env} usunięto ({err_msg})'
+                            )
+                            continue
+
+                    new_env_files.append(env_entry)
+
+                if new_env_files:
+                    svc['env_file'] = new_env_files if len(new_env_files) > 1 else new_env_files[0]
+                else:
+                    svc.pop('env_file', None)
 
             # Remove hostname/domainname that may conflict
             svc.pop('hostname', None)
@@ -1383,6 +1562,18 @@ def _bg_install(task_id, app_id, app_title, adapted, dir_name, host_app_dir, con
 
         _run_host(f'mkdir -p {_apps_root()}/{dir_name}')
 
+        compose_filename = 'docker-compose.yml'
+        compose_files = [compose_filename]
+
+        sandbox_override, sb_err = _ensure_sandbox_override(dir_name, host_app_dir, compose_filename)
+        if sb_err:
+            _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'error',
+                            'percent': 100, 'message': sb_err})
+            return
+        if sandbox_override:
+            compose_files.append(os.path.basename(sandbox_override))
+        files_arg = _compose_files_args(compose_files)
+
         # Step 2: Pull images (streaming)
         _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'pull',
                         'percent': 10, 'message': 'Pobieranie obrazów Docker…'})
@@ -1402,7 +1593,7 @@ def _bg_install(task_id, app_id, app_title, adapted, dir_name, host_app_dir, con
                             'percent': pull_pct[0], 'message': line[:120]})
 
         pull_output, pull_rc = _run_host_stream(
-            'docker compose pull', cwd=host_app_dir, on_line=on_pull_line, timeout=600
+            f'docker compose {files_arg} pull', cwd=host_app_dir, on_line=on_pull_line, timeout=600
         )
         if pull_rc != 0:
             _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'error',
@@ -1418,7 +1609,7 @@ def _bg_install(task_id, app_id, app_title, adapted, dir_name, host_app_dir, con
                             'percent': 90, 'message': line[:120]})
 
         up_output, up_rc = _run_host_stream(
-            'docker compose up -d', cwd=host_app_dir, on_line=on_up_line, timeout=300
+            f'docker compose {files_arg} up -d --remove-orphans', cwd=host_app_dir, on_line=on_up_line, timeout=300
         )
         if up_rc != 0:
             _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'error',
@@ -1430,7 +1621,7 @@ def _bg_install(task_id, app_id, app_title, adapted, dir_name, host_app_dir, con
                         'percent': 95, 'message': 'Weryfikacja kontenerów…'})
         time.sleep(2)
         verify_out, _, verify_rc = _run_host(
-            'docker compose ps --format json', cwd=host_app_dir, timeout=15
+            f'docker compose {files_arg} ps --format json', cwd=host_app_dir, timeout=15
         )
         running_ok = True
         if verify_rc == 0 and verify_out.strip():
@@ -1576,13 +1767,25 @@ def reinstall_app():
 
     def _bg_reinstall():
         try:
+            compose_filename = os.path.basename(compose_file)
+            compose_files = [compose_filename]
+
+            sandbox_override, sb_err = _ensure_sandbox_override(dir_name, safe_dir, compose_filename)
+            if sb_err:
+                _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'error',
+                                'percent': 100, 'message': sb_err})
+                return
+            if sandbox_override:
+                compose_files.append(os.path.basename(sandbox_override))
+            files_arg = _compose_files_args(compose_files)
+
             _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'prepare',
                             'percent': 5, 'message': 'Zatrzymywanie kontenerów…'})
-            _run_host_stream('docker compose down', cwd=safe_dir, timeout=120)
+            _run_host_stream(f'docker compose {files_arg} down', cwd=safe_dir, timeout=120)
 
             _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'pull',
                             'percent': 20, 'message': 'Pobieranie nowych obrazów…'})
-            pull_out, pull_rc = _run_host_stream('docker compose pull', cwd=safe_dir, timeout=600)
+            pull_out, pull_rc = _run_host_stream(f'docker compose {files_arg} pull', cwd=safe_dir, timeout=600)
             if pull_rc != 0:
                 _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'error',
                                 'percent': 100, 'message': f'Błąd: {pull_out[-300:]}'})
@@ -1590,7 +1793,7 @@ def reinstall_app():
 
             _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'start',
                             'percent': 80, 'message': 'Uruchamianie kontenerów…'})
-            up_out, up_rc = _run_host_stream('docker compose up -d', cwd=safe_dir, timeout=300)
+            up_out, up_rc = _run_host_stream(f'docker compose {files_arg} up -d --remove-orphans', cwd=safe_dir, timeout=300)
             if up_rc != 0:
                 _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'error',
                                 'percent': 100, 'message': f'Błąd: {up_out[-300:]}'})
