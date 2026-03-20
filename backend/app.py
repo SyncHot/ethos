@@ -405,7 +405,7 @@ _API_TO_APP = {
 # Admin-only apps — only role='admin' can access (matches admin_only: True in get_apps)
 _ADMIN_ONLY_APPS = {
     'users', 'usb-flasher', 'builder', 'updates', 'services',
-    'disk-repair', 'remote-log', 'surveillance', 'ai-chat',
+    'disk-repair', 'remote-log', 'surveillance',
     'system-settings', 'domains-manager', 'vm-manager', 'app-store',
 }
 

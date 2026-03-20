@@ -13,6 +13,7 @@ import subprocess
 import urllib.request
 import urllib.error
 import ssl
+from functools import wraps
 
 import psutil
 
@@ -74,6 +75,22 @@ def _is_admin():
 
 def _is_authenticated():
     return getattr(g, 'username', None) is not None
+
+
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not _is_admin():
+            try:
+                # Local import to avoid circular dependency
+                from blueprints.eventlog import log
+                log('security', 'warning', f'Nieautoryzowana próba dostępu do {request.path}', 
+                    details={'user': _get_username(), 'ip': request.remote_addr})
+            except ImportError:
+                pass
+            return jsonify({'error': 'Tylko admin'}), 403
+        return f(*args, **kwargs)
+    return decorated_function
 
 
 def _user_sandbox_root():
@@ -1635,6 +1652,7 @@ def _install_py_pkg(pkg_name, timeout=900):
 
 
 @aichat_bp.route('/install', methods=['POST'])
+@admin_required
 def aichat_install():
     """Install AI Chat dependencies (llama-cpp-python). Streams progress via SocketIO."""
     import threading
@@ -1716,6 +1734,7 @@ def aichat_install():
 
 
 @aichat_bp.route('/uninstall', methods=['POST'])
+@admin_required
 def aichat_uninstall():
     """Uninstall AI Chat: unload model, optionally wipe data."""
     wipe = (request.json or {}).get('wipe_data', False)
