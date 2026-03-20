@@ -48,6 +48,8 @@ from utils import load_json as _load_json, save_json as _save_json, \
     generate_thumbnail, THUMB_CACHE_DIR, THUMBS_DIR_NAME, \
     _thumb_cache_key, _local_thumb_path, list_directory as _list_dir
 
+from middleware.rate_limiter import RateLimiter
+
 from blueprints.monitor import (
     get_cpu_info as _mon_cpu, get_ram_info as _mon_ram,
     get_disk_info as _mon_disk, get_system_info as _mon_sys,
@@ -104,6 +106,9 @@ def _verify_shadow_hash(password: str, stored_hash: str) -> bool:
 # ─────────────────────────── App Setup ───────────────────────────
 
 app = Flask(__name__, static_folder='../frontend', static_url_path='/~static~')
+# Security: DDOS protection (5 req/sec per IP)
+limiter = RateLimiter(app, limit=300, window=60)
+
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024 * 1024  # 50 GB upload limit
 # No CORS — frontend served from same origin; no cross-origin access needed
 socketio = SocketIO(app, async_mode='gevent')  # default: same-origin only
