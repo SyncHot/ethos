@@ -6095,12 +6095,8 @@ a.dkr-port-link:hover {
 .aic-empty-title { font-size: 18px; font-weight: 600; color: var(--text-primary); margin-bottom: 6px; }
 .aic-empty-sub { font-size: 13px; color: var(--text-muted); line-height: 1.6; margin-bottom: 16px; }
 
-/* responsive */
-@media (max-width: 700px) {
-    .aic-sidebar { width: 200px; min-width: 160px; }
-    .aic-messages { padding: 12px; }
-    .aic-msg { max-width: 95%; }
-}
+/* responsive replaced by new block at end of section */
+/* @media (max-width: 700px) { ... } REMOVED */
 
 /* ═══════════════════ Model Library ═══════════════════ */
 
@@ -6177,11 +6173,8 @@ a.dkr-port-link:hover {
 .ml-card.ml-st-heavy { opacity: 0.6; }
 .ml-card.ml-st-heavy:hover { opacity: 0.85; }
 
-@media (max-width: 700px) {
-    .ml-grid { grid-template-columns: 1fr; padding: 12px; gap: 10px; }
-    .ml-hw { flex-direction: column; }
-    .ml-custom-row { flex-direction: column; }
-}
+/* ml-grid responsive moved to end of file */
+
 
 
 /* ═══════════════════ AI Chat — Setup Wizard ═══════════════════ */
@@ -6338,6 +6331,55 @@ a.dkr-port-link:hover {
 
 .aic-rag-progress-bar { width: 100%; height: 6px; background: var(--bg-elevated); border-radius: var(--r-sm); margin-top: 6px; overflow: hidden; }
 .aic-rag-progress-fill { height: 100%; background: linear-gradient(90deg, #8b5cf6, #6366f1); border-radius: var(--r-sm); transition: width var(--transition-slow); font-size: 0; /* collapse text node in progress bar */ }
+
+/* ═══ AI Chat Responsive ═══ */
+.aic-mobile-menu { display: none; margin-right: 8px; }
+.aic-mobile-close { display: none; }
+.aic-sidebar-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.5); z-index: 15; display: none; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
+.aic-sidebar-overlay.active { display: block; opacity: 1; pointer-events: auto; }
+
+@media (max-width: 768px) {
+    /* Mobile Sidebar */
+    .aic-sidebar {
+        position: absolute; left: -100%; top: 0; bottom: 0;
+        width: 280px; z-index: 20;
+        transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: var(--shadow-xl);
+    }
+    .aic-sidebar.active { left: 0; }
+    .aic-mobile-menu { display: flex; }
+    .aic-mobile-close { display: flex; }
+
+    /* Touch targets & Layout */
+    .aic-btn-icon, .aic-btn-new, .aic-btn-send { min-width: 44px; min-height: 44px; }
+    .aic-conv-item { min-height: 44px; padding: 12px; }
+    .aic-messages { padding: 12px; }
+    .aic-msg { max-width: 95%; }
+    .aic-input-bar { padding: 12px; }
+
+    /* Modals/Views */
+    .aic-settings-body { padding: 16px; }
+    .aic-field input, .aic-field select, .aic-field textarea { padding: 12px; font-size: 16px; }
+    .aic-toggle-label { padding: 8px 0; min-height: 44px; }
+    .aic-toggle-label input[type="checkbox"] { width: 20px; height: 20px; }
+    .aic-fp-item { padding: 12px; min-height: 44px; }
+    .aic-ml { padding-bottom: 20px; }
+    .ml-grid { grid-template-columns: 1fr; padding: 12px; gap: 12px; }
+    .ml-hw { flex-direction: column; align-items: flex-start; }
+    .ml-custom-row { flex-direction: column; align-items: stretch; }
+    .ml-custom-btn { width: 100%; justify-content: center; }
+    .aic-wiz-header { padding: 12px 16px; font-size: 16px; }
+    .aic-wiz-steps { flex-wrap: wrap; gap: 8px; }
+    .aic-wiz-step span { display: none; } /* Show only icons in stepper on small screens */
+}
+
+@media (max-width: 480px) {
+    .aic-msg-avatar { width: 28px; height: 28px; font-size: 12px; }
+    .aic-msg-bubble { padding: 10px 14px; font-size: 13px; }
+    .aic-dash-metric { min-width: 100px; }
+    /* Hide some header buttons on very small screens if needed */
+    .aic-sidebar-header .aic-btn-icon:not(.aic-mobile-close) { width: 44px; height: 44px; }
+}
 
 /* ═══════════════════════════════════════════════════════════
    File Operation Action Buttons (desktop.js)

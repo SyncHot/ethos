@@ -37,6 +37,67 @@ var _aic = {
     deps: null,
 };
 
+function _aicTierClass(id) {
+    if (!id) return 'aic-tier-light';
+    return 'aic-tier-' + id.toString().toLowerCase();
+}
+
+function _aicTierClassByScore(score) {
+    if (typeof score !== 'number') return 'aic-tier-light';
+    if (score >= 85) return 'aic-tier-ultra';
+    if (score >= 65) return 'aic-tier-balanced';
+    return 'aic-tier-light';
+}
+
+function _aicStatusClass(status) {
+    if (status === 'recommended') return 'aic-status-good';
+    if (status === 'possible') return 'aic-status-medium';
+    return 'aic-status-bad';
+}
+
+function _aicTpsClass(value) {
+    if (value >= 15) return 'aic-status-good';
+    if (value >= 5) return 'aic-status-medium';
+    return 'aic-status-bad';
+}
+
+function _aicFamilyKey(name) {
+    var raw = (name || 'custom').toString().toLowerCase();
+    var cleaned = raw.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    return cleaned || 'custom';
+}
+
+function _aicSetHidden(el, hidden) {
+    if (!el) return;
+    if (hidden) el.classList.add('aic-hidden');
+    else el.classList.remove('aic-hidden');
+}
+
+function _aicUpdateWizardDlBar(ds) {
+    if (!ds) return;
+    var bar = document.getElementById('wizDlBar');
+    var pctEl = document.querySelector('.aic-wiz-dl-pct');
+    var statusEl = document.getElementById('wizDlStatus');
+    var speedEl = document.getElementById('wizDlSpeed');
+    var pct = Math.round(ds.progress || 0);
+    if (bar) bar.style.width = pct + '%';
+    if (pctEl) pctEl.textContent = pct + '%';
+    if (statusEl) statusEl.textContent = ds.status || '';
+    if (ds.speed) {
+        if (!speedEl) {
+            var detailEl = document.querySelector('.aic-wiz-dl-detail');
+            if (detailEl) {
+                speedEl = document.createElement('span');
+                speedEl.id = 'wizDlSpeed';
+                detailEl.appendChild(speedEl);
+            }
+        }
+        if (speedEl) speedEl.textContent = ds.speed;
+    } else if (speedEl) {
+        speedEl.textContent = '';
+    }
+}
+
 /* ═══════════════════════════ HELPERS ═══════════════════════════ */
 function _aicFetch(url, opts) {
     opts = opts || {};
@@ -135,23 +196,30 @@ function _aicRender(body) {
     /* ── chat view ── */
     var healthBadge = '';
     if (_aic.health) {
-        var hc = _aic.health.score >= 85 ? '#10b981' : _aic.health.score >= 65 ? '#f59e0b' : _aic.health.score >= 40 ? '#ef4444' : '#6b7280';
-        healthBadge = '<span class="aic-health-badge" style="background:' + hc + '" onclick="window._aicOpenDashboard()" title="AI Health Score: ' + _aic.health.score + '/100">' + _aic.health.grade + '</span>';
+        var healthClass = _aicTierClassByScore(_aic.health.score || 0);
+        healthBadge = '<span class="aic-health-badge ' + healthClass + '" onclick="window._aicOpenDashboard()" title="AI Health Score: ' + _aic.health.score + '/100">' + _aic.health.grade + '</span>';
     }
     root.innerHTML =
         '<div class="aic-sidebar">' +
+            '<div class="aic-sidebar-brand"><i class="fas fa-robot"></i> ' + t('AI Chat') + '</div>' +
             '<div class="aic-sidebar-header">' +
                 '<button class="aic-btn-new" onclick="window._aicNewConv()" title="' + t('Nowa rozmowa') + '"><i class="fas fa-plus"></i> ' + t('Nowa') + '</button>' +
-                healthBadge +
                 '<button class="aic-btn-icon" onclick="window._aicOpenDashboard()" title="' + t('Dashboard AI') + '"><i class="fas fa-heartbeat"></i></button>' +
                 '<button class="aic-btn-icon" onclick="window._aicOpenSettings()" title="' + t('Ustawienia') + '"><i class="fas fa-cog"></i></button>' +
                 '<button class="aic-btn-icon" onclick="window._aicOpenModels()" title="' + t('Biblioteka modeli') + '"><i class="fas fa-cube"></i></button>' +
+                '<button class="aic-btn-icon aic-mobile-close" onclick="window._aicToggleSidebar()" style="margin-left: auto; color: var(--danger);"><i class="fas fa-times"></i></button>' +
             '</div>' +
             '<div class="aic-conv-list" id="aicConvList"></div>' +
         '</div>' +
+        '<div class="aic-sidebar-overlay" onclick="window._aicToggleSidebar()"></div>' +
         '<div class="aic-main">' +
+            '<div class="aic-main-header">' +
+                '<button class="aic-btn-icon aic-mobile-menu" onclick="window._aicToggleSidebar()"><i class="fas fa-bars"></i></button>' +
+                '<span class="aic-main-title text-lg"><i class="fas fa-robot"></i> ' + t('AI Chat') + '</span>' +
+                healthBadge +
+            '</div>' +
             '<div class="aic-messages" id="aicMessages"></div>' +
-            '<div id="aicAttachBar" class="aic-attach-bar" style="display:none"></div>' +
+            '<div id="aicAttachBar" class="aic-attach-bar aic-hidden"></div>' +
             '<div class="aic-input-bar">' +
                 `<button class="aic-btn-icon aic-btn-attach" onclick="window._aicOpenFilePicker()" title="${t('Dołącz pliki')}"><i class="fas fa-paperclip"></i></button>` +
                 `<textarea id="aicInput" class="aic-input" rows="1" placeholder="${t('Napisz wiadomość… (Shift+Enter = nowa linia)')}"></textarea>` +
@@ -183,7 +251,9 @@ function _aicRender(body) {
                 '<i class="fas fa-robot aic-empty-icon"></i>' +
                 '<div class="aic-empty-title">' + t('Witaj w AI Chat') + '</div>' +
                 '<div class="aic-empty-sub">' + t('Skonfiguruj klucz API aby rozpocząć.') + '</div>' +
-                '<button class="aic-btn-primary" onclick="window._aicOpenSettings()"><i class="fas fa-cog"></i> ' + t('Ustawienia') + '</button>' +
+                '<div class="aic-empty-actions">' +
+                    '<button class="aic-btn-primary" onclick="window._aicOpenSettings()">' + t('Konfiguracja') + '</button>' +
+                '</div>' +
             '</div>';
     } else if (!_aic.activeConv) {
         var msgs2 = root.querySelector('#aicMessages');
@@ -203,20 +273,29 @@ function _aicRender(body) {
                 }
             }
             msgs2.innerHTML =
-                '<div class="aic-empty">' +
-                    '<i class="fas fa-brain aic-empty-icon"></i>' +
-                    '<div class="aic-empty-title">' + t('Osobisty Asystent EthOS') + '</div>' +
-                    localBadge +
-                    ragBadge +
-                    '<div class="aic-empty-sub">' + t('Zarządzanie plikami, galeria zdjęć, pytania o dokumenty.') + '<br>' +
-                        '<span style="opacity:0.5"><i class="fas fa-search"></i> ' + t('szukaj w dokumentach') + ' &nbsp; ' +
-                        '<i class="fas fa-images"></i> ' + t('przeglądaj galerię') + ' &nbsp; ' +
-                        '<i class="fas fa-paperclip"></i> ' + t('dołącz pliki') + ' &nbsp; ' +
-                        '<i class="fas fa-terminal"></i> ' + t('uruchom') + '</span></div>' +
-                '</div>';
+            '<div class="aic-empty">' +
+                '<i class="fas fa-robot aic-empty-icon"></i>' +
+                '<div class="aic-empty-title">' + t('Osobisty Asystent EthOS') + '</div>' +
+                localBadge +
+                ragBadge +
+                '<div class="aic-empty-sub">' + t('Zarządzanie plikami, galeria zdjęć, pytania o dokumenty.') + '<br>' +
+                    '<span class="aic-empty-hint"><i class="fas fa-search"></i> ' + t('szukaj w dokumentach') + ' &nbsp; ' +
+                    '<i class="fas fa-images"></i> ' + t('przeglądaj galerię') + ' &nbsp; ' +
+                    '<i class="fas fa-paperclip"></i> ' + t('dołącz pliki') + ' &nbsp; ' +
+                    '<i class="fas fa-terminal"></i> ' + t('uruchom') + '</span></div>' +
+            '</div>';
         }
     }
 }
+
+window._aicToggleSidebar = function () {
+    var root = document.querySelector('.aic-root');
+    if (!root) return;
+    var sidebar = root.querySelector('.aic-sidebar');
+    var overlay = root.querySelector('.aic-sidebar-overlay');
+    if (sidebar) sidebar.classList.toggle('active');
+    if (overlay) overlay.classList.toggle('active');
+};
 
 /* ═══════════════════════════ SIDEBAR ═══════════════════════════ */
 function _aicRenderConvList(root) {
@@ -240,7 +319,7 @@ function _aicRenderMessages(root) {
     var msgs = _aic.activeConv.messages || [];
     if (!msgs.length) {
         container.innerHTML =
-            '<div class="aic-empty"><i class="fas fa-comments aic-empty-icon" style="font-size:2.5rem"></i>' +
+            '<div class="aic-empty"><i class="fas fa-robot aic-empty-icon"></i>' +
                 '<div class="aic-empty-sub">Napisz wiadomość, aby rozpocząć rozmowę.</div></div>';
         return;
     }
@@ -259,8 +338,12 @@ function _aicRenderMessages(root) {
 function _aicRenderAttachBar() {
     var bar = document.querySelector('#aicAttachBar');
     if (!bar) return;
-    if (!_aic.attachedFiles.length) { bar.style.display = 'none'; return; }
-    bar.style.display = 'flex';
+    if (!_aic.attachedFiles.length) {
+        bar.classList.add('aic-hidden');
+        bar.innerHTML = '';
+        return;
+    }
+    bar.classList.remove('aic-hidden');
     bar.innerHTML = _aic.attachedFiles.map(function (f, i) {
         var sizeKB = Math.round((f.size || 0) / 1024);
         return '<div class="aic-attach-chip">' +
@@ -312,11 +395,11 @@ function _aicPollRagIndexing() {
                 if (statsEl) statsEl.textContent = docs + ' ' + t('dokumentów') + ', ' + photos + ' ' + t('zdjęć');
                 // Hide progress bar
                 var wrap = document.querySelector('#aicRagProgressWrap');
-                if (wrap) wrap.style.display = 'none';
+                _aicSetHidden(wrap, true);
             } else {
                 // Show and update progress bar
                 var wrap = document.querySelector('#aicRagProgressWrap');
-                if (wrap) wrap.style.display = '';
+                _aicSetHidden(wrap, false);
                 var pbar = document.querySelector('#aicRagProgress');
                 var total = prog.total || 1;
                 var indexed = prog.indexed || 0;
