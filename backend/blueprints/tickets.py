@@ -930,6 +930,66 @@ def bug_hunt(project_id):
 
     target_app = random.choice(candidates)
     
+    # -----------------------------------------------------------------------
+    # 1. Analyze Complexity (Smart Slicing Logic)
+    # -----------------------------------------------------------------------
+    # Simulate dependency check
+    deps_str = target_app.get('deps_label', '')
+    # Filter out empty strings and "brak wymagań"
+    deps = [d.strip() for d in deps_str.split(',') if d.strip() and 'brak' not in d.lower()]
+    
+    # "Smart Slicing": If > 1 dependencies (>= 2), mark as complex for breakdown
+    # QA FIX: Lowered threshold from > 3 to > 1 as max deps is 3
+    is_complex_auth = len(deps) > 1
+    
+    # -----------------------------------------------------------------------
+    # 2. Analyze Performance (Section 4)
+    # -----------------------------------------------------------------------
+    # Check JS bundle size
+    js_size_kb = 0
+    try:
+        # QA FIX: Map App IDs to actual JS filenames
+        # Some apps use different naming conventions (e.g. ai-chat -> aichat.js)
+        js_map = {
+            'ai-chat': 'aichat.js',
+            'code-editor': 'code_editor.js',
+            'disk-repair': 'diskrepair.js',
+            'download-manager': 'downloads.js',
+            'domains-manager': 'domains.js',
+            'doc-editor': 'editor.js',
+            'usb-flasher': 'flasher.js',
+            'sharing': 'sharing.js',
+        }
+        
+        # Determine the key to use (app_id or id)
+        app_key = target_app.get('app_id', target_app['id'])
+        
+        # Potential filenames to check
+        candidates_filenames = [
+            js_map.get(app_key),               # Mapped name
+            js_map.get(target_app['id']),      # Mapped ID
+            f"{app_key}.js",                   # Standard name
+            f"{app_key.replace('-', '')}.js",  # No hyphens (ai-chat -> aichat)
+            f"{app_key.replace('-', '_')}.js"  # Underscores (code-editor -> code_editor)
+        ]
+        
+        # Resolve path relative to backend/blueprints/tickets.py -> ../../frontend/js/apps/
+        root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        
+        for fname in candidates_filenames:
+            if not fname:
+                continue
+                
+            js_path = os.path.join(root_dir, 'frontend', 'js', 'apps', fname)
+            if os.path.exists(js_path):
+                size_bytes = os.path.getsize(js_path)
+                js_size_kb = round(size_bytes / 1024, 1)
+                break # Found the file
+                
+    except Exception:
+        pass # Fallback if path resolution fails
+
+    
     with _lock:
         data = _load()
         project = _find_project(data, project_id)
@@ -943,16 +1003,23 @@ def bug_hunt(project_id):
         created_tickets = []
         now = _now()
         
-        # 1. Create Epic
+        # -----------------------------------------------------------------------
+        # 3. Create Epic (Final Output Schema)
+        # -----------------------------------------------------------------------
         epic_id = _gen_id('t_')
-        epic_title = f"Audyt bezpieczeństwa i UX: {target_app['name']}"
-        epic_desc = (f"Kompleksowy audyt aplikacji {target_app['name']} (v1.0).\n"
+        epic_title = f"[EPIC] Optymalizacja Pakietu Ethos: {target_app['name']}"
+        
+        epic_desc = (f"Kompleksowy audyt i optymalizacja aplikacji {target_app['name']} (v1.0).\n"
                      f"Opis aplikacji: {target_app['description']}\n\n"
-                     f"Cele audytu:\n"
-                     f"1. Weryfikacja bezpieczeństwa (RBAC, sanitizacja)\n"
-                     f"2. Analiza UI/UX (responsywność, komunikaty)\n"
-                     f"3. Spójność z systemem EthOS\n\n"
-                     f"Wymagane zależności: {target_app.get('deps_label', 'N/A')}")
+                     f"**Cele audytu:**\n"
+                     f"1. 🛡️ [Security] Weryfikacja RBAC i walidacja endpointów.\n"
+                     f"2. ⚙️ [Logic] Ciągłość sesji i przepływ ścieżek funkcjonalnych.\n"
+                     f"3. 🎨 [UX/UI] Dostosowanie do Design Systemu Ethos.\n"
+                     f"4. 🚀 [Perf] Optymalizacja assetów i czasu odpowiedzi API.\n\n"
+                     f"**Analiza wstępna:**\n"
+                     f"- Zależności: {len(deps)} ({', '.join(deps) if deps else 'brak'})\n"
+                     f"- Rozmiar pakietu JS: {js_size_kb} KB\n"
+                     f"- Złożoność Security: {'Wysoka (Smart Slicing aktywny)' if is_complex_auth else 'Standardowa'}")
         
         epic_ticket = {
             'id': epic_id,
@@ -963,7 +1030,7 @@ def bug_hunt(project_id):
             'priority': 'high',
             'assignee': g.username,
             'type': 'epic',
-            'complexity': 'complex',
+            'complexity': 'complex' if is_complex_auth else 'medium',
             'reporter': g.username,
             'labels': ['audit', 'auto-generated', target_app['id']],
             'comments': [],
@@ -974,90 +1041,111 @@ def bug_hunt(project_id):
         
         created_tickets.append(epic_ticket)
         
-        # 2. Create Tasks linked to Epic
-        tasks = [
-            {
-                'title': f"Analiza RBAC i uprawnień: {target_app['name']}",
+        # -----------------------------------------------------------------------
+        # 4. Create Tasks
+        # -----------------------------------------------------------------------
+        tasks = []
+
+        # Ticket #1: Security (With Smart Slicing)
+        if is_complex_auth:
+            # Breakdown into specific sub-tasks
+            tasks.append({
+                'title': f"🛡️ [Security] [RBAC] Backend Auth: {target_app['name']}",
+                'desc': (f"Weryfikacja autoryzacji w warstwie backendu (Smart Slicing: High Complexity).\n\n"
+                         f"**Zakres:**\n"
+                         f"- Audyt dekoratorów `@admin_required`.\n"
+                         f"- Weryfikacja dostępu do plików systemowych.\n"
+                         f"- Endpointy: {target_app.get('install_endpoint', 'N/A')}"),
+                'labels': ['security', 'RBAC', 'backend', f"epic:{epic_id}"],
+                'priority': 'critical',
+                'complexity': 'complex'
+            })
+            tasks.append({
+                'title': f"🛡️ [Security] [RBAC] Frontend Guard: {target_app['name']}",
+                'desc': (f"Weryfikacja zabezpieczeń po stronie klienta.\n\n"
+                         f"**Zakres:**\n"
+                         f"- Ukrywanie elementów interfejsu dla userów bez uprawnień.\n"
+                         f"- Obsługa odpowiedzi 403 Forbidden w widoku."),
+                'labels': ['security', 'RBAC', 'frontend', f"epic:{epic_id}"],
+                'priority': 'high',
+                'complexity': 'medium'
+            })
+            tasks.append({
+                'title': f"🛡️ [Security] Manifest Config & Deps: {target_app['name']}",
+                'desc': (f"Audyt manifestu i zależności ({len(deps)}).\n"
+                         f"Upewnij się, że zależności nie wprowadzają luk bezpieczeństwa."),
+                'labels': ['security', 'config', f"epic:{epic_id}"],
+                'priority': 'medium',
+                'complexity': 'medium'
+            })
+        else:
+            # Standard single ticket
+            tasks.append({
+                'title': f"🛡️ [Security] Weryfikacja RBAC i walidacja endpointów: {target_app['name']}",
                 'desc': (f"Sprawdź czy endpointy API aplikacji {target_app['name']} są poprawnie zabezpieczone.\n\n"
                          f"**Endpointy do sprawdzenia:**\n"
                          f"- Install: `{target_app.get('install_endpoint', 'N/A')}`\n"
-                         f"- Uninstall: `{target_app.get('uninstall_endpoint', 'N/A')}`\n"
-                         f"- Status: `{target_app.get('status_endpoint', 'N/A')}`\n\n"
-                         f"**Scenariusze testowe (QA):**\n"
-                         f"1. Próba wywołania endpointów bez tokenu (oczekiwane 401/403).\n"
-                         f"2. Próba wywołania endpointów jako użytkownik bez uprawnień admina (oczekiwane 403).\n"
-                         f"3. Weryfikacja czy status jest widoczny dla zwykłego użytkownika (zgodnie z polityką).\n\n"
+                         f"- Uninstall: `{target_app.get('uninstall_endpoint', 'N/A')}`\n\n"
                          f"**Zadania deweloperskie:**\n"
-                         f"- Dodać dekorator `@admin_required` do endpointów instalacji/dezinstalacji.\n"
+                         f"- Dodać dekorator `@admin_required`.\n"
                          f"- Sprawdzić logowanie prób nieautoryzowanego dostępu."),
                 'labels': ['security', 'RBAC', f"epic:{epic_id}"],
                 'priority': 'critical',
                 'complexity': 'medium'
-            },
-            {
-                'title': f"Weryfikacja sanitizacji danych wejściowych: {target_app['name']}",
-                'desc': (f"Przeprowadzić audyt pod kątem podatności Injection (XSS, Command Injection) w {target_app['name']}.\n\n"
-                         f"**Obszary do sprawdzenia:**\n"
-                         f"- Pola formularzy konfiguracyjnych.\n"
-                         f"- Parametry URL w endpointach API.\n"
-                         f"- Nazwy plików/folderów przetwarzane przez aplikację.\n\n"
-                         f"**Scenariusze testowe (QA):**\n"
-                         f"1. Wprowadzenie znaków specjalnych (`<script>`, `../`, `;`) w polach tekstowych.\n"
-                         f"2. Próba wykonania komendy systemowej w polach ścieżek.\n\n"
-                         f"**Zadania deweloperskie:**\n"
-                         f"- Użyć funkcji `secure_filename` dla operacji na plikach.\n"
-                         f"- Escapować dane wyjściowe w widokach (jeśli renderowane po stronie serwera)."),
-                'labels': ['security', 'input-validation', f"epic:{epic_id}"],
-                'priority': 'high',
-                'complexity': 'medium'
-            },
-            {
-                'title': f"Audyt UI/UX - Responsywność: {target_app['name']}",
-                'desc': (f"Zweryfikować działanie interfejsu aplikacji {target_app['name']} na urządzeniach mobilnych i tabletach.\n\n"
-                         f"**Scenariusze testowe (QA):**\n"
-                         f"1. Sprawdzenie widoku na szerokości 375px (iPhone SE) i 768px (iPad).\n"
-                         f"2. Czy przyciski są wystarczająco duże (min. 44x44px)?\n"
-                         f"3. Czy tabele przewijają się horyzontalnie bez psucia układu?\n"
-                         f"4. Czy modale mieszczą się na ekranie?\n\n"
-                         f"**Zadania deweloperskie:**\n"
-                         f"- Dodać media queries dla małych ekranów.\n"
-                         f"- Dostosować Grid/Flexbox do układu jednokolumnowego na mobile."),
-                'labels': ['ui-ux', 'mobile', f"epic:{epic_id}"],
-                'priority': 'medium',
-                'complexity': 'medium'
-            },
-            {
-                'title': f"Audyt UI/UX - Komunikaty błędów: {target_app['name']}",
-                'desc': (f"Poprawić jakość komunikatów błędów zwracanych do użytkownika w {target_app['name']}.\n\n"
-                         f"**Problem:**\n"
-                         f"Często błędy backendu są zwracane jako surowy JSON lub 'Internal Server Error'.\n\n"
-                         f"**Oczekiwane zachowanie (QA):**\n"
-                         f"1. Użytkownik widzi zrozumiały komunikat (np. 'Brak połączenia z dyskiem' zamiast 'IOError: [Errno 2]').\n"
-                         f"2. Komunikaty sukcesu (Toast) znikają po 3-5 sekundach.\n"
-                         f"3. Błędy krytyczne wymagają potwierdzenia zamknięcia.\n\n"
-                         f"**Zadania deweloperskie:**\n"
-                         f"- Przechwytywać wyjątki w endpointach i zwracać `jsonify({{ 'error': 'Human readable message' }})`.\n"
-                         f"- W frontendzie używać `toast()` z odpowiednim typem ('error', 'success')."),
-                'labels': ['ui-ux', 'error-handling', f"epic:{epic_id}"],
-                'priority': 'medium',
-                'complexity': 'simple'
-            },
-            {
-                'title': f"Spójność wizualna (Style Guide): {target_app['name']}",
-                'desc': (f"Dostosować wygląd aplikacji {target_app['name']} do standardów EthOS Design System.\n\n"
-                         f"**Elementy do weryfikacji:**\n"
-                         f"- Kolor wiodący: `{target_app['color']}` (czy jest używany w nagłówkach/przyciskach?)\n"
-                         f"- Ikona: `{target_app['icon']}` (czy jest spójna w menu i nagłówku?)\n"
-                         f"- Spójność fontów (Inter/Roboto) i odstępów (spacing scale).\n\n"
-                         f"**Zadania deweloperskie:**\n"
-                         f"- Usunąć inline style CSS.\n"
-                         f"- Używać klas z `style.css` (np. `.btn-primary`, `.card`, `.text-lg`)."),
-                'labels': ['ui-ux', 'consistency', f"epic:{epic_id}"],
-                'priority': 'low',
-                'complexity': 'simple'
-            }
-        ]
+            })
+
+        # Ticket #2: Logic
+        tasks.append({
+            'title': f"⚙️ [Logic] Ciągłość sesji i przepływ ścieżek funkcjonalnych: {target_app['name']}",
+            'desc': (f"Analiza logiki biznesowej i utrzymania stanu aplikacji.\n\n"
+                     f"**Context Aware:**\n"
+                     f"Skup się na logice aplikacji Ethos, nie na izolacji Docker.\n"
+                     f"- Czy stan aplikacji jest zachowany po odświeżeniu?\n"
+                     f"- Czy błędy sieciowe są obsługiwane graceful degrade?"),
+            'labels': ['logic', 'flow', f"epic:{epic_id}"],
+            'priority': 'medium',
+            'complexity': 'medium'
+        })
+
+        # Ticket #3: UX/UI
+        tasks.append({
+            'title': f"🎨 [UX/UI] Dostosowanie do Design Systemu Ethos: {target_app['name']}",
+            'desc': (f"Dostosować wygląd aplikacji {target_app['name']} do standardów EthOS Design System.\n\n"
+                     f"**Elementy do weryfikacji:**\n"
+                     f"- Kolor wiodący: `{target_app.get('color', 'N/A')}`\n"
+                     f"- Ikona: `{target_app.get('icon', 'N/A')}`\n"
+                     f"- Spójność fontów i odstępów."),
+            'labels': ['ui-ux', 'design-system', f"epic:{epic_id}"],
+            'priority': 'low',
+            'complexity': 'simple'
+        })
+
+        # Ticket #4: Performance (New Section)
+        perf_details = (f"Analiza: Czas ładowania zasobów pakietu oraz zużycie pamięci.\n\n"
+                        f"**Wyniki skanowania:**\n"
+                        f"- Rozmiar pliku JS: **{js_size_kb} KB**\n"
+                        f"- Zależności: {len(deps)}\n\n")
         
+        perf_tasks = (f"**Implementacja (Dev):**\n"
+                      f"- Wprowadź Lazy Loading dla modułów (jeśli > 200KB).\n"
+                      f"- Zoptymalizuj wielkość paczki (bundle size).\n"
+                      f"- Sprawdź wycieki pamięci przy przełączaniu funkcji.\n\n"
+                      f"**Testy (QA):**\n"
+                      f"- Zmierz czas TTFB (Time to First Byte).\n"
+                      f"- Sprawdź zachowanie przy ograniczonym transferze (Throttling 3G).")
+
+        if js_size_kb > 500:
+            perf_details += f"⚠️ **ZAGROŻENIE:** Assety > 500KB mogą spowalniać ładowanie na słabych łączach.\n\n"
+        
+        tasks.append({
+            'title': f"🚀 [Perf] Optymalizacja assetów i czasu odpowiedzi API: {target_app['name']}",
+            'desc': perf_details + perf_tasks,
+            'labels': ['performance', 'optimization', f"epic:{epic_id}"],
+            'priority': 'medium',
+            'complexity': 'medium'
+        })
+
+        # Create tasks
         for task in tasks:
             tid = _gen_id('t_')
             t_ticket = {
@@ -1073,7 +1161,7 @@ def bug_hunt(project_id):
                 'reporter': g.username,
                 'labels': task['labels'],
                 'comments': [],
-                'order': 0, # Placeholder, will update later
+                'order': 0, 
                 'created': now,
                 'updated': now,
             }
