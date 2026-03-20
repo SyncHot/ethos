@@ -986,6 +986,40 @@ def _adapt_compose(compose_text, app_id):
     gid = str(os.getgid())
     text = re.sub(r'\$\{?PUID\}?', uid, text)
     text = re.sub(r'\$\{?PGID\}?', gid, text)
+    def _normalize_webui_ports(raw_text):
+        ports_block_re = re.compile(r'^\s*ports\s*:')
+        host_port_re = re.compile(r'^(\s*-\s*)(["\']?)\s*\$\{?WEBUI_PORT\}?\s*:\s*(.*)$')
+
+        result_lines = []
+        in_ports = False
+        ports_indent = 0
+
+        for line in raw_text.splitlines(keepends=True):
+            stripped = line.strip()
+            indent = len(line) - len(line.lstrip())
+
+            if in_ports and stripped and indent <= ports_indent and not stripped.startswith('-'):
+                in_ports = False
+
+            if not in_ports and ports_block_re.match(line):
+                in_ports = True
+                ports_indent = indent
+                result_lines.append(line)
+                continue
+
+            if in_ports and stripped.startswith('-'):
+                core = line.rstrip('\r\n')
+                newline = line[len(core):]
+                match = host_port_re.match(core)
+                if match:
+                    prefix, quote, remainder = match.groups()
+                    line = f'{prefix}{quote}{remainder}{newline}'
+
+            result_lines.append(line)
+
+        return ''.join(result_lines)
+
+    text = _normalize_webui_ports(text)
     text = re.sub(r'\$\{?WEBUI_PORT\}?', '', text)
 
     # Unsafe per-service keys that grant excess host privileges
