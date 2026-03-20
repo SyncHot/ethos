@@ -1457,6 +1457,11 @@ async function renderTickets(body, launchOpts) {
         const columns = currentProject.columns || DEFAULT_COLUMNS;
         const members = currentProject.members || [];
         const ticketComments = await loadComments(ticket.id);
+        let localModel = null;
+        try {
+            const lm = await api('/aichat/models/active');
+            localModel = (lm && lm.model) || null;
+        } catch (e) { localModel = null; }
 
         /* ── fetch copilot logs list ── */
         let copilotLogs = [];
@@ -1594,9 +1599,8 @@ async function renderTickets(body, launchOpts) {
                     const isActive = watcherExecuting && watcherExecuting.ticket_id === ticket.id;
                     const modelList = copilotLogs.map(l => l.model).filter(Boolean);
                     const uniqueModels = [...new Set(modelList)];
-                    if (!isActive && !uniqueModels.length) return '';
                     let s = '<div class="tk-agent-section" style="margin-top:16px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.1);">';
-                    s += '<label><i class="fas fa-robot" style="margin-right:4px;"></i> ' + t('Agent Copilot') + '</label>';
+                    s += '<label><i class="fas fa-robot" style="margin-right:4px;"></i> ' + t('Agent Copilot / Lokalny') + '</label>';
                     if (isActive) {
                         const elapsed = watcherExecuting.elapsed ? Math.round(watcherExecuting.elapsed / 60) + ' min' : '';
                         const qaCycle = watcherExecuting.qa_cycle || 0;
@@ -1613,7 +1617,18 @@ async function renderTickets(body, launchOpts) {
                         s += '<span class="tk-model-history-label">' + t('Modele') + ':</span> ';
                         s += uniqueModels.map(m => '<span class="tk-model-tag">' + _escHtml(m) + '</span>').join(' ');
                         s += '</div>';
+                    } else if (!isActive) {
+                        s += '<div class="tk-agent-hint" style="font-size:12px;opacity:0.75;">' + t('Copilot nie wykonał jeszcze akcji dla tego ticketa.') + '</div>';
                     }
+                    s += '<div class="tk-agent-actions" style="margin-top:8px;display:flex;flex-wrap:wrap;gap:8px;">';
+                    const lm = localModel ? (localModel.name || localModel.id || 'local') : null;
+                    const lmLabel = lm ? _escHtml(lm) : t('brak aktywnego modelu');
+                    s += '<button class="tk-btn tk-btn-small" id="tk-open-aichat"><i class="fas fa-comments"></i> ' + t('AI Chat (lokalny)') + '</button>';
+                    s += '<div class="tk-agent-hint" style="font-size:12px;opacity:0.75;">' + t('Otwórz AI Chat z kontekstem ticketa (bez RAG). Lokalny model: ') + lmLabel + '</div>';
+                    if (!localModel) {
+                        s += '<div class="tk-agent-hint" style="font-size:12px;color:#f97316;">' + t('Aktywuj model w Bibliotece modeli (np. Qwen 2.5 Coder 7B) aby użyć lokalnego agenta.') + '</div>';
+                    }
+                    s += '</div>';
                     s += '</div>';
                     return s;
                 })()}
@@ -1794,6 +1809,29 @@ async function renderTickets(body, launchOpts) {
             }
             e.target.value = '';
         };
+
+        /* ── AI Chat integration ── */
+        const aiBtn = overlay.querySelector('#tk-open-aichat');
+        if (aiBtn) {
+            aiBtn.onclick = () => {
+                const appDef = (window.NAS && NAS.apps || []).find(a => a.id === 'ai-chat');
+                if (!appDef) { toast(t('AI Chat niedostępny'), 'error'); return; }
+                const launchOpts = {
+                    ticketContext: {
+                        id: ticket.id,
+                        title: ticket.title,
+                        description: ticket.description || '',
+                        priority: ticket.priority,
+                        complexity: ticket.complexity,
+                        column: ticket.column,
+                        labels: ticket.labels || [],
+                    },
+                    preferredModel: localModel ? { id: localModel.id, name: localModel.name } : null,
+                    disableRag: true
+                };
+                openApp(appDef, launchOpts);
+            };
+        }
 
         /* ── comments ── */
         let _commentCount = ticketComments.length;

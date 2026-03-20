@@ -1,15 +1,22 @@
 /* ─────────────────── AI Chat (EthOS) — Advanced Edition ─────────────────── */
-/* globals AppRegistry, createWindow, NAS, showToast, t */
+/* globals AppRegistry, createWindow, NAS, showToast, t, WM */
 
-AppRegistry['ai-chat'] = function (appDef) {
+AppRegistry['ai-chat'] = function (appDef, launchOpts) {
+    var alreadyOpen = typeof WM !== 'undefined' && WM.windows && WM.windows.has('ai-chat');
     createWindow('ai-chat', {
         title: t('AI Chat'),
         icon: appDef.icon,
         iconColor: appDef.color,
         width: 1050,
         height: 700,
-        onRender: function (body) { renderAIChat(body); },
+        onRender: function (body) { renderAIChat(body, launchOpts); },
     });
+    // createWindow returns early (focusing the existing window) when singleton is already open,
+    // so onRender is never called. Apply launchOpts directly to the running instance instead.
+    if (alreadyOpen && launchOpts) {
+        _aic.pendingLaunch = launchOpts;
+        _aicMaybeHandleLaunch();
+    }
 };
 
 /* ═══════════════════════════ STATE ═══════════════════════════ */
@@ -35,6 +42,9 @@ var _aic = {
     rag: null,           // {stats, indexing, progress, rag_enabled}
     ragSources: [],      // sources from last RAG response
     deps: null,
+    pendingLaunch: null, // optional deep-link launch options
+    convOverrides: {},   // conversation_id -> { providerOverride, ragEnabled, modelOverride }
+    pendingOverrides: null, // overrides to apply once new conversation id is known
 };
 
 function _aicTierClass(id) {
@@ -145,15 +155,55 @@ function _aicMd(text) {
 }
 
 /* ═══════════════════════════ MAIN RENDER ═══════════════════════════ */
-function renderAIChat(body) {
+function renderAIChat(body, launchOpts) {
+    _aic.pendingLaunch = launchOpts || null;
     body.innerHTML = `<div class="aic-root"><div class="aic-loading"><i class="fas fa-spinner fa-spin"></i> ${t('Ładowanie…')}</div></div>`;
     _aicLoadConfig(function () {
         _aicLoadStatus(function () {
             _aicLoadConversations(function () {
                 _aicRender(body);
+                _aicMaybeHandleLaunch();
             });
         });
     });
+}
+
+function _aicMaybeHandleLaunch() {
+    var opts = _aic.pendingLaunch;
+    if (!opts || opts._handled) return;
+    opts._handled = true;
+    if (opts.ticketContext) {
+        var tk = opts.ticketContext;
+        var preferredModel = opts.preferredModel || null;
+        var ragOff = true;
+        if (Object.prototype.hasOwnProperty.call(opts, 'disableRag')) {
+            ragOff = !!opts.disableRag;
+        }
+        var modelOverride = null;
+        if (preferredModel && typeof preferredModel.id === 'string') {
+            modelOverride = preferredModel.id;
+        }
+        var summary = [
+            'Jesteś lokalnym agentem kodowania EthOS (bez RAG).',
+            'Ticket: ' + (tk.id || ''),
+            'Tytuł: ' + (tk.title || ''),
+        ];
+        if (tk.description) summary.push('Opis: ' + tk.description);
+        if (tk.priority) summary.push('Priorytet: ' + tk.priority);
+        if (tk.complexity) summary.push('Złożoność: ' + tk.complexity);
+        if (tk.column) summary.push('Kolumna: ' + tk.column);
+        if (tk.labels && tk.labels.length) summary.push('Etykiety: ' + tk.labels.join(', '));
+        if (preferredModel) {
+            summary.push('Preferowany model: ' + (preferredModel.label || preferredModel.name || preferredModel.id || 'lokalny'));
+        }
+        summary.push('Używaj lokalnego modelu (np. Qwen 2.5 Coder 7B) i nie korzystaj z RAG.');
+        _aicSendMessage(summary.join('\n'), {
+            ragEnabled: !ragOff,
+            forceNewConv: true,
+            providerOverride: 'local',
+            modelOverride: modelOverride
+        });
+    }
 }
 
 function _aicLoadConfig(cb) {
@@ -493,38 +543,61 @@ window._aicDeleteConv = function (id) {
         .then(function () {
             _aic.convs = _aic.convs.filter(function (c) { return c.id !== id; });
             if (_aic.activeConv && _aic.activeConv.id === id) _aic.activeConv = null;
+            if (_aic.convOverrides && _aic.convOverrides[id]) delete _aic.convOverrides[id];
             var root = document.querySelector('.aic-root');
             if (root) _aicRender(root.parentElement);
         });
 };
 
 /* ═══════════════════════════ SEND MESSAGE ═══════════════════════════ */
-window._aicSend = function () {
+function _aicSendMessage(msg, opts) {
     if (_aic.streaming) return;
     var input = document.querySelector('#aicInput');
-    if (!input) return;
-    var msg = input.value.trim();
-    if (!msg) return;
-    input.value = '';
-    input.style.height = 'auto';
+    var text = (msg || (input ? input.value : '') || '').trim();
+    if (!text) return;
+    if (input && (!opts || !opts.keepInput)) {
+        input.value = '';
+        input.style.height = 'auto';
+    }
 
     _aic.streaming = true;
     var sendBtn = document.querySelector('#aicSendBtn');
     if (sendBtn) sendBtn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
 
     var convId = _aic.activeConv ? _aic.activeConv.id : null;
+    if (opts && opts.forceNewConv) {
+        convId = null;
+        _aic.activeConv = null;
+    }
+    var overrides = {};
+    var activeId = convId || (_aic.activeConv && _aic.activeConv.id) || null;
+    if (activeId && _aic.convOverrides[activeId]) {
+        Object.assign(overrides, _aic.convOverrides[activeId]);
+    } else if (!activeId && _aic.pendingOverrides) {
+        Object.assign(overrides, _aic.pendingOverrides);
+    }
+    if (opts && Object.prototype.hasOwnProperty.call(opts, 'ragEnabled')) {
+        overrides.ragEnabled = opts.ragEnabled;
+    }
+    if (opts && typeof opts.providerOverride === 'string') {
+        overrides.providerOverride = opts.providerOverride;
+    }
+    if (opts && typeof opts.modelOverride === 'string') {
+        overrides.modelOverride = opts.modelOverride;
+    }
     var filesPayload = _aic.attachedFiles.map(function (f) { return { path: f.path, content: f.content }; });
+    if (opts && Array.isArray(opts.files)) filesPayload = opts.files;
     _aic.attachedFiles = [];
     _aicRenderAttachBar();
 
     // Optimistic UI
     if (!_aic.activeConv) {
-        _aic.activeConv = { id: null, title: msg.substring(0, 80), messages: [] };
+        _aic.activeConv = { id: null, title: text.substring(0, 80), messages: [] };
     }
-    var displayMsg = msg;
+    var displayMsg = text;
     if (filesPayload.length) {
         var fnames = filesPayload.map(function (f) { return f.path.split('/').pop(); });
-        displayMsg = '\u{1f4ce} ' + fnames.join(', ') + '\n\n' + msg;
+        displayMsg = '\u{1f4ce} ' + fnames.join(', ') + '\n\n' + text;
     }
     _aic.activeConv.messages.push({ role: 'user', content: displayMsg, timestamp: new Date().toISOString() });
 
@@ -545,9 +618,30 @@ window._aicSend = function () {
         container.scrollTop = container.scrollHeight;
     }
 
+    var body = { conversation_id: convId, message: text, files: filesPayload };
+    if (Object.prototype.hasOwnProperty.call(overrides, 'ragEnabled')) {
+        body.rag_enabled = overrides.ragEnabled;
+    }
+    if (typeof overrides.providerOverride === 'string') {
+        body.provider_override = overrides.providerOverride;
+    }
+    if (typeof overrides.modelOverride === 'string') {
+        body.model = overrides.modelOverride;
+    }
+    var hasOverrides = Object.keys(overrides).length > 0;
+    if (hasOverrides) {
+        if (convId) {
+            _aic.convOverrides[convId] = overrides;
+        } else {
+            _aic.pendingOverrides = overrides;
+        }
+    } else if (opts && opts.forceNewConv) {
+        _aic.pendingOverrides = null;
+    }
+
     _aicFetch('/api/aichat/chat', {
         method: 'POST',
-        body: JSON.stringify({ conversation_id: convId, message: msg, files: filesPayload }),
+        body: JSON.stringify(body),
     }).then(function (response) {
         if (!response.ok) {
             return response.json().then(function (d) { throw new Error(d.error || 'HTTP ' + response.status); });
@@ -568,7 +662,14 @@ window._aicSend = function () {
                 try {
                     var ev = JSON.parse(line.substring(6));
                     if (ev.type === 'meta' && ev.conversation_id) {
-                        if (!convId) { convId = ev.conversation_id; _aic.activeConv.id = convId; }
+                        if (!convId) {
+                            convId = ev.conversation_id;
+                            _aic.activeConv.id = convId;
+                            if (_aic.pendingOverrides) {
+                                _aic.convOverrides[convId] = _aic.pendingOverrides;
+                                _aic.pendingOverrides = null;
+                            }
+                        }
                         // Capture RAG sources for display
                         if (ev.rag_sources && ev.rag_sources.length) {
                             _aic.ragSources = ev.rag_sources;
@@ -602,6 +703,10 @@ window._aicSend = function () {
         if (bubble) bubble.innerHTML = '<span class="aic-error">' + _aicEsc(err.message) + '</span>';
         _aicStreamDone('', aiIdx);
     });
+}
+
+window._aicSend = function () {
+    _aicSendMessage();
 };
 
 function _aicStreamDone(fullText, aiIdx) {

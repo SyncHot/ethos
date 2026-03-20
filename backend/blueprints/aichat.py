@@ -683,7 +683,16 @@ def chat():
         return jsonify({'error': 'Brak wiadomości'}), 400
 
     cfg = _load_config(username)
-    is_local = cfg.get('provider') == 'local'
+    provider = cfg.get('provider')
+    req_provider = data.get('provider_override')
+    if isinstance(req_provider, str):
+        rp = req_provider.strip()
+        if rp in ('local', 'openai', 'azure', 'custom'):
+            provider = rp
+    # Allow per-request override of RAG usage (without changing saved config)
+    req_rag_enabled = data.get('rag_enabled')
+    rag_enabled = cfg.get('rag_enabled', True) if req_rag_enabled is None else bool(req_rag_enabled)
+    is_local = provider == 'local'
     if not is_local and not cfg.get('api_key'):
         return jsonify({'error': 'Nie skonfigurowano klucza API. Otwórz ustawienia (⚙) i podaj klucz.'}), 400
 
@@ -701,7 +710,7 @@ def chat():
     # ── RAG: auto-inject context if enabled and no manual files attached ──
     rag_context = ''
     rag_sources = []
-    if cfg.get('rag_enabled', True) and not attached_files:
+    if rag_enabled and not attached_files:
         try:
             sandbox = _user_sandbox_root()
             indexer = _get_rag(username, sandbox)
@@ -761,7 +770,10 @@ def chat():
             api_messages.append({'role': m['role'], 'content': m['content']})
 
     # ── Smart context trimming — prevent token overflow ──
+    req_model = data.get('model')
     model_name = cfg.get('model', 'gpt-4o')
+    if isinstance(req_model, str) and req_model.strip():
+        model_name = req_model.strip()
     context_window = _MODEL_CONTEXT.get(model_name, _DEFAULT_CONTEXT_WINDOW)
     if is_local:
         context_window = min(context_window, 4096)  # local models typically small
@@ -868,7 +880,7 @@ def chat():
             else:
                 # ── REMOTE API (OpenAI / Azure / Custom) ──
                 api_body = {
-                    'model': cfg['model'],
+                    'model': model_name,
                     'messages': api_messages,
                     'max_tokens': int(cfg.get('max_tokens', 4096)),
                     'temperature': float(cfg.get('temperature', 0.7)),
