@@ -1446,6 +1446,12 @@
 .gal-folder-parent { color:#64748b; }
 .gal-folder-modal-empty { padding:24px; text-align:center; color:#475569; font-size:13px; }
 .gal-folder-modal-footer { padding:12px 20px; border-top:1px solid #1e293b; text-align:right; }
+.gal-folder-modal-warning {
+    margin-top: 8px;
+    font-size: 0.85em;
+    text-align: left;
+    color: var(--danger);
+}
 .gal-folder-add-btn {
   background:linear-gradient(135deg,#ec4899,var(--accent-purple)); border:none; color:#fff;
   padding:8px 20px; border-radius: var(--r-md); cursor:pointer; font-size:13px; font-weight:600;
@@ -2665,6 +2671,7 @@
 
 /* ─── Ticket Cards ─── */
 .tk-card {
+  position: relative;
   background: var(--bg-primary);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
@@ -3336,6 +3343,7 @@ select.tk-input {
 
 /* Child cards — slightly smaller, subtask feel */
 .tk-card-child {
+  position: relative;
   background: var(--bg-primary);
   border: 1px solid var(--border);
   border-radius: var(--r-md);

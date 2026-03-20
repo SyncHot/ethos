@@ -140,6 +140,7 @@ async function renderTickets(body, launchOpts) {
     let filterAssignee = '';
     let filterPriority = '';
     let filterSearch = '';
+    let selectedTickets = new Set();
     let watcherExecuting = null;  // { executing, ticket_id, model, elapsed, ... }
 
     /* ── root container ── */
@@ -165,12 +166,14 @@ async function renderTickets(body, launchOpts) {
         filterAssignee = '';
         filterPriority = '';
         filterSearch = '';
+        selectedTickets.clear();
         await loadProjects();
         renderProjectList();
     }
 
     async function showBoard(project) {
         currentProject = project;
+        selectedTickets.clear();
         await Promise.all([loadTickets(project.id), loadWatcherState()]);
         renderBoard();
     }
@@ -301,6 +304,29 @@ async function renderTickets(body, launchOpts) {
         } catch (e) {
             toast(t('Błąd usuwania ticketu'), 'error');
         }
+    }
+
+    async function deleteSelectedTickets() {
+        if (selectedTickets.size === 0) return;
+        const ids = Array.from(selectedTickets);
+        
+        tkConfirm(
+            t('Usuń tickety'),
+            t('Czy na pewno chcesz usunąć') + ' ' + ids.length + ' ' + t('zaznaczonych ticketów?'),
+            async () => {
+                 try {
+                    await Promise.all(ids.map(id => api('/tickets/tickets/' + id, { method: 'DELETE' })));
+                    selectedTickets.clear();
+                    updateSelectionToolbar();
+                    toast(t('Tickety usunięte'), 'success');
+                    await loadTickets(currentProject.id);
+                    renderBoard();
+                } catch (err) {
+                    console.error(err);
+                    toast(t('Błąd podczas usuwania'), 'error');
+                }
+            }
+        );
     }
 
     async function moveTicket(id, column, order) {
@@ -708,6 +734,18 @@ async function renderTickets(body, launchOpts) {
         }
     }
 
+    function updateSelectionToolbar() {
+        const btn = document.getElementById('tk-delete-selected');
+        const countSpan = document.getElementById('tk-sel-count');
+        if (!btn || !countSpan) return;
+        if (selectedTickets.size > 0) {
+            btn.style.display = 'inline-flex';
+            countSpan.innerText = `(${selectedTickets.size})`;
+        } else {
+            btn.style.display = 'none';
+        }
+    }
+
     function renderBoard() {
         const columns = currentProject.columns || DEFAULT_COLUMNS;
         const filtered = getFilteredTickets();
@@ -728,6 +766,9 @@ async function renderTickets(body, launchOpts) {
                     <div style="flex:1;"></div>
                     <button class="tk-btn tk-btn-primary" id="tk-new-ticket">
                         <i class="fas fa-plus"></i> ${t('Ticket')}
+                    </button>
+                    <button class="tk-btn tk-btn-danger" id="tk-delete-selected" style="margin-left:8px; display:none;">
+                        <i class="fas fa-trash"></i> <span id="tk-sel-count"></span>
                     </button>
                     <button class="tk-act-btn" id="tk-find-bugs-btn" title="${t('Znajdź 5 bugów')}">
                         <i class="fas fa-bug"></i>
@@ -771,6 +812,7 @@ async function renderTickets(body, launchOpts) {
             // Bindings
             app.querySelector('#tk-back').onclick = () => showProjectList();
             app.querySelector('#tk-new-ticket').onclick = () => showCreateTicketModal();
+            app.querySelector('#tk-delete-selected').onclick = () => deleteSelectedTickets();
             const findBugsBtn = app.querySelector('#tk-find-bugs-btn');
             if (findBugsBtn) findBugsBtn.onclick = () => findFiveBugs();
             
@@ -801,6 +843,15 @@ async function renderTickets(body, launchOpts) {
                 clearTimeout(_searchDebounce);
                 _searchDebounce = setTimeout(() => renderBoard(), 250);
             };
+
+            app.addEventListener('change', (e) => {
+                if (e.target.classList.contains('tk-ticket-check')) {
+                    const id = e.target.dataset.id;
+                    if (e.target.checked) selectedTickets.add(id);
+                    else selectedTickets.delete(id);
+                    updateSelectionToolbar();
+                }
+            });
         } else {
              // Update Toolbar Title/Color if needed (cheap)
              const titleEl = app.querySelector('.tk-board-title');
@@ -848,6 +899,9 @@ async function renderTickets(body, launchOpts) {
             ).join('');
 
             epicCard.innerHTML = `
+                <div class="tk-card-select" onclick="event.stopPropagation()" style="position:absolute;top:6px;right:6px;z-index:10;">
+                    <input type="checkbox" class="tk-ticket-check" data-id="${epicTk.id}" ${selectedTickets.has(epicTk.id) ? 'checked' : ''} style="cursor:pointer;transform:scale(1.2);">
+                </div>
                 <div class="tk-card-header">
                     ${_tkTypeIcon('epic')}
                     <span class="tk-priority-dot" style="background:${prioColor};" title="${_escHtml(PRIORITY_LABELS[epicTk.priority] || epicTk.priority)}"></span>
@@ -916,6 +970,9 @@ async function renderTickets(body, launchOpts) {
                     ).join('');
 
                     childCard.innerHTML = `
+                        <div class="tk-card-select" onclick="event.stopPropagation()" style="position:absolute;top:6px;right:6px;z-index:10;">
+                            <input type="checkbox" class="tk-ticket-check" data-id="${ch.id}" ${selectedTickets.has(ch.id) ? 'checked' : ''} style="cursor:pointer;transform:scale(1.2);">
+                        </div>
                         <div class="tk-card-header">
                             ${_tkTypeIcon(ch.type || 'subtask')}
                             <span class="tk-subtask-icon${isDone ? ' done' : ''}" style="--epic-color:${color};">
@@ -969,6 +1026,9 @@ async function renderTickets(body, launchOpts) {
             const compInfo = COMPLEXITY_LEVELS[tk.complexity] || COMPLEXITY_LEVELS.medium;
 
             card.innerHTML = `
+                <div class="tk-card-select" onclick="event.stopPropagation()" style="position:absolute;top:6px;right:6px;z-index:10;">
+                    <input type="checkbox" class="tk-ticket-check" data-id="${tk.id}" ${selectedTickets.has(tk.id) ? 'checked' : ''} style="cursor:pointer;transform:scale(1.2);">
+                </div>
                 <div class="tk-card-header">
                     ${_tkTypeIcon(tk.type)}
                     <span class="tk-priority-dot" style="background:${prioColor};" title="${_escHtml(PRIORITY_LABELS[tk.priority] || tk.priority)}"></span>
