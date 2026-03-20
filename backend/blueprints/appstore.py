@@ -391,22 +391,43 @@ def _extract_ports_from_services(services):
     ports = set()
     if not isinstance(services, dict):
         return ports
+    def _add_host_candidate(candidate):
+        candidate_value = str(candidate or '')
+        candidate_value = candidate_value.split('/')[0].strip()
+        if not candidate_value:
+            return
+        if '-' in candidate_value:
+            bounds = [segment.strip() for segment in candidate_value.split('-', 1)]
+            if len(bounds) == 2 and bounds[0].isdigit() and bounds[1].isdigit():
+                start, end = int(bounds[0]), int(bounds[1])
+                low, high = min(start, end), max(start, end)
+                ports.update(range(low, high + 1))
+                return
+        if candidate_value.isdigit():
+            ports.add(int(candidate_value))
     for svc in services.values():
         if not isinstance(svc, dict):
             continue
         for port_entry in (svc.get('ports') or []):
+            if isinstance(port_entry, dict):
+                host_candidate = (
+                    port_entry.get('published')
+                    or port_entry.get('published_port')
+                )
+                if host_candidate is not None:
+                    try:
+                        _add_host_candidate(host_candidate)
+                    except (ValueError, IndexError):
+                        pass
+                continue
             p = str(port_entry)
             # Formats: "8080:80", "8080:80/tcp", "127.0.0.1:8080:80"
             parts = p.split(':')
             try:
                 if len(parts) >= 2:
-                    host_port = parts[-2].split('/')[-1].strip()
-                    if host_port.isdigit():
-                        ports.add(int(host_port))
+                    _add_host_candidate(parts[-2])
                 elif len(parts) == 1:
-                    hp = parts[0].split('/')[0].strip()
-                    if hp.isdigit():
-                        ports.add(int(hp))
+                    _add_host_candidate(parts[0])
             except (ValueError, IndexError):
                 pass
     return ports
