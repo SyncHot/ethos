@@ -375,15 +375,22 @@ def _list_compose_services(project_path, compose_files):
 
 def _policy_to_service_limits(policy):
     """Translate sandbox policy into docker-compose service options."""
-    limits = {}
+    service_config = {}
+    
+    # Initialize deploy structure
+    deploy = {'resources': {'limits': {}, 'reservations': {}}}
+    has_deploy_limits = False
+    has_deploy_reservations = False
 
     mem_limit = str(policy.get('mem_limit', '')).strip()
     if mem_limit and mem_limit != '0':
-        limits['mem_limit'] = mem_limit
+        deploy['resources']['limits']['memory'] = mem_limit
+        has_deploy_limits = True
 
     mem_reservation = str(policy.get('mem_reservation', '')).strip()
     if mem_reservation and mem_reservation != '0':
-        limits['mem_reservation'] = mem_reservation
+        deploy['resources']['reservations']['memory'] = mem_reservation
+        has_deploy_reservations = True
 
     cpu_quota = policy.get('cpu_quota', 0)
     try:
@@ -391,7 +398,8 @@ def _policy_to_service_limits(policy):
     except (TypeError, ValueError):
         cpu_quota = 0
     if cpu_quota > 0:
-        limits['cpus'] = round(cpu_quota / 100.0, 3)
+        deploy['resources']['limits']['cpus'] = round(cpu_quota / 100.0, 3)
+        has_deploy_limits = True
 
     pids_limit = policy.get('pids_limit', 0)
     try:
@@ -399,23 +407,37 @@ def _policy_to_service_limits(policy):
     except (TypeError, ValueError):
         pids_limit = 0
     if pids_limit > 0:
-        limits['pids_limit'] = pids_limit
+        deploy['resources']['limits']['pids'] = pids_limit
+        has_deploy_limits = True
+
+    # Clean up empty sections
+    if not has_deploy_limits:
+        if 'limits' in deploy['resources']:
+            del deploy['resources']['limits']
+    if not has_deploy_reservations:
+        if 'reservations' in deploy['resources']:
+            del deploy['resources']['reservations']
+    if not deploy['resources']:
+        del deploy['resources']
+    
+    if has_deploy_limits or has_deploy_reservations:
+        service_config['deploy'] = deploy
 
     if policy.get('read_only_root'):
-        limits['read_only'] = True
+        service_config['read_only'] = True
 
     if policy.get('no_new_privileges'):
-        limits['security_opt'] = ['no-new-privileges:true']
+        service_config['security_opt'] = ['no-new-privileges:true']
 
     cap_drop = policy.get('cap_drop') or []
     if cap_drop:
-        limits['cap_drop'] = cap_drop
+        service_config['cap_drop'] = cap_drop
 
     cap_add = policy.get('cap_add') or []
     if cap_add:
-        limits['cap_add'] = cap_add
+        service_config['cap_add'] = cap_add
 
-    return limits
+    return service_config
 
 
 def _ensure_sandbox_override(project_name, project_path, main_filename):
