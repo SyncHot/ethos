@@ -151,6 +151,16 @@ _config_defaults = {
     'watch_folder_enabled': False,
     'overwrite_existing': False,
     'speed_limit': 0,
+    'auto_categorize': True,
+    'categories': [
+        {'id': 'movies', 'name': 'Filmy', 'path': '', 'extensions': ['mp4', 'mkv', 'avi', 'mov', 'wmv', 'm4v']},
+        {'id': 'music', 'name': 'Muzyka', 'path': '', 'extensions': ['mp3', 'flac', 'wav', 'aac', 'ogg', 'wma', 'm4a']},
+        {'id': 'documents', 'name': 'Dokumenty', 'path': '', 'extensions': ['pdf', 'doc', 'docx', 'txt', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods']},
+        {'id': 'software', 'name': 'Oprogramowanie', 'path': '', 'extensions': ['iso', 'exe', 'msi', 'deb', 'rpm', 'apk', 'sh', 'appimage', 'dmg']},
+        {'id': 'images', 'name': 'Obrazy', 'path': '', 'extensions': ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'tiff', 'svg', 'webp']},
+        {'id': 'archives', 'name': 'Archiwa', 'path': '', 'extensions': ['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz']},
+        {'id': 'other', 'name': 'Inne', 'path': '', 'extensions': []}
+    ]
 }
 
 
@@ -1354,6 +1364,23 @@ def _download_worker(dl_id):
             if not file_links:
                 raise Exception("Brak plików do pobrania z torrenta")
 
+            # Try to auto-categorize torrent if using default path
+            if config.get('auto_categorize', True):
+                current_dest = dl.get('dest_dir')
+                default_torrent = config.get('default_dir_torrent')
+                # If current dest matches default, try to categorize
+                if current_dest and default_torrent and os.path.normpath(current_dest) == os.path.normpath(default_torrent):
+                    largest = max(file_links, key=lambda x: x.get('filesize', 0))
+                    cat_id, cat_path = _get_category_for_file(largest.get('filename', ''), config)
+                    if cat_id:
+                        dest_dir = cat_path
+                        with _lock:
+                            dl['category_id'] = cat_id
+                            dl['dest_dir'] = dest_dir
+                            _save_state()
+                        if not os.path.exists(dest_dir):
+                            os.makedirs(dest_dir, exist_ok=True)
+
             # Download all resulting files
             with _lock:
                 dl['status'] = 'downloading'
@@ -1454,6 +1481,21 @@ def _download_worker(dl_id):
     filename = dl.get('filename') or (resolved or {}).get('filename') or _guess_filename(download_url)
     filesize = (resolved or {}).get('filesize', 0)
 
+    # Auto-categorize
+    if config.get('auto_categorize', True):
+        current_dest = dl.get('dest_dir')
+        default_dir = config.get('default_dir')
+        if current_dest and default_dir and os.path.normpath(current_dest) == os.path.normpath(default_dir):
+            cat_id, cat_path = _get_category_for_file(filename, config)
+            if cat_id:
+                dest_dir = cat_path
+                with _lock:
+                    dl['category_id'] = cat_id
+                    dl['dest_dir'] = dest_dir
+                    _save_state()
+                if not os.path.exists(dest_dir):
+                    os.makedirs(dest_dir, exist_ok=True)
+
     retries = dl.get('retry_count', 0)
     max_retries = MAX_RETRIES
 
@@ -1553,6 +1595,38 @@ def _calc_eta(dl):
     return int(remaining / speed)
 
 
+def _get_category_for_file(filename, config):
+    """Determine category and destination path based on file extension."""
+    if not config.get('auto_categorize', True):
+        return None, None
+    
+    ext = os.path.splitext(filename)[1].lower().lstrip('.')
+    if not ext:
+        return None, None
+    
+    categories = config.get('categories', [])
+    for cat in categories:
+        if ext in cat.get('extensions', []):
+            # Found matching category
+            # If cat path is absolute, use it. Else relative to default_dir
+            cat_path = cat.get('path')
+            if not cat_path:
+                base_dir = config.get('default_dir', '/home')
+                cat_path = os.path.join(base_dir, cat['name'])
+            return cat['id'], _safe_path(cat_path)
+            
+    # No match found - use 'other' category if defined
+    other = next((c for c in categories if c['id'] == 'other'), None)
+    if other:
+         cat_path = other.get('path')
+         if not cat_path:
+             base_dir = config.get('default_dir', '/home')
+             cat_path = os.path.join(base_dir, other['name'])
+         return other['id'], _safe_path(cat_path)
+
+    return None, None
+
+
 def _sanitize(dl):
     """Return a safe copy for JSON serialization."""
     d = {
@@ -1577,6 +1651,7 @@ def _sanitize(dl):
         'package_id': dl.get('package_id', ''),
         'eta': _calc_eta(dl),
         'retry_count': dl.get('retry_count', 0),
+        'category_id': dl.get('category_id', ''),
     }
     if d['is_torrent']:
         d['torrent_status'] = dl.get('torrent_status', '')
@@ -2694,6 +2769,10 @@ def set_config():
         cfg['speed_limit'] = max(0, int(data['speed_limit']))
     if 'debrid_service' in data:
         cfg['debrid_service'] = data['debrid_service']
+    if 'auto_categorize' in data:
+        cfg['auto_categorize'] = bool(data['auto_categorize'])
+    if 'categories' in data:
+        cfg['categories'] = data['categories']
 
     # Only update API keys if new value provided (not masked)
     for key in ('alldebrid_api_key', 'realdebrid_api_key', 'premiumize_api_key', 'debridlink_api_key', 'torbox_api_key'):

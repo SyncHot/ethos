@@ -84,7 +84,8 @@ function renderDownloadManager(body, launchOpts) {
         .dlm-speed-chart svg{width:100%;height:48px}
         .dlm-draggable{cursor:grab}
         .dlm-draggable:active{cursor:grabbing}
-        .dlm-item.dlm-drag-over{border-top:2px solid #10b981;transition:border-top .1s}
+        .dlm-item.dlm-drag-over-top{border-top:2px solid #10b981;transition:border-top .1s}
+        .dlm-item.dlm-drag-over-bottom{border-bottom:2px solid #10b981;transition:border-bottom .1s}
         .dlm-item.dlm-dragging{opacity:0.5;background:rgba(255,255,255,0.05)}
         .dlm-hist-toolbar { padding: 12px; background: var(--bg-secondary); border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
         .dlm-hist-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -99,6 +100,14 @@ function renderDownloadManager(body, launchOpts) {
         .dlm-btn-icon { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 6px; border: 1px solid transparent; background: transparent; color: var(--text-secondary); cursor: pointer; transition: 0.2s; }
         .dlm-btn-icon:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-primary); }
         .dlm-btn-icon:disabled { opacity: 0.5; cursor: default; }
+        .dlm-categories-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+        .dlm-category-item { background: var(--bg-hover); border: 1px solid var(--border); border-radius: 6px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+        .dlm-cat-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+        .dlm-cat-name { font-weight: 600; font-size: 13px; color: var(--text-primary); }
+        .dlm-cat-exts { font-size: 11px; color: var(--text-secondary); word-break: break-all; }
+        .dlm-cat-path { font-size: 11px; color: var(--text-muted); display: flex; align-items: center; gap: 4px; }
+        .dlm-cat-actions { display: flex; align-items: center; gap: 4px; }
+        .dlm-cat-edit-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
         @media (max-width: 768px) {
             .dlm-sidebar{width:56px;min-width:56px}
             .dlm-nav{padding:14px 0;justify-content:center;font-size:0}
@@ -130,6 +139,9 @@ function renderDownloadManager(body, launchOpts) {
                     <div class="dlm-filter-wrap">
                         <i class="fas fa-search"></i>
                         <input type="text" class="dlm-filter-input" id="dlm-filter" placeholder="Filtruj...">
+                        <select id="dlm-cat-filter" class="dlm-select-sm" style="margin-left:4px;width:120px;">
+                            <option value="">Wszystkie</option>
+                        </select>
                     </div>
                     <div class="dlm-bulk-actions">
                         <button class="dlm-btn-sm" id="dlm-pause-all" title="Wstrzymaj wszystkie aktywne"><i class="fas fa-pause"></i> Wstrzymaj</button>
@@ -296,6 +308,17 @@ function renderDownloadManager(body, launchOpts) {
                         </select>
                     </div>
 
+                    <h3 class="dlm-section-title dl-section-gap"><i class="fas fa-layer-group"></i> Kategorie</h3>
+                    <div class="dlm-setting-row">
+                        <label>Auto-sortowanie:</label>
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <input type="checkbox" id="dlm-auto-categorize">
+                            <label for="dlm-auto-categorize" style="font-size:13px;cursor:pointer;">Włącz auto-przypisanie do folderów na podstawie rozszerzenia</label>
+                        </div>
+                    </div>
+                    <div id="dlm-categories-list" class="dlm-categories-list"></div>
+                    <button class="dlm-btn-sm" id="dlm-add-category" style="margin-top:8px;"><i class="fas fa-plus"></i> Dodaj nową kategorię</button>
+
                     <h3 class="dlm-section-title dl-section-gap"><i class="fas fa-gem"></i> Serwis Premium (Debrid)</h3>
                     <p class="dlm-hint">Podłącz konto debrid, aby pobierać z hostingów premium (Rapidgator, Uploaded, 1fichier, Mega itp.)</p>
 
@@ -437,6 +460,8 @@ function renderDownloadManager(body, launchOpts) {
             max_concurrent: parseInt(body.querySelector('#dlm-max-concurrent').value),
             speed_limit: parseInt(body.querySelector('#dlm-speed-limit').value),
             debrid_service: svc,
+            auto_categorize: body.querySelector('#dlm-auto-categorize').checked,
+            categories: config.categories,
         };
         // Include API key if changed
         const keyInput = body.querySelector(`#dlm-key-${svc}`);
@@ -446,6 +471,118 @@ function renderDownloadManager(body, launchOpts) {
         const res = await api('/downloads/config', { method: 'PUT', body: payload });
         if (res.ok) toast('Ustawienia zapisane', 'success');
         else toast(res.error || t('Błąd'), 'error');
+    });
+
+    // Categories Management
+    function renderCategories() {
+        const listEl = body.querySelector('#dlm-categories-list');
+        listEl.innerHTML = '';
+        const cats = config.categories || [];
+        
+        cats.forEach((cat, index) => {
+            const div = document.createElement('div');
+            div.className = 'dlm-category-item';
+            div.dataset.index = index;
+            
+            // Path display
+            let pathDisplay = cat.path || (t('Domyślny folder') + '/' + cat.name);
+            
+            div.innerHTML = `
+                <div class="dlm-cat-header">
+                    <span class="dlm-cat-name">${cat.name}</span>
+                    <div class="dlm-cat-actions">
+                        <button class="dlm-btn-icon dlm-cat-edit" title="Edytuj"><i class="fas fa-edit"></i></button>
+                        <button class="dlm-btn-icon dlm-cat-del" title="Usuń" ${cat.id === 'other' ? 'disabled' : ''}><i class="fas fa-trash-alt"></i></button>
+                    </div>
+                </div>
+                <div class="dlm-cat-path"><i class="fas fa-folder-open"></i> ${pathDisplay}</div>
+                <div class="dlm-cat-exts">${(cat.extensions || []).join(', ')}</div>
+                
+                <div class="dlm-cat-edit-row" style="display:none;">
+                    <div style="grid-column:1/-1">
+                        <label style="font-size:11px;color:var(--text-muted)">Nazwa kategorii:</label>
+                        <input type="text" class="dlm-input-sm dlm-cat-name-input" value="${cat.name}" style="width:100%">
+                    </div>
+                    <div style="grid-column:1/-1">
+                        <label style="font-size:11px;color:var(--text-muted)">Folder docelowy (pusty = domyślny):</label>
+                        <div style="display:flex;gap:4px;">
+                            <input type="text" class="dlm-input-sm dlm-cat-path-input" value="${cat.path || ''}" style="flex:1">
+                            <button class="dlm-btn-sm dlm-pick-cat-path"><i class="fas fa-folder"></i></button>
+                        </div>
+                    </div>
+                    <div style="grid-column:1/-1">
+                        <label style="font-size:11px;color:var(--text-muted)">Rozszerzenia (oddzielone przecinkami):</label>
+                        <input type="text" class="dlm-input-sm dlm-cat-exts-input" value="${(cat.extensions || []).join(', ')}" style="width:100%">
+                    </div>
+                    <div style="grid-column:1/-1;display:flex;justify-content:flex-end;gap:4px;margin-top:4px;">
+                        <button class="dlm-btn-sm dlm-cat-save"><i class="fas fa-check"></i> OK</button>
+                    </div>
+                </div>
+            `;
+            
+            const editBtn = div.querySelector('.dlm-cat-edit');
+            const editRow = div.querySelector('.dlm-cat-edit-row');
+            
+            editBtn.addEventListener('click', () => {
+                const isHidden = editRow.style.display === 'none';
+                editRow.style.display = isHidden ? 'grid' : 'none';
+                if(isHidden) div.querySelector('.dlm-cat-name-input').focus();
+            });
+            
+            div.querySelector('.dlm-cat-del').addEventListener('click', () => {
+                if(confirm(t('Usunąć kategorię?'))) {
+                    config.categories.splice(index, 1);
+                    renderCategories();
+                    updateCategoryFilter();
+                }
+            });
+            
+            div.querySelector('.dlm-pick-cat-path').addEventListener('click', () => {
+                openDirPicker(cat.path || config.default_dir || '/home', t('Wybierz folder kategorii'), (path) => {
+                    div.querySelector('.dlm-cat-path-input').value = path;
+                });
+            });
+            
+            div.querySelector('.dlm-cat-save').addEventListener('click', () => {
+                cat.name = div.querySelector('.dlm-cat-name-input').value.trim();
+                cat.path = div.querySelector('.dlm-cat-path-input').value.trim();
+                const exts = div.querySelector('.dlm-cat-exts-input').value.split(',').map(e => e.trim()).filter(e => e);
+                cat.extensions = exts;
+                renderCategories();
+                updateCategoryFilter();
+            });
+            
+            listEl.appendChild(div);
+        });
+    }
+    
+    body.querySelector('#dlm-add-category').addEventListener('click', () => {
+        if(!config.categories) config.categories = [];
+        config.categories.push({
+            id: 'custom_' + Date.now(),
+            name: 'Nowa kategoria',
+            path: '',
+            extensions: []
+        });
+        renderCategories();
+    });
+
+    function updateCategoryFilter() {
+        const sel = body.querySelector('#dlm-cat-filter');
+        const current = sel.value;
+        sel.innerHTML = '<option value="">' + t('Wszystkie') + '</option>';
+        (config.categories || []).forEach(cat => {
+            const opt = document.createElement('option');
+            opt.value = cat.id;
+            opt.textContent = cat.name;
+            sel.appendChild(opt);
+        });
+        sel.value = current;
+        if (currentTab === 'downloads') renderDownloads(); 
+    }
+    
+    body.querySelector('#dlm-cat-filter').addEventListener('change', () => {
+        renderDownloads();
     });
 
     // Load config
@@ -473,6 +610,11 @@ function renderDownloadManager(body, launchOpts) {
         if (config.premiumize_api_key) body.querySelector('#dlm-key-premiumize').value = config.premiumize_api_key;
         if (config.debridlink_api_key) body.querySelector('#dlm-key-debridlink').value = config.debridlink_api_key;
         if (config.torbox_api_key) body.querySelector('#dlm-key-torbox').value = config.torbox_api_key;
+        
+        // Categories
+        body.querySelector('#dlm-auto-categorize').checked = !!config.auto_categorize;
+        renderCategories();
+        updateCategoryFilter();
     }
 
     // ─── Directory picker — uses global openDirPicker() from desktop.js ───
@@ -998,7 +1140,7 @@ function renderDownloadManager(body, launchOpts) {
     
     // Attach filter listeners
     setTimeout(() => {
-        ['#dlm-hist-q', '#dlm-hist-status', '#dlm-hist-source', '#dlm-hist-date'].forEach(sel => {
+        ['#dlm-hist-q', '#dlm-hist-status', '#dlm-hist-source', '#dlm-hist-date', '#dlm-hist-range-from', '#dlm-hist-range-to'].forEach(sel => {
             const el = body.querySelector(sel);
             if (el) {
                 // Clear existing listeners not easily possible without removing element, but we can check if already attached
@@ -1088,12 +1230,16 @@ function renderDownloadManager(body, launchOpts) {
             ? `<i class="fas fa-magnet dl-icon-torrent"></i>${_dlmEsc(dl.filename || _dlmShortUrl(dl.url))}`
             : _dlmEsc(dl.filename || _dlmShortUrl(dl.url));
 
+        const cat = (config.categories || []).find(c => c.id === dl.category_id);
+        const catBadge = cat ? `<span class="dlm-stats-chip" style="font-size:10px;padding:2px 6px;margin-right:4px;border-color:var(--border);background:var(--bg-surface);color:var(--text-secondary);">${cat.name}</span>` : '';
+
         return `
             <div class="dlm-item dlm-status-${dl.status}${isMovable ? ' dlm-draggable' : ''}" data-id="${dl.id}"${isMovable ? ' draggable="true"' : ''}>
                 <div class="dlm-item-icon">${icon}</div>
                 <div class="dlm-item-info">
                     <div class="dlm-item-name" title="${_dlmEsc(dl.filename || dl.url)}">${nameDisplay}</div>
                     <div class="dlm-item-meta">
+                        ${catBadge}
                         <span class="dlm-item-status">${statusLabel}</span>
                         ${dl.retry_count > 0 ? `<span class="dl-icon-amber" title="Próba ${dl.retry_count}"><i class="fas fa-sync-alt"></i> ${dl.retry_count}</span>` : ''}
                         ${sizeInfo ? `<span class="dlm-item-size">${sizeInfo}</span>` : ''}
@@ -1206,6 +1352,9 @@ function renderDownloadManager(body, launchOpts) {
     }
 
     function _matchesFilter(dl) {
+        const catFilter = body.querySelector('#dlm-cat-filter')?.value;
+        if (catFilter && dl.category_id !== catFilter) return false;
+
         if (!filterText) return true;
         const hay = ((dl.filename || '') + ' ' + (dl.url || '') + ' ' + (dl.dest_path || '') + ' ' + (dl.status || '')).toLowerCase();
         return hay.includes(filterText);
@@ -1409,26 +1558,54 @@ function renderDownloadManager(body, launchOpts) {
             const item = e.target.closest('.dlm-draggable');
             if (item) item.classList.remove('dlm-dragging');
             draggedItem = null;
-            list.querySelectorAll('.dlm-drag-over').forEach(el => el.classList.remove('dlm-drag-over'));
+            list.querySelectorAll('.dlm-drag-over-top, .dlm-drag-over-bottom').forEach(el => {
+                el.classList.remove('dlm-drag-over-top', 'dlm-drag-over-bottom');
+            });
         });
 
         list.addEventListener('dragover', (e) => {
             e.preventDefault();
             const item = e.target.closest('.dlm-draggable');
+            
+            // Cleanup others
+            list.querySelectorAll('.dlm-drag-over-top, .dlm-drag-over-bottom').forEach(el => {
+                if (el !== item) el.classList.remove('dlm-drag-over-top', 'dlm-drag-over-bottom');
+            });
+
             if (item && item !== draggedItem) {
-                list.querySelectorAll('.dlm-drag-over').forEach(el => el.classList.remove('dlm-drag-over'));
-                item.classList.add('dlm-drag-over');
+                const rect = item.getBoundingClientRect();
+                const offset = e.clientY - rect.top;
+                if (offset > rect.height / 2) {
+                    item.classList.remove('dlm-drag-over-top');
+                    item.classList.add('dlm-drag-over-bottom');
+                } else {
+                    item.classList.remove('dlm-drag-over-bottom');
+                    item.classList.add('dlm-drag-over-top');
+                }
             }
         });
 
         list.addEventListener('drop', async (e) => {
             e.preventDefault();
             const target = e.target.closest('.dlm-draggable');
-            list.querySelectorAll('.dlm-drag-over').forEach(el => el.classList.remove('dlm-drag-over'));
+            const isBottom = target && target.classList.contains('dlm-drag-over-bottom');
 
-            if (draggedItem && target && draggedItem !== target) {
-                // Move in DOM (optimistic)
-                list.insertBefore(draggedItem, target);
+            list.querySelectorAll('.dlm-drag-over-top, .dlm-drag-over-bottom').forEach(el => {
+                el.classList.remove('dlm-drag-over-top', 'dlm-drag-over-bottom');
+            });
+
+            if (draggedItem) {
+                if (target && draggedItem !== target) {
+                    // Move in DOM (optimistic)
+                    if (isBottom) {
+                        list.insertBefore(draggedItem, target.nextSibling);
+                    } else {
+                        list.insertBefore(draggedItem, target);
+                    }
+                } else if (!target && e.target.closest('.dlm-list') === list) {
+                     // Dropped on empty space/end of list
+                     list.appendChild(draggedItem);
+                }
                 
                 // Collect IDs
                 const movableIds = Array.from(list.querySelectorAll('.dlm-draggable')).map(el => el.dataset.id);
