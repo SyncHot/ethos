@@ -917,6 +917,9 @@ def preflight_check():
 
 @tickets_bp.route('/projects/<project_id>/bug-hunt', methods=['POST'])
 def bug_hunt(project_id):
+    if not g.username:
+        return jsonify({'error': 'Unauthorized'}), 401
+    
     # Filter candidates: non-docker Ethos packages
     candidates = [p for p in _ETHOS_PACKAGES if p['id'] != 'docker-manager']
     if not candidates:
