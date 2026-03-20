@@ -700,9 +700,9 @@ async function renderTickets(body, launchOpts) {
     }
 
     /* ── Find 5 Bugs Button Helper ── */
-    async function findFiveBugs() {
+    async function runAppAudit() {
         try {
-            toast(t('Szukanie projektu ETHOS...'), 'info');
+            toast(t('Rozpoczynanie audytu...'), 'info');
             
             // Ensure we have the latest project list to find ETHOS
             if (!projects.length) await loadProjects();
@@ -770,7 +770,7 @@ async function renderTickets(body, launchOpts) {
                     <button class="tk-btn tk-btn-danger" id="tk-delete-selected" style="margin-left:8px; display:none;">
                         <i class="fas fa-trash"></i> <span id="tk-sel-count"></span>
                     </button>
-                    <button class="tk-act-btn" id="tk-find-bugs-btn" title="${t('Znajdź 5 bugów')}">
+                    <button class="tk-act-btn" id="tk-find-bugs-btn" title="${t('Audyt aplikacji (Epic)')}">
                         <i class="fas fa-bug"></i>
                     </button>
                     ${currentProject.copilot_enabled ? '<button class="tk-act-btn" id="tk-watcher-btn" title="Ticket Watcher"><i class="fas fa-tower-broadcast"></i></button>' : ''}
@@ -814,7 +814,7 @@ async function renderTickets(body, launchOpts) {
             app.querySelector('#tk-new-ticket').onclick = () => showCreateTicketModal();
             app.querySelector('#tk-delete-selected').onclick = () => deleteSelectedTickets();
             const findBugsBtn = app.querySelector('#tk-find-bugs-btn');
-            if (findBugsBtn) findBugsBtn.onclick = () => findFiveBugs();
+            if (findBugsBtn) findBugsBtn.onclick = () => runAppAudit();
             
             // Mobile Filter Toggle
             const filterToggle = app.querySelector('#tk-mobile-filter-toggle');

@@ -934,48 +934,115 @@ def bug_hunt(project_id):
 
         target_column = project['columns'][0] if project.get('columns') else 'Backlog'
         
-        labels = ['FE', 'Backend', 'ux', 'UI', 'security']
         created_tickets = []
         now = _now()
         
-        for i in range(5):
-            ticket_type = 'bug'
-            priority = random.choice(VALID_PRIORITIES)
-            complexity = random.choice(VALID_COMPLEXITIES)
-            
-            title = f"Znajdź bug #{i+1} w aplikacji {target_app['name']}"
-            desc = (f"Automatyczny ticket poszukiwania bugów dla aplikacji: {target_app['name']}\n"
-                    f"Opis aplikacji: {target_app['description']}\n\n"
-                    f"Zadanie: Znajdź błąd w tej aplikacji. Skup się na obszarach: {', '.join(labels)}.")
-
+        # 1. Create Epic
+        epic_id = _gen_id('t_')
+        epic_title = f"Audyt bezpieczeństwa i UX: {target_app['name']}"
+        epic_desc = (f"Kompleksowy audyt aplikacji {target_app['name']}.\n"
+                     f"Opis aplikacji: {target_app['description']}\n\n"
+                     f"Cele:\n"
+                     f"1. Weryfikacja bezpieczeństwa i RBAC\n"
+                     f"2. Analiza UI/UX\n"
+                     f"3. Spójność z systemem EthOS")
+        
+        epic_ticket = {
+            'id': epic_id,
+            'project_id': project_id,
+            'title': epic_title,
+            'description': epic_desc,
+            'column': target_column,
+            'priority': 'high',
+            'assignee': g.username,
+            'type': 'epic',
+            'complexity': 'complex',
+            'reporter': g.username,
+            'labels': ['audit', 'auto-generated'],
+            'comments': [],
+            'order': 0, # Put at top
+            'created': now,
+            'updated': now,
+        }
+        
+        created_tickets.append(epic_ticket)
+        
+        # 2. Create Tasks linked to Epic
+        tasks = [
+            {
+                'title': f"Analiza RBAC i uprawnień: {target_app['name']}",
+                'desc': (f"Sprawdź czy endpointy API aplikacji {target_app['name']} są poprawnie zabezpieczone.\n"
+                         f"Endpointy do sprawdzenia:\n"
+                         f"- Install: {target_app.get('install_endpoint', 'N/A')}\n"
+                         f"- Uninstall: {target_app.get('uninstall_endpoint', 'N/A')}\n"
+                         f"- Status: {target_app.get('status_endpoint', 'N/A')}\n\n"
+                         f"Oczekiwane zachowanie:\n"
+                         f"- Tylko administrator może instalować/odinstalować\n"
+                         f"- Zwykły użytkownik może (lub nie) widzieć status - zweryfikuj politykę.\n"
+                         f"- Sprawdź czy brak tokenu zwraca 401/403."),
+                'labels': ['security', 'RBAC', f"epic:{epic_id}"],
+                'priority': 'critical'
+            },
+            {
+                'title': f"Audyt bezpieczeństwa danych: {target_app['name']}",
+                'desc': (f"Przeanalizuj w jaki sposób aplikacja {target_app['name']} przechowuje i przetwarza dane.\n"
+                         f"- Czy wrażliwe dane są szyfrowane?\n"
+                         f"- Czy aplikacja nie loguje haseł/tokenów?\n"
+                         f"- Sprawdź input validation w API."),
+                'labels': ['security', f"epic:{epic_id}"],
+                'priority': 'high'
+            },
+            {
+                'title': f"Spójność UI z Design Systemem: {target_app['name']}",
+                'desc': (f"Zweryfikuj wygląd aplikacji {target_app['name']} pod kątem zgodności z EthOS Design System.\n"
+                         f"- Kolorystyka (czy używa zmiennych CSS?)\n"
+                         f"- Poprawność ikon ({target_app.get('icon', 'fa-question')})\n"
+                         f"- Responsywność na mobile."),
+                'labels': ['UI', 'UX', f"epic:{epic_id}"],
+                'priority': 'medium'
+            },
+            {
+                'title': f"User Experience Flow: {target_app['name']}",
+                'desc': (f"Przejdź ścieżkę użytkownika w aplikacji {target_app['name']}.\n"
+                         f"- Czy komunikaty błędów są zrozumiałe?\n"
+                         f"- Czy stany ładowania (loading) są widoczne?\n"
+                         f"- Czy nawigacja jest intuicyjna?"),
+                'labels': ['UX', f"epic:{epic_id}"],
+                'priority': 'medium'
+            }
+        ]
+        
+        for task in tasks:
             tid = _gen_id('t_')
-            # Simple check for collision (unlikely with uuid hex)
-            
-            ticket = {
+            t_ticket = {
                 'id': tid,
                 'project_id': project_id,
-                'title': title,
-                'description': desc,
+                'title': task['title'],
+                'description': task['desc'],
                 'column': target_column,
-                'priority': priority,
+                'priority': task['priority'],
                 'assignee': g.username,
-                'type': ticket_type,
-                'complexity': complexity,
+                'type': 'task',
+                'complexity': 'medium',
                 'reporter': g.username,
-                'labels': labels,
+                'labels': task['labels'],
                 'comments': [],
-                'order': 0, # Put at top
+                'order': 0, # Placeholder, will update later
                 'created': now,
                 'updated': now,
             }
+            created_tickets.append(t_ticket)
             
-            # Shift existing tickets down
-            for t in data['tickets']:
-                if t['project_id'] == project_id and t['column'] == target_column:
-                    t['order'] = t.get('order', 0) + 1
-                    
-            data['tickets'].append(ticket)
-            created_tickets.append(ticket)
+        # Existing tickets in this column
+        existing_tickets = [t for t in data['tickets'] if t['project_id'] == project_id and t['column'] == target_column]
+        existing_tickets.sort(key=lambda x: x.get('order', 0))
+        
+        # New order: Created tickets first, then existing tickets
+        data['tickets'].extend(created_tickets)
+        
+        all_col_tickets = created_tickets + existing_tickets
+        for idx, t in enumerate(all_col_tickets):
+            t['order'] = idx
             
         _save(data)
 
