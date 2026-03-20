@@ -1134,6 +1134,13 @@ def rag_index_internal():
     # Non-admin sandbox: force to /home/<username>
     sandbox = f'/home/{username}'
 
+    # Validate directory: must exist and be within user's sandbox
+    if not os.path.isdir(directory):
+        return jsonify({'error': 'Podana ścieżka nie jest katalogiem'}), 400
+    ok, err = _path_in_sandbox(directory, sandbox)
+    if not ok:
+        return jsonify({'error': err}), 403
+
     indexer = _get_rag(username, sandbox)
     if indexer._indexing:
         return jsonify({'error': 'Indeksowanie już trwa'}), 409
