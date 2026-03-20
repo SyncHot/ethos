@@ -86,7 +86,7 @@ def admin_required(f):
                 from blueprints.eventlog import log
                 log('security', 'warning', f'Nieautoryzowana próba dostępu do {request.path}', 
                     details={'user': _get_username(), 'ip': request.remote_addr})
-            except ImportError:
+            except Exception:
                 pass
             return jsonify({'error': 'Tylko admin'}), 403
         return f(*args, **kwargs)
