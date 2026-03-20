@@ -2702,7 +2702,7 @@ function renderFM(body, state) {
             </div>
             <div style="display:flex;gap:10px;margin-bottom:12px">
                 <input type="text" id="fm-logs-search" placeholder="${t('Szukaj...')}" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border,#444);background:var(--bg-base,#181825);color:var(--text-primary)">
-                <select id="fm-logs-filter" style="padding:8px;border-radius:6px;border:1px solid var(--border,#444);background:var(--bg-base,#181825);color:var(--text-primary)">
+                <select id="fm-logs-filter" class="fm-input" title="Kategoria logów">
                     <option value="">${t('Wszystkie')}</option>
                     <option value="files" selected>${t('Operacje plików')}</option>
                     <option value="security">${t('Bezpieczeństwo')}</option>
@@ -6995,14 +6995,37 @@ function renderAppStore(body) {
         packages: [],          // EthOS packages
         detail: null,
         installing: null,
+        cacheStats: null,
     };
+
+    const formatAge = (seconds) => {
+        if (seconds === null || seconds === undefined) return '';
+        const s = Math.max(0, Number(seconds) || 0);
+        if (s < 60) return `${Math.round(s)}s`;
+        const m = Math.floor(s / 60);
+        if (m < 60) return `${m}m`;
+        const h = Math.floor(m / 60);
+        const remM = m % 60;
+        if (h < 48) return `${h}h${remM ? ' ' + remM + 'm' : ''}`;
+        const d = Math.floor(h / 24);
+        return `${d}d`;
+    };
+
+    const escapeHtml = (str) => String(str || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
 
     /* ── API helpers ── */
     const load = async (refresh) => {
         try {
             const url = refresh ? '/appstore/catalog?refresh=1' : '/appstore/catalog';
-            const r = await api(url);
+            const [r, stats] = await Promise.all([
+                api(url),
+                api('/appstore/cache/stats').catch(() => null)
+            ]);
             S.catalog = r;
+            S.cacheStats = stats || null;
             S.categories = [...new Set(r.map(a => a.category).filter(Boolean))].sort();
             S.repos = [...new Set(r.map(a => a.repo_id).filter(Boolean))].map(id => {
                 const app = r.find(a => a.repo_id === id);
@@ -7087,6 +7110,11 @@ function renderAppStore(body) {
             </select>
             <button class="as-refresh-btn" title="Odśwież katalog"><i class="fas fa-sync-alt"></i></button>
             <button class="as-repos-btn" title="Zarządzaj repozytoriami"><i class="fas fa-cog"></i></button>
+            ${S.cacheStats && S.cacheStats.catalog_age_seconds !== null
+                ? `<span class="as-cache-meta" title="Czas od ostatniego odświeżenia cache">
+                        <i class="fas fa-clock"></i> Cache: ${formatAge(S.cacheStats.catalog_age_seconds)} temu
+                   </span>`
+                : ''}
             <span class="as-count">${S.filtered.length} aplikacji</span>
         `;
         body.appendChild(toolbar);
@@ -7184,6 +7212,18 @@ function renderAppStore(body) {
             if (r.config) installConfig = JSON.parse(JSON.stringify(r.config));
         } catch (_) {}
 
+        const heroUrl = app.thumbnail || (app.screenshots && app.screenshots[0]) || '';
+        const extraShots = (app.screenshots || []).filter(s => s && s !== heroUrl);
+        const mediaHtml = heroUrl
+            ? `<div class="as-detail-media"><img src="${heroUrl}" onerror="this.parentElement.style.display='none'"></div>`
+            : '';
+        const galleryHtml = extraShots.length
+            ? `<div class="as-detail-gallery">${extraShots.map(s => `<img src="${s}" loading="lazy" onerror="this.style.display='none'">`).join('')}</div>`
+            : '';
+        const adaptWarningsHtml = composeAdaptWarnings.length
+            ? `<div class="as-adapt-warnings">${composeAdaptWarnings.map(w => `<div class="as-adapt-warning"><i class="fas fa-shield-alt"></i> ${escapeHtml(w)}</div>`).join('')}</div>`
+            : '';
+
         const overlay = document.createElement('div');
         overlay.className = 'as-modal-overlay';
         overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
@@ -7201,6 +7241,11 @@ function renderAppStore(body) {
             ? app.host_ports.map(p => `<a class="as-port-link" href="http://${location.hostname}:${p}" target="_blank" rel="noopener">:${p}</a>`).join(' ')
             : (app.port_map ? `<a class="as-port-link" href="http://${location.hostname}:${app.port_map}" target="_blank" rel="noopener">:${app.port_map}</a>` : '');
         const svcCountHtml = app.service_count > 1 ? `<div class="as-meta-item"><strong>${t('Serwisy')}:</strong> ${app.service_count}</div>` : '';
+        const volumeMeta = app.named_volumes?.length ? `<div class="as-meta-item"><strong>${t('Dane')}:</strong> ${app.named_volumes.join(', ')}</div>` : '';
+        const imagesMeta = app.all_images?.length ? `<div class="as-meta-item"><strong>${t('Obrazy')}:</strong> ${app.all_images.join(', ')}</div>` : '';
+        const storeIdMeta = app.store_app_id ? `<div class="as-meta-item"><strong>ID sklepu:</strong> ${app.store_app_id}</div>` : '';
+        const mainSvcMeta = app.main_service ? `<div class="as-meta-item"><strong>${t('Główny serwis')}:</strong> ${app.main_service}</div>` : '';
+        const sandboxNote = `<div class="as-sandbox-note"><i class="fas fa-shield-alt"></i> ${t('Polityka zasobów sandbox jest stosowana automatycznie przy uruchomieniu')}.</div>`;
 
         const renderConfigSection = () => {
             if (!installConfig || Object.keys(installConfig).length === 0) return '';
@@ -7264,7 +7309,9 @@ function renderAppStore(body) {
                 <button class="as-modal-close">&times;</button>
             </div>
             <div class="as-modal-body">
+                ${mediaHtml}
                 ${tipsHtml}
+                ${adaptWarningsHtml}
                 <div class="as-detail-section">
                     <div class="as-detail-tagline">${app.tagline || ''}</div>
                     <div class="as-detail-desc">${app.description || ''}</div>
@@ -7274,8 +7321,14 @@ function renderAppStore(body) {
                     ${portsHtml ? `<div class="as-meta-item"><strong>${t('Porty')}:</strong> ${portsHtml}</div>` : ''}
                     ${app.architectures?.length ? `<div class="as-meta-item"><strong>Arch:</strong> ${app.architectures.join(', ')}</div>` : ''}
                     ${app.category ? `<div class="as-meta-item"><strong>${t('Kategoria')}:</strong> ${app.category}</div>` : ''}
+                    ${storeIdMeta}
+                    ${mainSvcMeta}
                     ${svcCountHtml}
+                    ${volumeMeta}
+                    ${imagesMeta}
                 </div>
+                ${galleryHtml}
+                ${sandboxNote}
                 ${renderConfigSection()}
                 ${compose ? `
                 <div class="as-detail-section">

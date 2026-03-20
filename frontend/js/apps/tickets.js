@@ -900,7 +900,7 @@ async function renderTickets(body, launchOpts) {
 
             epicCard.innerHTML = `
                 <div class="tk-card-select" onclick="event.stopPropagation()" style="position:absolute;top:6px;right:6px;z-index:10;">
-                    <input type="checkbox" class="tk-ticket-check" data-id="${epicTk.id}" ${selectedTickets.has(epicTk.id) ? 'checked' : ''} style="cursor:pointer;transform:scale(1.2);">
+                    <input type="checkbox" class="tk-ticket-check" data-id="${epicTk.id}" ${selectedTickets.has(epicTk.id) ? 'checked' : ''}>
                 </div>
                 <div class="tk-card-header">
                     ${_tkTypeIcon('epic')}
@@ -971,7 +971,7 @@ async function renderTickets(body, launchOpts) {
 
                     childCard.innerHTML = `
                         <div class="tk-card-select" onclick="event.stopPropagation()" style="position:absolute;top:6px;right:6px;z-index:10;">
-                            <input type="checkbox" class="tk-ticket-check" data-id="${ch.id}" ${selectedTickets.has(ch.id) ? 'checked' : ''} style="cursor:pointer;transform:scale(1.2);">
+                            <input type="checkbox" class="tk-ticket-check" data-id="${ch.id}" ${selectedTickets.has(ch.id) ? 'checked' : ''}>
                         </div>
                         <div class="tk-card-header">
                             ${_tkTypeIcon(ch.type || 'subtask')}
@@ -1027,7 +1027,7 @@ async function renderTickets(body, launchOpts) {
 
             card.innerHTML = `
                 <div class="tk-card-select" onclick="event.stopPropagation()" style="position:absolute;top:6px;right:6px;z-index:10;">
-                    <input type="checkbox" class="tk-ticket-check" data-id="${tk.id}" ${selectedTickets.has(tk.id) ? 'checked' : ''} style="cursor:pointer;transform:scale(1.2);">
+                    <input type="checkbox" class="tk-ticket-check" data-id="${tk.id}" ${selectedTickets.has(tk.id) ? 'checked' : ''}>
                 </div>
                 <div class="tk-card-header">
                     ${_tkTypeIcon(tk.type)}

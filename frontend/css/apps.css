@@ -20,12 +20,20 @@
 .fm-badge-dim { background: var(--overlay-3); color: var(--text-muted); }
 
 .fm-input {
-    background: var(--bg-deep, #0f1117);
+    background-color: var(--bg-deep, #0f1117);
     border: 1px solid var(--border);
     border-radius: var(--r-sm);
     padding: 8px 12px;
     color: var(--text);
     font-size: 0.9em;
+}
+select.fm-input {
+    background-color: var(--bg-elevated); /* Match global standard */
+    padding-right: 24px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 320 512'%3E%3Cpath fill='%2364748b' d='M31.3 192h257.3c17.8 0 26.7 21.5 14.1 34.1L174.1 354.8c-7.8 7.8-20.5 7.8-28.3 0L17.2 226.1C4.6 213.5 13.5 192 31.3 192z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 6px center;
+    background-size: 8px;
 }
 .fm-input:focus { outline: none; border-color: var(--accent); }
 

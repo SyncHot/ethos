@@ -347,6 +347,57 @@ Ikony ładowane z CDN:
   padding: 12px 20px;
   border-top: 1px solid var(--border);
 }
+
+### 4.3. Elementy Formularzy (Select i Checkbox)
+
+Elementy formularzy w EthOS zostały ujednolicone, aby przypominały styl File Managera i AppStore.
+Style są aplikowane globalnie na tagi `<select>` i `<input type="checkbox">`.
+
+#### Select Box
+
+Elementy `<select>` mają usunięty domyślny wygląd przeglądarki (`appearance: none`) i zastąpiony stylem spójnym (tło `var(--bg-elevated)`, obramowanie, chevron).
+
+```css
+select {
+  appearance: none;
+  background-color: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  padding: 6px 24px 6px 8px; /* Miejsce na ikonę po prawej */
+  /* Ikona chevron jest dodawana przez background-image */
+  background-position: right 6px center;
+  font-size: 13px;
+}
+
+select:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+```
+
+Dla selectów wewnątrz formularzy z klasą `.fm-input`, stosowane są odpowiednie dostosowania paddingu i pozycji ikony.
+
+#### Checkbox
+
+Checkboxy mają spójny wygląd 16x16px z obramowaniem `var(--text-muted)` i akcentem po zaznaczeniu.
+Unikaj stosowania `transform: scale(...)` do powiększania checkboxów — domyślny styl zapewnia odpowiedni rozmiar i czytelność.
+
+```css
+input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--text-muted);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+
+input[type="checkbox"]:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+```
+
 ```
 
 ### 4.3. Toast Notifications

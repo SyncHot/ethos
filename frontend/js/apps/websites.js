@@ -338,7 +338,7 @@ function renderWebsitesApp(body) {
                 <div class="ws-page-list" id="ws-page-list"></div>
                 <div class="ws-sidebar-section">
                     <h4>Motyw</h4>
-                    <select id="ws-theme-select" style="width:100%;padding:6px 8px;border:1px solid var(--border,#334155);border-radius:6px;background:var(--bg-body,#0f172a);color:var(--text,#e2e8f0);font-size:12px;">
+                    <select id="ws-theme-select" class="fm-input" style="width:100%">
                         ${(themes.length ? themes : [{id:'light',name:'Jasny'},{id:'dark',name:'Ciemny'},{id:'ocean',name:'Ocean'},{id:'forest',name:'Las'}])
                           .map(t => `<option value="${esc(t.id)}"${t.id === s.theme ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}
                     </select>
