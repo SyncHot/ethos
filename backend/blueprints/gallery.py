@@ -335,8 +335,17 @@ def _load_folder_passwords_gallery():
 
 def _is_path_protected(real_path, protected_set):
     """Check if a real path falls under a password-protected folder."""
-    base_real = os.path.realpath(DATA_ROOT)
-    rel = '/' + os.path.relpath(real_path, base_real)
+    # Use data_path() to determine if we are inside internal storage
+    base_real = os.path.realpath(data_path())
+    
+    # If path is inside internal storage, make it relative (e.g. /photos)
+    # to match how passwords are likely stored for internal folders.
+    if real_path == base_real or real_path.startswith(base_real + '/'):
+        rel = '/' + os.path.relpath(real_path, base_real)
+    else:
+        # For external paths (or anything outside data_path), use the absolute path.
+        rel = real_path
+
     check = rel.rstrip('/')
     while check and check != '/':
         if check in protected_set:
