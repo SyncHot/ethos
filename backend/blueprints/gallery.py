@@ -22,7 +22,7 @@ from host import app_path, data_path, user_data_path, NATIVE_MODE, ensure_dep, g
     get_photo_folders, get_all_photo_folder_variants
 from utils import load_json as _load_json, save_json as _save_json, \
     safe_path as _safe_path_util, get_username as _get_username, DATA_ROOT, \
-    register_pkg_routes
+    ALLOWED_ROOTS, register_pkg_routes
 
 gallery_bp = Blueprint('gallery', __name__, url_prefix='/api/gallery')
 
@@ -60,16 +60,19 @@ _SCAN_CACHE_TTL = 30  # seconds
 # ─── Helpers ──────────────────────────────────────────────
 
 def _safe_path(user_path):
-    while '//' in user_path:
-        user_path = user_path.replace('//', '/')
-    base = os.path.realpath(DATA_ROOT)
-    target = os.path.realpath(os.path.join(base, user_path.lstrip('/')))
-    if not target.startswith(base):
+    if not user_path:
         return None
-    _ALLOWED = ('/home', '/media', '/run/media', '/mnt')
-    if not any(target == r or target.startswith(r + '/') for r in _ALLOWED):
-        return None
-    return target
+    # Support absolute paths without forcing them under DATA_ROOT
+    if os.path.isabs(user_path):
+        target = os.path.realpath(user_path)
+    else:
+        base = os.path.realpath(DATA_ROOT)
+        target = os.path.realpath(os.path.join(base, user_path))
+
+    # Ensure path is within allowed roots
+    if any(target == r or target.startswith(r + '/') for r in ALLOWED_ROOTS):
+        return target
+    return None
 
 
 def _load_gallery_folders():
