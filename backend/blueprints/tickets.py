@@ -1036,7 +1036,7 @@ def bug_hunt(project_id):
                          f"2. Komunikaty sukcesu (Toast) znikają po 3-5 sekundach.\n"
                          f"3. Błędy krytyczne wymagają potwierdzenia zamknięcia.\n\n"
                          f"**Zadania deweloperskie:**\n"
-                         f"- Przechwytywać wyjątki w endpointach i zwracać `jsonify({'error': 'Human readable message'})`.\n"
+                         f"- Przechwytywać wyjątki w endpointach i zwracać `jsonify({{ 'error': 'Human readable message' }})`.\n"
                          f"- W frontendzie używać `toast()` z odpowiednim typem ('error', 'success')."),
                 'labels': ['ui-ux', 'error-handling', f"epic:{epic_id}"],
                 'priority': 'medium',
