@@ -1304,6 +1304,32 @@ def _download_single_url(dl, download_url, filename, filesize, dest_dir, config)
         raise
 
 
+def _wait_for_slot(dl):
+    """Wait for a concurrency slot (limit from global config)."""
+    while True:
+        # Check if cancelled while waiting
+        with _lock:
+            if dl.get('status') in ('cancelled', 'failed', 'paused'):
+                return False
+
+            # Check global limit (system-wide)
+            # We load global config to ensure we respect the AppStore setting
+            config = _load_config(username=None)
+            max_conc = config.get('max_concurrent', 3)
+
+            # Count currently active downloads (excluding this one if it was already active,
+            # but it shouldn't be as we are in 'torrent_downloading' or similar)
+            active = sum(1 for d in _downloads.values()
+                         if d['status'] in ('downloading', 'resolving'))
+
+            if active < max_conc:
+                # Slot available!
+                return True
+
+        # Wait before retrying
+        time.sleep(2)
+
+
 def _download_worker(dl_id):
     """Background thread that downloads a single file (or torrent)."""
     with _lock:
@@ -1382,6 +1408,10 @@ def _download_worker(dl_id):
                             os.makedirs(dest_dir, exist_ok=True)
 
             # Download all resulting files
+            # Wait for a slot before starting local download to respect global limit
+            if not _wait_for_slot(dl):
+                return
+
             with _lock:
                 dl['status'] = 'downloading'
                 dl['progress'] = 0
