@@ -6294,8 +6294,15 @@ a.dkr-port-link:hover {
 .aic-dash-hw-row span { color: var(--text-muted); }
 .aic-dash-feat { display: inline-block; padding: 1px 6px; background: #10b98120; color: #10b981; border-radius: var(--r-sm); font-size: 10px; font-weight: 600; margin: 0 2px; }
 
+/* Sidebar brand label */
+.aic-sidebar-brand { display: flex; align-items: center; gap: 8px; padding: 12px 14px; font-size: 13px; font-weight: 600; color: var(--text-primary); border-bottom: 1px solid var(--border); }
+.aic-sidebar-brand i { color: #8b5cf6; font-size: 14px; }
+
 /* Health badge in sidebar */
 .aic-health-badge { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: var(--r-sm); font-size: 11px; font-weight: 700; color: #fff; cursor: pointer; margin-left: auto; }
+.aic-tier-ultra { background: #10b981; }
+.aic-tier-balanced { background: #f59e0b; }
+.aic-tier-light { background: #6b7280; }
 
 /* Local processing badge */
 .aic-local-badge { display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: #10b98115; color: #10b981; border-radius: var(--r-md); font-size: 12px; font-weight: 500; margin-bottom: 12px; }
