@@ -15,7 +15,7 @@ from flask import Blueprint, jsonify, request, Response, stream_with_context
 
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from host import host_run, host_run_stream_raw, host_path, browse_roots, data_path, q
+from host import host_run, host_run_stream_raw, host_path, browse_roots, data_path, q, app_path
 from utils import is_pid_alive, load_json as _load_json, save_json as _save_json
 
 flasher_bp = Blueprint('flasher', __name__, url_prefix='/api/flasher')
@@ -226,6 +226,10 @@ def list_usb_drives():
 def list_images():
     """Search for .iso and .img files in common locations."""
     search_paths = browse_roots()
+    
+    # Add EthOS builder output directories
+    search_paths.append(data_path('releases'))
+    search_paths.append(app_path('installer/releases'))
     results = []
     seen = set()
 
