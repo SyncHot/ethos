@@ -2513,6 +2513,12 @@
   border-color: var(--accent);
 }
 .tk-btn-primary:hover { filter: brightness(1.1); }
+.tk-btn-danger {
+  background: var(--danger);
+  color: #fff;
+  border-color: var(--danger);
+}
+.tk-btn-danger:hover { filter: brightness(1.1); }
 .tk-btn-back { padding: 6px 10px; margin-right: var(--space-xs); }
 .tk-board-title {
   font-weight: 600;
