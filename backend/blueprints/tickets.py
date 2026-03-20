@@ -14,7 +14,8 @@ import random
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from flask import Blueprint, request, jsonify, g
+from flask import Blueprint, request, jsonify, g, send_file
+from werkzeug.utils import secure_filename
 from host import data_path as _data_path
 from utils import load_json as _load_json, save_json as _save_json
 from ethos_packages_data import _ETHOS_PACKAGES
@@ -22,6 +23,8 @@ from ethos_packages_data import _ETHOS_PACKAGES
 tickets_bp = Blueprint('tickets', __name__, url_prefix='/api/tickets')
 
 TICKETS_FILE = _data_path('tickets.json')
+ATTACHMENTS_DIR = _data_path('ticket_attachments')
+os.makedirs(ATTACHMENTS_DIR, exist_ok=True)
 
 _lock = threading.Lock()
 _socketio = None
@@ -1093,3 +1096,106 @@ def bug_hunt(project_id):
         _emit('ticket_created', project_id, {'ticket': t})
 
     return jsonify({'ok': True, 'count': len(created_tickets), 'app': target_app['name'], 'epic_id': epic_id}), 201
+
+
+# ---------------------------------------------------------------------------
+# Attachments
+# ---------------------------------------------------------------------------
+
+@tickets_bp.route('/tickets/<ticket_id>/attachments', methods=['POST'])
+def upload_attachment(ticket_id):
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part'}), 400
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No selected file'}), 400
+    
+    with _lock:
+        data = _load()
+        ticket = _find_ticket(data, ticket_id)
+        if not ticket:
+            return jsonify({'error': 'Ticket not found'}), 404
+        
+        # Ensure user has access (via project)
+        project = _find_project(data, ticket['project_id'])
+        if not project or not _is_member(project):
+            return jsonify({'error': 'Access denied'}), 403
+            
+        tdir = os.path.join(ATTACHMENTS_DIR, ticket_id)
+        os.makedirs(tdir, exist_ok=True)
+        
+        filename = secure_filename(file.filename)
+        # Avoid overwrite
+        base, ext = os.path.splitext(filename)
+        if os.path.exists(os.path.join(tdir, filename)):
+             filename = f"{base}_{int(time.time())}{ext}"
+             
+        filepath = os.path.join(tdir, filename)
+        file.save(filepath)
+        
+        if 'attachments' not in ticket:
+            ticket['attachments'] = []
+            
+        attachment = {
+            'filename': filename,
+            'size': os.path.getsize(filepath),
+            'mimetype': file.mimetype,
+            'created': time.time(),
+            'uploader': g.username
+        }
+        ticket['attachments'].append(attachment)
+        ticket['updated'] = time.time()
+        
+        _save(data)
+        _emit('ticket_updated', ticket['project_id'], {'ticket': ticket})
+        
+        return jsonify({'attachment': attachment})
+
+@tickets_bp.route('/tickets/<ticket_id>/attachments/<filename>', methods=['GET'])
+def get_attachment(ticket_id, filename):
+    data = _load() 
+    ticket = _find_ticket(data, ticket_id)
+    if not ticket:
+         return jsonify({'error': 'Ticket not found'}), 404
+         
+    project = _find_project(data, ticket['project_id'])
+    if not project or not _is_member(project):
+         return jsonify({'error': 'Access denied'}), 403
+
+    tdir = os.path.join(ATTACHMENTS_DIR, ticket_id)
+    filepath = os.path.join(tdir, filename)
+    if not os.path.abspath(filepath).startswith(os.path.abspath(tdir)):
+         return jsonify({'error': 'Invalid path'}), 403
+         
+    if not os.path.exists(filepath):
+         return jsonify({'error': 'File not found'}), 404
+         
+    return send_file(filepath)
+
+@tickets_bp.route('/tickets/<ticket_id>/attachments/<filename>', methods=['DELETE'])
+def delete_attachment(ticket_id, filename):
+    with _lock:
+        data = _load()
+        ticket = _find_ticket(data, ticket_id)
+        if not ticket:
+             return jsonify({'error': 'Ticket not found'}), 404
+             
+        project = _find_project(data, ticket['project_id'])
+        if not project or not _is_member(project):
+             return jsonify({'error': 'Access denied'}), 403
+             
+        tdir = os.path.join(ATTACHMENTS_DIR, ticket_id)
+        filepath = os.path.join(tdir, filename)
+        
+        if 'attachments' in ticket:
+            ticket['attachments'] = [a for a in ticket['attachments'] if a['filename'] != filename]
+            
+        if os.path.exists(filepath):
+            os.remove(filepath)
+            
+        ticket['updated'] = time.time()
+        _save(data)
+        _emit('ticket_updated', ticket['project_id'], {'ticket': ticket})
+        
+        return jsonify({'status': 'deleted'})
+

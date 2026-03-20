@@ -1430,6 +1430,33 @@ async function renderTickets(body, launchOpts) {
                     ${ticket.updated ? '<div>' + t('Zaktualizowany') + ': ' + new Date(ticket.updated * 1000).toLocaleString('pl') + '</div>' : ''}
                 </div>
 
+                <div class="tk-attachments-section" style="margin-top:16px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.1);">
+                    <label>${t('Załączniki')}</label>
+                    <div class="tk-attachments-list" id="tk-df-attachments" style="display:grid;grid-template-columns:repeat(auto-fill, minmax(100px, 1fr));gap:8px;margin-top:8px;">
+                        ${(ticket.attachments || []).map(a => {
+                            const isImage = a.mimetype && a.mimetype.startsWith('image/');
+                            const url = `/api/tickets/tickets/${ticket.id}/attachments/${encodeURIComponent(a.filename)}`;
+                            return `
+                            <div class="tk-attachment-item" style="position:relative;background:rgba(255,255,255,0.05);border-radius:6px;overflow:hidden;aspect-ratio:1;">
+                                ${isImage 
+                                    ? `<div style="width:100%;height:100%;background:url('${url}') center/cover no-repeat;cursor:pointer;" onclick="window.open('${url}','_blank')"></div>`
+                                    : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:24px;color:rgba(255,255,255,0.5);"><i class="fas fa-file"></i></div>`
+                                }
+                                <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.6);padding:4px;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                                    ${_escHtml(a.filename)}
+                                </div>
+                                <button class="tk-att-delete" data-filename="${_escHtml(a.filename)}" style="position:absolute;top:2px;right:2px;background:rgba(0,0,0,0.5);border:none;color:#fff;border-radius:4px;width:20px;height:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;">
+                                    <i class="fas fa-times" style="font-size:10px;"></i>
+                                </button>
+                            </div>`;
+                        }).join('')}
+                    </div>
+                    <div style="margin-top:8px;">
+                        <input type="file" id="tk-df-upload-input" style="display:none;" />
+                        <button class="tk-btn tk-btn-small" id="tk-df-upload-btn"><i class="fas fa-paperclip"></i> ${t('Dodaj plik')}</button>
+                    </div>
+                </div>
+
                 <div class="tk-comments-section" style="margin-top:16px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.1);">
                     <label>${t('Komentarze')} (${ticketComments.length})</label>
                     <div id="tk-df-comments" class="tk-comments-list">${commentsHTML || '<div class="tk-empty-col">' + t('Brak komentarzy') + '</div>'}</div>
@@ -1564,6 +1591,85 @@ async function renderTickets(body, launchOpts) {
                 overlay.querySelector('#tk-df-add-label').click();
             }
         });
+
+        /* ── attachments logic ── */
+        overlay.querySelector('#tk-df-upload-btn').onclick = () => {
+            overlay.querySelector('#tk-df-upload-input').click();
+        };
+
+        function bindAttachmentEvents() {
+             overlay.querySelectorAll('.tk-att-delete').forEach(btn => {
+                btn.onclick = async (e) => {
+                     e.stopPropagation(); 
+                     if(!confirm(t('Usunąć plik?'))) return;
+                     const filename = btn.dataset.filename;
+                     const item = btn.closest('.tk-attachment-item');
+                     item.style.opacity = '0.5';
+                     try {
+                         await api(`/tickets/tickets/${ticket.id}/attachments/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+                         item.remove();
+                     } catch(e) { 
+                         toast(t('Błąd usuwania'), 'error'); 
+                         item.style.opacity = '1';
+                     }
+                };
+            });
+        }
+        bindAttachmentEvents();
+        
+        overlay.querySelector('#tk-df-upload-input').onchange = async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            const fd = new FormData();
+            fd.append('file', file);
+            
+            // Optimistic UI
+            const container = overlay.querySelector('#tk-df-attachments');
+            const tempId = 'temp-' + Date.now();
+            const tempHTML = `
+                <div class="tk-attachment-item" id="${tempId}" style="position:relative;background:rgba(255,255,255,0.05);border-radius:6px;overflow:hidden;aspect-ratio:1;display:flex;align-items:center;justify-content:center;">
+                    <i class="fas fa-spinner fa-spin"></i>
+                </div>`;
+            container.insertAdjacentHTML('beforeend', tempHTML);
+            
+            try {
+                const res = await api(`/tickets/tickets/${ticket.id}/attachments`, {
+                    method: 'POST',
+                    body: fd
+                });
+                
+                const a = res.attachment;
+                const isImage = a.mimetype && a.mimetype.startsWith('image/');
+                const url = `/api/tickets/tickets/${ticket.id}/attachments/${encodeURIComponent(a.filename)}`;
+                
+                const finalHTML = `
+                    <div class="tk-attachment-item" style="position:relative;background:rgba(255,255,255,0.05);border-radius:6px;overflow:hidden;aspect-ratio:1;">
+                        ${isImage 
+                            ? `<div style="width:100%;height:100%;background:url('${url}') center/cover no-repeat;cursor:pointer;" onclick="window.open('${url}','_blank')"></div>`
+                            : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:24px;color:rgba(255,255,255,0.5);"><i class="fas fa-file"></i></div>`
+                        }
+                        <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.6);padding:4px;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                            ${_escHtml(a.filename)}
+                        </div>
+                        <button class="tk-att-delete" data-filename="${_escHtml(a.filename)}" style="position:absolute;top:2px;right:2px;background:rgba(0,0,0,0.5);border:none;color:#fff;border-radius:4px;width:20px;height:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;">
+                            <i class="fas fa-times" style="font-size:10px;"></i>
+                        </button>
+                    </div>`;
+                
+                const tempEl = document.getElementById(tempId);
+                if (tempEl) tempEl.outerHTML = finalHTML;
+                
+                bindAttachmentEvents(); 
+                toast(t('Plik dodany'), 'success');
+                
+            } catch (err) {
+                console.error(err);
+                document.getElementById(tempId)?.remove();
+                toast(t('Błąd wysyłania pliku'), 'error');
+            }
+            e.target.value = '';
+        };
 
         /* ── comments ── */
         let _commentCount = ticketComments.length;
