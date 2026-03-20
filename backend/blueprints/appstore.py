@@ -441,9 +441,9 @@ def _parse_compose_metadata(compose_path):
         if not data:
             return None
 
-        casaos = data.get('x-casaos', {})
-        if not casaos:
-            return None
+        casaos = data.get('x-casaos')
+        if not isinstance(casaos, dict):
+            casaos = {}
 
         title_obj = casaos.get('title', {})
         title = title_obj.get('en_us', '') if isinstance(title_obj, dict) else str(title_obj)
