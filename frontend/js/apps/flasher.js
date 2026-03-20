@@ -276,10 +276,6 @@ function renderFlasherApp(body) {
 
         // Convert user-visible path to container path
         let containerPath = raw;
-        if (raw.startsWith('/home/'))       containerPath = '/data' + raw;
-        else if (raw.startsWith('/media/')) containerPath = '/data' + raw;
-        else if (raw.startsWith('/run/media/')) containerPath = '/data' + raw.replace('/run/media/', '/run_media/');
-        else if (raw.startsWith('/mnt/'))  containerPath = '/data' + raw;
 
         try {
             const data = await api(`/flasher/verify?path=${encodeURIComponent(containerPath)}`);
