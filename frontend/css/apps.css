@@ -2697,6 +2697,17 @@ select.fm-input {
   box-shadow: var(--shadow-sm);
   border-color: var(--accent);
 }
+.tk-card:focus, .tk-card-child:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent);
+  border-color: var(--accent);
+  z-index: 10;
+}
+.tk-column:focus {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--accent);
+  border-radius: var(--r-lg);
+}
 .tk-card-dragging {
   opacity: 0.4;
   transform: rotate(2deg);

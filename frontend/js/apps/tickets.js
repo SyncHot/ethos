@@ -746,6 +746,116 @@ async function renderTickets(body, launchOpts) {
         }
     }
 
+    // A11y Helpers
+    function announceToScreenReader(message) {
+        let sr = document.getElementById('tk-sr-live');
+        if (!sr) {
+            sr = document.createElement('div');
+            sr.id = 'tk-sr-live';
+            sr.setAttribute('aria-live', 'polite');
+            sr.style.position = 'absolute';
+            sr.style.width = '1px';
+            sr.style.height = '1px';
+            sr.style.padding = '0';
+            sr.style.margin = '-1px';
+            sr.style.overflow = 'hidden';
+            sr.style.clip = 'rect(0,0,0,0)';
+            sr.style.whiteSpace = 'nowrap';
+            sr.style.border = '0';
+            document.body.appendChild(sr);
+        }
+        sr.textContent = message;
+    }
+
+    async function handleCardKeydown(e, card, ticketId, currentColumn) {
+        const columns = currentProject.columns || DEFAULT_COLUMNS;
+        const colIdx = columns.indexOf(currentColumn);
+        
+        // Navigation within column
+        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+            e.preventDefault();
+            const allCards = [...document.querySelectorAll(`.tk-card[data-column="${currentColumn}"], .tk-card-child[data-column="${currentColumn}"]`)];
+            const idx = allCards.indexOf(card);
+            if (e.key === 'ArrowUp') {
+                if (idx > 0) allCards[idx - 1].focus();
+                else {
+                    const colHeader = document.querySelector(`.tk-column[data-column="${currentColumn}"]`);
+                    if(colHeader) colHeader.focus();
+                }
+            }
+            if (e.key === 'ArrowDown' && idx < allCards.length - 1) allCards[idx + 1].focus();
+        }
+
+        // Navigation between columns
+        if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !e.ctrlKey) {
+            e.preventDefault();
+            let newColIdx = e.key === 'ArrowLeft' ? colIdx - 1 : colIdx + 1;
+            if (newColIdx >= 0 && newColIdx < columns.length) {
+                const newCol = columns[newColIdx];
+                const cardsInNewCol = [...document.querySelectorAll(`.tk-card[data-column="${newCol}"], .tk-card-child[data-column="${newCol}"]`)];
+                
+                if (cardsInNewCol.length > 0) {
+                    const currentCards = [...document.querySelectorAll(`.tk-card[data-column="${currentColumn}"], .tk-card-child[data-column="${currentColumn}"]`)];
+                    const myIdx = currentCards.indexOf(card);
+                    const targetIdx = Math.min(myIdx, cardsInNewCol.length - 1);
+                    cardsInNewCol[targetIdx].focus();
+                } else {
+                    const colHeader = document.querySelector(`.tk-column[data-column="${newCol}"]`);
+                    if(colHeader) colHeader.focus();
+                }
+            }
+        }
+
+        // Move card (Ctrl + Arrow)
+        if (e.ctrlKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+            e.preventDefault();
+            let newColIdx = e.key === 'ArrowLeft' ? colIdx - 1 : colIdx + 1;
+            if (newColIdx >= 0 && newColIdx < columns.length) {
+                const newCol = columns[newColIdx];
+                const targetCards = [...document.querySelectorAll(`.tk-card[data-column="${newCol}"], .tk-card-child[data-column="${newCol}"]`)];
+                const order = targetCards.length; // Move to end
+                
+                try {
+                    await moveTicket(ticketId, newCol, order);
+                    setTimeout(() => {
+                        const newCard = document.querySelector(`.tk-card[data-id="${ticketId}"], .tk-card-child[data-id="${ticketId}"], .tk-epic-card[data-id="${ticketId}"]`);
+                        if(newCard) {
+                            newCard.focus();
+                            announceToScreenReader(t('Przeniesiono do') + ' ' + newCol);
+                        }
+                    }, 100);
+                } catch(err) { console.error(err); }
+            }
+        }
+
+        // Open details
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            const tk = tickets.find(t => t.id === ticketId);
+            if (tk) showTicketDetail(tk);
+        }
+    }
+
+    function handleColumnKeydown(e, colName) {
+        const columns = currentProject.columns || DEFAULT_COLUMNS;
+        const colIdx = columns.indexOf(colName);
+
+        if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+            e.preventDefault();
+            let newColIdx = e.key === 'ArrowLeft' ? colIdx - 1 : colIdx + 1;
+            if (newColIdx >= 0 && newColIdx < columns.length) {
+                const newCol = columns[newColIdx];
+                const colHeader = document.querySelector(`.tk-column[data-column="${newCol}"]`);
+                if(colHeader) colHeader.focus();
+            }
+        }
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            const cards = [...document.querySelectorAll(`.tk-card[data-column="${colName}"], .tk-card-child[data-column="${colName}"]`)];
+            if (cards.length > 0) cards[0].focus();
+        }
+    }
+
     function renderBoard() {
         const columns = currentProject.columns || DEFAULT_COLUMNS;
         const filtered = getFilteredTickets();
@@ -888,6 +998,9 @@ async function renderTickets(body, launchOpts) {
             const epicCard = document.createElement('div');
             epicCard.className = 'tk-card tk-epic-card';
             epicCard.draggable = true;
+            epicCard.tabIndex = 0;
+            epicCard.setAttribute('role', 'button');
+            epicCard.addEventListener('keydown', (e) => handleCardKeydown(e, epicCard, epicTk.id, colName));
             epicCard.dataset.id = epicTk.id;
             epicCard.dataset.column = colName;
 
@@ -961,6 +1074,9 @@ async function renderTickets(body, launchOpts) {
                     const childCard = document.createElement('div');
                     childCard.className = 'tk-card-child';
                     childCard.draggable = true;
+                    childCard.tabIndex = 0;
+                    childCard.setAttribute('role', 'button');
+                    childCard.addEventListener('keydown', (e) => handleCardKeydown(e, childCard, ch.id, colName));
                     childCard.dataset.id = ch.id;
                     childCard.dataset.column = colName;
                     
@@ -1015,6 +1131,9 @@ async function renderTickets(body, launchOpts) {
             const card = document.createElement('div');
             card.className = 'tk-card';
             card.draggable = true;
+            card.tabIndex = 0;
+            card.setAttribute('role', 'button');
+            card.addEventListener('keydown', (e) => handleCardKeydown(e, card, tk.id, tk.column));
             card.dataset.id = tk.id;
             card.dataset.column = tk.column;
 
@@ -1069,6 +1188,10 @@ async function renderTickets(body, launchOpts) {
             if (!col) {
                 col = document.createElement('div');
                 col.className = 'tk-column';
+                col.tabIndex = 0;
+                col.setAttribute('role', 'region');
+                col.setAttribute('aria-label', colName);
+                col.addEventListener('keydown', (e) => handleColumnKeydown(e, colName));
                 col.dataset.column = colName;
                 col.innerHTML = `
                     <div class="tk-column-header">
@@ -1157,6 +1280,7 @@ async function renderTickets(body, launchOpts) {
             });
 
             col.querySelector('.tk-column-count').innerText = items.length;
+            col.setAttribute('aria-label', colName + ' (' + items.length + ')');
 
             // Existing Map
             const existingElMap = new Map();
