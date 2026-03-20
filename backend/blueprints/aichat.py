@@ -13,6 +13,7 @@ import subprocess
 import urllib.request
 import urllib.error
 import ssl
+import re
 from functools import wraps
 
 import psutil
@@ -634,6 +635,9 @@ def exec_command():
     if not cmd:
         return jsonify({'error': 'Brak komendy'}), 400
 
+    if cwd and not os.path.isdir(cwd):
+        return jsonify({'error': 'Katalog roboczy nie istnieje'}), 400
+
     # Block destructive system-level commands
     import re as _re
     _DANGEROUS = _re.compile(
@@ -1088,6 +1092,13 @@ def rag_index():
         # Default: index user's home directory
         directory = sandbox or f'/home/{username}'
 
+    # Validate directory: must exist and be within user's sandbox
+    if not os.path.isdir(directory):
+        return jsonify({'error': 'Podana ścieżka nie jest katalogiem'}), 400
+    ok, err = _path_in_sandbox(directory, sandbox)
+    if not ok:
+        return jsonify({'error': err}), 403
+
     indexer = _get_rag(username, sandbox)
     if indexer._indexing:
         return jsonify({'error': 'Indeksowanie już trwa'}), 409
@@ -1210,6 +1221,11 @@ def rag_scheduler_toggle():
             cal_value = _VALID_INTERVALS.get(interval, interval)
             if not cal_value:
                 return jsonify({'error': 'Brak interwału'}), 400
+
+            # Security check: validate systemd time format to prevent injection
+            # Allow: alnum, space, *, /, -, :, comma. No newlines or control chars.
+            if not re.match(r'^[a-zA-Z0-9\s*/:,\-]+$', cal_value):
+                return jsonify({'error': 'Nieprawidłowy format interwału (dozwolone znaki: a-z 0-9 * / : - , spacje)'}), 400
 
             # Rewrite timer file (needs root — use sudo tee)
             timer_content = (

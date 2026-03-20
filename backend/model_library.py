@@ -11,6 +11,7 @@ import platform
 import shutil
 import time
 import threading
+from werkzeug.utils import secure_filename
 
 import psutil
 
@@ -2058,6 +2059,17 @@ class ModelLibrary:
 
         if not repo:
             return (None, 'Nie znaleziono nazwy repozytorium')
+
+        # Security check: prevent directory traversal in filename
+        if filename and ('..' in filename or filename.startswith('/') or filename.startswith('\\')):
+             return (None, 'Niedozwolona nazwa pliku (zawiera ".." lub zaczyna się od /)')
+
+        # Sanitize each path component with secure_filename to strip special chars
+        if filename:
+            _parts = [secure_filename(p) for p in filename.split('/') if p]
+            if not _parts or not all(_parts):
+                return (None, 'Nieprawidłowa nazwa pliku po sanitizacji')
+            filename = '/'.join(_parts)
 
         if not filename:
             if _HAS_HF:
