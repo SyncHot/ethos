@@ -13,6 +13,7 @@ Supported providers:
 import json, os, time, threading, logging, secrets, re, sys
 from datetime import datetime
 from flask import Blueprint, jsonify, request
+from admin_required import admin_required
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from crypto_utils import encrypt_secret, decrypt_secret
@@ -22,6 +23,7 @@ from host import data_path as _data_path
 _DDNS_SECRET_KEYS = ('token', 'password', 'api_token', 'update_key')
 
 log = logging.getLogger('ddns')
+
 
 ddns_bp = Blueprint('ddns', __name__, url_prefix='/api/ddns')
 
@@ -540,6 +542,18 @@ def clear_history():
 
 def _ddns_on_uninstall(wipe):
     _stop_timer()
+    log.info('[ddns] Uninstall triggered')
+
+@ddns_bp.route('/install', methods=['POST'])
+@admin_required
+def install_ddns():
+    return jsonify({'ok': True, 'message': 'DDNS installed'})
+
+@ddns_bp.route('/uninstall', methods=['POST'])
+@admin_required
+def uninstall_ddns():
+    _ddns_on_uninstall(wipe=True)
+    return jsonify({'ok': True, 'message': 'DDNS uninstalled'})
 
 register_pkg_routes(
     ddns_bp,
