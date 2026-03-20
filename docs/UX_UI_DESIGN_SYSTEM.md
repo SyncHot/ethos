@@ -400,7 +400,7 @@ input[type="checkbox"]:checked {
 
 ```
 
-### 4.3. Toast Notifications
+### 4.4. Toast Notifications
 
 ```
 ┌──────────────────────────────────────────┐
@@ -432,7 +432,7 @@ showToast('Nowa wersja dostępna', 'info');
 **Zachowanie:** Toast pojawia się w prawym górnym rogu, auto-dismiss po 4s (error: 6s),
 kliknięcie zamyka natychmiast.
 
-### 4.4. Formularze (Form Inputs)
+### 4.5. Formularze (Form Inputs)
 
 ```html
 <div class="form-group">
@@ -457,7 +457,7 @@ kliknięcie zamyka natychmiast.
 </div>
 ```
 
-### 4.5. Tabele (Tables)
+### 4.6. Tabele (Tables)
 
 ```html
 <table class="data-table">
@@ -483,7 +483,7 @@ kliknięcie zamyka natychmiast.
 </table>
 ```
 
-### 4.6. Tabs / Panels
+### 4.7. Tabs / Panels
 
 ```html
 <div class="tab-bar">
@@ -496,7 +496,7 @@ kliknięcie zamyka natychmiast.
 </div>
 ```
 
-### 4.7. Karty (Cards)
+### 4.8. Karty (Cards)
 
 ```html
 <div class="card">
@@ -513,7 +513,7 @@ kliknięcie zamyka natychmiast.
 </div>
 ```
 
-### 4.8. Paski Postępu (Progress Bars)
+### 4.9. Paski Postępu (Progress Bars)
 
 ```html
 <div class="progress-bar">
