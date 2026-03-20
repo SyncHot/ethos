@@ -940,12 +940,13 @@ def bug_hunt(project_id):
         # 1. Create Epic
         epic_id = _gen_id('t_')
         epic_title = f"Audyt bezpieczeństwa i UX: {target_app['name']}"
-        epic_desc = (f"Kompleksowy audyt aplikacji {target_app['name']}.\n"
+        epic_desc = (f"Kompleksowy audyt aplikacji {target_app['name']} (v1.0).\n"
                      f"Opis aplikacji: {target_app['description']}\n\n"
-                     f"Cele:\n"
-                     f"1. Weryfikacja bezpieczeństwa i RBAC\n"
-                     f"2. Analiza UI/UX\n"
-                     f"3. Spójność z systemem EthOS")
+                     f"Cele audytu:\n"
+                     f"1. Weryfikacja bezpieczeństwa (RBAC, sanitizacja)\n"
+                     f"2. Analiza UI/UX (responsywność, komunikaty)\n"
+                     f"3. Spójność z systemem EthOS\n\n"
+                     f"Wymagane zależności: {target_app.get('deps_label', 'N/A')}")
         
         epic_ticket = {
             'id': epic_id,
@@ -958,7 +959,7 @@ def bug_hunt(project_id):
             'type': 'epic',
             'complexity': 'complex',
             'reporter': g.username,
-            'labels': ['audit', 'auto-generated'],
+            'labels': ['audit', 'auto-generated', target_app['id']],
             'comments': [],
             'order': 0, # Put at top
             'created': now,
@@ -971,44 +972,83 @@ def bug_hunt(project_id):
         tasks = [
             {
                 'title': f"Analiza RBAC i uprawnień: {target_app['name']}",
-                'desc': (f"Sprawdź czy endpointy API aplikacji {target_app['name']} są poprawnie zabezpieczone.\n"
-                         f"Endpointy do sprawdzenia:\n"
-                         f"- Install: {target_app.get('install_endpoint', 'N/A')}\n"
-                         f"- Uninstall: {target_app.get('uninstall_endpoint', 'N/A')}\n"
-                         f"- Status: {target_app.get('status_endpoint', 'N/A')}\n\n"
-                         f"Oczekiwane zachowanie:\n"
-                         f"- Tylko administrator może instalować/odinstalować\n"
-                         f"- Zwykły użytkownik może (lub nie) widzieć status - zweryfikuj politykę.\n"
-                         f"- Sprawdź czy brak tokenu zwraca 401/403."),
+                'desc': (f"Sprawdź czy endpointy API aplikacji {target_app['name']} są poprawnie zabezpieczone.\n\n"
+                         f"**Endpointy do sprawdzenia:**\n"
+                         f"- Install: `{target_app.get('install_endpoint', 'N/A')}`\n"
+                         f"- Uninstall: `{target_app.get('uninstall_endpoint', 'N/A')}`\n"
+                         f"- Status: `{target_app.get('status_endpoint', 'N/A')}`\n\n"
+                         f"**Scenariusze testowe (QA):**\n"
+                         f"1. Próba wywołania endpointów bez tokenu (oczekiwane 401/403).\n"
+                         f"2. Próba wywołania endpointów jako użytkownik bez uprawnień admina (oczekiwane 403).\n"
+                         f"3. Weryfikacja czy status jest widoczny dla zwykłego użytkownika (zgodnie z polityką).\n\n"
+                         f"**Zadania deweloperskie:**\n"
+                         f"- Dodać dekorator `@admin_required` do endpointów instalacji/dezinstalacji.\n"
+                         f"- Sprawdzić logowanie prób nieautoryzowanego dostępu."),
                 'labels': ['security', 'RBAC', f"epic:{epic_id}"],
-                'priority': 'critical'
+                'priority': 'critical',
+                'complexity': 'medium'
             },
             {
-                'title': f"Audyt bezpieczeństwa danych: {target_app['name']}",
-                'desc': (f"Przeanalizuj w jaki sposób aplikacja {target_app['name']} przechowuje i przetwarza dane.\n"
-                         f"- Czy wrażliwe dane są szyfrowane?\n"
-                         f"- Czy aplikacja nie loguje haseł/tokenów?\n"
-                         f"- Sprawdź input validation w API."),
-                'labels': ['security', f"epic:{epic_id}"],
-                'priority': 'high'
+                'title': f"Weryfikacja sanitizacji danych wejściowych: {target_app['name']}",
+                'desc': (f"Przeprowadzić audyt pod kątem podatności Injection (XSS, Command Injection) w {target_app['name']}.\n\n"
+                         f"**Obszary do sprawdzenia:**\n"
+                         f"- Pola formularzy konfiguracyjnych.\n"
+                         f"- Parametry URL w endpointach API.\n"
+                         f"- Nazwy plików/folderów przetwarzane przez aplikację.\n\n"
+                         f"**Scenariusze testowe (QA):**\n"
+                         f"1. Wprowadzenie znaków specjalnych (`<script>`, `../`, `;`) w polach tekstowych.\n"
+                         f"2. Próba wykonania komendy systemowej w polach ścieżek.\n\n"
+                         f"**Zadania deweloperskie:**\n"
+                         f"- Użyć funkcji `secure_filename` dla operacji na plikach.\n"
+                         f"- Escapować dane wyjściowe w widokach (jeśli renderowane po stronie serwera)."),
+                'labels': ['security', 'input-validation', f"epic:{epic_id}"],
+                'priority': 'high',
+                'complexity': 'medium'
             },
             {
-                'title': f"Spójność UI z Design Systemem: {target_app['name']}",
-                'desc': (f"Zweryfikuj wygląd aplikacji {target_app['name']} pod kątem zgodności z EthOS Design System.\n"
-                         f"- Kolorystyka (czy używa zmiennych CSS?)\n"
-                         f"- Poprawność ikon ({target_app.get('icon', 'fa-question')})\n"
-                         f"- Responsywność na mobile."),
-                'labels': ['UI', 'UX', f"epic:{epic_id}"],
-                'priority': 'medium'
+                'title': f"Audyt UI/UX - Responsywność: {target_app['name']}",
+                'desc': (f"Zweryfikować działanie interfejsu aplikacji {target_app['name']} na urządzeniach mobilnych i tabletach.\n\n"
+                         f"**Scenariusze testowe (QA):**\n"
+                         f"1. Sprawdzenie widoku na szerokości 375px (iPhone SE) i 768px (iPad).\n"
+                         f"2. Czy przyciski są wystarczająco duże (min. 44x44px)?\n"
+                         f"3. Czy tabele przewijają się horyzontalnie bez psucia układu?\n"
+                         f"4. Czy modale mieszczą się na ekranie?\n\n"
+                         f"**Zadania deweloperskie:**\n"
+                         f"- Dodać media queries dla małych ekranów.\n"
+                         f"- Dostosować Grid/Flexbox do układu jednokolumnowego na mobile."),
+                'labels': ['ui-ux', 'mobile', f"epic:{epic_id}"],
+                'priority': 'medium',
+                'complexity': 'medium'
             },
             {
-                'title': f"User Experience Flow: {target_app['name']}",
-                'desc': (f"Przejdź ścieżkę użytkownika w aplikacji {target_app['name']}.\n"
-                         f"- Czy komunikaty błędów są zrozumiałe?\n"
-                         f"- Czy stany ładowania (loading) są widoczne?\n"
-                         f"- Czy nawigacja jest intuicyjna?"),
-                'labels': ['UX', f"epic:{epic_id}"],
-                'priority': 'medium'
+                'title': f"Audyt UI/UX - Komunikaty błędów: {target_app['name']}",
+                'desc': (f"Poprawić jakość komunikatów błędów zwracanych do użytkownika w {target_app['name']}.\n\n"
+                         f"**Problem:**\n"
+                         f"Często błędy backendu są zwracane jako surowy JSON lub 'Internal Server Error'.\n\n"
+                         f"**Oczekiwane zachowanie (QA):**\n"
+                         f"1. Użytkownik widzi zrozumiały komunikat (np. 'Brak połączenia z dyskiem' zamiast 'IOError: [Errno 2]').\n"
+                         f"2. Komunikaty sukcesu (Toast) znikają po 3-5 sekundach.\n"
+                         f"3. Błędy krytyczne wymagają potwierdzenia zamknięcia.\n\n"
+                         f"**Zadania deweloperskie:**\n"
+                         f"- Przechwytywać wyjątki w endpointach i zwracać `jsonify({'error': 'Human readable message'})`.\n"
+                         f"- W frontendzie używać `toast()` z odpowiednim typem ('error', 'success')."),
+                'labels': ['ui-ux', 'error-handling', f"epic:{epic_id}"],
+                'priority': 'medium',
+                'complexity': 'simple'
+            },
+            {
+                'title': f"Spójność wizualna (Style Guide): {target_app['name']}",
+                'desc': (f"Dostosować wygląd aplikacji {target_app['name']} do standardów EthOS Design System.\n\n"
+                         f"**Elementy do weryfikacji:**\n"
+                         f"- Kolor wiodący: `{target_app['color']}` (czy jest używany w nagłówkach/przyciskach?)\n"
+                         f"- Ikona: `{target_app['icon']}` (czy jest spójna w menu i nagłówku?)\n"
+                         f"- Spójność fontów (Inter/Roboto) i odstępów (spacing scale).\n\n"
+                         f"**Zadania deweloperskie:**\n"
+                         f"- Usunąć inline style CSS.\n"
+                         f"- Używać klas z `style.css` (np. `.btn-primary`, `.card`, `.text-lg`)."),
+                'labels': ['ui-ux', 'consistency', f"epic:{epic_id}"],
+                'priority': 'low',
+                'complexity': 'simple'
             }
         ]
         
@@ -1021,9 +1061,9 @@ def bug_hunt(project_id):
                 'description': task['desc'],
                 'column': target_column,
                 'priority': task['priority'],
-                'assignee': g.username,
+                'assignee': None,
                 'type': 'task',
-                'complexity': 'medium',
+                'complexity': task.get('complexity', 'medium'),
                 'reporter': g.username,
                 'labels': task['labels'],
                 'comments': [],
@@ -1049,4 +1089,4 @@ def bug_hunt(project_id):
     for t in created_tickets:
         _emit('ticket_created', project_id, {'ticket': t})
 
-    return jsonify({'ok': True, 'count': len(created_tickets), 'app': target_app['name']}), 201
+    return jsonify({'ok': True, 'count': len(created_tickets), 'app': target_app['name'], 'epic_id': epic_id}), 201
