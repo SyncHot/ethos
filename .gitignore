@@ -13,3 +13,4 @@ installer/releases/*.tar.gz
 installer/releases/*.zip
 cups-config/
 frontend_dist/
+.password_changed
