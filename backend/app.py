@@ -238,6 +238,10 @@ def csrf_check():
     if request.path == '/api/auth/login':
         return
 
+    # Allow localhost (internal services like smartd, fail2ban)
+    if request.remote_addr in ('127.0.0.1', '::1'):
+        return
+
     # Exclude Bearer token requests (CLI, Watcher, Frontend with token)
     if request.headers.get('Authorization', '').startswith('Bearer '):
         return

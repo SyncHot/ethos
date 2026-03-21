@@ -4801,6 +4801,13 @@ function renderDashboard(body) {
                     <div id="dash-disk-list"></div>
                 </div>
 
+                <div class="dash-card full-width" id="dash-smart">
+                    <div class="dash-card-header">
+                        <div class="dash-card-title"><i class="fas fa-user-md"></i> S.M.A.R.T.</div>
+                    </div>
+                    <div id="dash-smart-list" class="ddisk-group-cards"></div>
+                </div>
+
                 <div class="dash-card full-width" id="dash-docker">
                     <div class="dash-card-header">
                         <div class="dash-card-title"><i class="fas fa-cubes"></i> Docker</div>
@@ -4962,6 +4969,51 @@ function renderDashboard(body) {
         }
     }
 
+    async function loadSmartInfo() {
+        try {
+            const data = await api('/resources/smart');
+            const smartList = body.querySelector('#dash-smart-list');
+            if (!smartList) return;
+
+            if (!data || !data.length) {
+                smartList.innerHTML = `<div class="app-empty app-empty--compact">${t('Brak danych S.M.A.R.T.')}</div>`;
+                return;
+            }
+
+            smartList.innerHTML = data.map(d => {
+                const statusColor = d.health === 'PASS' ? 'var(--success)' : 'var(--danger)';
+                const icon = d.type === 'nvme' ? 'fa-memory' : 'fa-hdd';
+                const temp = d.temp > 0 ? d.temp + '°C' : '—';
+                const tempColor = d.temp > 50 ? 'var(--warning)' : d.temp > 60 ? 'var(--danger)' : 'var(--text-muted)';
+                let life = '';
+                if (d.remaining_life !== -1) {
+                    const lifeColor = d.remaining_life < 10 ? 'var(--danger)' : d.remaining_life < 30 ? 'var(--warning)' : 'var(--success)';
+                    life = `<span style="color:${lifeColor}"><i class="fas fa-heartbeat"></i> ${d.remaining_life}%</span>`;
+                }
+                const hours = d.power_on_hours > 0 ? Math.round(d.power_on_hours) + 'h' : '—';
+
+                return `
+                <div class="dash-list-item" style="display:flex;align-items:center;padding:12px;border-bottom:1px solid var(--border);gap:12px">
+                    <div class="dash-list-icon" style="color:${statusColor};font-size:1.5em;width:30px;text-align:center"><i class="fas ${icon}"></i></div>
+                    <div class="dash-list-content" style="flex:1">
+                        <div class="dash-list-title" style="font-weight:600;display:flex;align-items:center;gap:8px">
+                            ${d.model || d.device}
+                            <span class="app-badge" style="background:${statusColor};color:#fff;font-size:0.7em;padding:1px 6px;border-radius:4px">${d.health}</span>
+                        </div>
+                        <div class="dash-list-subtitle" style="font-size:0.85em;color:var(--text-muted);margin-top:2px">${d.device} · ${d.serial}</div>
+                    </div>
+                    <div class="dash-list-end" style="display:flex;gap:15px;align-items:center;font-size:0.9em;color:var(--text)">
+                         <div class="dash-chip" style="color:${tempColor}" title="${t('Temperatura')}"><i class="fas fa-thermometer-half"></i> ${temp}</div>
+                         ${life ? `<div class="dash-chip" title="${t('Pozostała żywotność')}">${life}</div>` : ''}
+                         <div class="dash-chip" style="color:var(--text-muted)" title="${t('Czas pracy')}"><i class="fas fa-clock"></i> ${hours}</div>
+                    </div>
+                </div>`;
+            }).join('');
+        } catch {
+            // ignore
+        }
+    }
+
     // Realtime updates via Socket.IO
     function updateFromSocket() {
         if (!NAS.socket) return;
@@ -4984,6 +5036,7 @@ function renderDashboard(body) {
 
     loadSystemInfo();
     loadDockerSummary();
+    loadSmartInfo();
     updateFromSocket();
 
     // Refresh button
@@ -4992,7 +5045,7 @@ function renderDashboard(body) {
         refreshBtn.addEventListener('click', async () => {
             refreshBtn.classList.add('dash-spin');
             refreshBtn.disabled = true;
-            await Promise.all([loadSystemInfo(), loadDockerSummary()]);
+            await Promise.all([loadSystemInfo(), loadDockerSummary(), loadSmartInfo()]);
             setTimeout(() => { refreshBtn.classList.remove('dash-spin'); refreshBtn.disabled = false; }, 600);
         });
     }

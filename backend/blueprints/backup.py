@@ -1401,6 +1401,62 @@ def create_usb_folder():
         return jsonify({'error': str(e)}), 500
 
 
+@backup_bp.route('/trigger-smart', methods=['POST'])
+def trigger_smart_backup():
+    """Trigger a backup due to SMART warning."""
+    global current_operation
+
+    # Check if a backup is already running
+    with operation_lock:
+        if current_operation is not None:
+             return jsonify({'status': 'busy', 'message': 'Backup already in progress'}), 200
+
+    # Find a suitable profile
+    profiles = load_profiles()
+    target_profile = None
+
+    # 1. Look for explicit "SMART" profile
+    for p in profiles:
+        if 'smart' in p['name'].lower():
+            target_profile = p
+            break
+
+    # 2. Look for "System" profile
+    if not target_profile:
+        for p in profiles:
+            if 'system' in p['name'].lower():
+                target_profile = p
+                break
+
+    # 3. Fallback to any profile
+    if not target_profile and profiles:
+        target_profile = profiles[0]
+
+    if target_profile:
+        destination = target_profile.get('destination')
+        # Load SSH config if needed
+        if destination and destination.get('type') == 'ssh':
+             ssh_id = destination.get('server_id')
+             if ssh_id:
+                 configs = load_ssh_configs()
+                 ssh_cfg = next((c for c in configs if c.get('id') == ssh_id), None)
+                 if ssh_cfg:
+                     destination['config'] = ssh_cfg
+
+        retention = target_profile.get('retention', 0)
+        incremental = target_profile.get('incremental', False)
+
+        emit_log(f"SMART Alert triggered backup: {target_profile['name']}", 'warning')
+
+        with operation_lock:
+             current_operation = 'backup'
+
+        _socketio.start_background_task(_run_scheduled_backup, target_profile, destination, retention, incremental)
+        return jsonify({'status': 'started', 'profile': target_profile['name']})
+    else:
+        return jsonify({'status': 'no_profile', 'message': 'No backup profiles configured'}), 400
+
+
 @backup_bp.route('/ssh-servers', methods=['GET'])
 def get_ssh_servers():
     configs = load_ssh_configs()

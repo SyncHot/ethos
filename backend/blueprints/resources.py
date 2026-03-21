@@ -12,7 +12,7 @@ from blueprints.monitor import (
     get_cpu_info, get_ram_info, get_gpu_info, get_disk_info,
     get_network_info, get_processes, kill_process, get_usb_devices,
     get_system_info, get_docker_containers, docker_action,
-    detect_gpu_hardware
+    detect_gpu_hardware, get_smart_info
 )
 from blueprints.resources_db import (
     init_db as init_resources_db, save_cpu_data, save_ram_data,
@@ -101,6 +101,11 @@ def api_usb():
     return jsonify(_cached('usb', get_usb_devices))
 
 
+@resources_bp.route('/smart')
+def api_smart():
+    return jsonify(_cached('smart', get_smart_info))
+
+
 @resources_bp.route('/docker')
 def api_docker():
     return jsonify(_cached('docker', get_docker_containers))
@@ -135,6 +140,7 @@ def api_all():
         'ram': _cached('ram', get_ram_info),
         'gpu': _cached('gpu', get_gpu_info),
         'disks': _cached('disks', get_disk_info),
+        'smart': _cached('smart', get_smart_info),
         'network': _cached('network', get_network_info),
         'processes': _cached('processes', get_processes, 'cpu', 30),
         'usb': _cached('usb', get_usb_devices),
@@ -157,6 +163,7 @@ def resources_background_collector(socketio):
 
     # Cached slow-changing data
     _disks = []
+    _smart = []
     _gpu = []
     _processes = []
     _usb = []
@@ -177,6 +184,7 @@ def resources_background_collector(socketio):
                 last_slow = now
                 _gpu = get_gpu_info()
                 _disks = get_disk_info()
+                _smart = get_smart_info()
                 _processes = get_processes('cpu', 30)
                 _usb = get_usb_devices()
                 _docker = get_docker_containers()
@@ -203,6 +211,7 @@ def resources_background_collector(socketio):
                 'ram': ram,
                 'gpu': _gpu,
                 'disks': _disks,
+                'smart': _smart,
                 'network': network,
                 'processes': _processes,
                 'usb': _usb,

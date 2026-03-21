@@ -15,13 +15,14 @@ AppRegistry['resource-monitor'] = function (appDef) {
 };
 
 function renderResourcesApp(body) {
-    const sections = ['overview','cpu','ram','gpu','disks','network','processes','usb'];
+    const sections = ['overview','cpu','ram','gpu','disks','smart','network','processes','usb'];
     const sectionLabels = {
         overview: `<i class="fas fa-tachometer-alt"></i> ${t('Przegląd')}`,
         cpu: '<i class="fas fa-microchip"></i> CPU',
         ram: '<i class="fas fa-memory"></i> RAM',
         gpu: '<i class="fas fa-tv"></i> GPU',
         disks: '<i class="fas fa-hdd"></i> Dyski',
+        smart: '<i class="fas fa-heartbeat"></i> S.M.A.R.T.',
         network: `<i class="fas fa-network-wired"></i> ${t('Sieć')}`,
         processes: '<i class="fas fa-list-alt"></i> Procesy',
         usb: '<i class="fas fa-usb"></i> USB',
@@ -106,6 +107,7 @@ function renderResourcesApp(body) {
             case 'ram': renderRAM(el, data); break;
             case 'gpu': renderGPU(el, data); break;
             case 'disks': renderDisks(el, data); break;
+            case 'smart': renderSMART(el, data); break;
             case 'network': renderNetwork(el, data); break;
             case 'processes': renderProcesses(el, data); break;
             case 'usb': renderUSB(el, data); break;
@@ -486,6 +488,73 @@ function renderResourcesApp(body) {
             renderGroup(t('Dyski zewnętrzne'), 'fa-hdd', ext) +
             renderGroup('Dyski USB', 'fa-usb', usb) +
             (disks.length === 0 ? `<div class="res-empty"><p>${t('Brak dysków')}</p></div>` : '');
+    }
+
+    function renderSMART(el, data) {
+        const smart = data.smart || [];
+        
+        if (!smart.length) {
+            el.innerHTML = `<div class="res-empty">
+                <i class="fas fa-heartbeat res-empty-icon"></i>
+                <p class="res-empty-title">Brak danych S.M.A.R.T.</p>
+                <p class="res-empty-desc">Może być wymagana konfiguracja smartmontools lub brak obsługiwanych dysków.</p>
+            </div>`;
+            return;
+        }
+
+        el.innerHTML = `<h3><i class="fas fa-heartbeat"></i> Zdrowie dysków (S.M.A.R.T.)</h3>` + smart.map(d => {
+            const healthColor = d.health === 'PASS' ? '#10b981' : '#ef4444';
+            const healthIcon = d.health === 'PASS' ? 'fa-check-circle' : 'fa-exclamation-triangle';
+            const tempColor = (d.temperature > 50) ? '#ef4444' : (d.temperature > 45 ? '#eab308' : '#fff');
+            
+            return `
+            <div class="res-card res-mb-md">
+                <div class="res-card-hdr">
+                    <div>
+                        <i class="fas fa-hdd" style="color:#a78bfa"></i> ${d.model} 
+                        <span class="res-mono-sm" style="opacity:0.7">(${d.device})</span>
+                    </div>
+                    <div style="margin-left:auto;color:${healthColor};font-weight:bold">
+                        <i class="fas ${healthIcon}"></i> ${d.health}
+                    </div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:15px 0;">
+                    <div class="res-kv-row">
+                        <span class="res-label">Serial Number:</span>
+                        <span class="res-val">${d.serial}</span>
+                    </div>
+                    <div class="res-kv-row">
+                        <span class="res-label">Temperatura:</span>
+                        <span class="res-val" style="color:${tempColor}">${d.temperature ? d.temperature + '°C' : '—'}</span>
+                    </div>
+                    <div class="res-kv-row">
+                        <span class="res-label">Power On Hours:</span>
+                        <span class="res-val">${d.power_on_hours} h</span>
+                    </div>
+                    <div class="res-kv-row">
+                        <span class="res-label">Żywotność (SSD):</span>
+                        <span class="res-val">${d.remaining_life >= 0 ? pct(d.remaining_life) : '—'}</span>
+                    </div>
+                </div>
+                
+                <div class="res-sep" style="border-top:1px solid rgba(255,255,255,0.1);margin:10px 0;"></div>
+                
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;text-align:center;">
+                    <div style="background:rgba(255,255,255,0.05);padding:10px;border-radius:6px;${d.reallocated_sectors > 0 ? 'border:1px solid #ef4444' : ''}">
+                        <div style="font-size:11px;opacity:0.7;margin-bottom:4px">Reallocated Sectors</div>
+                        <div style="font-size:16px;font-weight:bold;color:${d.reallocated_sectors > 0 ? '#ef4444' : '#fff'}">${d.reallocated_sectors}</div>
+                    </div>
+                    <div style="background:rgba(255,255,255,0.05);padding:10px;border-radius:6px;${d.pending_sectors > 0 ? 'border:1px solid #ef4444' : ''}">
+                        <div style="font-size:11px;opacity:0.7;margin-bottom:4px">Pending Sectors</div>
+                        <div style="font-size:16px;font-weight:bold;color:${d.pending_sectors > 0 ? '#ef4444' : '#fff'}">${d.pending_sectors}</div>
+                    </div>
+                    <div style="background:rgba(255,255,255,0.05);padding:10px;border-radius:6px;">
+                        <div style="font-size:11px;opacity:0.7;margin-bottom:4px">UDMA CRC Errors</div>
+                        <div style="font-size:16px;font-weight:bold">${d.udma_crc_errors}</div>
+                    </div>
+                </div>
+            </div>`;
+        }).join('');
     }
 
     function renderNetwork(el, data) {

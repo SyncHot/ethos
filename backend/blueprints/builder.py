@@ -856,7 +856,62 @@ chroot "$ROOT" groupadd -f nasosadmin
 chroot "$ROOT" groupadd -f nasos
 chroot "$ROOT" usermod -aG nasosadmin,nasos "$DEFAULT_USER"
 chroot "$ROOT" systemctl disable ssh
+chroot "$ROOT" systemctl enable smartd
 chroot "$ROOT" systemctl enable NetworkManager
+
+# ── SMART Monitoring Configuration ──
+echo "LOG:Konfiguracja SMART Monitoring..."
+cat > "$ROOT/etc/smartd.conf" <<'EOF'
+DEVICESCAN -a -o on -S on -n standby,q -s (S/../../7/02|L/../01/./03) -W 4,45,55 -m root -M exec /etc/smartmontools/run.d/ethos-notify
+EOF
+
+mkdir -p "$ROOT/etc/smartmontools/run.d"
+cat > "$ROOT/etc/smartmontools/run.d/ethos-notify" <<'EOF'
+#!/bin/bash
+# EthOS S.M.A.R.T. Alert Hook
+# Triggered by smartd on disk issues
+
+API_URL="http://localhost:9000/api"
+
+# Log to EventLog
+if [ -n "$SMARTD_MESSAGE" ]; then
+    curl -s -X POST "$API_URL/eventlog" \
+      -H "Content-Type: application/json" \
+      -d "{{
+        \"category\": \"storage\",
+        \"level\": \"warning\",
+        \"message\": \"SMART Alert: $SMARTD_DEVICE\",
+        \"detail\": {{
+            \"device\": \"$SMARTD_DEVICE\",
+            \"message\": \"$SMARTD_MESSAGE\",
+            \"failtype\": \"$SMARTD_FAILTYPE\",
+            \"full_message\": \"$SMARTD_FULLMESSAGE\"
+        }}
+      }}"
+fi
+
+# Trigger backup on critical attributes
+# Reallocated, Pending, Uncorrectable, or failure
+DO_BACKUP=0
+
+case "$SMARTD_MESSAGE" in
+    *Reallocated_Sector_Ct*|*Current_Pending_Sector*|*Offline_Uncorrectable*)
+        DO_BACKUP=1
+        ;;
+esac
+
+if [ -n "$SMARTD_FAILTYPE" ] && [ "$SMARTD_FAILTYPE" != "EmailTest" ]; then
+    DO_BACKUP=1
+fi
+
+if [ "$DO_BACKUP" -eq 1 ]; then
+    curl -s -X POST "$API_URL/backup/trigger-smart" \
+      -H "Content-Type: application/json" \
+      -d "{{}}"
+fi
+EOF
+chmod +x "$ROOT/etc/smartmontools/run.d/ethos-notify"
+
 chroot "$ROOT" systemctl disable networking 2>/dev/null || true
 chroot "$ROOT" systemctl enable avahi-daemon 2>/dev/null || true
 chroot "$ROOT" systemctl enable serial-getty@ttyS0.service 2>/dev/null || true
