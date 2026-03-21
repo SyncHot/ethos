@@ -8731,6 +8731,10 @@ def _watchdog_monitor():
 def cache_test():
     return jsonify({'time': time.time()})
 
+# Notify systemd when we are ready (delayed slightly to allow socket bind)
+if os.environ.get('NOTIFY_SOCKET'):
+    gevent.spawn_later(0.1, systemd_notify_ready)
+
 if __name__ == '__main__':
     # Initialize databases
     init_resources_db()
@@ -8862,8 +8866,5 @@ if __name__ == '__main__':
     else:
         run_kwargs['port'] = PORT
         print(f'\n  EthOS running on http://0.0.0.0:{PORT}\n')
-
-    # Notify systemd when we are ready (delayed slightly to allow socket bind)
-    gevent.spawn_later(0.1, systemd_notify_ready)
 
     socketio.run(app, **run_kwargs)
