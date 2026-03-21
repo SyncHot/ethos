@@ -20,7 +20,7 @@ def run_ufw(args):
 @admin_required
 def get_status():
     out, err, code = run_ufw(['status', 'numbered'])
-    
+
     # Check if UFW is installed or other error
     if code != 0:
         if "command not found" in (err or ""):
@@ -29,9 +29,9 @@ def get_status():
         if "inactive" in (out or ""):
              return jsonify({'status': 'inactive', 'rules': []})
         # If code is non-zero but output says inactive (happens on some versions)
-        if "inactive" in (err or ""): 
+        if "inactive" in (err or ""):
              return jsonify({'status': 'inactive', 'rules': []})
-             
+
         return jsonify({'error': err or 'Unknown error'}), 500
 
     # Parse output
@@ -39,18 +39,18 @@ def get_status():
     status = 'inactive'
     if lines and 'Status: active' in lines[0]:
         status = 'active'
-    
+
     rules = []
     if status == 'active':
         # Regex for rule line: [ 1] 22/tcp ALLOW IN Anywhere
         # Captures: id, to, action, direction (optional), from
         rule_pattern = re.compile(r'\[\s*(\d+)\]\s+(.*?)\s+(ALLOW|DENY|REJECT|LIMIT)(?:\s+(IN|OUT))?\s+(.*)')
-        
+
         for line in lines:
             line = line.strip()
             if not line: continue
             if line.startswith('To') or line.startswith('--'): continue
-            
+
             match = rule_pattern.match(line)
             if match:
                 rule_id = int(match.group(1))
@@ -58,13 +58,13 @@ def get_status():
                 action = match.group(3).strip()
                 direction = match.group(4) or "IN"
                 from_ip = match.group(5).strip()
-                
+
                 # Check for comment (v6 is often in parens, comments might be #)
                 comment = ""
-                # ufw output doesn't always show comments in 'status numbered'. 
-                # 'ufw show added' shows commands with comments. 
+                # ufw output doesn't always show comments in 'status numbered'.
+                # 'ufw show added' shows commands with comments.
                 # For now, let's just parse what we see.
-                
+
                 rules.append({
                     'id': rule_id,
                     'to': to_port,
@@ -73,7 +73,7 @@ def get_status():
                     'from': from_ip,
                     'comment': comment
                 })
-    
+
     return jsonify({'status': status, 'rules': rules})
 
 @firewall_bp.route('/toggle', methods=['POST'])
@@ -81,14 +81,14 @@ def get_status():
 def toggle_firewall():
     data = request.json or {}
     enable = data.get('enable', False)
-    
+
     # We need to force yes because 'ufw enable' prompts for confirmation
     args = ['--force', 'enable'] if enable else ['disable']
-    
+
     out, err, code = run_ufw(args)
     if code != 0:
         return jsonify({'error': err or f'Failed to {"enable" if enable else "disable"} firewall'}), 500
-        
+
     return jsonify({'success': True, 'message': f'Firewall {"enabled" if enable else "disabled"}', 'output': out})
 
 @firewall_bp.route('/rules', methods=['POST'])
@@ -96,12 +96,12 @@ def toggle_firewall():
 def manage_rules():
     data = request.json or {}
     action = data.get('action') # add, delete
-    
+
     if action == 'delete':
         rule_id = data.get('id')
         if not rule_id:
             return jsonify({'error': 'Missing rule ID'}), 400
-        
+
         # Delete by ID: sudo ufw --force delete <id>
         # We use --force to avoid confirmation prompt "Delete rule X (y|n)?"
         out, err, code = run_ufw(['--force', 'delete', str(rule_id)])
@@ -114,46 +114,46 @@ def manage_rules():
         proto = data.get('proto') # tcp, udp, or None (both)
         port = data.get('port')
         from_ip = data.get('from', 'any')
-        
+
         if not port:
              return jsonify({'error': 'Missing port'}), 400
-        
+
         # Construct command: ufw allow [proto] from [from] to any port [port]
         # Example: ufw allow 22/tcp
         # Example: ufw allow from 192.168.1.5 to any port 22 proto tcp
-        
+
         cmd_args = ['allow']
-        
+
         # Order matters for ufw syntax somewhat, but 'allow <port>/<proto>' is simplest
         # 'allow from <ip> to any port <port> proto <proto>' is most flexible
-        
+
         if from_ip and from_ip.lower() != 'any':
              cmd_args.extend(['from', from_ip])
         else:
-             # If from is any, we can skip 'from any' unless we want to be explicit, 
-             # but 'ufw allow <port>' implies from any. 
+             # If from is any, we can skip 'from any' unless we want to be explicit,
+             # but 'ufw allow <port>' implies from any.
              # However to keep structure consistent:
              cmd_args.extend(['from', 'any'])
 
         cmd_args.extend(['to', 'any', 'port', str(port)])
-        
+
         if proto and proto.lower() in ['tcp', 'udp']:
             cmd_args.extend(['proto', proto.lower()])
-            
+
         out, err, code = run_ufw(cmd_args)
         if code != 0:
              return jsonify({'error': err or 'Failed to add rule'}), 500
         return jsonify({'success': True, 'message': 'Rule added'})
-    
+
     elif action == 'reset_defaults':
         # Apply default EthOS rules
         # 1. Enable logging
         run_ufw(['logging', 'on'])
-        
+
         # 2. Set defaults
         run_ufw(['default', 'deny', 'incoming'])
         run_ufw(['default', 'allow', 'outgoing'])
-        
+
         # 3. Allow specific services
         defaults = [
             # SSH
@@ -169,13 +169,13 @@ def manage_rules():
             ['allow', '53'],
             ['allow', '67,68/udp']
         ]
-        
+
         for rule in defaults:
             run_ufw(rule)
-            
+
         # Ensure enabled
         run_ufw(['--force', 'enable'])
-        
+
         return jsonify({'success': True, 'message': 'Default rules applied'})
 
     return jsonify({'error': 'Invalid action'}), 400
@@ -222,29 +222,29 @@ def unban_ip():
     data = request.json or {}
     jail = data.get('jail')
     ip = data.get('ip')
-    
+
     if not jail or not ip:
         return jsonify({'error': 'Missing jail or IP'}), 400
-        
+
     # validate jail/ip to prevent injection (simple alphanumeric/dot/colon check)
     if not re.match(r'^[a-zA-Z0-9_\-]+$', jail):
         return jsonify({'error': 'Invalid jail name'}), 400
     if not re.match(r'^[0-9a-fA-F\.:]+$', ip):
         return jsonify({'error': 'Invalid IP address'}), 400
-        
+
     # sudo fail2ban-client set <jail> unbanip <ip>
-    out, err, code = run_ufw(['unban-placeholder']) # dummy, use subprocess directly
-    
+    # out, err, code = run_ufw(['unban-placeholder']) # dummy, use subprocess directly
+
     try:
         cmd = ['sudo', '-n', 'fail2ban-client', 'set', jail, 'unbanip', ip]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-        
+
         if result.returncode != 0:
-            # If IP not banned, fail2ban returns 0 or 1? 
+            # If IP not banned, fail2ban returns 0 or 1?
             # Usually it says "0" if nothing unbanned, but return code is 0.
             # If error, return code non-zero.
             return jsonify({'error': result.stderr.strip() or 'Failed to unban'}), 500
-            
+
         return jsonify({'success': True, 'message': f'IP {ip} unbanned from {jail}', 'output': result.stdout.strip()})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
