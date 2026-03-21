@@ -598,6 +598,117 @@ def _should_fallback_from_sonnet(model_info, log_file):
     failure = _classify_failure(log_file)
     return failure in ("rate_limit", "server_error", "transient")
 
+# ── Post-commit health gate — detect server crashes before QA ─────────────
+HEALTH_CHECK_URL = "http://localhost:9000/api/auth/verify"
+HEALTH_CHECK_TIMEOUT = 5        # seconds per HTTP check
+HEALTH_CHECK_RETRIES = 3        # attempts before declaring dead
+HEALTH_CHECK_RETRY_DELAY = 3    # seconds between health retries
+LIVE_HEALTH_CHECK_INTERVAL = 30 # seconds between live health checks during execution
+_last_live_health_check = 0
+_live_health_failures = 0
+
+def _check_ethos_health():
+    """Check if ethos service is running and API responds.
+    Returns (healthy: bool, detail: str)."""
+    # 1. Check systemd service
+    try:
+        r = subprocess.run(
+            ["systemctl", "is-active", "--quiet", "ethos"],
+            timeout=5, capture_output=True)
+        if r.returncode != 0:
+            return False, "ethos service not active"
+    except Exception as e:
+        return False, f"systemctl check failed: {e}"
+
+    # 2. Check HTTP health
+    for attempt in range(HEALTH_CHECK_RETRIES):
+        try:
+            resp = requests.get(HEALTH_CHECK_URL, timeout=HEALTH_CHECK_TIMEOUT)
+            if resp.status_code in (200, 401):
+                return True, f"API responding (HTTP {resp.status_code})"
+        except Exception:
+            pass
+        if attempt < HEALTH_CHECK_RETRIES - 1:
+            time.sleep(HEALTH_CHECK_RETRY_DELAY)
+
+    return False, "API not responding after retries"
+
+
+def _get_last_agent_commit(ticket_id):
+    """Find the most recent commit made by the copilot agent for this ticket.
+    Returns (sha, message) or (None, None)."""
+    try:
+        r = subprocess.run(
+            ["git", "--no-pager", "log", "--oneline", "-5"],
+            capture_output=True, text=True, timeout=10, cwd="/opt/ethos")
+        if r.returncode != 0:
+            return None, None
+        for line in r.stdout.strip().split("\n"):
+            if not line.strip():
+                continue
+            sha = line.split()[0]
+            msg = line[len(sha):].strip()
+            # Agent commits typically contain ticket ID or Co-authored-by Copilot
+            if ticket_id in msg:
+                return sha, msg
+            # Also check full commit for co-author trailer
+            full = subprocess.run(
+                ["git", "--no-pager", "show", "--quiet", sha],
+                capture_output=True, text=True, timeout=10, cwd="/opt/ethos")
+            if "Co-authored-by: Copilot" in full.stdout:
+                return sha, msg
+        return None, None
+    except Exception:
+        return None, None
+
+
+def _auto_revert_and_recover(ticket_id):
+    """Revert last agent commit and restart ethos.
+    Returns (success: bool, detail: str)."""
+    sha, msg = _get_last_agent_commit(ticket_id)
+    if not sha:
+        return False, "could not identify agent commit to revert"
+
+    print(f"AUTO_REVERT | {ticket_id} | reverting {sha}: {msg}", flush=True)
+
+    try:
+        # Revert the commit
+        r = subprocess.run(
+            ["git", "revert", "--no-edit", sha],
+            capture_output=True, text=True, timeout=30, cwd="/opt/ethos")
+        if r.returncode != 0:
+            # Try harder: reset if revert has conflicts
+            subprocess.run(["git", "revert", "--abort"],
+                capture_output=True, timeout=10, cwd="/opt/ethos")
+            subprocess.run(["git", "reset", "--hard", f"{sha}~1"],
+                capture_output=True, timeout=10, cwd="/opt/ethos")
+            print(f"AUTO_REVERT | {ticket_id} | revert had conflicts, used hard reset to {sha}~1", flush=True)
+    except Exception as e:
+        return False, f"git revert failed: {e}"
+
+    # Restart ethos
+    try:
+        subprocess.run(["sudo", "systemctl", "restart", "ethos"],
+            capture_output=True, timeout=30)
+        time.sleep(5)
+    except Exception as e:
+        return False, f"restart failed after revert: {e}"
+
+    # Verify recovery
+    healthy, detail = _check_ethos_health()
+    if healthy:
+        # Push the revert
+        try:
+            subprocess.run(["git", "push"],
+                capture_output=True, timeout=30, cwd="/opt/ethos")
+        except Exception:
+            pass
+        return True, f"reverted {sha}, server recovered"
+    else:
+        return False, f"reverted {sha} but server still unhealthy: {detail}"
+
+
+
 
 # ── Live log monitoring — detect rate limits during execution ─────────────
 _last_live_check = 0
@@ -2260,7 +2371,34 @@ def main():
                             _record_metric(_done_model, "ok", _exec_duration)
                             add_comment(active_ticket_id,
                                 f"[{_agent_prefix}] Zakończyłem pracę nad ticketem (exit 0). Log: {log_file}")
-                        # Move to QA (not Review — QA agent will verify first)
+                        # ── Health gate: verify server survived before moving to QA ──
+                        healthy, health_detail = _check_ethos_health()
+                        if not healthy:
+                            print(f"\nHEALTH_GATE_FAIL | {active_ticket_id} | {health_detail} — attempting auto-revert", flush=True)
+                            reverted, revert_detail = _auto_revert_and_recover(active_ticket_id)
+                            if reverted:
+                                add_comment(active_ticket_id,
+                                    f"[system] ⚠️ Serwer padł po commicie agenta. "
+                                    f"Auto-revert wykonany ({revert_detail}). "
+                                    f"Ticket wraca do kolejki.")
+                                print(f"HEALTH_GATE_REVERTED | {active_ticket_id} | {revert_detail}", flush=True)
+                            else:
+                                add_comment(active_ticket_id,
+                                    f"[system] ❌ Serwer padł po commicie agenta. "
+                                    f"Auto-revert nie powiódł się: {revert_detail}. "
+                                    f"Wymaga interwencji manualnej!")
+                                print(f"HEALTH_GATE_REVERT_FAILED | {active_ticket_id} | {revert_detail}", flush=True)
+                            try:
+                                move_ticket(active_ticket_id, "Do zrobienia")
+                            except Exception:
+                                print(f"MOVE_ERROR | {active_ticket_id} | could not move back to queue after health gate fail", flush=True)
+                            clear_executing()
+                            _last_ticket_finished = time.time()
+                            active_proc = None
+                            active_ticket_id = None
+                            continue
+
+                        # Health OK — move to QA
                         try:
                             move_ticket(active_ticket_id, "QA")
                             print(f"MOVED_TO_QA | {active_ticket_id}", flush=True)
@@ -2490,7 +2628,51 @@ def main():
                     # Don't clear executing yet — let the normal "process finished" handler
                     # deal with retry/fallback on next loop iteration
 
-            # --- Timeout check for DEV process ---
+            # --- Live health check: detect if ethos crashed during agent execution ---
+            if active_proc is not None and active_proc.poll() is None:
+                global _last_live_health_check, _live_health_failures
+                now = time.time()
+                if now - _last_live_health_check >= LIVE_HEALTH_CHECK_INTERVAL:
+                    _last_live_health_check = now
+                    healthy, detail = _check_ethos_health()
+                    if not healthy:
+                        _live_health_failures += 1
+                        print(f"LIVE_HEALTH_FAIL | {active_ticket_id} | {detail} | failures={_live_health_failures}/3", flush=True)
+                        if _live_health_failures >= 3:
+                            print(f"LIVE_HEALTH_KILL | {active_ticket_id} | server down for 3 checks — killing agent and reverting", flush=True)
+                            try:
+                                active_proc.terminate()
+                                try: active_proc.wait(timeout=5)
+                                except subprocess.TimeoutExpired: active_proc.kill()
+                            except OSError:
+                                pass
+                            if hasattr(active_proc, '_log_fh'):
+                                try: active_proc._log_fh.close()
+                                except: pass
+                            reverted, revert_detail = _auto_revert_and_recover(active_ticket_id)
+                            _lh_agent = (get_executing() or {}).get("agent", "copilot")
+                            if reverted:
+                                add_comment(active_ticket_id,
+                                    f"[system] ⚠️ Serwer padł w trakcie pracy agenta. "
+                                    f"Auto-revert: {revert_detail}. Ticket wraca do kolejki.")
+                            else:
+                                add_comment(active_ticket_id,
+                                    f"[system] ❌ Serwer padł w trakcie pracy agenta. "
+                                    f"Auto-revert nie powiódł się: {revert_detail}.")
+                            try:
+                                move_ticket(active_ticket_id, "Do zrobienia")
+                            except Exception:
+                                pass
+                            clear_executing()
+                            active_proc = None
+                            active_ticket_id = None
+                            _live_health_failures = 0
+                    else:
+                        if _live_health_failures > 0:
+                            print(f"LIVE_HEALTH_RECOVERED | {active_ticket_id} | {detail} (was {_live_health_failures} failures)", flush=True)
+                        _live_health_failures = 0
+
+                        # --- Timeout check for DEV process ---
             if active_proc is not None and active_proc.poll() is None:
                 executing = get_executing()
                 if executing:
