@@ -159,6 +159,11 @@ SERVER_ERROR_MARKERS = [
     "overloaded",
 ]
 
+QUOTA_EXHAUSTED_MARKERS = [
+    "you have no quota",
+    "402 you have no quota",
+]
+
 MAX_RETRIES_SAME_MODEL = 2      # retry same model N times with backoff before switching
 MAX_BACKOFF_SECS = 180          # cap exponential backoff at 3 min
 BACKOFF_BASE_SECS = 15          # starting backoff for rate limits (15→30→60→120→180)
@@ -568,8 +573,15 @@ def _count_transient_errors(log_file):
         return 0
 
 
+def _log_indicates_quota_exhausted(log_file):
+    """Detect 402 quota exhausted errors from Copilot log output."""
+    return _log_contains_markers(log_file, QUOTA_EXHAUSTED_MARKERS)
+
+
 def _classify_failure(log_file):
-    """Classify failure type from log output. Returns 'rate_limit', 'server_error', 'transient', or 'unknown'."""
+    """Classify failure type from log output. Returns 'quota_exhausted', 'rate_limit', 'server_error', 'transient', or 'unknown'."""
+    if _log_indicates_quota_exhausted(log_file):
+        return "quota_exhausted"
     if _log_indicates_rate_limit(log_file):
         return "rate_limit"
     if _log_indicates_server_error(log_file):
@@ -2356,6 +2368,26 @@ def main():
                                     else:
                                         add_comment(active_ticket_id,
                                             f"[system] Fallback na {fallback['model']} nie powiódł się.")
+
+                        elif failure_type == "quota_exhausted":
+                            # 402: account quota exhausted — no point retrying ANY model
+                            print(f"\nQUOTA_EXHAUSTED | {active_ticket_id} | {current_model} | no retry, returning to queue", flush=True)
+                            _record_metric(current_model, "fail")
+                            add_comment(active_ticket_id,
+                                f"[system] Brak limitu (402 quota exhausted). "
+                                f"Ticket wraca do kolejki — wymaga odnowienia limitu Copilot.")
+                            try:
+                                move_ticket(active_ticket_id, "Do zrobienia")
+                            except Exception as me:
+                                print(f"MOVE_ERROR | {active_ticket_id} | {me}", flush=True)
+                            clear_executing()
+                            _last_ticket_finished = time.time()
+                            active_proc = None
+                            active_ticket_id = None
+                            # Pause watcher for 5 min — quota won't reset quickly
+                            print("QUOTA_PAUSE | sleeping 300s before checking queue again", flush=True)
+                            _interruptible_sleep(300)
+                            continue
 
                         elif failure_type in ("server_error", "transient"):
                             # 5xx or transient: short cooldown + failover to next provider
