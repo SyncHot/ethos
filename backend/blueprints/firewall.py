@@ -215,3 +215,36 @@ def get_banned_ips():
         return jsonify({'jails': jail_data})
     except Exception as e:
         return jsonify({'error': str(e), 'jails': []})
+
+@firewall_bp.route('/unban', methods=['POST'])
+@admin_required
+def unban_ip():
+    data = request.json or {}
+    jail = data.get('jail')
+    ip = data.get('ip')
+    
+    if not jail or not ip:
+        return jsonify({'error': 'Missing jail or IP'}), 400
+        
+    # validate jail/ip to prevent injection (simple alphanumeric/dot/colon check)
+    if not re.match(r'^[a-zA-Z0-9_\-]+$', jail):
+        return jsonify({'error': 'Invalid jail name'}), 400
+    if not re.match(r'^[0-9a-fA-F\.:]+$', ip):
+        return jsonify({'error': 'Invalid IP address'}), 400
+        
+    # sudo fail2ban-client set <jail> unbanip <ip>
+    out, err, code = run_ufw(['unban-placeholder']) # dummy, use subprocess directly
+    
+    try:
+        cmd = ['sudo', '-n', 'fail2ban-client', 'set', jail, 'unbanip', ip]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        
+        if result.returncode != 0:
+            # If IP not banned, fail2ban returns 0 or 1? 
+            # Usually it says "0" if nothing unbanned, but return code is 0.
+            # If error, return code non-zero.
+            return jsonify({'error': result.stderr.strip() or 'Failed to unban'}), 500
+            
+        return jsonify({'success': True, 'message': f'IP {ip} unbanned from {jail}', 'output': result.stdout.strip()})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500

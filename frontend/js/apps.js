@@ -8530,15 +8530,6 @@ async function renderSystemSettings(body) {
                         <i class="fas fa-key"></i> ${t('Zmień hasło')}
                     </button>
                 </div>
-
-                <div class="ss-group" style="border-top:1px solid var(--border); padding-top:18px; margin-top:18px">
-                    <div class="ss-group-title"><i class="fas fa-user-shield"></i> ${t('Ochrona przed atakami (Fail2Ban)')}</div>
-                    <div id="ss-f2b-status" class="ss-msg ss-msg-warn" style="display:none"><i class="fas fa-spinner fa-spin"></i> ${t('Ładowanie statusu...')}</div>
-                    <div id="ss-f2b-list"></div>
-                    <div class="ss-actions">
-                         <button class="ss-btn" id="ss-f2b-refresh"><i class="fas fa-sync-alt"></i> ${t('Odśwież')}</button>
-                    </div>
-                </div>
             </div>
         `;
 
@@ -8759,107 +8750,12 @@ async function renderSystemSettings(body) {
             toast(t('Załadowano ') + timezones.length + ' stref czasowych', 'info');
         });
 
-                // -- Fail2Ban Logic --
-        async function loadFail2Ban() {
-            const statusEl = wrap.querySelector('#ss-f2b-status');
-            const listEl = wrap.querySelector('#ss-f2b-list');
-            if (!listEl) return;
-            
-            statusEl.style.display = 'block';
-            statusEl.className = 'ss-msg ss-msg-warn';
-            statusEl.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${t('Ładowanie statusu...')}`;
-            listEl.innerHTML = '';
-            
-            try {
-                const r = await api('/settings/fail2ban/status');
-                if (!r.running) {
-                    statusEl.className = 'ss-msg ss-msg-err';
-                    statusEl.innerHTML = `<i class="fas fa-exclamation-circle"></i> ${t('Fail2Ban nie jest uruchomiony')}`;
-                    return;
-                }
-                
-                statusEl.style.display = 'none';
-                
-                if (!r.jails || Object.keys(r.jails).length === 0) {
-                    listEl.innerHTML = `<div class="ss-msg ss-msg-ok"><i class="fas fa-check-circle"></i> ${t('Brak aktywnych więzień (jails)')}</div>`;
-                    return;
-                }
-                
-                let html = '';
-                for (const [jail, ips] of Object.entries(r.jails)) {
-                    html += `
-                        <div class="ss-info-card" style="margin-bottom:10px">
-                            <div class="ss-info-label" style="display:flex; justify-content:space-between; margin-bottom:8px">
-                                <span>${jail.toUpperCase()}</span>
-                                <span class="app-text-sm">${ips.length} ${t('zbanowanych')}</span>
-                            </div>
-                    `;
-                    
-                    if (ips.length === 0) {
-                        html += `<div class="app-text-muted app-text-xs">${t('Brak zbanowanych adresów IP')}</div>`;
-                    } else {
-                        html += `<div style="display:flex; flex-wrap:wrap; gap:6px;">`;
-                        ips.forEach(ip => {
-                            html += `
-                                <div style="background:var(--bg-input); border:1px solid var(--border); padding:4px 8px; border-radius:4px; font-size:12px; display:flex; align-items:center; gap:8px">
-                                    ${ip}
-                                    <i class="fas fa-times" style="cursor:pointer; color:#ef4444" title="${t('Odblokuj')}" onclick="document.dispatchEvent(new CustomEvent('f2b-unban', {detail: {jail:'${jail}', ip:'${ip}'}}))"></i>
-                                </div>
-                            `;
-                        });
-                        html += `</div>`;
-                    }
-                    html += `</div>`;
-                }
-                listEl.innerHTML = html;
-                
-            } catch (e) {
-                statusEl.className = 'ss-msg ss-msg-err';
-                statusEl.innerHTML = `<i class="fas fa-exclamation-circle"></i> ${t('Błąd:')} ${e.message}`;
-            }
-        }
-        
-        // Listen for unban events (using document since inline onclick can't access scope)
-        // Check if listener already exists to avoid duplicates if re-rendered?
-        // Apps usually re-render fully so listeners are lost, but document listener persists.
-        // Better to attach to 'wrap' if possible, but custom event is on document.
-        // We'll use a named handler if possible, or just accept it (since apps.js is loaded once usually?)
-        // Ah, renderSystemSettings is called when app is opened. 
-        // If we add document listener every time, it duplicates.
-        // Update handler reference to current closure
-        window._f2bReloadHandler = loadFail2Ban;
-
-        if (!window._f2bListenerAdded) {
-            document.addEventListener('f2b-unban', async (e) => {
-                const { jail, ip } = e.detail;
-                if (!confirm(t('Odblokować adres IP {ip} w sekcji {jail}?').replace('{ip}', ip).replace('{jail}', jail))) return;
-                
-                try {
-                    await api('/settings/fail2ban/unban', { method: 'POST', body: { jail, ip } });
-                    toast(t('Adres IP odblokowany'), 'success');
-                    // Trigger reload via event
-                    document.dispatchEvent(new CustomEvent('f2b-reload'));
-                } catch (err) {
-                    toast(t('Błąd: ') + err.message, 'error');
-                }
-            });
-
-            document.addEventListener('f2b-reload', () => {
-                if (window._f2bReloadHandler) window._f2bReloadHandler();
-            });
-            
-            window._f2bListenerAdded = true;
-        }
-
-        // Initial load when switching to security tab
+        // Initial load when switching to firewall tab
         wrap.querySelectorAll('.ss-tab').forEach(t => {
             t.addEventListener('click', () => {
-                if (t.dataset.tab === 'security') loadFail2Ban();
                 if (t.dataset.tab === 'firewall') { loadFirewallStatus(); loadBannedIPs(); }
             });
         });
-        
-        wrap.querySelector('#ss-f2b-refresh')?.addEventListener('click', loadFail2Ban);
 
         // -- Firewall Logic --
         async function loadFirewallStatus() {
@@ -8965,7 +8861,7 @@ async function renderSystemSettings(body) {
                         const jail = btn.dataset.fwUnbanJail;
                         if (!confirm(t('Odblokować IP ') + ip + '?')) return;
                         try {
-                            await api('/fail2ban/unban', { method: 'POST', body: { jail, ip } });
+                            await api('/firewall/unban', { method: 'POST', body: { jail, ip } });
                             toast(t('Odblokowano ') + ip, 'success');
                             loadBannedIPs();
                         } catch(e) { toast(t('Błąd: ') + e.message, 'error'); }
