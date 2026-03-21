@@ -712,7 +712,7 @@ systemd,systemd-sysv,dbus,\\
 linux-image-amd64,\\
 grub-pc-bin,grub-efi-amd64-bin,grub-efi-amd64,grub-common,grub2-common,\\
 efibootmgr,\\
-sudo,openssh-server,openssl,curl,ca-certificates,gnupg,lsb-release,\\
+sudo,openssh-server,curl,ca-certificates,gnupg,lsb-release,\\
 iproute2,iputils-ping,\\
 bash,locales,console-setup,\\
 python3,python3-minimal,\\
