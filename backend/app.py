@@ -36,6 +36,22 @@ import gevent.os
 import gevent.select
 from PIL import Image
 import io
+import logging
+from logging.handlers import RotatingFileHandler
+
+# Setup Auth Logger for Fail2Ban
+AUTH_LOG_FILE = '/opt/ethos/logs/auth.log'
+auth_logger = logging.getLogger('ethos_auth')
+auth_logger.setLevel(logging.INFO)
+if not auth_logger.handlers:
+    try:
+        os.makedirs(os.path.dirname(AUTH_LOG_FILE), exist_ok=True)
+        handler = RotatingFileHandler(AUTH_LOG_FILE, maxBytes=10*1024*1024, backupCount=5)
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        auth_logger.addHandler(handler)
+    except Exception:
+        pass
 from crypto_utils import hash_folder_password as _hash_folder_password_new, verify_folder_password as _verify_folder_password
 
 # Host abstraction layer
@@ -559,6 +575,13 @@ def _record_failed_login(client_ip):
         _login_attempts[client_ip] = attempt
 
 
+
+def _log_auth_failure(username, ip):
+    try:
+        auth_logger.warning(f'Failed login attempt for user {username} from {ip}')
+    except Exception:
+        pass
+
 @app.route('/api/auth/login', methods=['POST'])
 def login():
     client_ip = request.remote_addr or '0.0.0.0'
@@ -600,6 +623,7 @@ def login():
                             break
             if not username:
                 _record_failed_login(client_ip)
+                _log_auth_failure('admin', client_ip)
                 elog('system', 'warning', 'Nieudane logowanie (złe hasło)')
                 return jsonify({'error': 'Nieprawidłowe hasło'}), 401
 
@@ -608,6 +632,7 @@ def login():
     r = _host_run_base(f"getent shadow {shlex.quote(safe_user)}", timeout=10)
     if r.returncode != 0 or not r.stdout.strip():
         _record_failed_login(client_ip)
+        _log_auth_failure(safe_user, client_ip)
         return jsonify({'error': 'Nieprawidłowy login lub hasło'}), 401
 
     shadow_fields = r.stdout.strip().split(':')
@@ -617,6 +642,7 @@ def login():
 
     if not _verify_shadow_hash(password, stored_hash):
         _record_failed_login(client_ip)
+        _log_auth_failure(safe_user, client_ip)
         return jsonify({'error': 'Nieprawidłowy login lub hasło'}), 401
 
     # Clear login attempts on success

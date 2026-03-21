@@ -10,6 +10,8 @@ import subprocess
 import shlex
 import sys
 import time
+import logging
+from logging.handlers import RotatingFileHandler
 from flask import Blueprint, jsonify, request
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -18,6 +20,21 @@ from host import host_run as _host_run, data_path, get_data_disk, get_user_home,
 users_bp = Blueprint('users', __name__, url_prefix='/api/users')
 
 PRIVILEGES_FILE = data_path('privileges.json')
+
+# Setup Auth Logger for Fail2Ban
+AUTH_LOG_FILE = '/opt/ethos/logs/auth.log'
+auth_logger = logging.getLogger('ethos_auth')
+auth_logger.setLevel(logging.INFO)
+if not auth_logger.handlers:
+    try:
+        os.makedirs(os.path.dirname(AUTH_LOG_FILE), exist_ok=True)
+        # 10MB log file, keep 5 backups
+        handler = RotatingFileHandler(AUTH_LOG_FILE, maxBytes=10*1024*1024, backupCount=5)
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        auth_logger.addHandler(handler)
+    except Exception as e:
+        print(f"Failed to setup auth logger: {e}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -448,4 +465,11 @@ def validate_user():
     if r.returncode == 0 and 'OK' in r.stdout:
         return jsonify({'valid': True, 'username': safe_user})
     else:
+        # Log failure for fail2ban
+        try:
+            ip = request.remote_addr
+            if auth_logger.handlers:
+                auth_logger.warning(f'Failed login attempt for user {safe_user} from {ip}')
+        except Exception:
+            pass
         return jsonify({'valid': False, 'error': 'Nieprawidłowy login lub hasło'}), 401

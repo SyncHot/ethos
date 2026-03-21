@@ -1418,3 +1418,55 @@ def remove_known_host():
 def remove_known_host_line():
     from blueprints.ssh_manager import api_remove_line
     return api_remove_line()
+
+
+# ── Fail2Ban Routes ──
+
+@settings_bp.route('/fail2ban/status')
+def fail2ban_status():
+    """Get status of Fail2Ban jails."""
+    status = {}
+    
+    # Check if fail2ban is running
+    r = _host_run('systemctl is-active fail2ban')
+    if r.returncode != 0:
+        return jsonify({'running': False, 'jails': {}})
+
+    # Get list of jails
+    r = _host_run('fail2ban-client status')
+    if r.returncode != 0:
+        return jsonify({'running': False, 'error': 'Failed to query fail2ban-client', 'jails': {}})
+    
+    # Parse output: "Jail list: sshd, samba, ethos-web"
+    jail_list_match = re.search(r'Jail list:\s+(.*)', r.stdout)
+    if jail_list_match:
+        jail_names = [j.strip() for j in jail_list_match.group(1).split(',') if j.strip()]
+        for jail in jail_names:
+             r2 = _host_run(f'fail2ban-client status {jail}')
+             # Parse banned IPs
+             # "Banned IP list: 1.2.3.4 5.6.7.8"
+             banned_match = re.search(r'Banned IP list:\s+(.*)', r2.stdout)
+             banned_ips = banned_match.group(1).split() if banned_match and banned_match.group(1).strip() else []
+             status[jail] = banned_ips
+    
+    return jsonify({'running': True, 'jails': status})
+
+
+@settings_bp.route('/fail2ban/unban', methods=['POST'])
+def fail2ban_unban():
+    """Unban an IP from a jail."""
+    data = request.json or {}
+    jail = data.get('jail')
+    ip = data.get('ip')
+    
+    if not jail or not ip:
+         return jsonify({'error': 'Missing jail or ip'}), 400
+    
+    safe_jail = shlex.quote(jail)
+    safe_ip = shlex.quote(ip)
+    
+    r = _host_run(f'fail2ban-client set {safe_jail} unbanip {safe_ip}')
+    if r.returncode == 0:
+        return jsonify({'success': True})
+    else:
+        return jsonify({'error': r.stderr.strip() or r.stdout.strip()}), 500

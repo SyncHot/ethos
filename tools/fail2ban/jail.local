@@ -1,0 +1,29 @@
+[DEFAULT]
+ignoreip = 127.0.0.1/8 192.168.0.0/16 10.0.0.0/8 172.16.0.0/12 ::1
+bantime  = 1h
+findtime = 10m
+maxretry = 3
+action = iptables-multiport
+         ethos-eventlog
+
+[sshd]
+enabled = true
+backend = systemd
+maxretry = 3
+bantime = 1h
+
+[samba]
+enabled = true
+port = 139,445
+filter = samba
+backend = systemd
+maxretry = 5
+bantime = 30m
+
+[ethos-web]
+enabled = true
+port = 9000
+filter = ethos-web
+logpath = /opt/ethos/logs/auth.log
+maxretry = 5
+bantime = 15m
