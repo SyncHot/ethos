@@ -2167,6 +2167,11 @@ def main():
                     _dead_agent = executing.get("agent", "copilot") if isinstance(executing, dict) else "copilot"
                     add_comment(active_ticket_id,
                         f"[{_dead_agent}] Proces agenta zniknął nieoczekiwanie (PID {active_proc.pid}). Log: {log_file}")
+                    try:
+                        move_ticket(active_ticket_id, "Do zrobienia")
+                        print(f"DEAD_REQUEUE | {active_ticket_id} | moved back to Do zrobienia", flush=True)
+                    except Exception as me:
+                        print(f"MOVE_ERROR | {active_ticket_id} | {me}", flush=True)
                     clear_executing()
                     active_proc = None
                     active_ticket_id = None
@@ -2216,7 +2221,17 @@ def main():
                             move_ticket(active_ticket_id, "QA")
                             print(f"MOVED_TO_QA | {active_ticket_id}", flush=True)
                         except Exception as me:
-                            print(f"MOVE_ERROR | {active_ticket_id} | {me}", flush=True)
+                            print(f"MOVE_ERROR | {active_ticket_id} | QA move failed: {me} — retrying...", flush=True)
+                            time.sleep(2)
+                            try:
+                                move_ticket(active_ticket_id, "QA")
+                                print(f"MOVED_TO_QA | {active_ticket_id} | retry OK", flush=True)
+                            except Exception:
+                                try:
+                                    move_ticket(active_ticket_id, "Do zrobienia")
+                                    print(f"MOVE_FALLBACK | {active_ticket_id} | back to Do zrobienia", flush=True)
+                                except Exception:
+                                    print(f"MOVE_CRITICAL | {active_ticket_id} | all move attempts failed — ticket stranded in W trakcie!", flush=True)
                     else:
                         model_info = {}
                         if isinstance(executing, dict):
@@ -2464,6 +2479,11 @@ def main():
                     if hasattr(qa_proc, '_log_fh'):
                         try: qa_proc._log_fh.close()
                         except: pass
+                    try:
+                        move_ticket(qa_ticket_id, "Do zrobienia")
+                        print(f"DEAD_QA_REQUEUE | {qa_ticket_id} | moved back to Do zrobienia", flush=True)
+                    except Exception as me:
+                        print(f"MOVE_ERROR | {qa_ticket_id} | {me}", flush=True)
                     qa_proc = None
                     qa_ticket_id = None
 
@@ -2645,6 +2665,15 @@ def main():
             removed = set(prev_state.keys()) - set(current_state.keys())
             for rid in removed:
                 print(f"DONE | {rid} removed from queue", flush=True)
+
+            # --- Stranded ticket recovery: detect tickets stuck in "W trakcie" with no active process ---
+            if in_progress and active_proc is None and not is_executing():
+                for stale in in_progress:
+                    print(f"STRANDED | {stale['id']} | stuck in W trakcie with no active process — requeuing", flush=True)
+                    try:
+                        move_ticket(stale["id"], "Do zrobienia")
+                    except Exception as me:
+                        print(f"MOVE_ERROR | {stale['id']} | {me}", flush=True)
 
             # --- AUTO MODE: pick and start DEV ticket ---
             # Don't start a new ticket if anything is in "W trakcie" or "QA"
