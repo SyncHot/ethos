@@ -1108,7 +1108,7 @@ function openExternalApp(app) {
         height: 700,
         content: `
             <div class="iframe-container" id="external-${app.id}">
-                <iframe src="${app.url}" 
+                <iframe src="${app.url}"
                     referrerpolicy="no-referrer"
                     allow="fullscreen"
                     style="width:100%;height:100%;border:none;"
@@ -2197,7 +2197,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 function _dlmNotify(title, body, icon) {
     if (!("Notification" in window)) return;
-    
+
     // Default icon if not provided
     if (!icon) icon = '/favicon.ico'; // Fallback to favicon
 
@@ -2225,7 +2225,7 @@ function showPasswordChangeModal() {
             <div style="font-size:48px;color:var(--accent);margin-bottom:16px;"><i class="fas fa-shield-alt"></i></div>
             <h3 style="margin:0 0 10px;font-size:20px;">` + t('Wymagana zmiana hasła') + `</h3>
             <p style="margin:0 0 24px;color:var(--text-secondary);font-size:14px;line-height:1.5;">` + t('Ze względów bezpieczeństwa musisz zmienić domyślne hasło administratora.') + `</p>
-            
+
             <div class="form-group" style="text-align:left;">
                 <label style="font-size:12px;color:var(--text-secondary);margin-bottom:4px;display:block;">` + t('Obecne hasło') + `</label>
                 <div class="input-icon"><i class="fas fa-key"></i><input type="password" id="pwd-change-current" class="form-control" placeholder="` + t('Obecne hasło') + `"></div>
@@ -2238,7 +2238,7 @@ function showPasswordChangeModal() {
                 <label style="font-size:12px;color:var(--text-secondary);margin-bottom:4px;display:block;">` + t('Powtórz nowe hasło') + `</label>
                 <div class="input-icon"><i class="fas fa-lock"></i><input type="password" id="pwd-change-confirm" class="form-control" placeholder="` + t('Powtórz hasło') + `"></div>
             </div>
-            
+
             <div id="pwd-change-error" class="login-error" style="margin:16px 0 0;text-align:left;"></div>
             <button class="btn-login" id="pwd-change-submit" style="width:100%;margin-top:20px;"><span>` + t('Zmień hasło') + `</span> <i class="fas fa-arrow-right"></i></button>
         </div>
@@ -2255,7 +2255,7 @@ function showPasswordChangeModal() {
         singleton: true,
         icon: 'fa-shield-alt'
     });
-    
+
     // Disable close button
     const closeBtn = win.el.querySelector('.window-close');
     if (closeBtn) closeBtn.style.display = 'none';
@@ -2264,7 +2264,7 @@ function showPasswordChangeModal() {
         const submitBtn = win.el.querySelector('#pwd-change-submit');
         const errEl = win.el.querySelector('#pwd-change-error');
         const currentInput = win.el.querySelector('#pwd-change-current');
-        
+
         if (currentInput) currentInput.focus();
 
         submitBtn.onclick = async () => {
@@ -2280,15 +2280,15 @@ function showPasswordChangeModal() {
             submitBtn.disabled = true;
             submitBtn.style.opacity = '0.7';
             errEl.textContent = '';
-            
+
             try {
                 const r = await api('/settings/change-password', {
                     method: 'POST',
                     body: { current_password: current, new_password: newPw }
                 });
-                
+
                 if (r.error) throw new Error(r.error);
-                
+
                 win.close();
                 toast(t('Hasło zmienione pomyślnie'), 'success');
                 showDesktop();

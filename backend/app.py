@@ -163,7 +163,7 @@ def check_password_change():
         '/api/system/info',     # Often used by UI on load
         '/api/language',        # Needed for UI
     ]
-    
+
     # Check if path starts with any allowed prefix
     if any(request.path.startswith(p) for p in allowed):
         return
@@ -692,25 +692,16 @@ def login():
     home_path = _get_user_home(safe_user)
     # Ensure default folders exist in the user's home
     _ensure_user_home_structure(safe_user)
-    resp = jsonify({'token': token, 'nas_name': NAS_NAME,
-                    'user': {'username': safe_user, 'role': role, 'groups': groups,
-                             'home_path': home_path},
-                    'sudo_mode': role == 'admin'})
-    resp.set_cookie('nas_token', token, max_age=7 * 24 * 3600,
-                    httponly=True, samesite='Lax')
     elog('system', 'info', f'Logowanie: {safe_user} (rola: {role})')
 
-    # Check if password change is required
     pwd_change_required = _is_setup_done() and not os.path.exists(PASSWORD_CHANGED_MARKER)
-    
-    resp_data = {
+    resp = jsonify({
         'token': token, 'nas_name': NAS_NAME,
         'user': {'username': safe_user, 'role': role, 'groups': groups,
                  'home_path': home_path},
         'sudo_mode': role == 'admin',
         'password_change_required': pwd_change_required
-    }
-    resp = jsonify(resp_data)
+    })
     resp.set_cookie('nas_token', token, max_age=7 * 24 * 3600,
                     httponly=True, samesite='Lax')
     return resp
@@ -3392,7 +3383,7 @@ def folder_password_remove():
     # Verify current password (unless admin override)
     is_admin = cur and cur.get('role') == 'admin'
     force = data.get('force', False)
-    
+
     if not _verify_folder_password(password, passwords[path]):
         # Allow admin to force remove without correct password
         if is_admin and force:
@@ -4210,13 +4201,13 @@ def files_download():
     resp = send_file(real_path, as_attachment=True, conditional=True)
     # Advertise byte-range support so browsers can resume interrupted downloads (HTTP 206)
     resp.headers['Accept-Ranges'] = 'bytes'
-    
+
     # Log download start (only for full files, not partial ranges to avoid spam)
     if 'Range' not in request.headers:
         cur = get_current_user()
         username = cur['username'] if cur else 'unknown'
         elog('files', 'info', f'Pobieranie pliku: {path}', {'user': username, 'path': path, 'size': os.path.getsize(real_path)})
-        
+
     return resp
 
 
@@ -5362,7 +5353,7 @@ def files_delete():
     deleted = []
     errors = []
     meta = _load_trash_meta()
-    
+
     # Track deleted items for logging
     deleted_log = []
 
