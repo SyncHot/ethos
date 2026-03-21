@@ -13,6 +13,7 @@ import secrets
 import zipfile
 import tempfile
 import threading
+import shutil
 from flask import Blueprint, request, jsonify, send_file, g
 from functools import wraps
 
@@ -23,6 +24,7 @@ from host import app_path, data_path, user_data_path, NATIVE_MODE, ensure_dep, g
 from utils import load_json as _load_json, save_json as _save_json, \
     safe_path as _safe_path_util, get_username as _get_username, DATA_ROOT, \
     ALLOWED_ROOTS, register_pkg_routes
+from blueprints.admin_required import admin_required
 
 gallery_bp = Blueprint('gallery', __name__, url_prefix='/api/gallery')
 
@@ -1187,11 +1189,41 @@ def _gallery_on_uninstall(wipe):
                 except Exception:
                     pass
 
-register_pkg_routes(
-    gallery_bp,
-    install_message='Galeria gotowa do użycia.',
-    wipe_files=[GALLERY_CACHE, _GALLERY_CONFIG_GLOBAL, _FAVORITES_GLOBAL, FOLDER_PASSWORDS_FILE],
-    wipe_dirs=[THUMB_CACHE_DIR],
-    on_uninstall=_gallery_on_uninstall,
-    status_extras=lambda: {'configured': os.path.isfile(_GALLERY_CONFIG_GLOBAL)},
-)
+@gallery_bp.route('/install', methods=['POST'])
+@admin_required
+def gallery_install():
+    # Gallery has no system dependencies to install
+    return jsonify({'ok': True, 'message': 'Galeria gotowa do użycia.'})
+
+
+@gallery_bp.route('/uninstall', methods=['POST'])
+@admin_required
+def gallery_uninstall():
+    wipe = (request.json or {}).get('wipe_data', False)
+    
+    # 1. Custom uninstall logic
+    _gallery_on_uninstall(wipe)
+    
+    # 2. Wipe files/dirs if requested
+    if wipe:
+        # Files
+        for f in [GALLERY_CACHE, _GALLERY_CONFIG_GLOBAL, _FAVORITES_GLOBAL, FOLDER_PASSWORDS_FILE]:
+            try:
+                if os.path.isfile(f):
+                    os.remove(f)
+            except Exception:
+                pass
+        # Dirs
+        for d in [THUMB_CACHE_DIR]:
+            if os.path.isdir(d):
+                shutil.rmtree(d, ignore_errors=True)
+                
+    return jsonify({'ok': True})
+
+
+@gallery_bp.route('/pkg-status', methods=['GET'])
+def gallery_pkg_status():
+    return jsonify({
+        'installed': True,
+        'configured': os.path.isfile(_GALLERY_CONFIG_GLOBAL)
+    })

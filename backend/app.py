@@ -93,6 +93,7 @@ from blueprints.tickets import tickets_bp, init_tickets
 from blueprints.familyhub import familyhub_bp
 from blueprints.sharing import sharing_bp
 from blueprints.installer import installer_bp
+from blueprints.admin_required import admin_required
 
 # ── Shadow password verification (avoids crypt DeprecationWarning) ──
 import warnings as _warnings
@@ -2653,9 +2654,13 @@ def _cleanup_stale_ethos_tmp(data_root=None):
     except Exception:
         pass
 
+    _SKIP_DIRS = {'.trash', '.thumbs', '.Trash-1000', '.Trash-0', 'preview', '.snapshots'}
+
     def _scan_dir(start_path):
         try:
             for dirpath, dirs, files in os.walk(start_path):
+                # Prune directories that should never be walked for temp cleanup
+                dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
                 for fn in files:
                     if fn.endswith('.ethos_tmp') or fn.endswith('.ethos_upload_tmp') or fn.endswith('.ethos_mv_tmp'):
                         fp = os.path.join(dirpath, fn)
@@ -6092,11 +6097,13 @@ def duplicates_pkg_status():
 # -- code-editor package routes (frontend-only, noop backend) --
 @app.route('/api/code-editor/install', methods=['POST'])
 @require_auth
+@admin_required
 def code_editor_pkg_install():
     return jsonify({'ok': True})
 
 @app.route('/api/code-editor/uninstall', methods=['POST'])
 @require_auth
+@admin_required
 def code_editor_pkg_uninstall():
     return jsonify({'ok': True})
 

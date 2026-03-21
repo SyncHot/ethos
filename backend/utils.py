@@ -418,15 +418,12 @@ def register_pkg_routes(bp, *,
     """
     from host import claim_dep, release_dep, check_dep  # avoid circular at module level
     import shutil as _shutil
+    from blueprints.admin_required import admin_required
 
     pfx = url_prefix or ''
     owner_id = dep_owner or bp.name
 
-    @bp.route(f'{pfx}/install', methods=['POST'],
-              endpoint=f'{bp.name}_pkg_install')
     def _pkg_install():
-        if require_admin_install and getattr(g, 'role', None) != 'admin':
-            return jsonify({'ok': False, 'error': 'Brak uprawnień'}), 403
         errors = []
         if install_deps:
             for dep in install_deps:
@@ -440,11 +437,7 @@ def register_pkg_routes(bp, *,
             return jsonify({'ok': False, 'errors': errors}), 500
         return jsonify({'ok': True, 'message': install_message})
 
-    @bp.route(f'{pfx}/uninstall', methods=['POST'],
-              endpoint=f'{bp.name}_pkg_uninstall')
     def _pkg_uninstall():
-        if require_admin_install and getattr(g, 'role', None) != 'admin':
-            return jsonify({'ok': False, 'error': 'Brak uprawnień'}), 403
         wipe = (request.json or {}).get('wipe_data', False)
         dep_errors = []
         if install_deps:
@@ -470,6 +463,14 @@ def register_pkg_routes(bp, *,
         if dep_errors:
             return jsonify({'ok': False, 'errors': dep_errors}), 500
         return jsonify({'ok': True})
+
+    # Apply admin requirement if requested
+    if require_admin_install:
+        _pkg_install = admin_required(_pkg_install)
+        _pkg_uninstall = admin_required(_pkg_uninstall)
+
+    bp.add_url_rule(f'{pfx}/install', endpoint=f'{bp.name}_pkg_install', view_func=_pkg_install, methods=['POST'])
+    bp.add_url_rule(f'{pfx}/uninstall', endpoint=f'{bp.name}_pkg_uninstall', view_func=_pkg_uninstall, methods=['POST'])
 
     @bp.route(f'{pfx}/pkg-status', methods=['GET'],
               endpoint=f'{bp.name}_pkg_status')

@@ -150,9 +150,17 @@ def create_project():
         'columns': list(DEFAULT_COLUMNS),
         'color': color,
         'copilot_enabled': bool(body.get('copilot_enabled', False)),
+        'localai_enabled': bool(body.get('localai_enabled', False)),
+        'freemodel_enabled': bool(body.get('freemodel_enabled', False)),
         'created': now,
         'updated': now,
     }
+    # Mutual exclusivity: only one agent mode at a time
+    enabled = [k for k in ('copilot_enabled', 'localai_enabled', 'freemodel_enabled') if project[k]]
+    if len(enabled) > 1:
+        for k in ('localai_enabled', 'freemodel_enabled', 'copilot_enabled'):
+            if k != enabled[0]:
+                project[k] = False
 
     with _lock:
         data = _load()
@@ -214,6 +222,19 @@ def update_project(project_id):
 
         if 'copilot_enabled' in body:
             project['copilot_enabled'] = bool(body['copilot_enabled'])
+            if project['copilot_enabled']:
+                project['localai_enabled'] = False
+                project['freemodel_enabled'] = False
+        if 'localai_enabled' in body:
+            project['localai_enabled'] = bool(body['localai_enabled'])
+            if project['localai_enabled']:
+                project['copilot_enabled'] = False
+                project['freemodel_enabled'] = False
+        if 'freemodel_enabled' in body:
+            project['freemodel_enabled'] = bool(body['freemodel_enabled'])
+            if project['freemodel_enabled']:
+                project['copilot_enabled'] = False
+                project['localai_enabled'] = False
 
         project['updated'] = _now()
         _save(data)
@@ -640,7 +661,14 @@ def copilot_queue():
 
     queue = []
     for project in data['projects']:
-        if not project.get('copilot_enabled', False):
+        agent_type = None
+        if project.get('copilot_enabled', False):
+            agent_type = 'copilot'
+        elif project.get('localai_enabled', False):
+            agent_type = 'localai'
+        elif project.get('freemodel_enabled', False):
+            agent_type = 'freemodel'
+        if not agent_type:
             continue
         if not _is_member(project):
             continue
@@ -671,6 +699,7 @@ def copilot_queue():
                     'labels': t.get('labels', []),
                     'project_id': project['id'],
                     'project_name': project['name'],
+                    'agent': agent_type,
                     'last_comment': last_comment,
                 })
 
@@ -687,6 +716,7 @@ def copilot_queue():
 # ---------------------------------------------------------------------------
 
 COPILOT_LOG_DIR = '/opt/ethos/logs/copilot_tickets'
+LOCALAI_LOG_DIR = '/opt/ethos/logs/localai_tickets'
 WATCHER_LOG_FILE = '/opt/ethos/logs/ticket_watcher_new.log'
 WATCHER_LOCK_FILE = '/tmp/.ethos_watcher_executing'
 
@@ -718,9 +748,14 @@ def copilot_logs(ticket_id):
     if project and not _is_member(project):
         return jsonify({'error': 'Forbidden'}), 403
 
+    agent = (request.args.get('agent', 'copilot') or 'copilot').strip().lower()
+    if agent not in ('copilot', 'localai'):
+        return jsonify({'error': 'Invalid agent'}), 400
+    log_dir = COPILOT_LOG_DIR if agent == 'copilot' else LOCALAI_LOG_DIR
+
     safe_id = re.sub(r'[^a-zA-Z0-9_]', '', ticket_id)
-    pattern = os.path.join(COPILOT_LOG_DIR, f'{safe_id}_*.log')
-    files = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
+    pattern = os.path.join(log_dir, f'{safe_id}_*.log')
+    files = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True) if os.path.isdir(log_dir) else []
 
     logs = []
     for f in files:
@@ -740,6 +775,7 @@ def copilot_logs(ticket_id):
             'timestamp': ts,
             'size': os.path.getsize(f),
             'model': model,
+            'agent': agent,
         })
 
     return jsonify({'logs': logs})
@@ -757,12 +793,19 @@ def copilot_log_content(ticket_id, filename):
     if project and not _is_member(project):
         return jsonify({'error': 'Forbidden'}), 403
 
+    agent = (request.args.get('agent') or '').strip().lower()
+    if not agent:
+        agent = 'localai' if '_local_' in filename else 'copilot'
+    if agent not in ('copilot', 'localai'):
+        return jsonify({'error': 'Invalid agent'}), 400
+    log_dir = COPILOT_LOG_DIR if agent == 'copilot' else LOCALAI_LOG_DIR
+
     safe_id = re.sub(r'[^a-zA-Z0-9_]', '', ticket_id)
     safe_name = re.sub(r'[^a-zA-Z0-9_.\-]', '', filename)
     if not safe_name.startswith(safe_id) or '..' in safe_name:
         return jsonify({'error': 'Invalid filename'}), 400
 
-    path = os.path.join(COPILOT_LOG_DIR, safe_name)
+    path = os.path.join(log_dir, safe_name)
     if not os.path.isfile(path):
         return jsonify({'error': 'Log not found'}), 404
 
@@ -857,6 +900,7 @@ def watcher_executing():
             'ticket_id': tid,
             'model': model_info.get('model', '') if isinstance(model_info, dict) else '',
             'model_label': model_info.get('label', '') if isinstance(model_info, dict) else '',
+            'agent': lock.get('agent', 'copilot') if isinstance(lock, dict) else 'copilot',
             'started': started,
             'elapsed': round(elapsed),
             'pid': pid,
@@ -1286,4 +1330,3 @@ def delete_attachment(ticket_id, filename):
         _emit('ticket_updated', ticket['project_id'], {'ticket': ticket})
         
         return jsonify({'status': 'deleted'})
-

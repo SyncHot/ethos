@@ -13,7 +13,7 @@ Supported providers:
 import json, os, time, threading, logging, secrets, re, sys
 from datetime import datetime
 from flask import Blueprint, jsonify, request
-from admin_required import admin_required
+from blueprints.admin_required import admin_required
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from crypto_utils import encrypt_secret, decrypt_secret

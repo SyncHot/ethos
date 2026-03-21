@@ -17,6 +17,7 @@ from flask import Blueprint, jsonify, request, Response, stream_with_context
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from host import host_run as _host_run_base, host_run_stream as _host_run_stream_base, data_path, q as _q_imported, apt_install as _apt_install, claim_dep, release_dep
 from utils import fmt_bytes
+from blueprints.admin_required import admin_required
 
 storage_bp = Blueprint('storage', __name__, url_prefix='/api/storage')
 
@@ -1188,6 +1189,7 @@ sys.exit(p.returncode)
 # -- Samba package routes (for App Store install/uninstall) --
 
 @storage_bp.route('/samba/pkg-install', methods=['POST'])
+@admin_required
 def samba_pkg_install():
     """Install Samba via apt — delegates to the existing /samba/install SSE endpoint logic."""
     r = host_run("command -v smbd")
@@ -1201,6 +1203,7 @@ def samba_pkg_install():
 
 
 @storage_bp.route('/samba/pkg-uninstall', methods=['POST'])
+@admin_required
 def samba_pkg_uninstall():
     """Stop Samba services and disable them. Optionally wipe shares config."""
     wipe = (request.json or {}).get('wipe_data', False)
@@ -1688,6 +1691,7 @@ def webdav_remove():
 # -- WebDAV package routes (for EthOS Package Store) --
 
 @storage_bp.route('/webdav/pkg-install', methods=['POST'])
+@admin_required
 def webdav_pkg_install():
     r = host_run("command -v lighttpd")
     if r.returncode == 0:
@@ -1700,6 +1704,7 @@ def webdav_pkg_install():
 
 
 @storage_bp.route('/webdav/pkg-uninstall', methods=['POST'])
+@admin_required
 def webdav_pkg_uninstall():
     wipe = (request.json or {}).get('wipe_data', False)
     host_run("systemctl stop lighttpd 2>/dev/null || true")

@@ -59,6 +59,21 @@ function _aicTierClassByScore(score) {
     return 'aic-tier-light';
 }
 
+function _aicTierClassFromRecord(tier) {
+    if (tier) {
+        var id = tier.id || tier.tier_id;
+        if (id) return _aicTierClass(id);
+        if (typeof tier.score === 'number') return _aicTierClassByScore(tier.score);
+    }
+    return 'aic-tier-light';
+}
+
+function _aicTierTextClass(tier) {
+    var id = tier && (tier.id || tier.tier_id);
+    if (id) return 'aic-tier-text-' + id.toString().toLowerCase();
+    return 'aic-tier-text-light';
+}
+
 function _aicStatusClass(status) {
     if (status === 'recommended') return 'aic-status-good';
     if (status === 'possible') return 'aic-status-medium';
@@ -247,8 +262,9 @@ function _aicRender(body) {
     var healthBadge = '';
     if (_aic.health) {
         var healthClass = _aicTierClassByScore(_aic.health.score || 0);
-        healthBadge = '<span class="aic-health-badge ' + healthClass + '" onclick="window._aicOpenDashboard()" title="AI Health Score: ' + _aic.health.score + '/100">' + _aic.health.grade + '</span>';
+        healthBadge = '<span class="aic-health-badge ' + healthClass + ' aic-health-badge--header" onclick="window._aicOpenDashboard()" title="AI Health Score: ' + _aic.health.score + '/100">' + _aic.health.grade + '</span>';
     }
+    var healthActions = healthBadge ? '<div class="aic-main-header-actions">' + healthBadge + '</div>' : '';
     root.innerHTML =
         '<div class="aic-sidebar">' +
             '<div class="aic-sidebar-brand"><i class="fas fa-robot"></i> ' + t('AI Chat') + '</div>' +
@@ -257,7 +273,7 @@ function _aicRender(body) {
                 '<button class="aic-btn-icon" onclick="window._aicOpenDashboard()" title="' + t('Dashboard AI') + '"><i class="fas fa-heartbeat"></i></button>' +
                 '<button class="aic-btn-icon" onclick="window._aicOpenSettings()" title="' + t('Ustawienia') + '"><i class="fas fa-cog"></i></button>' +
                 '<button class="aic-btn-icon" onclick="window._aicOpenModels()" title="' + t('Biblioteka modeli') + '"><i class="fas fa-cube"></i></button>' +
-                '<button class="aic-btn-icon aic-mobile-close" onclick="window._aicToggleSidebar()" style="margin-left: auto; color: var(--danger);"><i class="fas fa-times"></i></button>' +
+                '<button class="aic-btn-icon aic-mobile-close" onclick="window._aicToggleSidebar()"><i class="fas fa-times"></i></button>' +
             '</div>' +
             '<div class="aic-conv-list" id="aicConvList"></div>' +
         '</div>' +
@@ -266,7 +282,7 @@ function _aicRender(body) {
             '<div class="aic-main-header">' +
                 '<button class="aic-btn-icon aic-mobile-menu" onclick="window._aicToggleSidebar()"><i class="fas fa-bars"></i></button>' +
                 '<span class="aic-main-title text-lg"><i class="fas fa-robot"></i> ' + t('AI Chat') + '</span>' +
-                healthBadge +
+                healthActions +
             '</div>' +
             '<div class="aic-messages" id="aicMessages"></div>' +
             '<div id="aicAttachBar" class="aic-attach-bar aic-hidden"></div>' +
@@ -1053,7 +1069,7 @@ function _aicRenderModels(root) {
         var pct = Math.round(ds.progress || 0);
         progressHtml =
             '<div class="ml-dl-progress">' +
-                '<div class="ml-dl-bar"><div class="ml-dl-fill" id="mlProgressBar" style="width:' + pct + '%"></div></div>' +
+                '<div class="ml-dl-bar"><div class="ml-dl-fill" id="mlProgressBar"></div></div>' +
                 '<div class="ml-dl-info">' +
                     '<span class="ml-dl-pct" id="mlProgressPct">' + pct + '%</span>' +
                     '<span id="mlProgressTxt">' + _aicEsc(ds.status || '') + (ds.speed ? '  ' + _aicEsc(ds.speed) : '') + '</span>' +
@@ -1073,9 +1089,9 @@ function _aicRenderModels(root) {
     var depsWarnHtml = '';
     if (deps && deps.huggingface_hub === false) {
         depsWarnHtml =
-            '<div class="aic-field-hint aic-warn" style="margin:8px 0 12px 0;display:flex;align-items:center;gap:10px;">' +
+            '<div class="aic-field-inline-hint aic-warn">' +
                 '<i class="fas fa-exclamation-triangle"></i> ' + t('Brak biblioteki huggingface_hub - pobieranie modeli może nie działać.') +
-                '<button class="aic-btn-secondary" onclick="window._mlInstallDeps()" style="margin-left:auto;">' +
+                '<button class="aic-btn-secondary ml-deps-action" onclick="window._mlInstallDeps()">' +
                     '<i class="fas fa-wrench"></i> ' + t('Napraw zależności') +
                 '</button>' +
             '</div>';
@@ -1093,15 +1109,10 @@ function _aicRenderModels(root) {
     } else {
         cardsHtml = '<div class="ml-grid">';
         models.forEach(function (m) {
-            var statusCls = m.status === 'recommended' ? 'ml-st-rec' : m.status === 'possible' ? 'ml-st-pos' : 'ml-st-heavy';
-            var statusIcon = m.status === 'recommended' ? 'fa-check-circle' : m.status === 'possible' ? 'fa-exclamation-circle' : 'fa-times-circle';
-
-            var familyColor = {
-                'Llama': '#3b82f6', 'Mistral': '#f59e0b', 'Phi': '#10b981',
-                'Gemma': '#ef4444', 'Qwen': '#8b5cf6', 'CodeLlama': '#06b6d4',
-                'DeepSeek': '#0ea5e9', 'StarCoder': '#14b8a6', 'Yi': '#f97316',
-                'Custom': '#6b7280',
-            }[m.family] || '#6b7280';
+        var statusCls = m.status === 'recommended' ? 'ml-st-rec' : m.status === 'possible' ? 'ml-st-pos' : 'ml-st-heavy';
+        var statusIcon = m.status === 'recommended' ? 'fa-check-circle' : m.status === 'possible' ? 'fa-exclamation-circle' : 'fa-times-circle';
+        var statusTone = m.status === 'recommended' ? 'good' : m.status === 'possible' ? 'medium' : 'bad';
+        var familyClass = 'ml-family-' + _aicFamilyKey(m.family);
 
             var badges = '';
             if (m.use_cases) {
@@ -1136,8 +1147,8 @@ function _aicRenderModels(root) {
             cardsHtml +=
                 '<div class="ml-card ' + statusCls + (m.downloaded ? ' ml-card-dl' : '') + (m.active ? ' ml-card-active' : '') + '">' +
                     '<div class="ml-card-head">' +
-                        '<div class="ml-card-family" style="background:' + familyColor + '">' + _aicEsc(m.family) + '</div>' +
-                        '<div class="ml-card-status ' + statusCls + '"><i class="fas ' + statusIcon + '"></i> ' + _aicEsc(m.status_label || '') + '</div>' +
+            '<div class="ml-card-family ' + familyClass + '">' + _aicEsc(m.family) + '</div>' +
+            '<div class="ml-card-status ' + statusCls + ' aic-status-' + statusTone + '"><i class="fas ' + statusIcon + '"></i> ' + _aicEsc(m.status_label || '') + '</div>' +
                         customBadge +
                     '</div>' +
                     '<div class="ml-card-name">' + _aicEsc(m.name) + '</div>' +
@@ -1361,6 +1372,10 @@ function _aicRenderWizard(root) {
             stepsHtml +
             '<div class="aic-wiz-body">' + bodyHtml + '</div>' +
         '</div>';
+    var downloadStatus = (_aic.wizardRecModel && _aic.wizardRecModel.download_status) || null;
+    if (downloadStatus && downloadStatus.active) {
+        _aicUpdateWizardDlBar(downloadStatus);
+    }
 }
 
 /* Step 0: Hardware Discovery */
@@ -1388,6 +1403,7 @@ function _aicWizStep0() {
     var cpu = hw.cpu || {};
     var disk = _aic.wizardHw.disk || {};
     var tier = _aic.wizardHw.tier || {};
+    var tierClass = _aicTierClassFromRecord(tier);
 
     var gpuHtml = '';
     if (hw.has_gpu && hw.gpus && hw.gpus.length) {
@@ -1427,8 +1443,8 @@ function _aicWizStep0() {
             '<div class="aic-wiz-hw-item"><i class="fas fa-compress-alt"></i> <strong>' + t('Zalecana kwantyzacja') + ':</strong> ' +
                 _aicEsc(cpu.recommended_quant || 'Q4_K_M') + '</div>' +
         '</div>' +
-        '<div class="aic-wiz-tier" style="border-color:' + (tier.color || '#6b7280') + '">' +
-            '<i class="fas ' + (tier.icon || 'fa-circle') + '" style="color:' + (tier.color || '#6b7280') + '"></i> ' +
+        '<div class="aic-wiz-tier ' + tierClass + '">' +
+            '<i class="fas ' + (tier.icon || 'fa-circle') + '"></i> ' +
             '<strong>' + t('Szacowany profil') + ': ' + _aicEsc(tier.name || '?') + '</strong>' +
             ' — ' + _aicEsc(tier.description || '') +
             ' (' + t('Zalecane modele') + ': ' + _aicEsc(tier.recommended_params || '?') + ')' +
@@ -1492,6 +1508,7 @@ function _aicWizStepBench() {
 
     // Benchmark results
     var tier = b.tier || {};
+    var tierClass = _aicTierClassFromRecord(tier);
     return '<h3><i class="fas fa-tachometer-alt"></i> ' + t('Wyniki benchmarku') + '</h3>' +
         '<p class="aic-wiz-hint">' + t('Testowano na modelu') + ': <strong>' + _aicEsc(b.ref_model_name || b.model_id || '?') + '</strong> (' + _aicEsc(b.ref_params || '?') + ')</p>' +
         '<div class="aic-wiz-bench-results">' +
@@ -1508,8 +1525,8 @@ function _aicWizStepBench() {
                 '<div class="aic-wiz-bench-label">' + t('Tokenów') + '</div>' +
             '</div>' +
         '</div>' +
-        '<div class="aic-wiz-tier" style="border-color:' + (tier.color || '#6b7280') + '">' +
-            '<i class="fas ' + (tier.icon || 'fa-circle') + '" style="color:' + (tier.color || '#6b7280') + '"></i> ' +
+        '<div class="aic-wiz-tier ' + tierClass + '">' +
+            '<i class="fas ' + (tier.icon || 'fa-circle') + '"></i> ' +
             '<strong>' + t('Profil wydajności') + ': ' + _aicEsc(tier.name || '?') + '</strong>' +
             ' — ' + _aicEsc(tier.description || '') +
         '</div>' +
@@ -1602,8 +1619,8 @@ function _aicWizStepModel() {
 
     var cardsHtml = '';
     models.slice(0, 12).forEach(function (m) {
-        var statusColor = m.status === 'recommended' ? '#10b981' : m.status === 'possible' ? '#f59e0b' : '#ef4444';
         var statusIcon = m.status === 'recommended' ? 'fa-check-circle' : m.status === 'possible' ? 'fa-exclamation-circle' : 'fa-times-circle';
+        var statusTone = m.status === 'recommended' ? 'good' : m.status === 'possible' ? 'medium' : 'bad';
         var dlBadge = m.downloaded ? '<span class="aic-wiz-dl-badge"><i class="fas fa-check"></i> ' + t('Pobrany') + '</span>' : '';
         var activeBadge = m.active ? '<span class="aic-wiz-active-badge"><i class="fas fa-bolt"></i> ' + t('Aktywny') + '</span>' : '';
         var autoTag = (!m.downloaded && m.id === topRecId) ? '<span class="aic-wiz-auto-badge"><i class="fas fa-star"></i> ' + t('Rekomendowany na podstawie benchmarku') + '</span>' : '';
@@ -1612,9 +1629,9 @@ function _aicWizStepModel() {
         var estTps = benchEstimates[m.id] || 0;
         var tpsHtml = '';
         if (estTps > 0) {
-            var tpsColor = estTps >= 15 ? '#10b981' : estTps >= 5 ? '#f59e0b' : '#ef4444';
+            var tpsTone = estTps >= 15 ? 'good' : estTps >= 5 ? 'medium' : 'bad';
             var tpsLabel = estTps >= 15 ? t('szybki') : estTps >= 5 ? t('OK') : t('wolny');
-            tpsHtml = '<span class="aic-wiz-model-tps" style="color:' + tpsColor + '"><i class="fas fa-tachometer-alt"></i> ~' + estTps + ' tok/s (' + tpsLabel + ')</span>';
+            tpsHtml = '<span class="aic-wiz-model-tps aic-status-' + tpsTone + '"><i class="fas fa-tachometer-alt"></i> ~' + estTps + ' tok/s (' + tpsLabel + ')</span>';
         }
 
         var actionBtn = '';
@@ -1632,7 +1649,7 @@ function _aicWizStepModel() {
             '<div class="aic-wiz-model-card' + (m.id === topRecId ? ' aic-wiz-model-top' : '') + '">' +
                 '<div class="aic-wiz-model-head">' +
                     '<span class="aic-wiz-model-name">' + _aicEsc(m.name) + '</span>' +
-                    '<span class="aic-wiz-model-status" style="color:' + statusColor + '"><i class="fas ' + statusIcon + '"></i> ' + _aicEsc(m.status_label || '') + '</span>' +
+                    '<span class="aic-wiz-model-status aic-status-' + statusTone + '"><i class="fas ' + statusIcon + '"></i> ' + _aicEsc(m.status_label || '') + '</span>' +
                 '</div>' +
                 autoTag +
                 '<div class="aic-wiz-model-meta">' +

@@ -228,8 +228,6 @@ def list_images():
     search_paths = browse_roots()
     
     # Add EthOS builder output directories
-    search_paths.append(data_path('releases'))
-    search_paths.append(app_path('installer/releases'))
     search_paths.append(app_path('installer/images'))
     results = []
     seen = set()

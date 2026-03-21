@@ -14,6 +14,7 @@ import time
 import threading
 from functools import wraps
 from flask import Blueprint, request, jsonify
+from blueprints.admin_required import admin_required
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from host import host_run, check_dep, ensure_dep, get_data_disk as _get_data_disk, app_path as _app_path
@@ -67,6 +68,23 @@ def _save_vms(vms):
 
 
 # ─── Helpers ─────────────────────────────────────────────────
+
+def _allowed_image_roots():
+    roots = [
+        os.path.realpath(_iso_root()),
+        os.path.realpath(_vm_root()),
+    ]
+    builder_images = _app_path('installer/images')
+    if builder_images:
+        roots.append(os.path.realpath(builder_images))
+    return [r.rstrip(os.sep) for r in roots if r]
+
+
+def _is_allowed_image_path(path):
+    """Check if a path stays within permitted VM image directories."""
+    real = os.path.realpath(path or '')
+    return any(real == root or real.startswith(root + os.sep) for root in _allowed_image_roots())
+
 
 def _qemu_available():
     return check_dep('qemu-system-x86_64')
@@ -218,6 +236,7 @@ def _check_vm_process(vm_id):
 # ═══════════════════════════════════════════════════════════
 
 @vm_bp.route('/status')
+@admin_required
 def vm_status():
     """Check QEMU/KVM availability and capabilities."""
     qemu_ok = _qemu_available()
@@ -235,6 +254,7 @@ def vm_status():
 # ═══════════════════════════════════════════════════════════
 
 @vm_bp.route('/machines')
+@admin_required
 @_require_qemu
 def list_vms():
     """List all virtual machines with their status."""
@@ -268,6 +288,7 @@ def list_vms():
 
 
 @vm_bp.route('/machines', methods=['POST'])
+@admin_required
 @_require_qemu
 def create_vm():
     """Create a new virtual machine."""
@@ -291,6 +312,11 @@ def create_vm():
         return jsonify({'error': 'RAM: 256 MB - 64 GB'}), 400
     if not re.match(r'^\d+[GMK]?$', disk_size):
         return jsonify({'error': 'Nieprawidłowy rozmiar dysku (np. 20G, 512M)'}), 400
+    if boot_image:
+        boot_image_real = os.path.realpath(boot_image)
+        if not _is_allowed_image_path(boot_image_real):
+            return jsonify({'error': 'Niedozwolona ścieżka obrazu'}), 403
+        boot_image = boot_image_real
 
     vm_id = _sanitize_name(name).lower().replace(' ', '-')
     vm_id = re.sub(r'-+', '-', vm_id)
@@ -332,6 +358,7 @@ def create_vm():
 
 
 @vm_bp.route('/machines/<vm_id>', methods=['PUT'])
+@admin_required
 @_require_qemu
 def update_vm(vm_id):
     """Update VM configuration (only when VM is stopped)."""
@@ -354,7 +381,13 @@ def update_vm(vm_id):
     if 'os_type' in data:
         vm['os_type'] = data['os_type']
     if 'boot_image' in data:
-        vm['boot_image'] = data['boot_image']
+        new_boot = data.get('boot_image', '')
+        if new_boot:
+            real_boot = os.path.realpath(new_boot)
+            if not _is_allowed_image_path(real_boot):
+                return jsonify({'error': 'Niedozwolona ścieżka obrazu'}), 403
+            new_boot = real_boot
+        vm['boot_image'] = new_boot
     if 'description' in data:
         vm['description'] = data['description']
 
@@ -363,6 +396,7 @@ def update_vm(vm_id):
 
 
 @vm_bp.route('/machines/<vm_id>', methods=['DELETE'])
+@admin_required
 @_require_qemu
 def delete_vm(vm_id):
     """Delete a virtual machine and its disk files."""
@@ -389,6 +423,7 @@ def delete_vm(vm_id):
 # ═══════════════════════════════════════════════════════════
 
 @vm_bp.route('/machines/<vm_id>/start', methods=['POST'])
+@admin_required
 @_require_qemu
 def start_vm(vm_id):
     """Start a virtual machine."""
@@ -404,6 +439,11 @@ def start_vm(vm_id):
     kvm = _kvm_available()
 
     boot_image = vm.get('boot_image', '')
+    boot_image_real = os.path.realpath(boot_image) if boot_image else ''
+    if boot_image and not _is_allowed_image_path(boot_image_real):
+        return jsonify({'error': 'Niedozwolona ścieżka obrazu'}), 403
+    boot_image = boot_image_real
+
     is_arm = _is_arm_image(boot_image, vm.get('name', ''))
     is_rpi = _is_rpi_image(boot_image, vm.get('name', ''))
 
@@ -651,6 +691,7 @@ def start_vm(vm_id):
 
 
 @vm_bp.route('/machines/<vm_id>/stop', methods=['POST'])
+@admin_required
 @_require_qemu
 def stop_vm(vm_id):
     """Stop (gracefully or forcefully) a virtual machine."""
@@ -684,6 +725,7 @@ def stop_vm(vm_id):
 
 
 @vm_bp.route('/machines/<vm_id>/restart', methods=['POST'])
+@admin_required
 @_require_qemu
 def restart_vm(vm_id):
     """Restart a VM by stopping and starting it."""
@@ -710,6 +752,7 @@ def restart_vm(vm_id):
 # ═══════════════════════════════════════════════════════════
 
 @vm_bp.route('/images')
+@admin_required
 @_require_qemu
 def list_images():
     """List available ISO/IMG/QCOW2 images for booting VMs."""
@@ -737,6 +780,7 @@ def list_images():
 
 
 @vm_bp.route('/builder-images')
+@admin_required
 def list_builder_images():
     """List images built by the EthOS Builder (installer/images/)."""
     images_dir = _app_path('installer/images')
@@ -764,6 +808,7 @@ def list_builder_images():
 
 
 @vm_bp.route('/builder-images/copy', methods=['POST'])
+@admin_required
 @_require_qemu
 def copy_builder_image():
     """Copy a builder image into the VM images directory."""
@@ -788,6 +833,7 @@ def copy_builder_image():
 
 
 @vm_bp.route('/images', methods=['POST'])
+@admin_required
 @_require_qemu
 def upload_image():
     """Upload an ISO/IMG/QCOW2 image."""
@@ -811,6 +857,7 @@ def upload_image():
 
 
 @vm_bp.route('/images/<path:filename>', methods=['DELETE'])
+@admin_required
 @_require_qemu
 def delete_image(filename):
     """Delete an image file."""
@@ -833,6 +880,7 @@ def delete_image(filename):
 # ═══════════════════════════════════════════════════════════
 
 @vm_bp.route('/machines/<vm_id>/disk-info')
+@admin_required
 @_require_qemu
 def disk_info(vm_id):
     """Get info about a VM's disk file."""
@@ -863,6 +911,7 @@ def disk_info(vm_id):
 
 
 @vm_bp.route('/machines/<vm_id>/resize-disk', methods=['POST'])
+@admin_required
 @_require_qemu
 def resize_disk(vm_id):
     """Resize a VM's disk (expand only, VM must be stopped)."""
@@ -900,6 +949,7 @@ def resize_disk(vm_id):
 # ═══════════════════════════════════════════════════════════
 
 @vm_bp.route('/machines/<vm_id>/snapshots')
+@admin_required
 @_require_qemu
 def list_snapshots(vm_id):
     """List disk snapshots for a QCOW2 VM."""
@@ -937,6 +987,7 @@ def list_snapshots(vm_id):
 
 
 @vm_bp.route('/machines/<vm_id>/snapshots', methods=['POST'])
+@admin_required
 @_require_qemu
 def create_snapshot(vm_id):
     """Create a disk snapshot (VM must be stopped, disk must be QCOW2)."""
@@ -965,6 +1016,7 @@ def create_snapshot(vm_id):
 
 
 @vm_bp.route('/machines/<vm_id>/snapshots/<tag>', methods=['POST'])
+@admin_required
 @_require_qemu
 def restore_snapshot(vm_id, tag):
     """Restore a disk snapshot (VM must be stopped)."""
@@ -988,6 +1040,7 @@ def restore_snapshot(vm_id, tag):
 
 
 @vm_bp.route('/machines/<vm_id>/snapshots/<tag>', methods=['DELETE'])
+@admin_required
 @_require_qemu
 def delete_snapshot(vm_id, tag):
     """Delete a disk snapshot."""
@@ -1012,6 +1065,7 @@ def delete_snapshot(vm_id, tag):
 # ═══════════════════════════════════════════════════════════
 
 @vm_bp.route('/convert', methods=['POST'])
+@admin_required
 @_require_qemu
 def convert_image():
     """Convert a disk image between formats (raw, qcow2, vdi, vmdk)."""
@@ -1025,11 +1079,17 @@ def convert_image():
     if not source or not os.path.exists(source):
         return jsonify({'error': 'Plik źródłowy nie istnieje'}), 404
 
-    base, _ = os.path.splitext(source)
-    dest = f'{base}.{target_format}'
+    source_real = os.path.realpath(source)
+    if not _is_allowed_image_path(source_real):
+        return jsonify({'error': 'Niedozwolona ścieżka źródłowa'}), 403
+
+    base, _ = os.path.splitext(source_real)
+    dest = os.path.realpath(f'{base}.{target_format}')
+    if not _is_allowed_image_path(dest):
+        return jsonify({'error': 'Niedozwolona ścieżka docelowa'}), 403
 
     try:
-        r = host_run(f'qemu-img convert -O {target_format} "{source}" "{dest}"', timeout=600)
+        r = host_run(f'qemu-img convert -O {target_format} "{source_real}" "{dest}"', timeout=600)
         if r.returncode == 0:
             return jsonify({'ok': True, 'output': dest, 'message': f'Skonwertowano do {target_format}'})
         return jsonify({'error': r.stderr}), 500

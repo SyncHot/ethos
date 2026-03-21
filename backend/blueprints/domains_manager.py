@@ -18,6 +18,7 @@ import tempfile
 import threading
 from datetime import datetime
 from flask import Blueprint, request, jsonify, g
+from datetime import datetime, timedelta
 
 import sys as _sys
 _sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -649,16 +650,19 @@ def _generate_nginx_conf(entry):
             lines.append('')
             lines.append('    listen 80;')
             lines.append('    listen [::]:80;')
-            lines.append('')
-            lines.append('    # ACME challenge for certbot webroot renewal')
-            lines.append('    location /.well-known/acme-challenge/ {')
-            lines.append('        root /var/www/letsencrypt;')
-            lines.append('        allow all;')
-            lines.append('    }')
     else:
         lines.append('    listen 80;')
         lines.append('    listen [::]:80;')
         lines.append(f'    server_name {domain};')
+
+    # ACME challenge location — always present so certbot webroot works
+    # before and after SSL is enabled
+    lines.append('')
+    lines.append('    # ACME challenge for certbot webroot')
+    lines.append('    location /.well-known/acme-challenge/ {')
+    lines.append('        root /var/www/letsencrypt;')
+    lines.append('        allow all;')
+    lines.append('    }')
 
     lines.append('')
     lines.append('    # Proxy settings')

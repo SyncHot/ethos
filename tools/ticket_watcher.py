@@ -23,6 +23,13 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from codebase_map import generate as generate_codebase_map
 
+# Backend imports for local AI execution
+sys.path.insert(0, "/opt/ethos/backend")
+try:
+    from model_library import get_library as _get_ml
+except Exception:
+    _get_ml = None
+
 BASE = "http://localhost:9000/api"
 TOKEN_FILE = "/tmp/.ethos_orchestrator_token"
 LOCK_FILE = "/tmp/.ethos_watcher_executing"
@@ -52,38 +59,60 @@ _session.mount("http://", _adapter)
 _session.mount("https://", _adapter)
 _session.verify = False
 
+# ── Free Model mapping (Copilot CLI with free/low-cost models) ──────────
+FREE_MODEL_MAP = {
+    "complex": {
+        "model": "gpt-4.1",
+        "label": "GPT-4.1 (Free)",
+        "reason": "Best free model for complex tasks",
+    },
+    "medium": {
+        "model": "gpt-4.1",
+        "label": "GPT-4.1 (Free)",
+        "reason": "Strong free model for medium tasks",
+    },
+    "simple": {
+        "model": "gpt-5-mini",
+        "label": "GPT-5 Mini (Free)",
+        "reason": "Fast free model for simple tasks",
+    },
+}
+FREE_MODEL_ROUTING = {
+    "complex": ["gpt-4.1", "gpt-5-mini", "gpt-5.1-codex-mini"],
+    "medium":  ["gpt-4.1", "gpt-5-mini", "gpt-5.1-codex-mini"],
+    "simple":  ["gpt-5-mini", "gpt-4.1", "gpt-5.1-codex-mini"],
+}
+
 # ── Complexity → AI Model mapping ────────────────────────────────────────
 # Maps to Copilot CLI --model flag values
 COMPLEXITY_MODEL_MAP = {
     "complex": {
-        "model": "gpt-5.1-codex-max",
-        "label": "GPT-5.1 Codex Max (Agent Mode)",
-        "reason": "Deep repo-wide reasoning and architectural autonomy",
+        "model": "claude-sonnet-4.6",
+        "label": "Claude Sonnet 4.6 (Deep Reasoning)",
+        "reason": "Best at multi-file architecture, security audits, and cross-cutting changes",
     },
     "medium": {
         "model": "gemini-3-pro-preview",
-        "label": "Gemini 3 Pro (Reliability)",
-        "reason": "Best handling of system tools and QA protocols",
+        "label": "Gemini 3 Pro (Reliable Implementer)",
+        "reason": "Strong tool use, reliable for typical 2-3 file feature tickets",
     },
     "simple": {
         "model": "gpt-5.1-codex-mini",
-        "label": "Codex Mini (Efficiency)",
-        "reason": "Fast and cheap for straightforward logic",
+        "label": "Codex Mini (Fast & Efficient)",
+        "reason": "Quick single-file edits, CSS tweaks, config changes",
     },
 }
 
 # ── Model routing: ordered fallback chains per complexity ─────────────────
 MODEL_ROUTING = {
-    "complex": ["gpt-5.1-codex-max", "claude-opus-4.6", "gemini-3-pro-preview"],
-    "medium":  ["gemini-3-pro-preview", "claude-sonnet-4.6", "gpt-5.1-codex-mini"],
+    "complex": ["claude-sonnet-4.6", "gemini-3-pro-preview", "gpt-5.1-codex", "gpt-4.1"],
+    "medium":  ["gemini-3-pro-preview", "claude-sonnet-4.6", "gpt-5.1-codex-mini", "gpt-4.1"],
     "simple":  ["gpt-5.1-codex-mini", "gpt-5-mini", "gpt-4.1"],
 }
 
 # All available Copilot CLI models, ranked by capability (best first).
 # Used as last-resort fallback pool when the routing chain is exhausted.
 ALL_AVAILABLE_MODELS = [
-    "gpt-5.1-codex-max",
-    "claude-opus-4.6",
     "gpt-5.3-codex",
     "gpt-5.2-codex",
     "gpt-5.4",
@@ -141,6 +170,7 @@ TRANSIENT_SOFT_COOLDOWN_THRESHOLD = 3  # after exit 0, if this many transient er
 # ── Global model cooldown tracker ─────────────────────────────────────────
 # {model_name: timestamp_when_cooldown_expires}
 _model_cooldowns = {}
+_timeout_counts = {}  # {ticket_id: number_of_timeouts}
 
 # ── Provider grouping: rate limits are usually per-provider ──────────────
 # When one model from a provider gets 429'd, sibling models likely share the quota.
@@ -358,16 +388,22 @@ def add_comment(tid, text):
 def is_executing():
     return os.path.exists(LOCK_FILE)
 
-def set_executing(tid, model_info=None, retry_count=0, tried_models=None, qa_cycle=0):
+def set_executing(tid, model_info=None, retry_count=0, tried_models=None, qa_cycle=0, agent="copilot", pid=None, log_file=None):
     with open(LOCK_FILE, "w") as f:
-        json.dump({
+        payload = {
             "ticket_id": tid,
             "started": time.time(),
             "model": model_info,
             "retry_count": retry_count,
             "tried_models": tried_models or [],
             "qa_cycle": qa_cycle,
-        }, f)
+            "agent": agent,
+        }
+        if pid:
+            payload["copilot_pid"] = pid
+        if log_file:
+            payload["log_file"] = log_file
+        json.dump(payload, f)
 
 def clear_executing():
     if os.path.exists(LOCK_FILE):
@@ -423,7 +459,7 @@ def resume_in_progress_tickets():
             tid = ticket["id"]
             try:
                 move_ticket(tid, "Do zrobienia")
-                add_comment(tid, "[copilot] Watcher zrestartowany — ticket wraca do kolejki do ponownego wykonania.")
+                add_comment(tid, "[system] Watcher zrestartowany — ticket wraca do kolejki do ponownego wykonania.")
                 print(f"RESUME | {tid} | '{ticket['title']}' moved back to 'Do zrobienia'", flush=True)
             except Exception as e:
                 print(f"RESUME_ERROR | {tid} | {e}", flush=True)
@@ -542,6 +578,19 @@ def _get_next_fallback(model_info, complexity, tried_models=None):
     current = model_info.get("model", "")
     tried = set(tried_models or [])
     tried.add(current)
+
+    # For freemodel agent, stay within free model pool
+    executing = get_executing() or {}
+    if executing.get("agent") == "freemodel":
+        chain = FREE_MODEL_ROUTING.get(complexity, FREE_MODEL_ROUTING.get("medium", []))
+        for m in chain:
+            if m not in tried and not _is_model_cooled_down(m):
+                return {
+                    "model": m,
+                    "label": f"{m} (free fallback)",
+                    "reason": f"Free model failover from {current}",
+                }
+        return None
 
     # 1) Try the routing chain for this complexity (skip cooled-down)
     chain = MODEL_ROUTING.get(complexity, MODEL_ROUTING.get("medium", []))
@@ -670,6 +719,7 @@ def load_docs_context(agent):
 
 COPILOT_BIN = "/home/marcin/.local/bin/copilot"
 COPILOT_LOG_DIR = "/opt/ethos/logs/copilot_tickets"
+LOCALAI_LOG_DIR = "/opt/ethos/logs/localai_tickets"
 MAX_AUTOPILOT = {
     "complex": 25,
     "medium": 15,
@@ -678,8 +728,9 @@ MAX_AUTOPILOT = {
 MAX_EXECUTION_SECS = {
     "complex": 2400,   # 40 min
     "medium": 1200,    # 20 min
-    "simple": 600,     # 10 min
+    "simple": 900,     # 15 min
 }
+MAX_TIMEOUT_RETRIES = 2  # max times a ticket can timeout before being shelved
 MAX_QA_CYCLES = 3  # max dev→QA round-trips before giving up
 
 def build_qa_prompt(ticket):
@@ -730,8 +781,8 @@ Focus on: correctness, requirements met, docs compliance, no regressions."""
     return prompt
 
 
-# ── QA model selection with fallback ─────────────────────────────────────
-QA_MODEL_CHAIN = ["claude-sonnet-4.6", "gemini-3-pro-preview", "gpt-5.1-codex-mini"]
+# ── QA model selection with fallback (free/low-cost models) ──────────────
+QA_MODEL_CHAIN = ["claude-sonnet-4.6", "gpt-5.1-codex-mini", "gpt-5-mini", "gpt-4.1"]
 
 def _select_qa_model():
     """Select QA model, skipping cooled-down ones. Returns a dict like select_model()."""
@@ -1106,6 +1157,398 @@ def _get_previous_log_summary(tid, max_chars=3000):
         pass
     return ""
 
+# ── Local AI helper (via model_library) ────────────────────────────────────
+LOCAL_MAX_TOKENS = {
+    "complex": 1024,
+    "medium": 768,
+    "simple": 512,
+}
+LOCAL_CTX_WINDOW = 2048         # must match model_library ctx_size
+LOCAL_SYSTEM_OVERHEAD = 180     # rough token count for system prompt
+LOCAL_MAX_RETRIES = 2           # max attempts per ticket before parking
+_local_fail_counts = {}         # {ticket_id: fail_count}
+
+def _build_local_system_prompt(model_name=None):
+    """Build system prompt with the actual active model name."""
+    label = model_name or "lokalny model"
+    return (
+        f"Jesteś lokalnym agentem deweloperskim EthOS ({label}). "
+        "Realizujesz tickety z tablicy Kanban. Twoje zmiany zostaną automatycznie zaaplikowane przez system. "
+        "OBOWIĄZKOWO generuj KOMPLETNY unified diff w blokach ```diff ... ```. "
+        "Każdy diff musi zaczynać się od --- a/ścieżka i +++ b/ścieżka (względem /opt/ethos/). "
+        "Podaj pełny kontekst (min. 3 linie przed i po zmianie). "
+        "Na końcu dodaj sekcję TESTY z 2-3 szybkimi krokami weryfikacji. "
+        "Odpowiadaj po polsku. Bądź zwięzły — liczy się poprawny diff."
+    )
+
+
+def _check_local_model_ready():
+    """Check if a local model is available and ready. Returns (active_info, error_str)."""
+    if _get_ml is None:
+        return None, "Biblioteka modeli lokalnych niedostępna"
+    try:
+        lib = _get_ml()
+        active = lib.get_active_model()
+        if not active:
+            return None, "Brak aktywnego modelu lokalnego. Włącz model w Bibliotece modeli."
+        return active, None
+    except Exception as e:
+        return None, str(e)
+
+def _run_local_model(prompt, max_tokens=900, temperature=0.15, log_file=None):
+    """Execute local chat completion using active model_library model.
+
+    When *log_file* is provided, tokens are streamed and appended to it in
+    real-time so users can ``tail -f`` the file during inference.
+    """
+    active, err = _check_local_model_ready()
+    if err:
+        return None, active, err
+    try:
+        lib = _get_ml()
+        llm, err = lib.load_model()
+        if err:
+            return None, active, err
+        lib.touch_model()
+        model_name = active.get("name") or active.get("id", "lokalny model")
+        system_prompt = _build_local_system_prompt(model_name)
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ]
+
+        # Stream tokens for real-time log visibility
+        stream = llm.create_chat_completion(
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            stream=True,
+        )
+        chunks = []
+        log_fh = None
+        try:
+            if log_file:
+                log_fh = open(log_file, "a")
+                log_fh.write("### Response ###\n")
+                log_fh.flush()
+            for chunk in stream:
+                delta = chunk.get("choices", [{}])[0].get("delta", {})
+                token = delta.get("content", "")
+                if token:
+                    chunks.append(token)
+                    if log_fh:
+                        log_fh.write(token)
+                        log_fh.flush()
+        finally:
+            if log_fh:
+                log_fh.write("\n")
+                log_fh.close()
+
+        content = "".join(chunks).strip()
+        return content, active, None
+    except Exception as e:
+        return None, active, str(e)
+
+
+def _truncate_to_tokens(text, max_tokens):
+    """Rough truncation: ~3 chars per token for mixed PL/EN/code."""
+    max_chars = max_tokens * 3
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars] + "\n[...obcięto...]"
+
+
+def build_local_plan_prompt(ticket, agent, info, max_response_tokens=768):
+    """Construct a concise instruction for the local model (no autopilot).
+
+    Prompt is trimmed so that prompt_tokens + max_response_tokens < LOCAL_CTX_WINDOW.
+    """
+    tid = ticket["id"]
+    title = ticket["title"]
+    desc = ticket.get("description", "")
+    complexity = ticket.get("complexity", "medium")
+    priority = ticket.get("priority", "medium")
+    lc = ticket.get("last_comment")
+    feedback = f"Ostatni komentarz: [{lc['author']}] {lc['text'][:200]}" if lc else ""
+    doc_list = '\n'.join(f"- /opt/ethos/docs/{d}" for d in info.get("docs", []))
+    codebase_map = get_codebase_map()
+
+    # Budget: context_window - response_tokens - system_overhead
+    prompt_budget = LOCAL_CTX_WINDOW - max_response_tokens - LOCAL_SYSTEM_OVERHEAD
+
+    # Fixed parts of prompt (~200 tokens)
+    header = f"""TICKET: {tid} — {title}
+Priorytet: {priority} | Złożoność: {complexity}
+{f'Opis: {desc[:300]}' if desc else ''}
+{feedback}
+
+Zasoby:
+{doc_list if doc_list else '- brak dodatkowych dokumentów'}"""
+
+    task = """\nZADANIE:
+- Przygotuj plan wykonania (2–5 kroków).
+- Wygeneruj KOMPLETNY unified diff dla KAŻDEGO pliku do zmiany.
+- Format diffa MUSI być poprawny (--- a/path, +++ b/path, @@ hunki).
+- Ścieżki podawaj względem /opt/ethos/, np. --- a/backend/blueprints/ddns.py
+- Podaj min. 3 linie kontekstu przed i po każdej zmianie.
+- Na końcu dodaj sekcję TESTY: 2–3 kroki weryfikacji.
+"""
+
+    # Budget for codebase map = total budget - header - task
+    header_tokens = len(header) // 3
+    task_tokens = len(task) // 3
+    map_budget = max(100, prompt_budget - header_tokens - task_tokens)
+
+    if codebase_map:
+        codebase_map = _truncate_to_tokens(codebase_map, map_budget)
+
+    prompt = f"""{header}
+
+CODEBASE MAP (skrócony):
+{codebase_map or 'brak mapy'}
+{task}"""
+    return prompt
+
+
+def _parse_diffs(text):
+    """Extract unified diff blocks from model output.
+
+    Returns list of diff strings ready for ``git apply``.
+    """
+    diffs = []
+    in_block = False
+    current = []
+    for line in text.splitlines():
+        if line.strip().startswith("```diff"):
+            in_block = True
+            current = []
+            continue
+        if in_block and line.strip().startswith("```"):
+            in_block = False
+            if current:
+                diffs.append("\n".join(current) + "\n")
+            current = []
+            continue
+        if in_block:
+            current.append(line)
+    # Also try to catch inline diffs without fences (--- a/ ... +++ b/ pattern)
+    if not diffs:
+        current = []
+        for line in text.splitlines():
+            if line.startswith("--- a/") or line.startswith("diff --git"):
+                if current:
+                    diffs.append("\n".join(current) + "\n")
+                current = [line]
+            elif current:
+                current.append(line)
+        if current:
+            diffs.append("\n".join(current) + "\n")
+    return diffs
+
+
+def _apply_and_commit(diffs, tid, title, model_label, log_file):
+    """Apply parsed diffs via git apply, then commit.
+
+    Returns (success: bool, message: str, files_changed: list).
+    """
+    if not diffs:
+        return False, "Brak diffów do zaaplikowania", []
+
+    applied_files = []
+    failed_patches = []
+
+    for i, diff_text in enumerate(diffs):
+        patch_path = os.path.join(LOCALAI_LOG_DIR, f"{tid}_patch_{i}.diff")
+        with open(patch_path, "w") as pf:
+            pf.write(diff_text)
+
+        # Try to apply
+        result = subprocess.run(
+            ["git", "apply", "--check", patch_path],
+            capture_output=True, text=True, cwd="/opt/ethos", timeout=10,
+        )
+        if result.returncode != 0:
+            # Try with --3way for fuzzy matching
+            result = subprocess.run(
+                ["git", "apply", "--check", "--3way", patch_path],
+                capture_output=True, text=True, cwd="/opt/ethos", timeout=10,
+            )
+        if result.returncode != 0:
+            failed_patches.append((i, result.stderr.strip()))
+            try:
+                os.remove(patch_path)
+            except OSError:
+                pass
+            continue
+
+        # Apply for real
+        apply_result = subprocess.run(
+            ["git", "apply", patch_path],
+            capture_output=True, text=True, cwd="/opt/ethos", timeout=10,
+        )
+        if apply_result.returncode != 0:
+            # Retry with --3way
+            apply_result = subprocess.run(
+                ["git", "apply", "--3way", patch_path],
+                capture_output=True, text=True, cwd="/opt/ethos", timeout=10,
+            )
+        if apply_result.returncode == 0:
+            # Extract filenames from diff
+            for line in diff_text.splitlines():
+                if line.startswith("+++ b/"):
+                    applied_files.append(line[6:])
+        else:
+            failed_patches.append((i, apply_result.stderr.strip()))
+
+        try:
+            os.remove(patch_path)
+        except OSError:
+            pass
+
+    if not applied_files:
+        fail_reasons = "; ".join(f"patch {i}: {err[:100]}" for i, err in failed_patches)
+        return False, f"Nie udało się zaaplikować żadnego patcha. {fail_reasons}", []
+
+    # Stage and commit
+    try:
+        subprocess.run(
+            ["git", "add"] + applied_files,
+            capture_output=True, text=True, cwd="/opt/ethos", timeout=10,
+        )
+        short_title = title[:60].replace('"', "'")
+        commit_msg = f"[{tid}] {short_title}\n\nLocal AI ({model_label})\nLog: {os.path.basename(log_file)}"
+        commit_result = subprocess.run(
+            ["git", "commit", "-m", commit_msg],
+            capture_output=True, text=True, cwd="/opt/ethos", timeout=15,
+        )
+        if commit_result.returncode != 0:
+            return False, f"git commit failed: {commit_result.stderr.strip()[:200]}", applied_files
+    except Exception as e:
+        return False, f"git error: {e}", applied_files
+
+    msg = f"Zaaplikowano {len(applied_files)} plik(ów): {', '.join(applied_files[:5])}"
+    if failed_patches:
+        msg += f" ({len(failed_patches)} patch(y) nie przeszło)"
+    return True, msg, applied_files
+
+
+def process_local_ticket(ticket):
+    """Handle a ticket with the local model: generate diff, apply, commit, QA.
+
+    Flow mirrors Copilot: edit files → git commit → move to QA.
+    If diff application fails, falls back to plan-only mode (comment + Review).
+    """
+    tid = ticket["id"]
+    title = ticket["title"]
+    agent = detect_agent(title, ticket.get("labels", []))
+    info = AGENT_MAP.get(agent, AGENT_MAP["General"])
+    complexity = ticket.get("complexity", "medium")
+
+    # Retry guard: don't re-attempt tickets that permanently fail
+    fail_count = _local_fail_counts.get(tid, 0)
+    if fail_count >= LOCAL_MAX_RETRIES:
+        print(f"LOCAL_PARKED | {tid} | max retries ({LOCAL_MAX_RETRIES}) reached, skipping", flush=True)
+        return
+
+    # Pre-check: is a local model actually available?
+    active_pre, pre_err = _check_local_model_ready()
+    if pre_err:
+        print(f"LOCAL_SKIP | {tid} | {pre_err}", flush=True)
+        add_comment(tid, f"[localai] {pre_err}")
+        return
+
+    model_name = active_pre.get("name") or active_pre.get("id", "Local AI")
+    os.makedirs(LOCALAI_LOG_DIR, exist_ok=True)
+    log_file = os.path.join(LOCALAI_LOG_DIR, f"{tid}_local_{int(time.time())}.log")
+
+    set_executing(tid, {"model": "local", "label": model_name}, agent="localai", pid=os.getpid(), log_file=log_file)
+
+    try:
+        assign_ticket(tid, "localai")
+        move_ticket(tid, "W trakcie")
+    except Exception as e:
+        print(f"LOCAL_ASSIGN_ERROR | {tid} | {e}", flush=True)
+
+    max_tok = LOCAL_MAX_TOKENS.get(complexity, 768)
+    prompt = build_local_plan_prompt(ticket, agent, info, max_response_tokens=max_tok)
+
+    # Write log header + prompt BEFORE inference so users can tail -f
+    with open(log_file, "w") as f:
+        f.write(f"=== Local AI Ticket ===\n")
+        f.write(f"Ticket: {tid} | {title}\n")
+        f.write(f"Model: {model_name}\n")
+        f.write(f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+        f.write("### Prompt ###\n")
+        f.write(prompt + "\n\n")
+
+    # Streaming inference — tokens are appended to log_file in real-time
+    result, active_model, err = _run_local_model(prompt, max_tokens=max_tok, log_file=log_file)
+
+    if err:
+        with open(log_file, "a") as f:
+            f.write(f"\nERROR: {err}\n")
+
+    if err:
+        _local_fail_counts[tid] = fail_count + 1
+        remaining = LOCAL_MAX_RETRIES - fail_count - 1
+        if remaining > 0:
+            add_comment(tid, f"[localai] Błąd: {err}. Ponowię próbę ({remaining} pozostało).")
+        else:
+            add_comment(tid, f"[localai] Błąd: {err}. Ticket wymaga interwencji (wyczerpano {LOCAL_MAX_RETRIES} prób).")
+        try:
+            move_ticket(tid, "Do zrobienia")
+        except Exception:
+            pass
+        clear_executing()
+        return
+
+    # Success — clear fail counter
+    _local_fail_counts.pop(tid, None)
+
+    model_label = active_model.get("name") or active_model.get("id") if active_model else "local"
+
+    # --- Try to apply diffs and commit (like Copilot) ---
+    diffs = _parse_diffs(result or "")
+    applied = False
+    apply_msg = ""
+    files_changed = []
+    if diffs:
+        applied, apply_msg, files_changed = _apply_and_commit(
+            diffs, tid, title, model_label, log_file)
+        with open(log_file, "a") as f:
+            f.write(f"\n### Apply Result ###\n")
+            f.write(f"Applied: {applied} | {apply_msg}\n")
+            if files_changed:
+                f.write(f"Files: {', '.join(files_changed)}\n")
+        print(f"LOCAL_APPLY | {tid} | applied={applied} | {apply_msg}", flush=True)
+
+    summary = (result or "")[:1500]
+    if applied:
+        # Full flow — files changed, committed, go to QA
+        add_comment(
+            tid,
+            f"[localai] Zmiany zaaplikowane i scommitowane (model: {model_label}).\n"
+            f"{apply_msg}\n"
+            f"Log: {os.path.basename(log_file)}\n\n{summary}"
+        )
+        try:
+            move_ticket(tid, "QA")
+            print(f"MOVED_TO_QA | {tid} | local", flush=True)
+        except Exception as e:
+            print(f"LOCAL_MOVE_ERROR | {tid} | {e}", flush=True)
+    else:
+        # Fallback — plan only, no file changes
+        fallback_note = f"\n⚠️ Patch nie przeszedł: {apply_msg}" if diffs else ""
+        add_comment(
+            tid,
+            f"[localai] Plan i propozycje zmian (model: {model_label}).{fallback_note}\n"
+            f"Log: {os.path.basename(log_file)}\n\n{summary}"
+        )
+        try:
+            move_ticket(tid, "Review")
+        except Exception as e:
+            print(f"LOCAL_MOVE_ERROR | {tid} | {e}", flush=True)
+    clear_executing()
 
 def build_retry_prompt(ticket, agent, info, model_info, docs_context, prev_model, failure_type):
     """Build a prompt for retry/failover that includes rich context from the previous attempt."""
@@ -1197,7 +1640,7 @@ def execute_via_copilot(ticket, agent, info, model_info, docs_context, override_
             "docs_context": docs_context,
         }
 
-        # Store PID in lock for monitoring (preserve qa_cycle from set_executing)
+        # Store PID in lock for monitoring (preserve qa_cycle and agent from set_executing)
         existing = get_executing() or {}
         with open(LOCK_FILE, "w") as f:
             json.dump({
@@ -1207,6 +1650,7 @@ def execute_via_copilot(ticket, agent, info, model_info, docs_context, override_
                 "copilot_pid": proc.pid,
                 "log_file": log_file,
                 "qa_cycle": existing.get("qa_cycle", 0),
+                "agent": existing.get("agent", "copilot"),
             }, f)
 
         print(f"COPILOT_RUNNING | {tid} | PID={proc.pid}", flush=True)
@@ -1214,7 +1658,8 @@ def execute_via_copilot(ticket, agent, info, model_info, docs_context, override_
 
     except Exception as e:
         print(f"COPILOT_ERROR | {tid} | {e}", flush=True)
-        add_comment(tid, f"[copilot] Błąd uruchamiania Copilot: {e}")
+        _err_agent = (get_executing() or {}).get("agent", "copilot")
+        add_comment(tid, f"[{_err_agent}] Błąd uruchamiania agenta: {e}")
         return None
 
 
@@ -1273,21 +1718,26 @@ def auto_rework_ticket(ticket, qa_reason, qa_cycle):
     title = ticket["title"]
     agent = detect_agent(title, ticket.get("labels", []))
     info = AGENT_MAP.get(agent, AGENT_MAP["General"])
-    model_info = select_model(ticket)
+    ticket_agent = ticket.get("agent", "copilot")
+    if ticket_agent == "freemodel":
+        complexity = ticket.get("complexity", "medium")
+        model_info = FREE_MODEL_MAP.get(complexity, FREE_MODEL_MAP["medium"])
+    else:
+        model_info = select_model(ticket)
     complexity = ticket.get("complexity", "medium")
     docs_context = load_docs_context(agent)
 
-    set_executing(tid, model_info, qa_cycle=qa_cycle)
+    set_executing(tid, model_info, qa_cycle=qa_cycle, agent=ticket_agent)
 
     print(f"\n{'='*70}", flush=True)
-    print(f"REWORK | {tid} | {agent} | QA cycle {qa_cycle}/{MAX_QA_CYCLES}", flush=True)
+    print(f"REWORK | {tid} | {agent} | QA cycle {qa_cycle}/{MAX_QA_CYCLES} | agent={ticket_agent}", flush=True)
     print(f"Title: {title}", flush=True)
     print(f"QA reason: {qa_reason[:200]}", flush=True)
     print(f"Model: {model_info['model']} ({model_info['label']})", flush=True)
     print(f"{'='*70}", flush=True)
 
     add_comment(tid,
-        f"[copilot] Rozpoczynam poprawki po QA (cykl {qa_cycle}/{MAX_QA_CYCLES}).\n"
+        f"[{ticket_agent}] Rozpoczynam poprawki po QA (cykl {qa_cycle}/{MAX_QA_CYCLES}).\n"
         f"Agent: {agent} | Model: {model_info['model']}\n"
         f"QA feedback: {qa_reason[:500]}")
 
@@ -1322,7 +1772,9 @@ def main():
     print(f"Model mapping: complex→{COMPLEXITY_MODEL_MAP['complex']['model']}, medium→{COMPLEXITY_MODEL_MAP['medium']['model']}, simple→{COMPLEXITY_MODEL_MAP['simple']['model']}", flush=True)
     routing_str = ", ".join(f"{k}: {' → '.join(v)}" for k, v in MODEL_ROUTING.items())
     print(f"Fallback routing: {routing_str}", flush=True)
-    print(f"QA agent: Sonnet | Flow: Dev→QA→Review (fail→Rework→QA, max {MAX_QA_CYCLES} cycles)", flush=True)
+    print(f"QA agent: {QA_MODEL_CHAIN[0]} (free) | Flow: Dev→QA→Review (fail→Rework→QA, max {MAX_QA_CYCLES} cycles)", flush=True)
+    free_str = ", ".join(f"{k}→{v['model']}" for k, v in FREE_MODEL_MAP.items())
+    print(f"Free model mapping: {free_str}", flush=True)
     print(f"Copilot CLI: {COPILOT_BIN}", flush=True)
 
     # Clean up stale lock from previous watcher instance
@@ -1343,6 +1795,7 @@ def main():
     # QA cycle tracking per ticket {ticket_id: cycle_count}
     qa_cycles = {}
     todo = []
+    local_busy = False
 
     # ── Graceful shutdown on SIGTERM / SIGINT ─────────────────────────────
     _shutting_down = False
@@ -1421,8 +1874,9 @@ def main():
                         except: pass
                     executing = get_executing()
                     log_file = executing.get("log_file", "?") if executing else "?"
+                    _dead_agent = executing.get("agent", "copilot") if isinstance(executing, dict) else "copilot"
                     add_comment(active_ticket_id,
-                        f"[copilot] Proces Copilot zniknął nieoczekiwanie (PID {active_proc.pid}). Log: {log_file}")
+                        f"[{_dead_agent}] Proces agenta zniknął nieoczekiwanie (PID {active_proc.pid}). Log: {log_file}")
                     clear_executing()
                     active_proc = None
                     active_ticket_id = None
@@ -1440,6 +1894,7 @@ def main():
 
                     executing = get_executing()
                     log_file = executing.get("log_file", "?") if executing else "?"
+                    _agent_prefix = (executing.get("agent", "copilot") if isinstance(executing, dict) else "copilot")
                     if retcode == 0:
                         # Preserve qa_cycle from lock file before clearing
                         qa_cycle_for_ticket = 0
@@ -1459,13 +1914,13 @@ def main():
                             print(f"\nCOPILOT_DONE | {active_ticket_id} | exit=0 | qa_cycle={qa_cycle_for_ticket} | log={log_file} | ⚠ {transient_count} transient errors → soft cooldown {soft_cd}s on {_done_model}", flush=True)
                             _record_metric(_done_model, "ok", _exec_duration)
                             add_comment(active_ticket_id,
-                                f"[copilot] Zakończyłem pracę (exit 0), ale z {transient_count} transient API errors. "
+                                f"[{_agent_prefix}] Zakończyłem pracę (exit 0), ale z {transient_count} transient API errors. "
                                 f"Model {_done_model} w soft-cooldownie ({soft_cd}s). Log: {log_file}")
                         else:
                             print(f"\nCOPILOT_DONE | {active_ticket_id} | exit=0 | qa_cycle={qa_cycle_for_ticket} | log={log_file}", flush=True)
                             _record_metric(_done_model, "ok", _exec_duration)
                             add_comment(active_ticket_id,
-                                f"[copilot] Zakończyłem pracę nad ticketem (exit 0). Log: {log_file}")
+                                f"[{_agent_prefix}] Zakończyłem pracę nad ticketem (exit 0). Log: {log_file}")
                         # Move to QA (not Review — QA agent will verify first)
                         try:
                             move_ticket(active_ticket_id, "QA")
@@ -1610,7 +2065,7 @@ def main():
                         print(f"\nCOPILOT_FAILED | {active_ticket_id} | exit={retcode} | type={failure_type} | tried: [{tried_str}] | log={log_file}", flush=True)
                         _record_metric(current_model, "fail")
                         add_comment(active_ticket_id,
-                            f"[copilot] Copilot zakończył z błędem (exit {retcode}, {failure_type}). "
+                            f"[{_agent_prefix}] Zakończono z błędem (exit {retcode}, {failure_type}). "
                             f"Wypróbowane modele: [{tried_str}]. Log: {log_file}")
                         try:
                             move_ticket(active_ticket_id, "Do zrobienia")
@@ -1687,12 +2142,27 @@ def main():
                         if hasattr(active_proc, '_log_fh'):
                             try: active_proc._log_fh.close()
                             except: pass
-                        add_comment(active_ticket_id,
-                            f"[copilot] Przekroczono limit czasu ({max_secs}s). Ticket wraca do kolejki. Log: {log_file}")
-                        try:
-                            move_ticket(active_ticket_id, "Do zrobienia")
-                        except Exception as me:
-                            print(f"MOVE_ERROR | {active_ticket_id} | {me}", flush=True)
+                        _to_agent = executing.get("agent", "copilot") if isinstance(executing, dict) else "copilot"
+                        _timeout_counts[active_ticket_id] = _timeout_counts.get(active_ticket_id, 0) + 1
+                        _tc = _timeout_counts[active_ticket_id]
+                        if _tc >= MAX_TIMEOUT_RETRIES:
+                            print(f"TIMEOUT_EXHAUSTED | {active_ticket_id} | {_tc}/{MAX_TIMEOUT_RETRIES} timeouts → shelving to Review", flush=True)
+                            add_comment(active_ticket_id,
+                                f"[{_to_agent}] Przekroczono limit czasu {_tc}x (po {max_secs}s każdy). "
+                                f"Ticket wymaga interwencji manualnej. Log: {log_file}")
+                            try:
+                                move_ticket(active_ticket_id, "Review")
+                            except Exception as me:
+                                print(f"MOVE_ERROR | {active_ticket_id} | {me}", flush=True)
+                        else:
+                            print(f"TIMEOUT_RETRY | {active_ticket_id} | attempt {_tc}/{MAX_TIMEOUT_RETRIES} → back to queue", flush=True)
+                            add_comment(active_ticket_id,
+                                f"[{_to_agent}] Przekroczono limit czasu ({max_secs}s, próba {_tc}/{MAX_TIMEOUT_RETRIES}). "
+                                f"Ticket wraca do kolejki. Log: {log_file}")
+                            try:
+                                move_ticket(active_ticket_id, "Do zrobienia")
+                            except Exception as me:
+                                print(f"MOVE_ERROR | {active_ticket_id} | {me}", flush=True)
                         clear_executing()
                         active_proc = None
                         active_ticket_id = None
@@ -1800,6 +2270,50 @@ def main():
             todo = [t for t in queue if t["column"] == "Do zrobienia"]
             in_progress = [t for t in queue if t["column"] == "W trakcie"]
             qa_tickets = [t for t in queue if t["column"] == "QA"]
+
+            todo_local = [t for t in todo if t.get("agent") == "localai"]
+            todo_free = [t for t in todo if t.get("agent") == "freemodel"]
+            todo = [t for t in todo if t.get("agent", "copilot") not in ("localai", "freemodel")]
+
+            # Lightweight local agent (plan + patch hints) — runs only when no other execution is active
+            if args.auto and todo_local and not is_executing() and not local_busy and active_proc is None and qa_proc is None:
+                local_busy = True
+                try:
+                    process_local_ticket(todo_local[0])
+                    _last_ticket_finished = time.time()
+                except Exception as local_err:
+                    print(f"LOCAL_TICKET_ERROR | {todo_local[0].get('id','?')} | {local_err}", flush=True)
+                    clear_executing()
+                finally:
+                    local_busy = False
+
+            # Free-model agent — uses Copilot CLI with free/low-cost models
+            if args.auto and todo_free and not is_executing() and active_proc is None and qa_proc is None and not local_busy:
+                next_free = todo_free[0]
+                complexity = next_free.get("complexity", "medium")
+                model_info = FREE_MODEL_MAP.get(complexity, FREE_MODEL_MAP["medium"])
+                agent = detect_agent(next_free["title"], next_free.get("labels", []))
+                info = AGENT_MAP.get(agent, AGENT_MAP["General"])
+                assign_ticket(next_free["id"], "freemodel")
+                move_ticket(next_free["id"], "W trakcie")
+                set_executing(next_free["id"], model_info, agent="freemodel")
+                docs_context = load_docs_context(agent)
+                print(f"\n{'='*70}", flush=True)
+                print(f"FREE_EXECUTE | {next_free['id']} | {agent} | {model_info['model']} ({model_info['label']})", flush=True)
+                print(f"Title: {next_free['title']}", flush=True)
+                print(f"{'='*70}", flush=True)
+                add_comment(next_free["id"],
+                    f"[freemodel] Rozpoczynam prace nad ticketem.\n"
+                    f"Agent: {agent} | Model: {model_info['model']} ({model_info['label']})\n"
+                    f"Złożoność: {complexity}")
+                active_proc = execute_via_copilot(next_free, agent, info, model_info, docs_context)
+                if active_proc:
+                    active_ticket_id = next_free["id"]
+                else:
+                    print(f"FREE_LAUNCH_FAILED | {next_free['id']}", flush=True)
+                    clear_executing()
+                    try: move_ticket(next_free["id"], "Do zrobienia")
+                    except: pass
 
             for t in queue:
                 tid, col = t["id"], t["column"]

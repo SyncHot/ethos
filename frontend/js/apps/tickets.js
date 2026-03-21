@@ -143,6 +143,14 @@ async function renderTickets(body, launchOpts) {
     let selectedTickets = new Set();
     let watcherExecuting = null;  // { executing, ticket_id, model, elapsed, ... }
 
+    function watcherLabel(we) {
+        if (!we) return '';
+        const agentMap = { localai: 'Local AI', freemodel: 'Free Model', copilot: 'Copilot' };
+        const agent = agentMap[we.agent] || 'Copilot';
+        const model = we.model_label || we.model || '';
+        return model ? (agent + ' · ' + model) : agent;
+    }
+
     /* ── root container ── */
     body.innerHTML = '<div class="tk-app"><div class="tk-loading" style="padding:2rem;text-align:center;"><i class="fas fa-spinner fa-spin"></i> ' + t('Ładowanie...') + '</div></div>';
     const app = body.querySelector('.tk-app');
@@ -471,6 +479,19 @@ async function renderTickets(body, launchOpts) {
         const existingMembers = existing?.members || [];
         const columns = (existing?.columns || DEFAULT_COLUMNS).join(', ');
         const copilotEnabled = existing?.copilot_enabled || false;
+        const localaiEnabled = existing?.localai_enabled || false;
+        const freemodelEnabled = existing?.freemodel_enabled || false;
+
+        let activeModelName = '';
+        try {
+            const am = await api('/aichat/models/active');
+            const m = am?.model;
+            if (m && m.name) activeModelName = m.name;
+            else if (m && m.id) activeModelName = m.id;
+        } catch(e) {}
+        const localaiLabel = activeModelName
+            ? t('Lokalny agent') + ` (${activeModelName})`
+            : t('Lokalny agent (brak aktywnego modelu)');
 
         let allSystemUsers = [];
         try {
@@ -518,6 +539,22 @@ async function renderTickets(body, launchOpts) {
                     </label>
                     <small class="tk-toggle-hint">${t('Copilot automatycznie realizuje tickety z kolumny "Do zrobienia"')}</small>
                 </div>
+                <div class="tk-form-group">
+                    <label class="tk-toggle-row">
+                        <input type="checkbox" id="tk-pf-localai" ${localaiEnabled ? 'checked' : ''} />
+                        <span class="tk-toggle-slider"></span>
+                        <span class="tk-toggle-label"><i class="fas fa-brain"></i> ${localaiLabel}</span>
+                    </label>
+                    <small class="tk-toggle-hint">${activeModelName ? t('Użyj lokalnego modelu do analizy i propozycji zmian. Nie wymaga kluczy API.') : t('Brak aktywnego modelu. Pobierz i aktywuj model w Bibliotece modeli (AIChat).')}</small>
+                </div>
+                <div class="tk-form-group">
+                    <label class="tk-toggle-row">
+                        <input type="checkbox" id="tk-pf-freemodel" ${freemodelEnabled ? 'checked' : ''} />
+                        <span class="tk-toggle-slider"></span>
+                        <span class="tk-toggle-label"><i class="fas fa-gift"></i> ${t('Darmowe modele Copilota')}</span>
+                    </label>
+                    <small class="tk-toggle-hint">${t('Używa darmowych modeli Copilot CLI (GPT-4.1, GPT-5 Mini). Pełny flow jak Copilot, ale bez zużycia limitu premium.')}</small>
+                </div>
             </div>
         `;
 
@@ -533,6 +570,8 @@ async function renderTickets(body, launchOpts) {
                 columns: modal.querySelector('#tk-pf-columns').value
                     .split(',').map(s => s.trim()).filter(Boolean),
                 copilot_enabled: modal.querySelector('#tk-pf-copilot').checked,
+                localai_enabled: modal.querySelector('#tk-pf-localai').checked,
+                freemodel_enabled: modal.querySelector('#tk-pf-freemodel').checked,
             };
             if (payload.columns.length === 0) payload.columns = [...DEFAULT_COLUMNS];
 
@@ -546,6 +585,23 @@ async function renderTickets(body, launchOpts) {
         const colorInput = overlay.querySelector('#tk-pf-color');
         const colorVal = overlay.querySelector('#tk-pf-color-val');
         colorInput.oninput = () => { colorVal.textContent = colorInput.value; };
+
+        const copilotToggle = overlay.querySelector('#tk-pf-copilot');
+        const localToggle = overlay.querySelector('#tk-pf-localai');
+        const freeToggle = overlay.querySelector('#tk-pf-freemodel');
+        if (copilotToggle && localToggle && freeToggle) {
+            copilotToggle.onchange = () => { if (copilotToggle.checked) { localToggle.checked = false; freeToggle.checked = false; } };
+            localToggle.onchange = () => {
+                if (localToggle.checked) {
+                    copilotToggle.checked = false;
+                    freeToggle.checked = false;
+                    if (!activeModelName) {
+                        toast(t('Brak aktywnego modelu. Pobierz i aktywuj model w Bibliotece modeli (AIChat).'), 'warning');
+                    }
+                }
+            };
+            freeToggle.onchange = () => { if (freeToggle.checked) { copilotToggle.checked = false; localToggle.checked = false; } };
+        }
 
         /* ── Chip picker logic ── */
         const chipsEl = overlay.querySelector('#tk-pf-chips');
@@ -883,7 +939,7 @@ async function renderTickets(body, launchOpts) {
                     <button class="tk-act-btn" id="tk-find-bugs-btn" title="${t('Audyt aplikacji (Epic)')}">
                         <i class="fas fa-bug"></i>
                     </button>
-                    ${currentProject.copilot_enabled ? '<button class="tk-act-btn" id="tk-watcher-btn" title="Ticket Watcher"><i class="fas fa-tower-broadcast"></i></button>' : ''}
+                    ${(currentProject.copilot_enabled || currentProject.localai_enabled || currentProject.freemodel_enabled) ? '<button class="tk-act-btn" id="tk-watcher-btn" title="AI Agent"><i class="fas fa-tower-broadcast"></i></button>' : ''}
                     <button class="tk-act-btn" id="tk-mobile-filter-toggle" title="${t('Filtry')}">
                         <i class="fas fa-filter"></i>
                     </button>
@@ -1040,7 +1096,7 @@ async function renderTickets(body, launchOpts) {
                 epicCard.classList.add('tk-agent-active');
                 const badge = document.createElement('div');
                 badge.className = 'tk-agent-badge';
-                badge.innerHTML = '<i class="fas fa-robot"></i> ' + _escHtml(watcherExecuting.model_label || watcherExecuting.model || 'agent');
+                badge.innerHTML = '<i class="fas fa-robot"></i> ' + _escHtml(watcherLabel(watcherExecuting));
                 epicCard.appendChild(badge);
             }
 
@@ -1104,7 +1160,7 @@ async function renderTickets(body, launchOpts) {
                         childCard.classList.add('tk-agent-active');
                         const badge = document.createElement('div');
                         badge.className = 'tk-agent-badge';
-                        badge.innerHTML = '<i class="fas fa-robot"></i> ' + _escHtml(watcherExecuting.model_label || watcherExecuting.model || 'agent');
+                        badge.innerHTML = '<i class="fas fa-robot"></i> ' + _escHtml(watcherLabel(watcherExecuting));
                         childCard.appendChild(badge);
                     }
 
@@ -1163,7 +1219,7 @@ async function renderTickets(body, launchOpts) {
                 card.classList.add('tk-agent-active');
                 const badge = document.createElement('div');
                 badge.className = 'tk-agent-badge';
-                badge.innerHTML = '<i class="fas fa-robot"></i> ' + _escHtml(watcherExecuting.model_label || watcherExecuting.model || 'agent');
+                badge.innerHTML = '<i class="fas fa-robot"></i> ' + _escHtml(watcherLabel(watcherExecuting));
                 card.appendChild(badge);
             }
 
@@ -1304,7 +1360,7 @@ async function renderTickets(body, launchOpts) {
                 
                 // Calc Hash
                 const base = [tk.id, tk.title, tk.priority, tk.complexity, tk.type, tk.assignee, (tk.labels||[]).join(','), tk.column].join('|');
-                const watcher = (watcherExecuting && watcherExecuting.ticket_id === tk.id) ? (watcherExecuting.model||'') : '';
+                const watcher = (watcherExecuting && watcherExecuting.ticket_id === tk.id) ? watcherLabel(watcherExecuting) : '';
                 let childHash = '';
                 let collapsed = '';
                 if (isEpic) {
@@ -1463,11 +1519,17 @@ async function renderTickets(body, launchOpts) {
             localModel = (lm && lm.model) || null;
         } catch (e) { localModel = null; }
 
-        /* ── fetch copilot logs list ── */
+        /* ── fetch AI agent logs (copilot + lokalny) ── */
         let copilotLogs = [];
         try {
             const logsResp = await api('/tickets/tickets/' + ticket.id + '/copilot-logs');
-            copilotLogs = (logsResp && logsResp.logs) || [];
+            const localResp = await api('/tickets/tickets/' + ticket.id + '/copilot-logs?agent=localai');
+            const cLogs = (logsResp && logsResp.logs) || [];
+            const lLogs = (localResp && localResp.logs) || [];
+            copilotLogs = [
+                ...cLogs.map(l => ({ ...l, agent: l.agent || 'copilot' })),
+                ...lLogs.map(l => ({ ...l, agent: l.agent || 'localai' })),
+            ];
         } catch (e) { /* ignore — no logs available */ }
 
         const labels = (ticket.labels || []);
@@ -1607,7 +1669,7 @@ async function renderTickets(body, launchOpts) {
                         s += '<div class="tk-agent-status-live">';
                         s += '<span class="tk-agent-pulse">●</span> ';
                         s += '<strong>' + t('Agent pracuje') + '</strong>';
-                        s += ' — ' + _escHtml(watcherExecuting.model_label || watcherExecuting.model || '');
+                        s += ' — ' + _escHtml(watcherLabel(watcherExecuting));
                         if (elapsed) s += ' · ' + elapsed;
                         if (qaCycle > 0) s += ' · QA #' + qaCycle;
                         s += '</div>';
@@ -1639,12 +1701,13 @@ async function renderTickets(body, launchOpts) {
                     <div class="tk-log-tabs" id="tk-log-tabs">
                         ${copilotLogs.map((log, i) => {
                             const d = new Date(log.timestamp * 1000);
-                            const label = (log.type === 'qa' ? '🔍 QA' : '🤖 Dev') + ' ' +
+                            const agentIcon = log.agent === 'localai' ? '🧠' : log.agent === 'freemodel' ? '🎁' : (log.type === 'qa' ? '🔍 QA' : '🤖 Dev');
+                            const label = agentIcon + ' ' +
                                 d.toLocaleString('pl', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
                             const sizeKB = (log.size / 1024).toFixed(1);
                             const modelTag = log.model ? ' <span class="tk-log-model">' + _escHtml(log.model) + '</span>' : '';
                             return '<button class="tk-log-tab' + (i === 0 ? ' active' : '') + '" data-filename="' +
-                                _escHtml(log.filename) + '" data-idx="' + i + '">' + label + modelTag + ' <span class="tk-log-size">' + sizeKB + 'KB</span></button>';
+                                _escHtml(log.filename) + '" data-agent="' + (log.agent || 'copilot') + '" data-idx="' + i + '">' + label + modelTag + ' <span class="tk-log-size">' + sizeKB + 'KB</span></button>';
                         }).join('')}
                     </div>
                     <div class="tk-log-viewer" id="tk-log-viewer">
@@ -1913,20 +1976,23 @@ async function renderTickets(body, launchOpts) {
         _cleanupObserver.observe(document.body, { childList: true });
 
         if (logTabs && logViewer) {
-            const loadLog = async (filename) => {
+            let _logAgent = 'copilot';
+
+            const loadLog = async (filename, agent) => {
                 // stop previous polling
                 if (_logPollTimer) { clearInterval(_logPollTimer); _logPollTimer = null; }
                 _logOffset = 0;
                 _logFilename = filename;
+                _logAgent = agent || 'copilot';
                 logViewer.innerHTML = '<div class="tk-log-loading"><i class="fas fa-spinner fa-spin"></i> ' + t('Ładowanie...') + '</div>';
                 try {
-                    const resp = await api('/tickets/tickets/' + ticket.id + '/copilot-logs/' + encodeURIComponent(filename));
+                    const resp = await api('/tickets/tickets/' + ticket.id + '/copilot-logs/' + encodeURIComponent(filename) + '?agent=' + _logAgent);
                     const content = (resp && resp.content) || '';
                     _logOffset = resp.offset || content.length;
                     logViewer.innerHTML = '<pre class="tk-log-content">' + _escHtml(content) + '</pre>';
                     logViewer.scrollTop = logViewer.scrollHeight;
                     // start polling for new content
-                    _logPollTimer = setInterval(() => pollLogUpdates(filename), 3000);
+                    _logPollTimer = setInterval(() => pollLogUpdates(filename), 2000);
                 } catch (e) {
                     logViewer.innerHTML = '<div class="tk-log-error"><i class="fas fa-exclamation-triangle"></i> ' + t('Błąd ładowania logu') + '</div>';
                 }
@@ -1939,7 +2005,7 @@ async function renderTickets(body, launchOpts) {
                 }
                 const liveBadge = overlay.querySelector('#tk-log-live');
                 try {
-                    const resp = await api('/tickets/tickets/' + ticket.id + '/copilot-logs/' + encodeURIComponent(filename) + '?offset=' + _logOffset);
+                    const resp = await api('/tickets/tickets/' + ticket.id + '/copilot-logs/' + encodeURIComponent(filename) + '?agent=' + _logAgent + '&offset=' + _logOffset);
                     const newContent = (resp && resp.content) || '';
                     if (newContent.length > 0) {
                         _logOffset = resp.offset || (_logOffset + newContent.length);
@@ -1961,11 +2027,26 @@ async function renderTickets(body, launchOpts) {
                 if (!tab) return;
                 logTabs.querySelectorAll('.tk-log-tab').forEach(t => t.classList.remove('active'));
                 tab.classList.add('active');
-                loadLog(tab.dataset.filename);
+                loadLog(tab.dataset.filename, tab.dataset.agent);
             });
-            // auto-load first log
-            const firstTab = logTabs.querySelector('.tk-log-tab');
-            if (firstTab) loadLog(firstTab.dataset.filename);
+
+            // If ticket is currently being processed, find & auto-select its live log tab
+            let autoLoaded = false;
+            if (watcherExecuting && watcherExecuting.executing && watcherExecuting.ticket_id === ticket.id && watcherExecuting.log_file) {
+                const liveTab = logTabs.querySelector('[data-filename="' + CSS.escape(watcherExecuting.log_file) + '"]');
+                if (liveTab) {
+                    logTabs.querySelectorAll('.tk-log-tab').forEach(t => t.classList.remove('active'));
+                    liveTab.classList.add('active');
+                    loadLog(liveTab.dataset.filename, liveTab.dataset.agent);
+                    const liveBadge = overlay.querySelector('#tk-log-live');
+                    if (liveBadge) liveBadge.style.display = 'inline';
+                    autoLoaded = true;
+                }
+            }
+            if (!autoLoaded) {
+                const firstTab = logTabs.querySelector('.tk-log-tab');
+                if (firstTab) loadLog(firstTab.dataset.filename, firstTab.dataset.agent);
+            }
         }
     }
 
