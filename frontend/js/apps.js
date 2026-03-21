@@ -8768,7 +8768,10 @@ async function renderSystemSettings(body) {
             window._f2bListenerAdded = true;
         }
 
-        document.addEventListener('f2b-reload', loadFail2Ban);
+        if (!window._f2bReloadAdded) {
+            document.addEventListener('f2b-reload', loadFail2Ban);
+            window._f2bReloadAdded = true;
+        }
 
         // Initial load when switching to security tab
         wrap.querySelectorAll('.ss-tab').forEach(t => {

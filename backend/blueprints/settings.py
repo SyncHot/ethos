@@ -1425,6 +1425,8 @@ def remove_known_host_line():
 @settings_bp.route('/fail2ban/status')
 def fail2ban_status():
     """Get status of Fail2Ban jails."""
+    if g.role != 'admin':
+        return jsonify({'error': 'Tylko administrator może przeglądać status Fail2Ban'}), 403
     status = {}
 
     # Check if fail2ban is running
@@ -1455,6 +1457,8 @@ def fail2ban_status():
 @settings_bp.route('/fail2ban/unban', methods=['POST'])
 def fail2ban_unban():
     """Unban an IP from a jail."""
+    if g.role != 'admin':
+        return jsonify({'error': 'Tylko administrator może odblokowywać adresy IP'}), 403
     data = request.json or {}
     jail = data.get('jail')
     ip = data.get('ip')
