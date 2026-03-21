@@ -11,3 +11,4 @@ __pycache__/
 installer/images/*.img
 installer/releases/*.tar.gz
 installer/releases/*.zip
+cups-config/
