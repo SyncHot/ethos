@@ -745,6 +745,9 @@ def get_docker_containers():
                             c['block_write'] = _parse_docker_size(bio_parts[1].strip())
                         c['pids'] = int(parts[6].strip() or '0')
 
+                        # Check for high usage alerts (throttled)
+                        _check_resource_alert(c)
+
         containers = list(container_map.values())
         containers.sort(key=lambda x: x['cpu_percent'], reverse=True)
 
@@ -754,6 +757,28 @@ def get_docker_containers():
         print(f'Docker error: {e}')
 
     return containers
+
+
+
+def _check_resource_alert(container):
+    """Log warning if container usage is critically high (throttled)."""
+    name = container['name']
+    mem_pct = container.get('memory_percent', 0)
+    cpu_pct = container.get('cpu_percent', 0)
+
+    msg = None
+    if mem_pct > 90:
+        msg = f'Wysokie zużycie pamięci przez kontener {name}: {mem_pct:.1f}%'
+    
+    if msg:
+        now = time.time()
+        last = _last_alert_ts.get(name, 0)
+        if (now - last > 300):
+            try:
+                log('docker', 'warning', msg, details=container)
+            except Exception:
+                pass
+            _last_alert_ts[name] = now
 
 
 def docker_action(container_id, action):
@@ -776,3 +801,4 @@ def docker_action(container_id, action):
             return {'success': False, 'message': result.stderr.strip() or f'Failed to {action} container'}
     except Exception as e:
         return {'success': False, 'message': str(e)}
+

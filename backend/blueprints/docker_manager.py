@@ -401,6 +401,14 @@ def _policy_to_service_limits(policy):
         deploy['resources']['limits']['cpus'] = round(cpu_quota / 100.0, 3)
         has_deploy_limits = True
 
+    cpu_shares = policy.get('cpu_shares', 1024)
+    try:
+        cpu_shares = int(cpu_shares)
+    except (TypeError, ValueError):
+        cpu_shares = 1024
+    if cpu_shares > 0 and cpu_shares != 1024:
+        service_config['cpu_shares'] = cpu_shares
+
     pids_limit = policy.get('pids_limit', 0)
     try:
         pids_limit = int(pids_limit)

@@ -35,6 +35,7 @@ DEFAULT_LIMITS = {
     'mem_limit': '512m',        # Max RAM (Docker memory string: 128m, 1g, …)
     'mem_reservation': '128m',  # Soft memory limit / reservation
     'cpu_quota': 50.0,          # % of a single CPU core (0 = unlimited)
+    'cpu_shares': 1024,         # CPU shares (relative weight, default 1024)
     'pids_limit': 200,          # Max processes/threads inside container (0 = unlimited)
     'no_new_privileges': True,  # Prevent privilege escalation via setuid/setgid
     'read_only_root': False,    # Mount root filesystem read-only
@@ -95,7 +96,7 @@ def get_effective_policy(app_name):
 def _validate_limits(data):
     """Validate a partial or full limits dict. Returns (cleaned, error_str)."""
     allowed_keys = {
-        'mem_limit', 'mem_reservation', 'cpu_quota', 'pids_limit',
+        'mem_limit', 'mem_reservation', 'cpu_quota', 'cpu_shares', 'pids_limit',
         'no_new_privileges', 'read_only_root', 'cap_drop', 'cap_add',
     }
     unknown = set(data.keys()) - allowed_keys
@@ -124,6 +125,15 @@ def _validate_limits(data):
         except (TypeError, ValueError):
             return None, 'cpu_quota: oczekiwana liczba 0–1000 (% CPU, 0 = brak limitu)'
         cleaned['cpu_quota'] = v
+
+    if 'cpu_shares' in data:
+        try:
+            v = int(data['cpu_shares'])
+            if v < 2:  # Docker minimum is 2
+                raise ValueError
+        except (TypeError, ValueError):
+            return None, 'cpu_shares: oczekiwana liczba całkowita >= 2 (domyślnie 1024)'
+        cleaned['cpu_shares'] = v
 
     if 'pids_limit' in data:
         try:
