@@ -34,12 +34,12 @@ def drop_privileges():
             # Drop to the owner of the logs directory or 1000
             target_uid = 1000
             target_gid = 1000
-            
+
             if os.path.exists(os.path.dirname(DB_PATH)):
                 st = os.stat(os.path.dirname(DB_PATH))
                 target_uid = st.st_uid
                 target_gid = st.st_gid
-            
+
             os.setgid(target_gid)
             os.setuid(target_uid)
         except Exception:
@@ -181,6 +181,6 @@ if __name__ == '__main__':
             urllib.request.urlopen(req, timeout=5)
         except Exception:
             pass
-    
+
     # 3. Log to DB (drops privileges internally)
     log_event(jail, ip, failures)

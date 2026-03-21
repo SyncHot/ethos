@@ -123,7 +123,7 @@ AppRegistry['fail2ban'] = function (appDef) {
                             <th style="padding:5px;text-align:right">Akcja</th>
                         </tr>
                     `;
-                    
+
                     jail.banned_ips.forEach(ip => {
                         const tr = document.createElement('tr');
                         tr.innerHTML = `

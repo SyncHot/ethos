@@ -21,14 +21,14 @@ def get_status():
     out, err = run_command(['fail2ban-client', 'status'])
     if err:
         return jsonify({'error': str(err)}), 500
-    
+
     jails = []
     # Output: Jail list: sshd, ethos-web
     match = re.search(r'Jail list:\s+(.*)', out)
     if match:
         raw_jails = match.group(1).split(',')
         jails = [j.strip() for j in raw_jails if j.strip()]
-    
+
     jail_stats = []
     for jail in jails:
         # Get status for each jail
@@ -37,26 +37,26 @@ def get_status():
             curr_banned = 0
             total_banned = 0
             banned_ips = []
-            
+
             m_curr = re.search(r'Currently banned:\s+(\d+)', j_out)
             if m_curr: curr_banned = int(m_curr.group(1))
-            
+
             m_total = re.search(r'Total banned:\s+(\d+)', j_out)
             if m_total: total_banned = int(m_total.group(1))
-            
+
             m_ips = re.search(r'Banned IP list:\s+(.*)', j_out)
             if m_ips:
                 ips_str = m_ips.group(1).strip()
                 if ips_str:
                     banned_ips = ips_str.split()
-                
+
             jail_stats.append({
                 'name': jail,
                 'currently_banned': curr_banned,
                 'total_banned': total_banned,
                 'banned_ips': banned_ips
             })
-            
+
     return jsonify({'jails': jail_stats})
 
 @fail2ban_bp.route('/unban', methods=['POST'])
@@ -64,21 +64,21 @@ def unban_ip():
     data = request.json
     jail = data.get('jail')
     ip = data.get('ip')
-    
+
     if not jail or not ip:
         return jsonify({'error': 'Missing jail or IP'}), 400
-        
+
     out, err = run_command(['fail2ban-client', 'set', jail, 'unbanip', ip])
     if err:
         return jsonify({'error': err}), 500
-        
+
     return jsonify({'success': True, 'message': f'Unbanned {ip} from {jail}'})
 
 @fail2ban_bp.route('/whitelist', methods=['GET'])
 def get_whitelist():
     # Get global ignoreip from sshd jail (which inherits default)
     out, err = run_command(['fail2ban-client', 'get', 'sshd', 'ignoreip'])
-    
+
     ips = []
     if out:
         # The output format is typically space-separated list of IPs
@@ -86,5 +86,5 @@ def get_whitelist():
     elif err:
         # Fallback to defaults if sshd jail is down
         return jsonify({'whitelist': ['127.0.0.1/8', '::1', '192.168.0.0/16', '10.0.0.0/8']})
-         
+
     return jsonify({'whitelist': ips})
