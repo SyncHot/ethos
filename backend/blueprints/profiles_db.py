@@ -15,7 +15,7 @@ def get_db_connection():
     db_path = os.environ.get('PROFILES_DB_PATH', data_path('profiles.db'))
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    conn.execute('PRAGMA journal_mode=WAL')
+    conn.execute('PRAGMA journal_mode=WAL')  # Enable Write-Ahead Logging
     return conn
 
 
