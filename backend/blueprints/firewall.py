@@ -1,3 +1,4 @@
+# blueprints/firewall.py — Zarządzanie firewallem UFW i integracja z Fail2Ban
 from flask import Blueprint, jsonify, request
 import subprocess
 import re
@@ -19,6 +20,7 @@ def run_ufw(args):
 @firewall_bp.route('/status', methods=['GET'])
 @admin_required
 def get_status():
+    """Return UFW status (active/inactive) and list of numbered rules."""
     out, err, code = run_ufw(['status', 'numbered'])
 
     # Check if UFW is installed or other error
@@ -79,6 +81,7 @@ def get_status():
 @firewall_bp.route('/toggle', methods=['POST'])
 @admin_required
 def toggle_firewall():
+    """Enable or disable UFW. Body: {"enable": true|false}."""
     data = request.json or {}
     enable = data.get('enable', False)
 
@@ -94,6 +97,7 @@ def toggle_firewall():
 @firewall_bp.route('/rules', methods=['POST'])
 @admin_required
 def manage_rules():
+    """Add, delete, or reset UFW rules. Body: {"action": "add"|"delete"|"reset_defaults", ...}."""
     data = request.json or {}
     action = data.get('action') # add, delete
 
@@ -219,6 +223,7 @@ def get_banned_ips():
 @firewall_bp.route('/unban', methods=['POST'])
 @admin_required
 def unban_ip():
+    """Unban an IP from a Fail2Ban jail. Body: {"jail": "sshd", "ip": "1.2.3.4"}."""
     data = request.json or {}
     jail = data.get('jail')
     ip = data.get('ip')

@@ -587,7 +587,7 @@ def _blueprint_auth_guard():
                         '/api/flasher/', '/api/builder/', '/api/services/',
                         '/api/surveillance/', '/api/notes/', '/api/familyhub/', '/api/update/',
                         '/api/remote-log/', '/api/websites/', '/api/sandbox/',
-                        '/api/fail2ban/')):
+                        '/api/fail2ban/', '/api/firewall/')):
         # Allow unauthenticated access to user auth validation
         if path == '/api/users/auth/validate':
             return
