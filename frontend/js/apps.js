@@ -8747,7 +8747,9 @@ async function renderSystemSettings(body) {
         // We'll use a named handler if possible, or just accept it (since apps.js is loaded once usually?)
         // Ah, renderSystemSettings is called when app is opened. 
         // If we add document listener every time, it duplicates.
-        // Use a flag on window?
+        // Update handler reference to current closure
+        window._f2bReloadHandler = loadFail2Ban;
+
         if (!window._f2bListenerAdded) {
             document.addEventListener('f2b-unban', async (e) => {
                 const { jail, ip } = e.detail;
@@ -8756,21 +8758,18 @@ async function renderSystemSettings(body) {
                 try {
                     await api('/settings/fail2ban/unban', { method: 'POST', body: { jail, ip } });
                     toast(t('Adres IP odblokowany'), 'success');
-                    // We can't easily call loadFail2Ban() here because it's in a closure.
-                    // Dispatch another event? Or refresh button will do.
-                    // But we want to refresh UI.
-                    // Dispatch 'f2b-reload'?
+                    // Trigger reload via event
                     document.dispatchEvent(new CustomEvent('f2b-reload'));
                 } catch (err) {
                     toast(t('Błąd: ') + err.message, 'error');
                 }
             });
-            window._f2bListenerAdded = true;
-        }
 
-        if (!window._f2bReloadAdded) {
-            document.addEventListener('f2b-reload', loadFail2Ban);
-            window._f2bReloadAdded = true;
+            document.addEventListener('f2b-reload', () => {
+                if (window._f2bReloadHandler) window._f2bReloadHandler();
+            });
+            
+            window._f2bListenerAdded = true;
         }
 
         // Initial load when switching to security tab
