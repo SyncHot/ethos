@@ -48,11 +48,11 @@ case "$COMMAND" in
         fi
         exec /usr/bin/systemctl "$ACTION" ${NOW_FLAG:+"$NOW_FLAG"} "$SERVICE"
         ;;
-    
+
     fail2ban-client)
         exec /usr/bin/fail2ban-client "$@"
         ;;
-        
+
     copy-timer)
         SRC="$1"
         DEST="/etc/systemd/system/rag_index_cron.timer"
@@ -66,7 +66,7 @@ case "$COMMAND" in
         SHELL="$2"
         HOME_DIR="$3"
         if [[ ! "$USERNAME" =~ ^[a-z_][a-z0-9_-]*$ ]]; then exit 1; fi
-        
+
         CMD=(/usr/sbin/useradd -m -s "$SHELL" "$USERNAME")
         if [[ -n "$HOME_DIR" ]]; then
             if [[ "$HOME_DIR" != /mnt/data/home/* && "$HOME_DIR" != /home/* ]]; then exit 1; fi
@@ -88,7 +88,7 @@ case "$COMMAND" in
         TYPE="$2"
         VALUE="$3"
         if [[ ! "$USERNAME" =~ ^[a-z_][a-z0-9_-]*$ ]]; then exit 1; fi
-        
+
         case "$TYPE" in
             shell) exec /usr/sbin/usermod -s "$VALUE" "$USERNAME" ;;
             group-append) exec /usr/sbin/usermod -aG "$VALUE" "$USERNAME" ;;
@@ -96,7 +96,7 @@ case "$COMMAND" in
             *) exit 1 ;;
         esac
         ;;
-    
+
     user-set-password)
         USERNAME="$1"
         if [[ ! "$USERNAME" =~ ^[a-z_][a-z0-9_-]*$ ]]; then exit 1; fi
@@ -134,11 +134,11 @@ case "$COMMAND" in
         if [[ ! "$STATE" =~ ^(up|down)$ ]]; then exit 1; fi
         exec /usr/sbin/ip link set "$DEV" "$STATE"
         ;;
-    
+
     nmcli)
         exec /usr/bin/nmcli "$@"
         ;;
-        
+
     ap-control)
         ACTION="$1"
         if [[ ! "$ACTION" =~ ^(start|stop|status)$ ]]; then exit 1; fi
@@ -171,7 +171,7 @@ case "$COMMAND" in
 
     smartctl)
         # Whitelist safe query ops
-        # We need to parse args to ensure no destructive ops if possible, 
+        # We need to parse args to ensure no destructive ops if possible,
         # but smartctl is mostly query. -t is test (safeish).
         exec /usr/sbin/smartctl "$@"
         ;;
@@ -183,28 +183,28 @@ case "$COMMAND" in
             LAZY_FLAG="-l"
             shift
         fi
-        
+
         if [[ $# -eq 0 ]]; then
              echo "Error: No device specified" >&2
              exit 1
         fi
-        
+
         for dev in "$@"; do
              # Can be mountpoint or device
              if [[ "$dev" == /dev/* ]]; then
                  validate_dev "$dev"
              fi
         done
-        
+
         exec /usr/bin/umount ${LAZY_FLAG:+"$LAZY_FLAG"} "$@"
         ;;
-        
+
     fsck)
         DEV="$1"
         validate_dev "$DEV"
         exec /usr/sbin/fsck -y "$DEV"
         ;;
-    
+
     fsck-check)
         DEV="$1"
         validate_dev "$DEV"
@@ -222,12 +222,12 @@ case "$COMMAND" in
         IMAGE="$1"
         DEV="$2"
         validate_dev "$DEV"
-        
+
         if [[ ! -f "$IMAGE" ]]; then
              echo "Error: Image file not found" >&2
              exit 1
         fi
-        
+
         # Determine decompressor
         case "$IMAGE" in
             *.gz) DECOMPRESS="gunzip -c" ;;
@@ -235,7 +235,7 @@ case "$COMMAND" in
             *.zst|*.zstd) DECOMPRESS="zstd -dc" ;;
             *) DECOMPRESS="cat" ;;
         esac
-        
+
         # Write
         $DECOMPRESS "$IMAGE" | dd of="$DEV" bs=4M oflag=direct conv=fsync status=progress
         ;;
@@ -244,17 +244,17 @@ case "$COMMAND" in
         # Zero out beginning and end of disk
         DEV="$1"
         validate_dev "$DEV"
-        
+
         # 10MB at start
         dd if=/dev/zero of="$DEV" bs=1M count=10 oflag=direct,sync status=none
-        
+
         # 10MB at end
         SZ=$(blockdev --getsize64 "$DEV")
         SEEK=$(( SZ / 1048576 - 10 ))
         if [[ $SEEK -gt 10 ]]; then
             dd if=/dev/zero of="$DEV" bs=1M seek=$SEEK count=10 oflag=direct,sync status=none
         fi
-        
+
         sync
         blockdev --flushbufs "$DEV"
         blockdev --rereadpt "$DEV"
