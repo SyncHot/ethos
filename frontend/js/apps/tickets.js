@@ -939,7 +939,7 @@ async function renderTickets(body, launchOpts) {
                     <button class="tk-act-btn" id="tk-find-bugs-btn" title="${t('Audyt aplikacji (Epic)')}">
                         <i class="fas fa-bug"></i>
                     </button>
-                    ${(currentProject.copilot_enabled || currentProject.localai_enabled || currentProject.freemodel_enabled) ? '<button class="tk-act-btn" id="tk-watcher-btn" title="AI Agent"><i class="fas fa-tower-broadcast"></i></button>' : ''}
+                    ${(currentProject.copilot_enabled || currentProject.localai_enabled || currentProject.freemodel_enabled) ? '<button class="tk-act-btn" id="tk-watcher-btn" title="AI Agent"><i class="fas fa-tower-broadcast"></i></button><button class="tk-act-btn" id="tk-ai-usage-btn" title="AI Usage"><i class="fas fa-chart-bar"></i></button>' : ''}
                     <button class="tk-act-btn" id="tk-mobile-filter-toggle" title="${t('Filtry')}">
                         <i class="fas fa-filter"></i>
                     </button>
@@ -994,6 +994,8 @@ async function renderTickets(body, launchOpts) {
             app.querySelector('#tk-project-settings').onclick = () => showProjectModal(currentProject);
             const watcherBtn = app.querySelector('#tk-watcher-btn');
             if (watcherBtn) watcherBtn.onclick = () => showWatcherModal();
+            const aiUsageBtn = app.querySelector('#tk-ai-usage-btn');
+            if (aiUsageBtn) aiUsageBtn.onclick = () => showAiUsageModal();
 
             app.querySelector('#tk-f-assignee').onchange = (e) => {
                 filterAssignee = e.target.value;
@@ -2051,6 +2053,136 @@ async function renderTickets(body, launchOpts) {
     }
 
     /* ═══════════════════ WATCHER MODAL ═══════════════════ */
+
+    function showAiUsageModal() {
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        overlay.innerHTML = `
+            <div class="modal-box" style="width:700px;max-width:95vw;max-height:90vh;display:flex;flex-direction:column;">
+                <div class="modal-header">
+                    <span><i class="fas fa-chart-bar" style="margin-right:6px;"></i>${t('AI Usage')}</span>
+                    <button class="modal-close"><i class="fas fa-times"></i></button>
+                </div>
+                <div class="modal-body" style="overflow-y:auto;flex:1;padding:16px;" id="tk-ai-usage-body">
+                    <div style="text-align:center;padding:40px;opacity:0.5;"><i class="fas fa-spinner fa-spin"></i> ${t('Ładowanie...')}</div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary tk-modal-cancel">${t('Zamknij')}</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+        overlay.querySelector('.modal-close').onclick = () => overlay.remove();
+        overlay.querySelector('.tk-modal-cancel').onclick = () => overlay.remove();
+        overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+
+        const body = overlay.querySelector('#tk-ai-usage-body');
+
+        api(`/tickets/ai-usage/${currentProject.id}`).then(data => {
+            const tot = data.totals || {};
+            const premiumFmt = (v) => v % 1 === 0 ? v.toFixed(0) : v.toFixed(1);
+            const timeFmt = (s) => {
+                if (s < 60) return s + 's';
+                const m = Math.floor(s / 60), rs = s % 60;
+                if (m < 60) return m + 'm ' + rs + 's';
+                const h = Math.floor(m / 60), rm = m % 60;
+                return h + 'h ' + rm + 'm';
+            };
+            const tokenFmt = (n) => {
+                if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B';
+                if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+                if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+                return String(n);
+            };
+
+            let html = `
+                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px;">
+                    <div style="background:var(--card-bg,#1e1e2e);border-radius:8px;padding:12px;text-align:center;">
+                        <div style="font-size:22px;font-weight:700;color:#8b5cf6;">${premiumFmt(tot.premium_requests || 0)}</div>
+                        <div style="font-size:11px;opacity:0.6;">Premium Requests</div>
+                    </div>
+                    <div style="background:var(--card-bg,#1e1e2e);border-radius:8px;padding:12px;text-align:center;">
+                        <div style="font-size:22px;font-weight:700;color:#22c55e;">${tot.runs || 0}</div>
+                        <div style="font-size:11px;opacity:0.6;">Runs (${tot.qa_runs || 0} QA)</div>
+                    </div>
+                    <div style="background:var(--card-bg,#1e1e2e);border-radius:8px;padding:12px;text-align:center;">
+                        <div style="font-size:22px;font-weight:700;color:#3b82f6;">${timeFmt(tot.session_time_s || 0)}</div>
+                        <div style="font-size:11px;opacity:0.6;">Session Time</div>
+                    </div>
+                    <div style="background:var(--card-bg,#1e1e2e);border-radius:8px;padding:12px;text-align:center;">
+                        <div style="font-size:22px;font-weight:700;color:#f59e0b;">+${tot.code_added || 0} / -${tot.code_removed || 0}</div>
+                        <div style="font-size:11px;opacity:0.6;">Lines Changed</div>
+                    </div>
+                </div>
+            `;
+
+            // By Model table
+            const models = Object.entries(data.by_model || {});
+            if (models.length) {
+                html += `<h4 style="margin:16px 0 8px;font-size:13px;opacity:0.7;"><i class="fas fa-robot" style="margin-right:4px;"></i> ${t('By Model')}</h4>`;
+                html += `<table style="width:100%;font-size:12px;border-collapse:collapse;">`;
+                html += `<tr style="opacity:0.5;text-align:left;"><th style="padding:4px 8px;">Model</th><th>Premium</th><th>Runs</th><th>Time</th><th>Tokens In</th><th>Tokens Out</th></tr>`;
+                models.sort((a, b) => b[1].premium_requests - a[1].premium_requests);
+                for (const [model, m] of models) {
+                    html += `<tr style="border-top:1px solid rgba(255,255,255,0.06);">`;
+                    html += `<td style="padding:4px 8px;font-weight:500;">${_escHtml(model)}</td>`;
+                    html += `<td style="padding:4px 8px;">${premiumFmt(m.premium_requests)}</td>`;
+                    html += `<td style="padding:4px 8px;">${m.runs}</td>`;
+                    html += `<td style="padding:4px 8px;">${timeFmt(m.session_time_s)}</td>`;
+                    html += `<td style="padding:4px 8px;">${tokenFmt(m.tokens_in)}</td>`;
+                    html += `<td style="padding:4px 8px;">${tokenFmt(m.tokens_out)}</td>`;
+                    html += `</tr>`;
+                }
+                html += `</table>`;
+            }
+
+            // By Month table
+            const months = Object.entries(data.by_month || {});
+            if (months.length) {
+                html += `<h4 style="margin:16px 0 8px;font-size:13px;opacity:0.7;"><i class="fas fa-calendar" style="margin-right:4px;"></i> ${t('By Month')}</h4>`;
+                html += `<table style="width:100%;font-size:12px;border-collapse:collapse;">`;
+                html += `<tr style="opacity:0.5;text-align:left;"><th style="padding:4px 8px;">Month</th><th>Premium</th><th>Runs</th><th>Time</th><th>+/-</th></tr>`;
+                months.reverse();
+                for (const [month, m] of months) {
+                    html += `<tr style="border-top:1px solid rgba(255,255,255,0.06);">`;
+                    html += `<td style="padding:4px 8px;font-weight:500;">${_escHtml(month)}</td>`;
+                    html += `<td style="padding:4px 8px;">${premiumFmt(m.premium_requests)}</td>`;
+                    html += `<td style="padding:4px 8px;">${m.runs} (${m.qa_runs} QA)</td>`;
+                    html += `<td style="padding:4px 8px;">${timeFmt(m.session_time_s)}</td>`;
+                    html += `<td style="padding:4px 8px;">+${m.code_added} / -${m.code_removed}</td>`;
+                    html += `</tr>`;
+                }
+                html += `</table>`;
+            }
+
+            // By Day (last 14 days)
+            const days = Object.entries(data.by_day || {});
+            if (days.length) {
+                const recentDays = days.slice(-14);
+                html += `<h4 style="margin:16px 0 8px;font-size:13px;opacity:0.7;"><i class="fas fa-chart-line" style="margin-right:4px;"></i> ${t('Daily')} (${t('last')} ${recentDays.length} ${t('days')})</h4>`;
+                // Mini bar chart
+                const maxPremium = Math.max(...recentDays.map(([, d]) => d.premium_requests), 1);
+                html += `<div style="display:flex;align-items:flex-end;gap:3px;height:80px;margin-bottom:4px;">`;
+                for (const [day, d] of recentDays) {
+                    const h = Math.max(2, (d.premium_requests / maxPremium) * 70);
+                    const label = day.slice(5); // MM-DD
+                    html += `<div style="flex:1;display:flex;flex-direction:column;align-items:center;" title="${day}: ${premiumFmt(d.premium_requests)} premium, ${d.runs} runs">`;
+                    html += `<div style="width:100%;max-width:32px;height:${h}px;background:#8b5cf6;border-radius:3px 3px 0 0;min-width:8px;"></div>`;
+                    html += `<div style="font-size:9px;opacity:0.4;margin-top:2px;white-space:nowrap;">${label}</div>`;
+                    html += `</div>`;
+                }
+                html += `</div>`;
+            }
+
+            if (!models.length && !days.length) {
+                html += `<div style="text-align:center;padding:30px;opacity:0.4;"><i class="fas fa-chart-bar" style="font-size:2rem;"></i><p>${t('Brak danych')}</p></div>`;
+            }
+
+            body.innerHTML = html;
+        }).catch(err => {
+            body.innerHTML = `<div style="text-align:center;padding:30px;color:#ef4444;"><i class="fas fa-exclamation-triangle"></i> ${_escHtml(String(err))}</div>`;
+        });
+    }
 
     function showWatcherModal() {
         const html = `

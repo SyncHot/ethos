@@ -11,6 +11,7 @@ import uuid
 import subprocess
 import threading
 import random
+from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
@@ -646,6 +647,195 @@ def project_stats(project_id):
         'by_priority': by_priority,
         'by_assignee': by_assignee,
     })
+
+# ---------------------------------------------------------------------------
+# AI Usage Analytics
+# ---------------------------------------------------------------------------
+
+_ai_usage_cache = {}
+
+def _parse_token_val(s):
+    """Parse token strings like '1.9m', '9.5k', '120' into integers."""
+    s = s.strip().lower().replace(',', '')
+    try:
+        if s.endswith('b'):
+            return int(float(s[:-1]) * 1e9)
+        if s.endswith('m'):
+            return int(float(s[:-1]) * 1e6)
+        if s.endswith('k'):
+            return int(float(s[:-1]) * 1e3)
+        return int(float(s))
+    except (ValueError, IndexError):
+        return 0
+
+def _empty_totals():
+    return {'premium_requests': 0, 'runs': 0, 'qa_runs': 0,
+            'session_time_s': 0, 'code_added': 0, 'code_removed': 0,
+            'tokens_in': 0, 'tokens_out': 0}
+
+def _parse_log_usage(filepath):
+    """Extract usage metrics from a single log file footer."""
+    result = _empty_totals()
+    result['model'] = None
+    is_qa = '_qa_' in os.path.basename(filepath)
+    result['is_qa'] = is_qa
+    try:
+        with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
+            lines = f.readlines()
+    except Exception:
+        return result
+
+    # Parse header for model
+    for line in lines[:5]:
+        if line.startswith('=== Model:'):
+            m = re.search(r'Model:\s*(\S+)', line)
+            if m:
+                result['model'] = m.group(1)
+        elif line.startswith('Model:'):
+            m = re.search(r'Model:\s*(\S+)', line)
+            if m:
+                result['model'] = m.group(1)
+
+    # Parse footer (last 30 lines)
+    tail = lines[-30:] if len(lines) > 30 else lines
+    for line in tail:
+        line_s = line.strip()
+        # Total usage est:  2 Premium requests
+        m = re.match(r'Total usage est:\s*([\d.]+)\s*Premium', line_s, re.I)
+        if m:
+            result['premium_requests'] = float(m.group(1))
+            continue
+        # Total session time:  5m 40s
+        m = re.match(r'Total session time:\s*(.*)', line_s)
+        if m:
+            ts = m.group(1).strip()
+            secs = 0
+            hm = re.search(r'(\d+)h', ts)
+            mm = re.search(r'(\d+)m', ts)
+            sm = re.search(r'(\d+)s', ts)
+            if hm: secs += int(hm.group(1)) * 3600
+            if mm: secs += int(mm.group(1)) * 60
+            if sm: secs += int(sm.group(1))
+            result['session_time_s'] = secs
+            continue
+        # Total code changes:  +126 -14
+        m = re.match(r'Total code changes:\s*\+(\d+)\s+-(\d+)', line_s)
+        if m:
+            result['code_added'] = int(m.group(1))
+            result['code_removed'] = int(m.group(2))
+            continue
+        # Breakdown line: claude-sonnet-4.6  1.9m in, 9.5k out, 1.9m cached (Est. 2 Premium requests)
+        m = re.match(r'^\s*(\S+)\s+([\d.]+[kmb]?)\s*in,\s*([\d.]+[kmb]?)\s*out', line_s, re.I)
+        if m:
+            result['tokens_in'] += _parse_token_val(m.group(2))
+            result['tokens_out'] += _parse_token_val(m.group(3))
+
+    return result
+
+
+@tickets_bp.route('/ai-usage/<project_id>', methods=['GET'])
+def ai_usage(project_id):
+    """Aggregate AI usage stats for a project."""
+    if not g.username:
+        return jsonify({'error': 'Unauthorized'}), 401
+    with _lock:
+        data = _load()
+    project = _find_project(data, project_id)
+    if not project:
+        return jsonify({'error': 'Project not found'}), 404
+    if not _is_member(project):
+        return jsonify({'error': 'Access denied'}), 403
+
+    # Check if any agent is enabled
+    if not (project.get('copilot_enabled') or project.get('localai_enabled') or project.get('freemodel_enabled')):
+        return jsonify({'by_day': {}, 'by_model': {}, 'by_month': {}, 'totals': _empty_totals()})
+
+    # Cache for 60s
+    cache_key = project_id
+    now = time.time()
+    cached = _ai_usage_cache.get(cache_key)
+    if cached and now - cached['ts'] < 60:
+        return jsonify(cached['data'])
+
+    # Collect ticket IDs for this project
+    ticket_ids = set()
+    for t in data['tickets']:
+        if t['project_id'] == project_id:
+            ticket_ids.add(t['id'])
+
+    # Scan all log directories
+    log_dirs = [COPILOT_LOG_DIR, LOCALAI_LOG_DIR,
+                os.path.join(COPILOT_LOG_DIR, 'archive'),
+                os.path.join(LOCALAI_LOG_DIR, 'archive')]
+
+    by_day = {}   # date-str -> totals
+    by_model = {} # model-name -> totals
+    by_month = {} # YYYY-MM -> totals
+    totals = _empty_totals()
+
+    for log_dir in log_dirs:
+        if not os.path.isdir(log_dir):
+            continue
+        for fname in os.listdir(log_dir):
+            if not fname.endswith('.log'):
+                continue
+            if '_prompt' in fname:
+                continue
+            # Check if this log belongs to a project ticket
+            m = re.match(r'(t_[a-f0-9]+)', fname)
+            if not m or m.group(1) not in ticket_ids:
+                continue
+
+            fpath = os.path.join(log_dir, fname)
+            usage = _parse_log_usage(fpath)
+            model = usage.get('model') or 'unknown'
+
+            # Determine date from filename timestamp
+            ts_m = re.search(r'_(\d{10,})', fname)
+            if ts_m:
+                day_str = datetime.fromtimestamp(int(ts_m.group(1))).strftime('%Y-%m-%d')
+                month_str = day_str[:7]
+            else:
+                try:
+                    mt = os.path.getmtime(fpath)
+                    day_str = datetime.fromtimestamp(mt).strftime('%Y-%m-%d')
+                    month_str = day_str[:7]
+                except Exception:
+                    day_str = 'unknown'
+                    month_str = 'unknown'
+
+            # Accumulate
+            for bucket_map, key in [(by_day, day_str), (by_model, model), (by_month, month_str)]:
+                if key not in bucket_map:
+                    bucket_map[key] = _empty_totals()
+                b = bucket_map[key]
+                b['premium_requests'] += usage['premium_requests']
+                b['runs'] += 1
+                if usage['is_qa']:
+                    b['qa_runs'] += 1
+                b['session_time_s'] += usage['session_time_s']
+                b['code_added'] += usage['code_added']
+                b['code_removed'] += usage['code_removed']
+                b['tokens_in'] += usage['tokens_in']
+                b['tokens_out'] += usage['tokens_out']
+
+            totals['premium_requests'] += usage['premium_requests']
+            totals['runs'] += 1
+            if usage['is_qa']:
+                totals['qa_runs'] += 1
+            totals['session_time_s'] += usage['session_time_s']
+            totals['code_added'] += usage['code_added']
+            totals['code_removed'] += usage['code_removed']
+            totals['tokens_in'] += usage['tokens_in']
+            totals['tokens_out'] += usage['tokens_out']
+
+    # Sort by_day
+    by_day = dict(sorted(by_day.items()))
+    by_month = dict(sorted(by_month.items()))
+
+    result = {'by_day': by_day, 'by_model': by_model, 'by_month': by_month, 'totals': totals}
+    _ai_usage_cache[cache_key] = {'ts': now, 'data': result}
+    return jsonify(result)
 
 # ---------------------------------------------------------------------------
 # Copilot Integration
