@@ -109,6 +109,7 @@ from blueprints.updater import update_bp, updates_public_bp, init_update, update
 from blueprints.flasher import flasher_bp
 from blueprints.builder import builder_bp
 from blueprints.fail2ban import fail2ban_bp
+from blueprints.firewall import firewall_bp
 from blueprints.diskrepair import diskrepair_bp
 from blueprints.remote_log import remote_log_bp, init_remote_log
 from blueprints.surveillance import surveillance_bp, init_surveillance
@@ -248,6 +249,7 @@ app.register_blueprint(updates_public_bp)
 app.register_blueprint(flasher_bp)
 app.register_blueprint(builder_bp)
 app.register_blueprint(diskrepair_bp)
+app.register_blueprint(firewall_bp)
 app.register_blueprint(remote_log_bp)
 app.register_blueprint(surveillance_bp)
 if _HAS_AICHAT:

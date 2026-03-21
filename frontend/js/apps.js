@@ -8399,6 +8399,7 @@ async function renderSystemSettings(body) {
             { id: 'general', icon: 'fa-cog', label: t('Ogólne') },
             { id: 'network', icon: 'fa-network-wired', label: t('Sieć') },
             { id: 'security', icon: 'fa-shield-alt', label: t('Bezpieczeństwo') },
+            { id: 'firewall', icon: 'fa-fire', label: t('Firewall') },
             { id: 'about', icon: 'fa-info-circle', label: t('O systemie') },
             { id: 'maintenance', icon: 'fa-tools', label: t('Konserwacja') },
         ];
@@ -8624,8 +8625,86 @@ async function renderSystemSettings(body) {
             </div>
         `;
 
+        // === Firewall Section ===
+        const firewallHtml = `
+            <div class="ss-section" data-section="firewall">
+                <div class="ss-section-title"><i class="fas fa-fire"></i> ${t('Firewall (UFW)')}</div>
+
+                <div class="ss-group">
+                    <div class="ss-group-title">${t('Status')}</div>
+                    <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px">
+                        <div id="fw-status-badge" style="font-size:13px; color:var(--text-muted)"><i class="fas fa-spinner fa-spin"></i> ${t('Ładowanie...')}</div>
+                        <div style="display:flex; gap:8px">
+                            <button class="ss-btn" id="fw-enable-btn"><i class="fas fa-play"></i> ${t('Włącz')}</button>
+                            <button class="ss-btn ss-btn-warn" id="fw-disable-btn"><i class="fas fa-stop"></i> ${t('Wyłącz')}</button>
+                            <button class="ss-btn" id="fw-refresh-btn"><i class="fas fa-sync-alt"></i></button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="ss-group" style="margin-top:14px">
+                    <div class="ss-group-title" style="display:flex; justify-content:space-between; align-items:center">
+                        <span>${t('Aktywne reguły')}</span>
+                    </div>
+                    <div id="fw-rules-list" style="font-size:13px; color:var(--text-muted)"><i class="fas fa-spinner fa-spin"></i></div>
+                </div>
+
+                <div class="ss-group" style="margin-top:14px">
+                    <div class="ss-group-title">${t('Szybkie reguły')}</div>
+                    <div style="display:flex; gap:8px; flex-wrap:wrap">
+                        <button class="ss-btn" data-fw-quick="ssh"><i class="fas fa-terminal"></i> Allow SSH (22)</button>
+                        <button class="ss-btn" data-fw-quick="samba"><i class="fas fa-folder-open"></i> Allow Samba (445)</button>
+                        <button class="ss-btn" data-fw-quick="plex"><i class="fas fa-film"></i> Allow Plex (32400)</button>
+                        <button class="ss-btn" data-fw-quick="ethos"><i class="fas fa-server"></i> Allow EthOS (9000)</button>
+                    </div>
+                </div>
+
+                <div class="ss-group" style="margin-top:14px">
+                    <div class="ss-group-title">${t('Dodaj regułę')}</div>
+                    <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end">
+                        <div>
+                            <div style="font-size:11px; color:var(--text-muted); margin-bottom:4px">${t('Port')}</div>
+                            <input type="text" id="fw-port" placeholder="22" style="width:80px">
+                        </div>
+                        <div>
+                            <div style="font-size:11px; color:var(--text-muted); margin-bottom:4px">${t('Protokół')}</div>
+                            <select id="fw-proto" style="padding:8px 10px; background:var(--bg-input); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:13px">
+                                <option value="tcp">TCP</option>
+                                <option value="udp">UDP</option>
+                                <option value="">TCP+UDP</option>
+                            </select>
+                        </div>
+                        <div>
+                            <div style="font-size:11px; color:var(--text-muted); margin-bottom:4px">${t('Źródło IP (opcjonalne)')}</div>
+                            <input type="text" id="fw-from" placeholder="any / 192.168.1.0/24" style="width:180px">
+                        </div>
+                        <button class="ss-btn" id="fw-add-rule-btn"><i class="fas fa-plus"></i> ${t('Dodaj')}</button>
+                    </div>
+                    <div id="fw-rule-msg" style="margin-top:8px"></div>
+                </div>
+
+                <div class="ss-group" style="margin-top:14px">
+                    <div class="ss-group-title" style="display:flex; justify-content:space-between; align-items:center">
+                        <span>${t('Domyślne reguły EthOS')}</span>
+                    </div>
+                    <div style="font-size:12px; color:var(--text-muted); margin-bottom:10px">
+                        SSH, EthOS Web, Samba, Plex — ${t('deny incoming, allow outgoing')}
+                    </div>
+                    <button class="ss-btn ss-btn-warn" id="fw-defaults-btn"><i class="fas fa-undo-alt"></i> ${t('Zastosuj domyślne reguły')}</button>
+                </div>
+
+                <div class="ss-group" style="margin-top:14px">
+                    <div class="ss-group-title"><i class="fas fa-ban"></i> ${t('Zbanowane IP (Fail2Ban)')}</div>
+                    <div id="fw-banned-list" style="font-size:13px; color:var(--text-muted)"><i class="fas fa-spinner fa-spin"></i></div>
+                    <div class="ss-actions" style="margin-top:8px">
+                        <button class="ss-btn" id="fw-banned-refresh"><i class="fas fa-sync-alt"></i> ${t('Odśwież')}</button>
+                    </div>
+                </div>
+            </div>
+        `;
+
         const container = document.createElement('div');
-        container.innerHTML = generalHtml + networkHtml + securityHtml + aboutHtml + maintenanceHtml;
+        container.innerHTML = generalHtml + networkHtml + securityHtml + firewallHtml + aboutHtml + maintenanceHtml;
         wrap.appendChild(container);
 
         // -- Event: Language selector --
@@ -8776,10 +8855,196 @@ async function renderSystemSettings(body) {
         wrap.querySelectorAll('.ss-tab').forEach(t => {
             t.addEventListener('click', () => {
                 if (t.dataset.tab === 'security') loadFail2Ban();
+                if (t.dataset.tab === 'firewall') { loadFirewallStatus(); loadBannedIPs(); }
             });
         });
         
         wrap.querySelector('#ss-f2b-refresh')?.addEventListener('click', loadFail2Ban);
+
+        // -- Firewall Logic --
+        async function loadFirewallStatus() {
+            const badge = wrap.querySelector('#fw-status-badge');
+            const list = wrap.querySelector('#fw-rules-list');
+            if (!badge) return;
+            badge.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${t('Ładowanie...')}`;
+            if (list) list.innerHTML = `<i class="fas fa-spinner fa-spin"></i>`;
+            try {
+                const r = await api('/firewall/status');
+                const active = r.status === 'active';
+                badge.innerHTML = active
+                    ? `<span style="color:#22c55e"><i class="fas fa-check-circle"></i> ${t('Aktywny')}</span>`
+                    : `<span style="color:#ef4444"><i class="fas fa-times-circle"></i> ${t('Nieaktywny')}</span>`;
+                if (list) {
+                    if (!r.rules || r.rules.length === 0) {
+                        list.innerHTML = `<div style="color:var(--text-muted); font-size:12px; padding:8px 0">${t('Brak reguł')}</div>`;
+                    } else {
+                        list.innerHTML = `
+                            <table style="width:100%; border-collapse:collapse; font-size:12px">
+                                <thead>
+                                    <tr style="color:var(--text-muted); border-bottom:1px solid var(--border)">
+                                        <th style="text-align:left; padding:6px 8px">#</th>
+                                        <th style="text-align:left; padding:6px 8px">${t('Port/Cel')}</th>
+                                        <th style="text-align:left; padding:6px 8px">${t('Akcja')}</th>
+                                        <th style="text-align:left; padding:6px 8px">${t('Kierunek')}</th>
+                                        <th style="text-align:left; padding:6px 8px">${t('Źródło')}</th>
+                                        <th style="padding:6px 4px"></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${r.rules.map(rule => `
+                                        <tr style="border-bottom:1px solid var(--border)">
+                                            <td style="padding:6px 8px; color:var(--text-muted)">${rule.id}</td>
+                                            <td style="padding:6px 8px; font-weight:500">${esc(rule.to)}</td>
+                                            <td style="padding:6px 8px">
+                                                <span style="color:${rule.action==='ALLOW'?'#22c55e':rule.action==='DENY'?'#ef4444':'#f59e0b'}">${esc(rule.action)}</span>
+                                            </td>
+                                            <td style="padding:6px 8px; color:var(--text-muted)">${esc(rule.direction)}</td>
+                                            <td style="padding:6px 8px">${esc(rule.from)}</td>
+                                            <td style="padding:6px 4px; text-align:right">
+                                                <i class="fas fa-trash" style="cursor:pointer; color:#ef4444; opacity:0.7" title="${t('Usuń regułę')}" data-fw-delete="${rule.id}"></i>
+                                            </td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>`;
+                        list.querySelectorAll('[data-fw-delete]').forEach(el => {
+                            el.addEventListener('click', async () => {
+                                const id = el.dataset.fwDelete;
+                                if (!confirm(t('Usunąć regułę #') + id + '?')) return;
+                                try {
+                                    await api('/firewall/rules', { method: 'POST', body: { action: 'delete', id: parseInt(id) } });
+                                    toast(t('Reguła usunięta'), 'success');
+                                    loadFirewallStatus();
+                                } catch(e) { toast(t('Błąd: ') + e.message, 'error'); }
+                            });
+                        });
+                    }
+                }
+            } catch(e) {
+                badge.innerHTML = `<span style="color:#ef4444"><i class="fas fa-exclamation-circle"></i> ${t('Błąd:')} ${e.message}</span>`;
+                if (list) list.innerHTML = '';
+            }
+        }
+
+        async function loadBannedIPs() {
+            const el = wrap.querySelector('#fw-banned-list');
+            if (!el) return;
+            el.innerHTML = `<i class="fas fa-spinner fa-spin"></i>`;
+            try {
+                const r = await api('/firewall/banned');
+                if (r.error) {
+                    el.innerHTML = `<div style="color:var(--text-muted); font-size:12px">${t('Fail2Ban niedostępny')}: ${esc(r.error)}</div>`;
+                    return;
+                }
+                if (!r.jails || r.jails.length === 0) {
+                    el.innerHTML = `<div style="color:var(--text-muted); font-size:12px">${t('Brak danych Fail2Ban')}</div>`;
+                    return;
+                }
+                let html = '';
+                for (const jail of r.jails) {
+                    html += `<div style="margin-bottom:10px">
+                        <div style="font-size:11px; font-weight:600; color:var(--text-muted); margin-bottom:6px; text-transform:uppercase">${esc(jail.name)} (${jail.banned_ips.length})</div>`;
+                    if (jail.banned_ips.length === 0) {
+                        html += `<div style="font-size:12px; color:var(--text-muted)">${t('Brak zbanowanych IP')}</div>`;
+                    } else {
+                        html += `<div style="display:flex; flex-wrap:wrap; gap:6px">`;
+                        jail.banned_ips.forEach(ip => {
+                            html += `<span style="background:var(--bg-input); border:1px solid var(--border); padding:3px 8px; border-radius:4px; font-size:12px; display:flex; align-items:center; gap:6px">
+                                ${esc(ip)}
+                                <i class="fas fa-times" style="cursor:pointer; color:#ef4444; opacity:0.8" title="${t('Odblokuj')}" data-fw-unban-jail="${esc(jail.name)}" data-fw-unban-ip="${esc(ip)}"></i>
+                            </span>`;
+                        });
+                        html += `</div>`;
+                    }
+                    html += `</div>`;
+                }
+                el.innerHTML = html;
+                el.querySelectorAll('[data-fw-unban-ip]').forEach(btn => {
+                    btn.addEventListener('click', async () => {
+                        const ip = btn.dataset.fwUnbanIp;
+                        const jail = btn.dataset.fwUnbanJail;
+                        if (!confirm(t('Odblokować IP ') + ip + '?')) return;
+                        try {
+                            await api('/fail2ban/unban', { method: 'POST', body: { jail, ip } });
+                            toast(t('Odblokowano ') + ip, 'success');
+                            loadBannedIPs();
+                        } catch(e) { toast(t('Błąd: ') + e.message, 'error'); }
+                    });
+                });
+            } catch(e) {
+                el.innerHTML = `<div style="color:var(--text-muted); font-size:12px">${t('Błąd: ')} ${e.message}</div>`;
+            }
+        }
+
+        // Firewall toggle
+        wrap.querySelector('#fw-enable-btn')?.addEventListener('click', async () => {
+            if (!confirm(t('Włączyć firewall?'))) return;
+            try {
+                await api('/firewall/toggle', { method: 'POST', body: { enable: true } });
+                toast(t('Firewall włączony'), 'success');
+                loadFirewallStatus();
+            } catch(e) { toast(t('Błąd: ') + e.message, 'error'); }
+        });
+
+        wrap.querySelector('#fw-disable-btn')?.addEventListener('click', async () => {
+            if (!confirm(t('Wyłączyć firewall? Ruch sieciowy będzie niezabezpieczony.'))) return;
+            try {
+                await api('/firewall/toggle', { method: 'POST', body: { enable: false } });
+                toast(t('Firewall wyłączony'), 'warn');
+                loadFirewallStatus();
+            } catch(e) { toast(t('Błąd: ') + e.message, 'error'); }
+        });
+
+        wrap.querySelector('#fw-refresh-btn')?.addEventListener('click', () => { loadFirewallStatus(); loadBannedIPs(); });
+        wrap.querySelector('#fw-banned-refresh')?.addEventListener('click', loadBannedIPs);
+
+        // Quick rules
+        const quickRules = {
+            ssh:   { port: '22',    proto: 'tcp', label: 'SSH' },
+            samba: { port: '139,445', proto: 'tcp', label: 'Samba TCP' },
+            plex:  { port: '32400', proto: 'tcp', label: 'Plex' },
+            ethos: { port: '9000',  proto: 'tcp', label: 'EthOS Web' },
+        };
+        wrap.querySelectorAll('[data-fw-quick]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const key = btn.dataset.fwQuick;
+                const rule = quickRules[key];
+                if (!rule) return;
+                btn.disabled = true;
+                try {
+                    await api('/firewall/rules', { method: 'POST', body: { action: 'add', port: rule.port, proto: rule.proto } });
+                    toast(t('Reguła dodana: ') + rule.label, 'success');
+                    loadFirewallStatus();
+                } catch(e) { toast(t('Błąd: ') + e.message, 'error'); }
+                finally { btn.disabled = false; }
+            });
+        });
+
+        // Add custom rule
+        wrap.querySelector('#fw-add-rule-btn')?.addEventListener('click', async () => {
+            const port = wrap.querySelector('#fw-port')?.value.trim();
+            const proto = wrap.querySelector('#fw-proto')?.value;
+            const from = wrap.querySelector('#fw-from')?.value.trim() || 'any';
+            const msgEl = wrap.querySelector('#fw-rule-msg');
+            if (!port) { if (msgEl) msgEl.innerHTML = `<span style="color:#ef4444">${t('Podaj port')}</span>`; return; }
+            try {
+                await api('/firewall/rules', { method: 'POST', body: { action: 'add', port, proto: proto || undefined, from } });
+                if (msgEl) msgEl.innerHTML = `<span style="color:#22c55e">${t('Reguła dodana')}</span>`;
+                wrap.querySelector('#fw-port').value = '';
+                wrap.querySelector('#fw-from').value = '';
+                loadFirewallStatus();
+            } catch(e) { if (msgEl) msgEl.innerHTML = `<span style="color:#ef4444">${t('Błąd: ')} ${e.message}</span>`; }
+        });
+
+        // Apply defaults
+        wrap.querySelector('#fw-defaults-btn')?.addEventListener('click', async () => {
+            if (!confirm(t('Zastosować domyślne reguły EthOS? Obecne reguły zostaną zachowane.'))) return;
+            try {
+                await api('/firewall/rules', { method: 'POST', body: { action: 'reset_defaults' } });
+                toast(t('Domyślne reguły zastosowane'), 'success');
+                loadFirewallStatus();
+            } catch(e) { toast(t('Błąd: ') + e.message, 'error'); }
+        });
 
         // -- Event: Save general --
         wrap.querySelector('#ss-save-general')?.addEventListener('click', async (e) => {
