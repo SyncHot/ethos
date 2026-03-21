@@ -14,7 +14,7 @@ Complexity → Model mapping:
     simple   → gpt-5.1-codex-mini (fast, cost-effective)
 """
 
-import sys, time, json, os, argparse, requests, urllib3, subprocess, shlex, signal, threading
+import sys, time, json, os, argparse, requests, urllib3, subprocess, shlex, signal, threading, hashlib
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -166,6 +166,35 @@ LIVE_LOG_CHECK_INTERVAL = 10   # seconds between checking running process log fo
 QA_RATE_LIMIT_COOLDOWN = 30    # extra pause only if QA would use same provider that just got 429
 TRANSIENT_ERROR_KILL_THRESHOLD = 5  # kill process after N transient API errors (they waste autopilot turns)
 TRANSIENT_SOFT_COOLDOWN_THRESHOLD = 3  # after exit 0, if this many transient errors → soft cooldown on model
+
+# ── Global attempt cap — prevents infinite retry loops on stuck tickets ───
+MAX_TOTAL_ATTEMPTS = 6  # max total dev runs per ticket before auto-shelving
+_ticket_attempt_counts = {}  # {ticket_id: total_attempts_across_all_cycles}
+
+def _record_attempt(tid):
+    """Record a dev attempt for a ticket. Returns (allowed, count)."""
+    _ticket_attempt_counts[tid] = _ticket_attempt_counts.get(tid, 0) + 1
+    count = _ticket_attempt_counts[tid]
+    return count <= MAX_TOTAL_ATTEMPTS, count
+
+def _is_ticket_shelved(tid):
+    """Check if ticket has exhausted total attempts."""
+    return _ticket_attempt_counts.get(tid, 0) >= MAX_TOTAL_ATTEMPTS
+
+# ── Prompt deduplication — skip rewriting identical prompts ──────────────
+_last_prompt_hashes = {}  # {ticket_id: (hash, prompt_file_path)}
+
+def _dedup_prompt(tid, prompt, log_dir):
+    """Return prompt_file path, reusing previous file if prompt hash matches."""
+    h = hashlib.md5(prompt.encode()).hexdigest()[:12]
+    prev = _last_prompt_hashes.get(tid)
+    if prev and prev[0] == h and os.path.exists(prev[1]):
+        return prev[1], True  # reuse
+    prompt_file = os.path.join(log_dir, f"{tid}_{int(time.time())}_prompt.txt")
+    with open(prompt_file, "w") as pf:
+        pf.write(prompt)
+    _last_prompt_hashes[tid] = (h, prompt_file)
+    return prompt_file, False
 
 # ── Global model cooldown tracker ─────────────────────────────────────────
 # {model_name: timestamp_when_cooldown_expires}
@@ -701,21 +730,24 @@ _docs_cache_time = 0
 _DOCS_CACHE_TTL = 600  # refresh docs from disk every 10 minutes
 
 # Codebase map cache — regenerated every 10 minutes or when stale
-_codebase_map_cache = ""
+_codebase_map_cache = {}  # {agent_or_None: map_string}
 _codebase_map_time = 0
 
-def get_codebase_map():
-    """Get the codebase map, regenerating if cache is stale (>10min)."""
+def get_codebase_map(agent=None):
+    """Get the codebase map (optionally filtered by agent), regenerating if stale."""
     global _codebase_map_cache, _codebase_map_time
     now = time.time()
-    if now - _codebase_map_time > _DOCS_CACHE_TTL or not _codebase_map_cache:
+    if now - _codebase_map_time > _DOCS_CACHE_TTL:
+        _codebase_map_cache = {}
+        _codebase_map_time = now
+    key = agent or "_full"
+    if key not in _codebase_map_cache:
         try:
-            _codebase_map_cache = generate_codebase_map()
-            _codebase_map_time = now
+            _codebase_map_cache[key] = generate_codebase_map(agent=agent)
         except Exception as e:
             print(f"CODEBASE_MAP_ERROR | {e}", flush=True)
-            _codebase_map_cache = ""
-    return _codebase_map_cache
+            _codebase_map_cache[key] = ""
+    return _codebase_map_cache[key]
 
 def _summarize_doc(content, max_lines=40):
     """Extract key bullet points from a doc — headings + first sentence of each section."""
@@ -975,6 +1007,33 @@ def run_qa_check(ticket):
                 return self.returncode
         return _StaticResult(log_file)
 
+    # --- Docs-only changes: skip model QA entirely ---
+    try:
+        _changed = subprocess.run(
+            ["git", "diff", "--name-only", "HEAD~1"],
+            capture_output=True, text=True, cwd="/opt/ethos", timeout=10,
+        )
+        _changed_files = [f for f in _changed.stdout.strip().splitlines() if f.strip()]
+        if _changed_files and all(f.endswith(".md") for f in _changed_files):
+            os.makedirs(COPILOT_LOG_DIR, exist_ok=True)
+            log_file = os.path.join(COPILOT_LOG_DIR, f"{tid}_qa_{int(time.time())}.log")
+            with open(log_file, "w") as f:
+                f.write(f"=== QA Review: {tid} | {ticket['title']} ===\n")
+                f.write(f"=== Docs-only change — no model QA needed ===\n\n")
+                f.write(f"QA_PASS: Only documentation files changed ({', '.join(_changed_files)}). No code QA required.\n")
+            print(f"QA_DOCS_SKIP | {tid} | docs-only change ({len(_changed_files)} .md files)", flush=True)
+            class _DocsPass:
+                def __init__(self, lf):
+                    self._log_file = lf
+                    self._qa_mode = True
+                    self.pid = 0
+                    self.returncode = 0
+                def poll(self):
+                    return self.returncode
+            return _DocsPass(log_file)
+    except Exception:
+        pass
+
     # --- Simple tickets: static-only QA (no model call at all) ---
     if qa_cfg["static_only"]:
         os.makedirs(COPILOT_LOG_DIR, exist_ok=True)
@@ -1075,8 +1134,8 @@ def build_copilot_prompt(ticket, agent, info, model_info, docs_context):
 
     doc_list = '\n'.join(f'   - /opt/ethos/docs/{d}' for d in info.get('docs', []))
 
-    # Generate dynamic codebase map so agent knows where everything is
-    codebase_map = get_codebase_map()
+    # Generate dynamic codebase map filtered for this agent type
+    codebase_map = get_codebase_map(agent=agent)
 
     map_section = ""
     if codebase_map:
@@ -1783,13 +1842,13 @@ def execute_via_copilot(ticket, agent, info, model_info, docs_context, override_
     # Ensure log dir exists
     os.makedirs(COPILOT_LOG_DIR, exist_ok=True)
     log_file = os.path.join(COPILOT_LOG_DIR, f"{tid}_{int(time.time())}.log")
-    prompt_file = os.path.join(COPILOT_LOG_DIR, f"{tid}_{int(time.time())}_prompt.txt")
 
     prompt = override_prompt or build_copilot_prompt(ticket, agent, info, model_info, docs_context)
 
-    # Write prompt to temp file to avoid shell escaping issues
-    with open(prompt_file, "w") as pf:
-        pf.write(prompt)
+    # Prompt dedup: reuse prompt file if content hasn't changed
+    prompt_file, reused = _dedup_prompt(tid, prompt, COPILOT_LOG_DIR)
+    if reused:
+        print(f"PROMPT_REUSED | {tid} | same prompt hash, skipping rewrite", flush=True)
 
     cmd = [
         COPILOT_BIN,
@@ -1867,6 +1926,20 @@ def auto_start_ticket(ticket):
     """Start ticket: assign, move, select model by complexity, launch Copilot CLI."""
     tid = ticket["id"]
     title = ticket["title"]
+
+    # Global attempt cap: prevent infinite retry loops
+    allowed, attempt_count = _record_attempt(tid)
+    if not allowed:
+        print(f"SHELVED | {tid} | {attempt_count} total attempts (max {MAX_TOTAL_ATTEMPTS}) — moving to Review", flush=True)
+        add_comment(tid,
+            f"[system] Ticket automatycznie odłożony po {attempt_count} próbach. "
+            f"Wymaga interwencji manualnej (limit: {MAX_TOTAL_ATTEMPTS} prób).")
+        try:
+            move_ticket(tid, "Review")
+        except Exception:
+            pass
+        return tid, None
+
     agent = detect_agent(title, ticket.get("labels", []))
     info = AGENT_MAP.get(agent, AGENT_MAP["General"])
     model_info = select_model(ticket)
@@ -2493,30 +2566,40 @@ def main():
             # Free-model agent — uses Copilot CLI with free/low-cost models
             if args.auto and todo_free and not is_executing() and active_proc is None and qa_proc is None and not local_busy:
                 next_free = todo_free[0]
-                complexity = next_free.get("complexity", "medium")
-                model_info = FREE_MODEL_MAP.get(complexity, FREE_MODEL_MAP["medium"])
-                agent = detect_agent(next_free["title"], next_free.get("labels", []))
-                info = AGENT_MAP.get(agent, AGENT_MAP["General"])
-                assign_ticket(next_free["id"], "freemodel")
-                move_ticket(next_free["id"], "W trakcie")
-                set_executing(next_free["id"], model_info, agent="freemodel")
-                docs_context = load_docs_context(agent)
-                print(f"\n{'='*70}", flush=True)
-                print(f"FREE_EXECUTE | {next_free['id']} | {agent} | {model_info['model']} ({model_info['label']})", flush=True)
-                print(f"Title: {next_free['title']}", flush=True)
-                print(f"{'='*70}", flush=True)
-                add_comment(next_free["id"],
-                    f"[freemodel] Rozpoczynam prace nad ticketem.\n"
-                    f"Agent: {agent} | Model: {model_info['model']} ({model_info['label']})\n"
-                    f"Złożoność: {complexity}")
-                active_proc = execute_via_copilot(next_free, agent, info, model_info, docs_context)
-                if active_proc:
-                    active_ticket_id = next_free["id"]
+                # Global attempt cap for free-model tickets too
+                if _is_ticket_shelved(next_free["id"]):
+                    print(f"SHELVED_FREE | {next_free['id']} | max attempts reached", flush=True)
+                    try:
+                        add_comment(next_free["id"], f"[system] Ticket automatycznie odłożony po {MAX_TOTAL_ATTEMPTS} próbach.")
+                        move_ticket(next_free["id"], "Review")
+                    except Exception:
+                        pass
                 else:
-                    print(f"FREE_LAUNCH_FAILED | {next_free['id']}", flush=True)
-                    clear_executing()
-                    try: move_ticket(next_free["id"], "Do zrobienia")
-                    except: pass
+                    _record_attempt(next_free["id"])
+                    complexity = next_free.get("complexity", "medium")
+                    model_info = FREE_MODEL_MAP.get(complexity, FREE_MODEL_MAP["medium"])
+                    agent = detect_agent(next_free["title"], next_free.get("labels", []))
+                    info = AGENT_MAP.get(agent, AGENT_MAP["General"])
+                    assign_ticket(next_free["id"], "freemodel")
+                    move_ticket(next_free["id"], "W trakcie")
+                    set_executing(next_free["id"], model_info, agent="freemodel")
+                    docs_context = load_docs_context(agent)
+                    print(f"\n{'='*70}", flush=True)
+                    print(f"FREE_EXECUTE | {next_free['id']} | {agent} | {model_info['model']} ({model_info['label']})", flush=True)
+                    print(f"Title: {next_free['title']}", flush=True)
+                    print(f"{'='*70}", flush=True)
+                    add_comment(next_free["id"],
+                        f"[freemodel] Rozpoczynam prace nad ticketem.\n"
+                        f"Agent: {agent} | Model: {model_info['model']} ({model_info['label']})\n"
+                        f"Złożoność: {complexity}")
+                    active_proc = execute_via_copilot(next_free, agent, info, model_info, docs_context)
+                    if active_proc:
+                        active_ticket_id = next_free["id"]
+                    else:
+                        print(f"FREE_LAUNCH_FAILED | {next_free['id']}", flush=True)
+                        clear_executing()
+                        try: move_ticket(next_free["id"], "Do zrobienia")
+                        except: pass
 
             for t in queue:
                 tid, col = t["id"], t["column"]
