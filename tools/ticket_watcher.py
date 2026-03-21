@@ -1151,22 +1151,34 @@ Title: {title}
 {f'Description: {desc}' if desc else ''}
 {feedback}
 
-PROJECT: /opt/ethos/ (Flask backend + vanilla JS frontend)
+PROJECT: /opt/ethos/ (Flask backend + vanilla JS frontend, port 9000)
 {map_section}{relevant_files}REFERENCE DOCS (summaries below — read full doc with cat only if needed):
 {doc_list}
+
+CRITICAL FACTS:
+- Server runs on port 9000 (NOT 5000). API base: http://localhost:9000/api
+- Files may be owned by root — if EACCES on write, use: sudo tee <file> or sudo cp
+- Git push: sudo -u marcin git push
+
+HELPER TOOLS (use these instead of manual exploration — saves time and tokens):
+  bash /opt/ethos/tools/agent_helpers/find_route.sh <pattern>       — find API routes by keyword
+  bash /opt/ethos/tools/agent_helpers/find_function.sh <name> [scope] — find function/class defs (scope: backend|frontend|all)
+  bash /opt/ethos/tools/agent_helpers/file_overview.sh <file>        — get file structure (funcs, classes, routes, imports)
+  bash /opt/ethos/tools/agent_helpers/check_syntax.sh [files...]     — validate Python/JS syntax
+  bash /opt/ethos/tools/agent_helpers/safe_restart.sh {tid} <reason> — preflight + log + restart + verify (one command)
+  bash /opt/ethos/tools/agent_helpers/get_api_token.sh               — get valid Bearer token for curl testing
+  bash /opt/ethos/tools/agent_helpers/git_summary.sh [{tid}]         — git status + recent commits + diffs
+  bash /opt/ethos/tools/agent_helpers/project_info.sh                — ports, paths, blueprints, ownership info
 
 WORKFLOW:
 1. Use the codebase map above to locate the relevant files — open them directly
 2. Implement the solution
-3. Test if possible (restart ethos if backend changes):
-   - First log the restart: curl -s -X POST http://localhost:9000/api/eventlog -H 'Content-Type: application/json' -d '{{"category":"system","level":"warning","message":"Restart ethos z ticket watchera","detail":{{"ticket_id":"{tid}","reason":"backend changes"}}}}'
-   - Run preflight before restart: python3 /opt/ethos/tools/preflight_check.py
-   - If preflight passed, restart: sudo systemctl restart ethos
-   - If preflight FAILED, fix the errors before restarting
-4. Commit: git add <files> && git commit -m "[{tid}] <description>"
-5. Push: sudo -u marcin git push
+3. Validate: bash /opt/ethos/tools/agent_helpers/check_syntax.sh <changed files>
+4. If backend changes: bash /opt/ethos/tools/agent_helpers/safe_restart.sh {tid} "<reason>"
+5. Commit: git add <files> && git commit -m "[{tid}] <description>"
+6. Push: sudo -u marcin git push
 
-Be focused and efficient. Do not read docs that aren't relevant to the task."""
+Be focused and efficient. Use the helper tools above instead of manual exploration."""
 
     return prompt
 
@@ -1292,25 +1304,31 @@ QA CYCLE: {qa_cycle}/{MAX_QA_CYCLES}
 """
 
     prompt += f"""
-PROJECT: /opt/ethos/ (Flask backend + vanilla JS frontend)
+PROJECT: /opt/ethos/ (Flask backend + vanilla JS frontend, port 9000)
 REFERENCE DOCS (consult only when relevant):
 {doc_list}
+
+CRITICAL FACTS:
+- Server runs on port 9000 (NOT 5000). API base: http://localhost:9000/api
+- Files may be owned by root — if EACCES on write, use: sudo tee <file> or sudo cp
+
+HELPER TOOLS:
+  bash /opt/ethos/tools/agent_helpers/check_syntax.sh [files...]     — validate syntax before restart
+  bash /opt/ethos/tools/agent_helpers/safe_restart.sh {tid} <reason> — preflight + log + restart + verify
+  bash /opt/ethos/tools/agent_helpers/find_function.sh <name>        — find function/class definitions
+  bash /opt/ethos/tools/agent_helpers/file_overview.sh <file>        — get file structure overview
 
 WORKFLOW:
 1. Read the QA failure reason and full QA analysis above — they tell you EXACTLY what's wrong
 2. The diff above shows your previous changes — locate the specific issues QA reported
 3. Fix ONLY the issues identified by QA — do not restructure or rewrite working code
-4. Test if possible (restart ethos if backend changes):
-   - First log the restart: curl -s -X POST http://localhost:9000/api/eventlog -H 'Content-Type: application/json' -d '{{"category":"system","level":"warning","message":"Restart ethos z ticket watchera","detail":{{"ticket_id":"{tid}","reason":"backend changes"}}}}'
-   - Run preflight before restart: python3 /opt/ethos/tools/preflight_check.py
-   - If preflight passed, restart: sudo systemctl restart ethos
-   - If preflight FAILED, fix the errors before restarting
-5. Commit: git add <files> && git commit -m "[{tid}] fix: QA cycle {qa_cycle} — <description>"
-6. Push: sudo -u marcin git push
+4. Validate: bash /opt/ethos/tools/agent_helpers/check_syntax.sh <changed files>
+5. If backend changes: bash /opt/ethos/tools/agent_helpers/safe_restart.sh {tid} "QA fix"
+6. Commit: git add <files> && git commit -m "[{tid}] fix: QA cycle {qa_cycle} — <description>"
+7. Push: sudo -u marcin git push
 
 IMPORTANT: You have the diff and QA analysis above. Go directly to fixing the issues.
-Do NOT explore the codebase from scratch — start from the specific files mentioned in the QA feedback.
-The ticket will go through QA again after your fixes."""
+Do NOT explore the codebase from scratch — start from the specific files mentioned in the QA feedback."""
 
     return prompt
 
