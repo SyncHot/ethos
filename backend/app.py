@@ -676,6 +676,9 @@ def _blueprint_auth_guard():
         # Internal system events (localhost only, e.g. from ticket watcher)
         if path == '/api/eventlog' and request.method == 'POST' and request.remote_addr in ('127.0.0.1', '::1'):
             return
+        # Internal backup trigger from smartd ethos-notify hook
+        if path == '/api/backup/trigger-smart' and request.method == 'POST' and request.remote_addr in ('127.0.0.1', '::1'):
+            return
         # Internal RAG indexing endpoint (localhost only, used by cron)
         if path == '/api/aichat/rag/index-internal':
             return

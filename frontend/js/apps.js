@@ -4983,8 +4983,8 @@ function renderDashboard(body) {
             smartList.innerHTML = data.map(d => {
                 const statusColor = d.health === 'PASS' ? 'var(--success)' : 'var(--danger)';
                 const icon = d.type === 'nvme' ? 'fa-memory' : 'fa-hdd';
-                const temp = d.temp > 0 ? d.temp + '°C' : '—';
-                const tempColor = d.temp > 50 ? 'var(--warning)' : d.temp > 60 ? 'var(--danger)' : 'var(--text-muted)';
+                const temp = d.temperature > 0 ? d.temperature + '°C' : '—';
+                const tempColor = d.temperature > 60 ? 'var(--danger)' : d.temperature > 50 ? 'var(--warning)' : 'var(--text-muted)';
                 let life = '';
                 if (d.remaining_life !== -1) {
                     const lifeColor = d.remaining_life < 10 ? 'var(--danger)' : d.remaining_life < 30 ? 'var(--warning)' : 'var(--success)';

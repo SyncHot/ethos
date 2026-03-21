@@ -862,7 +862,7 @@ chroot "$ROOT" systemctl enable NetworkManager
 # ── SMART Monitoring Configuration ──
 echo "LOG:Konfiguracja SMART Monitoring..."
 cat > "$ROOT/etc/smartd.conf" <<'EOF'
-DEVICESCAN -a -o on -S on -n standby,q -s (S/../../7/02|L/../01/./03) -W 4,45,55 -m root -M exec /etc/smartmontools/run.d/ethos-notify
+DEVICESCAN -a -o on -S on -n standby,q -s (S/../../7/02|L/../../6/03) -W 4,50,55 -R 199 -m root -M exec /etc/smartmontools/run.d/ethos-notify
 EOF
 
 mkdir -p "$ROOT/etc/smartmontools/run.d"
@@ -897,6 +897,9 @@ DO_BACKUP=0
 case "$SMARTD_MESSAGE" in
     *Reallocated_Sector_Ct*|*Current_Pending_Sector*|*Offline_Uncorrectable*)
         DO_BACKUP=1
+        ;;
+    *UDMA_CRC_Error_Count*)
+        # Just log, don't trigger panic backup for cable errors
         ;;
 esac
 
