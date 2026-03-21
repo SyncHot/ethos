@@ -520,6 +520,32 @@ if [[ -d "$INSTALLER_DIR/app" ]]; then
     echo "[i] Wyczyszczono pliki instalatora"
 fi
 
+# ─── Power Management ───
+echo "[i] Konfiguruję zarządzanie energią..."
+
+# Copy config script
+if [ -f "$INSTALL_DIR/tools/ethos-power-config.sh" ]; then
+    cp "$INSTALL_DIR/tools/ethos-power-config.sh" /usr/local/bin/ethos-power-config
+    chmod +x /usr/local/bin/ethos-power-config
+fi
+
+# Copy systemd service
+if [ -f "$INSTALL_DIR/tools/ethos-power.service" ]; then
+    cp "$INSTALL_DIR/tools/ethos-power.service" /etc/systemd/system/ethos-power.service
+    # Reload daemon to pick up new service
+    systemctl daemon-reload
+    systemctl enable ethos-power.service
+    # Start it now to apply settings
+    systemctl start ethos-power.service || echo "[!] Failed to start ethos-power.service"
+    echo "[✓] Power management service configured"
+fi
+
+# Copy blacklist
+if [ -f "$INSTALL_DIR/tools/ethos-power-blacklist.conf" ]; then
+    cp "$INSTALL_DIR/tools/ethos-power-blacklist.conf" /etc/modprobe.d/ethos-power.conf
+    echo "[✓] Peripheral blacklist configured"
+fi
+
 # ─── Final message ───
 LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 

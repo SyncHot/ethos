@@ -1066,6 +1066,14 @@ rm -f "$ETHOS_DIR/backend/blueprints/"*.bak 2>/dev/null || true
 echo "LOG:Kopiowanie frontend..."
 cp -r "$NASOS/frontend" "$ETHOS_DIR/"
 
+# ── Kopiowanie narzędzi ──
+echo "LOG:Kopiowanie tools..."
+mkdir -p "$ETHOS_DIR/tools"
+cp "$NASOS/tools/ethos-power-config.sh" "$ETHOS_DIR/tools/"
+cp "$NASOS/tools/ethos-power.service" "$ETHOS_DIR/tools/"
+cp "$NASOS/tools/ethos-power-blacklist.conf" "$ETHOS_DIR/tools/"
+chmod +x "$ETHOS_DIR/tools/ethos-power-config.sh"
+
 # ── CUPS config ──
 if [[ -d "$NASOS/cups-config" ]]; then
     cp -r "$NASOS/cups-config/"* "$ETHOS_DIR/cups-config/" 2>/dev/null || true
