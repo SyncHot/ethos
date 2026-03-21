@@ -2650,16 +2650,24 @@ select.fm-input {
 .tk-column-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   padding: 10px 12px;
   font-weight: 600;
   font-size: 13px;
   border-bottom: 1px solid var(--border);
 }
+.tk-col-select-all {
+  cursor: pointer;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  accent-color: var(--accent, #3b82f6);
+}
 .tk-column-title {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 1;
 }
 .tk-column-count {
   background: var(--overlay-3);

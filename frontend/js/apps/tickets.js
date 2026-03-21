@@ -802,6 +802,17 @@ async function renderTickets(body, launchOpts) {
         }
     }
 
+    function updateColumnSelectAll(col) {
+        if (!col) return;
+        const all = col.querySelector('.tk-col-select-all');
+        if (!all) return;
+        const checks = col.querySelectorAll('.tk-ticket-check');
+        if (checks.length === 0) { all.checked = false; all.indeterminate = false; return; }
+        const checkedCount = Array.from(checks).filter(c => c.checked).length;
+        all.checked = checkedCount === checks.length;
+        all.indeterminate = checkedCount > 0 && checkedCount < checks.length;
+    }
+
     // A11y Helpers
     function announceToScreenReader(message) {
         let sr = document.getElementById('tk-sr-live');
@@ -1017,6 +1028,20 @@ async function renderTickets(body, launchOpts) {
                     const id = e.target.dataset.id;
                     if (e.target.checked) selectedTickets.add(id);
                     else selectedTickets.delete(id);
+                    updateSelectionToolbar();
+                    updateColumnSelectAll(e.target.closest('.tk-column'));
+                }
+                if (e.target.classList.contains('tk-col-select-all')) {
+                    const colName = e.target.dataset.column;
+                    const checked = e.target.checked;
+                    const col = e.target.closest('.tk-column');
+                    if (col) {
+                        col.querySelectorAll('.tk-ticket-check').forEach(cb => {
+                            cb.checked = checked;
+                            if (checked) selectedTickets.add(cb.dataset.id);
+                            else selectedTickets.delete(cb.dataset.id);
+                        });
+                    }
                     updateSelectionToolbar();
                 }
             });
@@ -1253,6 +1278,7 @@ async function renderTickets(body, launchOpts) {
                 col.dataset.column = colName;
                 col.innerHTML = `
                     <div class="tk-column-header">
+                        <input type="checkbox" class="tk-col-select-all" data-column="${_escHtml(colName)}" title="${t('Zaznacz wszystkie')}">
                         <span class="tk-column-title">${_escHtml(colName)}</span>
                         <span class="tk-column-count">0</span>
                     </div>
@@ -1410,6 +1436,8 @@ async function renderTickets(body, launchOpts) {
             
             // Remove extra
             existingElMap.forEach(el => el.remove());
+
+            updateColumnSelectAll(col);
         });
 
         // Cleanup columns
