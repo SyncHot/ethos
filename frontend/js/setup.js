@@ -334,6 +334,7 @@ function setupBindStep() {
 
             if (!username || username.length < 2) { err.textContent = t('Nazwa użytkownika min. 2 znaki'); return; }
             if (!pw || pw.length < 4) { err.textContent = t('Hasło min. 4 znaki'); return; }
+            if (pw === 'ethos') { err.textContent = t('Hasło nie może być domyślne ("ethos")'); return; }
             if (pw !== pw2) { err.textContent = t('Hasła nie są identyczne'); return; }
 
             Setup.data.nas_name = nasname || 'EthOS';

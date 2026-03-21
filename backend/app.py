@@ -135,6 +135,42 @@ Compress(app)
 app.config['COMPRESS_ALGORITHM'] = ['brotli', 'gzip', 'deflate']
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 31536000  # 1 year
 
+PASSWORD_CHANGED_MARKER = '/opt/ethos/.password_changed'
+
+@app.before_request
+def check_password_change():
+    """Enforce password change on first run."""
+    # Skip for static files
+    if request.path.startswith('/~static~') or request.endpoint == 'static':
+        return
+
+    # If setup is not done, allow setup-related endpoints
+    if not _is_setup_done():
+        return
+
+    # If password changed marker exists, we are good
+    if os.path.exists(PASSWORD_CHANGED_MARKER):
+        return
+
+    # Allowed endpoints for password change flow
+    allowed = [
+        '/api/auth/login',
+        '/api/auth/logout',
+        '/api/auth/verify',     # Used to check status
+        '/api/auth/change-password', # The fix
+        '/api/settings/change-password', # Alias? Check where it is
+        '/api/setup/status',    # Needed for frontend logic
+        '/api/system/info',     # Often used by UI on load
+        '/api/language',        # Needed for UI
+    ]
+    
+    # Check if path starts with any allowed prefix
+    if any(request.path.startswith(p) for p in allowed):
+        return
+
+    # Block everything else with specific code for frontend to catch
+    return jsonify({'error': 'Wymagana zmiana hasła', 'code': 'PASSWORD_CHANGE_REQUIRED'}), 403
+
 @app.after_request
 def add_header(response):
     # Add Cache-Control headers
@@ -663,6 +699,20 @@ def login():
     resp.set_cookie('nas_token', token, max_age=7 * 24 * 3600,
                     httponly=True, samesite='Lax')
     elog('system', 'info', f'Logowanie: {safe_user} (rola: {role})')
+
+    # Check if password change is required
+    pwd_change_required = _is_setup_done() and not os.path.exists(PASSWORD_CHANGED_MARKER)
+    
+    resp_data = {
+        'token': token, 'nas_name': NAS_NAME,
+        'user': {'username': safe_user, 'role': role, 'groups': groups,
+                 'home_path': home_path},
+        'sudo_mode': role == 'admin',
+        'password_change_required': pwd_change_required
+    }
+    resp = jsonify(resp_data)
+    resp.set_cookie('nas_token', token, max_age=7 * 24 * 3600,
+                    httponly=True, samesite='Lax')
     return resp
 
 
@@ -672,12 +722,14 @@ def verify():
     info = tokens.get(token)
     if info and info['expires'] > datetime.now():
         home_path = _get_user_home(info['username'])
+        pwd_change_required = _is_setup_done() and not os.path.exists(PASSWORD_CHANGED_MARKER)
         return jsonify({
             'valid': True,
             'nas_name': NAS_NAME,
             'user': {'username': info['username'], 'role': info['role'],
                      'home_path': home_path},
             'sudo_mode': info.get('role') == 'admin',
+            'password_change_required': pwd_change_required
         })
     return jsonify({'valid': False}), 401
 
@@ -1468,6 +1520,16 @@ def setup_complete():
         setup_info['data_disk'] = data_disk
     with open(SETUP_DONE_FILE, 'w') as f:
         json.dump(setup_info, f)
+
+    # Create password changed marker
+    with open(PASSWORD_CHANGED_MARKER, 'w') as f:
+        f.write(str(time.time()))
+
+    # Enable SSH now that setup is complete and password is set
+    try:
+        subprocess.run(['systemctl', 'enable', '--now', 'ssh'], check=False)
+    except Exception:
+        pass
 
     # Remove tty1 auto-login override (no longer needed after setup)
     try:

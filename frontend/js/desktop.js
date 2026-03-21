@@ -363,7 +363,11 @@ async function tryAutoLogin() {
             NAS.nasName = data.nas_name || 'EthOS';
             NAS.user = data.user || { username: 'admin', role: 'admin' };
             NAS.sudoMode = NAS.user.role === 'admin';
-            showDesktop();
+            if (data.password_change_required) {
+                showPasswordChangeModal();
+            } else {
+                showDesktop();
+            }
         } else {
             showLogin();
         }
@@ -392,7 +396,11 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
             NAS.sudoMode = NAS.user.role === 'admin';
             localStorage.setItem('nas_token', data.token);
             errEl.textContent = '';
-            showDesktop();
+            if (data.password_change_required) {
+                showPasswordChangeModal();
+            } else {
+                showDesktop();
+            }
         } else {
             errEl.textContent = data.error || t('Błąd logowania');
             document.getElementById('login-password').classList.add('shake');
@@ -2209,4 +2217,86 @@ function _dlmFormatBytes(bytes) {
     const units = ['B', 'KB', 'MB', 'GB', 'TB'];
     const i = Math.floor(Math.log(bytes) / Math.log(1024));
     return (bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
+}
+
+function showPasswordChangeModal() {
+    const content = `
+        <div style="padding:20px;text-align:center;">
+            <div style="font-size:48px;color:var(--accent);margin-bottom:16px;"><i class="fas fa-shield-alt"></i></div>
+            <h3 style="margin:0 0 10px;font-size:20px;">` + t('Wymagana zmiana hasła') + `</h3>
+            <p style="margin:0 0 24px;color:var(--text-secondary);font-size:14px;line-height:1.5;">` + t('Ze względów bezpieczeństwa musisz zmienić domyślne hasło administratora.') + `</p>
+            
+            <div class="form-group" style="text-align:left;">
+                <label style="font-size:12px;color:var(--text-secondary);margin-bottom:4px;display:block;">` + t('Obecne hasło') + `</label>
+                <div class="input-icon"><i class="fas fa-key"></i><input type="password" id="pwd-change-current" class="form-control" placeholder="` + t('Obecne hasło') + `"></div>
+            </div>
+            <div class="form-group" style="text-align:left;margin-top:12px;">
+                <label style="font-size:12px;color:var(--text-secondary);margin-bottom:4px;display:block;">` + t('Nowe hasło') + `</label>
+                <div class="input-icon"><i class="fas fa-lock"></i><input type="password" id="pwd-change-new" class="form-control" placeholder="` + t('Min. 4 znaki') + `"></div>
+            </div>
+            <div class="form-group" style="text-align:left;margin-top:12px;">
+                <label style="font-size:12px;color:var(--text-secondary);margin-bottom:4px;display:block;">` + t('Powtórz nowe hasło') + `</label>
+                <div class="input-icon"><i class="fas fa-lock"></i><input type="password" id="pwd-change-confirm" class="form-control" placeholder="` + t('Powtórz hasło') + `"></div>
+            </div>
+            
+            <div id="pwd-change-error" class="login-error" style="margin:16px 0 0;text-align:left;"></div>
+            <button class="btn-login" id="pwd-change-submit" style="width:100%;margin-top:20px;"><span>` + t('Zmień hasło') + `</span> <i class="fas fa-arrow-right"></i></button>
+        </div>
+    `;
+
+    // Ensure login screen is hidden
+    document.getElementById('login-screen').classList.add('hidden');
+
+    const win = createWindow('password-change-modal', {
+        title: t('Bezpieczeństwo'),
+        width: 420,
+        height: 540,
+        content: content,
+        singleton: true,
+        icon: 'fa-shield-alt'
+    });
+    
+    // Disable close button
+    const closeBtn = win.el.querySelector('.window-close');
+    if (closeBtn) closeBtn.style.display = 'none';
+
+    setTimeout(() => {
+        const submitBtn = win.el.querySelector('#pwd-change-submit');
+        const errEl = win.el.querySelector('#pwd-change-error');
+        const currentInput = win.el.querySelector('#pwd-change-current');
+        
+        if (currentInput) currentInput.focus();
+
+        submitBtn.onclick = async () => {
+            const current = win.el.querySelector('#pwd-change-current').value;
+            const newPw = win.el.querySelector('#pwd-change-new').value;
+            const confirm = win.el.querySelector('#pwd-change-confirm').value;
+
+            if (!current || !newPw) { errEl.textContent = t('Wypełnij wszystkie pola'); return; }
+            if (newPw.length < 4) { errEl.textContent = t('Hasło za krótkie (min. 4 znaki)'); return; }
+            if (newPw === 'ethos') { errEl.textContent = t('Hasło nie może być domyślne ("ethos")'); return; }
+            if (newPw !== confirm) { errEl.textContent = t('Hasła nie są identyczne'); return; }
+
+            submitBtn.disabled = true;
+            submitBtn.style.opacity = '0.7';
+            errEl.textContent = '';
+            
+            try {
+                const r = await api('/settings/change-password', {
+                    method: 'POST',
+                    body: { current_password: current, new_password: newPw }
+                });
+                
+                if (r.error) throw new Error(r.error);
+                
+                win.close();
+                toast(t('Hasło zmienione pomyślnie'), 'success');
+                showDesktop();
+            } catch (e) {
+                errEl.textContent = e.message || t('Błąd zmiany hasła');
+                submitBtn.disabled = false;
+                submitBtn.style.opacity = '1';
+            }
+        };
+    }, 100);
 }

@@ -210,6 +210,8 @@ def change_password():
         return jsonify({'error': 'Oba pola hasła są wymagane'}), 400
     if len(new_pw) < 4:
         return jsonify({'error': 'Nowe hasło musi mieć minimum 4 znaki'}), 400
+    if new_pw == 'ethos':
+        return jsonify({'error': 'Hasło nie może być domyślne ("ethos")'}), 400
 
     username = g.username
     if not username:
@@ -240,6 +242,17 @@ def change_password():
     r = _host_run(f'echo {safe} | chpasswd', timeout=10)
     if r.returncode != 0:
         return jsonify({'error': f'Błąd zmiany hasła: {r.stderr.strip()}'}), 500
+
+    # Ensure password changed marker exists (if this was the first run)
+    try:
+        marker = '/opt/ethos/.password_changed'
+        if not os.path.exists(marker):
+            with open(marker, 'w') as f:
+                f.write(str(time.time()))
+            # Also enable SSH if it was disabled
+            subprocess.run(['systemctl', 'enable', '--now', 'ssh'], check=False)
+    except Exception:
+        pass
 
     return jsonify({'ok': True, 'message': 'Hasło zostało zmienione'})
 

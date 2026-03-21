@@ -855,11 +855,14 @@ chmod 440 "$ROOT/etc/sudoers.d/010_ethos"
 chroot "$ROOT" groupadd -f nasosadmin
 chroot "$ROOT" groupadd -f nasos
 chroot "$ROOT" usermod -aG nasosadmin,nasos "$DEFAULT_USER"
-chroot "$ROOT" systemctl enable ssh
+chroot "$ROOT" systemctl disable ssh
 chroot "$ROOT" systemctl enable NetworkManager
 chroot "$ROOT" systemctl disable networking 2>/dev/null || true
 chroot "$ROOT" systemctl enable avahi-daemon 2>/dev/null || true
 chroot "$ROOT" systemctl enable serial-getty@ttyS0.service 2>/dev/null || true
+
+# ── Force password change on first boot ──
+rm -f "$ROOT/opt/ethos/.password_changed"
 
 # ── USB automount (devmon/udevil) ──
 echo "LOG:Konfiguracja devmon USB automount..."
