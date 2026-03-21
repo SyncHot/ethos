@@ -18,6 +18,9 @@ const NAS = {
 async function api(path, options = {}) {
     const headers = { ...(options.headers || {}) };
     if (NAS.token) headers['Authorization'] = `Bearer ${NAS.token}`;
+    // CSRF Protection
+    if (NAS.csrfToken) headers['X-CSRFToken'] = NAS.csrfToken;
+    
     if (options.body && !(options.body instanceof FormData)) {
         headers['Content-Type'] = 'application/json';
         options.body = JSON.stringify(options.body);
@@ -374,6 +377,7 @@ async function tryAutoLogin() {
             NAS.nasName = data.nas_name || 'EthOS';
             NAS.user = data.user || { username: 'admin', role: 'admin' };
             NAS.sudoMode = NAS.user.role === 'admin';
+            NAS.csrfToken = data.csrf_token; // Store CSRF token
             if (data.password_change_required) {
                 showPasswordChangeModal();
             } else {
@@ -405,6 +409,7 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
             NAS.nasName = data.nas_name || 'EthOS';
             NAS.user = data.user || { username: username || 'admin', role: 'admin' };
             NAS.sudoMode = NAS.user.role === 'admin';
+            NAS.csrfToken = data.csrf_token; // Store CSRF token
             localStorage.setItem('nas_token', data.token);
             errEl.textContent = '';
             if (data.password_change_required) {
