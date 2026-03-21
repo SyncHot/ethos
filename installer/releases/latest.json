@@ -1,8 +1,8 @@
 {
-  "version": "1.0.19",
+  "version": "1.0.20",
   "build_date": "2026-03-21",
-  "filename": "ethos-1.0.19.tar.gz",
-  "size": 904970,
-  "sha256": "f3db67c5e523979d41569cf00b1e6d557eed6c1f79bd377b4e05f0fd8d141880",
+  "filename": "ethos-1.0.20.tar.gz",
+  "size": 911064,
+  "sha256": "7ddb94ff410ccaf3f38c2eca9bdbb5fa29dadded470da0425a1297241fe8d7f5",
   "min_version": "1.0.0"
 }

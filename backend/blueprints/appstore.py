@@ -23,6 +23,7 @@ from flask import Blueprint, request, jsonify, g
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from host import host_run as _host_run_base, NATIVE_MODE, data_path, check_dep, get_data_disk as _get_data_disk
 from utils import load_json as _load_json, save_json as _save_json, run_host, \
+    get_ethos_user, \
     find_compose_project_names as _find_compose_project_names, \
     docker_available as _docker_available_util
 
@@ -63,9 +64,9 @@ REPOS_FILE = data_path('appstore_repos.json')
 CACHE_MAX_AGE = 3600 * 6  # 6 hours
 SANDBOX_OVERRIDE_FILENAME = 'docker-compose.ethos-sandbox.yml'
 
-HOST_COMPOSE_ROOT = '/home/marcin/docker'
-CONTAINER_COMPOSE_ROOT = '/home/marcin/docker'
-APPDATA_ROOT = '/home/marcin/docker/_appdata'
+HOST_COMPOSE_ROOT = f'/home/{get_ethos_user()}/docker'
+CONTAINER_COMPOSE_ROOT = f'/home/{get_ethos_user()}/docker'
+APPDATA_ROOT = f'/home/{get_ethos_user()}/docker/_appdata'
 
 # Default resource limits applied if service has none
 DEFAULT_MEM_LIMIT = '2g'

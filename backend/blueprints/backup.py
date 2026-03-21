@@ -21,6 +21,10 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeou
 
 from flask import Blueprint, jsonify, request, g
 
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from utils import get_ethos_user
+
 try:
     import paramiko
     from scp import SCPClient
@@ -2711,7 +2715,7 @@ def _create_snapshot_worker(label, include_docker, include_volumes,
             pct = int(step_i / steps_total * 90)
             _snap_update(percent=pct, message='Backupuję EthOS...', log='Kopiowanie konfiguracji EthOS...')
 
-            ethos_root = os.environ.get('ETHOS_ROOT', '/home/marcin/docker/nasos')
+            ethos_root = os.environ.get('ETHOS_ROOT', f'/home/{get_ethos_user()}/docker/nasos')
             ethos_dir = os.path.join(snap_dir, 'ethos')
             os.makedirs(ethos_dir, exist_ok=True)
 
@@ -2827,7 +2831,7 @@ def _create_snapshot_worker(label, include_docker, include_volumes,
 
             if _docker_ok():
                 # Compose projects — save compose files + .env
-                compose_root = os.environ.get('COMPOSE_ROOT', '/home/marcin/docker')
+                compose_root = os.environ.get('COMPOSE_ROOT', f'/home/{get_ethos_user()}/docker')
                 projects = []
                 if os.path.isdir(compose_root):
                     for entry in sorted(os.listdir(compose_root)):
@@ -3036,7 +3040,7 @@ def _restore_snapshot_worker(snap_dir, restore_docker, restore_volumes,
             pct = int(step_i / steps_total * 85)
             _snap_update(percent=pct, message='Przywracanie EthOS...', log='Przywracanie konfiguracji EthOS...')
 
-            ethos_root = os.environ.get('ETHOS_ROOT', '/home/marcin/docker/nasos')
+            ethos_root = os.environ.get('ETHOS_ROOT', f'/home/{get_ethos_user()}/docker/nasos')
             ethos_bak = os.path.join(snap_dir, 'ethos')
 
             if os.path.isdir(ethos_bak):
@@ -3174,7 +3178,7 @@ def _restore_snapshot_worker(snap_dir, restore_docker, restore_volumes,
             proj_bak = os.path.join(docker_bak, 'projects')
 
             if os.path.isdir(proj_bak) and _docker_ok():
-                compose_root = os.environ.get('COMPOSE_ROOT', '/home/marcin/docker')
+                compose_root = os.environ.get('COMPOSE_ROOT', f'/home/{get_ethos_user()}/docker')
                 restored = 0
 
                 for proj_name in sorted(os.listdir(proj_bak)):

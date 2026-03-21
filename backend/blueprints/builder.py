@@ -1363,6 +1363,8 @@ find "$ROOT/opt" "$ROOT/usr" -type d -name "__pycache__" -exec rm -rf {{}} + 2>/
 find "$ROOT/opt" -name '*.pyc' -delete 2>/dev/null || true
 truncate -s 0 "$ROOT/etc/machine-id" 2>/dev/null || true
 rm -f "$ROOT/var/lib/dbus/machine-id"
+# [DIST-SEC] Remove SSH host keys so they regenerate on first boot
+rm -f "$ROOT/etc/ssh/ssh_host_"*
 # Log final image usage
 echo "LOG:Wykorzystanie dysku w obrazie:"
 du -sh "$ROOT"/* 2>/dev/null | sort -rh | head -10 || true

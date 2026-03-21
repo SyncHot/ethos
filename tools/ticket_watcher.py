@@ -27,8 +27,10 @@ from codebase_map import generate as generate_codebase_map
 sys.path.insert(0, "/opt/ethos/backend")
 try:
     from model_library import get_library as _get_ml
+    from utils import get_ethos_user
 except Exception:
     _get_ml = None
+    def get_ethos_user(): return "nasadmin"
 
 BASE = "http://localhost:9000/api"
 TOKEN_FILE = "/tmp/.ethos_orchestrator_token"
@@ -378,8 +380,10 @@ AGENT_MAP = {
 # ── Auth & API helpers ───────────────────────────────────────────────────
 
 def login():
-    username = os.environ.get("ETHOS_COPILOT_USER", "marcin")
-    password = os.environ.get("ETHOS_COPILOT_PASS", "pluton2303")
+    username = os.environ.get("ETHOS_COPILOT_USER")
+    password = os.environ.get("ETHOS_COPILOT_PASS")
+    if not username or not password:
+        raise RuntimeError("Missing ETHOS_COPILOT_USER or ETHOS_COPILOT_PASS env vars")
     r = _session.post(f"{BASE}/auth/login",
                       json={"username": username, "password": password},
                       timeout=API_TIMEOUT)
@@ -963,7 +967,7 @@ def load_docs_context(agent):
 
 # ── Execute ticket via Copilot CLI ────────────────────────────────────────
 
-COPILOT_BIN = "/home/marcin/.local/bin/copilot"
+COPILOT_BIN = os.environ.get("COPILOT_BIN_PATH", f"/home/{get_ethos_user()}/.local/bin/copilot")
 COPILOT_LOG_DIR = "/opt/ethos/logs/copilot_tickets"
 LOCALAI_LOG_DIR = "/opt/ethos/logs/localai_tickets"
 MAX_AUTOPILOT = {
@@ -1311,7 +1315,7 @@ PROJECT: /opt/ethos/ (Flask backend + vanilla JS frontend, port 9000)
 CRITICAL FACTS:
 - Server runs on port 9000 (NOT 5000). API base: http://localhost:9000/api
 - Files may be owned by root — if EACCES on write, use: sudo tee <file> or sudo cp
-- Git push: sudo -u marcin git push
+- Git push: sudo -u ${ETHOS_USER} git push
 
 HELPER TOOLS (use these instead of manual exploration — saves time and tokens):
   bash /opt/ethos/tools/agent_helpers/find_route.sh <pattern>       — find API routes by keyword
@@ -1329,7 +1333,7 @@ WORKFLOW:
 3. Validate: bash /opt/ethos/tools/agent_helpers/check_syntax.sh <changed files>
 4. If backend changes: bash /opt/ethos/tools/agent_helpers/safe_restart.sh {tid} "<reason>"
 5. Commit: git add <files> && git commit -m "[{tid}] <description>"
-6. Push: sudo -u marcin git push
+6. Push: sudo -u ${ETHOS_USER} git push
 
 Be focused and efficient. Use the helper tools above instead of manual exploration."""
 
@@ -1490,7 +1494,7 @@ WORKFLOW:
 4. Validate: bash /opt/ethos/tools/agent_helpers/check_syntax.sh <changed files>
 5. If backend changes: bash /opt/ethos/tools/agent_helpers/safe_restart.sh {tid} "QA fix"
 6. Commit: git add <files> && git commit -m "[{tid}] fix: QA cycle {qa_cycle} — <description>"
-7. Push: sudo -u marcin git push
+7. Push: sudo -u ${ETHOS_USER} git push
 
 IMPORTANT: You have the diff and QA analysis above. Go directly to fixing the issues.
 Do NOT explore the codebase from scratch — start from the specific files mentioned in the QA feedback."""

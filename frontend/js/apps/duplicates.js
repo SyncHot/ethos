@@ -202,7 +202,7 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
                         <label class="fm-dup-label">Foldery do skanowania:</label>
                         <div class="fm-dup-folder-list" id="dup-folders"></div>
                         <div class="fm-dup-folder-add-row">
-                            <input type="text" class="fm-dup-path-input" id="dup-path-input" placeholder="${t('/home/marcin/Zdjęcia')}" value="">
+                            <input type="text" class="fm-dup-path-input" id="dup-path-input" placeholder="${t('/home/nasadmin/Zdjęcia')}" value="">
                             <button class="fm-dup-btn" id="dup-add-path" title="Dodaj folder"><i class="fas fa-plus"></i> Dodaj</button>
                         </div>
                         <div class="fm-dup-quick-paths">

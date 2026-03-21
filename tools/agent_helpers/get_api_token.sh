@@ -7,7 +7,7 @@ set -euo pipefail
 
 RESP=$(curl -sf -X POST http://localhost:9000/api/auth/login \
     -H 'Content-Type: application/json' \
-    -d '{"username":"marcin","password":"marcin"}' 2>/dev/null) || {
+    -d "{\"username\":\"${ETHOS_COPILOT_USER:-nasadmin}\",\"password\":\"${ETHOS_COPILOT_PASS:-ethos}\"}" 2>/dev/null) || {
     echo "ERROR: Could not get token — is ethos running?" >&2
     exit 1
 }

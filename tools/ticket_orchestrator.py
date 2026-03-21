@@ -25,7 +25,12 @@ COLUMN_FLOW = ["Backlog", "Do zrobienia", "W trakcie", "Review", "Gotowe"]
 # ─── Auth ───
 
 def login():
-    r = requests.post(f"{BASE}/auth/login", json={"username": "marcin", "password": "pluton2303"}, verify=False)
+    username = os.environ.get("ETHOS_COPILOT_USER")
+    password = os.environ.get("ETHOS_COPILOT_PASS")
+    if not username or not password:
+        print("❌ Missing ETHOS_COPILOT_USER or ETHOS_COPILOT_PASS env vars")
+        sys.exit(1)
+    r = requests.post(f"{BASE}/auth/login", json={"username": username, "password": password}, verify=False)
     r.raise_for_status()
     token = r.json().get("token", "")
     with open(TOKEN_FILE, "w") as f:

@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from host import host_run as _host_run_base, host_path, NATIVE_MODE, check_dep, ensure_dep, \
     get_data_disk as _get_data_disk
 from utils import docker_available as _docker_available_util, run_host, \
-    find_compose_projects as _find_compose_projects_util, register_pkg_routes
+    find_compose_projects as _find_compose_projects_util, register_pkg_routes, get_ethos_user
 
 # Import sandbox policy helper — used to apply resource limits to containers
 try:
@@ -28,7 +28,7 @@ except ImportError:
 docker_bp = Blueprint('docker_mgr', __name__, url_prefix='/api/docker')
 
 # Fallback defaults when no data disk is configured
-_DEFAULT_COMPOSE_ROOT = '/home/marcin/docker'
+_DEFAULT_COMPOSE_ROOT = f'/home/{get_ethos_user()}/docker'
 
 # Projects that cannot be stopped/deleted via the UI (self-protection)
 _PROTECTED_PROJECTS = {'nasos'}

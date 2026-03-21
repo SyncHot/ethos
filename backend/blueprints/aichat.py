@@ -1140,7 +1140,9 @@ def rag_index_internal():
         return jsonify({'error': 'Tylko localhost'}), 403
 
     body = request.get_json(silent=True) or {}
-    username = body.get('username', 'marcin').strip()
+    username = body.get('username', '').strip()
+    if not username:
+        return jsonify({'error': 'Username required'}), 400
     directory = body.get('directory', '').strip() or f'/home/{username}'
 
     # Non-admin sandbox: force to /home/<username>

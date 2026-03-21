@@ -5,7 +5,7 @@ Wants=network.target ethos.service
 
 [Service]
 Type=simple
-User=marcin
+User=nasadmin
 WorkingDirectory=/opt/ethos
 EnvironmentFile=/opt/ethos/ethos.env
 ExecStartPre=/bin/mkdir -p /opt/ethos/logs/copilot_tickets

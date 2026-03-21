@@ -17,7 +17,8 @@ echo "=== File Ownership ==="
 echo "Backend files owned by root — use 'sudo tee' for edits when EACCES occurs:"
 echo "  Example: echo 'content' | sudo tee /opt/ethos/backend/file.py > /dev/null"
 echo "  Or: sudo cp /tmp/file.py /opt/ethos/backend/file.py"
-echo "Git runs as marcin — use 'sudo -u marcin git push' for push"
+GIT_USER=$(stat -c '%U' .git 2>/dev/null || echo "nasadmin")
+echo "Git runs as $GIT_USER — use 'sudo -u $GIT_USER git push' for push"
 
 echo ""
 echo "=== Service Status ==="

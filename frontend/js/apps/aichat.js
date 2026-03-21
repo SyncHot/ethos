@@ -2023,7 +2023,7 @@ function _aicRenderSettings(root) {
                 '</div>' +
                 '<div class="aic-field">' +
                     '<label>' + t('Workspace (domyślna ścieżka dla przeglądarki plików)') + '</label>' +
-                    '<input type="text" id="aicWorkspace" value="' + _aicEsc(c.workspace || '') + '" placeholder="/home/marcin/projekt">' +
+                    '<input type="text" id="aicWorkspace" value="' + _aicEsc(c.workspace || '') + '" placeholder="/home/nasadmin/projekt">' +
                 '</div>' +
                 /* ── RAG section ── */
                 '<div class="aic-settings-section">' +

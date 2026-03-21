@@ -534,7 +534,7 @@ function renderBackupApp(body) {
                     <div class="bak-col-gap10">
                         <div>
                             <label class="bak-label12-block">Użytkownik SSH:</label>
-                            <input type="text" id="snap-addnas-user" placeholder="np. marcin" class="bak-textarea">
+                            <input type="text" id="snap-addnas-user" placeholder="np. nasadmin" class="bak-textarea">
                         </div>
                         <div>
                             <label class="bak-label12-block">Hasło:</label>

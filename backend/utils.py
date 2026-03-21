@@ -60,7 +60,7 @@ def safe_path(user_path, *, isolate_home=True, current_user=None, sudo_mode=Fals
     Parameters
     ----------
     user_path : str
-        The user-visible path (e.g. ``/home/marcin/docs``).
+        The user-visible path (e.g. ``/home/user/docs``).
     isolate_home : bool
         If True, blocks access to ``/home/<other_user>``.
     current_user : str | None
@@ -505,3 +505,28 @@ def systemd_notify_ready():
             sock.sendall(b'READY=1')
     except Exception:
         pass
+
+
+# ── Configuration helpers ───────────────────────────────────
+
+def get_ethos_config():
+    """Read /opt/ethos/install.conf and return as dict."""
+    config = {}
+    try:
+        # Try known locations
+        paths = ['/opt/ethos/install.conf', '../install.conf', 'install.conf']
+        path = next((p for p in paths if os.path.isfile(p)), None)
+        if path:
+            with open(path) as f:
+                for line in f:
+                    if '=' in line and not line.strip().startswith('#'):
+                        key, val = line.strip().split('=', 1)
+                        config[key] = val.strip('"').strip("'")
+    except Exception:
+        pass
+    return config
+
+
+def get_ethos_user():
+    """Get the primary EthOS username from env or install.conf."""
+    return os.environ.get('ETHOS_USER') or get_ethos_config().get('ETHOS_USER', 'nasadmin')

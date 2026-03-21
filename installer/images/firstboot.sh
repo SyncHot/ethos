@@ -99,6 +99,16 @@ if [[ -f "$MARKER" ]]; then
     exit 0
 fi
 
+# [DIST-SEC] Regenerate SSH host keys if missing (security fix)
+# Removed by builder to ensure unique keys per installation
+if ! ls /etc/ssh/ssh_host_* 1> /dev/null 2>&1; then
+    echo "[i] Regeneracja kluczy SSH..."
+    DEBIAN_FRONTEND=noninteractive dpkg-reconfigure openssh-server
+    # Ensure they serve immediately
+    systemctl restart ssh
+    echo "[✓] Klucze SSH wygenerowane"
+fi
+
 # ─── Detect mode ───
 # Pre-packaged: config in /opt/ethos/install.conf, backend already present
 # Installer:    config in /opt/ethos-installer/install.conf, needs copy

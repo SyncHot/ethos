@@ -203,7 +203,7 @@ def data_path(rel=''):
 
 def user_data_path(filename, username):
     """Get per-user data file path.
-    user_data_path('favorites.json', 'marcin') → /opt/ethos/data/favorites_marcin.json
+    user_data_path('favorites.json', 'nasadmin') → /opt/ethos/data/favorites_nasadmin.json
     Inserts '_<username>' before the file extension.
     """
     base, ext = os.path.splitext(filename)
