@@ -145,6 +145,8 @@ TRANSIENT_ERROR_MARKERS = [
     "transient api error",
     "transient error",
     "request failed due to a transient",
+    "no active shell sessions",
+    "invalid shell id",
 ]
 
 SERVER_ERROR_MARKERS = [
