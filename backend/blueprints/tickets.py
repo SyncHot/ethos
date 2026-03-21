@@ -8,6 +8,7 @@ import threading
 import random
 import shutil
 import sys
+from datetime import datetime
 from flask import Blueprint, jsonify, request, g, send_file
 from werkzeug.utils import secure_filename
 
@@ -16,8 +17,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 # Import database functions
 from blueprints.tickets_db import (
-    init_db, get_projects, get_projects_with_stats, get_project, create_project, 
-    update_project, delete_project, get_tickets, get_ticket, 
+    init_db, get_projects, get_projects_with_stats, get_project, create_project,
+    update_project, delete_project, get_tickets, get_ticket,
     create_ticket, update_ticket, delete_ticket
 )
 
@@ -141,12 +142,12 @@ def api_create_project():
         'created': now,
         'updated': now,
     }
-    
+
     # Mutual exclusivity logic
     enabled = [k for k in ('copilot_enabled', 'localai_enabled', 'freemodel_enabled') if project_data[k]]
     if len(enabled) > 1:
         # If multiple enabled, disable others (simple logic: keep the first one encountered or just reset)
-        # Replicating original logic: keep 1st found in enabled list? 
+        # Replicating original logic: keep 1st found in enabled list?
         # Original: if k != enabled[0]: project[k] = False
         pass # Already handled by only setting 1 if carefully sent, but tickets_db handles storage
         # Logic in tickets_db doesn't enforce this, so we should enforce in create
@@ -184,7 +185,7 @@ def api_update_project(project_id):
     if 'name' in body: updates['name'] = _strip(body['name'], MAX_TITLE)
     if 'description' in body: updates['description'] = _strip(body['description'], MAX_DESCRIPTION)
     if 'color' in body: updates['color'] = _strip(body['color'], 20)
-    
+
     if 'copilot_enabled' in body: updates['copilot_enabled'] = bool(body['copilot_enabled'])
     if 'localai_enabled' in body: updates['localai_enabled'] = bool(body['localai_enabled'])
     if 'freemodel_enabled' in body: updates['freemodel_enabled'] = bool(body['freemodel_enabled'])
@@ -205,7 +206,7 @@ def api_update_project(project_id):
     # We need to merge with existing state to check
     current_state = {k: project.get(k, False) for k in ['copilot_enabled', 'localai_enabled', 'freemodel_enabled']}
     current_state.update({k: v for k, v in updates.items() if k in current_state})
-    
+
     enabled = [k for k in current_state if current_state[k]]
     if len(enabled) > 1:
         # Priority: Copilot > LocalAI > Free
@@ -251,7 +252,7 @@ def api_create_ticket():
     title = _strip(body.get('title', ''), MAX_TITLE)
     if not title:
         return jsonify({'error': 'Title required'}), 400
-    
+
     column = body.get('column')
     if column not in project.get('columns', []):
         column = project.get('columns', [])[0] if project.get('columns') else 'Backlog'
@@ -274,14 +275,14 @@ def api_create_ticket():
         'created': now,
         'updated': now
     }
-    
+
     # Logic for order: find max order in column?
     # Original code: didn't seem to calc order explicitly in create_project example, but check list
-    # Let's just use 0 or time? 
+    # Let's just use 0 or time?
     # Original tickets.py: `data['tickets'].append(ticket)` -> usually creates at end of list?
     # But filtering by project -> list.
     # We can just let it be 0.
-    
+
     ticket = create_ticket(ticket_data)
     _emit('ticket_created', project_id, {'ticket': ticket})
     return jsonify({'ok': True, 'item': ticket}), 201
@@ -291,11 +292,11 @@ def api_get_ticket(ticket_id):
     ticket = get_ticket(ticket_id)
     if not ticket:
         return jsonify({'error': 'Ticket not found'}), 404
-    
+
     project = get_project(ticket['project_id'])
     if not _is_member(project):
         return jsonify({'error': 'Access denied'}), 403
-        
+
     return jsonify(ticket)
 
 @tickets_bp.route('/tickets/<ticket_id>', methods=['PUT'])
@@ -304,7 +305,7 @@ def api_update_ticket(ticket_id):
     ticket = get_ticket(ticket_id)
     if not ticket:
         return jsonify({'error': 'Ticket not found'}), 404
-        
+
     project = get_project(ticket['project_id'])
     if not _is_member(project):
         return jsonify({'error': 'Access denied'}), 403
@@ -326,18 +327,18 @@ def api_delete_ticket(ticket_id):
     ticket = get_ticket(ticket_id)
     if not ticket:
         return jsonify({'error': 'Ticket not found'}), 404
-        
+
     project = get_project(ticket['project_id'])
     if not _is_member(project):
         return jsonify({'error': 'Access denied'}), 403
-        
+
     delete_ticket(ticket_id)
-    
+
     # Also delete attachments
     tdir = os.path.join(ATTACHMENTS_DIR, ticket_id)
     if os.path.exists(tdir):
         shutil.rmtree(tdir)
-        
+
     _emit('ticket_deleted', ticket['project_id'], {'id': ticket_id})
     return jsonify({'ok': True})
 
@@ -347,7 +348,7 @@ def api_move_ticket(ticket_id):
     ticket = get_ticket(ticket_id)
     if not ticket:
         return jsonify({'error': 'Ticket not found'}), 404
-    
+
     project = get_project(ticket['project_id'])
     if not _is_member(project):
         return jsonify({'error': 'Access denied'}), 403
@@ -357,10 +358,10 @@ def api_move_ticket(ticket_id):
         col = body['column']
         if col in project.get('columns', []):
             updates['column'] = col
-    
+
     if 'order' in body:
         updates['order'] = int(body['order'])
-        
+
     updated_ticket = update_ticket(ticket_id, updates)
     _emit('ticket_updated', ticket['project_id'], {'ticket': updated_ticket})
     return jsonify({'ok': True, 'item': updated_ticket})
@@ -389,10 +390,10 @@ def add_comment(ticket_id):
         'text': text,
         'created': _now()
     }
-    
+
     comments = ticket.get('comments', [])
     comments.append(comment)
-    
+
     updated_ticket = update_ticket(ticket_id, {'comments': comments})
     _emit('ticket_updated', ticket['project_id'], {'ticket': updated_ticket})
     return jsonify(comment), 201
@@ -407,18 +408,18 @@ def delete_comment(ticket_id, comment_id):
         return jsonify({'error': 'Access denied'}), 403
 
     comments = ticket.get('comments', [])
-    # Only author or admin/owner can delete? 
+    # Only author or admin/owner can delete?
     # Original logic: "if c['id'] == comment_id" - assume check passes if found?
     # Actually need to check permission logic from original code.
     # Original code: if g.username != c['author'] and not _can_manage_project(project): error
-    
+
     target_comment = next((c for c in comments if c['id'] == comment_id), None)
     if not target_comment:
         return jsonify({'error': 'Comment not found'}), 404
-        
+
     if g.username != target_comment['author'] and not _can_manage_project(project):
         return jsonify({'error': 'Access denied'}), 403
-        
+
     comments = [c for c in comments if c['id'] != comment_id]
     updated_ticket = update_ticket(ticket_id, {'comments': comments})
     _emit('ticket_updated', ticket['project_id'], {'ticket': updated_ticket})
@@ -443,7 +444,7 @@ def add_label(ticket_id):
         labels.append(label)
         updated_ticket = update_ticket(ticket_id, {'labels': labels})
         _emit('ticket_updated', ticket['project_id'], {'ticket': updated_ticket})
-    
+
     return jsonify({'ok': True})
 
 @tickets_bp.route('/tickets/<ticket_id>/labels/<label>', methods=['DELETE'])
@@ -460,7 +461,7 @@ def remove_label(ticket_id, label):
         labels.remove(label)
         updated_ticket = update_ticket(ticket_id, {'labels': labels})
         _emit('ticket_updated', ticket['project_id'], {'ticket': updated_ticket})
-        
+
     return jsonify({'ok': True})
 
 # ---------------------------------------------------------------------------
@@ -474,25 +475,25 @@ def upload_attachment(ticket_id):
     file = request.files['file']
     if file.filename == '':
         return jsonify({'error': 'No selected file'}), 400
-    
+
     ticket = get_ticket(ticket_id)
     if not ticket:
         return jsonify({'error': 'Ticket not found'}), 404
     project = get_project(ticket['project_id'])
     if not _is_member(project):
         return jsonify({'error': 'Access denied'}), 403
-        
+
     tdir = os.path.join(ATTACHMENTS_DIR, ticket_id)
     os.makedirs(tdir, exist_ok=True)
-    
+
     filename = secure_filename(file.filename)
     base, ext = os.path.splitext(filename)
     if os.path.exists(os.path.join(tdir, filename)):
             filename = f"{base}_{int(time.time())}{ext}"
-            
+
     filepath = os.path.join(tdir, filename)
     file.save(filepath)
-    
+
     attachment = {
         'filename': filename,
         'size': os.path.getsize(filepath),
@@ -500,13 +501,13 @@ def upload_attachment(ticket_id):
         'created': time.time(),
         'uploader': g.username
     }
-    
+
     attachments = ticket.get('attachments', [])
     attachments.append(attachment)
-    
+
     updated_ticket = update_ticket(ticket_id, {'attachments': attachments})
     _emit('ticket_updated', ticket['project_id'], {'ticket': updated_ticket})
-    
+
     return jsonify({'attachment': attachment})
 
 @tickets_bp.route('/tickets/<ticket_id>/attachments/<filename>', methods=['GET'])
@@ -514,7 +515,7 @@ def get_attachment(ticket_id, filename):
     ticket = get_ticket(ticket_id)
     if not ticket:
             return jsonify({'error': 'Ticket not found'}), 404
-            
+
     project = get_project(ticket['project_id'])
     if not _is_member(project):
             return jsonify({'error': 'Access denied'}), 403
@@ -523,10 +524,10 @@ def get_attachment(ticket_id, filename):
     filepath = os.path.join(tdir, filename)
     if not os.path.abspath(filepath).startswith(os.path.abspath(tdir)):
             return jsonify({'error': 'Invalid path'}), 403
-            
+
     if not os.path.exists(filepath):
             return jsonify({'error': 'File not found'}), 404
-            
+
     return send_file(filepath)
 
 @tickets_bp.route('/tickets/<ticket_id>/attachments/<filename>', methods=['DELETE'])
@@ -534,24 +535,265 @@ def delete_attachment(ticket_id, filename):
     ticket = get_ticket(ticket_id)
     if not ticket:
             return jsonify({'error': 'Ticket not found'}), 404
-            
+
     project = get_project(ticket['project_id'])
     if not _is_member(project):
             return jsonify({'error': 'Access denied'}), 403
-            
+
     tdir = os.path.join(ATTACHMENTS_DIR, ticket_id)
     filepath = os.path.join(tdir, filename)
-    
+
     attachments = ticket.get('attachments', [])
     attachments = [a for a in attachments if a['filename'] != filename]
-    
+
     if os.path.exists(filepath):
         os.remove(filepath)
-        
+
     updated_ticket = update_ticket(ticket_id, {'attachments': attachments})
     _emit('ticket_updated', ticket['project_id'], {'ticket': updated_ticket})
-    
+
     return jsonify({'status': 'deleted'})
+
+# ---------------------------------------------------------------------------
+# Copilot Integration
+# ---------------------------------------------------------------------------
+
+PRIORITY_ORDER = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3}
+
+@tickets_bp.route('/copilot/queue', methods=['GET'])
+def copilot_queue():
+    """Returns actionable tickets from copilot-enabled projects."""
+    projects = get_projects()
+    queue = []
+    for project in projects:
+        agent_type = None
+        if project.get('copilot_enabled', False):
+            agent_type = 'copilot'
+        elif project.get('localai_enabled', False):
+            agent_type = 'localai'
+        elif project.get('freemodel_enabled', False):
+            agent_type = 'freemodel'
+        if not agent_type:
+            continue
+        if not _is_member(project):
+            continue
+
+        proj_tickets = get_tickets(project['id'])
+        for t in proj_tickets:
+            col = t.get('column', '')
+            if col in ('Do zrobienia', 'W trakcie', 'QA'):
+                comments = t.get('comments', [])
+                last_comment = None
+                if comments:
+                    lc = comments[-1]
+                    last_comment = {
+                        'author': lc.get('author', ''),
+                        'text': lc.get('text', ''),
+                        'created': lc.get('created', 0),
+                    }
+                # Extract type/complexity from labels if stored there
+                labels = t.get('labels', [])
+                t_type = t.get('type', 'task')
+                t_complexity = t.get('complexity', 'medium')
+                for lbl in labels:
+                    if isinstance(lbl, str) and lbl.startswith('complexity:'):
+                        t_complexity = lbl.split(':', 1)[1]
+                    elif isinstance(lbl, str) and lbl.startswith('type:'):
+                        t_type = lbl.split(':', 1)[1]
+                queue.append({
+                    'id': t['id'],
+                    'title': t['title'],
+                    'description': t.get('description', ''),
+                    'priority': t.get('priority', 'medium'),
+                    'type': t_type,
+                    'complexity': t_complexity,
+                    'column': col,
+                    'assignee': t.get('assignee', ''),
+                    'labels': labels,
+                    'project_id': project['id'],
+                    'project_name': project['name'],
+                    'agent': agent_type,
+                    'last_comment': last_comment,
+                })
+
+    queue.sort(key=lambda t: (
+        0 if t['column'] == 'Do zrobienia' else (1 if t['column'] == 'W trakcie' else 2),
+        PRIORITY_ORDER.get(t['priority'], 2),
+    ))
+
+    return jsonify({'queue': queue, 'total': len(queue)})
+
+
+# ---------------------------------------------------------------------------
+# AI Usage
+# ---------------------------------------------------------------------------
+
+_ai_usage_cache = {}
+
+def _parse_token_val(s):
+    """Parse token strings like '1.9m', '9.5k', '120' into integers."""
+    s = s.strip().lower().replace(',', '')
+    try:
+        if s.endswith('b'):
+            return int(float(s[:-1]) * 1e9)
+        if s.endswith('m'):
+            return int(float(s[:-1]) * 1e6)
+        if s.endswith('k'):
+            return int(float(s[:-1]) * 1e3)
+        return int(float(s))
+    except (ValueError, IndexError):
+        return 0
+
+def _empty_totals():
+    return {'premium_requests': 0, 'runs': 0, 'qa_runs': 0,
+            'session_time_s': 0, 'code_added': 0, 'code_removed': 0,
+            'tokens_in': 0, 'tokens_out': 0}
+
+def _parse_log_usage(filepath):
+    """Extract usage metrics from a single log file footer."""
+    result = _empty_totals()
+    result['model'] = None
+    is_qa = '_qa_' in os.path.basename(filepath)
+    result['is_qa'] = is_qa
+    try:
+        with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
+            lines = f.readlines()
+    except Exception:
+        return result
+
+    for line in lines[:5]:
+        if line.startswith('=== Model:'):
+            m = re.search(r'Model:\s*(\S+)', line)
+            if m:
+                result['model'] = m.group(1)
+        elif line.startswith('Model:'):
+            m = re.search(r'Model:\s*(\S+)', line)
+            if m:
+                result['model'] = m.group(1)
+
+    tail = lines[-30:] if len(lines) > 30 else lines
+    for line in tail:
+        line_s = line.strip()
+        m = re.match(r'Total usage est:\s*([\d.]+)\s*Premium', line_s, re.I)
+        if m:
+            result['premium_requests'] = float(m.group(1))
+            continue
+        m = re.match(r'Total session time:\s*(.*)', line_s)
+        if m:
+            ts = m.group(1).strip()
+            secs = 0
+            hm = re.search(r'(\d+)h', ts)
+            mm = re.search(r'(\d+)m', ts)
+            sm = re.search(r'(\d+)s', ts)
+            if hm: secs += int(hm.group(1)) * 3600
+            if mm: secs += int(mm.group(1)) * 60
+            if sm: secs += int(sm.group(1))
+            result['session_time_s'] = secs
+            continue
+        m = re.match(r'Total code changes:\s*\+(\d+)\s+-(\d+)', line_s)
+        if m:
+            result['code_added'] = int(m.group(1))
+            result['code_removed'] = int(m.group(2))
+            continue
+        m = re.match(r'^\s*(\S+)\s+([\d.]+[kmb]?)\s*in,\s*([\d.]+[kmb]?)\s*out', line_s, re.I)
+        if m:
+            result['tokens_in'] += _parse_token_val(m.group(2))
+            result['tokens_out'] += _parse_token_val(m.group(3))
+
+    return result
+
+
+@tickets_bp.route('/ai-usage/<project_id>', methods=['GET'])
+def ai_usage(project_id):
+    """Aggregate AI usage stats for a project."""
+    if not g.username:
+        return jsonify({'error': 'Unauthorized'}), 401
+    project = get_project(project_id)
+    if not project:
+        return jsonify({'error': 'Project not found'}), 404
+    if not _is_member(project):
+        return jsonify({'error': 'Access denied'}), 403
+
+    if not (project.get('copilot_enabled') or project.get('localai_enabled') or project.get('freemodel_enabled')):
+        return jsonify({'by_day': {}, 'by_model': {}, 'by_month': {}, 'totals': _empty_totals()})
+
+    cache_key = project_id
+    now = time.time()
+    cached = _ai_usage_cache.get(cache_key)
+    if cached and now - cached['ts'] < 60:
+        return jsonify(cached['data'])
+
+    ticket_ids = set()
+    for t in get_tickets(project_id):
+        ticket_ids.add(t['id'])
+
+    log_dirs = [COPILOT_LOG_DIR, LOCALAI_LOG_DIR,
+                os.path.join(COPILOT_LOG_DIR, 'archive'),
+                os.path.join(LOCALAI_LOG_DIR, 'archive')]
+
+    by_day = {}
+    by_model = {}
+    by_month = {}
+    totals = _empty_totals()
+
+    for log_dir in log_dirs:
+        if not os.path.isdir(log_dir):
+            continue
+        for fname in os.listdir(log_dir):
+            if not fname.endswith('.log') or '_prompt' in fname:
+                continue
+            m = re.match(r'(t_[a-f0-9]+)', fname)
+            if not m or m.group(1) not in ticket_ids:
+                continue
+
+            fpath = os.path.join(log_dir, fname)
+            usage = _parse_log_usage(fpath)
+            model = usage.get('model') or 'unknown'
+
+            ts_m = re.search(r'_(\d{10,})', fname)
+            if ts_m:
+                day_str = datetime.fromtimestamp(int(ts_m.group(1))).strftime('%Y-%m-%d')
+                month_str = day_str[:7]
+            else:
+                try:
+                    mt = os.path.getmtime(fpath)
+                    day_str = datetime.fromtimestamp(mt).strftime('%Y-%m-%d')
+                    month_str = day_str[:7]
+                except Exception:
+                    day_str = 'unknown'
+                    month_str = 'unknown'
+
+            for bucket_map, key in [(by_day, day_str), (by_model, model), (by_month, month_str)]:
+                if key not in bucket_map:
+                    bucket_map[key] = _empty_totals()
+                b = bucket_map[key]
+                b['premium_requests'] += usage['premium_requests']
+                b['runs'] += 1
+                if usage['is_qa']:
+                    b['qa_runs'] += 1
+                b['session_time_s'] += usage['session_time_s']
+                b['code_added'] += usage['code_added']
+                b['code_removed'] += usage['code_removed']
+                b['tokens_in'] += usage['tokens_in']
+                b['tokens_out'] += usage['tokens_out']
+
+            totals['premium_requests'] += usage['premium_requests']
+            totals['runs'] += 1
+            if usage['is_qa']:
+                totals['qa_runs'] += 1
+            totals['session_time_s'] += usage['session_time_s']
+            totals['code_added'] += usage['code_added']
+            totals['code_removed'] += usage['code_removed']
+            totals['tokens_in'] += usage['tokens_in']
+            totals['tokens_out'] += usage['tokens_out']
+
+    by_day = dict(sorted(by_day.items()))
+    by_month = dict(sorted(by_month.items()))
+
+    result = {'by_day': by_day, 'by_model': by_model, 'by_month': by_month, 'totals': totals}
+    _ai_usage_cache[cache_key] = {'ts': now, 'data': result}
+    return jsonify(result)
+
 
 # ---------------------------------------------------------------------------
 # AI & Watcher
@@ -774,7 +1016,7 @@ def preflight_check():
 def bug_hunt(project_id):
     if not g.username:
         return jsonify({'error': 'Unauthorized'}), 401
-    
+
     project = get_project(project_id)
     if not project:
         return jsonify({'error': 'Project not found'}), 404
@@ -786,12 +1028,12 @@ def bug_hunt(project_id):
         return jsonify({'error': 'No suitable packages found'}), 500
 
     target_app = random.choice(candidates)
-    
+
     # 1. Analyze Complexity
     deps_str = target_app.get('deps_label', '')
     deps = [d.strip() for d in deps_str.split(',') if d.strip() and 'brak' not in d.lower()]
     is_complex_auth = len(deps) > 1
-    
+
     # 2. Analyze Performance
     js_size_kb = 0
     try:
@@ -805,7 +1047,7 @@ def bug_hunt(project_id):
             'usb-flasher': 'flasher.js',
             'sharing': 'sharing.js',
         }
-        
+
         app_key = target_app.get('app_id', target_app['id'])
         candidates_filenames = [
             js_map.get(app_key),
@@ -814,7 +1056,7 @@ def bug_hunt(project_id):
             f"{app_key.replace('-', '')}.js",
             f"{app_key.replace('-', '_')}.js"
         ]
-        
+
         root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         for fname in candidates_filenames:
             if not fname:
@@ -830,7 +1072,7 @@ def bug_hunt(project_id):
     target_column = project['columns'][0] if project.get('columns') else 'Backlog'
     created_tickets = []
     now = _now()
-    
+
     # 3. Create Epic
     epic_id = _gen_id('t_')
     epic_title = f"[EPIC] Optymalizacja Pakietu Ethos: {target_app['name']}"
@@ -845,7 +1087,7 @@ def bug_hunt(project_id):
                  f"- Zależności: {len(deps)} ({', '.join(deps) if deps else 'brak'})\n"
                  f"- Rozmiar pakietu JS: {js_size_kb} KB\n"
                  f"- Złożoność Security: {'Wysoka (Smart Slicing aktywny)' if is_complex_auth else 'Standardowa'}")
-    
+
     epic_ticket = {
         'id': epic_id,
         'project_id': project_id,
@@ -864,7 +1106,7 @@ def bug_hunt(project_id):
     }
     # Note: 'type' and 'complexity' fields from original are not in DB schema but were stored in JSON
     # If they are important, we should add columns. Assuming they are less critical or can go in description/labels for now.
-    # Original logic had them in the dict. 
+    # Original logic had them in the dict.
     # Let's add them as labels or part of description if schema doesn't support.
     # Or just ignore if frontend doesn't strictly need them.
     # To be safe, I'll add them to description or ignore.
@@ -954,7 +1196,7 @@ def bug_hunt(project_id):
                   f"- Sprawdź zachowanie przy ograniczonym transferze (Throttling 3G).")
     if js_size_kb > 500:
         perf_details += f"⚠️ **ZAGROŻENIE:** Assety > 500KB mogą spowalniać ładowanie na słabych łączach.\n\n"
-    
+
     tasks.append({
         'title': f"🚀 [Perf] Optymalizacja assetów i czasu odpowiedzi API: {target_app['name']}",
         'desc': perf_details + perf_tasks,
@@ -982,7 +1224,7 @@ def bug_hunt(project_id):
         # Add 'type' label if missing
         t_ticket['labels'].append('type:task')
         created_tickets.append(create_ticket(t_ticket))
-        
+
     for t in created_tickets:
         _emit('ticket_created', project_id, {'ticket': t})
 

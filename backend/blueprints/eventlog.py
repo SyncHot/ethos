@@ -32,7 +32,7 @@ def init_eventlog(socketio_instance):
     global _socketio
     _socketio = socketio_instance
     os.makedirs(LOG_DIR, exist_ok=True)
-    
+
     conn = get_db()
     conn.execute('''
         CREATE TABLE IF NOT EXISTS events (
@@ -49,17 +49,17 @@ def init_eventlog(socketio_instance):
     conn.execute('CREATE INDEX IF NOT EXISTS idx_category ON events(category)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_level ON events(level)')
     conn.commit()
-    
+
     # Check if empty and migrate
     try:
         count = conn.execute('SELECT COUNT(*) FROM events').fetchone()[0]
     except:
         count = 0
     conn.close()
-    
+
     if count == 0 and os.path.isfile(JSON_LOG_FILE):
         _migrate_from_json()
-        
+
     _log_startup()
 
 def _migrate_from_json():
@@ -92,23 +92,23 @@ def _migrate_from_json():
 
 def _log_startup():
     startup_details = {'pid': os.getpid()}
-    
+
     conn = get_db()
     # Find last shutdown
     # Assuming 'system' 'warning' and 'zatrzymany' in message
     try:
         rows = conn.execute('''
-            SELECT ts, message FROM events 
-            WHERE category='system' AND level='warning' 
+            SELECT ts, message FROM events
+            WHERE category='system' AND level='warning'
             ORDER BY ts DESC LIMIT 100
         ''').fetchall()
-        
+
         shutdown_ts = 0
         for r in rows:
             if 'zatrzymany' in r['message']:
                 shutdown_ts = r['ts']
                 break
-                
+
         if shutdown_ts:
             elapsed = int(time.time() - shutdown_ts)
             h, rem = divmod(elapsed, 3600)
@@ -123,11 +123,11 @@ def _log_startup():
         # Check for restart trigger (last 5 mins)
         now_ts = time.time()
         rows = conn.execute('''
-            SELECT ts, message, details FROM events 
+            SELECT ts, message, details FROM events
             WHERE category='system' AND level='warning' AND ts > ?
             ORDER BY ts DESC
         ''', (now_ts - 300,)).fetchall()
-        
+
         for r in rows:
             if r['message'] == 'Restart ethos z ticket watchera':
                 details = json.loads(r['details']) if r['details'] else {}
@@ -140,15 +140,15 @@ def _log_startup():
         print(f"Startup log error: {e}")
     finally:
         conn.close()
-    
+
     log('system', 'info', 'EthOS uruchomiony', details=startup_details)
 
 def log(category, level, message, details=None):
     if level not in LEVELS: level = 'info'
-    
+
     ts = time.time()
     t_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    
+
     conn = get_db()
     try:
         conn.execute(
@@ -214,21 +214,21 @@ def eventlog_list():
 
     query = "SELECT * FROM events WHERE 1=1"
     params = []
-    
+
     if category:
         cats = category.split(',')
         query += " AND category IN ({})".format(','.join(['?']*len(cats)))
         params.extend(cats)
-        
+
     if level:
         lvls = level.split(',')
         query += " AND level IN ({})".format(','.join(['?']*len(lvls)))
         params.extend(lvls)
-        
+
     if search:
         query += " AND (lower(message) LIKE ? OR lower(details) LIKE ?)"
         params.extend([f'%{search}%', f'%{search}%'])
-        
+
     # Count total first
     conn = get_db()
     try:
@@ -238,12 +238,12 @@ def eventlog_list():
         else:
             count_query = f"SELECT COUNT(*) FROM ({query})"
             total = conn.execute(count_query, params).fetchone()[0]
-        
+
         query += " ORDER BY ts DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
-        
+
         rows = conn.execute(query, params).fetchall()
-        
+
         events = []
         for r in rows:
             d = dict(r)
@@ -275,12 +275,12 @@ def eventlog_stats():
         rows = conn.execute('SELECT category, COUNT(*) as c FROM events GROUP BY category').fetchall()
         for r in rows:
             by_category[r['category']] = r['c']
-            
+
         by_level = {}
         rows = conn.execute('SELECT level, COUNT(*) as c FROM events GROUP BY level').fetchall()
         for r in rows:
             by_level[r['level']] = r['c']
-            
+
         total = conn.execute('SELECT COUNT(*) FROM events').fetchone()[0]
     finally:
         conn.close()
