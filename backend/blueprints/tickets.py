@@ -358,6 +358,8 @@ def api_move_ticket(ticket_id):
         col = body['column']
         if col in project.get('columns', []):
             updates['column'] = col
+        else:
+            return jsonify({'error': f'Column not found: {col}'}), 400
 
     if 'order' in body:
         updates['order'] = int(body['order'])

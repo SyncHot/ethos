@@ -56,7 +56,7 @@ const LABEL_COLORS = [
     '#ec4899', '#06b6d4', '#f97316', '#14b8a6', '#6366f1',
 ];
 
-const DEFAULT_COLUMNS = ['Backlog', 'Do zrobienia', 'W trakcie', 'Review', 'Gotowe'];
+const DEFAULT_COLUMNS = ['Backlog', 'Do zrobienia', 'W trakcie', 'QA', 'Review', 'Gotowe'];
 
 function _tkTypeIcon(type) {
     const info = TICKET_TYPES[type] || TICKET_TYPES.task;
