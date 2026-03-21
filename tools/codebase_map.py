@@ -186,83 +186,115 @@ def scan_css():
         })
     return results
 
+# ── Agent-filtered maps ──────────────────────────────────────────────────
+# Maps agent type to which sections to include (True = include)
+_AGENT_SECTIONS = {
+    "FE/UX":    {"backend": False, "frontend": True, "css": True,  "docs": True, "data": False, "tools": False},
+    "Backend":  {"backend": True,  "frontend": False, "css": False, "docs": True, "data": True,  "tools": True},
+    "DevOps":   {"backend": True,  "frontend": False, "css": False, "docs": True, "data": True,  "tools": True},
+    "Security": {"backend": True,  "frontend": True,  "css": False, "docs": True, "data": False, "tools": True},
+    "Docs":     {"backend": False, "frontend": False, "css": False, "docs": True, "data": False, "tools": False},
+    "QA":       {"backend": True,  "frontend": True,  "css": False, "docs": True, "data": False, "tools": True},
+}
 
 # ── Format compact markdown ──────────────────────────────────────────────
 
-def format_markdown(backend, frontend, css):
+def format_markdown(backend, frontend, css, agent=None):
     out = []
     out.append("# EthOS Codebase Map")
     out.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')} | Root: /opt/ethos/")
+    if agent:
+        out.append(f"Filtered for: {agent} agent")
     out.append("Architecture: Flask backend + Vanilla JS frontend, no frameworks.\n")
 
+    sections = _AGENT_SECTIONS.get(agent, {}) if agent else {}
+
     # Backend
-    out.append("## Backend")
-    for item in backend:
-        f = item["file"]
-        L = item["lines"]
-        if "note" in item:
-            out.append(f"  {f} ({L}L) — {item['note']}")
-        elif "prefix" in item:
-            out.append(f"  {f} ({L}L) [{item['prefix']}] {item['routes']}R")
-        elif "functions" in item:
-            out.append(f"  {f} ({L}L) — {', '.join(item['functions'][:6])}")
+    if backend:
+        out.append("## Backend")
+        for item in backend:
+            f = item["file"]
+            L = item["lines"]
+            if "note" in item:
+                out.append(f"  {f} ({L}L) \u2014 {item['note']}")
+            elif "prefix" in item:
+                out.append(f"  {f} ({L}L) [{item['prefix']}] {item['routes']}R")
+            elif "functions" in item:
+                out.append(f"  {f} ({L}L) \u2014 {', '.join(item['functions'][:6])}")
 
     # Frontend
-    out.append("\n## Frontend JS")
-    for item in frontend:
-        f = item["file"]
-        L = item["lines"]
-        apps = item.get("apps", [])
-        fns = item.get("key_fns", [])
-        parts = []
-        if apps:
-            parts.append("Apps: " + ", ".join(apps))
-        if fns:
-            parts.append("Fns: " + ", ".join(fns[:8]))
-        detail = " | ".join(parts) if parts else ""
-        out.append(f"  {f} ({L}L)")
-        if detail:
-            out.append(f"    {detail}")
+    if frontend:
+        out.append("\n## Frontend JS")
+        for item in frontend:
+            f = item["file"]
+            L = item["lines"]
+            apps = item.get("apps", [])
+            fns = item.get("key_fns", [])
+            parts = []
+            if apps:
+                parts.append("Apps: " + ", ".join(apps))
+            if fns:
+                parts.append("Fns: " + ", ".join(fns[:8]))
+            detail = " | ".join(parts) if parts else ""
+            out.append(f"  {f} ({L}L)")
+            if detail:
+                out.append(f"    {detail}")
 
     # CSS
-    out.append("\n## CSS")
-    for item in css:
-        out.append(f"  {item['file']} ({item['lines']}L)")
-        if item.get("sections"):
-            out.append(f"    Sections: {', '.join(item['sections'][:15])}")
+    if css:
+        out.append("\n## CSS")
+        for item in css:
+            out.append(f"  {item['file']} ({item['lines']}L)")
+            if item.get("sections"):
+                out.append(f"    Sections: {', '.join(item['sections'][:15])}")
 
     # Docs
-    out.append("\n## Docs")
-    if os.path.isdir(os.path.join(ROOT, "docs")):
-        for fname in sorted(os.listdir(os.path.join(ROOT, "docs"))):
-            if fname.endswith(".md"):
-                fpath = os.path.join(ROOT, "docs", fname)
-                out.append(f"  docs/{fname} ({_count(fpath)}L)")
+    if not sections or sections.get("docs", True):
+        out.append("\n## Docs")
+        if os.path.isdir(os.path.join(ROOT, "docs")):
+            for fname in sorted(os.listdir(os.path.join(ROOT, "docs"))):
+                if fname.endswith(".md"):
+                    fpath = os.path.join(ROOT, "docs", fname)
+                    out.append(f"  docs/{fname} ({_count(fpath)}L)")
 
     # Data (>1KB only)
-    out.append("\n## Data (>1KB)")
-    if os.path.isdir(os.path.join(ROOT, "data")):
-        for fname in sorted(os.listdir(os.path.join(ROOT, "data"))):
-            fpath = os.path.join(ROOT, "data", fname)
-            if os.path.isfile(fpath):
-                sz = os.path.getsize(fpath)
-                if sz >= 1024:
-                    out.append(f"  data/{fname} ({round(sz/1024, 1)}KB)")
+    if not sections or sections.get("data", True):
+        out.append("\n## Data (>1KB)")
+        if os.path.isdir(os.path.join(ROOT, "data")):
+            for fname in sorted(os.listdir(os.path.join(ROOT, "data"))):
+                fpath = os.path.join(ROOT, "data", fname)
+                if os.path.isfile(fpath):
+                    sz = os.path.getsize(fpath)
+                    if sz >= 1024:
+                        out.append(f"  data/{fname} ({round(sz/1024, 1)}KB)")
 
     # Tools
-    out.append("\n## Tools")
-    if os.path.isdir(os.path.join(ROOT, "tools")):
-        for fname in sorted(os.listdir(os.path.join(ROOT, "tools"))):
-            fpath = os.path.join(ROOT, "tools", fname)
-            if os.path.isfile(fpath):
-                out.append(f"  tools/{fname} ({_count(fpath)}L)")
+    if not sections or sections.get("tools", True):
+        out.append("\n## Tools")
+        if os.path.isdir(os.path.join(ROOT, "tools")):
+            for fname in sorted(os.listdir(os.path.join(ROOT, "tools"))):
+                fpath = os.path.join(ROOT, "tools", fname)
+                if os.path.isfile(fpath):
+                    out.append(f"  tools/{fname} ({_count(fpath)}L)")
 
     return "\n".join(out)
 
 
-def generate():
-    """Generate and return the codebase map as markdown string."""
-    return format_markdown(scan_backend(), scan_frontend(), scan_css())
+def generate(agent=None):
+    """Generate codebase map, optionally filtered by agent type.
+    When agent is provided, only relevant sections are included (40-50% smaller)."""
+    backend = scan_backend()
+    frontend = scan_frontend()
+    css = scan_css()
+    if agent and agent in _AGENT_SECTIONS:
+        sections = _AGENT_SECTIONS[agent]
+        if not sections.get("backend"):
+            backend = []
+        if not sections.get("frontend"):
+            frontend = []
+        if not sections.get("css"):
+            css = []
+    return format_markdown(backend, frontend, css, agent=agent)
 
 
 def main():
