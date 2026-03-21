@@ -1264,7 +1264,8 @@ Type=simple
 WorkingDirectory=/opt/ethos
 EnvironmentFile=/opt/ethos/ethos.env
 ExecStartPre=/bin/mkdir -p /opt/ethos/data /opt/ethos/logs /opt/ethos/backups /opt/ethos/uploads
-ExecStart=/opt/ethos/venv/bin/python /opt/ethos/backend/app.py
+Environment=PYTHONPATH=/opt/ethos/backend
+ExecStart=/opt/ethos/venv/bin/gunicorn -k gevent -w 4 -b 0.0.0.0:80 app:app
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGTERM

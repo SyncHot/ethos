@@ -333,7 +333,8 @@ Wants=network.target
 Type=simple
 WorkingDirectory=${INSTALL_DIR}
 EnvironmentFile=${INSTALL_DIR}/ethos.env
-ExecStart=${INSTALL_DIR}/venv/bin/python ${INSTALL_DIR}/backend/app.py
+Environment=PYTHONPATH=${INSTALL_DIR}/backend
+ExecStart=${INSTALL_DIR}/venv/bin/gunicorn -k gevent -w 4 -b 0.0.0.0:80 app:app
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGTERM
