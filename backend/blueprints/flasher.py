@@ -448,9 +448,7 @@ def _flash_worker(host_image_path, target_disk, image_path, image_size, verify_a
         elif compressed == 'zstd':
             dd_cmd = f"sudo {_HELPER} write-image {_q(host_image_path)} /dev/{target_disk} 2>&1"
         else:
-            dd_cmd = (
-                f"dd if={_q(host_image_path)} of=/dev/{target_disk} bs={bs} oflag=direct conv=fsync 2>&1"
-            )
+            dd_cmd = f"sudo {_HELPER} write-image {_q(host_image_path)} /dev/{target_disk} 2>&1"
 
         start_time = time.time()
 
