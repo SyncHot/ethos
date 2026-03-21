@@ -251,7 +251,7 @@ def csrf_check():
         if request.cookies.get('nas_token'):
             auth_logger.warning(f'CSRF mismatch from {request.remote_addr}: cookie={cookie_token}, header={header_token}')
             return jsonify({'error': 'CSRF validation failed'}), 403
-        
+
         # If not authenticated, we still enforce CSRF for consistency, unless it's a public endpoint.
         # But most endpoints are protected. If we block here, we return 403.
         # If we let it pass, the auth check will fail (401).
@@ -265,7 +265,7 @@ def add_security_headers(response):
     # We can't easily modify existing Set-Cookie headers here without parsing,
     # so we rely on setting samesite='Strict' when creating cookies (login/verify).
     # However, we can add other security headers here.
-    
+
     # CSP from previous attempt (kept for security)
     csp_frame_ancestors = "frame-ancestors 'none';"
     x_frame_options = 'DENY'
@@ -296,7 +296,7 @@ def add_security_headers(response):
     response.headers['X-Frame-Options'] = x_frame_options
     response.headers['X-XSS-Protection'] = '1; mode=block'
     response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
-    
+
     return response
 
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024 * 1024  # 50 GB upload limit
@@ -811,10 +811,10 @@ def login():
     elog('system', 'info', f'Logowanie: {safe_user} (rola: {role})')
 
     pwd_change_required = _is_setup_done() and not os.path.exists(PASSWORD_CHANGED_MARKER)
-    
+
     # 1. Generate CSRF token
     csrf_token = secrets.token_hex(32)
-    
+
     resp = jsonify({
         'token': token, 'nas_name': NAS_NAME,
         'user': {'username': safe_user, 'role': role, 'groups': groups,
@@ -823,15 +823,15 @@ def login():
         'password_change_required': pwd_change_required,
         'csrf_token': csrf_token  # Expose to frontend for API helper
     })
-    
+
     # 5. Add SameSite=Strict to cookie policy
     resp.set_cookie('nas_token', token, max_age=7 * 24 * 3600,
                     httponly=True, samesite='Strict', secure=False) # secure=False for local dev/http
-                    
+
     # Set CSRF cookie (JS readable, Strict)
     resp.set_cookie('csrf_token', csrf_token, max_age=7 * 24 * 3600,
                     httponly=False, samesite='Strict', secure=False)
-                    
+
     return resp
 
 
@@ -842,10 +842,10 @@ def verify():
     if info and info['expires'] > datetime.now():
         home_path = _get_user_home(info['username'])
         pwd_change_required = _is_setup_done() and not os.path.exists(PASSWORD_CHANGED_MARKER)
-        
+
         # Ensure CSRF token is present/refreshed
         csrf_token = request.cookies.get('csrf_token') or secrets.token_hex(32)
-        
+
         resp = jsonify({
             'valid': True,
             'nas_name': NAS_NAME,
@@ -855,12 +855,12 @@ def verify():
             'password_change_required': pwd_change_required,
             'csrf_token': csrf_token
         })
-        
+
         # Refresh cookie if missing or just to be safe
         resp.set_cookie('csrf_token', csrf_token, max_age=7 * 24 * 3600,
                         httponly=False, samesite='Strict', secure=False)
         return resp
-        
+
     return jsonify({'valid': False}), 401
 
 

@@ -20,7 +20,7 @@ async function api(path, options = {}) {
     if (NAS.token) headers['Authorization'] = `Bearer ${NAS.token}`;
     // CSRF Protection
     if (NAS.csrfToken) headers['X-CSRFToken'] = NAS.csrfToken;
-    
+
     if (options.body && !(options.body instanceof FormData)) {
         headers['Content-Type'] = 'application/json';
         options.body = JSON.stringify(options.body);
@@ -39,7 +39,7 @@ async function api(path, options = {}) {
         // For other 403s, we might want to throw or return data.
         // Assuming other 403s are handled by caller or just return error json.
         // But if we consume json here, we need to return it.
-        return data; 
+        return data;
     }
     return resp.json();
 }
