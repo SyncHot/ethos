@@ -27,13 +27,13 @@ fi
 
 # 2. Disk Spindown (Rotational drives only)
 # 242 = 1 hour (values 1-240 are 5s steps, 241-251 are 30min steps)
-SPINDOWN_TIME=242 
+SPINDOWN_TIME=242
 
 echo "[Power] Configuring disk spindown..."
 for disk in /sys/block/sd*; do
     # Ensure glob matched
     [ -e "$disk" ] || continue
-    
+
     if [ -d "$disk" ]; then
         # Check if rotational (1 = rotational, 0 = ssd)
         ROTATIONAL=$(cat "$disk/queue/rotational" 2>/dev/null || echo "0")
