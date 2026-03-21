@@ -1,147 +1,174 @@
-"""
-EthOS — Event Log (Dziennik zdarzeń)
-Centralized event logging system for debugging and monitoring.
-Logs to file + exposes API for the frontend viewer app.
-
-Endpoints:
-  GET  /api/eventlog                   — list events (filterable)
-  POST /api/eventlog                   — log event externally (agents, ticket_watcher)
-  POST /api/eventlog/clear             — clear all events
-  GET  /api/eventlog/stats             — counts by category/level
-"""
-
+import sqlite3
 import os
 import json
 import time
 import threading
 from datetime import datetime
 from flask import Blueprint, request, jsonify
-from collections import deque
-
 import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from host import log_path
 
 eventlog_bp = Blueprint('eventlog', __name__)
 
 LOG_DIR = log_path()
-LOG_FILE = os.path.join(LOG_DIR, 'eventlog.jsonl')
-MAX_MEMORY_EVENTS = 1000
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB rotate
+DB_PATH = os.environ.get('EVENTLOG_DB_PATH', os.path.join(LOG_DIR, 'eventlog.db'))
+JSON_LOG_FILE = os.path.join(LOG_DIR, 'eventlog.jsonl')
 
-_lock = threading.Lock()
-_events = deque(maxlen=MAX_MEMORY_EVENTS)
 _socketio = None
-
 
 LEVELS = ('debug', 'info', 'warning', 'error')
 CATEGORIES = ('system', 'files', 'backup', 'docker', 'storage',
               'network', 'printer', 'security', 'error')
 
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    return conn
 
 def init_eventlog(socketio_instance):
     global _socketio
     _socketio = socketio_instance
     os.makedirs(LOG_DIR, exist_ok=True)
-    _load_recent()
-
-    startup_details = {'pid': os.getpid()}
-
-    # Find last shutdown event to calculate downtime
-    with _lock:
-        events_copy = list(_events)
-    for ev in reversed(events_copy):
-        if (ev.get('category') == 'system' and ev.get('level') == 'warning'
-                and 'zatrzymany' in ev.get('message', '')):
-            shutdown_ts = ev.get('ts', 0)
-            if shutdown_ts:
-                elapsed = int(time.time() - shutdown_ts)
-                h, rem = divmod(elapsed, 3600)
-                m, s = divmod(rem, 60)
-                if h:
-                    startup_details['downtime'] = f'{h}h {m}m {s}s'
-                elif m:
-                    startup_details['downtime'] = f'{m}m {s}s'
-                else:
-                    startup_details['downtime'] = f'{s}s'
-            break
-
-    # Check for restart trigger (e.g. from ticket watcher) in the last 5 minutes
-    now_ts = time.time()
-    for ev in reversed(events_copy):
-        if now_ts - ev.get('ts', 0) > 300:
-            break
-        if (ev.get('category') == 'system' and ev.get('level') == 'warning'
-                and ev.get('message') == 'Restart ethos z ticket watchera'):
-            details = ev.get('details') or {}
-            if 'reason' in details:
-                startup_details['reason'] = details['reason']
-            if 'ticket_id' in details:
-                startup_details['ticket_id'] = details['ticket_id']
-            break
-
-    log('system', 'info', 'EthOS uruchomiony', details=startup_details)
-
-
-def _load_recent():
-    if not os.path.isfile(LOG_FILE):
-        return
+    
+    conn = get_db()
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts REAL,
+            time TEXT,
+            category TEXT,
+            level TEXT,
+            message TEXT,
+            details TEXT
+        )
+    ''')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_ts ON events(ts)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_category ON events(category)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_level ON events(level)')
+    conn.commit()
+    
+    # Check if empty and migrate
     try:
-        lines = []
-        with open(LOG_FILE, 'r') as f:
+        count = conn.execute('SELECT COUNT(*) FROM events').fetchone()[0]
+    except:
+        count = 0
+    conn.close()
+    
+    if count == 0 and os.path.isfile(JSON_LOG_FILE):
+        _migrate_from_json()
+        
+    _log_startup()
+
+def _migrate_from_json():
+    print(f"Migrating eventlog from {JSON_LOG_FILE}...")
+    try:
+        conn = get_db()
+        with open(JSON_LOG_FILE, 'r') as f:
             for line in f:
                 line = line.strip()
-                if line:
-                    lines.append(line)
-        for line in lines[-MAX_MEMORY_EVENTS:]:
-            try:
-                _events.append(json.loads(line))
-            except json.JSONDecodeError:
-                pass
-    except Exception:
-        pass
+                if not line: continue
+                try:
+                    e = json.loads(line)
+                    conn.execute(
+                        'INSERT INTO events (ts, time, category, level, message, details) VALUES (?, ?, ?, ?, ?, ?)',
+                        (
+                            e.get('ts', time.time()),
+                            e.get('time', ''),
+                            e.get('category', 'system'),
+                            e.get('level', 'info'),
+                            e.get('message', ''),
+                            json.dumps(e.get('details')) if e.get('details') else None
+                        )
+                    )
+                except:
+                    pass
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Eventlog migration failed: {e}")
 
-
-def _rotate_if_needed():
+def _log_startup():
+    startup_details = {'pid': os.getpid()}
+    
+    conn = get_db()
+    # Find last shutdown
+    # Assuming 'system' 'warning' and 'zatrzymany' in message
     try:
-        if os.path.isfile(LOG_FILE) and os.path.getsize(LOG_FILE) > MAX_FILE_SIZE:
-            rotated = LOG_FILE + '.1'
-            if os.path.isfile(rotated):
-                os.remove(rotated)
-            os.rename(LOG_FILE, rotated)
-    except Exception:
-        pass
+        rows = conn.execute('''
+            SELECT ts, message FROM events 
+            WHERE category='system' AND level='warning' 
+            ORDER BY ts DESC LIMIT 100
+        ''').fetchall()
+        
+        shutdown_ts = 0
+        for r in rows:
+            if 'zatrzymany' in r['message']:
+                shutdown_ts = r['ts']
+                break
+                
+        if shutdown_ts:
+            elapsed = int(time.time() - shutdown_ts)
+            h, rem = divmod(elapsed, 3600)
+            m, s = divmod(rem, 60)
+            if h:
+                startup_details['downtime'] = f'{h}h {m}m {s}s'
+            elif m:
+                startup_details['downtime'] = f'{m}m {s}s'
+            else:
+                startup_details['downtime'] = f'{s}s'
 
+        # Check for restart trigger (last 5 mins)
+        now_ts = time.time()
+        rows = conn.execute('''
+            SELECT ts, message, details FROM events 
+            WHERE category='system' AND level='warning' AND ts > ?
+            ORDER BY ts DESC
+        ''', (now_ts - 300,)).fetchall()
+        
+        for r in rows:
+            if r['message'] == 'Restart ethos z ticket watchera':
+                details = json.loads(r['details']) if r['details'] else {}
+                if 'reason' in details:
+                    startup_details['reason'] = details['reason']
+                if 'ticket_id' in details:
+                    startup_details['ticket_id'] = details['ticket_id']
+                break
+    except Exception as e:
+        print(f"Startup log error: {e}")
+    finally:
+        conn.close()
+    
+    log('system', 'info', 'EthOS uruchomiony', details=startup_details)
 
 def log(category, level, message, details=None):
-    """
-    Log an event.
-    category: system|files|backup|docker|storage|network|printer|error
-    level: debug|info|warning|error
-    message: Human-readable description
-    details: Optional dict with extra data
-    """
-    if level not in LEVELS:
-        level = 'info'
+    if level not in LEVELS: level = 'info'
+    
+    ts = time.time()
+    t_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    conn = get_db()
+    try:
+        conn.execute(
+            'INSERT INTO events (ts, time, category, level, message, details) VALUES (?, ?, ?, ?, ?, ?)',
+            (ts, t_str, category, level, message, json.dumps(details) if details else None)
+        )
+        conn.commit()
+    except Exception:
+        pass
+    finally:
+        conn.close()
 
     event = {
-        'ts': time.time(),
-        'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'ts': ts,
+        'time': t_str,
         'category': category,
         'level': level,
         'message': message,
+        'details': details
     }
-    if details:
-        event['details'] = details
-
-    with _lock:
-        _events.append(event)
-        try:
-            _rotate_if_needed()
-            with open(LOG_FILE, 'a') as f:
-                f.write(json.dumps(event, ensure_ascii=False) + '\n')
-        except Exception:
-            pass
 
     if _socketio:
         try:
@@ -149,7 +176,6 @@ def log(category, level, message, details=None):
         except Exception:
             pass
 
-    # Trigger remote log on errors (throttled: max once per 5 min)
     if level == 'error':
         try:
             from blueprints.remote_log import send_report, _config, _last_send_ts
@@ -162,14 +188,8 @@ def log(category, level, message, details=None):
         except Exception:
             pass
 
-
-# ─── API ─────────────────────────────────────────────────────
-
 @eventlog_bp.route('/api/eventlog', methods=['POST'])
 def eventlog_create():
-    """POST /api/eventlog — log an event from external callers (e.g. ticket_watcher, agents)
-    Body: {"category": "system", "level": "warning", "message": "...", "detail": {...}}
-    """
     data = request.get_json(silent=True) or {}
     category = data.get('category', 'system')
     level = data.get('level', 'info')
@@ -178,72 +198,91 @@ def eventlog_create():
 
     if not message:
         return jsonify({'error': 'message is required'}), 400
-    if category not in CATEGORIES:
-        category = 'system'
-    if level not in LEVELS:
-        level = 'info'
+    if category not in CATEGORIES: category = 'system'
+    if level not in LEVELS: level = 'info'
 
     log(category, level, message, details=detail)
     return jsonify({'ok': True}), 201
 
-
 @eventlog_bp.route('/api/eventlog')
 def eventlog_list():
-    """GET /api/eventlog?limit=100&offset=0&category=files&level=error&search=text"""
     limit = min(int(request.args.get('limit', 100)), 1000)
     offset = int(request.args.get('offset', 0))
     category = request.args.get('category', '')
     level = request.args.get('level', '')
     search = request.args.get('search', '').lower()
 
-    with _lock:
-        all_events = list(_events)
-
+    query = "SELECT * FROM events WHERE 1=1"
+    params = []
+    
     if category:
-        cats = set(category.split(','))
-        all_events = [e for e in all_events if e.get('category') in cats]
+        cats = category.split(',')
+        query += " AND category IN ({})".format(','.join(['?']*len(cats)))
+        params.extend(cats)
+        
     if level:
-        lvls = set(level.split(','))
-        all_events = [e for e in all_events if e.get('level') in lvls]
+        lvls = level.split(',')
+        query += " AND level IN ({})".format(','.join(['?']*len(lvls)))
+        params.extend(lvls)
+        
     if search:
-        all_events = [e for e in all_events
-                      if search in e.get('message', '').lower()
-                      or search in json.dumps(e.get('details', {})).lower()]
+        query += " AND (lower(message) LIKE ? OR lower(details) LIKE ?)"
+        params.extend([f'%{search}%', f'%{search}%'])
+        
+    # Count total first
+    conn = get_db()
+    try:
+        # Use simple count for performance if no filters, else subquery
+        if not (category or level or search):
+            total = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+        else:
+            count_query = f"SELECT COUNT(*) FROM ({query})"
+            total = conn.execute(count_query, params).fetchone()[0]
+        
+        query += " ORDER BY ts DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        
+        rows = conn.execute(query, params).fetchall()
+        
+        events = []
+        for r in rows:
+            d = dict(r)
+            if d['details']:
+                try:
+                    d['details'] = json.loads(d['details'])
+                except:
+                    pass
+            events.append(d)
+    finally:
+        conn.close()
 
-    all_events.reverse()
-    total = len(all_events)
-    page = all_events[offset:offset + limit]
-
-    return jsonify({'events': page, 'total': total, 'limit': limit, 'offset': offset})
-
+    return jsonify({'events': events, 'total': total, 'limit': limit, 'offset': offset})
 
 @eventlog_bp.route('/api/eventlog/clear', methods=['POST'])
 def eventlog_clear():
-    with _lock:
-        _events.clear()
-        try:
-            if os.path.isfile(LOG_FILE):
-                os.remove(LOG_FILE)
-            rotated = LOG_FILE + '.1'
-            if os.path.isfile(rotated):
-                os.remove(rotated)
-        except Exception:
-            pass
+    conn = get_db()
+    conn.execute('DELETE FROM events')
+    conn.commit()
+    conn.close()
     log('system', 'info', 'Dziennik zdarzeń wyczyszczony')
     return jsonify({'ok': True})
 
-
 @eventlog_bp.route('/api/eventlog/stats')
 def eventlog_stats():
-    with _lock:
-        all_events = list(_events)
+    conn = get_db()
+    try:
+        by_category = {}
+        rows = conn.execute('SELECT category, COUNT(*) as c FROM events GROUP BY category').fetchall()
+        for r in rows:
+            by_category[r['category']] = r['c']
+            
+        by_level = {}
+        rows = conn.execute('SELECT level, COUNT(*) as c FROM events GROUP BY level').fetchall()
+        for r in rows:
+            by_level[r['level']] = r['c']
+            
+        total = conn.execute('SELECT COUNT(*) FROM events').fetchone()[0]
+    finally:
+        conn.close()
 
-    by_category = {}
-    by_level = {}
-    for e in all_events:
-        cat = e.get('category', 'unknown')
-        lvl = e.get('level', 'info')
-        by_category[cat] = by_category.get(cat, 0) + 1
-        by_level[lvl] = by_level.get(lvl, 0) + 1
-
-    return jsonify({'total': len(all_events), 'by_category': by_category, 'by_level': by_level})
+    return jsonify({'total': total, 'by_category': by_category, 'by_level': by_level})

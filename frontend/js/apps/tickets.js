@@ -200,7 +200,7 @@ async function renderTickets(body, launchOpts) {
 
     async function loadTickets(projectId) {
         try {
-            const data = await api('/tickets/projects/' + projectId + '/tickets');
+            const data = await api('/tickets/projects/' + projectId);
             tickets = data.tickets || [];
 
             // Build epic -> children mapping from labels like 'epic:<id>'
@@ -278,8 +278,8 @@ async function renderTickets(body, launchOpts) {
 
     async function createTicket(payload) {
         try {
-            const data = await api('/tickets/projects/' + currentProject.id + '/tickets', {
-                method: 'POST', body: payload,
+            const data = await api('/tickets/tickets', {
+                method: 'POST', body: Object.assign({project_id: currentProject.id}, payload),
             });
             if (data.error) throw new Error(data.error);
             toast(t('Ticket utworzony'), 'success');
