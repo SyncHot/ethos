@@ -17,6 +17,8 @@ from host import host_run as _host_run
 
 network_bp = Blueprint('network', __name__, url_prefix='/api/network')
 
+_HELPER = '/opt/ethos/tools/ethos-system-helper.sh'
+
 _DOCKER_PREFIXES = ('docker', 'br-', 'veth', 'lo', 'p2p-dev')
 
 
@@ -165,8 +167,8 @@ def iface_up(name):
     # For WiFi, enable radio via NetworkManager
     r2 = _host(f"test -d /sys/class/net/{shlex.quote(safe)}/wireless && echo wifi")
     if 'wifi' in (r2.stdout or ''):
-        _host("nmcli radio wifi on 2>&1")
-    r = _host(f"ip link set {shlex.quote(safe)} up 2>&1")
+        _host(f"sudo {_HELPER} nmcli radio wifi on 2>&1")
+    r = _host(f"sudo {_HELPER} ip-link {shlex.quote(safe)} up 2>&1")
     if r.returncode != 0:
         return jsonify({'error': r.stdout.strip() or r.stderr.strip()}), 400
     return jsonify({'success': True})
@@ -178,9 +180,9 @@ def iface_down(name):
     # For WiFi, disable radio via NetworkManager
     r2 = _host(f"test -d /sys/class/net/{shlex.quote(safe)}/wireless && echo wifi")
     if 'wifi' in (r2.stdout or ''):
-        _host("nmcli radio wifi off 2>&1")
+        _host(f"sudo {_HELPER} nmcli radio wifi off 2>&1")
         return jsonify({'success': True})
-    r = _host(f"ip link set {shlex.quote(safe)} down 2>&1")
+    r = _host(f"sudo {_HELPER} ip-link {shlex.quote(safe)} down 2>&1")
     if r.returncode != 0:
         return jsonify({'error': r.stdout.strip() or r.stderr.strip()}), 400
     return jsonify({'success': True})
@@ -220,10 +222,10 @@ def wifi_scan():
             return jsonify({'error': 'Brak interfejsu WiFi'}), 404
 
         # Bring up interface if down
-        _host(f"ip link set {shlex.quote(wifi_iface)} up 2>/dev/null")
+        _host(f"sudo {_HELPER} ip-link {shlex.quote(wifi_iface)} up 2>/dev/null")
 
         # Rescan
-        _host(f"nmcli device wifi rescan ifname {shlex.quote(wifi_iface)} 2>/dev/null")
+        _host(f"sudo {_HELPER} nmcli device wifi rescan ifname {shlex.quote(wifi_iface)} 2>/dev/null")
 
         import time
         time.sleep(3)
@@ -321,19 +323,19 @@ def wifi_connect():
 
     try:
         # Bring interface up
-        _host(f"ip link set {shlex.quote(wifi_iface)} up 2>/dev/null")
+        _host(f"sudo {_HELPER} ip-link {shlex.quote(wifi_iface)} up 2>/dev/null")
 
         # Try connecting
         if password:
             r = _host(
-                f"nmcli device wifi connect {shlex.quote(ssid)} "
+                f"sudo {_HELPER} nmcli device wifi connect {shlex.quote(ssid)} "
                 f"password {shlex.quote(password)} "
                 f"ifname {shlex.quote(wifi_iface)} 2>&1",
                 timeout=30
             )
         else:
             r = _host(
-                f"nmcli device wifi connect {shlex.quote(ssid)} "
+                f"sudo {_HELPER} nmcli device wifi connect {shlex.quote(ssid)} "
                 f"ifname {shlex.quote(wifi_iface)} 2>&1",
                 timeout=30
             )
@@ -364,7 +366,7 @@ def wifi_connect():
                 pass
             # Stop AP hotspot if it was running (WiFi connected → AP no longer needed)
             try:
-                _host("/usr/local/bin/ethos-ap stop 2>/dev/null || true", timeout=10)
+                _host(f"sudo {_HELPER} ap-control stop 2>/dev/null || true", timeout=10)
             except Exception:
                 pass
             return jsonify({
@@ -392,7 +394,7 @@ def wifi_disconnect():
     if not wifi_iface:
         return jsonify({'error': 'Brak interfejsu WiFi'}), 404
     try:
-        r = _host(f"nmcli device disconnect {shlex.quote(wifi_iface)} 2>&1")
+        r = _host(f"sudo {_HELPER} nmcli device disconnect {shlex.quote(wifi_iface)} 2>&1")
         return jsonify({'success': True, 'message': (r.stdout or '').strip()})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -406,7 +408,7 @@ def wifi_forget():
     if not name:
         return jsonify({'error': 'Podaj nazwę połączenia'}), 400
     try:
-        r = _host(f"nmcli connection delete {shlex.quote(name)} 2>&1")
+        r = _host(f"sudo {_HELPER} nmcli connection delete {shlex.quote(name)} 2>&1")
         if r.returncode == 0:
             return jsonify({'success': True})
         return jsonify({'error': (r.stdout or r.stderr or '').strip()}), 400
@@ -507,7 +509,7 @@ def ap_start():
     """Start the WiFi hotspot."""
     try:
         script = _ap_script()
-        r = _host(f"bash {script} start 2>&1", timeout=30)
+        r = _host(f"sudo {_HELPER} ap-control start 2>&1", timeout=30)
         output = (r.stdout or '').strip()
         if r.returncode == 0:
             return jsonify({'success': True, 'message': output})
@@ -521,7 +523,7 @@ def ap_stop():
     """Stop the WiFi hotspot and reconnect to normal WiFi."""
     try:
         script = _ap_script()
-        r = _host(f"bash {script} stop 2>&1", timeout=30)
+        r = _host(f"sudo {_HELPER} ap-control stop 2>&1", timeout=30)
         output = (r.stdout or '').strip()
         return jsonify({'success': True, 'message': output})
     except Exception as e:

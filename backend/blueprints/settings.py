@@ -1430,12 +1430,12 @@ def fail2ban_status():
     status = {}
 
     # Check if fail2ban is running
-    r = _host_run('sudo systemctl is-active fail2ban')
+    r = _host_run('sudo /opt/ethos/tools/ethos-system-helper.sh systemctl is-active fail2ban')
     if r.returncode != 0:
         return jsonify({'running': False, 'jails': {}})
 
     # Get list of jails
-    r = _host_run('sudo fail2ban-client status')
+    r = _host_run('sudo /opt/ethos/tools/ethos-system-helper.sh fail2ban-client status')
     if r.returncode != 0:
         return jsonify({'running': False, 'error': 'Failed to query fail2ban-client', 'jails': {}})
 
@@ -1444,7 +1444,7 @@ def fail2ban_status():
     if jail_list_match:
         jail_names = [j.strip() for j in jail_list_match.group(1).split(',') if j.strip()]
         for jail in jail_names:
-             r2 = _host_run(f'sudo fail2ban-client status {jail}')
+             r2 = _host_run(f'sudo /opt/ethos/tools/ethos-system-helper.sh fail2ban-client status {jail}')
              # Parse banned IPs
              # "Banned IP list: 1.2.3.4 5.6.7.8"
              banned_match = re.search(r'Banned IP list:\s+(.*)', r2.stdout)
@@ -1469,7 +1469,7 @@ def fail2ban_unban():
     safe_jail = shlex.quote(jail)
     safe_ip = shlex.quote(ip)
 
-    r = _host_run(f'sudo fail2ban-client set {safe_jail} unbanip {safe_ip}')
+    r = _host_run(f'sudo /opt/ethos/tools/ethos-system-helper.sh fail2ban-client set {safe_jail} unbanip {safe_ip}')
     if r.returncode == 0:
         return jsonify({'success': True})
     else:

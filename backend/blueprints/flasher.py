@@ -10,6 +10,7 @@ import re
 import signal
 import subprocess
 import threading
+_HELPER = '/opt/ethos/tools/ethos-system-helper.sh'
 import time
 from flask import Blueprint, jsonify, request, Response, stream_with_context
 
@@ -166,7 +167,7 @@ def flash_status():
 def list_usb_drives():
     """List removable USB drives (whole disks, not partitions)."""
     r = _host_run(
-        "lsblk -J -o NAME,SIZE,TYPE,TRAN,HOTPLUG,MODEL,LABEL,MOUNTPOINT,RM 2>/dev/null"
+        "sudo /opt/ethos/tools/ethos-system-helper.sh lsblk -J -o NAME,SIZE,TYPE,TRAN,HOTPLUG,MODEL,LABEL,MOUNTPOINT,RM 2>/dev/null"
     )
     if r.returncode != 0:
         return jsonify({'error': 'Nie można odczytać listy dysków'}), 500
@@ -187,7 +188,7 @@ def list_usb_drives():
             continue
 
         # Check size in bytes for display
-        size_r = _host_run(f"blockdev --getsize64 /dev/{dev['name']} 2>/dev/null", timeout=5)
+        size_r = _host_run(f"sudo /opt/ethos/tools/ethos-system-helper.sh blockdev --getsize64 /dev/{dev['name']} 2>/dev/null", timeout=5)
         size_bytes = int(size_r.stdout.strip()) if size_r.returncode == 0 and size_r.stdout.strip().isdigit() else 0
 
         # Gather partition info
@@ -360,7 +361,7 @@ def flash_drive():
     image_size = os.path.getsize(image_path)
 
     # Verify target is a USB disk
-    r = _host_run(f"lsblk -ndo TRAN,HOTPLUG,TYPE /dev/{target_disk} 2>/dev/null")
+    r = _host_run(f"sudo /opt/ethos/tools/ethos-system-helper.sh lsblk -ndo TRAN,HOTPLUG,TYPE /dev/{target_disk} 2>/dev/null")
     if r.returncode != 0:
         return jsonify({'error': f'/dev/{target_disk} nie istnieje'}), 404
 
@@ -375,7 +376,7 @@ def flash_drive():
         return jsonify({'error': 'To nie jest urządzenie USB — odmowa zapisu'}), 400
 
     # Protect system disk
-    mount_check = _host_run(f"lsblk -nlo MOUNTPOINT /dev/{target_disk} 2>/dev/null")
+    mount_check = _host_run(f"sudo /opt/ethos/tools/ethos-system-helper.sh lsblk -nlo MOUNTPOINT /dev/{target_disk} 2>/dev/null")
     if mount_check.returncode == 0:
         mounts = [m.strip() for m in mount_check.stdout.strip().splitlines() if m.strip()]
         for mp in mounts:
@@ -383,7 +384,7 @@ def flash_drive():
                 return jsonify({'error': f'Dysk zawiera partycję systemową ({mp}) — odmowa zapisu!'}), 400
 
     # Check disk size
-    size_r = _host_run(f"blockdev --getsize64 /dev/{target_disk} 2>/dev/null")
+    size_r = _host_run(f"sudo /opt/ethos/tools/ethos-system-helper.sh blockdev --getsize64 /dev/{target_disk} 2>/dev/null")
     disk_size = int(size_r.stdout.strip()) if size_r.returncode == 0 and size_r.stdout.strip().isdigit() else 0
 
     if disk_size > 0 and image_size > disk_size:
@@ -424,14 +425,14 @@ def _flash_worker(host_image_path, target_disk, image_path, image_size, verify_a
         _update_flash(percent=0, message=msg, log_line=msg)
 
         umount_r = _host_run(
-            f"lsblk -nlo NAME,MOUNTPOINT /dev/{target_disk} 2>/dev/null"
+            f"sudo /opt/ethos/tools/ethos-system-helper.sh lsblk -nlo NAME,MOUNTPOINT /dev/{target_disk} 2>/dev/null"
         )
         if umount_r.returncode == 0:
             for line in umount_r.stdout.strip().splitlines():
                 cols = line.split(None, 1)
                 if len(cols) >= 2 and cols[1].strip():
                     mp = cols[1].strip()
-                    _host_run(f"umount {_q(mp)} 2>/dev/null")
+                    _host_run(f"sudo /opt/ethos/tools/ethos-system-helper.sh umount {_q(mp)} 2>/dev/null")
                     _update_flash(log_line=f'Odmontowano {mp}')
 
         # Step 2: Write image with dd (no status=progress — we track via /proc)
@@ -441,11 +442,11 @@ def _flash_worker(host_image_path, target_disk, image_path, image_size, verify_a
         bs = '4M'
         # Use oflag=direct to bypass OS page cache — writes go straight to device
         if compressed == 'gzip':
-            dd_cmd = f"gunzip -c {_q(host_image_path)} | dd of=/dev/{target_disk} bs={bs} oflag=direct conv=fsync 2>&1"
+            dd_cmd = f"sudo {_HELPER} write-image {_q(host_image_path)} /dev/{target_disk} 2>&1"
         elif compressed == 'xz':
-            dd_cmd = f"xz -dc {_q(host_image_path)} | dd of=/dev/{target_disk} bs={bs} oflag=direct conv=fsync 2>&1"
+            dd_cmd = f"sudo {_HELPER} write-image {_q(host_image_path)} /dev/{target_disk} 2>&1"
         elif compressed == 'zstd':
-            dd_cmd = f"zstd -dc {_q(host_image_path)} | dd of=/dev/{target_disk} bs={bs} oflag=direct conv=fsync 2>&1"
+            dd_cmd = f"sudo {_HELPER} write-image {_q(host_image_path)} /dev/{target_disk} 2>&1"
         else:
             dd_cmd = (
                 f"dd if={_q(host_image_path)} of=/dev/{target_disk} bs={bs} oflag=direct conv=fsync 2>&1"
@@ -494,11 +495,11 @@ def _flash_worker(host_image_path, target_disk, image_path, image_size, verify_a
             _update_flash(percent=95, message='Synchronizacja...', log_line='Synchronizacja...')
             _host_run('sync', timeout=60)
             # Flush device write cache (critical for USB card readers)
-            _host_run(f'blockdev --flushbufs /dev/{target_disk} 2>/dev/null', timeout=30)
+            _host_run(f'sudo /opt/ethos/tools/ethos-system-helper.sh blockdev --flushbufs /dev/{target_disk} 2>/dev/null', timeout=30)
             _host_run(f'hdparm -F /dev/{target_disk} 2>/dev/null', timeout=10)
 
             # Re-unmount: automounters (devmon/udisks) may have mounted partitions after dd
-            _host_run(f"for mp in $(lsblk -nlo MOUNTPOINT /dev/{target_disk} 2>/dev/null | grep .); do umount \"$mp\" 2>/dev/null; done", timeout=15)
+            _host_run(f"for mp in $(sudo /opt/ethos/tools/ethos-system-helper.sh lsblk -nlo MOUNTPOINT /dev/{target_disk} 2>/dev/null | grep .); do sudo /opt/ethos/tools/ethos-system-helper.sh umount \"$mp\" 2>/dev/null; done", timeout=15)
 
             # Step 3: Optional data verification (BEFORE partprobe which may alter GPT)
             if verify_after and not compressed:
@@ -712,7 +713,7 @@ def format_drive():
         return jsonify({'error': 'Nieobsługiwany system plików'}), 400
 
     # Verify USB
-    r = _host_run(f"lsblk -ndo TRAN,HOTPLUG,TYPE /dev/{disk} 2>/dev/null")
+    r = _host_run(f"sudo /opt/ethos/tools/ethos-system-helper.sh lsblk -ndo TRAN,HOTPLUG,TYPE /dev/{disk} 2>/dev/null")
     if r.returncode != 0:
         return jsonify({'error': f'/dev/{disk} nie istnieje'}), 404
     parts = r.stdout.strip().split()
@@ -722,7 +723,7 @@ def format_drive():
         return jsonify({'error': 'To nie jest urządzenie USB'}), 400
 
     # System disk protection
-    mount_check = _host_run(f"lsblk -nlo MOUNTPOINT /dev/{disk} 2>/dev/null")
+    mount_check = _host_run(f"sudo /opt/ethos/tools/ethos-system-helper.sh lsblk -nlo MOUNTPOINT /dev/{disk} 2>/dev/null")
     if mount_check.returncode == 0:
         mounts = [m.strip() for m in mount_check.stdout.strip().splitlines() if m.strip()]
         for mp in mounts:
@@ -730,12 +731,12 @@ def format_drive():
                 return jsonify({'error': f'Dysk zawiera partycję systemową ({mp})!'}), 400
 
     # Unmount all partitions
-    umount_r = _host_run(f"lsblk -nlo NAME,MOUNTPOINT /dev/{disk} 2>/dev/null")
+    umount_r = _host_run(f"sudo /opt/ethos/tools/ethos-system-helper.sh lsblk -nlo NAME,MOUNTPOINT /dev/{disk} 2>/dev/null")
     if umount_r.returncode == 0:
         for line in umount_r.stdout.strip().splitlines():
             cols = line.split(None, 1)
             if len(cols) >= 2 and cols[1].strip():
-                _host_run(f"umount {_q(cols[1].strip())} 2>/dev/null")
+                _host_run(f"sudo /opt/ethos/tools/ethos-system-helper.sh umount {_q(cols[1].strip())} 2>/dev/null")
 
     # Wipe and create new partition table + single partition
     part_name = f"{disk}1"
@@ -746,7 +747,7 @@ def format_drive():
         f"partprobe /dev/{disk} 2>&1",
         "sleep 2",
         # Re-unmount: automounters may have mounted the new partition
-        f"for mp in $(lsblk -nlo MOUNTPOINT /dev/{disk} 2>/dev/null | grep .); do umount \"$mp\" 2>/dev/null; done",
+        f"for mp in $(sudo /opt/ethos/tools/ethos-system-helper.sh lsblk -nlo MOUNTPOINT /dev/{disk} 2>/dev/null | grep .); do sudo /opt/ethos/tools/ethos-system-helper.sh umount \"$mp\" 2>/dev/null; done",
         "sleep 1",
     ]
     if fs_type == 'fat32':
@@ -780,17 +781,17 @@ def format_drive():
             f"exec 2>&1; "
             # Stop automounter to prevent race conditions
             f"systemctl stop devmon@devmon.service 2>/dev/null || true; "
-            f"umount /dev/{disk}?* 2>/dev/null || true; "
-            f"umount -l /dev/{disk}?* 2>/dev/null || true; "
+            f"sudo /opt/ethos/tools/ethos-system-helper.sh umount /dev/{disk}?* 2>/dev/null || true; "
+            f"sudo /opt/ethos/tools/ethos-system-helper.sh umount -l /dev/{disk}?* 2>/dev/null || true; "
             f"sleep 1; "
             # Wipe filesystem signatures
             f"for p in /dev/{disk}[0-9]*; do wipefs -af \"$p\" 2>/dev/null; done; "
             f"wipefs -af /dev/{disk} 2>/dev/null; "
             # Zero first and last 10MB with O_DIRECT+O_SYNC
             f"dd if=/dev/zero of=/dev/{disk} bs=1M count=10 oflag=direct,sync 2>&1; "
-            f"SZ=$(blockdev --getsize64 /dev/{disk} 2>/dev/null); "
+            f"SZ=$(sudo /opt/ethos/tools/ethos-system-helper.sh blockdev --getsize64 /dev/{disk} 2>/dev/null); "
             f"dd if=/dev/zero of=/dev/{disk} bs=1M seek=$(( $SZ / 1048576 - 10 )) count=10 oflag=direct,sync 2>&1; "
-            f"sync; blockdev --flushbufs /dev/{disk} 2>/dev/null || true; "
+            f"sync; sudo /opt/ethos/tools/ethos-system-helper.sh blockdev --flushbufs /dev/{disk} 2>/dev/null || true; "
             # Drop all caches, verify write reached physical media
             f"echo 3 > /proc/sys/vm/drop_caches; "
             f"FIRST=$(dd if=/dev/{disk} bs=512 count=1 iflag=direct 2>/dev/null | od -A n -t x1 -N 4 | tr -d ' \\n'); "
@@ -800,7 +801,7 @@ def format_drive():
             f"echo \"ioerr:$IOERR\"; "
             # Remove partitions from kernel
             f"partx -d /dev/{disk} 2>/dev/null || true; "
-            f"blockdev --rereadpt /dev/{disk} 2>/dev/null || true; "
+            f"sudo /opt/ethos/tools/ethos-system-helper.sh blockdev --rereadpt /dev/{disk} 2>/dev/null || true; "
             # Restart automounter
             f"systemctl start devmon@devmon.service 2>/dev/null || true; "
             f"echo WIPE_DONE"

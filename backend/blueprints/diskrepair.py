@@ -10,6 +10,7 @@ import re
 import signal
 import subprocess
 import threading
+_HELPER = '/opt/ethos/tools/ethos-system-helper.sh'
 import time
 
 from flask import Blueprint, jsonify, request
@@ -127,7 +128,7 @@ def _dev_exists(name):
 
 
 def _parse_size_bytes(name):
-    r = host_run(f"blockdev --getsize64 /dev/{name} 2>/dev/null", timeout=5)
+    r = host_run(f"sudo /opt/ethos/tools/ethos-system-helper.sh blockdev --getsize64 /dev/{name} 2>/dev/null", timeout=5)
     if r.returncode == 0 and r.stdout.strip().isdigit():
         return int(r.stdout.strip())
     return 0
@@ -143,7 +144,7 @@ def _ensure_smartctl():
 
 
 def _get_mountpoint(partition):
-    r = host_run(f"lsblk -nlo MOUNTPOINT /dev/{partition} 2>/dev/null", timeout=5)
+    r = host_run(f"sudo /opt/ethos/tools/ethos-system-helper.sh lsblk -nlo MOUNTPOINT /dev/{partition} 2>/dev/null", timeout=5)
     if r.returncode == 0:
         mp = r.stdout.strip().splitlines()
         return mp[0].strip() if mp and mp[0].strip() else None
@@ -163,7 +164,7 @@ def _try_smartctl(disk_name, timeout=15):
     Returns parsed dict or None.
     """
     for extra in ('', '-d sat'):
-        cmd = f"smartctl -j -a {extra} /dev/{disk_name} 2>/dev/null".strip()
+        cmd = f"sudo /opt/ethos/tools/ethos-system-helper.sh smartctl -j -a {extra} /dev/{disk_name} 2>/dev/null".strip()
         sr = host_run(cmd, timeout=timeout)
         if sr.stdout and sr.stdout.strip():
             try:
@@ -194,7 +195,7 @@ def _try_smartctl(disk_name, timeout=15):
 @diskrepair_bp.route('/disks')
 def list_disks():
     r = host_run(
-        "lsblk -J -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL,SERIAL,TRAN,ROTA,RO,STATE,HCTL 2>/dev/null"
+        "sudo /opt/ethos/tools/ethos-system-helper.sh lsblk -J -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL,SERIAL,TRAN,ROTA,RO,STATE,HCTL 2>/dev/null"
     )
     if r.returncode != 0:
         return jsonify({'error': 'Cannot read disk list'}), 500
@@ -331,7 +332,7 @@ def smart_detail(disk):
 
     # Error log from text output
     error_log = []
-    er = host_run(f"smartctl -l error /dev/{disk} 2>/dev/null", timeout=15)
+    er = host_run(f"sudo /opt/ethos/tools/ethos-system-helper.sh smartctl -l error /dev/{disk} 2>/dev/null", timeout=15)
     if er.returncode == 0 and er.stdout:
         error_log = [line for line in er.stdout.strip().splitlines() if line.strip()]
 
@@ -376,17 +377,17 @@ def run_fsck():
         if is_system:
             return jsonify({'error': f'Cannot repair system partition {partition} (mounted at {mountpoint}). Unmount first.'}), 400
         # Auto-unmount for repair
-        ur = host_run(f"umount /dev/{partition} 2>&1", timeout=15)
+        ur = host_run(f"sudo /opt/ethos/tools/ethos-system-helper.sh umount /dev/{partition} 2>&1", timeout=15)
         if ur.returncode != 0:
             return jsonify({'error': f'Cannot unmount /dev/{partition}: {ur.stdout.strip()}'}), 400
         mountpoint = None
 
     if repair:
-        cmd = f"fsck -y /dev/{partition} 2>&1"
+        cmd = f"sudo /opt/ethos/tools/ethos-system-helper.sh fsck /dev/{partition} 2>&1"
     elif mountpoint:
-        cmd = f"fsck -n /dev/{partition} 2>&1"
+        cmd = f"sudo /opt/ethos/tools/ethos-system-helper.sh fsck-check /dev/{partition} 2>&1"
     else:
-        cmd = f"fsck -n /dev/{partition} 2>&1"
+        cmd = f"sudo /opt/ethos/tools/ethos-system-helper.sh fsck-check /dev/{partition} 2>&1"
 
     _update_state(
         status='running', operation='fsck', disk='', partition=partition,
@@ -584,7 +585,7 @@ def start_smart_test():
 
     _ensure_smartctl()
 
-    r = host_run(f"smartctl -t {test_type} /dev/{disk} 2>&1", timeout=15)
+    r = host_run(f"sudo /opt/ethos/tools/ethos-system-helper.sh smartctl -t {test_type} /dev/{disk} 2>&1", timeout=15)
     output = r.stdout.strip() if r.stdout else ''
 
     # Parse estimated completion time
@@ -698,7 +699,7 @@ def unmount_partition():
     if mp in _SYSTEM_MOUNTS:
         return jsonify({'error': f'Cannot unmount system partition ({mp})'}), 400
 
-    r = host_run(f"umount /dev/{partition} 2>&1", timeout=15)
+    r = host_run(f"sudo /opt/ethos/tools/ethos-system-helper.sh umount /dev/{partition} 2>&1", timeout=15)
     if r.returncode == 0:
         return jsonify({'ok': True, 'message': f'Unmounted /dev/{partition} from {mp}'})
 
@@ -717,7 +718,7 @@ def filesystem_info(partition):
         return jsonify({'error': f'/dev/{partition} not found'}), 404
 
     # Detect filesystem type
-    r = host_run(f"lsblk -nlo FSTYPE /dev/{partition} 2>/dev/null", timeout=5)
+    r = host_run(f"sudo /opt/ethos/tools/ethos-system-helper.sh lsblk -nlo FSTYPE /dev/{partition} 2>/dev/null", timeout=5)
     fstype = r.stdout.strip() if r.returncode == 0 else ''
 
     result = {

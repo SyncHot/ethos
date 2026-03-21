@@ -1227,12 +1227,12 @@ def rag_scheduler_toggle():
 
     try:
         if action == 'enable':
-            subprocess.run(['sudo', 'systemctl', 'enable', '--now', _TIMER_UNIT],
+            subprocess.run(['sudo', '/opt/ethos/tools/ethos-system-helper.sh', 'systemctl', 'enable', '--now', _TIMER_UNIT],
                            capture_output=True, timeout=10)
             return jsonify({'ok': True, 'message': 'Harmonogram włączony'})
 
         elif action == 'disable':
-            subprocess.run(['sudo', 'systemctl', 'disable', '--now', _TIMER_UNIT],
+            subprocess.run(['sudo', '/opt/ethos/tools/ethos-system-helper.sh', 'systemctl', 'disable', '--now', _TIMER_UNIT],
                            capture_output=True, timeout=10)
             return jsonify({'ok': True, 'message': 'Harmonogram wyłączony'})
 
@@ -1262,12 +1262,12 @@ def rag_scheduler_toggle():
             tmp = tempfile.NamedTemporaryFile('w', suffix='.timer', delete=False)
             tmp.write(timer_content)
             tmp.close()
-            subprocess.run(['sudo', 'cp', tmp.name, _TIMER_FILE],
+            subprocess.run(['sudo', '/opt/ethos/tools/ethos-system-helper.sh', 'copy-timer', tmp.name],
                            capture_output=True, timeout=10)
             os.unlink(tmp.name)
 
-            subprocess.run(['sudo', 'systemctl', 'daemon-reload'], capture_output=True, timeout=10)
-            subprocess.run(['sudo', 'systemctl', 'restart', _TIMER_UNIT], capture_output=True, timeout=10)
+            subprocess.run(['sudo', '/opt/ethos/tools/ethos-system-helper.sh', 'systemctl', 'daemon-reload'], capture_output=True, timeout=10)
+            subprocess.run(['sudo', '/opt/ethos/tools/ethos-system-helper.sh', 'systemctl', 'restart', _TIMER_UNIT], capture_output=True, timeout=10)
             return jsonify({'ok': True, 'message': f'Interwał zmieniony na: {cal_value}'})
 
         else:

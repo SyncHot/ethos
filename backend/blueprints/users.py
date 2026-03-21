@@ -61,7 +61,7 @@ def ensure_nasos_group():
     """Create the 'nasos' group on the host if it doesn't exist."""
     r = host_run(f"getent group {NASOS_GROUP}")
     if r.returncode != 0:
-        host_run(f"groupadd {NASOS_GROUP}")
+        host_run(f"sudo {_HELPER} group-add {NASOS_GROUP}")
 
 
 def _load_privileges():
@@ -87,6 +87,8 @@ def _save_privileges(data):
 
 _users_cache = {'data': None, 'ts': 0}
 _USERS_CACHE_TTL = 30  # seconds
+
+_HELPER = '/opt/ethos/tools/ethos-system-helper.sh'
 
 @users_bp.route('/list')
 def list_users():
@@ -159,27 +161,27 @@ def create_user():
         home_base = os.path.join(dd, 'home')
         home_dir = os.path.join(home_base, username)
         os.makedirs(home_base, mode=0o755, exist_ok=True)
-        cmd = f"useradd -m -d {_sq(home_dir)} -s {_sq(shell)} {_sq(username)}"
+        cmd = f"sudo {_HELPER} user-add {_sq(username)} {_sq(shell)} {_sq(home_dir)}"
     else:
-        cmd = f"useradd -m -s {_sq(shell)} {_sq(username)}"
+        cmd = f"sudo {_HELPER} user-add {_sq(username)} {_sq(shell)}"
 
     r = host_run(cmd)
     if r.returncode != 0:
         return jsonify({'error': f'Błąd tworzenia: {r.stderr.strip()}'}), 500
 
     # Set password
-    r = host_run(f"echo {_sq(username + ':' + password)} | chpasswd")
+    r = host_run(f"echo {_sq(password)} | sudo {_HELPER} user-set-password {_sq(username)}")
     if r.returncode != 0:
         return jsonify({'error': f'Błąd ustawiania hasła: {r.stderr.strip()}'}), 500
 
     # Add to nasos group (mark as EthOS-created user)
-    host_run(f"usermod -aG {_sq(NASOS_GROUP)} {_sq(username)}")
+    host_run(f"sudo {_HELPER} user-mod {_sq(username)} group-append {_sq(NASOS_GROUP)}")
 
     # Add to additional groups
     for g in groups:
         g = _safe_name(g)
         if g:
-            host_run(f"usermod -aG {_sq(g)} {_sq(username)}")
+            host_run(f"sudo {_HELPER} user-mod {_sq(username)} group-append {_sq(g)}")
 
     # Create default folder structure (Dokumenty, Pobrane, …) + ~/.ethos
     ensure_user_home_structure(username)
@@ -198,7 +200,7 @@ def delete_user():
     if username == 'root':
         return jsonify({'error': 'Nie można usunąć root'}), 400
 
-    r = host_run(f"userdel -r {_sq(username)} 2>&1")
+    r = host_run(f"sudo {_HELPER} user-del {_sq(username)} 2>&1")
     if r.returncode != 0:
         return jsonify({'error': f'Błąd: {r.stdout.strip() or r.stderr.strip()}'}), 500
 
@@ -219,14 +221,14 @@ def update_user():
     # Change password
     password = data.get('password')
     if password:
-        r = host_run(f"echo {_sq(username + ':' + password)} | chpasswd")
+        r = host_run(f"echo {_sq(password)} | sudo {_HELPER} user-set-password {_sq(username)}")
         if r.returncode != 0:
             errors.append(f'Hasło: {r.stderr.strip()}')
 
     # Change shell
     shell = data.get('shell')
     if shell:
-        r = host_run(f"usermod -s {_sq(shell)} {_sq(username)}")
+        r = host_run(f"sudo {_HELPER} user-mod {_sq(username)} shell {_sq(shell)}")
         if r.returncode != 0:
             errors.append(f'Shell: {r.stderr.strip()}')
 
@@ -235,7 +237,8 @@ def update_user():
     if groups is not None:
         safe_groups = [_safe_name(g) for g in groups if _safe_name(g)]
         if safe_groups:
-            r = host_run(f"usermod -G {','.join(_sq(g) for g in safe_groups)} {_sq(username)}")
+            groups_str = ','.join(_sq(g) for g in safe_groups)
+            r = host_run(f"sudo {_HELPER} user-mod {_sq(username)} groups-set {groups_str}")
             if r.returncode != 0:
                 errors.append(f'Grupy: {r.stderr.strip()}')
 
@@ -287,7 +290,7 @@ def create_group():
     if not name or len(name) < 2:
         return jsonify({'error': 'Nazwa grupy jest wymagana (min. 2 znaki)'}), 400
 
-    r = host_run(f"groupadd {_sq(name)} 2>&1")
+    r = host_run(f"sudo {_HELPER} group-add {_sq(name)} 2>&1")
     if r.returncode != 0:
         return jsonify({'error': r.stdout.strip() or r.stderr.strip() or 'Błąd tworzenia grupy'}), 500
 
@@ -309,7 +312,7 @@ def delete_group():
     if not name:
         return jsonify({'error': 'Nazwa grupy jest wymagana'}), 400
 
-    r = host_run(f"groupdel {_sq(name)} 2>&1")
+    r = host_run(f"sudo {_HELPER} group-del {_sq(name)} 2>&1")
     if r.returncode != 0:
         return jsonify({'error': r.stdout.strip() or r.stderr.strip() or 'Błąd'}), 500
 
@@ -349,14 +352,14 @@ def update_group_members():
     for u in add_list:
         u = _safe_name(u)
         if u:
-            r = host_run(f"usermod -aG {_sq(group)} {_sq(u)}")
+            r = host_run(f"sudo {_HELPER} user-mod {_sq(u)} group-append {_sq(group)}")
             if r.returncode != 0:
                 errors.append(f'Dodawanie {u}: {r.stderr.strip()}')
 
     for u in remove_list:
         u = _safe_name(u)
         if u:
-            r = host_run(f"gpasswd -d {_sq(u)} {_sq(group)} 2>&1")
+            r = host_run(f"sudo {_HELPER} group-mod {_sq(group)} {_sq(u)} remove 2>&1")
             if r.returncode != 0:
                 errors.append(f'Usuwanie {u}: {r.stdout.strip()}')
 

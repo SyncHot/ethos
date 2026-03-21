@@ -849,8 +849,9 @@ APT
 echo "LOG:Tworzenie użytkownika $DEFAULT_USER..."
 PASS_HASH=$(openssl passwd -6 "$USER_PASS")
 chroot "$ROOT" useradd -m -s /bin/bash -G sudo -p "$PASS_HASH" "$DEFAULT_USER"
-echo "${{DEFAULT_USER}} ALL=(ALL) NOPASSWD:ALL" > "$ROOT/etc/sudoers.d/010_${{DEFAULT_USER}}"
-chmod 440 "$ROOT/etc/sudoers.d/010_${{DEFAULT_USER}}"
+ALLOWED_CMDS="/opt/ethos/tools/ethos-system-helper.sh, /opt/ethos/tools/ethos-power-*, /usr/bin/systemctl restart ethos, /usr/sbin/smartctl, /usr/bin/docker, /opt/ethos/venv/bin/gunicorn"
+echo "${{DEFAULT_USER}} ALL=(ALL) NOPASSWD: ${{ALLOWED_CMDS}}" > "$ROOT/etc/sudoers.d/010_ethos"
+chmod 440 "$ROOT/etc/sudoers.d/010_ethos"
 chroot "$ROOT" groupadd -f nasosadmin
 chroot "$ROOT" groupadd -f nasos
 chroot "$ROOT" usermod -aG nasosadmin,nasos "$DEFAULT_USER"
@@ -1070,9 +1071,11 @@ cp -r "$NASOS/frontend" "$ETHOS_DIR/"
 echo "LOG:Kopiowanie tools..."
 mkdir -p "$ETHOS_DIR/tools"
 cp "$NASOS/tools/ethos-power-config.sh" "$ETHOS_DIR/tools/"
+cp "$NASOS/tools/ethos-system-helper.sh" "$ETHOS_DIR/tools/"
 cp "$NASOS/tools/ethos-power.service" "$ETHOS_DIR/tools/"
 cp "$NASOS/tools/ethos-power-blacklist.conf" "$ETHOS_DIR/tools/"
 chmod +x "$ETHOS_DIR/tools/ethos-power-config.sh"
+chmod +x "$ETHOS_DIR/tools/ethos-system-helper.sh"
 
 # ── CUPS config ──
 if [[ -d "$NASOS/cups-config" ]]; then

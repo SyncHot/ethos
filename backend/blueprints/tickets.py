@@ -981,7 +981,7 @@ def watcher_control():
         return jsonify({'error': 'Invalid action'}), 400
     try:
         result = subprocess.run(
-            ['sudo', 'systemctl', action, _WATCHER_UNIT],
+            ['sudo', '/opt/ethos/tools/ethos-system-helper.sh', 'systemctl', action, _WATCHER_UNIT],
             capture_output=True, text=True, timeout=30
         )
         if result.returncode != 0:

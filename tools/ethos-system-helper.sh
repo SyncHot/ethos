@@ -179,16 +179,24 @@ case "$COMMAND" in
     umount)
         # Support optional -l (lazy) flag
         LAZY_FLAG=""
-        DEV="$1"
-        if [[ "$DEV" == "-l" ]]; then
+        if [[ "$1" == "-l" ]]; then
             LAZY_FLAG="-l"
-            DEV="$2"
+            shift
         fi
-        # Can be mountpoint or device
-        if [[ "$DEV" == /dev/* ]]; then
-            validate_dev "$DEV"
+        
+        if [[ $# -eq 0 ]]; then
+             echo "Error: No device specified" >&2
+             exit 1
         fi
-        exec /usr/bin/umount ${LAZY_FLAG:+"$LAZY_FLAG"} "$DEV"
+        
+        for dev in "$@"; do
+             # Can be mountpoint or device
+             if [[ "$dev" == /dev/* ]]; then
+                 validate_dev "$dev"
+             fi
+        done
+        
+        exec /usr/bin/umount ${LAZY_FLAG:+"$LAZY_FLAG"} "$@"
         ;;
         
     fsck)
