@@ -3385,5 +3385,3 @@ def _containers_using_volume(vol_name):
     if rc == 0 and out:
         return [c.strip() for c in out.split('\n') if c.strip()]
     return []
-
-
