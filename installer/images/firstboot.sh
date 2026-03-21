@@ -92,6 +92,46 @@ else
     touch "$RESIZED_MARKER"
 fi
 
+# ─── Generate Flask SECRET_KEY ───
+# Generujemy unikalny klucz dla sesji Flask (jeśli nie istnieje)
+if [[ ! -f "/opt/ethos/data/.flask_secret" ]]; then
+    echo "[i] Generowanie unikalnego Flask SECRET_KEY..."
+    mkdir -p /opt/ethos/data
+    python3 -c "import secrets; print(secrets.token_hex(32))" > /opt/ethos/data/.flask_secret
+    chmod 600 /opt/ethos/data/.flask_secret
+fi
+
+# ─── Generate HTTPS Certificate (Self-signed) ───
+SSL_DIR="/opt/ethos/data/ssl"
+SSL_CERT="$SSL_DIR/ethos.crt"
+SSL_KEY="$SSL_DIR/ethos.key"
+
+if [[ ! -f "$SSL_CERT" ]]; then
+    echo "[i] Generowanie certyfikatu HTTPS (self-signed)..."
+    mkdir -p "$SSL_DIR"
+    
+    # Check IP addresses for SAN
+    IP_ADDRS=$(hostname -I 2>/dev/null || echo "127.0.0.1")
+    # Clean up whitespace
+    IP_ADDRS=$(echo "$IP_ADDRS" | xargs)
+    
+    # Construct SAN string
+    SAN="DNS:ethos.local,DNS:localhost"
+    for ip in $IP_ADDRS; do
+        SAN="$SAN,IP:$ip"
+    done
+    
+    openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+      -keyout "$SSL_KEY" \
+      -out "$SSL_CERT" \
+      -subj "/CN=ethos.local" \
+      -addext "subjectAltName = $SAN" \
+      2>/dev/null
+      
+    chmod 600 "$SSL_KEY"
+    echo "[ok] Certyfikat wygenerowany w $SSL_DIR"
+fi
+
 # Already installed?
 if [[ -f "$MARKER" ]]; then
     echo "[i] EthOS already installed, skipping."

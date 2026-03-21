@@ -8494,6 +8494,20 @@ async function renderSystemSettings(body) {
                     </div>
                 </div>
 
+                <div class="ss-group" style="border-top:1px solid var(--border); padding-top:18px">
+                    <div class="ss-group-title"><i class="fas fa-lock"></i> HTTPS / SSL</div>
+                    <div class="ss-row" style="display:block">
+                        <div style="font-size:13px; color:var(--text); margin-bottom:12px; line-height:1.5;">
+                            ${t('Zabezpiecz połączenie używając darmowych certyfikatów Let\'s Encrypt lub własnych kluczy SSL.')}
+                            <br>
+                            <span style="opacity:0.7">${t('Możesz wygenerować certyfikat automatycznie w aplikacji Domeny.')}</span>
+                        </div>
+                        <button class="ss-btn" style="background:rgba(5,150,105,.15); color:#059669; border:1px solid rgba(5,150,105,.3)" onclick="openApp('domains-manager')">
+                            <i class="fas fa-globe"></i> ${t('Konfiguruj SSL / Let\'s Encrypt')}
+                        </button>
+                    </div>
+                </div>
+
                 <div class="ss-actions">
                     <button class="ss-btn ss-btn-primary" id="ss-save-network">
                         <i class="fas fa-save"></i> ${t('Zapisz zmiany')}

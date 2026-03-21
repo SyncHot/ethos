@@ -135,6 +135,31 @@ Compress(app)
 app.config['COMPRESS_ALGORITHM'] = ['brotli', 'gzip', 'deflate']
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 31536000  # 1 year
 
+# ── SECRET_KEY Setup ──
+# Critical for session security. Load from file or env, generate if missing.
+_secret_file = _data_path('.flask_secret')
+if os.environ.get('FLASK_SECRET'):
+    app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET')
+elif os.path.exists(_secret_file):
+    try:
+        with open(_secret_file) as f:
+            app.config['SECRET_KEY'] = f.read().strip()
+    except Exception:
+        app.config['SECRET_KEY'] = secrets.token_hex(32)
+else:
+    # Generate and save locally so it persists across restarts
+    try:
+        _new_secret = secrets.token_hex(32)
+        os.makedirs(os.path.dirname(_secret_file), exist_ok=True)
+        with open(_secret_file, 'w') as f:
+            f.write(_new_secret)
+        os.chmod(_secret_file, 0o600)
+        app.config['SECRET_KEY'] = _new_secret
+    except Exception as e:
+        print(f"Warning: Could not save .flask_secret: {e}")
+        app.config['SECRET_KEY'] = secrets.token_hex(32)
+
+
 PASSWORD_CHANGED_MARKER = '/opt/ethos/.password_changed'
 
 @app.before_request
@@ -8927,11 +8952,26 @@ if __name__ == '__main__':
     _wd_thread.start()
 
     # ── SSL configuration ──
-    ssl_enabled = os.environ.get('SSL_ENABLED', '0') == '1'
-    ssl_cert = os.environ.get('SSL_CERT', '')
-    ssl_key = os.environ.get('SSL_KEY', '')
+    # Auto-detect default certificates if not explicitly configured
+    default_cert = '/opt/ethos/data/ssl/ethos.crt'
+    default_key = '/opt/ethos/data/ssl/ethos.key'
+
+    ssl_enabled_env = os.environ.get('SSL_ENABLED')
+    ssl_cert = os.environ.get('SSL_CERT', default_cert)
+    ssl_key = os.environ.get('SSL_KEY', default_key)
+
+    # Enable SSL if explicitly set OR if default certs exist
+    if ssl_enabled_env == '1':
+        ssl_enabled = True
+    elif ssl_enabled_env is None and os.path.exists(ssl_cert) and os.path.exists(ssl_key):
+        ssl_enabled = True
+        print(f"  [Auto-SSL] Detected default certificates at {ssl_cert}, enabling HTTPS.")
+    else:
+        ssl_enabled = False
+
     https_port = int(os.environ.get('HTTPS_PORT', '443'))
-    ssl_redirect = os.environ.get('SSL_REDIRECT', '0') == '1'
+    # Default to redirecting if SSL is on
+    ssl_redirect = os.environ.get('SSL_REDIRECT', '1' if ssl_enabled else '0') == '1'
 
     run_kwargs = dict(host='0.0.0.0', debug=False, allow_unsafe_werkzeug=True)
 
