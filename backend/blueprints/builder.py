@@ -712,7 +712,7 @@ systemd,systemd-sysv,dbus,\\
 linux-image-amd64,\\
 grub-pc-bin,grub-efi-amd64-bin,grub-efi-amd64,grub-common,grub2-common,\\
 efibootmgr,\\
-sudo,openssh-server,curl,ca-certificates,gnupg,lsb-release,\\
+sudo,openssh-server,curl,ca-certificates,gnupg,lsb-release,fail2ban,\\
 iproute2,iputils-ping,\\
 bash,locales,console-setup,\\
 python3,python3-minimal,\\
@@ -860,6 +860,54 @@ chroot "$ROOT" systemctl enable NetworkManager
 chroot "$ROOT" systemctl disable networking 2>/dev/null || true
 chroot "$ROOT" systemctl enable avahi-daemon 2>/dev/null || true
 chroot "$ROOT" systemctl enable serial-getty@ttyS0.service 2>/dev/null || true
+
+# ── Fail2Ban Configuration ──
+echo "LOG:Konfiguracja Fail2Ban (SSH, Samba, Web)..."
+cat > "$ROOT/etc/fail2ban/jail.local" <<'F2B'
+[DEFAULT]
+bantime = 3600
+findtime = 600
+maxretry = 5
+backend = systemd
+ignoreip = 127.0.0.1/8 ::1 192.168.0.0/16 10.0.0.0/8
+# Persistent database
+dbfile = /opt/ethos/data/fail2ban.sqlite3
+dbpurgeage = 86400
+action = %(action_)s
+         ethos-eventlog
+
+[sshd]
+enabled = true
+
+[samba]
+enabled = true
+port = 139,445
+filter = samba
+logpath = /var/log/samba/log.*
+backend = auto
+
+[ethos-web]
+enabled = true
+port = 9000
+filter = ethos-web
+logpath = /opt/ethos/logs/access.log
+backend = auto
+F2B
+
+mkdir -p "$ROOT/etc/fail2ban/action.d"
+cat > "$ROOT/etc/fail2ban/action.d/ethos-eventlog.conf" <<'ACT'
+[Definition]
+actionban = /opt/ethos/tools/fail2ban_eventlog.py <name> <ip> <failures>
+ACT
+
+mkdir -p "$ROOT/etc/fail2ban/filter.d"
+cat > "$ROOT/etc/fail2ban/filter.d/ethos-web.conf" <<'WEB'
+[Definition]
+failregex = ^<HOST> - - \[.*\] ".*" (401|403) .*$
+ignoreregex =
+WEB
+
+chroot "$ROOT" systemctl enable fail2ban
 
 # ── Force password change on first boot ──
 rm -f "$ROOT/opt/ethos/.password_changed"

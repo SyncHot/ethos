@@ -52,6 +52,21 @@ if not auth_logger.handlers:
         auth_logger.addHandler(handler)
     except Exception:
         pass
+
+# Setup Access Logger for Fail2Ban
+ACCESS_LOG_FILE = '/opt/ethos/logs/access.log'
+access_logger = logging.getLogger('ethos_access')
+access_logger.setLevel(logging.INFO)
+if not access_logger.handlers:
+    try:
+        os.makedirs(os.path.dirname(ACCESS_LOG_FILE), exist_ok=True)
+        handler = RotatingFileHandler(ACCESS_LOG_FILE, maxBytes=10*1024*1024, backupCount=5)
+        formatter = logging.Formatter('%(message)s')
+        handler.setFormatter(formatter)
+        access_logger.addHandler(handler)
+    except Exception:
+        pass
+
 from crypto_utils import hash_folder_password as _hash_folder_password_new, verify_folder_password as _verify_folder_password
 
 # Host abstraction layer
@@ -93,6 +108,7 @@ from blueprints.downloads import downloads_bp, init_downloads
 from blueprints.updater import update_bp, updates_public_bp, init_update, update_auto_check_loop
 from blueprints.flasher import flasher_bp
 from blueprints.builder import builder_bp
+from blueprints.fail2ban import fail2ban_bp
 from blueprints.diskrepair import diskrepair_bp
 from blueprints.remote_log import remote_log_bp, init_remote_log
 from blueprints.surveillance import surveillance_bp, init_surveillance
@@ -183,6 +199,25 @@ def add_header(response):
         response.cache_control.no_cache = True
         response.cache_control.must_revalidate = True
         response.cache_control.max_age = 0
+
+    # Log access for Fail2Ban (ethos-web jail)
+    # Format: <HOST> - - [dd/MMM/yyyy:HH:mm:ss +0000] "GET /foo HTTP/1.1" 401 123 "-" "UserAgent"
+    if not request.path.startswith('/~static~'):
+        try:
+            now = datetime.now().strftime('%d/%b/%Y:%H:%M:%S +0000') # Simplified UTC for now
+            ip = request.remote_addr
+            method = request.method
+            path = request.full_path if request.query_string else request.path
+            status = response.status_code
+            length = response.content_length or 0
+            ua = request.user_agent.string
+            # Check if access_logger is defined (it should be)
+            if 'access_logger' in globals():
+                msg = f'{ip} - - [{now}] "{method} {path} HTTP/1.1" {status} {length} "-" "{ua}"'
+                access_logger.info(msg)
+        except Exception:
+            pass
+
     return response
 cache = Cache(app, config={'CACHE_TYPE': 'SimpleCache'})
 # Security: DDOS protection (5 req/sec per IP)
@@ -229,6 +264,7 @@ app.register_blueprint(notes_bp)
 app.register_blueprint(tickets_bp)
 app.register_blueprint(familyhub_bp)
 app.register_blueprint(sharing_bp)
+app.register_blueprint(fail2ban_bp)
 init_appstore(socketio)
 init_downloads(socketio)
 init_update(socketio)
@@ -7633,6 +7669,16 @@ def get_apps():
             'type': 'builtin',
             'category': 'System',
             'description': 'Logi i historia operacji'
+        },
+        {
+            'id': 'fail2ban',
+            'name': 'Ochrona przed atakami',
+            'icon': 'fa-shield-alt',
+            'color': '#ef4444',
+            'type': 'builtin',
+            'category': 'System',
+            'description': 'Fail2Ban — aktywne bany, biała lista, ochrona SSH/Samba/Web',
+            'admin_only': True
         },
         {
             'id': 'app-store',
