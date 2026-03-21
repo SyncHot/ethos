@@ -6,6 +6,7 @@ Backend API Server
 from gevent import monkey
 monkey.patch_all()
 
+from flask_compress import Compress
 from flask import Flask, request, jsonify, send_from_directory, send_file, g
 from flask_caching import Cache
 from flask_socketio import SocketIO, emit
@@ -108,7 +109,29 @@ def _verify_shadow_hash(password: str, stored_hash: str) -> bool:
 
 # ─────────────────────────── App Setup ───────────────────────────
 
-app = Flask(__name__, static_folder='../frontend', static_url_path='/~static~')
+# Determine static folder (use dist if available)
+_static_folder = '../frontend'
+if os.path.exists(os.path.join(os.path.dirname(__file__), '../frontend_dist')):
+    _static_folder = '../frontend_dist'
+
+app = Flask(__name__, static_folder=_static_folder, static_url_path='/~static~')
+Compress(app)
+app.config['COMPRESS_ALGORITHM'] = ['brotli', 'gzip', 'deflate']
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 31536000  # 1 year
+
+@app.after_request
+def add_header(response):
+    # Add Cache-Control headers
+    if request.path.startswith('/~static~') or request.path.endswith('.js') or request.path.endswith('.css') or request.path.endswith('.png') or request.path.endswith('.jpg') or request.path.endswith('.woff2'):
+        # Assets: Cache for 1 year
+        response.cache_control.max_age = 31536000
+        response.cache_control.public = True
+    elif request.path == '/' or request.path == '/index.html':
+        # HTML: No cache (always revalidate)
+        response.cache_control.no_cache = True
+        response.cache_control.must_revalidate = True
+        response.cache_control.max_age = 0
+    return response
 cache = Cache(app, config={'CACHE_TYPE': 'SimpleCache'})
 # Security: DDOS protection (5 req/sec per IP)
 limiter = RateLimiter(app, limit=300, window=60)
