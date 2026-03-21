@@ -111,6 +111,11 @@ def get_ram_info():
     }
 
 
+def _host_cmd(cmd, timeout=10):
+    """Run on host via host abstraction layer."""
+    return _host_run_imported(cmd, timeout=timeout)
+
+
 def get_smart_info():
     """Get SMART health data for all drives using smartctl."""
     disks = []
@@ -196,6 +201,7 @@ def get_smart_info():
 
                 disks.append({
                     'device': name,
+                    'type': type_arg,
                     'model': data.get('model_name', 'Unknown'),
                     'serial': data.get('serial_number', ''),
                     'health': health,
@@ -370,11 +376,6 @@ def detect_gpu_hardware():
     except Exception:
         pass
     return result
-
-
-def _host_cmd(cmd, timeout=10):
-    """Run on host via host abstraction layer."""
-    return _host_run_imported(cmd, timeout=timeout)
 
 
 def get_disk_info():
