@@ -171,15 +171,40 @@ TRANSIENT_SOFT_COOLDOWN_THRESHOLD = 3  # after exit 0, if this many transient er
 MAX_TOTAL_ATTEMPTS = 6  # max total dev runs per ticket before auto-shelving
 _ticket_attempt_counts = {}  # {ticket_id: total_attempts_across_all_cycles}
 
+def _count_existing_attempts(tid):
+    """Count how many dev run logs exist on disk for a ticket (persists across restarts)."""
+    count = 0
+    for log_dir in ("/opt/ethos/logs/copilot_tickets", "/opt/ethos/logs/localai_tickets"):
+        if os.path.isdir(log_dir):
+            for fname in os.listdir(log_dir):
+                # Match dev logs like t_xxx_1234567890.log but NOT qa/prompt files
+                if fname.startswith(tid + "_") and fname.endswith(".log") \
+                        and "_qa_" not in fname and "_prompt" not in fname:
+                    count += 1
+    return count
+
 def _record_attempt(tid):
-    """Record a dev attempt for a ticket. Returns (allowed, count)."""
+    """Record a dev attempt for a ticket. Returns (allowed, count).
+    Combines in-memory session count with on-disk history for restart persistence."""
     _ticket_attempt_counts[tid] = _ticket_attempt_counts.get(tid, 0) + 1
+    # On first call after restart, seed from disk to survive restarts
+    if _ticket_attempt_counts[tid] == 1:
+        disk_count = _count_existing_attempts(tid)
+        # disk_count includes the log about to be created, so use it directly
+        if disk_count > 1:
+            _ticket_attempt_counts[tid] = disk_count
     count = _ticket_attempt_counts[tid]
     return count <= MAX_TOTAL_ATTEMPTS, count
 
 def _is_ticket_shelved(tid):
     """Check if ticket has exhausted total attempts."""
-    return _ticket_attempt_counts.get(tid, 0) >= MAX_TOTAL_ATTEMPTS
+    mem_count = _ticket_attempt_counts.get(tid, 0)
+    if mem_count >= MAX_TOTAL_ATTEMPTS:
+        return True
+    # Also check disk for restart persistence
+    if mem_count == 0:
+        return _count_existing_attempts(tid) >= MAX_TOTAL_ATTEMPTS
+    return False
 
 # ── Prompt deduplication — skip rewriting identical prompts ──────────────
 _last_prompt_hashes = {}  # {ticket_id: (hash, prompt_file_path)}
@@ -848,12 +873,12 @@ def _pre_qa_static_check(tid):
             if not os.path.isfile(fpath):
                 continue
             if f.endswith(".py"):
-                r = subprocess.run(
-                    ["python3", "-m", "py_compile", fpath],
-                    capture_output=True, text=True, timeout=10,
-                )
-                if r.returncode != 0:
-                    errors.append(f"Syntax error in {f}: {r.stderr.strip()[:200]}")
+                try:
+                    with open(fpath, "r", encoding="utf-8") as pf:
+                        source = pf.read()
+                    compile(source, fpath, "exec")
+                except SyntaxError as se:
+                    errors.append(f"Syntax error in {f}: {se}")
             elif f.endswith(".js"):
                 r = subprocess.run(
                     ["node", "-c", fpath],
@@ -1179,6 +1204,18 @@ WORKFLOW:
 6. Push: sudo -u marcin git push
 
 Be focused and efficient. Use the helper tools above instead of manual exploration."""
+
+    # Inject context from previous attempts (survives watcher restarts)
+    prior_parts = []
+    git_ctx = _get_recent_git_context(tid)
+    if git_ctx:
+        prior_parts.append(git_ctx)
+    log_ctx = _get_previous_log_summary(tid)
+    if log_ctx:
+        prior_parts.append(log_ctx)
+    if prior_parts:
+        prompt += "\n\n⚠️ PREVIOUS ATTEMPT CONTEXT (a prior run was interrupted — do NOT start from scratch):\n"
+        prompt += "\n".join(prior_parts)
 
     return prompt
 
@@ -1830,26 +1867,16 @@ def build_retry_prompt(ticket, agent, info, model_info, docs_context, prev_model
     base_prompt = build_copilot_prompt(ticket, agent, info, model_info, docs_context)
     tid = ticket["id"]
 
-    context_parts = []
+    # build_copilot_prompt already injects git context and log summary if available.
+    # Only add retry-specific note about model switch.
+    if "PREVIOUS ATTEMPT CONTEXT" not in base_prompt:
+        # No prior context was found — add a fallback hint
+        base_prompt += (
+            f"\n\nNOTE: A previous attempt with model {prev_model} was interrupted ({failure_type}). "
+            f"Run: git --no-pager log --oneline -10 and git status to see if any partial work exists."
+        )
 
-    # Git state: commits + uncommitted work
-    git_context = _get_recent_git_context(tid)
-    if git_context:
-        context_parts.append(git_context)
-
-    # Previous agent log summary
-    log_summary = _get_previous_log_summary(tid)
-    if log_summary:
-        context_parts.append(log_summary)
-
-    if context_parts:
-        return base_prompt + "\n".join(context_parts)
-
-    # Fallback: at least mention there was a prior attempt
-    return base_prompt + (
-        f"\n\nNOTE: A previous attempt with model {prev_model} was interrupted ({failure_type}). "
-        f"Run: git --no-pager log --oneline -10 and git status to see if any partial work exists."
-    )
+    return base_prompt
 
 
 def execute_via_copilot(ticket, agent, info, model_info, docs_context, override_prompt=None):
