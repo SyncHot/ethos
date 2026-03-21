@@ -2,6 +2,7 @@ from flask import Blueprint, jsonify, request
 import subprocess
 import re
 import os
+from blueprints.admin_required import admin_required
 
 fail2ban_bp = Blueprint('fail2ban', __name__, url_prefix='/api/fail2ban')
 
@@ -16,6 +17,7 @@ def run_command(cmd):
         return None, str(e)
 
 @fail2ban_bp.route('/status', methods=['GET'])
+@admin_required
 def get_status():
     # Get list of jails
     out, err = run_command(['fail2ban-client', 'status'])
@@ -60,8 +62,9 @@ def get_status():
     return jsonify({'jails': jail_stats})
 
 @fail2ban_bp.route('/unban', methods=['POST'])
+@admin_required
 def unban_ip():
-    data = request.json
+    data = request.json or {}
     jail = data.get('jail')
     ip = data.get('ip')
 
@@ -75,14 +78,16 @@ def unban_ip():
     return jsonify({'success': True, 'message': f'Unbanned {ip} from {jail}'})
 
 @fail2ban_bp.route('/whitelist', methods=['GET'])
+@admin_required
 def get_whitelist():
     # Get global ignoreip from sshd jail (which inherits default)
     out, err = run_command(['fail2ban-client', 'get', 'sshd', 'ignoreip'])
 
     ips = []
     if out:
-        # The output format is typically space-separated list of IPs
-        ips = out.split()
+        # Output is multi-line: "These IP addresses/networks are ignored:\n|- 127.0.0.0/8\n..."
+        # Extract entries after the |- or `- list markers
+        ips = re.findall(r'[|`]\-\s+(\S+)', out)
     elif err:
         # Fallback to defaults if sshd jail is down
         return jsonify({'whitelist': ['127.0.0.1/8', '::1', '192.168.0.0/16', '10.0.0.0/8']})

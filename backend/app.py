@@ -524,6 +524,7 @@ _API_TO_APP = {
     '/api/remote-log/': 'remote-log',
     '/api/websites/': 'websites',
     '/api/sandbox/': 'docker-manager',
+    '/api/fail2ban/': 'fail2ban',
 }
 
 # Admin-only apps — only role='admin' can access (matches admin_only: True in get_apps)
@@ -531,6 +532,7 @@ _ADMIN_ONLY_APPS = {
     'users', 'usb-flasher', 'builder', 'updates', 'services',
     'disk-repair', 'remote-log', 'surveillance',
     'system-settings', 'domains-manager', 'vm-manager', 'app-store',
+    'fail2ban',
 }
 
 
@@ -582,7 +584,8 @@ def _blueprint_auth_guard():
                         '/api/domains-mgr/', '/api/settings/', '/api/ssh/',
                         '/api/flasher/', '/api/builder/', '/api/services/',
                         '/api/surveillance/', '/api/notes/', '/api/familyhub/', '/api/update/',
-                        '/api/remote-log/', '/api/websites/', '/api/sandbox/')):
+                        '/api/remote-log/', '/api/websites/', '/api/sandbox/',
+                        '/api/fail2ban/')):
         # Allow unauthenticated access to user auth validation
         if path == '/api/users/auth/validate':
             return
