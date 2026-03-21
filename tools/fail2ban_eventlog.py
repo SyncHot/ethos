@@ -147,6 +147,40 @@ if __name__ == '__main__':
 
     # 1. Send email (as root/invoker)
     send_email_notification(jail, ip, failures)
+
+    # 2. Send Webhook (if configured)
+    webhook_url = ENV.get('WEBHOOK_URL', '').strip()
+    if webhook_url:
+        try:
+            import urllib.request
+            import urllib.parse
+
+            data = json.dumps({
+                "text": f"🚨 **EthOS Security Alert**\n**Jail:** {jail}\n**IP:** {ip}\n**Failures:** {failures}",
+                "blocks": [
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"🚨 **EthOS Security Alert**\n*Fail2Ban Ban Triggered*"
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "fields": [
+                            {"type": "mrkdwn", "text": f"*Jail:*\n{jail}"},
+                            {"type": "mrkdwn", "text": f"*IP Address:*\n{ip}"},
+                            {"type": "mrkdwn", "text": f"*Failures:*\n{failures}"},
+                            {"type": "mrkdwn", "text": f"*Time:*\n{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"}
+                        ]
+                    }
+                ]
+            }).encode('utf-8')
+
+            req = urllib.request.Request(webhook_url, data=data, headers={'Content-Type': 'application/json'})
+            urllib.request.urlopen(req, timeout=5)
+        except Exception:
+            pass
     
-    # 2. Log to DB (drops privileges internally)
+    # 3. Log to DB (drops privileges internally)
     log_event(jail, ip, failures)
