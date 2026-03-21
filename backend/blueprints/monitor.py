@@ -117,48 +117,48 @@ def get_smart_info():
     try:
         # Use -j for JSON output if available
         r = _host_cmd("sudo smartctl --scan -j", timeout=10)
-        
+
         if r.returncode != 0 or not r.stdout.strip():
              return []
-             
+
         scan_data = json.loads(r.stdout)
         devices = scan_data.get('devices', [])
-        
+
         for dev in devices:
             name = dev.get('name')
             type_arg = dev.get('type') # e.g. 'sat' or 'nvme'
-            
+
             cmd = f"sudo smartctl -a -j {name}"
             if type_arg:
                 cmd += f" -d {type_arg}"
-                
+
             out = _host_cmd(cmd, timeout=5)
             # Accept exit code 0-7 (smartctl bitmask), but we need stdout
             if not out.stdout:
                 continue
-                
+
             try:
                 data = json.loads(out.stdout)
-                
+
                 # Extract key metrics
                 smart_status = data.get('smart_status', {}).get('passed')
                 health = 'PASS' if smart_status else 'FAIL'
-                
+
                 # Attributes
                 attrs = data.get('ata_smart_attributes', {}).get('table', [])
                 nvme_attrs = data.get('nvme_smart_health_information_log', {})
-                
+
                 temp = 0
                 reallocated = 0
                 pending = 0
                 crc_errors = 0
                 power_on_hours = 0
-                
+
                 # SATA/ATA
                 for attr in attrs:
                     id_ = attr.get('id')
                     raw = attr.get('raw', {}).get('value', 0)
-                    
+
                     if id_ == 5: # Reallocated_Sector_Ct
                         reallocated = raw
                     elif id_ == 197: # Current_Pending_Sector
@@ -171,7 +171,7 @@ def get_smart_info():
                 # Temperature (try generic then attrs)
                 if 'temperature' in data:
                     temp = data['temperature'].get('current', 0)
-                
+
                 # NVMe specific
                 if nvme_attrs:
                     temp = nvme_attrs.get('temperature', temp)
@@ -188,7 +188,7 @@ def get_smart_info():
                     for attr in attrs:
                         id_ = attr.get('id')
                         # 231: SSD_Life_Left, 233: Media_Wearout_Indicator, 177: Wear_Leveling_Count
-                        if id_ in [231, 233, 177]: 
+                        if id_ in [231, 233, 177]:
                              val = attr.get('value', -1)
                              if val != -1:
                                  remaining_life = val
