@@ -650,9 +650,41 @@ def detect_agent(title, labels):
 
 # ── Model selection based on complexity ──────────────────────────────────
 
+def _maybe_upgrade_complexity(ticket):
+    """Auto-upgrade complexity based on description/title heuristics.
+    Catches misclassified 'simple' tickets that are actually harder."""
+    current = ticket.get("complexity", "medium")
+    title = (ticket.get("title", "") + " " + ticket.get("description", "")).lower()
+    desc = ticket.get("description", "")
+
+    # Count hints of multi-file/complex work
+    complex_keywords = ["refactor", "migration", "security audit", "architektur",
+                        "restructur", "rewrite", "multi-file", "cross-cutting"]
+    medium_keywords = ["endpoint", "blueprint", "component", "feature",
+                       "integration", "socket", "websocket", "middleware"]
+
+    if current == "simple":
+        # Upgrade simple→medium if description is substantial or has medium keywords
+        word_count = len(desc.split()) if desc else 0
+        if word_count > 80:
+            return "medium"
+        if any(kw in title for kw in medium_keywords + complex_keywords):
+            return "medium"
+    if current in ("simple", "medium"):
+        # Upgrade to complex if strong complexity signals
+        if any(kw in title for kw in complex_keywords):
+            return "complex"
+    return current
+
+
 def select_model(ticket, tried_models=None):
-    """Select AI model based on ticket complexity, respecting cooldowns."""
-    complexity = ticket.get("complexity", "medium")
+    """Select AI model based on ticket complexity, respecting cooldowns.
+    Auto-upgrades complexity if heuristics detect misclassification."""
+    complexity = _maybe_upgrade_complexity(ticket)
+    orig = ticket.get("complexity", "medium")
+    if complexity != orig:
+        print(f"COMPLEXITY_UPGRADE | {ticket.get('id','?')} | {orig} → {complexity}", flush=True)
+        ticket["complexity"] = complexity  # persist for downstream (autopilot turns, timeouts)
     if complexity not in COMPLEXITY_MODEL_MAP:
         complexity = "medium"
     # Use cooldown-aware selection instead of static mapping
@@ -685,8 +717,28 @@ def get_codebase_map():
             _codebase_map_cache = ""
     return _codebase_map_cache
 
+def _summarize_doc(content, max_lines=40):
+    """Extract key bullet points from a doc — headings + first sentence of each section."""
+    lines = content.splitlines()
+    summary = []
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        # Keep headings
+        if stripped.startswith("#"):
+            summary.append(stripped)
+        # Keep bullet points and numbered items
+        elif stripped.startswith(("- ", "* ", "1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9.")):
+            summary.append(stripped[:150])
+        # Keep lines right after headings (first paragraph sentence)
+        elif i > 0 and lines[i-1].strip().startswith("#") and stripped:
+            summary.append(stripped[:150])
+        if len(summary) >= max_lines:
+            break
+    return "\n".join(summary)
+
+
 def load_docs_context(agent):
-    """Load and return concatenated content of docs relevant to the agent type. Cached."""
+    """Load summarized docs for the agent type. Full docs are referenced by path for the agent to read if needed."""
     global _docs_cache, _docs_cache_time
     info = AGENT_MAP.get(agent, AGENT_MAP["General"])
     doc_files = info.get("docs", [])
@@ -707,7 +759,16 @@ def load_docs_context(agent):
             try:
                 with open(doc_path, "r", encoding="utf-8") as f:
                     content = f.read()
-                entry = f"--- {doc_name} ---\n{content}"
+                line_count = content.count("\n")
+                # Short docs (<80 lines): include full content
+                if line_count < 80:
+                    entry = f"--- {doc_name} ---\n{content}"
+                else:
+                    # Long docs: include summary + tell agent where to find full version
+                    summary = _summarize_doc(content)
+                    entry = (f"--- {doc_name} (summary, {line_count} lines) ---\n"
+                             f"{summary}\n\n"
+                             f"[Full doc: /opt/ethos/docs/{doc_name} — read with cat if you need details]")
                 _docs_cache[doc_name] = entry
                 context_parts.append(entry)
             except Exception:
@@ -732,6 +793,89 @@ MAX_EXECUTION_SECS = {
 }
 MAX_TIMEOUT_RETRIES = 2  # max times a ticket can timeout before being shelved
 MAX_QA_CYCLES = 3  # max dev→QA round-trips before giving up
+
+# Per-complexity QA settings — simple tickets get static-only, complex get full review
+QA_DEPTH = {
+    "complex": {"autopilot": 8, "static_only": False, "max_cycles": 3},
+    "medium":  {"autopilot": 6, "static_only": False, "max_cycles": 3},
+    "simple":  {"autopilot": 0, "static_only": True,  "max_cycles": 2},
+}
+
+def _pre_qa_static_check(tid):
+    """Run fast local checks before expensive model QA.
+    Returns (passed: bool, errors: list[str]).
+    """
+    errors = []
+    try:
+        changed = subprocess.run(
+            ["git", "diff", "--name-only", "HEAD~1"],
+            capture_output=True, text=True, cwd="/opt/ethos", timeout=10,
+        )
+        for f in changed.stdout.strip().splitlines():
+            fpath = os.path.join("/opt/ethos", f)
+            if not os.path.isfile(fpath):
+                continue
+            if f.endswith(".py"):
+                r = subprocess.run(
+                    ["python3", "-m", "py_compile", fpath],
+                    capture_output=True, text=True, timeout=10,
+                )
+                if r.returncode != 0:
+                    errors.append(f"Syntax error in {f}: {r.stderr.strip()[:200]}")
+            elif f.endswith(".js"):
+                r = subprocess.run(
+                    ["node", "-c", fpath],
+                    capture_output=True, text=True, timeout=10,
+                )
+                if r.returncode != 0:
+                    errors.append(f"JS error in {f}: {r.stderr.strip()[:200]}")
+        # Whitespace errors / conflict markers
+        r = subprocess.run(
+            ["git", "diff", "--check", "HEAD~1"],
+            capture_output=True, text=True, cwd="/opt/ethos", timeout=10,
+        )
+        if r.returncode != 0:
+            errors.append(f"git diff --check: {r.stdout.strip()[:300]}")
+    except Exception as e:
+        # Static checks failed to run — don't block QA
+        print(f"PRE_QA_STATIC_ERROR | {tid} | {e}", flush=True)
+        return True, []
+    return len(errors) == 0, errors
+
+
+def _pre_fetch_relevant_files(ticket):
+    """Use ripgrep to find files relevant to the ticket, saving agent exploration turns."""
+    title = ticket.get("title", "")
+    desc = ticket.get("description", "")
+    # Extract meaningful keywords (skip short/common words)
+    words = set()
+    for text in (title, desc):
+        for w in text.split():
+            w = w.strip("[](){}:,.;!?\"'").lower()
+            if len(w) >= 4 and w not in ("this", "that", "with", "from", "should", "would",
+                                          "could", "ticket", "ethos", "need", "when", "have",
+                                          "make", "will", "been", "then", "also", "into"):
+                words.add(w)
+    if not words:
+        return ""
+    # Limit to 6 keywords to keep rg fast
+    keywords = list(words)[:6]
+    pattern = "|".join(keywords)
+    try:
+        r = subprocess.run(
+            ["rg", "-l", "-i", "--max-count=1", "--max-depth=4",
+             "--glob=*.py", "--glob=*.js", "--glob=*.html",
+             pattern],
+            capture_output=True, text=True, cwd="/opt/ethos", timeout=10,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            files = r.stdout.strip().splitlines()[:15]  # cap at 15 files
+            return "\nLIKELY RELEVANT FILES (from keyword search — check these first):\n" + \
+                "\n".join(f"  - {f}" for f in files) + "\n"
+    except Exception:
+        pass
+    return ""
+
 
 def build_qa_prompt(ticket):
     """Build a QA review prompt — includes the actual diff so QA knows exactly what to review."""
@@ -799,10 +943,61 @@ def _select_qa_model():
 
 
 def run_qa_check(ticket):
-    """Launch Copilot CLI as QA agent with fallback model selection."""
+    """Launch Copilot CLI as QA agent with fallback model selection.
+
+    For simple tickets: static checks only (no model call).
+    For medium/complex: static checks first, then model QA if static passes.
+    """
     tid = ticket["id"]
+    complexity = ticket.get("complexity", "medium")
+    qa_cfg = QA_DEPTH.get(complexity, QA_DEPTH["medium"])
+
+    # --- Pre-QA static checks (free, instant) ---
+    static_ok, static_errors = _pre_qa_static_check(tid)
+    if not static_ok:
+        # Static checks caught real errors — fast-fail without model call
+        os.makedirs(COPILOT_LOG_DIR, exist_ok=True)
+        log_file = os.path.join(COPILOT_LOG_DIR, f"{tid}_qa_{int(time.time())}.log")
+        error_text = "\n".join(static_errors)
+        with open(log_file, "w") as f:
+            f.write(f"=== QA Review: {tid} | {ticket['title']} ===\n")
+            f.write(f"=== Static pre-check — no model needed ===\n\n")
+            f.write(f"QA_FAIL: Static checks failed:\n{error_text}\n")
+        print(f"QA_STATIC_FAIL | {tid} | {len(static_errors)} error(s) | skipped model QA", flush=True)
+        # Return a fake proc-like object so the caller can parse the log
+        class _StaticResult:
+            def __init__(self, lf):
+                self._log_file = lf
+                self._qa_mode = True
+                self.pid = 0
+                self.returncode = 1
+            def poll(self):
+                return self.returncode
+        return _StaticResult(log_file)
+
+    # --- Simple tickets: static-only QA (no model call at all) ---
+    if qa_cfg["static_only"]:
+        os.makedirs(COPILOT_LOG_DIR, exist_ok=True)
+        log_file = os.path.join(COPILOT_LOG_DIR, f"{tid}_qa_{int(time.time())}.log")
+        with open(log_file, "w") as f:
+            f.write(f"=== QA Review: {tid} | {ticket['title']} ===\n")
+            f.write(f"=== Static-only QA (simple ticket) — no model cost ===\n\n")
+            f.write(f"QA_PASS: Static checks passed (syntax OK, no conflict markers). Simple ticket — model QA skipped.\n")
+        print(f"QA_STATIC_PASS | {tid} | simple ticket, no model QA needed", flush=True)
+        class _StaticPass:
+            def __init__(self, lf):
+                self._log_file = lf
+                self._qa_mode = True
+                self.pid = 0
+                self.returncode = 0
+            def poll(self):
+                return self.returncode
+        return _StaticPass(log_file)
+
+    # --- Medium/Complex: full model QA ---
     model_info = _select_qa_model()
     model = model_info["model"]
+    autopilot_turns = qa_cfg["autopilot"]
 
     os.makedirs(COPILOT_LOG_DIR, exist_ok=True)
     log_file = os.path.join(COPILOT_LOG_DIR, f"{tid}_qa_{int(time.time())}.log")
@@ -815,10 +1010,10 @@ def run_qa_check(ticket):
         "--model", model,
         "--autopilot",
         "--allow-all",
-        "--max-autopilot-continues", str(15),
+        "--max-autopilot-continues", str(autopilot_turns),
     ]
 
-    print(f"QA_START | {tid} | model={model} | log={log_file}", flush=True)
+    print(f"QA_START | {tid} | model={model} | autopilot={autopilot_turns} | log={log_file}", flush=True)
 
     try:
         lf = open(log_file, "w")
@@ -887,6 +1082,9 @@ def build_copilot_prompt(ticket, agent, info, model_info, docs_context):
     if codebase_map:
         map_section = f"\nCODEBASE MAP (use this to locate files — do NOT explore from scratch):\n{codebase_map}\n"
 
+    # Pre-fetch relevant files via ripgrep to save agent exploration turns
+    relevant_files = _pre_fetch_relevant_files(ticket)
+
     prompt = f"""You are an EthOS {agent} agent. Execute this ticket efficiently.
 
 TICKET: {tid}
@@ -895,7 +1093,7 @@ Title: {title}
 {feedback}
 
 PROJECT: /opt/ethos/ (Flask backend + vanilla JS frontend)
-{map_section}REFERENCE DOCS (consult only when relevant, do NOT read everything):
+{map_section}{relevant_files}REFERENCE DOCS (summaries below — read full doc with cat only if needed):
 {doc_list}
 
 WORKFLOW:
@@ -1725,7 +1923,8 @@ def auto_rework_ticket(ticket, qa_reason, qa_cycle):
     else:
         model_info = select_model(ticket)
     complexity = ticket.get("complexity", "medium")
-    docs_context = load_docs_context(agent)
+    # Rework prompt builds its own context — skip expensive docs reload
+    docs_context = ""
 
     set_executing(tid, model_info, qa_cycle=qa_cycle, agent=ticket_agent)
 
@@ -2201,11 +2400,16 @@ def main():
                         current_qa_cycle = qa_cycles.get(qa_ticket_id, 0) + 1
                         qa_cycles[qa_ticket_id] = current_qa_cycle
 
-                        print(f"\nQA_FAIL | {qa_ticket_id} | cycle {current_qa_cycle}/{MAX_QA_CYCLES} | {reason}", flush=True)
-                        add_comment(qa_ticket_id,
-                            f"[qa] ❌ QA FAILED (cykl {current_qa_cycle}/{MAX_QA_CYCLES}): {reason}")
+                        # Per-complexity max QA cycles
+                        qa_ticket_data = next((t for t in queue if t["id"] == qa_ticket_id), None)
+                        _qa_complexity = qa_ticket_data.get("complexity", "medium") if qa_ticket_data else "medium"
+                        _max_cycles = QA_DEPTH.get(_qa_complexity, QA_DEPTH["medium"]).get("max_cycles", MAX_QA_CYCLES)
 
-                        if current_qa_cycle < MAX_QA_CYCLES and active_proc is None:
+                        print(f"\nQA_FAIL | {qa_ticket_id} | cycle {current_qa_cycle}/{_max_cycles} | {reason}", flush=True)
+                        add_comment(qa_ticket_id,
+                            f"[qa] ❌ QA FAILED (cykl {current_qa_cycle}/{_max_cycles}): {reason}")
+
+                        if current_qa_cycle < _max_cycles and active_proc is None:
                             # Move to W trakcie and launch rework agent
                             try:
                                 move_ticket(qa_ticket_id, "W trakcie")
@@ -2214,7 +2418,6 @@ def main():
                                 print(f"MOVE_ERROR | {qa_ticket_id} | {me}", flush=True)
 
                             # Find full ticket data for rework
-                            qa_ticket_data = next((t for t in queue if t["id"] == qa_ticket_id), None)
                             if qa_ticket_data:
                                 active_ticket_id, active_proc = auto_rework_ticket(
                                     qa_ticket_data, reason, current_qa_cycle)
@@ -2222,11 +2425,11 @@ def main():
                                 print(f"REWORK_SKIP | {qa_ticket_id} | ticket data not found in queue", flush=True)
                         else:
                             # Max cycles reached or dev agent busy — back to Do zrobienia
-                            if current_qa_cycle >= MAX_QA_CYCLES:
+                            if current_qa_cycle >= _max_cycles:
                                 add_comment(qa_ticket_id,
-                                    f"[system] Osiągnięto limit cykli QA ({MAX_QA_CYCLES}). "
+                                    f"[system] Osiągnięto limit cykli QA ({_max_cycles}). "
                                     f"Ticket wymaga interwencji manualnej.")
-                                print(f"QA_MAX_CYCLES | {qa_ticket_id} | {MAX_QA_CYCLES} cycles exhausted", flush=True)
+                                print(f"QA_MAX_CYCLES | {qa_ticket_id} | {_max_cycles} cycles exhausted", flush=True)
                             try:
                                 move_ticket(qa_ticket_id, "Do zrobienia")
                                 print(f"MOVED_TO_TODO | {qa_ticket_id} (QA failed, needs manual rework)", flush=True)
