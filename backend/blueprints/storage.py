@@ -504,9 +504,15 @@ def toggle_keepalive():
 # API – Drives
 # ---------------------------------------------------------------------------
 
+_drives_cache = {'data': None, 'ts': 0}
+_DRIVES_CACHE_TTL = 10  # seconds
+
 @storage_bp.route('/drives')
 def list_drives():
     """List block devices with useful info (including main system disk)."""
+    now = time.time()
+    if _drives_cache['data'] is not None and now - _drives_cache['ts'] < _DRIVES_CACHE_TTL:
+        return jsonify(_drives_cache['data'])
     r = host_run(
         "lsblk -J -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,LABEL,MODEL,TRAN,UUID,HOTPLUG"
     )
@@ -662,7 +668,10 @@ def list_drives():
     for dev in data.get('blockdevices', []):
         _collect(dev)
 
-    return jsonify({'drives': drives})
+    result = {'drives': drives}
+    _drives_cache['data'] = result
+    _drives_cache['ts'] = time.time()
+    return jsonify(result)
 
 
 # /mounts endpoint removed — fstab no longer managed for USB drives

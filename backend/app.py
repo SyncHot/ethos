@@ -7,6 +7,7 @@ from gevent import monkey
 monkey.patch_all()
 
 from flask import Flask, request, jsonify, send_from_directory, send_file, g
+from flask_caching import Cache
 from flask_socketio import SocketIO, emit
 import os
 import json
@@ -107,6 +108,7 @@ def _verify_shadow_hash(password: str, stored_hash: str) -> bool:
 # ─────────────────────────── App Setup ───────────────────────────
 
 app = Flask(__name__, static_folder='../frontend', static_url_path='/~static~')
+cache = Cache(app, config={'CACHE_TYPE': 'SimpleCache'})
 # Security: DDOS protection (5 req/sec per IP)
 limiter = RateLimiter(app, limit=300, window=60)
 
@@ -338,6 +340,15 @@ def get_current_user():
     if info and info['expires'] > datetime.now():
         return {'username': info['username'], 'role': info['role']}
     return None
+
+
+def make_user_cache_key(*args, **kwargs):
+    """Generate cache key based on path, query, user, and sudo mode."""
+    path = request.full_path  # includes query string
+    user = get_current_user()
+    username = user['username'] if user else 'anon'
+    sudo = 'sudo' if _is_sudo_mode() else 'nosudo'
+    return f"{path}:{username}:{sudo}"
 
 
 def require_auth(f):
@@ -1647,6 +1658,7 @@ def power_status():
 
 @app.route('/api/system/info')
 @require_auth
+@cache.cached(timeout=5)
 def system_info():
     cpu = _mon_cpu()
     ram = _mon_ram()
@@ -1718,6 +1730,7 @@ _KNOWN_SERVICES = {
 
 @app.route('/api/services/list')
 @require_auth
+@cache.cached(timeout=10)
 def services_list():
     """List only EthOS-relevant services with their status."""
     services = []
@@ -3664,6 +3677,7 @@ def photo_favorites_files():
 
 @app.route('/api/files/list')
 @require_auth
+@cache.cached(timeout=10, key_prefix=make_user_cache_key)
 def files_list():
     path = request.args.get('path', '/')
     # Normalize double slashes
@@ -8710,6 +8724,11 @@ def _watchdog_monitor():
 
 
 # ─────────────────────────── Main ───────────────────────────
+
+@app.route('/api/cache-test')
+@cache.cached(timeout=60)
+def cache_test():
+    return jsonify({'time': time.time()})
 
 if __name__ == '__main__':
     # Initialize databases

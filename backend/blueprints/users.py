@@ -9,6 +9,7 @@ import re
 import subprocess
 import shlex
 import sys
+import time
 from flask import Blueprint, jsonify, request
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -67,9 +68,15 @@ def _save_privileges(data):
 # Users
 # ---------------------------------------------------------------------------
 
+_users_cache = {'data': None, 'ts': 0}
+_USERS_CACHE_TTL = 30  # seconds
+
 @users_bp.route('/list')
 def list_users():
     """List all system users (uid >= 1000 + root)."""
+    now = time.time()
+    if _users_cache['data'] is not None and (now - _users_cache['ts']) < _USERS_CACHE_TTL:
+        return jsonify(_users_cache['data'])
     try:
         r = host_run(
             "getent passwd | awk -F: '($3 >= 1000 && $3 < 65534) || $3 == 0 "
@@ -94,6 +101,8 @@ def list_users():
                     'groups': groups,
                     'nasos_user': NASOS_GROUP in groups,
                 })
+        _users_cache['data'] = users
+        _users_cache['ts'] = time.time()
         return jsonify(users)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -158,6 +167,7 @@ def create_user():
     # Create default folder structure (Dokumenty, Pobrane, …) + ~/.ethos
     ensure_user_home_structure(username)
 
+    _users_cache['data'] = None  # invalidate cache
     return jsonify({'success': True, 'username': username})
 
 
@@ -175,6 +185,7 @@ def delete_user():
     if r.returncode != 0:
         return jsonify({'error': f'Błąd: {r.stdout.strip() or r.stderr.strip()}'}), 500
 
+    _users_cache['data'] = None  # invalidate cache
     return jsonify({'success': True})
 
 

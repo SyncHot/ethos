@@ -9,6 +9,7 @@ import shlex
 import json
 import os
 import sys
+import time
 from flask import Blueprint, jsonify, request
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -31,9 +32,15 @@ def _is_real_iface(name):
 # Interfaces list
 # ---------------------------------------------------------------------------
 
+_iface_cache = {'data': None, 'ts': 0}
+_IFACE_CACHE_TTL = 5  # seconds
+
 @network_bp.route('/interfaces')
 def list_interfaces():
     """Return non-Docker network interfaces with addresses and stats."""
+    now = time.time()
+    if _iface_cache['data'] is not None and (now - _iface_cache['ts']) < _IFACE_CACHE_TTL:
+        return jsonify(_iface_cache['data'])
     try:
         r = _host("ip -j addr show 2>/dev/null")
         if r.returncode != 0:
@@ -135,12 +142,15 @@ def list_interfaces():
         rh = _host("hostname 2>/dev/null")
         hostname = rh.stdout.strip() if rh.returncode == 0 else ''
 
-        return jsonify({
+        result = {
             'interfaces': ifaces,
             'gateway': gateway,
             'dns': dns_servers,
             'hostname': hostname,
-        })
+        }
+        _iface_cache['data'] = result
+        _iface_cache['ts'] = time.time()
+        return jsonify(result)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

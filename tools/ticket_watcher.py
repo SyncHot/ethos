@@ -174,7 +174,8 @@ _ticket_attempt_counts = {}  # {ticket_id: total_attempts_across_all_cycles}
 def _count_existing_attempts(tid):
     """Count how many dev run logs exist on disk for a ticket (persists across restarts)."""
     count = 0
-    for log_dir in ("/opt/ethos/logs/copilot_tickets", "/opt/ethos/logs/localai_tickets"):
+    for log_dir in ("/opt/ethos/logs/copilot_tickets", "/opt/ethos/logs/localai_tickets",
+                     "/opt/ethos/logs/copilot_tickets/archive", "/opt/ethos/logs/localai_tickets/archive"):
         if os.path.isdir(log_dir):
             for fname in os.listdir(log_dir):
                 # Match dev logs like t_xxx_1234567890.log but NOT qa/prompt files
@@ -2696,11 +2697,20 @@ def main():
             # --- Stranded ticket recovery: detect tickets stuck in "W trakcie" with no active process ---
             if in_progress and active_proc is None and not is_executing():
                 for stale in in_progress:
-                    print(f"STRANDED | {stale['id']} | stuck in W trakcie with no active process — requeuing", flush=True)
-                    try:
-                        move_ticket(stale["id"], "Do zrobienia")
-                    except Exception as me:
-                        print(f"MOVE_ERROR | {stale['id']} | {me}", flush=True)
+                    stale_id = stale['id']
+                    if _is_ticket_shelved(stale_id):
+                        print(f"SHELVED_STRANDED | {stale_id} | max attempts reached — moving to Review", flush=True)
+                        try:
+                            add_comment(stale_id, f"[system] Ticket odłożony po {MAX_TOTAL_ATTEMPTS} próbach (znaleziony jako porzucony w W trakcie).")
+                            move_ticket(stale_id, "Review")
+                        except Exception as me:
+                            print(f"MOVE_ERROR | {stale_id} | {me}", flush=True)
+                    else:
+                        print(f"STRANDED | {stale_id} | stuck in W trakcie with no active process — requeuing", flush=True)
+                        try:
+                            move_ticket(stale_id, "Do zrobienia")
+                        except Exception as me:
+                            print(f"MOVE_ERROR | {stale_id} | {me}", flush=True)
 
             # --- AUTO MODE: pick and start DEV ticket ---
             # Don't start a new ticket if anything is in "W trakcie" or "QA"

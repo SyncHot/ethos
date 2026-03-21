@@ -27,27 +27,40 @@ COLLECT_INTERVAL_SLOW = int(os.environ.get('COLLECT_INTERVAL_SLOW', 15))  # slow
 CLEANUP_INTERVAL = int(os.environ.get('CLEANUP_INTERVAL', 3600))
 DATA_RETENTION_DAYS = int(os.environ.get('DATA_RETENTION_DAYS', 7))
 
+# ---- In-memory cache fed by background collector ----
+# The collector runs every 3-15s and stores latest data here.
+# REST endpoints serve this cached snapshot instead of re-computing.
+_snapshot = {}
+_snapshot_ts = 0  # time.time() of last update
 
-# ---- REST API ----
+
+def _cached(key, fallback_fn, *args):
+    """Return cached data from collector snapshot, fall back to live call."""
+    if _snapshot_ts and key in _snapshot:
+        return _snapshot[key]
+    return fallback_fn(*args)
+
+
+# ---- REST API (served from collector cache when available) ----
 
 @resources_bp.route('/system')
 def api_system():
-    return jsonify(get_system_info())
+    return jsonify(_cached('system', get_system_info))
 
 
 @resources_bp.route('/cpu')
 def api_cpu():
-    return jsonify(get_cpu_info())
+    return jsonify(_cached('cpu', get_cpu_info))
 
 
 @resources_bp.route('/ram')
 def api_ram():
-    return jsonify(get_ram_info())
+    return jsonify(_cached('ram', get_ram_info))
 
 
 @resources_bp.route('/gpu')
 def api_gpu():
-    return jsonify(get_gpu_info())
+    return jsonify(_cached('gpu', get_gpu_info))
 
 
 @resources_bp.route('/gpu/detect')
@@ -57,19 +70,19 @@ def api_gpu_detect():
 
 @resources_bp.route('/disks')
 def api_disks():
-    return jsonify(get_disk_info())
+    return jsonify(_cached('disks', get_disk_info))
 
 
 @resources_bp.route('/network')
 def api_network():
-    return jsonify(get_network_info())
+    return jsonify(_cached('network', get_network_info))
 
 
 @resources_bp.route('/processes')
 def api_processes():
     sort_by = request.args.get('sort', 'cpu')
     limit = int(request.args.get('limit', 30))
-    return jsonify(get_processes(sort_by, limit))
+    return jsonify(_cached('processes', get_processes, sort_by, limit))
 
 
 @resources_bp.route('/processes/kill', methods=['POST'])
@@ -85,12 +98,12 @@ def api_kill_process():
 
 @resources_bp.route('/usb')
 def api_usb():
-    return jsonify(get_usb_devices())
+    return jsonify(_cached('usb', get_usb_devices))
 
 
 @resources_bp.route('/docker')
 def api_docker():
-    return jsonify(get_docker_containers())
+    return jsonify(_cached('docker', get_docker_containers))
 
 
 @resources_bp.route('/docker/action', methods=['POST'])
@@ -117,15 +130,15 @@ def api_history(table):
 @resources_bp.route('/all')
 def api_all():
     return jsonify({
-        'system': get_system_info(),
-        'cpu': get_cpu_info(),
-        'ram': get_ram_info(),
-        'gpu': get_gpu_info(),
-        'disks': get_disk_info(),
-        'network': get_network_info(),
-        'processes': get_processes('cpu', 30),
-        'usb': get_usb_devices(),
-        'docker': get_docker_containers()
+        'system': _cached('system', get_system_info),
+        'cpu': _cached('cpu', get_cpu_info),
+        'ram': _cached('ram', get_ram_info),
+        'gpu': _cached('gpu', get_gpu_info),
+        'disks': _cached('disks', get_disk_info),
+        'network': _cached('network', get_network_info),
+        'processes': _cached('processes', get_processes, 'cpu', 30),
+        'usb': _cached('usb', get_usb_devices),
+        'docker': _cached('docker', get_docker_containers)
     })
 
 
@@ -138,6 +151,7 @@ def resources_background_collector(socketio):
     - Fast (every COLLECT_INTERVAL=3s): CPU, RAM, network — cheap psutil calls
     - Slow (every COLLECT_INTERVAL_SLOW=15s): disks, docker, USB, processes, GPU — subprocess calls
     """
+    global _snapshot, _snapshot_ts
     last_cleanup = time.time()
     last_slow = 0  # force slow collection on first tick
 
@@ -195,6 +209,10 @@ def resources_background_collector(socketio):
                 'docker': _docker,
                 'timestamp': now
             }
+            # Update module-level snapshot so REST endpoints serve cached data
+            _snapshot = data
+            _snapshot_ts = now
+
             socketio.emit('resources_update', data)
 
             # Cleanup old data
