@@ -1430,6 +1430,8 @@ def setup_complete():
         return jsonify({'error': 'Nazwa użytkownika jest wymagana (min. 2 znaki)'}), 400
     if not password or len(password) < 4:
         return jsonify({'error': 'Hasło jest wymagane (min. 4 znaki)'}), 400
+    if password == 'ethos':
+        return jsonify({'error': 'Hasło nie może być domyślne ("ethos")'}), 400
 
     import shlex
     errors = []

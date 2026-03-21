@@ -27,6 +27,17 @@ async function api(path, options = {}) {
         showLogin();
         throw new Error('Unauthorized');
     }
+    if (resp.status === 403) {
+        const data = await resp.json();
+        if (data.code === 'PASSWORD_CHANGE_REQUIRED') {
+            showPasswordChangeModal();
+            throw new Error('Password change required');
+        }
+        // For other 403s, we might want to throw or return data.
+        // Assuming other 403s are handled by caller or just return error json.
+        // But if we consume json here, we need to return it.
+        return data; 
+    }
     return resp.json();
 }
 
