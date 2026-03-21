@@ -12,6 +12,7 @@ import subprocess
 import re
 import json
 import sys
+import logging
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from host import host_run as _host_run_imported
@@ -33,6 +34,7 @@ _prev_net_counters = {}
 _prev_net_time = None
 _prev_disk_counters = {}
 _prev_disk_time = None
+_last_alert_ts = {}
 
 # Cache CPU name — cpuinfo.get_cpu_info() spawns a heavy subprocess
 # and the CPU brand never changes at runtime
@@ -769,13 +771,14 @@ def _check_resource_alert(container):
     msg = None
     if mem_pct > 90:
         msg = f'Wysokie zużycie pamięci przez kontener {name}: {mem_pct:.1f}%'
-    
+
     if msg:
         now = time.time()
         last = _last_alert_ts.get(name, 0)
         if (now - last > 300):
             try:
-                log('docker', 'warning', msg, details=container)
+                logging.getLogger('monitor').warning(f'{msg} Details: {container}')
+                _last_alert_ts[name] = now
             except Exception:
                 pass
             _last_alert_ts[name] = now
@@ -801,4 +804,3 @@ def docker_action(container_id, action):
             return {'success': False, 'message': result.stderr.strip() or f'Failed to {action} container'}
     except Exception as e:
         return {'success': False, 'message': str(e)}
-
