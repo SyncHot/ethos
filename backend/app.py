@@ -47,7 +47,8 @@ from host import NATIVE_MODE, host_run as _host_run_base, host_run_stream as _ho
 from utils import load_json as _load_json, save_json as _save_json, \
     safe_path as _safe_path_util, fmt_bytes, DATA_ROOT, \
     generate_thumbnail, THUMB_CACHE_DIR, THUMBS_DIR_NAME, \
-    _thumb_cache_key, _local_thumb_path, list_directory as _list_dir
+    _thumb_cache_key, _local_thumb_path, list_directory as _list_dir, \
+    systemd_notify_ready
 
 from middleware.rate_limiter import RateLimiter
 
@@ -8861,5 +8862,8 @@ if __name__ == '__main__':
     else:
         run_kwargs['port'] = PORT
         print(f'\n  EthOS running on http://0.0.0.0:{PORT}\n')
+
+    # Notify systemd when we are ready (delayed slightly to allow socket bind)
+    gevent.spawn_later(0.1, systemd_notify_ready)
 
     socketio.run(app, **run_kwargs)

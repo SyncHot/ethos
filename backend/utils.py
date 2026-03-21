@@ -485,3 +485,23 @@ def register_pkg_routes(bp, *,
             except Exception:
                 pass
         return jsonify(result)
+
+
+# ── Systemd helpers ─────────────────────────────────────────
+
+def systemd_notify_ready():
+    """Send 'READY=1' to systemd notification socket if available."""
+    notify_socket = os.environ.get('NOTIFY_SOCKET')
+    if not notify_socket:
+        return
+
+    if notify_socket.startswith('@'):
+        notify_socket = '\0' + notify_socket[1:]
+
+    import socket
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sock:
+            sock.connect(notify_socket)
+            sock.sendall(b'READY=1')
+    except Exception:
+        pass

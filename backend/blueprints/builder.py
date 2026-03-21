@@ -1196,7 +1196,7 @@ Description=EthOS WiFi Hotspot (auto if no network)
 After=NetworkManager.service
 Wants=NetworkManager.service
 [Service]
-Type=oneshot
+Type=simple
 RemainAfterExit=yes
 ExecStart=/usr/local/bin/ethos-ap auto
 ExecStop=/usr/local/bin/ethos-ap stop
@@ -1260,7 +1260,8 @@ Wants=network.target
 Conflicts=ethos-preboot.service
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=all
 WorkingDirectory=/opt/ethos
 EnvironmentFile=/opt/ethos/ethos.env
 ExecStartPre=/bin/mkdir -p /opt/ethos/data /opt/ethos/logs /opt/ethos/backups /opt/ethos/uploads
