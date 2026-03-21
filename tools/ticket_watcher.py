@@ -169,7 +169,9 @@ TRANSIENT_SOFT_COOLDOWN_THRESHOLD = 3  # after exit 0, if this many transient er
 
 # ── Global attempt cap — prevents infinite retry loops on stuck tickets ───
 MAX_TOTAL_ATTEMPTS = 6  # max total dev runs per ticket before auto-shelving
+MAX_STRANDED_REQUEUES = 3  # max consecutive stranded detections before auto-shelving
 _ticket_attempt_counts = {}  # {ticket_id: total_attempts_across_all_cycles}
+_stranded_counts = {}  # {ticket_id: consecutive stranded detections}
 
 def _count_existing_attempts(tid):
     """Count how many dev run logs exist on disk for a ticket (persists across restarts)."""
@@ -2698,19 +2700,32 @@ def main():
             if in_progress and active_proc is None and not is_executing():
                 for stale in in_progress:
                     stale_id = stale['id']
-                    if _is_ticket_shelved(stale_id):
-                        print(f"SHELVED_STRANDED | {stale_id} | max attempts reached — moving to Review", flush=True)
+                    _stranded_counts[stale_id] = _stranded_counts.get(stale_id, 0) + 1
+                    stranded_n = _stranded_counts[stale_id]
+                    if _is_ticket_shelved(stale_id) or stranded_n >= MAX_STRANDED_REQUEUES:
+                        reason = (f"max attempts ({MAX_TOTAL_ATTEMPTS})" if _is_ticket_shelved(stale_id)
+                                  else f"stranded {stranded_n}x consecutively (limit {MAX_STRANDED_REQUEUES})")
+                        print(f"SHELVED_STRANDED | {stale_id} | {reason} — moving to Review", flush=True)
                         try:
-                            add_comment(stale_id, f"[system] Ticket odłożony po {MAX_TOTAL_ATTEMPTS} próbach (znaleziony jako porzucony w W trakcie).")
+                            add_comment(stale_id,
+                                f"[system] Ticket odłożony — {reason}. "
+                                f"Wykryto pętlę: ticket wielokrotnie utykał w 'W trakcie' bez aktywnego procesu. "
+                                f"Wymaga interwencji manualnej.")
                             move_ticket(stale_id, "Review")
+                            _stranded_counts.pop(stale_id, None)
                         except Exception as me:
                             print(f"MOVE_ERROR | {stale_id} | {me}", flush=True)
                     else:
-                        print(f"STRANDED | {stale_id} | stuck in W trakcie with no active process — requeuing", flush=True)
+                        print(f"STRANDED | {stale_id} | detection {stranded_n}/{MAX_STRANDED_REQUEUES} — requeuing", flush=True)
                         try:
                             move_ticket(stale_id, "Do zrobienia")
                         except Exception as me:
                             print(f"MOVE_ERROR | {stale_id} | {me}", flush=True)
+            else:
+                # Reset stranded counters for tickets no longer stuck
+                for tid in list(_stranded_counts.keys()):
+                    if not any(t['id'] == tid for t in in_progress):
+                        _stranded_counts.pop(tid, None)
 
             # --- AUTO MODE: pick and start DEV ticket ---
             # Don't start a new ticket if anything is in "W trakcie" or "QA"
