@@ -200,7 +200,7 @@ def get_status():
 def install_minidlna():
     """Install minidlna package via apt."""
     if _is_installed():
-        return jsonify({'success': True, 'message': 'Already installed'})
+        return jsonify({'status': 'ok', 'installed': True})
     r = host_run(
         "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y minidlna",
         timeout=120,
@@ -210,7 +210,7 @@ def install_minidlna():
     # Stop the auto-started service so user can configure first
     host_run("sudo systemctl stop minidlna 2>/dev/null", timeout=10)
     host_run("sudo systemctl disable minidlna 2>/dev/null", timeout=10)
-    return jsonify({'success': True, 'message': 'minidlna installed'})
+    return jsonify({'status': 'ok'})
 
 
 @dlna_bp.route('/config')
@@ -302,7 +302,7 @@ def rescan_library():
     r = host_run("sudo systemctl start minidlna", timeout=15)
     if r.returncode != 0:
         return jsonify({'error': r.stderr.strip() or 'Rescan failed'}), 500
-    return jsonify({'success': True, 'message': 'Rescan started'})
+    return jsonify({'status': 'ok'})
 
 
 @dlna_bp.route('/pkg-status')

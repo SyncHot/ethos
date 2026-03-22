@@ -320,7 +320,7 @@ def cache_info():
 def cache_clear():
     """Clear build cache."""
     _host_run("rm -rf /var/cache/ethos-builder/debootstrap/* /var/cache/ethos-builder/apt/*", timeout=30)
-    return jsonify({'ok': True, 'message': 'Cache wyczyszczony'})
+    return jsonify({'status': 'ok'})
 
 
 # ═══════════════════════════════════════════════════════════
@@ -537,7 +537,7 @@ def build_image():
     )
     t.start()
 
-    return jsonify({'ok': True, 'message': 'Build rozpoczęty'})
+    return jsonify({'status': 'ok'})
 
 
 def _build_image_worker(nasos):

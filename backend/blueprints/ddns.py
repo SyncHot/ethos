@@ -547,13 +547,13 @@ def _ddns_on_uninstall(wipe):
 @ddns_bp.route('/install', methods=['POST'])
 @admin_required
 def install_ddns():
-    return jsonify({'ok': True, 'message': 'DDNS installed'})
+    return jsonify({'status': 'ok'})
 
 @ddns_bp.route('/uninstall', methods=['POST'])
 @admin_required
 def uninstall_ddns():
     _ddns_on_uninstall(wipe=True)
-    return jsonify({'ok': True, 'message': 'DDNS uninstalled'})
+    return jsonify({'status': 'ok'})
 
 register_pkg_routes(
     ddns_bp,

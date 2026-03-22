@@ -960,7 +960,7 @@ def samba_status():
 def samba_install():
     r = host_run("command -v smbd")
     if r.returncode == 0:
-        return jsonify({"installed": True, "message": "Samba is already installed"}), 200
+        return jsonify({"status": "ok", "installed": True}), 200
 
     def generate():
         install_script = """
@@ -1265,12 +1265,12 @@ def samba_pkg_install():
     """Install Samba via apt — delegates to the existing /samba/install SSE endpoint logic."""
     r = host_run("command -v smbd")
     if r.returncode == 0:
-        return jsonify({'ok': True, 'message': 'Samba jest już zainstalowana.'})
+        return jsonify({'status': 'ok', 'installed': True})
     ok, msg = claim_dep('smbd', 'sharing-samba')
     if not ok:
         return jsonify({'ok': False, 'error': msg or 'Instalacja Samba nie powiodła się'}), 500
     host_run("systemctl unmask smbd nmbd 2>/dev/null; systemctl enable smbd nmbd 2>/dev/null; systemctl start smbd nmbd 2>/dev/null || true")
-    return jsonify({'ok': True, 'message': 'Samba zainstalowana.'})
+    return jsonify({'status': 'ok'})
 
 
 @storage_bp.route('/samba/pkg-uninstall', methods=['POST'])
@@ -1337,7 +1337,7 @@ def nfs_install():
     # Set optimal NFS thread count
     host_run("sed -i 's/^RPCNFSDCOUNT=.*/RPCNFSDCOUNT=16/' /etc/default/nfs-kernel-server 2>/dev/null || echo 'RPCNFSDCOUNT=16' >> /etc/default/nfs-kernel-server")
     host_run("systemctl restart nfs-server", timeout=15)
-    return jsonify({"ok": True, "message": "NFS zainstalowany"})
+    return jsonify({"status": "ok"})
 
 
 @storage_bp.route('/nfs/exports')
@@ -1399,12 +1399,12 @@ def nfs_export_remove():
 def nfs_pkg_install():
     r = host_run("command -v exportfs")
     if r.returncode == 0:
-        return jsonify({'ok': True, 'message': 'NFS jest już zainstalowany.'})
+        return jsonify({'status': 'ok', 'installed': True})
     ok, msg = claim_dep('exportfs', 'sharing-nfs')
     if not ok:
         return jsonify({'ok': False, 'error': msg or 'Instalacja NFS nie powiodła się'}), 500
     host_run("systemctl enable nfs-server && systemctl start nfs-server", timeout=15)
-    return jsonify({'ok': True, 'message': 'NFS zainstalowany.'})
+    return jsonify({'status': 'ok'})
 
 
 @storage_bp.route('/nfs/pkg-uninstall', methods=['POST'])
@@ -1453,7 +1453,7 @@ def dlna_install():
     if r.returncode != 0:
         return jsonify({"error": f"Instalacja nie powiodła się: {r.stderr[-200:]}"}), 500
     host_run("systemctl enable minidlna", timeout=10)
-    return jsonify({"ok": True, "message": "MiniDLNA zainstalowany"})
+    return jsonify({"status": "ok"})
 
 
 @storage_bp.route('/dlna/config')
@@ -1497,7 +1497,7 @@ inotify=yes
 @storage_bp.route('/dlna/rescan', methods=['POST'])
 def dlna_rescan():
     host_run("systemctl restart minidlna", timeout=10)
-    return jsonify({"ok": True, "message": "Reskan rozpoczęty"})
+    return jsonify({"status": "ok"})
 
 
 # -- DLNA package routes (for EthOS Package Store) --
@@ -1692,7 +1692,7 @@ def webdav_install():
         return jsonify({"error": f"Instalacja nie powiodła się: {r.stderr[-200:]}"}), 500
     # Enable WebDAV module
     host_run("lighttpd-enable-mod webdav 2>/dev/null || true")
-    return jsonify({"ok": True, "message": "WebDAV zainstalowany"})
+    return jsonify({"status": "ok"})
 
 
 @storage_bp.route('/webdav/shares')
@@ -1840,7 +1840,7 @@ pasv_max_port=40100
 """
     _host_write_file('/etc/vsftpd.conf', config)
     host_run("systemctl enable vsftpd && systemctl restart vsftpd", timeout=10)
-    return jsonify({"ok": True, "message": "FTP zainstalowany"})
+    return jsonify({"status": "ok"})
 
 
 @storage_bp.route('/ftp/toggle', methods=['POST'])

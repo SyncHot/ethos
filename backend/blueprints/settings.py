@@ -259,7 +259,7 @@ def change_password():
         pass
 
     audit_log('user.password.change', f'User "{username}" changed own password')
-    return jsonify({'ok': True, 'message': 'Hasło zostało zmienione'})
+    return jsonify({'status': 'ok'})
 
 
 @settings_bp.route('/timezones', methods=['GET'])
@@ -282,7 +282,7 @@ def restart_app():
             pass
 
     gevent.spawn_later(1, _do_restart)
-    return jsonify({'ok': True, 'message': 'Restart za chwilę…'})
+    return jsonify({'status': 'ok'})
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -415,13 +415,13 @@ def install_certbot():
     if g.role != 'admin':
         return jsonify({'error': 'Tylko administrator'}), 403
     if _certbot_installed():
-        return jsonify({'ok': True, 'message': 'Certbot jest już zainstalowany'})
+        return jsonify({'status': 'ok', 'installed': True})
 
     r = _apt_install('certbot', timeout=120)
     if r.returncode != 0:
         return jsonify({'error': f'Instalacja nie powiodła się: {r.stderr.strip()[-200:]}'}), 500
 
-    return jsonify({'ok': True, 'message': 'Certbot zainstalowany'})
+    return jsonify({'status': 'ok'})
 
 
 @settings_bp.route('/ssl/obtain', methods=['POST'])
@@ -596,13 +596,13 @@ def ssl_auto_renew():
                 timeout=10)
         cfg['auto_renew'] = True
         _save_ssl_config(cfg)
-        return jsonify({'ok': True, 'message': 'Automatyczne odnawianie włączone'})
+        return jsonify({'status': 'ok'})
     else:
         _host_run('systemctl disable certbot.timer 2>/dev/null; systemctl stop certbot.timer 2>/dev/null', timeout=10)
         _host_run('(crontab -l 2>/dev/null | grep -v certbot) | crontab -', timeout=10)
         cfg['auto_renew'] = False
         _save_ssl_config(cfg)
-        return jsonify({'ok': True, 'message': 'Automatyczne odnawianie wyłączone'})
+        return jsonify({'status': 'ok'})
 
 
 @settings_bp.route('/ssl/test', methods=['POST'])
@@ -848,7 +848,7 @@ def install_nginx():
     if g.role != 'admin':
         return jsonify({'error': 'Tylko administrator'}), 403
     if _nginx_installed():
-        return jsonify({'ok': True, 'message': 'Nginx jest już zainstalowany'})
+        return jsonify({'status': 'ok', 'installed': True})
 
     r = _apt_install('nginx', timeout=120)
     if r.returncode != 0:
@@ -878,7 +878,7 @@ def install_nginx():
                        'Uruchomi się automatycznie po dodaniu pierwszej domeny.',
         })
 
-    return jsonify({'ok': True, 'message': 'Nginx zainstalowany i uruchomiony'})
+    return jsonify({'status': 'ok'})
 
 
 @settings_bp.route('/domains/services', methods=['GET'])
@@ -1015,7 +1015,7 @@ def delete_domain(domain_id):
     _remove_nginx_conf(domain_id)
     _save_domains(data)
 
-    return jsonify({'ok': True, 'message': f'Domena {entry["domain"]} usunięta'})
+    return jsonify({'status': 'ok', 'domain': entry["domain"]})
 
 
 @settings_bp.route('/domains/<domain_id>/toggle', methods=['POST'])
@@ -1040,7 +1040,7 @@ def toggle_domain(domain_id):
     _save_domains(data)
 
     status_str = 'włączona' if entry['enabled'] else 'wyłączona'
-    return jsonify({'ok': True, 'enabled': entry['enabled'], 'message': f'Domena {entry["domain"]} {status_str}'})
+    return jsonify({'status': 'ok', 'enabled': entry['enabled'], 'domain': entry["domain"]})
 
 
 @settings_bp.route('/domains/<domain_id>/ssl', methods=['POST'])
@@ -1505,7 +1505,7 @@ def restart_sysctl():
         # Reload sysctl settings from all system files
         r = _host_run('sudo /opt/ethos/tools/ethos-system-helper.sh sysctl --system', timeout=30)
         if r.returncode == 0:
-            return jsonify({'ok': True, 'message': 'Ustawienia kernela (sysctl) przeładowane pomyślnie.'})
+            return jsonify({'status': 'ok'})
         else:
             return jsonify({'ok': False, 'error': r.stderr.strip()}), 500
     except Exception as e:

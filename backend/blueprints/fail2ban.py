@@ -75,7 +75,7 @@ def unban_ip():
     if err:
         return jsonify({'error': err}), 500
 
-    return jsonify({'success': True, 'message': f'Unbanned {ip} from {jail}'})
+    return jsonify({'status': 'ok', 'ip': ip, 'jail': jail})
 
 @fail2ban_bp.route('/whitelist', methods=['GET'])
 @admin_required

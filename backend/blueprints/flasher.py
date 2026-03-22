@@ -826,14 +826,14 @@ def format_drive():
             msg += 'Sprawdź: (1) blokada zapisu na karcie SD, (2) uszkodzona karta, (3) wadliwy czytnik USB.'
             return jsonify({'error': msg}), 500
 
-        return jsonify({'ok': True, 'message': 'Dysk wyczyszczony (brak partycji)'})
+        return jsonify({'status': 'ok'})
 
     full_cmd = ' && '.join(cmds)
     result = _host_run(full_cmd, timeout=120)
 
     if result.returncode == 0:
         msg = 'Dysk wyczyszczony (brak partycji)' if fs_type == 'wipe' else f'Dysk sformatowany jako {fs_type.upper()} ({label})'
-        return jsonify({'ok': True, 'message': msg})
+        return jsonify({'status': 'ok', 'disk_type': fs_type, 'label': label if fs_type != 'wipe' else None})
     else:
         return jsonify({'error': f'Błąd formatowania: {(result.stdout or "").strip()[-200:]}'}), 500
 
@@ -858,7 +858,7 @@ def flash_history():
 
 @flasher_bp.route('/install', methods=['POST'])
 def install_flasher():
-    return jsonify({'ok': True, 'message': 'Kreator USB gotowy.'})
+    return jsonify({'status': 'ok'})
 
 
 @flasher_bp.route('/uninstall', methods=['POST'])

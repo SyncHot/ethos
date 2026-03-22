@@ -98,10 +98,10 @@ def docker_status():
 def docker_install():
     """Install Docker Engine via get.docker.com (uses ensure_dep)."""
     if _docker_available():
-        return jsonify({'ok': True, 'message': 'Docker już zainstalowany'})
+        return jsonify({'status': 'ok', 'installed': True})
     ok, msg = ensure_dep('docker', install=True)
     if ok:
-        return jsonify({'ok': True, 'message': 'Docker zainstalowany i uruchomiony'})
+        return jsonify({'status': 'ok'})
     return jsonify({'ok': False, 'error': msg}), 500
 
 # ─── helpers ─────────────────────────────────────────────────
@@ -634,7 +634,7 @@ def delete_project(project_name):
     try:
         if os.path.isdir(real_path):
             shutil.rmtree(real_path)
-        return jsonify({'ok': True, 'message': f'Projekt {project_name} usunięty'})
+        return jsonify({'status': 'ok', 'project': project_name})
     except Exception as e:
         return jsonify({'error': f'Błąd usuwania katalogu: {str(e)}'}), 500
 
@@ -925,7 +925,7 @@ services:
         compose_file = os.path.join(project_path, 'docker-compose.yaml')
         with open(compose_file, 'w') as f:
             f.write(content)
-        return jsonify({'ok': True, 'message': f'Projekt "{name}" utworzony', 'path': project_path})
+        return jsonify({'status': 'ok', 'name': name, 'path': project_path})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

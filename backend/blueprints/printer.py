@@ -755,12 +755,12 @@ def api_cups_status():
 def api_cups_install():
     """Install CUPS natively via ensure_dep."""
     if _cups_installed():
-        return jsonify({'ok': True, 'message': 'CUPS już zainstalowany'})
+        return jsonify({'status': 'ok', 'installed': True})
     ok, msg = ensure_dep('lpadmin', install=True)
     if ok:
         from host import host_run
         host_run("systemctl enable cups && systemctl start cups", timeout=30)
-        return jsonify({'ok': True, 'message': 'CUPS zainstalowany i uruchomiony'})
+        return jsonify({'status': 'ok'})
     return jsonify({'error': msg}), 500
 
 

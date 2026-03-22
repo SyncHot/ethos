@@ -395,7 +395,7 @@ def wifi_disconnect():
         return jsonify({'error': 'Brak interfejsu WiFi'}), 404
     try:
         r = _host(f"sudo {_HELPER} nmcli device disconnect {shlex.quote(wifi_iface)} 2>&1")
-        return jsonify({'success': True, 'message': (r.stdout or '').strip()})
+        return jsonify({'status': 'ok', 'output': (r.stdout or '').strip()})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -512,7 +512,7 @@ def ap_start():
         r = _host(f"sudo {_HELPER} ap-control start 2>&1", timeout=30)
         output = (r.stdout or '').strip()
         if r.returncode == 0:
-            return jsonify({'success': True, 'message': output})
+            return jsonify({'status': 'ok', 'output': output})
         return jsonify({'error': output or 'Nie udało się uruchomić hotspota'}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -525,7 +525,7 @@ def ap_stop():
         script = _ap_script()
         r = _host(f"sudo {_HELPER} ap-control stop 2>&1", timeout=30)
         output = (r.stdout or '').strip()
-        return jsonify({'success': True, 'message': output})
+        return jsonify({'status': 'ok', 'output': output})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

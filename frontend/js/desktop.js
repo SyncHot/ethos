@@ -97,6 +97,49 @@ NAS.toast = toast;
 window.showToast = toast;
 window.showNotification = toast;
 
+// ───────────────────── Loading States ─────────────────────
+function showLoading(container, message) {
+    if (typeof container === 'string') container = document.querySelector(container);
+    if (!container) return;
+    const el = document.createElement('div');
+    el.className = 'ethos-loading';
+    el.innerHTML = '<div class="ethos-spinner"></div>' + (message ? '<span>' + message + '</span>' : '');
+    container.innerHTML = '';
+    container.appendChild(el);
+    return el;
+}
+
+function hideLoading(container) {
+    if (typeof container === 'string') container = document.querySelector(container);
+    if (!container) return;
+    const el = container.querySelector('.ethos-loading');
+    if (el) el.remove();
+}
+
+function formatDate(dateStr, opts) {
+    if (!dateStr) return '—';
+    try {
+        const d = new Date(dateStr);
+        if (isNaN(d)) return dateStr;
+        const o = opts || { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' };
+        return d.toLocaleString(document.documentElement.lang || 'pl-PL', o);
+    } catch { return dateStr; }
+}
+
+function formatRelativeTime(dateStr) {
+    if (!dateStr) return '—';
+    try {
+        const d = new Date(dateStr);
+        if (isNaN(d)) return dateStr;
+        const diff = (Date.now() - d.getTime()) / 1000;
+        if (diff < 60) return t('przed chwilą');
+        if (diff < 3600) return Math.floor(diff / 60) + ' min ' + t('temu');
+        if (diff < 86400) return Math.floor(diff / 3600) + 'h ' + t('temu');
+        if (diff < 604800) return Math.floor(diff / 86400) + 'd ' + t('temu');
+        return formatDate(dateStr, { day: '2-digit', month: '2-digit', year: 'numeric' });
+    } catch { return dateStr; }
+}
+
 // ───────────────────── Global Task Progress Stack ─────────────────────
 
 function _fmtEta(seconds) {

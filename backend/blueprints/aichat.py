@@ -1129,7 +1129,7 @@ def rag_index():
         _gevent.spawn(_bg_index)
     else:
         _threading.Thread(target=_bg_index, daemon=True).start()
-    return jsonify({'ok': True, 'message': f'Indeksowanie {directory} rozpoczęte', 'directory': directory})
+    return jsonify({'status': 'ok', 'directory': directory})
 
 
 @aichat_bp.route('/rag/index-internal', methods=['POST'])
@@ -1166,7 +1166,7 @@ def rag_index_internal():
         _gevent.spawn(_bg_index)
     else:
         _threading.Thread(target=_bg_index, daemon=True).start()
-    return jsonify({'ok': True, 'message': f'Indeksowanie {directory} dla {username}', 'directory': directory})
+    return jsonify({'status': 'ok', 'directory': directory})
 
 
 @aichat_bp.route('/rag/search', methods=['POST'])
@@ -1200,7 +1200,7 @@ def rag_clear():
     sandbox = _user_sandbox_root()
     indexer = _get_rag(username, sandbox)
     indexer.clear()
-    return jsonify({'ok': True, 'message': 'Indeks wyczyszczony'})
+    return jsonify({'status': 'ok'})
 
 
 @aichat_bp.route('/rag/scheduler', methods=['GET'])
@@ -1231,12 +1231,12 @@ def rag_scheduler_toggle():
         if action == 'enable':
             subprocess.run(['sudo', '/opt/ethos/tools/ethos-system-helper.sh', 'systemctl', 'enable', '--now', _TIMER_UNIT],
                            capture_output=True, timeout=10)
-            return jsonify({'ok': True, 'message': 'Harmonogram włączony'})
+            return jsonify({'status': 'ok'})
 
         elif action == 'disable':
             subprocess.run(['sudo', '/opt/ethos/tools/ethos-system-helper.sh', 'systemctl', 'disable', '--now', _TIMER_UNIT],
                            capture_output=True, timeout=10)
-            return jsonify({'ok': True, 'message': 'Harmonogram wyłączony'})
+            return jsonify({'status': 'ok'})
 
         elif action == 'set_interval':
             cal_value = _VALID_INTERVALS.get(interval, interval)
@@ -1270,7 +1270,7 @@ def rag_scheduler_toggle():
 
             subprocess.run(['sudo', '/opt/ethos/tools/ethos-system-helper.sh', 'systemctl', 'daemon-reload'], capture_output=True, timeout=10)
             subprocess.run(['sudo', '/opt/ethos/tools/ethos-system-helper.sh', 'systemctl', 'restart', _TIMER_UNIT], capture_output=True, timeout=10)
-            return jsonify({'ok': True, 'message': f'Interwał zmieniony na: {cal_value}'})
+            return jsonify({'status': 'ok', 'interval': cal_value})
 
         else:
             return jsonify({'error': 'Nieznana akcja'}), 400
@@ -1336,7 +1336,7 @@ def models_download():
     ok, err = lib.start_download(model_id, socketio=sio)
     if not ok:
         return jsonify({'error': err}), 400
-    return jsonify({'ok': True, 'message': f'Pobieranie {model_id} rozpoczęte'})
+    return jsonify({'status': 'ok', 'model_id': model_id})
 
 @aichat_bp.route('/models/download/status', methods=['GET'])
 def models_download_status():
@@ -1398,9 +1398,9 @@ def models_unload():
     lib = _get_ml()
     loaded, mid = lib.get_loaded_model()
     if loaded is None:
-        return jsonify({'ok': True, 'message': 'Żaden model nie jest załadowany'})
+        return jsonify({'status': 'ok', 'loaded': False})
     lib.unload_model()
-    return jsonify({'ok': True, 'message': f'Model {mid} wyładowany z pamięci'})
+    return jsonify({'status': 'ok', 'model_id': mid})
 
 @aichat_bp.route('/models/path', methods=['GET', 'POST'])
 def models_path():
@@ -1767,7 +1767,7 @@ def aichat_install():
 
     t = threading.Thread(target=_bg, daemon=True)
     t.start()
-    return jsonify({'ok': True, 'task_id': task_id, 'message': 'Instalacja rozpoczęta'})
+    return jsonify({'status': 'ok', 'task_id': task_id})
 
 
 @aichat_bp.route('/uninstall', methods=['POST'])

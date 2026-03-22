@@ -1518,7 +1518,7 @@ def cache_clear():
         repos_dir = os.path.join(CACHE_DIR, 'repos')
         if os.path.isdir(repos_dir):
             shutil.rmtree(repos_dir, ignore_errors=True)
-        return jsonify({'ok': True, 'message': 'Cache wyczyszczony'})
+        return jsonify({'status': 'ok'})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -1793,7 +1793,7 @@ def install_app():
         _bg_install(task_id, app_id, app_title,
                     adapted, dir_name, host_app_dir, container_app_dir)
 
-    return jsonify({'ok': True, 'task_id': task_id, 'message': 'Installation started'})
+    return jsonify({'status': 'ok', 'task_id': task_id})
 
 
 @appstore_bp.route('/reinstall', methods=['POST'])
@@ -1897,7 +1897,7 @@ def reinstall_app():
     else:
         _bg_reinstall()
 
-    return jsonify({'ok': True, 'task_id': task_id, 'message': 'Reinstall started'})
+    return jsonify({'status': 'ok', 'task_id': task_id})
 
 
 @appstore_bp.route('/uninstall', methods=['POST'])
@@ -1929,7 +1929,7 @@ def uninstall_app():
     except Exception as e:
         return jsonify({'ok': False, 'error': f'Compose down ok but cleanup failed: {e}'}), 500
 
-    return jsonify({'ok': True, 'message': f'{app_id} uninstalled', 'stdout': out})
+    return jsonify({'status': 'ok', 'app_id': app_id, 'stdout': out})
 
 
 @appstore_bp.route('/compose/<path:app_id>')

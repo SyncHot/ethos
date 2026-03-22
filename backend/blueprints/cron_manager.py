@@ -217,7 +217,7 @@ def create_job():
     ok, err = _write_crontab(lines)
     if not ok:
         return jsonify({'error': err}), 500
-    return jsonify({'success': True, 'message': 'Job created'})
+    return jsonify({'status': 'ok'})
 
 
 @cron_bp.route('/jobs/<int:index>', methods=['PUT'])
@@ -256,7 +256,7 @@ def update_job(index):
     ok, err = _write_crontab(lines)
     if not ok:
         return jsonify({'error': err}), 500
-    return jsonify({'success': True, 'message': 'Job updated'})
+    return jsonify({'status': 'ok'})
 
 
 @cron_bp.route('/jobs/<int:index>', methods=['DELETE'])
@@ -271,7 +271,7 @@ def delete_job(index):
     ok, err = _write_crontab(lines)
     if not ok:
         return jsonify({'error': err}), 500
-    return jsonify({'success': True, 'message': 'Job deleted'})
+    return jsonify({'status': 'ok'})
 
 
 @cron_bp.route('/jobs/<int:index>/toggle', methods=['POST'])

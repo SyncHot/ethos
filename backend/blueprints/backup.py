@@ -1440,7 +1440,7 @@ def start_backup():
                 destination['config'] = ssh_cfg
 
     _socketio.start_background_task(run_backup, valid_paths, destination, retention=retention, incremental=incremental, encrypt_passphrase=encrypt_passphrase)
-    return jsonify({'success': True, 'message': 'Backup rozpoczęty'})
+    return jsonify({'status': 'ok'})
 
 
 @backup_bp.route('/backup-preview/<filename>')
@@ -1530,7 +1530,7 @@ def start_restore():
             return jsonify({'error': f'Nie można utworzyć katalogu: {e}'}), 400
 
     _socketio.start_background_task(run_restore, backup_file, restore_target, archive_dir, decrypt_passphrase)
-    return jsonify({'success': True, 'message': 'Przywracanie rozpoczęte'})
+    return jsonify({'status': 'ok'})
 
 
 @backup_bp.route('/status')
@@ -2008,7 +2008,7 @@ def run_profile(profile_id):
                 destination['config'] = ssh_cfg
 
     _socketio.start_background_task(run_backup, profile['paths'], destination, profile['name'], profile['retention'], profile['incremental'], encrypt_passphrase)
-    return jsonify({'success': True, 'message': f'Backup "{profile["name"]}" rozpoczęty'})
+    return jsonify({'status': 'ok', 'profile': profile["name"]})
 
 
 @backup_bp.route('/profiles/<profile_id>/key', methods=['GET'])
@@ -2202,7 +2202,7 @@ def create_snapshot():
         logger.error("SocketIO not initialized — cannot start snapshot worker")
         _snapshot_state['status'] = 'error'
         _snapshot_state['message'] = 'Błąd wewnętrzny: SocketIO niezainicjalizowane'
-    return jsonify({'ok': True, 'message': 'Tworzenie snapshota rozpoczęte'})
+    return jsonify({'status': 'ok'})
 
 
 @backup_bp.route('/snapshots/<snap_id>/browse', methods=['GET'])
@@ -2297,7 +2297,7 @@ def restore_snapshot(snap_id):
             _restore_snapshot_worker,
             snap_dir, restore_docker, restore_volumes, restore_ethos, restore_system
         )
-    return jsonify({'ok': True, 'message': 'Przywracanie rozpoczęte'})
+    return jsonify({'status': 'ok'})
 
 
 @backup_bp.route('/snapshots/<snap_id>/download')
@@ -2349,7 +2349,7 @@ def transfer_snapshot(snap_id):
         _socketio.start_background_task(
             _transfer_snapshot_worker, snap_id, snap_dir, srv
         )
-    return jsonify({'ok': True, 'message': 'Transfer rozpoczęty'})
+    return jsonify({'status': 'ok'})
 
 
 def _ssh_resolve_remote_path(ssh, raw_path):
@@ -2658,7 +2658,7 @@ def adopt_received_snapshot():
         # Copy the snapshot directory into local SNAPSHOTS_DIR
         os.makedirs(SNAPSHOTS_DIR, exist_ok=True)
         shutil.copytree(source_path, local_dest)
-        return jsonify({'ok': True, 'message': f'Snapshot {snap_dir_name} zaimportowany do lokalnego katalogu'})
+        return jsonify({'status': 'ok', 'snapshot': snap_dir_name})
     except Exception as e:
         logger.exception("Error adopting received snapshot")
         return jsonify({'error': str(e)}), 500
@@ -2695,7 +2695,7 @@ def restore_received_snapshot():
             _restore_snapshot_worker, source_path,
             restore_docker, restore_volumes, restore_ethos, restore_system
         )
-    return jsonify({'ok': True, 'message': 'Przywracanie rozpoczęte'})
+    return jsonify({'status': 'ok'})
 
 
 @backup_bp.route('/snapshots/remote', methods=['POST'])
@@ -2787,7 +2787,7 @@ def pull_remote_snapshot():
         _socketio.start_background_task(
             _pull_snapshot_worker, remote_snap_id, srv
         )
-    return jsonify({'ok': True, 'message': 'Pobieranie rozpoczęte'})
+    return jsonify({'status': 'ok'})
 
 
 def _pull_snapshot_worker(snap_id, ssh_config):

@@ -264,7 +264,7 @@ def delete_app_policy(app_name):
 
     del store['apps'][app_name]
     _save_policies(store)
-    return jsonify({'ok': True, 'message': f'Polityka dla "{app_name}" usunięta'})
+    return jsonify({'status': 'ok', 'app_name': app_name})
 
 
 @sandbox_bp.route('/apps/<app_name>/effective', methods=['GET'])

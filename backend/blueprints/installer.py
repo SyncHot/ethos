@@ -1228,7 +1228,7 @@ def api_execute():
         daemon=True)
     _install_thread.start()
 
-    return jsonify({'success': True, 'message': 'Instalacja rozpoczęta'})
+    return jsonify({'status': 'ok'})
 
 
 @installer_bp.route('/status')

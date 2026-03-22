@@ -337,7 +337,7 @@ def test_channel():
     try:
         sender(ch_cfg, 'EthOS Test', 'This is a test notification from your EthOS NAS.')
         _append_history(ch_name, 'EthOS Test', 'Test notification', True)
-        return jsonify({'ok': True, 'message': 'Test sent successfully'})
+        return jsonify({'status': 'ok'})
     except Exception as exc:
         _append_history(ch_name, 'EthOS Test', 'Test notification', False, str(exc))
         return jsonify({'error': str(exc)}), 500

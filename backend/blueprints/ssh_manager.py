@@ -211,7 +211,7 @@ def api_deploy_key(key_name):
 
         if fingerprint in existing:
             ssh.close()
-            return jsonify({'success': True, 'message': 'Klucz już jest wdrożony na tym serwerze', 'already_deployed': True})
+            return jsonify({'status': 'ok', 'already_deployed': True})
 
         escaped = pub_key.replace("'", "'\\''")
         _, stderr, rc = _ssh_exec(ssh, f"echo '{escaped}' >> ~/.ssh/authorized_keys")
@@ -224,7 +224,7 @@ def api_deploy_key(key_name):
 
         priv_path = os.path.join(SSH_KEYS_DIR, key_name)
         if fingerprint in verify:
-            return jsonify({'success': True, 'message': 'Klucz wdrożony pomyślnie', 'key_path': priv_path})
+            return jsonify({'status': 'ok', 'key_path': priv_path})
         else:
             return jsonify({'error': 'Key deployment could not be verified'}), 500
 
@@ -396,7 +396,7 @@ def api_remove_host():
                            capture_output=True, text=True, timeout=5)
         if r.returncode == 0:
             log.info('[%s] Removed known_hosts entry for %s', username, host)
-            return jsonify({'success': True, 'message': f'Usunięto wpisy dla {host}'})
+            return jsonify({'status': 'ok', 'host': host})
         return jsonify({'error': r.stderr.strip() or 'Host nie znaleziony'}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500

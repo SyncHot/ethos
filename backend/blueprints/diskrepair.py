@@ -697,14 +697,14 @@ def unmount_partition():
 
     mp = _get_mountpoint(partition)
     if not mp:
-        return jsonify({'ok': True, 'message': 'Partition is not mounted'})
+        return jsonify({'status': 'ok', 'mounted': False})
 
     if mp in _SYSTEM_MOUNTS:
         return jsonify({'error': f'Cannot unmount system partition ({mp})'}), 400
 
     r = host_run(f"sudo /opt/ethos/tools/ethos-system-helper.sh umount /dev/{partition} 2>&1", timeout=15)
     if r.returncode == 0:
-        return jsonify({'ok': True, 'message': f'Unmounted /dev/{partition} from {mp}'})
+        return jsonify({'status': 'ok', 'partition': partition, 'mountpoint': mp})
 
     return jsonify({'error': f'Failed to unmount: {(r.stdout or "").strip()}'}), 500
 

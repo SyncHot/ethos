@@ -1193,7 +1193,7 @@ def _gallery_on_uninstall(wipe):
 @admin_required
 def gallery_install():
     # Gallery has no system dependencies to install
-    return jsonify({'ok': True, 'message': 'Galeria gotowa do użycia.'})
+    return jsonify({'status': 'ok'})
 
 
 @gallery_bp.route('/uninstall', methods=['POST'])

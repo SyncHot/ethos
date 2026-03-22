@@ -229,11 +229,11 @@ def install_certbot():
     if g.role != 'admin':
         return jsonify({'error': 'Tylko administrator'}), 403
     if _certbot_installed():
-        return jsonify({'ok': True, 'message': 'Certbot jest już zainstalowany'})
+        return jsonify({'status': 'ok', 'installed': True})
     r = _apt_install('certbot', timeout=120)
     if r.returncode != 0:
         return jsonify({'error': f'Instalacja nie powiodła się: {r.stderr.strip()[-200:]}'}), 500
-    return jsonify({'ok': True, 'message': 'Certbot zainstalowany'})
+    return jsonify({'status': 'ok'})
 
 
 @domains_mgr_bp.route('/ssl/obtain', methods=['POST'])
@@ -387,13 +387,13 @@ def ssl_auto_renew():
                 timeout=5)
         cfg['auto_renew'] = True
         _save_ssl_config(cfg)
-        return jsonify({'ok': True, 'message': 'Automatyczne odnawianie włączone'})
+        return jsonify({'status': 'ok'})
     else:
         _host_run('systemctl disable certbot.timer 2>/dev/null; systemctl stop certbot.timer 2>/dev/null', timeout=10)
         _host_run('(crontab -l 2>/dev/null | grep -v certbot) | crontab -', timeout=10)
         cfg['auto_renew'] = False
         _save_ssl_config(cfg)
-        return jsonify({'ok': True, 'message': 'Automatyczne odnawianie wyłączone'})
+        return jsonify({'status': 'ok'})
 
 
 @domains_mgr_bp.route('/ssl/test', methods=['POST'])
@@ -762,7 +762,7 @@ def install_nginx():
     if g.role != 'admin':
         return jsonify({'error': 'Tylko administrator'}), 403
     if _nginx_installed():
-        return jsonify({'ok': True, 'message': 'Nginx jest już zainstalowany'})
+        return jsonify({'status': 'ok', 'installed': True})
 
     r = _apt_install('nginx', timeout=120)
     if r.returncode != 0:
@@ -782,7 +782,7 @@ def install_nginx():
             'message': 'Nginx zainstalowany, ale nie udało się uruchomić. '
                        'Uruchomi się automatycznie po dodaniu pierwszej domeny.',
         })
-    return jsonify({'ok': True, 'message': 'Nginx zainstalowany i uruchomiony'})
+    return jsonify({'status': 'ok'})
 
 
 @domains_mgr_bp.route('/domains/services', methods=['GET'])
@@ -954,7 +954,7 @@ def delete_domain(domain_id):
     entry = domains.pop(found)
     _remove_nginx_conf(domain_id)
     _save_domains(data)
-    return jsonify({'ok': True, 'message': f'Domena {entry["domain"]} usunięta'})
+    return jsonify({'status': 'ok', 'domain': entry["domain"]})
 
 
 @domains_mgr_bp.route('/domains/<domain_id>/toggle', methods=['POST'])
@@ -978,7 +978,7 @@ def toggle_domain(domain_id):
     _save_domains(data)
 
     status_str = 'włączona' if entry['enabled'] else 'wyłączona'
-    return jsonify({'ok': True, 'enabled': entry['enabled'], 'message': f'Domena {entry["domain"]} {status_str}'})
+    return jsonify({'status': 'ok', 'enabled': entry['enabled'], 'domain': entry["domain"]})
 
 
 @domains_mgr_bp.route('/domains/<domain_id>/ssl', methods=['POST'])
@@ -1087,4 +1087,4 @@ def nginx_action():
     r = _host_run(f'systemctl {action} nginx', timeout=15)
     if r.returncode != 0:
         return jsonify({'error': f'Nie udało się: {(r.stderr or r.stdout).strip()[-300:]}'}), 500
-    return jsonify({'ok': True, 'message': f'Nginx: {action} — OK'})
+    return jsonify({'status': 'ok', 'action': action})

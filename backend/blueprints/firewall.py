@@ -92,7 +92,7 @@ def toggle_firewall():
     if code != 0:
         return jsonify({'error': err or f'Failed to {"enable" if enable else "disable"} firewall'}), 500
 
-    return jsonify({'success': True, 'message': f'Firewall {"enabled" if enable else "disabled"}', 'output': out})
+    return jsonify({'status': 'ok', 'enabled': enable, 'output': out})
 
 @firewall_bp.route('/rules', methods=['POST'])
 @admin_required
@@ -111,7 +111,7 @@ def manage_rules():
         out, err, code = run_ufw(['--force', 'delete', str(rule_id)])
         if code != 0:
             return jsonify({'error': err or 'Failed to delete rule'}), 500
-        return jsonify({'success': True, 'message': 'Rule deleted'})
+        return jsonify({'status': 'ok'})
 
     elif action == 'add':
         # Expected: proto (tcp/udp), port (22), from_ip (any/1.2.3.4)
@@ -147,7 +147,7 @@ def manage_rules():
         out, err, code = run_ufw(cmd_args)
         if code != 0:
              return jsonify({'error': err or 'Failed to add rule'}), 500
-        return jsonify({'success': True, 'message': 'Rule added'})
+        return jsonify({'status': 'ok'})
 
     elif action == 'reset_defaults':
         # Apply default EthOS rules
@@ -183,7 +183,7 @@ def manage_rules():
         # Ensure enabled
         run_ufw(['--force', 'enable'])
 
-        return jsonify({'success': True, 'message': 'Default rules applied'})
+        return jsonify({'status': 'ok'})
 
     return jsonify({'error': 'Invalid action'}), 400
 
@@ -253,6 +253,6 @@ def unban_ip():
             # If error, return code non-zero.
             return jsonify({'error': result.stderr.strip() or 'Failed to unban'}), 500
 
-        return jsonify({'success': True, 'message': f'IP {ip} unbanned from {jail}', 'output': result.stdout.strip()})
+        return jsonify({'status': 'ok', 'ip': ip, 'jail': jail, 'output': result.stdout.strip()})
     except Exception as e:
         return jsonify({'error': str(e)}), 500

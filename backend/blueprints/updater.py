@@ -341,7 +341,7 @@ def apply_update():
         # Start background update
         import gevent
         gevent.spawn(_do_apply_update, manifest)
-        return jsonify({'success': True, 'message': 'Aktualizacja rozpoczęta'})
+        return jsonify({'status': 'ok'})
 
     except Exception as e:
         _update_lock.release()
@@ -368,7 +368,7 @@ def upload_update():
 
         import gevent
         gevent.spawn(_do_apply_from_file, pkg_path)
-        return jsonify({'success': True, 'message': 'Aktualizacja z pliku rozpoczęta'})
+        return jsonify({'status': 'ok'})
     except Exception as e:
         _update_lock.release()
         return jsonify({'error': str(e)}), 500

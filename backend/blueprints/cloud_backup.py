@@ -406,7 +406,7 @@ def run_job(job_id):
 
     t = threading.Thread(target=_run_backup_thread, args=(job_id,), daemon=True)
     t.start()
-    return jsonify({'success': True, 'message': 'Backup started'})
+    return jsonify({'status': 'ok'})
 
 
 @cloud_backup_bp.route('/jobs/<job_id>/status', methods=['GET'])
@@ -448,7 +448,7 @@ def restore_job(job_id):
     )
     if r.returncode != 0:
         return jsonify({'error': f'Restore failed: {r.stderr.strip()}'}), 500
-    return jsonify({'success': True, 'message': 'Restore completed'})
+    return jsonify({'status': 'ok'})
 
 
 # ── History ────────────────────────────────────────────────
@@ -478,7 +478,7 @@ def install_rclone():
     host_run('curl -fsSL https://rclone.org/install.sh | bash', timeout=120)
     import shutil
     ok = shutil.which('rclone') is not None
-    return jsonify({'ok': ok, 'message': 'rclone installed' if ok else 'Install failed'})
+    return jsonify({'status': 'ok' if ok else 'error', 'installed': ok})
 
 
 @cloud_backup_bp.route('/uninstall', methods=['POST'])
