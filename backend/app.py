@@ -130,6 +130,8 @@ from blueprints.tickets import tickets_bp, init_tickets
 from blueprints.familyhub import familyhub_bp
 from blueprints.sharing import sharing_bp
 from blueprints.installer import installer_bp
+from blueprints.ups import ups_bp, init_ups, _ups_status
+from blueprints.power import power_bp
 from blueprints.admin_required import admin_required
 
 # ── Shadow password verification (avoids crypt DeprecationWarning) ──
@@ -348,12 +350,15 @@ app.register_blueprint(familyhub_bp)
 app.register_blueprint(sharing_bp)
 app.register_blueprint(fail2ban_bp)
 app.register_blueprint(wireguard_bp)
+app.register_blueprint(ups_bp)
+app.register_blueprint(power_bp, url_prefix='/api/power')
 init_appstore(socketio)
 init_downloads(socketio)
 init_update(socketio)
 init_remote_log(socketio)
 init_surveillance(socketio)
 init_tickets(socketio)
+init_ups()
 
 # ── Migrate data from app_path → data_path (one-time, for existing installs) ──
 def _migrate_app_data():
@@ -609,6 +614,7 @@ _API_TO_APP = {
     '/api/sandbox/': 'docker-manager',
     '/api/fail2ban/': 'fail2ban',
     '/api/wireguard/': 'wireguard',
+    '/api/power/': 'power',
 }
 
 # Admin-only apps — only role='admin' can access (matches admin_only: True in get_apps)
@@ -616,7 +622,7 @@ _ADMIN_ONLY_APPS = {
     'users', 'usb-flasher', 'builder', 'updates', 'services',
     'disk-repair', 'remote-log', 'surveillance',
     'system-settings', 'domains-manager', 'vm-manager', 'app-store',
-    'fail2ban', 'wireguard',
+    'fail2ban', 'wireguard', 'power',
 }
 
 
@@ -1937,7 +1943,8 @@ def system_info():
             'bytes_recv': net.bytes_recv
         },
         'uptime': sys_i['uptime'],
-        'cpu_temp': cpu['temperature']
+        'cpu_temp': cpu['temperature'],
+        'ups': _ups_status
     })
 
 
@@ -7884,6 +7891,16 @@ def get_apps():
             'type': 'builtin',
             'category': 'System',
             'description': 'Sprawdź i zainstaluj aktualizacje systemu',
+            'admin_only': True
+        },
+        {
+            'id': 'power',
+            'name': 'Zarządzanie energią',
+            'icon': 'fa-power-off',
+            'color': '#22c55e',
+            'type': 'builtin',
+            'category': 'System',
+            'description': 'Harmonogram, WOL, oszczędzanie energii',
             'admin_only': True
         },
         {

@@ -717,9 +717,9 @@ iproute2,iputils-ping,wireguard-tools,qrencode,\\
 bash,locales,console-setup,\\
 python3,python3-minimal,\\
 dosfstools,e2fsprogs,parted,util-linux,\\
-rsync,smartmontools,\\
+rsync,smartmontools,ethtool,hdparm,cpufrequtils,rtcwake,\\
 cryptsetup,\\
-usbutils,pciutils,lm-sensors,\\
+usbutils,pciutils,lm-sensors,nut,\\
 avahi-daemon,libnss-mdns,\\
 kmod,udev \\
     "$DEBIAN_RELEASE" "$WORK_DIR/root" http://deb.debian.org/debian 2>&1 | \\
@@ -830,9 +830,14 @@ net.ipv4.tcp_rmem = 4096 87380 16777216
 net.ipv4.tcp_wmem = 4096 65536 16777216
 vm.min_free_kbytes = 65536
 vm.dirty_expire_centisecs = 1500
-vm.dirty_writeback_centisecs = 300
+vm.dirty_writeback_centisecs = 1500
+kernel.nmi_watchdog = 0
 net.ipv4.ip_forward = 1
 IOTUNE
+
+cat > "$ROOT/etc/udev/rules.d/99-ethos-power.rules" <<'UDEV_PWR'
+ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="1", RUN+="/sbin/hdparm -S 242 /dev/%k"
+UDEV_PWR
 
 cat > "$ROOT/etc/udev/rules.d/99-ethos-readahead.rules" <<'UDEV'
 SUBSYSTEM=="block", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="1", RUN+="/sbin/blockdev --setra 4096 /dev/%k"
@@ -869,6 +874,7 @@ chroot "$ROOT" groupadd -f nasos
 chroot "$ROOT" usermod -aG nasosadmin,nasos "$DEFAULT_USER"
 chroot "$ROOT" systemctl disable ssh
 chroot "$ROOT" systemctl enable smartd
+chroot "$ROOT" systemctl enable nut-server
 chroot "$ROOT" systemctl enable NetworkManager
 
 # ── SMART Monitoring Configuration ──

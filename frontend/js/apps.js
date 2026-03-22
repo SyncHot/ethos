@@ -4794,6 +4794,13 @@ function renderDashboard(body) {
                     <div id="dash-info-rows"></div>
                 </div>
 
+                <div class="dash-card" id="dash-ups" style="display:none">
+                    <div class="dash-card-header">
+                        <div class="dash-card-title"><i class="fas fa-battery-full"></i> UPS</div>
+                    </div>
+                    <div id="dash-ups-content" class="app-text-center"></div>
+                </div>
+
                 <div class="dash-card full-width" id="dash-disks">
                     <div class="dash-card-header">
                         <div class="dash-card-title"><i class="fas fa-hdd"></i> Dyski</div>
@@ -4858,6 +4865,35 @@ function renderDashboard(body) {
                     <div class="dash-info-row"><span class="dash-info-label">Temperatura</span><span class="dash-info-value">${info.cpu_temp ? info.cpu_temp.toFixed(1) + '°C' : '—'}</span></div>
                     <div class="dash-info-row"><span class="dash-info-label">Uptime</span><span class="dash-info-value">${formatUptime(info.uptime)}</span></div>
                 `;
+            }
+
+            // UPS
+            const upsCard = body.querySelector('#dash-ups');
+            const upsContent = body.querySelector('#dash-ups-content');
+            if (upsCard && info.ups && info.ups.connected) {
+                upsCard.style.display = 'flex';
+                const charge = info.ups.battery_charge;
+                const status = info.ups.status;
+                const runtime = info.ups.runtime;
+
+                let icon = 'fa-battery-full';
+                let color = 'var(--success)';
+                if (charge < 20) { icon = 'fa-battery-quarter'; color = 'var(--danger)'; }
+                else if (charge < 50) { icon = 'fa-battery-half'; color = 'var(--warning)'; }
+
+                if (status.includes('OB')) { color = 'var(--danger)'; icon = 'fa-plug-circle-xmark'; }
+
+                upsContent.innerHTML = `
+                    <div style="font-size:2em;color:${color}"><i class="fas ${icon}"></i> ${charge}%</div>
+                    <div class="app-sublabel">${info.ups.model}</div>
+                    <div class="app-stat-value" style="font-size:0.9em;margin-top:5px">
+                        ${status} ${runtime > 0 ? '· ' + formatUptime(runtime) : ''}
+                    </div>
+                `;
+                upsCard.onclick = () => openApp('ups');
+                upsCard.style.cursor = 'pointer';
+            } else if (upsCard) {
+                upsCard.style.display = 'none';
             }
 
             // Disks
