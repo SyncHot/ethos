@@ -675,8 +675,8 @@ def _blueprint_auth_guard():
                         '/api/flasher/', '/api/builder/', '/api/services/',
                         '/api/surveillance/', '/api/notes/', '/api/familyhub/', '/api/update/',
                         '/api/remote-log/', '/api/websites/', '/api/sandbox/',
-                        '/api/fail2ban/', '/api/firewall/', '/api/wireguard/')):
-        # Allow unauthenticated access to user auth validation
+                        '/api/fail2ban/', '/api/firewall/', '/api/wireguard/',
+                        '/api/power/', '/api/ups/')):        # Allow unauthenticated access to user auth validation
         if path == '/api/users/auth/validate':
             return
         # Public gallery share links (no auth)

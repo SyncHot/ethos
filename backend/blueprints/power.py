@@ -2,6 +2,7 @@ import os
 import re
 import json
 import shutil
+import subprocess
 import time
 from flask import Blueprint, jsonify, request
 from blueprints.eventlog import log
@@ -92,7 +93,7 @@ def save_settings():
         _apply_cpu_governor(config['cpu_governor'])
         
     save_config(config)
-    log("Power settings updated")
+    log('power', 'info', 'Power settings updated')
     return jsonify({"status": "ok"})
 
 def _get_primary_iface():
@@ -106,14 +107,19 @@ def _apply_wol(enabled):
     val = 'g' if enabled else 'd'
     # Apply now
     run_cmd(f"ethtool -s {iface} wol {val}")
-    # Persist via NetworkManager dispatcher or systemd link?
-    # For now, we apply it. A reboot might reset it unless we add a persistent config.
-    # On Debian/Ubuntu with systemd-networkd, it's in .link file. 
-    # With NetworkManager, 'nmcli c modify <con> 802-3-ethernet.wake-on-lan magic'.
-    # We'll try nmcli if available, otherwise just rely on ethtool in a startup script (rc.local equivalent)
-    # Simplest persistence: add to a script ran at boot.
-    # ethos-system-helper.sh runs at boot? check tools/ethos-system-helper.sh
-    pass 
+    # Persist via NetworkManager if available
+    nm_con = run_cmd(f"nmcli -g GENERAL.CONNECTION dev show {iface} 2>/dev/null")
+    if nm_con:
+        nm_val = 'magic' if enabled else 'default'
+        run_cmd(f"nmcli con modify '{nm_con}' 802-3-ethernet.wake-on-lan {nm_val}")
+    else:
+        # Persist via systemd-networkd .link file
+        link_dir = "/etc/systemd/network"
+        os.makedirs(link_dir, exist_ok=True)
+        link_file = f"{link_dir}/10-ethos-wol.link"
+        wol_val = "magic" if enabled else "off"
+        with open(link_file, 'w') as f:
+            f.write(f"[Match]\nOriginalName={iface}\n\n[Link]\nWakeOnLan={wol_val}\n")
 
 def _apply_schedule(schedule):
     # schedule: list of rules
@@ -173,5 +179,3 @@ def _apply_cpu_governor(gov):
         run_cmd("systemctl restart cpufrequtils")
     except:
         pass
-
-import subprocess
