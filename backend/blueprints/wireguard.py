@@ -114,14 +114,19 @@ def _get_wg_keys():
         if m:
             priv_key = m.group(1).strip()
             # Derive public key
-            p = subprocess.run(f"echo '{priv_key}' | wg pubkey", shell=True, capture_output=True, text=True)
-            if p.returncode == 0:
-                pub_key = p.stdout.strip()
+            # Use stdin to avoid exposing key in ps and shell expansion issues
+            try:
+                p = subprocess.run(['wg', 'pubkey'], input=priv_key.encode(), capture_output=True)
+                if p.returncode == 0:
+                    pub_key = p.stdout.decode().strip()
+            except Exception:
+                pass
     
     return priv_key, pub_key
 
 def _generate_keys():
     priv = subprocess.run("wg genkey", shell=True, capture_output=True, text=True).stdout.strip()
+    # Use pipe or explicit input for pubkey to be safe
     pub = subprocess.run(f"echo '{priv}' | wg pubkey", shell=True, capture_output=True, text=True).stdout.strip()
     preshared = subprocess.run("wg genpsk", shell=True, capture_output=True, text=True).stdout.strip()
     return priv, pub, preshared
@@ -346,7 +351,16 @@ def add_peer():
     _write_config(server_priv, WG_PORT, peers)
 
     # Sync live interface without restart
-    subprocess.run("sudo wg syncconf wg0 <(sudo wg-quick strip wg0)", shell=True, executable='/bin/bash')
+    # Fix: avoid process substitution <(...) which fails in list context or sudo
+    # Use pipe: wg-quick strip wg0 | wg syncconf wg0 /dev/stdin
+    try:
+        # Get config
+        strip_proc = subprocess.run(['sudo', 'wg-quick', 'strip', 'wg0'], capture_output=True)
+        if strip_proc.returncode == 0:
+            config_data = strip_proc.stdout
+            subprocess.run(['sudo', 'wg', 'syncconf', 'wg0', '/dev/stdin'], input=config_data)
+    except Exception as e:
+        print(f"Error syncing wg conf: {e}")
     
     # Construct peer config
     hostname = _get_ddns_hostname() or request.host.split(':')[0]
@@ -368,11 +382,13 @@ PersistentKeepalive = 25
     import base64
     qr_b64 = ''
     try:
-        qr_proc = subprocess.run(['qrencode', '-o', '-', '-t', 'PNG'], input=peer_conf.encode(), capture_output=True)
+        # Input must be bytes if text is False (default)
+        # qrencode expects input on stdin
+        qr_proc = subprocess.run(['qrencode', '-o', '-', '-t', 'PNG'], input=peer_conf.encode('utf-8'), capture_output=True)
         if qr_proc.returncode == 0:
             qr_b64 = base64.b64encode(qr_proc.stdout).decode('utf-8')
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"QR code generation failed: {e}")
 
     return jsonify({
         'success': True,
