@@ -8821,10 +8821,9 @@ async function renderSystemSettings(body) {
                 set('#ss-sysctl-swappiness', data['vm.swappiness']);
                 set('#ss-sysctl-dirty', data['vm.dirty_ratio']);
                 set('#ss-sysctl-cache', data['vm.vfs_cache_pressure']);
-                if (data['net.ipv4.tcp_rmem']) {
-                    const parts = data['net.ipv4.tcp_rmem'].split(/\s+/);
-                    const max = parseInt(parts[parts.length-1]);
-                    set('#ss-sysctl-tcp-rmem', (max / 1024 / 1024).toFixed(0) + ' MB');
+                if (data['net.core.rmem_max']) {
+                    const val = parseInt(data['net.core.rmem_max']);
+                    set('#ss-sysctl-tcp-rmem', (val / 1024 / 1024).toFixed(0) + ' MB');
                 }
             } catch (e) { console.error(e); }
         }
