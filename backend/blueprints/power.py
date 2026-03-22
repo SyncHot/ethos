@@ -42,7 +42,7 @@ def run_cmd(cmd):
 @power_bp.route('/status', methods=['GET'])
 def get_status():
     config = load_config()
-    
+
     # 1. WOL
     iface = _get_primary_iface()
     wol_status = "Unknown"
@@ -54,14 +54,14 @@ def get_status():
             wol_status = "Enabled"
         elif "Wake-on: d" in out:
             wol_status = "Disabled"
-            
+
     # 2. CPU Governor
     gov = run_cmd("cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null") or "unknown"
     avail_govs = run_cmd("cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors 2>/dev/null").split()
-    
+
     # 3. HDD Spindown (read from config + check actual status if possible)
     # Checking actual status (active/standby) takes time and might spin up disk, so we just show config.
-    
+
     return jsonify({
         "wol": {"interface": iface, "status": wol_status, "enabled": config.get("wol_enabled", False)},
         "schedule": config.get("schedule", []),
@@ -73,7 +73,7 @@ def get_status():
 def save_settings():
     data = request.json
     config = load_config()
-    
+
     # Update Config
     if 'wol_enabled' in data:
         config['wol_enabled'] = data['wol_enabled']
