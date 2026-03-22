@@ -713,7 +713,7 @@ linux-image-amd64,\\
 grub-pc-bin,grub-efi-amd64-bin,grub-efi-amd64,grub-common,grub2-common,\\
 efibootmgr,\\
 sudo,openssh-server,curl,ca-certificates,gnupg,lsb-release,fail2ban,\\
-iproute2,iputils-ping,\\
+iproute2,iputils-ping,wireguard-tools,qrencode,\\
 bash,locales,console-setup,\\
 python3,python3-minimal,\\
 dosfstools,e2fsprogs,parted,util-linux,\\

@@ -109,6 +109,7 @@ from blueprints.updater import update_bp, updates_public_bp, init_update, update
 from blueprints.flasher import flasher_bp
 from blueprints.builder import builder_bp
 from blueprints.fail2ban import fail2ban_bp
+from blueprints.wireguard import wireguard_bp
 from blueprints.firewall import firewall_bp
 from blueprints.diskrepair import diskrepair_bp
 from blueprints.remote_log import remote_log_bp, init_remote_log
@@ -346,6 +347,7 @@ app.register_blueprint(tickets_bp)
 app.register_blueprint(familyhub_bp)
 app.register_blueprint(sharing_bp)
 app.register_blueprint(fail2ban_bp)
+app.register_blueprint(wireguard_bp)
 init_appstore(socketio)
 init_downloads(socketio)
 init_update(socketio)
@@ -606,6 +608,7 @@ _API_TO_APP = {
     '/api/websites/': 'websites',
     '/api/sandbox/': 'docker-manager',
     '/api/fail2ban/': 'fail2ban',
+    '/api/wireguard/': 'wireguard',
 }
 
 # Admin-only apps — only role='admin' can access (matches admin_only: True in get_apps)
@@ -613,7 +616,7 @@ _ADMIN_ONLY_APPS = {
     'users', 'usb-flasher', 'builder', 'updates', 'services',
     'disk-repair', 'remote-log', 'surveillance',
     'system-settings', 'domains-manager', 'vm-manager', 'app-store',
-    'fail2ban',
+    'fail2ban', 'wireguard',
 }
 
 
@@ -666,7 +669,7 @@ def _blueprint_auth_guard():
                         '/api/flasher/', '/api/builder/', '/api/services/',
                         '/api/surveillance/', '/api/notes/', '/api/familyhub/', '/api/update/',
                         '/api/remote-log/', '/api/websites/', '/api/sandbox/',
-                        '/api/fail2ban/', '/api/firewall/')):
+                        '/api/fail2ban/', '/api/firewall/', '/api/wireguard/')):
         # Allow unauthenticated access to user auth validation
         if path == '/api/users/auth/validate':
             return
@@ -8012,6 +8015,16 @@ def get_apps():
             'type': 'builtin',
             'category': 'Narzędzia',
             'description': 'Tablica ogłoszeń, listy zakupów, zadania i kalendarz rodzinny'
+        },
+        {
+            'id': 'wireguard',
+            'name': 'VPN (WireGuard)',
+            'icon': 'fa-shield-halved',
+            'color': '#7c3aed',
+            'type': 'builtin',
+            'category': 'Sieć',
+            'description': 'Serwer VPN WireGuard — zarządzaj peerami, generuj QR kody',
+            'admin_only': True
         }
     ]
 
