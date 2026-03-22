@@ -12,12 +12,34 @@ import sys
 import time
 import logging
 from logging.handlers import RotatingFileHandler
+from collections import defaultdict
 from flask import Blueprint, jsonify, request
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from host import host_run as _host_run, data_path, get_data_disk, get_user_home, ensure_user_home_structure
+from audit import audit_log
 
 users_bp = Blueprint('users', __name__, url_prefix='/api/users')
+
+
+# ─── Endpoint rate limiter (in-memory, per-IP) ───
+class _EndpointRateLimiter:
+    def __init__(self):
+        self._attempts = defaultdict(list)
+
+    def is_limited(self, key, max_attempts=10, window_secs=300):
+        now = time.time()
+        self._attempts[key] = [t for t in self._attempts[key] if now - t < window_secs]
+        if len(self._attempts[key]) >= max_attempts:
+            return True
+        self._attempts[key].append(now)
+        return False
+
+    def reset(self, key):
+        self._attempts.pop(key, None)
+
+_rate_limiter = _EndpointRateLimiter()
+
 
 PRIVILEGES_FILE = data_path('privileges.json')
 
@@ -155,6 +177,9 @@ def create_user():
 
     Accepts optional ``role``: 'admin' | 'user' | 'family' (default: 'user').
     """
+    client_ip = request.remote_addr or '0.0.0.0'
+    if _rate_limiter.is_limited(f'create_user:{client_ip}'):
+        return jsonify({"error": "Zbyt wiele prób. Spróbuj za 5 minut."}), 429
     data = request.json or {}
     username = _safe_name(data.get('username', ''))
     password = data.get('password', '')
@@ -217,6 +242,7 @@ def create_user():
     ensure_user_home_structure(username)
 
     _users_cache['data'] = None  # invalidate cache
+    audit_log('user.create', f'User "{username}" created (role: {role})')
     return jsonify({'success': True, 'username': username})
 
 
@@ -235,12 +261,16 @@ def delete_user():
         return jsonify({'error': f'Błąd: {r.stdout.strip() or r.stderr.strip()}'}), 500
 
     _users_cache['data'] = None  # invalidate cache
+    audit_log('user.delete', f'User "{username}" deleted')
     return jsonify({'success': True})
 
 
 @users_bp.route('/update', methods=['POST'])
 def update_user():
     """Update user properties (password, shell, groups)."""
+    client_ip = request.remote_addr or '0.0.0.0'
+    if _rate_limiter.is_limited(f'update_user:{client_ip}'):
+        return jsonify({"error": "Zbyt wiele prób. Spróbuj za 5 minut."}), 429
     data = request.json or {}
     username = _safe_name(data.get('username', ''))
     if not username:
@@ -254,6 +284,8 @@ def update_user():
         r = host_run(f"echo {_sq(password)} | sudo {_HELPER} user-set-password {_sq(username)}")
         if r.returncode != 0:
             errors.append(f'Hasło: {r.stderr.strip()}')
+        else:
+            audit_log('user.password.change', f'Password changed for user "{username}"')
 
     # Change shell
     shell = data.get('shell')
@@ -455,6 +487,7 @@ def set_user_role():
         host_run(f"sudo rm -f /etc/sudoers.d/010_{_sq(username)}")
 
     _users_cache['data'] = None  # invalidate cache
+    audit_log('user.role.change', f'Role changed for "{username}" to "{new_role}"')
     return jsonify({'success': True, 'username': username, 'role': new_role})
 
 

@@ -170,7 +170,6 @@ AppRegistry['fail2ban'] = function (appDef) {
             });
 
         } catch (e) {
-            console.error(e);
             body.querySelector('#f2b-jails').textContent = 'Błąd ładowania danych: ' + e.message;
         }
     }

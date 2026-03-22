@@ -1114,7 +1114,6 @@ function renderDownloadManager(body, launchOpts) {
             });
 
         } catch (e) {
-            console.error(e);
             list.innerHTML = '<div class="dlm-empty"><i class="fas fa-exclamation-triangle"></i><span>Błąd ładowania</span></div>';
         }
     }

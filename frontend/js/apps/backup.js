@@ -2116,7 +2116,7 @@ function renderBackupApp(body) {
             snapshots = r.snapshots || [];
             renderSnapshots();
             loadSnapSpace();
-        } catch(e) { console.error('loadSnapshots', e); }
+        } catch(e) { /* silenced */ }
     }
 
     async function loadSnapSpace() {

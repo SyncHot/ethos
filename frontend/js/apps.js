@@ -1930,6 +1930,12 @@ function renderFM(body, state) {
                 headers: { 'Authorization': `Bearer ${NAS.token}` },
                 body: formData
             });
+            if (!resp.ok) {
+                let msg = t('Błąd tworzenia pliku');
+                try { const errData = await resp.json(); msg = errData.error || msg; } catch { /* non-JSON response */ }
+                toast(msg, 'error');
+                return;
+            }
             const data = await resp.json();
             if (data.ok || data.uploaded) {
                 toast(`Plik "${name}" utworzony`, 'success');
@@ -3059,7 +3065,7 @@ function renderFM(body, state) {
             const ulist = await api('/users/list');
             const me = (typeof NAS !== 'undefined' && NAS.user) ? NAS.user.username : '';
             allUsers = (ulist || []).filter(u => u.nasos_user && u.username !== me);
-        } catch(e) {}
+        } catch(e) { /* non-critical — share dialog still works without user list */ }
 
         const result = await new Promise((resolve) => {
             const overlay = document.createElement('div');
@@ -5404,8 +5410,7 @@ function renderDockerManager(body) {
             const info = await api(`/docker/containers/${cid}/inspect`);
             main.querySelector('#dkr-detail-title').innerHTML = `<span class="dkr-dot ${info.state.status}"></span> ${esc(info.name)}`;
             S._inspectCache = info;
-        } catch { }
-        S.detailTab = 'logs';
+        } catch { toast(t('Błąd pobierania szczegółów kontenera'), 'error'); }
         renderDetailContent(cid);
     }
 
@@ -5445,9 +5450,10 @@ function renderDockerManager(body) {
                     pre.textContent = (r.logs || []).join('\n');
                     if (db.querySelector('#dkr-log-follow')?.checked) pre.scrollTop = pre.scrollHeight;
                 }
-            } catch { }
-        }
-        loadLogs();
+            } catch {
+                const pre = db.querySelector('#dkr-logs');
+                if (pre) pre.textContent = t('Błąd pobierania logów');
+            }
         db.querySelector('#dkr-log-refresh').addEventListener('click', loadLogs);
         db.querySelector('#dkr-log-lines').addEventListener('change', loadLogs);
         let debounce;
@@ -6210,14 +6216,7 @@ function renderVMManager(body) {
 
     async function showCreateModal() {
         let imgs = [];
-        try { imgs = await api('/vm/images'); } catch {}
-
-        const overlay = document.createElement('div');
-        overlay.className = 'vm-modal-overlay';
-        overlay.innerHTML = `
-            <div class="vm-modal">
-                <div class="vm-modal-header">
-                    <span>Nowa maszyna wirtualna</span>
+        try { imgs = await api('/vm/images'); } catch { /* non-critical — VM form works with empty image list */ }
                     <button class="vm-modal-close">&times;</button>
                 </div>
                 <div class="vm-modal-body">
@@ -8871,7 +8870,7 @@ async function renderSystemSettings(body) {
                     const val = parseInt(data['net.core.rmem_max']);
                     set('#ss-sysctl-tcp-rmem', (val / 1024 / 1024).toFixed(0) + ' MB');
                 }
-            } catch (e) { console.error(e); }
+            } catch (e) { /* silenced */ }
         }
         loadSysctl();
 

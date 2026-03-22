@@ -330,7 +330,6 @@ async function renderTickets(body, launchOpts) {
                     await loadTickets(currentProject.id);
                     renderBoard();
                 } catch (err) {
-                    console.error(err);
                     toast(t('Błąd podczas usuwania'), 'error');
                 }
             }
@@ -765,7 +764,6 @@ async function renderTickets(body, launchOpts) {
             
             let targetProject = projects.find(p => p.name === 'ETHOS');
             if (!targetProject) {
-                console.warn('Projekt ETHOS nie znaleziony, używam bieżącego');
                 targetProject = currentProject;
                 if (!targetProject) {
                      toast(t('Nie wybrano projektu'), 'error');
@@ -785,7 +783,6 @@ async function renderTickets(body, launchOpts) {
                 }
             }
         } catch (e) {
-            console.error(e);
             toast(t('Błąd: ') + e.message, 'error');
         }
     }
@@ -891,7 +888,7 @@ async function renderTickets(body, launchOpts) {
                             announceToScreenReader(t('Przeniesiono do') + ' ' + newCol);
                         }
                     }, 100);
-                } catch(err) { console.error(err); }
+                } catch(err) { /* silenced */ }
             }
         }
 
@@ -1896,7 +1893,6 @@ async function renderTickets(body, launchOpts) {
                 toast(t('Plik dodany'), 'success');
                 
             } catch (err) {
-                console.error(err);
                 document.getElementById(tempId)?.remove();
                 toast(t('Błąd wysyłania pliku'), 'error');
             }

@@ -371,7 +371,6 @@ AppRegistry['firewall'] = function (appDef) {
             }
 
         } catch (e) {
-            console.error(e);
             tbody.innerHTML = `<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--text-error)">Błąd: ${e.message}</td></tr>`;
         }
     }
@@ -561,7 +560,6 @@ AppRegistry['firewall'] = function (appDef) {
             });
 
         } catch (e) {
-            console.error(e);
             list.innerHTML = `<div style="color:var(--text-error)">Błąd: ${e.message}</div>`;
         }
     }

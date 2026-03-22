@@ -21,6 +21,7 @@ settings_bp = Blueprint('settings', __name__, url_prefix='/api/settings')
 import sys as _sys
 _sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from host import host_run as _host_run, ETHOS_ROOT, data_path as _data_path, apt_install as _apt_install, app_path as _app_path
+from audit import audit_log
 
 try:
     import paramiko
@@ -191,6 +192,9 @@ def update_settings():
     if errors and not changes:
         return jsonify({'ok': False, 'errors': errors}), 400
 
+    if changes:
+        audit_log('system.settings.change', f'Settings changed: {"; ".join(changes)}')
+
     return jsonify({
         'ok': True,
         'changes': changes,
@@ -254,6 +258,7 @@ def change_password():
     except Exception:
         pass
 
+    audit_log('user.password.change', f'User "{username}" changed own password')
     return jsonify({'ok': True, 'message': 'Hasło zostało zmienione'})
 
 

@@ -17,6 +17,7 @@ from host import host_run as _host_run_base, host_path, NATIVE_MODE, check_dep, 
     get_data_disk as _get_data_disk
 from utils import docker_available as _docker_available_util, run_host, \
     find_compose_projects as _find_compose_projects_util, register_pkg_routes, get_ethos_user
+from audit import audit_log
 
 # Import sandbox policy helper — used to apply resource limits to containers
 try:
@@ -204,6 +205,7 @@ def container_action(container_id):
     try:
         out, err, rc = _run(args, timeout=30)
         if rc == 0:
+            audit_log('docker.container.action', f'Container "{container_id}" action: {action}')
             return jsonify({'ok': True})
         return jsonify({'error': err.strip()}), 500
     except Exception as e:

@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from flask import Blueprint, request, jsonify, send_file, send_from_directory, g
 from host import data_path
 from utils import load_json, save_json, DATA_ROOT, generate_thumbnail
+from audit import audit_log
 
 sharing_bp = Blueprint('sharing', __name__)
 
@@ -158,6 +159,7 @@ def create_share():
     shares.append(share)
     _save_shares(shares)
 
+    audit_log('file.share.create', f'Shared "{path}" (token: {token})')
     return jsonify(share)
 
 
@@ -173,6 +175,7 @@ def delete_share(token):
         return jsonify({'error': 'Brak uprawnień'}), 403
     new = [s for s in shares if s['token'] != token]
     _save_shares(new)
+    audit_log('file.share.delete', f'Unshared "{target.get("path", "")}" (token: {token})')
     return jsonify({'ok': True})
 
 
