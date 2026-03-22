@@ -1530,7 +1530,7 @@ def get_sysctl_params():
             r = _host_run(f'sysctl -n {p}', timeout=5)
             if r.returncode == 0:
                 result[p] = r.stdout.strip()
-        except:
+        except Exception as e:
             pass
 
     return jsonify(result)

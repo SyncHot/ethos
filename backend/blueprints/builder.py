@@ -829,6 +829,8 @@ net.core.wmem_max = 16777216
 net.ipv4.tcp_rmem = 4096 87380 16777216
 net.ipv4.tcp_wmem = 4096 65536 16777216
 vm.min_free_kbytes = 65536
+vm.dirty_expire_centisecs = 1500
+vm.dirty_writeback_centisecs = 300
 IOTUNE
 
 cat > "$ROOT/etc/udev/rules.d/99-ethos-readahead.rules" <<'UDEV'
