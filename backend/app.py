@@ -133,7 +133,9 @@ from blueprints.sharing import sharing_bp
 from blueprints.installer import installer_bp
 from blueprints.ups import _ups_status
 from blueprints.power import power_bp
+from blueprints.notifications import notifications_bp
 from blueprints.admin_required import admin_required
+from blueprints.totp import totp_bp, is_totp_enabled, verify_totp_code, verify_backup_code
 
 # ── Shadow password verification (avoids crypt DeprecationWarning) ──
 import warnings as _warnings
@@ -152,6 +154,22 @@ if os.path.exists(os.path.join(os.path.dirname(__file__), '../frontend_dist')):
     _static_folder = '../frontend_dist'
 
 app = Flask(__name__, static_folder=_static_folder, static_url_path='/~static~')
+
+# Unique SECRET_KEY per installation — generated once, persisted
+_secret_key_path = os.path.join(os.path.dirname(__file__), '..', 'data', '.flask_secret')
+if os.path.exists(_secret_key_path):
+    with open(_secret_key_path) as _skf:
+        app.secret_key = _skf.read().strip()
+else:
+    app.secret_key = secrets.token_hex(32)
+    try:
+        os.makedirs(os.path.dirname(_secret_key_path), exist_ok=True)
+        with open(_secret_key_path, 'w') as _skf:
+            _skf.write(app.secret_key)
+        os.chmod(_secret_key_path, 0o600)
+    except OSError:
+        pass
+
 Compress(app)
 app.config['COMPRESS_ALGORITHM'] = ['brotli', 'gzip', 'deflate']
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 31536000  # 1 year
@@ -181,6 +199,8 @@ def check_password_change():
         '/api/auth/change-password', # The fix
         '/api/settings/change-password', # Alias? Check where it is
         '/api/setup/status',    # Needed for frontend logic
+        '/api/setup/timezones', # Setup wizard data
+        '/api/setup/locales',   # Setup wizard data
         '/api/system/info',     # Often used by UI on load
         '/api/language',        # Needed for UI
     ]
@@ -312,6 +332,26 @@ app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024 * 1024  # 50 GB upload limit
 socketio = SocketIO(app, async_mode='gevent')  # default: same-origin only
 
 
+# ── Production error handlers — never leak internals ──
+@app.errorhandler(404)
+def _handle_404(e):
+    if request.path.startswith('/api/'):
+        return jsonify({'error': 'Not found'}), 404
+    return send_from_directory(app.static_folder, 'index.html')
+
+@app.errorhandler(405)
+def _handle_405(e):
+    return jsonify({'error': 'Method not allowed'}), 405
+
+@app.errorhandler(413)
+def _handle_413(e):
+    return jsonify({'error': 'File too large'}), 413
+
+@app.errorhandler(500)
+def _handle_500(e):
+    return jsonify({'error': 'Internal server error'}), 500
+
+
 # Register blueprints
 app.register_blueprint(storage_bp)
 init_storage(socketio)
@@ -354,6 +394,8 @@ app.register_blueprint(fail2ban_bp)
 app.register_blueprint(wireguard_bp)
 app.register_blueprint(ups_bp)
 app.register_blueprint(power_bp, url_prefix='/api/power')
+app.register_blueprint(notifications_bp)
+app.register_blueprint(totp_bp)
 init_appstore(socketio)
 init_downloads(socketio)
 init_update(socketio)
@@ -679,7 +721,7 @@ def _blueprint_auth_guard():
                         '/api/surveillance/', '/api/notes/', '/api/familyhub/', '/api/update/',
                         '/api/remote-log/', '/api/websites/', '/api/sandbox/',
                         '/api/fail2ban/', '/api/firewall/', '/api/wireguard/',
-                        '/api/power/', '/api/ups/')):        # Allow unauthenticated access to user auth validation
+                        '/api/power/', '/api/ups/', '/api/totp/')):        # Allow unauthenticated access to user auth validation
         if path == '/api/users/auth/validate':
             return
         # Public gallery share links (no auth)
@@ -818,6 +860,21 @@ def login():
 
     # Clear login attempts on success
     _login_attempts.pop(client_ip, None)
+
+    # ─── TOTP / 2FA check ───
+    if is_totp_enabled(safe_user):
+        totp_code = str(data.get('totp_code', '')).strip()
+        backup_code = str(data.get('backup_code', '')).strip()
+        if not totp_code and not backup_code:
+            return jsonify({'totp_required': True}), 200
+        totp_ok = False
+        if totp_code:
+            totp_ok = verify_totp_code(safe_user, totp_code)
+        if not totp_ok and backup_code:
+            totp_ok = verify_backup_code(safe_user, backup_code)
+        if not totp_ok:
+            _log_auth_failure(safe_user, client_ip)
+            return jsonify({'error': 'Invalid 2FA code'}), 401
 
     # Password OK — determine role
     gr = _host_run_base(f"id -Gn {shlex.quote(safe_user)}", timeout=5)
@@ -1034,6 +1091,45 @@ def setup_progress():
             'elapsed': int(_SETUP_PROGRESS.get('elapsed') or 0),
             'updated_at': int(_SETUP_PROGRESS.get('updated_at') or 0),
         })
+
+
+@app.route('/api/setup/timezones')
+def setup_timezones():
+    """List available timezones (no auth for setup wizard)."""
+    tz_dir = '/usr/share/zoneinfo'
+    zones = []
+    for region in sorted(os.listdir(tz_dir)):
+        region_path = os.path.join(tz_dir, region)
+        if not os.path.isdir(region_path) or region.startswith(('.', '+')) or region in ('posix', 'right', 'posixrules'):
+            continue
+        for city in sorted(os.listdir(region_path)):
+            if os.path.isfile(os.path.join(region_path, city)):
+                zones.append(f'{region}/{city}')
+    return jsonify({'timezones': zones, 'default': 'Europe/Warsaw'})
+
+
+@app.route('/api/setup/locales')
+def setup_locales():
+    """List commonly used locales for setup wizard."""
+    locales = [
+        {'code': 'en_US.UTF-8', 'name': 'English (US)'},
+        {'code': 'en_GB.UTF-8', 'name': 'English (UK)'},
+        {'code': 'pl_PL.UTF-8', 'name': 'Polski'},
+        {'code': 'de_DE.UTF-8', 'name': 'Deutsch'},
+        {'code': 'fr_FR.UTF-8', 'name': 'Français'},
+        {'code': 'es_ES.UTF-8', 'name': 'Español'},
+        {'code': 'it_IT.UTF-8', 'name': 'Italiano'},
+        {'code': 'pt_BR.UTF-8', 'name': 'Português (Brasil)'},
+        {'code': 'nl_NL.UTF-8', 'name': 'Nederlands'},
+        {'code': 'sv_SE.UTF-8', 'name': 'Svenska'},
+        {'code': 'nb_NO.UTF-8', 'name': 'Norsk'},
+        {'code': 'da_DK.UTF-8', 'name': 'Dansk'},
+        {'code': 'fi_FI.UTF-8', 'name': 'Suomi'},
+        {'code': 'ja_JP.UTF-8', 'name': '日本語'},
+        {'code': 'zh_CN.UTF-8', 'name': '中文 (简体)'},
+        {'code': 'ko_KR.UTF-8', 'name': '한국어'},
+    ]
+    return jsonify({'locales': locales, 'default': 'en_US.UTF-8'})
 
 
 # ── EthOS identification (public, no auth) ──
@@ -1584,6 +1680,8 @@ def setup_complete():
     nas_name = data.get('nas_name', '').strip() or hostname
     data_disk = data.get('data_disk', '').strip()  # mountpoint for user data
     language = data.get('language', 'pl').strip()   # system language from wizard
+    timezone = data.get('timezone', '').strip()     # e.g. "Europe/Warsaw"
+    locale = data.get('locale', '').strip()         # e.g. "en_US.UTF-8"
 
     if not username or len(username) < 2:
         return jsonify({'error': 'Nazwa użytkownika jest wymagana (min. 2 znaki)'}), 400
@@ -1595,6 +1693,18 @@ def setup_complete():
     import shlex
     errors = []
     _setup_progress_start('Rozpoczynam konfigurację systemu...')
+
+    # 0. Set timezone & locale if provided
+    if timezone and re.match(r'^[A-Za-z_]+/[A-Za-z_/]+$', timezone):
+        tz_path = f'/usr/share/zoneinfo/{timezone}'
+        if os.path.exists(tz_path):
+            _host_run_base(f"ln -sf {tz_path} /etc/localtime && "
+                           f"echo {shlex.quote(timezone)} > /etc/timezone", timeout=10)
+    if locale and re.match(r'^[a-zA-Z_]+\.[A-Za-z0-9-]+$', locale):
+        _host_run_base(f"echo {shlex.quote(locale + ' UTF-8')} >> /etc/locale.gen && "
+                       f"locale-gen >/dev/null 2>&1 && "
+                       f"echo {shlex.quote('LANG=' + locale)} > /etc/default/locale",
+                       timeout=30)
 
     # 1. Set hostname on host
     _setup_progress_update('hostname', 'Ustawiam hostname systemu...')
@@ -7796,6 +7906,15 @@ def get_apps():
             'description': 'Logi i historia operacji'
         },
         {
+            'id': 'notifications',
+            'name': 'Powiadomienia',
+            'icon': 'fa-bell',
+            'color': '#f59e0b',
+            'type': 'builtin',
+            'category': 'System',
+            'description': 'Kanały powiadomień systemowych'
+        },
+        {
             'id': 'fail2ban',
             'name': 'Ochrona przed atakami',
             'icon': 'fa-shield-alt',
@@ -9150,7 +9269,7 @@ if __name__ == '__main__':
     https_port = int(os.environ.get('HTTPS_PORT', '443'))
     ssl_redirect = os.environ.get('SSL_REDIRECT', '0') == '1'
 
-    run_kwargs = dict(host='0.0.0.0', debug=False, allow_unsafe_werkzeug=True)
+    run_kwargs = dict(host='0.0.0.0', debug=False, allow_unsafe_werkzeug=False)
 
     if ssl_enabled and ssl_cert and ssl_key and os.path.exists(ssl_cert) and os.path.exists(ssl_key):
         run_kwargs['port'] = https_port
