@@ -1520,6 +1520,7 @@ def get_sysctl_params():
         'vm.vfs_cache_pressure',
         'net.core.rmem_max',
         'net.core.wmem_max',
+        'net.ipv4.tcp_rmem',
         'vm.min_free_kbytes'
     ]
 
