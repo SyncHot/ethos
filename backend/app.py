@@ -142,6 +142,7 @@ from blueprints.dashboard import dashboard_bp
 from blueprints.admin_required import admin_required
 from blueprints.totp import totp_bp, is_totp_enabled, verify_totp_code, verify_backup_code
 from blueprints.cron_manager import cron_bp
+from blueprints.raid_manager import raid_bp
 
 # ── Shadow password verification (avoids crypt DeprecationWarning) ──
 import warnings as _warnings
@@ -409,6 +410,7 @@ app.register_blueprint(totp_bp)
 app.register_blueprint(dlna_bp)
 app.register_blueprint(dashboard_bp)
 app.register_blueprint(cron_bp)
+app.register_blueprint(raid_bp)
 init_appstore(socketio)
 init_downloads(socketio)
 init_update(socketio)
@@ -675,6 +677,7 @@ _API_TO_APP = {
     '/api/power/': 'power',
     '/api/ups/': 'ups',
     '/api/cloud-backup/': 'cloud-backup',
+    '/api/raid/': 'raid',
 }
 
 # Admin-only apps — only role='admin' can access (matches admin_only: True in get_apps)
@@ -683,6 +686,7 @@ _ADMIN_ONLY_APPS = {
     'disk-repair', 'remote-log', 'surveillance',
     'system-settings', 'domains-manager', 'vm-manager', 'app-store',
     'fail2ban', 'wireguard', 'power', 'ups', 'dlna', 'cloud-backup', 'rollback',
+    'raid',
 }
 
 
@@ -7861,6 +7865,16 @@ def get_apps():
             'type': 'builtin',
             'category': 'Przechowywanie',
             'description': 'Montowanie, formatowanie i partycje'
+        },
+        {
+            'id': 'raid',
+            'name': 'RAID / LVM',
+            'icon': 'fa-layer-group',
+            'color': '#0ea5e9',
+            'type': 'builtin',
+            'category': 'Przechowywanie',
+            'description': 'Macierze RAID i woluminy LVM',
+            'admin_only': True
         },
         {
             'id': 'sharing',
