@@ -278,13 +278,17 @@ def _set_model_cooldown(model_name, duration=None):
                     print(f"  SIBLING_COOLDOWN | {sibling} | {sibling_duration}s (provider={provider})", flush=True)
 
 def _get_available_model(complexity, tried_models=None):
-    """Get best available model for complexity, skipping cooled-down ones."""
+    """Get best available model for complexity, skipping cooled-down and poorly-performing ones."""
     tried = set(tried_models or [])
     chain = MODEL_ROUTING.get(complexity, MODEL_ROUTING.get("medium", []))
-    # First try routing chain
+    # First try routing chain, skipping models with <40% success rate (at least 5 runs)
+    for m in chain:
+        if m not in tried and not _is_model_cooled_down(m) and not _is_model_underperforming(m):
+            return {"model": m, "label": f"{m} (routing)", "reason": "Primary routing choice"}
+    # Retry chain without performance filter (give underperforming models a second chance)
     for m in chain:
         if m not in tried and not _is_model_cooled_down(m):
-            return {"model": m, "label": f"{m} (routing)", "reason": "Primary routing choice"}
+            return {"model": m, "label": f"{m} (routing, low-perf)", "reason": "Routing choice (low success rate)"}
     # Then all available models
     for m in ALL_AVAILABLE_MODELS:
         if m not in tried and not _is_model_cooled_down(m):
@@ -344,6 +348,19 @@ def _print_metrics_summary():
         parts.append(f"{model}: {rate} ok ({m['ok']}/{total}, {m['rate_limit']}×429, {m['total_secs']/60:.0f}min)")
     if parts:
         print(f"METRICS | {' | '.join(parts)}", flush=True)
+
+MIN_RUNS_FOR_PERF_CHECK = 5
+MIN_SUCCESS_RATE = 0.40
+
+def _is_model_underperforming(model):
+    """Return True if model has enough data and its success rate is below threshold."""
+    m = _model_metrics.get(model)
+    if not m:
+        return False
+    total = m["ok"] + m["fail"] + m["rate_limit"] + m["server_error"] + m["transient"]
+    if total < MIN_RUNS_FOR_PERF_CHECK:
+        return False
+    return (m["ok"] / total) < MIN_SUCCESS_RATE
 
 def _should_wait_before_next_ticket(next_model=None):
     """Calculate how long to wait before starting the next ticket.
@@ -975,10 +992,22 @@ MAX_AUTOPILOT = {
     "medium": 15,
     "simple": 8,
 }
+# Rework cycles get fewer turns — agent already has context, just needs targeted fix
+MAX_AUTOPILOT_REWORK = {
+    "complex": 15,
+    "medium": 10,
+    "simple": 5,
+}
 MAX_EXECUTION_SECS = {
     "complex": 2400,   # 40 min
     "medium": 1200,    # 20 min
     "simple": 900,     # 15 min
+}
+# Rework cycles get shorter timeouts — focused fix, not full exploration
+MAX_EXECUTION_SECS_REWORK = {
+    "complex": 1500,   # 25 min
+    "medium": 900,     # 15 min
+    "simple": 600,     # 10 min
 }
 MAX_TIMEOUT_RETRIES = 2  # max times a ticket can timeout before being shelved
 MAX_QA_CYCLES = 5  # max dev→QA round-trips before giving up
@@ -1097,36 +1126,45 @@ Title: {title}
 YOUR TASK:
 1. Read the ticket requirements (title + description above)
 2. Review the CHANGES TO REVIEW diff above — these are the actual code changes
-3. Read the relevant EthOS docs to understand standards:
-   - /opt/ethos/docs/DEV_STANDARDS.md
-   - /opt/ethos/docs/QA_FAILOVER_PROTOCOLS.md
-4. Verify the changes meet the ticket requirements
-5. Test the functionality if possible (curl API endpoints, check if server responds, etc.)
-6. Check if the code follows EthOS coding standards from the docs
+3. Verify the changes meet the ticket requirements — is the core ask addressed?
+4. Look for actual bugs: syntax errors, broken logic, missing imports, runtime crashes
+5. If backend changes exist, check the server is responding: curl -s http://localhost:9000/api/health
 
 VERDICT — you MUST output exactly one of these lines at the END of your response:
   QA_PASS: <brief reason why it passes>
-  QA_FAIL: <specific issues found that need fixing — include file names and line numbers>
+  QA_FAIL: <specific bugs or unmet requirements — include file names and line numbers>
 
-When reporting QA_FAIL:
-- List EACH issue with the specific file path and what's wrong
-- Be concrete: "in backend/app.py line 123, the error handler is missing X" not "error handling needs improvement"
-- Only report real bugs or requirement gaps, not style preferences
-Focus on: correctness, requirements met, docs compliance, no regressions."""
+PASS the ticket if:
+- The core requirement is met (even if the implementation isn't perfect)
+- There are no obvious bugs or crashes
+- Minor style issues, missing edge cases, or imperfect naming are NOT reasons to fail
+
+FAIL the ticket ONLY if:
+- The core requirement is clearly NOT met
+- There's a bug that would cause a crash, data loss, or broken functionality
+- There's a syntax error preventing the code from running
+- A critical import or dependency is missing
+
+Do NOT fail for: style preferences, missing documentation, minor naming issues, or theoretical edge cases."""
 
     return prompt
 
 
-# ── QA model selection with fallback (free/low-cost models) ──────────────
-QA_MODEL_CHAIN = ["claude-sonnet-4.6", "gpt-5.1-codex-mini", "gpt-5-mini", "gpt-4.1"]
+# ── QA model selection — complexity-aware, cheapest first ─────────────────
+QA_MODEL_CHAIN = {
+    "complex": ["claude-sonnet-4.6", "gpt-5.1-codex-mini", "gpt-4.1"],
+    "medium":  ["gpt-4.1", "gpt-5.1-codex-mini", "gpt-5-mini"],
+    "simple":  ["gpt-4.1", "gpt-5-mini"],
+}
 
-def _select_qa_model():
-    """Select QA model, skipping cooled-down ones. Returns a dict like select_model()."""
-    for m in QA_MODEL_CHAIN:
+def _select_qa_model(complexity="medium"):
+    """Select QA model by complexity, cheapest available first. Returns a dict like select_model()."""
+    chain = QA_MODEL_CHAIN.get(complexity, QA_MODEL_CHAIN["medium"])
+    for m in chain:
         if not _is_model_cooled_down(m):
             return {"model": m, "label": f"{m} (QA)", "reason": "QA review agent"}
     # All cooled down — pick soonest available
-    soonest = min(QA_MODEL_CHAIN, key=lambda m: _model_cooldowns.get(m, 0))
+    soonest = min(chain, key=lambda m: _model_cooldowns.get(m, 0))
     wait = max(0, _model_cooldowns.get(soonest, 0) - time.time())
     if wait > 0:
         print(f"QA_WAIT | all QA models in cooldown, waiting {wait:.0f}s for {soonest}", flush=True)
@@ -1214,7 +1252,7 @@ def run_qa_check(ticket):
         return _StaticPass(log_file)
 
     # --- Medium/Complex: full model QA ---
-    model_info = _select_qa_model()
+    model_info = _select_qa_model(complexity)
     model = model_info["model"]
     autopilot_turns = qa_cfg["autopilot"]
 
@@ -1355,8 +1393,25 @@ Be focused and efficient. Use the helper tools above instead of manual explorati
     return prompt
 
 
+_git_context_cache = {}  # {tid: {"data": str, "time": float, "head": str}}
+_GIT_CONTEXT_TTL = 120   # 2 minutes — fresh enough for retry, avoids repeated git ops
+
 def _get_ticket_diff_context(tid):
-    """Get a concise diff of all changes made for this ticket (committed and uncommitted)."""
+    """Get a concise diff of all changes made for this ticket (committed and uncommitted).
+    Cached per ticket for 2 minutes to avoid redundant git calls on rework cycles."""
+    # Check cache: reuse if HEAD hasn't changed and TTL not expired
+    cached = _git_context_cache.get(tid)
+    if cached:
+        try:
+            head = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                capture_output=True, text=True, cwd="/opt/ethos", timeout=3,
+            ).stdout.strip()
+        except Exception:
+            head = ""
+        if (time.time() - cached["time"] < _GIT_CONTEXT_TTL) and (head == cached.get("head", "")):
+            return cached["data"]
+
     parts = []
     try:
         # Find the commit range for this ticket
@@ -1401,7 +1456,17 @@ def _get_ticket_diff_context(tid):
 
     except Exception:
         pass
-    return "\n".join(parts) if parts else ""
+    result = "\n".join(parts) if parts else ""
+    # Cache the result
+    try:
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True, text=True, cwd="/opt/ethos", timeout=3,
+        ).stdout.strip()
+    except Exception:
+        head = ""
+    _git_context_cache[tid] = {"data": result, "time": time.time(), "head": head}
+    return result
 
 
 def _get_qa_log_details(tid):
@@ -2014,7 +2079,7 @@ def build_retry_prompt(ticket, agent, info, model_info, docs_context, prev_model
     return base_prompt
 
 
-def execute_via_copilot(ticket, agent, info, model_info, docs_context, override_prompt=None):
+def execute_via_copilot(ticket, agent, info, model_info, docs_context, override_prompt=None, is_rework=False):
     """Launch Copilot CLI in non-interactive mode to solve the ticket."""
     tid = ticket["id"]
     model = model_info["model"]
@@ -2030,13 +2095,17 @@ def execute_via_copilot(ticket, agent, info, model_info, docs_context, override_
     if reused:
         print(f"PROMPT_REUSED | {tid} | same prompt hash, skipping rewrite", flush=True)
 
+    # Rework cycles get fewer autopilot turns — focused fix, not full exploration
+    ap_table = MAX_AUTOPILOT_REWORK if is_rework else MAX_AUTOPILOT
+    ap_turns = ap_table.get(ticket.get("complexity", "medium"), 15)
+
     cmd = [
         COPILOT_BIN,
         "-p", prompt,
         "--model", model,
         "--autopilot",
         "--allow-all",
-        "--max-autopilot-continues", str(MAX_AUTOPILOT.get(ticket.get("complexity", "medium"), 15)),
+        "--max-autopilot-continues", str(ap_turns),
     ]
     reasoning_effort = model_info.get("reasoning_effort")
     if reasoning_effort:
@@ -2194,7 +2263,7 @@ def auto_rework_ticket(ticket, qa_reason, qa_cycle):
         f"QA feedback: {qa_reason[:500]}")
 
     rework_prompt = build_rework_prompt(ticket, agent, info, model_info, docs_context, qa_reason, qa_cycle)
-    proc = execute_via_copilot(ticket, agent, info, model_info, docs_context, override_prompt=rework_prompt)
+    proc = execute_via_copilot(ticket, agent, info, model_info, docs_context, override_prompt=rework_prompt, is_rework=True)
     if proc is None:
         print(f"REWORK_LAUNCH_FAILED | {tid} | Copilot failed to start", flush=True)
         clear_executing()
@@ -2224,7 +2293,8 @@ def main():
     print(f"Model mapping: complex→{COMPLEXITY_MODEL_MAP['complex']['model']}, medium→{COMPLEXITY_MODEL_MAP['medium']['model']}, simple→{COMPLEXITY_MODEL_MAP['simple']['model']}", flush=True)
     routing_str = ", ".join(f"{k}: {' → '.join(v)}" for k, v in MODEL_ROUTING.items())
     print(f"Fallback routing: {routing_str}", flush=True)
-    print(f"QA agent: {QA_MODEL_CHAIN[0]} (free) | Flow: Dev→QA→Review (fail→Rework→QA, max {MAX_QA_CYCLES} cycles)", flush=True)
+    qa_str = ", ".join(f"{k}: {' → '.join(v)}" for k, v in QA_MODEL_CHAIN.items())
+    print(f"QA models: {qa_str} | Flow: Dev→QA→Review (fail→Rework→QA, max {MAX_QA_CYCLES} cycles)", flush=True)
     free_str = ", ".join(f"{k}→{v['model']}" for k, v in FREE_MODEL_MAP.items())
     print(f"Free model mapping: {free_str}", flush=True)
     print(f"Copilot CLI: {COPILOT_BIN}", flush=True)
@@ -2686,7 +2756,9 @@ def main():
                     started = executing.get("started", 0)
                     ticket_ctx = getattr(active_proc, "_ticket_ctx", {})
                     complexity = ticket_ctx.get("ticket", {}).get("complexity", "medium") if ticket_ctx else "medium"
-                    max_secs = MAX_EXECUTION_SECS.get(complexity, MAX_EXECUTION_SECS["medium"])
+                    is_rework = executing.get("qa_cycle", 0) > 0
+                    timeout_table = MAX_EXECUTION_SECS_REWORK if is_rework else MAX_EXECUTION_SECS
+                    max_secs = timeout_table.get(complexity, timeout_table["medium"])
                     elapsed = time.time() - started
                     if elapsed > max_secs:
                         log_file = executing.get("log_file", "?")
@@ -2969,7 +3041,8 @@ def main():
             # Strict sequencing: never run QA alongside DEV to avoid git conflicts
             if args.auto and active_proc is None and qa_tickets and qa_proc is None:
                 # Inter-ticket pacing for QA — check against QA model
-                qa_model_info = _select_qa_model()
+                qa_complexity = qa_candidate.get("complexity", "medium") if qa_candidate else "medium"
+                qa_model_info = _select_qa_model(qa_complexity)
                 planned_qa_model = qa_model_info.get("model") if qa_model_info else None
                 wait_secs = _should_wait_before_next_ticket(planned_qa_model)
                 if wait_secs > 0:

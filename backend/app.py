@@ -91,6 +91,7 @@ from blueprints.monitor import (
 
 # Blueprints
 from blueprints.storage import storage_bp, init_storage, get_usb_notifications, usb_monitor_loop, keepalive_loop, try_wake_path
+from blueprints.ups import ups_bp, init_ups
 from blueprints.printer import printer_bp
 from blueprints.resources import resources_bp, resources_background_collector
 from blueprints.resources_db import init_db as init_resources_db
@@ -130,7 +131,7 @@ from blueprints.tickets import tickets_bp, init_tickets
 from blueprints.familyhub import familyhub_bp
 from blueprints.sharing import sharing_bp
 from blueprints.installer import installer_bp
-from blueprints.ups import ups_bp, init_ups, _ups_status
+from blueprints.ups import _ups_status
 from blueprints.power import power_bp
 from blueprints.admin_required import admin_required
 
@@ -309,6 +310,7 @@ def add_security_headers(response):
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024 * 1024  # 50 GB upload limit
 # No CORS — frontend served from same origin; no cross-origin access needed
 socketio = SocketIO(app, async_mode='gevent')  # default: same-origin only
+
 
 # Register blueprints
 app.register_blueprint(storage_bp)
@@ -615,6 +617,7 @@ _API_TO_APP = {
     '/api/fail2ban/': 'fail2ban',
     '/api/wireguard/': 'wireguard',
     '/api/power/': 'power',
+    '/api/ups/': 'ups',
 }
 
 # Admin-only apps — only role='admin' can access (matches admin_only: True in get_apps)
@@ -622,7 +625,7 @@ _ADMIN_ONLY_APPS = {
     'users', 'usb-flasher', 'builder', 'updates', 'services',
     'disk-repair', 'remote-log', 'surveillance',
     'system-settings', 'domains-manager', 'vm-manager', 'app-store',
-    'fail2ban', 'wireguard', 'power',
+    'fail2ban', 'wireguard', 'power', 'ups',
 }
 
 
@@ -8588,6 +8591,8 @@ def _notif_key(n):
     return n.get('title', '') + '::' + n.get('message', '')
 
 
+
+
 @app.route('/api/notifications')
 @require_auth
 def get_notifications():
@@ -8731,6 +8736,10 @@ def serve_index():
 
 @app.route('/<path:path>')
 def serve_static(path):
+    # PWA files must be served from root scope
+    if path in ['manifest.json', 'sw.js', 'offline.html']:
+        return send_from_directory(app.static_folder, path)
+
     if os.path.isfile(os.path.join(app.static_folder, path)):
         return send_from_directory(app.static_folder, path)
     return send_from_directory(app.static_folder, 'index.html')

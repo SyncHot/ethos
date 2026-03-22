@@ -78,6 +78,12 @@ function renderUPSApp(body) {
                 </select>
             </div>
             
+            <div class="form-group" style="margin-top:15px">
+                <label>Webhook URL (Powiadomienia)</label>
+                <input type="text" id="ups-webhook" class="fm-input" placeholder="https://..." style="width:100%">
+                <div style="font-size:0.8em;color:var(--text-muted);margin-top:5px">Opcjonalnie: URL do powiadomień POST przy zmianie zasilania</div>
+            </div>
+            
             <div id="ups-usb-config">
                 <div class="form-group" style="margin-top:15px">
                     <label>Auto-wykrywanie</label>
@@ -158,6 +164,7 @@ function renderUPSApp(body) {
         // Settings Tab
         $('#ups-enabled').checked = config.enabled;
         $('#ups-mode').value = config.mode || 'usb';
+        $('#ups-webhook').value = config.webhook_url || '';
         $('#ups-shutdown-pct').value = config.shutdown_threshold || 20;
         $('#ups-shutdown-time').value = config.shutdown_timer || 300;
     }
@@ -202,6 +209,7 @@ function renderUPSApp(body) {
         const newConfig = {
             enabled: $('#ups-enabled').checked,
             mode: $('#ups-mode').value,
+            webhook_url: $('#ups-webhook').value.trim(),
             shutdown_threshold: parseInt($('#ups-shutdown-pct').value),
             shutdown_timer: parseInt($('#ups-shutdown-time').value)
         };

@@ -4,6 +4,8 @@ import json
 import threading
 import subprocess
 import shutil
+import urllib.request
+import urllib.parse
 from flask import Blueprint, jsonify, request
 from blueprints.eventlog import log
 
@@ -34,7 +36,9 @@ def load_settings():
         'shutdown_threshold': 20,
         'shutdown_timer': 300, # 5 min on battery
         'enabled': False,
-        'mode': 'usb' # usb, net
+        'mode': 'usb', # usb, net
+        'webhook_url': '',
+        'webhook_method': 'POST'
     }
 
 def save_settings(settings):
@@ -83,6 +87,16 @@ def update_status():
          _ups_status['connected'] = False
          _ups_status['status'] = 'ERROR'
 
+def trigger_webhook(url, method, payload):
+    if not url: return
+    try:
+        data = json.dumps(payload).encode('utf-8')
+        req = urllib.request.Request(url, data=data, method=method.upper())
+        req.add_header('Content-Type', 'application/json')
+        urllib.request.urlopen(req, timeout=5)
+    except Exception as e:
+        log('system', 'error', f'UPS Webhook failed: {e}')
+
 def monitor_loop():
     last_status = 'OL'
     on_battery_start = 0
@@ -100,13 +114,22 @@ def monitor_loop():
         
         # Event logging
         if status != last_status:
+            webhook_payload = {
+                'event': 'status_change',
+                'status': status,
+                'charge': charge,
+                'ts': time.time()
+            }
+            
             if 'OB' in status and 'OL' in last_status:
                 log('system', 'warning', 'Zasilanie UPS: Przejście na baterię!', {'charge': charge})
                 on_battery_start = time.time()
-                # Notification could be sent here (log handles socketio emit)
+                trigger_webhook(settings.get('webhook_url'), settings.get('webhook_method', 'POST'), webhook_payload)
             elif 'OL' in status and 'OB' in last_status:
                 log('system', 'info', 'Zasilanie UPS: Przywrócono zasilanie sieciowe', {'charge': charge})
                 on_battery_start = 0
+                trigger_webhook(settings.get('webhook_url'), settings.get('webhook_method', 'POST'), webhook_payload)
+            
             last_status = status
 
         # Shutdown logic
@@ -173,22 +196,16 @@ def api_apply_config():
         
     # Write to ups.conf
     try:
-        with open(f'{NUT_CONF_DIR}/ups.conf', 'w') as f:
-             f.write("pollinterval = 1\n")
-             f.write("maxretry = 3\n\n")
-             f.write("[ups]\n")
-             # driver_config should be lines like "driver = usbhid-ups" etc.
-             f.write(driver_config + "\n")
-             f.write("desc = EthOS Auto Configured UPS\n")
+        conf_content = "pollinterval = 1\nmaxretry = 3\n\n[ups]\n" + driver_config + "\ndesc = EthOS Auto Configured UPS\n"
+        subprocess.run(['sudo', 'tee', f'{NUT_CONF_DIR}/ups.conf'], input=conf_content, text=True, check=True)
         
         # Enable NET server mode if needed
-        with open(f'{NUT_CONF_DIR}/upsd.conf', 'w') as f:
-            f.write("LISTEN 0.0.0.0 3493\n")
-            f.write("LISTEN ::0 3493\n")
+        upsd_content = "LISTEN 0.0.0.0 3493\nLISTEN ::0 3493\n"
+        subprocess.run(['sudo', 'tee', f'{NUT_CONF_DIR}/upsd.conf'], input=upsd_content, text=True, check=True)
 
         # Restart NUT
-        subprocess.run(['systemctl', 'restart', 'nut-server'], timeout=10)
-        subprocess.run(['systemctl', 'restart', 'nut-monitor'], timeout=10)
+        subprocess.run(['sudo', 'systemctl', 'restart', 'nut-server'], timeout=10)
+        subprocess.run(['sudo', 'systemctl', 'restart', 'nut-monitor'], timeout=10)
         
         # Update settings to enabled
         s = load_settings()
