@@ -1500,23 +1500,23 @@ function renderFM(body, state) {
                                 </div>
                             `;
                             document.body.appendChild(overlay);
-                            
+
                             const inp = overlay.querySelector('#pw-remove-input');
                             const forceCb = overlay.querySelector('#pw-admin-force');
-                            
+
                             const close = (res) => { overlay.remove(); resolve(res); };
                             overlay.querySelector('#pw-cancel').onclick = () => close(null);
                             overlay.querySelector('#pw-confirm').onclick = () => close({ pw: inp.value, force: forceCb.checked });
                             inp.onkeydown = e => { if(e.key === 'Enter') close({ pw: inp.value, force: forceCb.checked }); };
                         });
-                        
+
                         if (!override) break;
                         const rmRes = await api('/files/folder-password', { method: 'DELETE', body: { path: frPath, password: override.pw, force: override.force } });
                         if (rmRes.ok) { toast(t('Hasło usunięte'), 'success'); navigateTo(state.path); }
                         else toast(rmRes.error || t('Nieprawidłowe hasło'), 'error');
                         break;
                     }
-                    
+
                     rpw = await promptDialog(t('Usuń hasło folderu'), t('Podaj aktualne hasło:'));
                     if (!rpw) break;
                     const rmRes = await api('/files/folder-password', { method: 'DELETE', body: { path: frPath, password: rpw } });
@@ -1860,7 +1860,7 @@ function renderFM(body, state) {
                 if (idx >= 0) state.focusedIndex = idx;
             }
             state.lastClickedIndex = state.focusedIndex;
-            
+
             // Reset pagination, search, dir sizes on navigation
             state.page = 0;
             state.searchResults = null;
@@ -2690,11 +2690,11 @@ function renderFM(body, state) {
         const overlay = document.createElement('div');
         overlay.className = 'app-modal-overlay';
         overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9999;display:flex;align-items:center;justify-content:center';
-        
+
         const dialog = document.createElement('div');
         dialog.className = 'app-modal';
         dialog.style.cssText = 'background:var(--bg-surface,#1e1e2e);border:1px solid var(--border,#333);border-radius:12px;padding:20px;width:700px;max-width:95vw;height:80vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,0.5)';
-        
+
         dialog.innerHTML = `
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
                 <h3 style="margin:0;font-size:1.2em"><i class="fas fa-history"></i> ${t('Dziennik zdarzeń plików')}</h3>
@@ -2714,19 +2714,19 @@ function renderFM(body, state) {
                 <div style="padding:20px;text-align:center;color:var(--text-muted)">${t('Ładowanie...')}</div>
             </div>
         `;
-        
+
         overlay.appendChild(dialog);
         document.body.appendChild(overlay);
-        
+
         const close = () => overlay.remove();
         overlay.querySelector('#fm-logs-close').onclick = close;
         overlay.onclick = e => { if (e.target === overlay) close(); };
-        
+
         const listEl = overlay.querySelector('#fm-logs-list');
         const searchInput = overlay.querySelector('#fm-logs-search');
         const filterSelect = overlay.querySelector('#fm-logs-filter');
         const refreshBtn = overlay.querySelector('#fm-logs-refresh');
-        
+
         async function loadLogs() {
             listEl.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-muted)">${t('Ładowanie...')}</div>`;
             try {
@@ -2738,7 +2738,7 @@ function renderFM(body, state) {
                     listEl.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-muted)">${t('Brak zdarzeń')}</div>`;
                     return;
                 }
-                
+
                 listEl.innerHTML = res.events.map(e => {
                     const time = e.time || new Date(e.ts * 1000).toLocaleString();
                     const color = e.level === 'error' ? '#ef4444' : e.level === 'warning' ? '#eab308' : '#a6accd';
@@ -2758,11 +2758,11 @@ function renderFM(body, state) {
                 listEl.innerHTML = `<div style="padding:20px;text-align:center;color:var(--danger)">${t('Błąd ładowania logów')}</div>`;
             }
         }
-        
+
         refreshBtn.onclick = loadLogs;
         searchInput.onkeydown = e => { if(e.key === 'Enter') loadLogs(); };
         filterSelect.onchange = loadLogs;
-        
+
         loadLogs();
     }
 
@@ -2797,7 +2797,7 @@ function renderFM(body, state) {
         const octPerm = perms.permissions || item.permissions || '';
         const owner = perms.owner || item.owner || '—';
         const group = perms.group || item.group || '—';
-        
+
         // Helper to generate checkboxes for permissions
         const getPermChecks = (oct) => {
             const p = parseInt(oct || '0', 8);
@@ -2809,12 +2809,12 @@ function renderFM(body, state) {
                     <div><input type="checkbox" class="perm-cb" data-val="400" ${check(0o400)} ${!isAdmin ? 'disabled' : ''}></div>
                     <div><input type="checkbox" class="perm-cb" data-val="200" ${check(0o200)} ${!isAdmin ? 'disabled' : ''}></div>
                     <div><input type="checkbox" class="perm-cb" data-val="100" ${check(0o100)} ${!isAdmin ? 'disabled' : ''}></div>
-                    
+
                     <div style="text-align:left">${t('Grupa')}</div>
                     <div><input type="checkbox" class="perm-cb" data-val="40" ${check(0o040)} ${!isAdmin ? 'disabled' : ''}></div>
                     <div><input type="checkbox" class="perm-cb" data-val="20" ${check(0o020)} ${!isAdmin ? 'disabled' : ''}></div>
                     <div><input type="checkbox" class="perm-cb" data-val="10" ${check(0o010)} ${!isAdmin ? 'disabled' : ''}></div>
-                    
+
                     <div style="text-align:left">${t('Inni')}</div>
                     <div><input type="checkbox" class="perm-cb" data-val="4" ${check(0o004)} ${!isAdmin ? 'disabled' : ''}></div>
                     <div><input type="checkbox" class="perm-cb" data-val="2" ${check(0o002)} ${!isAdmin ? 'disabled' : ''}></div>
@@ -2834,7 +2834,7 @@ function renderFM(body, state) {
                 </div>
             </div>
         `;
-        
+
         const chownSection = isAdmin ? `
             <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border,#333)">
                  <div style="font-weight:600;margin-bottom:8px;color:var(--text-primary)">${t('Właściciel')}</div>
@@ -2881,7 +2881,7 @@ function renderFM(body, state) {
         if (isAdmin) {
             const checkboxes = overlay.querySelectorAll('.perm-cb');
             const octInput = overlay.querySelector('#fm-chmod-input');
-            
+
             const updateOct = () => {
                 let oct = 0;
                 checkboxes.forEach(cb => {
@@ -2889,9 +2889,9 @@ function renderFM(body, state) {
                 });
                 octInput.value = '0' + oct.toString(8);
             };
-            
+
             checkboxes.forEach(cb => cb.addEventListener('change', updateOct));
-            
+
             octInput.addEventListener('input', () => {
                 let val = parseInt(octInput.value, 8);
                 if (isNaN(val)) return;
@@ -2905,21 +2905,21 @@ function renderFM(body, state) {
                 const modeVal = octInput.value.trim();
                 const newUser = overlay.querySelector('#fm-chown-user')?.value.trim();
                 const newGroup = overlay.querySelector('#fm-chown-group')?.value.trim();
-                
+
                 let success = true;
-                
+
                 // chmod
                 if (modeVal !== octPerm) {
                      const r = await api('/files/chmod', { method: 'POST', body: { path: itemPath, mode: modeVal } });
                      if (!r.ok && !r.permissions) { toast(r.error || t('Błąd uprawnień'), 'error'); success = false; }
                 }
-                
+
                 // chown
                 if (newUser !== owner || newGroup !== group) {
                      const r = await api('/files/chown', { method: 'POST', body: { path: itemPath, owner: newUser, group: newGroup } });
                      if (r.error) { toast(r.error || t('Błąd właściciela'), 'error'); success = false; }
                 }
-                
+
                 if (success) {
                     toast(t('Zapisano zmiany'), 'success');
                     close();
@@ -3448,12 +3448,12 @@ function renderFM(body, state) {
         if (total === 0) return;
 
         let processed = true;
-        
+
         const getCols = () => {
             if (state.viewMode === 'list') return 1;
             const items = _fmList.querySelectorAll('.fm-grid-item, .fm-thumb-item');
             if (items.length < 2) return 1;
-            
+
             // Robust way: find first item on the next row
             const firstTop = items[0].getBoundingClientRect().top;
             for (let i = 1; i < items.length; i++) {
@@ -3473,10 +3473,10 @@ function renderFM(body, state) {
                 if (state.lastClickedIndex === -1) state.lastClickedIndex = state.focusedIndex;
                 const start = Math.min(state.lastClickedIndex, newIdx);
                 const end = Math.max(state.lastClickedIndex, newIdx);
-                
+
                 // If not holding Ctrl, Shift+Arrow usually clears previous discontinuous selections
                 if (!e.ctrlKey && !e.metaKey) state.selected.clear();
-                
+
                 const sorted = sortItems(_allItems);
                 for (let i = start; i <= end; i++) {
                     if (sorted[i]) state.selected.add(sorted[i].name);
@@ -3485,7 +3485,7 @@ function renderFM(body, state) {
             } else {
                 // Move anchor if not selecting
                 state.lastClickedIndex = newIdx;
-                
+
                 // Standard desktop behavior: moving focus selects item (unless Ctrl is held)
                 if (!e.ctrlKey && !e.metaKey) {
                     state.selected.clear();
@@ -3814,7 +3814,7 @@ function renderFM(body, state) {
             }
             return;
         }
-        
+
         if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
 
         // Ctrl+A — Select All
@@ -3935,7 +3935,7 @@ function renderFM(body, state) {
         if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown'].includes(e.key)) {
             e.preventDefault();
             body.querySelector('#fm-file-list').focus({ preventScroll: true });
-            
+
             const allItems = state.searchResults !== null ? state.searchResults : state.items;
             const sorted = sortItems(allItems);
             if (!sorted.length) return;
@@ -3969,7 +3969,7 @@ function renderFM(body, state) {
                  const list = body.querySelector('#fm-file-list');
                  const items = Array.from(list.querySelectorAll('.fm-grid-item, .fm-thumb-item'));
                  if (!items.length) return;
-                 
+
                  // Robust column calculation by checking y-offset
                  const firstTop = items[0].getBoundingClientRect().top;
                  let cols = 0;
@@ -3978,7 +3978,7 @@ function renderFM(body, state) {
                      else break;
                  }
                  cols = Math.max(1, cols);
-                 
+
                  if (e.key === 'ArrowLeft') newIdx--;
                  else if (e.key === 'ArrowRight') newIdx++;
                  else if (e.key === 'ArrowUp') newIdx -= cols;
@@ -4007,10 +4007,10 @@ function renderFM(body, state) {
                     state.lastClickedIndex = newIdx;
                 }
             }
-            
+
             setFocusedIndex(newIdx);
             updateSelection();
-            
+
             // Scroll into view
             const targetEl = body.querySelector(`#fm-item-${newIdx}`);
             if (targetEl) targetEl.scrollIntoView({ block: 'nearest' });
@@ -4041,7 +4041,7 @@ function renderFM(body, state) {
             body.querySelector(`#fm-item-${newIdx}`)?.scrollIntoView({ block: 'nearest' });
             return;
         }
-        
+
         if (e.key === 'End') {
             e.preventDefault();
             const allItems = state.searchResults !== null ? state.searchResults : state.items;
@@ -4622,7 +4622,7 @@ function renderFM(body, state) {
         let selectionBox = null;
         let startX, startY;
         let initialSelected;
-        
+
         const onMouseMove = (e) => {
             if (!selectionBox) return;
 
@@ -4641,7 +4641,7 @@ function renderFM(body, state) {
 
             const boxRect = selectionBox.getBoundingClientRect();
             const items = list.querySelectorAll('.fm-file-item, .fm-grid-item, .fm-thumb-item');
-            
+
             state.selected = new Set(initialSelected);
             let changed = false;
 
@@ -4652,9 +4652,9 @@ function renderFM(body, state) {
                     changed = true;
                 }
             });
-            
+
             if (changed || state.selected.size !== initialSelected.size) {
-                updateSelection(); 
+                updateSelection();
             }
         };
 
@@ -4673,7 +4673,7 @@ function renderFM(body, state) {
             if (e.target === list && e.offsetX > list.clientWidth) return;
 
             e.preventDefault(); // prevent text selection
-            
+
             startX = e.clientX;
             startY = e.clientY;
 
@@ -4699,12 +4699,12 @@ function renderFM(body, state) {
     }
 
     function rectsIntersect(r1, r2) {
-        return !(r2.left > r1.right || 
-                 r2.right < r1.left || 
-                 r2.top > r1.bottom || 
+        return !(r2.left > r1.right ||
+                 r2.right < r1.left ||
+                 r2.top > r1.bottom ||
                  r2.bottom < r1.top);
     }
-    
+
     // Initialize Marquee
     initMarqueeSelection();
 }
@@ -5164,7 +5164,7 @@ function renderDockerManager(body) {
 
     // ─── CONTAINERS TAB ───
     async function loadContainers() {
-        try { 
+        try {
             const res = await api('/docker/containers');
             // Pre-compute search string for performance
             S.containers = res.map(c => {
@@ -5199,7 +5199,7 @@ function renderDockerManager(body) {
         `;
 
         // Virtual scroll initialization
-        S.virtual = { rowH: 45, padTop: 0, padBot: 0 }; 
+        S.virtual = { rowH: 45, padTop: 0, padBot: 0 };
         S.filtered = []; // Initialize to empty array to prevent TypeError in renderVirtualChunk
         const wrap = main.querySelector('.dkr-table-wrap');
         let ticking = false;
@@ -5231,12 +5231,12 @@ function renderDockerManager(body) {
         const badge = main.querySelector('#dkr-cnt-count');
         const wrap = main.querySelector('.dkr-table-wrap');
         if (!tbody) return;
-        
+
         const f = S.filter;
         // Optimized filter using pre-computed _search
         S.filtered = S.containers.filter(c => !f || c._search.includes(f));
         badge.textContent = S.filtered.length;
-        
+
         // Reset scroll on filter change if needed, but only if triggered by filter input
         if (wrap) wrap.scrollTop = 0;
         renderVirtualChunk();
@@ -5256,14 +5256,14 @@ function renderDockerManager(body) {
         // Calculate visible range
         let start = Math.floor(scrollT / rowH);
         let end = Math.ceil((scrollT + viewH) / rowH);
-        
+
         // Add buffer
         start = Math.max(0, start - 5);
         end = Math.min(total, end + 5);
 
         const padTop = start * rowH;
         const padBot = Math.max(0, (total - end) * rowH);
-        
+
         const visible = S.filtered.slice(start, end);
 
         tbody.innerHTML = `
@@ -5497,8 +5497,8 @@ function renderDockerManager(body) {
 
     // ─── PROJECTS TAB ───
     async function loadProjects() {
-        try { 
-            const res = await api('/docker/projects'); 
+        try {
+            const res = await api('/docker/projects');
             S.projects = res.map(p => {
                 const srv = (p.containers||[]).map(c=>c.name + ' ' + (c.image||'')).join(' ');
                 p._search = (p.name + ' ' + srv).toLowerCase();
@@ -5519,7 +5519,7 @@ function renderDockerManager(body) {
             <div class="dkr-projects" id="dkr-projects"><div class="dkr-loading"><i class="fas fa-spinner fa-spin"></i></div></div>
         `;
         const wrap = main.querySelector('#dkr-projects');
-        
+
         // Infinite scroll
         let ticking = false;
         wrap.addEventListener('scroll', () => {
@@ -5539,24 +5539,24 @@ function renderDockerManager(body) {
 
         main.querySelector('#dkr-proj-refresh').addEventListener('click', async () => { await loadProjects(); fillProjects(); });
         main.querySelector('#dkr-proj-create').addEventListener('click', () => openCreateProjectModal());
-        main.querySelector('#dkr-proj-filter').addEventListener('input', e => { 
+        main.querySelector('#dkr-proj-filter').addEventListener('input', e => {
             S.projLimit = 10;
             if (wrap) wrap.scrollTop = 0;
-            fillProjects(); 
+            fillProjects();
         });
         loadProjects().then(() => fillProjects());
 
         function fillProjects() {
             const wrap = main.querySelector('#dkr-projects');
             if (!wrap) return;
-            
+
             const pf = (main.querySelector('#dkr-proj-filter').value || '').toLowerCase();
             S.filteredProjects = S.projects.filter(p => !pf || p._search.includes(pf));
-            
+
             if (!S.filteredProjects.length) { wrap.innerHTML = `<div class="dkr-empty">${t('Brak projektów')}</div>`; return; }
-            
+
             const visible = S.filteredProjects.slice(0, S.projLimit);
-            
+
             wrap.innerHTML = visible.map(p => {
                 const statusCls = p.status === 'running' ? 'success' : p.status === 'partial' ? 'warning' : 'muted';
                 const statusLabel = p.status === 'running' ? t('Działa') : p.status === 'partial' ? t('Częściowo') : 'Zatrzymany';
@@ -5631,7 +5631,7 @@ function renderDockerManager(body) {
                 b.addEventListener('click', async () => {
                     const project = b.dataset.project;
                     if (!await confirmDialog(t('Usunąć projekt'), t('Czy na pewno usunąć projekt') + ` <b>${project}</b>? ` + t('Tej operacji nie można cofnąć.'))) return;
-                    
+
                     b.disabled = true;
                     b.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
                     try {
@@ -5639,7 +5639,7 @@ function renderDockerManager(body) {
                         toast(`Projekt ${project} usunięty`, 'success');
                         await loadProjects();
                         fillProjects();
-                    } catch (err) { 
+                    } catch (err) {
                         toast(`Błąd usuwania projektu ${project}`, 'error');
                         b.disabled = false;
                         b.innerHTML = '<i class="fas fa-trash-alt"></i>';
@@ -7302,15 +7302,15 @@ function renderAppStore(body) {
 
         const renderConfigSection = () => {
             if (!installConfig || Object.keys(installConfig).length === 0) return '';
-            
+
             let html = '<div class="as-config-section">';
             html += `<div class="as-config-title"><i class="fas fa-sliders-h"></i> ${t('Konfiguracja')}</div>`;
-            
+
             for (const [svcName, svc] of Object.entries(installConfig)) {
                 if (Object.keys(installConfig).length > 1) {
                     html += `<div class="as-svc-header">${svcName}</div>`;
                 }
-                
+
                 // Ports
                 if (svc.ports && svc.ports.length) {
                     html += `<table class="as-config-table">
@@ -7320,7 +7320,7 @@ function renderAppStore(body) {
                         html += `<tr>
                             <td>${p.container}${p.protocol !== 'tcp' ? '/'+p.protocol : ''}</td>
                             <td>
-                                <input type="text" class="as-config-input as-port-input" 
+                                <input type="text" class="as-config-input as-port-input"
                                     data-svc="${svcName}" data-idx="${idx}" value="${p.host}" placeholder="Auto">
                                 <div class="as-config-warning hidden"></div>
                             </td>
@@ -7338,7 +7338,7 @@ function renderAppStore(body) {
                          html += `<tr>
                             <td>${v.container} <span style="opacity:0.5;font-size:0.8em">(${v.mode})</span></td>
                             <td>
-                                <input type="text" class="as-config-input as-vol-input" 
+                                <input type="text" class="as-config-input as-vol-input"
                                     data-svc="${svcName}" data-idx="${idx}" value="${v.host}">
                                 <div class="as-config-warning hidden"></div>
                             </td>
@@ -7507,7 +7507,7 @@ function renderAppStore(body) {
                 try {
                     const body = { app_id: appId, compose_override: composeOverride };
                     if (installConfig) body.options_override = installConfig;
-                    
+
                     const vr = await api('/appstore/validate', { method: 'POST', body });
                     if (vr.errors && vr.errors.length) {
                         if (validationArea) {
@@ -8454,6 +8454,7 @@ async function renderSystemSettings(body) {
             { id: 'security', icon: 'fa-shield-alt', label: t('Bezpieczeństwo') },
             { id: 'firewall', icon: 'fa-fire', label: t('Firewall') },
             { id: 'about', icon: 'fa-info-circle', label: t('O systemie') },
+            { id: 'performance', icon: 'fa-tachometer-alt', label: t('Wydajność') },
             { id: 'maintenance', icon: 'fa-tools', label: t('Konserwacja') },
         ];
         const tabBar = document.createElement('div');
@@ -8628,6 +8629,45 @@ async function renderSystemSettings(body) {
             </div>
         `;
 
+        // === Performance Section ===
+        const performanceHtml = `
+            <div class="ss-section" data-section="performance">
+                <div class="ss-section-title"><i class="fas fa-tachometer-alt"></i> ${t('Wydajność')}</div>
+                <div class="ss-group">
+                    <div class="ss-group-title">${t('Ustawienia sysctl')}</div>
+                    <div class="ss-msg ss-msg-ok" style="margin-bottom:14px">
+                        <i class="fas fa-check-circle"></i> ${t('Zoptymalizowane dla NAS')}
+                    </div>
+
+                    <div class="ss-info-grid" style="margin-bottom:14px">
+                        <div class="ss-info-card">
+                             <div class="ss-info-label">Swappiness</div>
+                             <div class="ss-info-value" id="ss-sysctl-swappiness">-</div>
+                        </div>
+                        <div class="ss-info-card">
+                             <div class="ss-info-label">Dirty Ratio</div>
+                             <div class="ss-info-value" id="ss-sysctl-dirty">-</div>
+                        </div>
+                        <div class="ss-info-card">
+                             <div class="ss-info-label">Cache Pressure</div>
+                             <div class="ss-info-value" id="ss-sysctl-cache">-</div>
+                        </div>
+                         <div class="ss-info-card">
+                             <div class="ss-info-label">TCP Read Max</div>
+                             <div class="ss-info-value" id="ss-sysctl-tcp-rmem">-</div>
+                        </div>
+                    </div>
+
+                    <div class="ss-actions">
+                        <button class="ss-btn ss-btn-warn" id="ss-sysctl-reload">
+                            <i class="fas fa-sync-alt"></i> ${t('Przeładuj ustawienia (sysctl)')}
+                        </button>
+                    </div>
+                    <div class="ss-hint" style="margin:8px 0 0 0">${t('Użyj po ręcznej edycji plików w /etc/sysctl.d/')}</div>
+                </div>
+            </div>
+        `;
+
         // === Maintenance Section ===
         const maintenanceHtml = `
             <div class="ss-section" data-section="maintenance">
@@ -8748,8 +8788,47 @@ async function renderSystemSettings(body) {
         `;
 
         const container = document.createElement('div');
-        container.innerHTML = generalHtml + networkHtml + securityHtml + firewallHtml + aboutHtml + maintenanceHtml;
+        container.innerHTML = generalHtml + networkHtml + securityHtml + firewallHtml + aboutHtml + performanceHtml + maintenanceHtml;
         wrap.appendChild(container);
+
+        // -- Performance Logic --
+        const reloadBtn = wrap.querySelector('#ss-sysctl-reload');
+        if (reloadBtn) {
+            reloadBtn.addEventListener('click', async () => {
+                reloadBtn.disabled = true;
+                const origHtml = reloadBtn.innerHTML;
+                reloadBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+                try {
+                    const r = await api('/settings/sysctl/restart', { method: 'POST' });
+                    toast(r.message || 'OK');
+                } catch (e) {
+                    toast(e.message, 'error');
+                } finally {
+                    reloadBtn.disabled = false;
+                    reloadBtn.innerHTML = origHtml;
+                    loadSysctl();
+                }
+            });
+        }
+
+        async function loadSysctl() {
+            try {
+                const data = await api('/settings/sysctl');
+                const set = (id, val) => {
+                    const el = wrap.querySelector(id);
+                    if (el) el.innerText = val || '-';
+                };
+                set('#ss-sysctl-swappiness', data['vm.swappiness']);
+                set('#ss-sysctl-dirty', data['vm.dirty_ratio']);
+                set('#ss-sysctl-cache', data['vm.vfs_cache_pressure']);
+                if (data['net.ipv4.tcp_rmem']) {
+                    const parts = data['net.ipv4.tcp_rmem'].split(/\s+/);
+                    const max = parseInt(parts[parts.length-1]);
+                    set('#ss-sysctl-tcp-rmem', (max / 1024 / 1024).toFixed(0) + ' MB');
+                }
+            } catch (e) { console.error(e); }
+        }
+        loadSysctl();
 
         // -- Event: Language selector --
         const langBtn = wrap.querySelector('#ss-lang-btn');

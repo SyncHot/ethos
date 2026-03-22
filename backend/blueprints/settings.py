@@ -1487,3 +1487,49 @@ def fail2ban_unban():
         return jsonify({'success': True})
     else:
         return jsonify({'error': r.stderr.strip() or r.stdout.strip()}), 500
+
+# ── Power / Performance ──
+
+@settings_bp.route('/sysctl/restart', methods=['POST'])
+def restart_sysctl():
+    """Reload sysctl settings."""
+    if g.role != 'admin':
+        return jsonify({'error': 'Admin required'}), 403
+
+    try:
+        # Reload sysctl settings from all system files
+        r = _host_run('sysctl --system', timeout=30)
+        if r.returncode == 0:
+            return jsonify({'ok': True, 'message': 'Ustawienia kernela (sysctl) przeładowane pomyślnie.'})
+        else:
+            return jsonify({'ok': False, 'error': r.stderr.strip()}), 500
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/sysctl', methods=['GET'])
+def get_sysctl_params():
+    """Return key NAS tuning parameters."""
+    if g.role != 'admin':
+        return jsonify({'error': 'Admin required'}), 403
+
+    params = [
+        'vm.swappiness',
+        'vm.dirty_ratio',
+        'vm.dirty_background_ratio',
+        'vm.vfs_cache_pressure',
+        'net.core.rmem_max',
+        'net.core.wmem_max',
+        'vm.min_free_kbytes'
+    ]
+
+    result = {}
+    for p in params:
+        try:
+            r = _host_run(f'sysctl -n {p}', timeout=5)
+            if r.returncode == 0:
+                result[p] = r.stdout.strip()
+        except:
+            pass
+
+    return jsonify(result)

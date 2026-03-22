@@ -818,15 +818,24 @@ mkswap "$ROOT/swapfile" >/dev/null
 
 # ── I/O tuning for low-power NAS hardware ──
 echo "LOG:Konfiguracja I/O tuning..."
-cat > "$ROOT/etc/sysctl.d/99-ethos-io-tuning.conf" <<'IOTUNE'
-# EthOS I/O tuning — smaller dirty page limits = frequent small flushes
-# instead of large stalls that freeze the system during copy/unzip
-vm.dirty_ratio = 5
-vm.dirty_background_ratio = 3
+cat > "$ROOT/etc/sysctl.d/90-ethos-nas.conf" <<'IOTUNE'
+# EthOS NAS Tuning
 vm.swappiness = 10
-vm.dirty_expire_centisecs = 1500
-vm.dirty_writeback_centisecs = 300
+vm.dirty_ratio = 40
+vm.dirty_background_ratio = 10
+vm.vfs_cache_pressure = 50
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+net.ipv4.tcp_rmem = 4096 87380 16777216
+net.ipv4.tcp_wmem = 4096 65536 16777216
+vm.min_free_kbytes = 65536
 IOTUNE
+
+cat > "$ROOT/etc/udev/rules.d/99-ethos-readahead.rules" <<'UDEV'
+SUBSYSTEM=="block", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="1", RUN+="/sbin/blockdev --setra 4096 /dev/%k"
+SUBSYSTEM=="block", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="0", RUN+="/sbin/blockdev --setra 256 /dev/%k"
+SUBSYSTEM=="block", KERNEL=="nvme*", RUN+="/sbin/blockdev --setra 256 /dev/%k"
+UDEV
 cat > "$ROOT/etc/hosts" <<HOSTS
 127.0.0.1   localhost
 127.0.1.1   $DEFAULT_HOSTNAME
