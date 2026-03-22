@@ -131,10 +131,12 @@ from blueprints.stickynotes import notes_bp
 from blueprints.tickets import tickets_bp, init_tickets
 from blueprints.familyhub import familyhub_bp
 from blueprints.sharing import sharing_bp
+from blueprints.rollback import rollback_bp
 from blueprints.cloud_backup import cloud_backup_bp
 from blueprints.installer import installer_bp
 from blueprints.ups import _ups_status
 from blueprints.power import power_bp
+from blueprints.dlna import dlna_bp
 from blueprints.notifications import notifications_bp
 from blueprints.dashboard import dashboard_bp
 from blueprints.admin_required import admin_required
@@ -396,6 +398,7 @@ app.register_blueprint(notes_bp)
 app.register_blueprint(tickets_bp)
 app.register_blueprint(familyhub_bp)
 app.register_blueprint(sharing_bp)
+app.register_blueprint(rollback_bp)
 app.register_blueprint(cloud_backup_bp)
 app.register_blueprint(fail2ban_bp)
 app.register_blueprint(wireguard_bp)
@@ -403,6 +406,7 @@ app.register_blueprint(ups_bp)
 app.register_blueprint(power_bp, url_prefix='/api/power')
 app.register_blueprint(notifications_bp)
 app.register_blueprint(totp_bp)
+app.register_blueprint(dlna_bp)
 app.register_blueprint(dashboard_bp)
 app.register_blueprint(cron_bp)
 init_appstore(socketio)
@@ -678,7 +682,7 @@ _ADMIN_ONLY_APPS = {
     'users', 'usb-flasher', 'builder', 'updates', 'services',
     'disk-repair', 'remote-log', 'surveillance',
     'system-settings', 'domains-manager', 'vm-manager', 'app-store',
-    'fail2ban', 'wireguard', 'power', 'ups', 'cloud-backup',
+    'fail2ban', 'wireguard', 'power', 'ups', 'dlna', 'cloud-backup', 'rollback',
 }
 
 
@@ -7888,6 +7892,16 @@ def get_apps():
             'admin_only': True
         },
         {
+            'id': 'rollback',
+            'name': 'Przywracanie',
+            'icon': 'fa-history',
+            'color': '#f97316',
+            'type': 'builtin',
+            'category': 'System',
+            'description': 'Snapshoty systemu i przywracanie poprzednich wersji',
+            'admin_only': True
+        },
+        {
             'id': 'resource-monitor',
             'name': 'Monitor zasobów',
             'icon': 'fa-chart-area',
@@ -8241,6 +8255,16 @@ def get_apps():
             'type': 'builtin',
             'category': 'Sieć',
             'description': 'Serwer VPN WireGuard — zarządzaj peerami, generuj QR kody',
+            'admin_only': True
+        },
+        {
+            'id': 'dlna',
+            'name': 'DLNA / UPnP',
+            'icon': 'fa-play-circle',
+            'color': '#8b5cf6',
+            'type': 'builtin',
+            'category': 'Przechowywanie',
+            'description': 'Serwer mediów DLNA/UPnP — strumieniowanie do Smart TV i odtwarzaczy',
             'admin_only': True
         }
     ]
