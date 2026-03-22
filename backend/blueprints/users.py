@@ -55,13 +55,29 @@ def _safe_name(name):
 
 
 NASOS_GROUP = 'nasos'
+NASOS_FAMILY_GROUP = 'nasos-family'
+
+# Valid EthOS roles for user creation
+_VALID_ROLES = {'admin', 'user', 'family'}
 
 
 def ensure_nasos_group():
-    """Create the 'nasos' group on the host if it doesn't exist."""
+    """Create the 'nasos' and 'nasos-family' groups on the host if they don't exist."""
     r = host_run(f"getent group {NASOS_GROUP}")
     if r.returncode != 0:
         host_run(f"sudo {_HELPER} group-add {NASOS_GROUP}")
+    r2 = host_run(f"getent group {NASOS_FAMILY_GROUP}")
+    if r2.returncode != 0:
+        host_run(f"sudo {_HELPER} group-add {NASOS_FAMILY_GROUP}")
+
+
+def _detect_user_role(groups):
+    """Detect EthOS role from system groups: admin, user, or family."""
+    if 'sudo' in groups or 'root' in groups or 'nasosadmin' in groups:
+        return 'admin'
+    if NASOS_FAMILY_GROUP in groups:
+        return 'family'
+    return 'user'
 
 
 def _load_privileges():
@@ -119,6 +135,7 @@ def list_users():
                     'shell': parts[4],
                     'groups': groups,
                     'nasos_user': NASOS_GROUP in groups,
+                    'role': _detect_user_role(groups),
                 })
         _users_cache['data'] = users
         _users_cache['ts'] = time.time()
@@ -135,12 +152,18 @@ def create_user():
     on the data disk at ``{data_disk}/home/{username}`` so their files
     live on the chosen storage device.  Default folders (Dokumenty,
     Pobrane, …) and the ``~/.ethos`` config directory are also created.
+
+    Accepts optional ``role``: 'admin' | 'user' | 'family' (default: 'user').
     """
     data = request.json or {}
     username = _safe_name(data.get('username', ''))
     password = data.get('password', '')
     shell = data.get('shell', '/bin/bash')
     groups = data.get('groups', [])
+    role = data.get('role', 'user')
+
+    if role not in _VALID_ROLES:
+        role = 'user'
 
     if not username or len(username) < 2:
         return jsonify({'error': 'Nazwa użytkownika jest wymagana (min. 2 znaki)'}), 400
@@ -176,6 +199,13 @@ def create_user():
 
     # Add to nasos group (mark as EthOS-created user)
     host_run(f"sudo {_HELPER} user-mod {_sq(username)} group-append {_sq(NASOS_GROUP)}")
+
+    # Assign role-based groups
+    if role == 'admin':
+        host_run(f"sudo {_HELPER} user-mod {_sq(username)} group-append sudo")
+        host_run(f"sudo {_HELPER} user-mod {_sq(username)} group-append nasosadmin")
+    elif role == 'family':
+        host_run(f"sudo {_HELPER} user-mod {_sq(username)} group-append {_sq(NASOS_FAMILY_GROUP)}")
 
     # Add to additional groups
     for g in groups:
@@ -371,6 +401,62 @@ def update_group_members():
 # ---------------------------------------------------------------------------
 # App Privileges
 # ---------------------------------------------------------------------------
+
+@users_bp.route('/roles')
+def get_roles():
+    """Return available EthOS roles with their app access lists."""
+    from importlib import import_module
+    try:
+        _app = import_module('app')
+        role_apps = getattr(_app, '_ROLE_APPS', {})
+    except Exception:
+        role_apps = {}
+    return jsonify({
+        'roles': [
+            {'id': 'admin', 'name': 'Administrator', 'description': 'Pełny dostęp do systemu', 'apps': None},
+            {'id': 'user', 'name': 'Użytkownik', 'description': 'Dostęp do narzędzi pracy', 'apps': sorted(role_apps.get('user', []))},
+            {'id': 'family', 'name': 'Rodzina / Gość', 'description': 'Bezpieczny tryb z podstawowymi apkami', 'apps': sorted(role_apps.get('family', []))},
+        ]
+    })
+
+
+@users_bp.route('/set-role', methods=['POST'])
+def set_user_role():
+    """Change a user's role. Admin only."""
+    data = request.json or {}
+    username = _safe_name(data.get('username', ''))
+    new_role = data.get('role', '')
+
+    if not username:
+        return jsonify({'error': 'Nazwa użytkownika jest wymagana'}), 400
+    if new_role not in _VALID_ROLES:
+        return jsonify({'error': f'Nieprawidłowa rola. Dozwolone: {", ".join(sorted(_VALID_ROLES))}'}), 400
+    if username == 'root':
+        return jsonify({'error': 'Nie można zmienić roli root'}), 400
+
+    # Remove from all role groups first
+    host_run(f"sudo gpasswd -d {_sq(username)} sudo 2>/dev/null")
+    host_run(f"sudo gpasswd -d {_sq(username)} nasosadmin 2>/dev/null")
+    host_run(f"sudo gpasswd -d {_sq(username)} {_sq(NASOS_FAMILY_GROUP)} 2>/dev/null")
+
+    # Add to appropriate groups
+    if new_role == 'admin':
+        host_run(f"sudo {_HELPER} user-mod {_sq(username)} group-append sudo")
+        host_run(f"sudo {_HELPER} user-mod {_sq(username)} group-append nasosadmin")
+        # Grant passwordless sudo
+        sudoers_file = f"/etc/sudoers.d/010_{username}"
+        host_run(f"echo {_sq(username + ' ALL=(ALL) NOPASSWD:ALL')} | sudo tee {_sq(sudoers_file)} > /dev/null && sudo chmod 440 {_sq(sudoers_file)}")
+    elif new_role == 'family':
+        host_run(f"sudo {_HELPER} user-mod {_sq(username)} group-append {_sq(NASOS_FAMILY_GROUP)}")
+        # Remove sudoers file if exists
+        host_run(f"sudo rm -f /etc/sudoers.d/010_{_sq(username)}")
+    else:
+        # 'user' role — just nasos group (already added at creation)
+        host_run(f"sudo rm -f /etc/sudoers.d/010_{_sq(username)}")
+
+    _users_cache['data'] = None  # invalidate cache
+    return jsonify({'success': True, 'username': username, 'role': new_role})
+
 
 @users_bp.route('/privileges')
 def get_privileges():

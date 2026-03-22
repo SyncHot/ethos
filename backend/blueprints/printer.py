@@ -878,7 +878,10 @@ def api_print():
 
     wake_printer(printer)
 
-    copies = int(request.form.get('copies', 1))
+    try:
+        copies = int(request.form.get('copies', 1))
+    except (ValueError, TypeError):
+        copies = 1
     duplex = request.form.get('duplex', 'false').lower() == 'true'
 
     filename = secure_filename(file.filename)

@@ -30,7 +30,7 @@ def load_settings():
         try:
             with open(SETTINGS_FILE, 'r') as f:
                 return json.load(f)
-        except:
+        except (OSError, json.JSONDecodeError):
             pass
     return {
         'shutdown_threshold': 20,
@@ -52,7 +52,7 @@ def get_ups_name():
             lines = r.stdout.strip().splitlines()
             if lines:
                 return lines[0].strip()
-    except:
+    except (OSError, subprocess.SubprocessError):
         pass
     return 'ups'
 
@@ -166,7 +166,7 @@ def api_get_settings():
 
 @ups_bp.route('/api/ups/settings', methods=['POST'])
 def api_save_settings():
-    data = request.json
+    data = request.json or {}
     settings = load_settings()
     settings.update(data)
     save_settings(settings)
@@ -183,13 +183,13 @@ def api_scan():
         r = subprocess.run(['nut-scanner', '-U', '-q'], capture_output=True, text=True, timeout=10)
         if r.returncode == 0 and r.stdout.strip():
             return jsonify({'found': True, 'config': r.stdout.strip()})
-    except:
+    except (OSError, subprocess.SubprocessError):
         pass
     return jsonify({'found': False})
 
 @ups_bp.route('/api/ups/apply', methods=['POST'])
 def api_apply_config():
-    data = request.json
+    data = request.json or {}
     driver_config = data.get('config')
     
     if not driver_config:

@@ -2586,7 +2586,10 @@ def analyze_path():
     Uses du -k (1K blocks) which is much faster than du -b (apparent size).
     """
     path = request.args.get('path', '/')
-    limit = min(int(request.args.get('limit', 50)), 200)
+    try:
+        limit = min(int(request.args.get('limit', 50)), 200)
+    except (ValueError, TypeError):
+        limit = 50
 
     # Validate path is absolute
     if not path.startswith('/'):
@@ -2652,7 +2655,10 @@ def analyze_files():
     Query params: path (required), limit (default 50)
     """
     path = request.args.get('path', '/')
-    limit = min(int(request.args.get('limit', 50)), 200)
+    try:
+        limit = min(int(request.args.get('limit', 50)), 200)
+    except (ValueError, TypeError):
+        limit = 50
 
     if not path.startswith('/'):
         return jsonify({"error": "Path must be absolute"}), 400

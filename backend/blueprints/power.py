@@ -20,7 +20,7 @@ def load_config():
         try:
             with open(CONFIG_FILE, 'r') as f:
                 return json.load(f)
-        except:
+        except (OSError, json.JSONDecodeError):
             pass
     return {
         "wol_enabled": False,
@@ -73,7 +73,7 @@ def get_status():
 
 @power_bp.route('/save', methods=['POST'])
 def save_settings():
-    data = request.json
+    data = request.json or {}
     config = load_config()
 
     # Update Config
@@ -197,5 +197,5 @@ def _apply_cpu_governor(gov):
         with open("/etc/default/cpufrequtils", "w") as f:
             f.write(f'GOVERNOR="{gov}"\n')
         run_cmd("systemctl restart cpufrequtils")
-    except:
+    except (OSError, subprocess.SubprocessError):
         pass

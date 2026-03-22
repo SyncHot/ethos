@@ -150,7 +150,10 @@ def flash_status():
                 _flash_state['result'] = {'success': False, 'message': _flash_state['message']}
                 _save_flash_state()
 
-    since = int(request.args.get('since', 0))
+    try:
+        since = int(request.args.get('since', 0))
+    except (ValueError, TypeError):
+        since = 0
     with _flash_lock:
         out = dict(_flash_state)
         out['logs'] = _flash_state['logs'][since:]

@@ -1264,7 +1264,7 @@ def browse_directory():
 @backup_bp.route('/browse/mkdir', methods=['POST'])
 def browse_mkdir():
     allowed = _effective_browse_roots()
-    data = request.json
+    data = request.json or {}
     parent = data.get('path', '')
     name = data.get('name', '').strip()
     if not parent or not name:
@@ -1289,7 +1289,7 @@ def get_paths():
 
 @backup_bp.route('/paths', methods=['POST'])
 def add_path():
-    data = request.json
+    data = request.json or {}
     path = data.get('path', '').strip()
     if not path:
         return jsonify({'error': 'Ścieżka jest wymagana'}), 400
@@ -1303,7 +1303,7 @@ def add_path():
 
 @backup_bp.route('/paths', methods=['DELETE'])
 def remove_path():
-    data = request.json
+    data = request.json or {}
     path = data.get('path', '').strip()
     paths = load_paths()
     if path in paths:
@@ -1404,7 +1404,7 @@ def start_backup():
             return jsonify({'error': 'Inna operacja jest w toku'}), 400
         current_operation = 'backup'
 
-    data = request.json
+    data = request.json or {}
     paths = data.get('paths', [])
     destination = data.get('destination')
     retention = data.get('retention', 0)
@@ -1495,7 +1495,7 @@ def start_restore():
             return jsonify({'error': 'Inna operacja jest w toku'}), 400
         current_operation = 'restore'
 
-    data = request.json
+    data = request.json or {}
     backup_file = data.get('backup_file', '')
     backup_path = data.get('backup_path', '')
     target_path = data.get('target_path', '')
@@ -1570,7 +1570,7 @@ def browse_usb():
 
 @backup_bp.route('/usb-mkdir', methods=['POST'])
 def create_usb_folder():
-    data = request.json
+    data = request.json or {}
     parent = data.get('path', '')
     name = data.get('name', '').strip()
     if not parent or not name:
@@ -1654,7 +1654,7 @@ def get_ssh_servers():
 
 @backup_bp.route('/ssh-servers', methods=['POST'])
 def add_ssh_server():
-    data = request.json
+    data = request.json or {}
     for field in ['name', 'host', 'username']:
         if not data.get(field):
             return jsonify({'error': f'{field} wymagane'}), 400
@@ -1737,7 +1737,7 @@ def get_profiles():
 
 @backup_bp.route('/profiles', methods=['POST'])
 def create_profile():
-    data = request.json
+    data = request.json or {}
     if not data.get('name'):
         return jsonify({'error': 'Nazwa wymagana'}), 400
     if not data.get('paths'):
@@ -1796,7 +1796,7 @@ def import_profiles():
             file = request.files['file']
             import_data = json.loads(file.read().decode('utf-8'))
         else:
-            import_data = request.json
+            import_data = request.json or {}
 
         if not import_data:
             return jsonify({'error': 'Brak danych do importu'}), 400
@@ -1885,7 +1885,7 @@ def import_profiles():
 
 @backup_bp.route('/profiles/<profile_id>/schedule', methods=['PUT'])
 def update_profile_schedule(profile_id):
-    data = request.json
+    data = request.json or {}
     conn = get_db_connection()
     c = conn.cursor()
     c.execute('SELECT * FROM profiles WHERE id = ?', (profile_id,))
@@ -1899,7 +1899,7 @@ def update_profile_schedule(profile_id):
 
 @backup_bp.route('/profiles/<profile_id>', methods=['PUT'])
 def update_profile(profile_id):
-    data = request.json
+    data = request.json or {}
     conn = get_db_connection()
     c = conn.cursor()
     c.execute('SELECT * FROM profiles WHERE id = ?', (profile_id,))

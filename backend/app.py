@@ -680,6 +680,13 @@ _API_TO_APP = {
     '/api/ups/': 'ups',
     '/api/cloud-backup/': 'cloud-backup',
     '/api/raid/': 'raid',
+    '/api/cron/': 'cron',
+    '/api/dashboard/': 'dashboard',
+    '/api/dlna/': 'dlna',
+    '/api/notifications/': 'notifications',
+    '/api/rollback/': 'rollback',
+    '/api/totp/': 'system-settings',
+    '/api/firewall/': 'firewall',
 }
 
 # Admin-only apps — only role='admin' can access (matches admin_only: True in get_apps)
@@ -688,12 +695,35 @@ _ADMIN_ONLY_APPS = {
     'disk-repair', 'remote-log', 'surveillance',
     'system-settings', 'domains-manager', 'vm-manager', 'app-store',
     'fail2ban', 'wireguard', 'power', 'ups', 'dlna', 'cloud-backup', 'rollback',
-    'raid',
+    'raid', 'cron',
+}
+
+# ─── Role-based app access (3 roles: admin / user / family) ───
+# admin  → ALL apps (no filtering)
+# user   → work/productivity apps (everything except admin tools)
+# family → safe subset for kids/guests
+_ROLE_APPS = {
+    'user': {
+        'dashboard', 'file-manager', 'docker-manager', 'storage-manager',
+        'sharing', 'backup', 'resource-monitor', 'printer', 'terminal',
+        'packages', 'network', 'event-log', 'notifications', 'gallery',
+        'duplicates', 'doc-editor', 'code-editor', 'download-manager',
+        'naslink', 'ssh-manager', 'sticky-notes', 'tickets', 'family-hub',
+        'ai-chat', 'cron',
+    },
+    'family': {
+        'dashboard', 'file-manager', 'gallery', 'doc-editor',
+        'sticky-notes', 'download-manager', 'family-hub',
+    },
 }
 
 
 def _user_allowed_apps(username, role):
-    """Return set of allowed app IDs for a user, or None meaning ALL."""
+    """Return set of allowed app IDs for a user, or None meaning ALL.
+
+    Role hierarchy: admin → all, user → _ROLE_APPS['user'], family → _ROLE_APPS['family'].
+    Custom privileges from privileges.json override role defaults if configured.
+    """
     if role == 'admin':
         return None  # all access
     import shlex as _shlex
@@ -701,17 +731,26 @@ def _user_allowed_apps(username, role):
     user_groups = gr.stdout.strip().split() if gr.returncode == 0 else []
     if 'sudo' in user_groups or 'root' in user_groups or 'nasosadmin' in user_groups:
         return None  # all access
+
+    # Check for custom privilege overrides (from privileges.json)
     privileges = _load_privileges()
-    allowed = set()
-    has_restrictions = False
-    for g in user_groups:
-        if g in privileges:
-            has_restrictions = True
-            allowed.update(privileges[g])
-    if not has_restrictions:
-        return None  # no privilege config → full access
-    allowed.add('dashboard')
-    return allowed
+    custom_allowed = set()
+    has_custom = False
+    for ug in user_groups:
+        if ug in privileges and privileges[ug]:
+            has_custom = True
+            custom_allowed.update(privileges[ug])
+    if has_custom:
+        custom_allowed.add('dashboard')
+        return custom_allowed
+
+    # Determine role from groups: nasos-family → family, else user
+    if 'nasos-family' in user_groups:
+        base = set(_ROLE_APPS.get('family', set()))
+    else:
+        base = set(_ROLE_APPS.get('user', set()))
+    base.add('dashboard')
+    return base
 
 
 @app.before_request
@@ -742,7 +781,12 @@ def _blueprint_auth_guard():
                         '/api/surveillance/', '/api/notes/', '/api/familyhub/', '/api/update/',
                         '/api/remote-log/', '/api/websites/', '/api/sandbox/',
                         '/api/fail2ban/', '/api/firewall/', '/api/wireguard/',
-                        '/api/power/', '/api/ups/', '/api/totp/')):        # Allow unauthenticated access to user auth validation
+                        '/api/power/', '/api/ups/', '/api/totp/',
+                        '/api/cloud-backup/', '/api/cron/', '/api/dashboard/',
+                        '/api/dlna/', '/api/notifications/', '/api/raid/',
+                        '/api/rollback/', '/api/tickets/', '/api/vm/',
+                        '/api/installer/')):
+        # Allow unauthenticated access to user auth validation
         if path == '/api/users/auth/validate':
             return
         # Public gallery share links (no auth)
@@ -2532,7 +2576,10 @@ def gpu_driver_install():
 def services_logs():
     """Get recent journal logs for a service. Query: ?service=name&lines=50"""
     name = request.args.get('service', '').strip()
-    lines = min(int(request.args.get('lines', '50')), 500)
+    try:
+        lines = min(int(request.args.get('lines', '50')), 500)
+    except (ValueError, TypeError):
+        lines = 50
     if not name:
         return jsonify({'error': 'service required'}), 400
     import re as _re
@@ -4280,7 +4327,10 @@ def files_search():
     # Cache passwords once per request (not per os.walk iteration)
     pw_folders = _load_folder_passwords()
     data_real = os.path.realpath(DATA_ROOT)
-    max_depth = int(request.args.get('depth', 6))
+    try:
+        max_depth = int(request.args.get('depth', 6))
+    except (ValueError, TypeError):
+        max_depth = 6
     base_depth = real_path.rstrip('/').count('/')
 
     import time as _time
@@ -5444,7 +5494,10 @@ def sync_upload():
         return jsonify({'error': 'No file'}), 400
 
     rel_path = request.form.get('rel_path', _sanitize_filename(f.filename))
-    file_size = int(request.form.get('size', 0))
+    try:
+        file_size = int(request.form.get('size', 0))
+    except (ValueError, TypeError):
+        file_size = 0
     mtime_ms = request.form.get('mtime_ms', '')
 
     meta = _load_sync_meta()

@@ -617,7 +617,10 @@ def start_smart_test():
 
 @diskrepair_bp.route('/status')
 def repair_status():
-    since = int(request.args.get('since', 0))
+    try:
+        since = int(request.args.get('since', 0))
+    except (ValueError, TypeError):
+        since = 0
     with _repair_lock:
         out = dict(_repair_state)
         out['logs'] = _repair_state['logs'][since:]

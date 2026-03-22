@@ -211,8 +211,14 @@ def eventlog_create():
 
 @eventlog_bp.route('/api/eventlog')
 def eventlog_list():
-    limit = min(int(request.args.get('limit', 100)), 1000)
-    offset = int(request.args.get('offset', 0))
+    try:
+        limit = min(int(request.args.get('limit', 100)), 1000)
+    except (ValueError, TypeError):
+        limit = 100
+    try:
+        offset = int(request.args.get('offset', 0))
+    except (ValueError, TypeError):
+        offset = 0
     category = request.args.get('category', '')
     level = request.args.get('level', '')
     search = request.args.get('search', '').lower()

@@ -81,7 +81,10 @@ def api_network():
 @resources_bp.route('/processes')
 def api_processes():
     sort_by = request.args.get('sort', 'cpu')
-    limit = int(request.args.get('limit', 30))
+    try:
+        limit = int(request.args.get('limit', 30))
+    except (ValueError, TypeError):
+        limit = 30
     return jsonify(_cached('processes', get_processes, sort_by, limit))
 
 
@@ -127,8 +130,14 @@ def api_history(table):
     allowed = ['cpu_history', 'ram_history', 'gpu_history', 'disk_history', 'network_history', 'process_history', 'docker_history']
     if table not in allowed:
         return jsonify({'error': 'Invalid table'}), 400
-    hours = int(request.args.get('hours', 1))
-    limit = int(request.args.get('limit', 500))
+    try:
+        hours = int(request.args.get('hours', 1))
+    except (ValueError, TypeError):
+        hours = 1
+    try:
+        limit = int(request.args.get('limit', 500))
+    except (ValueError, TypeError):
+        limit = 500
     return jsonify(get_history(table, hours, limit))
 
 
