@@ -161,7 +161,7 @@ def _get_peers():
         peers.append(current_peer)
         
     # Enrich with status
-    status_out, _, _ = _run_cmd(['sudo', 'wg', 'show', 'wg0', 'dump'])
+    status_out, _, _ = _run_cmd(['wg', 'show', 'wg0', 'dump'])
     # dump format: peer_pubkey  preshared_key  endpoint  allowed_ips  latest_handshake  transfer_rx  transfer_tx  persistent_keepalive
     
     peer_status = {}
