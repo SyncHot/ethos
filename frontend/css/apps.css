@@ -382,6 +382,7 @@ select.fm-input {
 .bak-badge-blue { background: rgba(59,130,246,0.15); color: #60a5fa; }
 .bak-badge-green { background: rgba(16,185,129,0.15); color: #34d399; }
 .bak-badge-purple { background: rgba(168,85,247,0.15); color: #c084fc; }
+.bak-badge-orange { background: rgba(251,146,60,0.15); color: #fb923c; }
 .bak-badge i { font-size: 0.85em; }
 
 /* ── Empty states ── */
@@ -451,6 +452,7 @@ select.fm-input {
 .bak-backup-icon { width: 38px; height: 38px; border-radius: var(--r-md); display: flex; align-items: center; justify-content: center; font-size: 1em; flex-shrink: 0; }
 .bak-icon-green { background: rgba(16,185,129,0.12); color: #34d399; }
 .bak-icon-purple { background: rgba(168,85,247,0.12); color: #c084fc; }
+.bak-icon-orange { background: rgba(251,146,60,0.12); color: #fb923c; }
 .bak-backup-info { flex: 1; min-width: 0; overflow: hidden; }
 .bak-backup-name { display: block; font-size: 0.88em; font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 4px; }
 .bak-backup-meta { display: flex; gap: 6px 12px; flex-wrap: wrap; font-size: 0.8em; color: var(--text-muted); align-items: center; }
@@ -1789,6 +1791,13 @@ select.fm-input {
 .bak-modal-500 { width:500px; }
 .bak-modal-480 { width:480px; }
 .bak-modal-460 { width:460px; }
+.bak-modal-400 { width:400px; }
+.bak-encrypt-warning { display:flex; align-items:flex-start; gap:8px; padding:10px 12px; background:rgba(251,146,60,0.1); border:1px solid rgba(251,146,60,0.3); border-radius:8px; color:#fb923c; font-size:0.85em; line-height:1.4; }
+.bak-encrypt-warning i { font-size:1.1em; flex-shrink:0; margin-top:2px; }
+.bak-encrypt-info { display:flex; align-items:flex-start; gap:8px; padding:10px 12px; background:rgba(59,130,246,0.1); border:1px solid rgba(59,130,246,0.3); border-radius:8px; color:#60a5fa; font-size:0.85em; line-height:1.4; }
+.bak-encrypt-info i { font-size:1.1em; flex-shrink:0; margin-top:2px; }
+.bak-mb12 { margin-bottom:12px; }
+.bak-key-display { font-family:monospace; font-size:0.85em; background:var(--bg-input,#1e1e2e); border:1px solid var(--border,#333); border-radius:6px; padding:8px 10px; word-break:break-all; color:#34d399; user-select:all; cursor:text; }
 .bak-progress-fill { width:0%; transition:width .3s; }
 .bak-snap-progress-fill { width:0%; height:100%; background:var(--accent); border-radius:6px; transition:width .3s; }
 .bak-bar-h8 { height:8px; }

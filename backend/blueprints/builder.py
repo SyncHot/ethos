@@ -1116,6 +1116,7 @@ chroot "$ROOT" apt-get install -y -qq \
     cloud-guest-utils \
     udevil udisks2 \
     zstd cron \
+    gnupg age \
     2>&1 | tail -10 || echo "LOG:Niektóre pakiety pominięte"
 
 echo "LOG:Instalacja firmware..."

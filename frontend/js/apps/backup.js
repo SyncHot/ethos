@@ -628,6 +628,25 @@ function renderBackupApp(body) {
                         <input type="number" id="bak-pm-retention" class="fm-input bak-w80" value="3" min="0">
                         <label class="storage-check"><input type="checkbox" id="bak-pm-incr"> Przyrostowy</label>
                     </div>
+
+                    <div class="storage-form-row bak-mt10">
+                        <label class="storage-check"><input type="checkbox" id="bak-pm-encrypt"> <i class="fas fa-lock"></i> Szyfruj backup (AES-256)</label>
+                    </div>
+                    <div class="hidden" id="bak-pm-encrypt-opts">
+                        <div class="storage-form-row bak-mt10">
+                            <label>Tryb klucza:</label>
+                            <label class="storage-check"><input type="radio" name="bak-pm-enc-mode" value="passphrase" id="bak-pm-enc-passphrase" checked> <i class="fas fa-keyboard"></i> Hasło (wpisywane)</label>
+                            <label class="storage-check"><input type="radio" name="bak-pm-enc-mode" value="key" id="bak-pm-enc-key"> <i class="fas fa-key"></i> Klucz automatyczny</label>
+                        </div>
+                        <div class="bak-encrypt-warning" id="bak-pm-encrypt-warning">
+                            <i class="fas fa-exclamation-triangle"></i>
+                            <strong>Zapamiętaj hasło!</strong> Bez niego backup jest bezużyteczny — nie ma możliwości odzyskania danych.
+                        </div>
+                        <div class="bak-encrypt-info hidden" id="bak-pm-key-info">
+                            <i class="fas fa-info-circle"></i>
+                            Klucz zostanie wygenerowany automatycznie i zapisany (zaplanowane backupy działają). Zapamiętaj klucz — zostanie pokazany raz po zapisaniu.
+                        </div>
+                    </div>
                 </div>
                 <div class="bak-modal-footer bak-gap8">
                     <button class="fm-toolbar-btn btn-green" id="bak-pm-save"><i class="fas fa-save"></i> Zapisz</button>
@@ -635,6 +654,60 @@ function renderBackupApp(body) {
                 </div>
             </div>
         </div>
+    </div>
+
+    <!-- Passphrase modal for encrypted backup/restore -->
+    <div class="bak-modal hidden" id="bak-passphrase-modal">
+        <div class="bak-modal-content bak-modal-400">
+            <div class="bak-modal-header">
+                <h3 id="bak-passphrase-title"><i class="fas fa-lock"></i> Hasło szyfrowania</h3>
+                <button class="fm-toolbar-btn" id="bak-passphrase-close"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="bak-scroll-body">
+                <div class="bak-encrypt-warning bak-mb12">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <strong>Zapamiętaj hasło!</strong> Bez niego backup jest bezużyteczny — nie ma możliwości odzyskania danych.
+                </div>
+                <div class="storage-form-row">
+                    <label>Hasło:</label>
+                    <input type="password" id="bak-passphrase-input" class="fm-input" autocomplete="new-password" placeholder="Hasło szyfrowania...">
+                </div>
+                <div class="storage-form-row" id="bak-passphrase-confirm-row">
+                    <label>Potwierdź:</label>
+                    <input type="password" id="bak-passphrase-confirm" class="fm-input" autocomplete="new-password" placeholder="Powtórz hasło...">
+                </div>
+            </div>
+            <div class="bak-modal-footer bak-gap8">
+                <button class="fm-toolbar-btn btn-green" id="bak-passphrase-ok"><i class="fas fa-check"></i> Potwierdź</button>
+                <button class="fm-toolbar-btn" id="bak-passphrase-cancel"><i class="fas fa-times"></i> Anuluj</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Generated key display modal -->
+    <div class="bak-modal hidden" id="bak-genkey-modal">
+        <div class="bak-modal-content bak-modal-480">
+            <div class="bak-modal-header">
+                <h3><i class="fas fa-key"></i> Klucz szyfrowania — zapisz!</h3>
+            </div>
+            <div class="bak-scroll-body">
+                <div class="bak-encrypt-warning bak-mb12">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <strong>Zapisz ten klucz w bezpiecznym miejscu!</strong> Bez niego nie będziesz mógł przywrócić zaszyfrowanych backupów. Klucz jest pokazywany tylko raz po wygenerowaniu.
+                </div>
+                <div class="storage-form-row">
+                    <label>Klucz szyfrowania:</label>
+                    <div id="bak-genkey-value" class="bak-key-display"></div>
+                </div>
+                <div class="storage-form-row bak-mt10">
+                    <button class="fm-toolbar-btn" id="bak-genkey-copy"><i class="fas fa-copy"></i> Kopiuj klucz</button>
+                </div>
+            </div>
+            <div class="bak-modal-footer bak-gap8">
+                <button class="fm-toolbar-btn btn-green" id="bak-genkey-ok"><i class="fas fa-check"></i> Rozumiem, zapisałem klucz</button>
+            </div>
+        </div>
+    </div>
     </div>`;
 
     const QS = id => body.querySelector(id);
@@ -792,6 +865,13 @@ function renderBackupApp(body) {
 
             var destHtml = destLabelHtml(dest);
             var incrHtml = p.incremental ? '<span class="bak-badge bak-badge-purple"><i class="fas fa-layer-group"></i> ' + t('Tylko zmiany') + '</span>' : '<span class="bak-badge bak-badge-green"><i class="fas fa-clone"></i> ' + t('Pełna kopia') + '</span>';
+            var enc = typeof p.encryption === 'string' ? JSON.parse(p.encryption || 'null') : p.encryption;
+            var encHtml = '';
+            if (enc && enc.enabled) {
+                var encLabel = enc.mode === 'key' ? 'Klucz auto.' : 'Szyfrowany';
+                var encIcon = enc.mode === 'key' ? 'fa-key' : 'fa-lock';
+                encHtml = '<span class="bak-badge bak-badge-orange"><i class="fas ' + encIcon + '"></i> ' + encLabel + '</span>';
+            }
 
             /* Paths as individual pills */
             var pathsHtml = paths.map(function(pt) {
@@ -818,7 +898,7 @@ function renderBackupApp(body) {
                 + '<div class="bak-profile-icon"><i class="fas fa-bookmark"></i></div>'
                 + '<div class="bak-profile-title">'
                 + '<strong>' + p.name + '</strong>'
-                + '<div class="bak-profile-badges">' + schedHtml + incrHtml + '</div>'
+                + '<div class="bak-profile-badges">' + schedHtml + incrHtml + encHtml + '</div>'
                 + '</div>'
                 + '</div>'
                 + '<div class="bak-profile-card-body">'
@@ -837,6 +917,7 @@ function renderBackupApp(body) {
                 + '<div class="bak-profile-card-actions">'
                 + '<button class="fm-toolbar-btn btn-green btn-sm" data-run-profile="' + p.id + '"><i class="fas fa-play"></i> Uruchom</button>'
                 + '<button class="fm-toolbar-btn btn-sm" data-edit-profile="' + p.id + '"><i class="fas fa-edit"></i> Edytuj</button>'
+                + (enc && enc.enabled && enc.mode === 'key' ? '<button class="fm-toolbar-btn btn-sm" data-view-key="' + p.id + '" title="Pokaż klucz szyfrowania"><i class="fas fa-key"></i></button>' : '')
                 + '<button class="fm-toolbar-btn btn-red btn-sm" data-del-profile="' + p.id + '"><i class="fas fa-trash"></i></button>'
                 + '</div></div>';
         }).join('');
@@ -844,8 +925,18 @@ function renderBackupApp(body) {
         el.querySelectorAll('button[data-run-profile]').forEach(btn => {
             btn.onclick = async () => {
                 if (state.busy) { toast('Operacja w toku', 'warning'); return; }
+                var profileId = btn.dataset.runProfile;
+                var profile = state.profiles.find(function(p) { return String(p.id) === String(profileId); });
+                var enc = profile && (typeof profile.encryption === 'string' ? JSON.parse(profile.encryption || 'null') : profile.encryption);
+                var body = {};
+                if (enc && enc.enabled && enc.mode !== 'key') {
+                    // Passphrase mode: ask user; key mode: backend resolves automatically
+                    var pw = await promptPassphrase('Hasło szyfrowania backupu', true);
+                    if (!pw) return;
+                    body.encrypt_passphrase = pw;
+                }
                 try {
-                    await api('/backup/profiles/' + btn.dataset.runProfile + '/run', { method: 'POST' });
+                    await api('/backup/profiles/' + profileId + '/run', { method: 'POST', body: body });
                     state.busy = true;
                     switchTab('backup');
                     showProgress();
@@ -855,6 +946,14 @@ function renderBackupApp(body) {
         });
         el.querySelectorAll('button[data-edit-profile]').forEach(btn => {
             btn.onclick = () => openProfileEditor(state.profiles.find(p => String(p.id) === String(btn.dataset.editProfile)));
+        });
+        el.querySelectorAll('button[data-view-key]').forEach(btn => {
+            btn.onclick = async () => {
+                try {
+                    var resp = await api('/backup/profiles/' + btn.dataset.viewKey + '/key');
+                    if (resp && resp.key) showGeneratedKey(resp.key);
+                } catch(e) { toast('Błąd pobierania klucza', 'error'); }
+            };
         });
         el.querySelectorAll('button[data-del-profile]').forEach(btn => {
             btn.onclick = async () => {
@@ -961,11 +1060,26 @@ function renderBackupApp(body) {
                 QS('#bak-pm-sched-time').value = '03:00';
                 updatePmSchedType();
             }
+
+            // Encryption
+            var enc = typeof profile.encryption === 'string' ? JSON.parse(profile.encryption || 'null') : profile.encryption;
+            var encEnabled = enc && enc.enabled;
+            var encMode = (enc && enc.mode) || 'passphrase';
+            QS('#bak-pm-encrypt').checked = !!encEnabled;
+            QS('#bak-pm-encrypt-opts').classList.toggle('hidden', !encEnabled);
+            QS('#bak-pm-enc-passphrase').checked = encMode !== 'key';
+            QS('#bak-pm-enc-key').checked = encMode === 'key';
+            updatePmEncMode();
         } else {
             QS('#bak-pm-name').value = '';
             pmPaths = state.paths.slice();
             QS('#bak-pm-retention').value = 3;
             QS('#bak-pm-incr').checked = false;
+            QS('#bak-pm-encrypt').checked = false;
+            QS('#bak-pm-encrypt-opts').classList.add('hidden');
+            QS('#bak-pm-enc-passphrase').checked = true;
+            QS('#bak-pm-enc-key').checked = false;
+            updatePmEncMode();
             QS('#bak-pm-dest').value = 'local';
             QS('#bak-pm-sched-type').value = 'manual';
             QS('#bak-pm-sched-time').value = '03:00';
@@ -1019,6 +1133,23 @@ function renderBackupApp(body) {
     }
     QS('#bak-pm-sched-type').onchange = updatePmSchedType;
 
+    QS('#bak-pm-encrypt').onchange = function() {
+        var checked = this.checked;
+        QS('#bak-pm-encrypt-opts').classList.toggle('hidden', !checked);
+        if (!checked) {
+            QS('#bak-pm-enc-passphrase').checked = true;
+            updatePmEncMode();
+        }
+    };
+
+    function updatePmEncMode() {
+        var mode = QS('#bak-pm-enc-passphrase').checked ? 'passphrase' : 'key';
+        QS('#bak-pm-encrypt-warning').classList.toggle('hidden', mode !== 'passphrase');
+        QS('#bak-pm-key-info').classList.toggle('hidden', mode !== 'key');
+    }
+    QS('#bak-pm-enc-passphrase').onchange = updatePmEncMode;
+    QS('#bak-pm-enc-key').onchange = updatePmEncMode;
+
     QS('#bak-pm-close').onclick = function() { QS('#bak-profile-modal').classList.add('hidden'); };
     QS('#bak-pm-cancel').onclick = function() { QS('#bak-profile-modal').classList.add('hidden'); };
 
@@ -1042,21 +1173,28 @@ function renderBackupApp(body) {
             }
         }
 
+        var encEnabled = QS('#bak-pm-encrypt').checked;
+        var encMode = encEnabled ? (QS('#bak-pm-enc-key').checked ? 'key' : 'passphrase') : null;
         var payload = {
             name: name, paths: pmPaths, destination: dest, schedule: schedule,
             retention: parseInt(QS('#bak-pm-retention').value) || 0,
-            incremental: QS('#bak-pm-incr').checked
+            incremental: QS('#bak-pm-incr').checked,
+            encryption: encEnabled ? { enabled: true, mode: encMode } : null,
         };
         try {
+            var resp;
             if (pmEditId) {
-                await api('/backup/profiles/' + pmEditId, { method: 'PUT', body: payload });
+                resp = await api('/backup/profiles/' + pmEditId, { method: 'PUT', body: payload });
             } else {
-                await api('/backup/profiles', { method: 'POST', body: payload });
+                resp = await api('/backup/profiles', { method: 'POST', body: payload });
             }
             toast('Profil zapisany', 'success');
             QS('#bak-profile-modal').classList.add('hidden');
             loadProfiles();
             loadScheduled();
+            if (resp && resp.generated_key) {
+                showGeneratedKey(resp.generated_key);
+            }
         } catch(e) { toast(t('Błąd zapisu'), 'error'); }
     };
 
@@ -1109,8 +1247,63 @@ function renderBackupApp(body) {
     };
 
     /* ══════════════════════════════════════════════════════════
-       PATHS (ad hoc)
+       PASSPHRASE MODAL — for encrypted backup/restore
        ══════════════════════════════════════════════════════════ */
+    var _passphraseResolve = null;
+
+    function promptPassphrase(titleText, needConfirm) {
+        return new Promise(function(resolve) {
+            _passphraseResolve = resolve;
+            QS('#bak-passphrase-title').innerHTML = '<i class="fas fa-lock"></i> ' + (titleText || 'Hasło szyfrowania');
+            QS('#bak-passphrase-input').value = '';
+            QS('#bak-passphrase-confirm').value = '';
+            QS('#bak-passphrase-confirm-row').classList.toggle('hidden', !needConfirm);
+            QS('#bak-passphrase-modal').classList.remove('hidden');
+            QS('#bak-passphrase-input').focus();
+        });
+    }
+
+    QS('#bak-passphrase-close').onclick = function() {
+        QS('#bak-passphrase-modal').classList.add('hidden');
+        if (_passphraseResolve) { _passphraseResolve(null); _passphraseResolve = null; }
+    };
+    QS('#bak-passphrase-cancel').onclick = function() {
+        QS('#bak-passphrase-modal').classList.add('hidden');
+        if (_passphraseResolve) { _passphraseResolve(null); _passphraseResolve = null; }
+    };
+    QS('#bak-passphrase-ok').onclick = function() {
+        var pw = QS('#bak-passphrase-input').value;
+        var confirmRow = QS('#bak-passphrase-confirm-row');
+        if (!pw) { toast(t('Podaj hasło'), 'warning'); return; }
+        if (!confirmRow.classList.contains('hidden')) {
+            var pw2 = QS('#bak-passphrase-confirm').value;
+            if (pw !== pw2) { toast('Hasła nie są zgodne', 'error'); return; }
+        }
+        QS('#bak-passphrase-modal').classList.add('hidden');
+        if (_passphraseResolve) { _passphraseResolve(pw); _passphraseResolve = null; }
+    };
+    QS('#bak-passphrase-input').onkeydown = function(e) {
+        if (e.key === 'Enter') QS('#bak-passphrase-ok').click();
+    };
+    QS('#bak-passphrase-confirm').onkeydown = function(e) {
+        if (e.key === 'Enter') QS('#bak-passphrase-ok').click();
+    };
+
+    /* ── Generated key display modal ── */
+    function showGeneratedKey(key) {
+        QS('#bak-genkey-value').textContent = key;
+        QS('#bak-genkey-modal').classList.remove('hidden');
+    }
+    QS('#bak-genkey-ok').onclick = function() {
+        QS('#bak-genkey-modal').classList.add('hidden');
+        QS('#bak-genkey-value').textContent = '';
+    };
+    QS('#bak-genkey-copy').onclick = function() {
+        var key = QS('#bak-genkey-value').textContent;
+        if (key && navigator.clipboard) {
+            navigator.clipboard.writeText(key).then(function() { toast('Klucz skopiowany', 'success'); }).catch(function() {});
+        }
+    };
     function renderPaths() {
         var el = QS('#bak-paths');
         if (state.paths.length) {
@@ -1506,18 +1699,21 @@ function renderBackupApp(body) {
 
             list.forEach(function(b) {
                 var isIncr = b.name.indexOf('_incr') !== -1;
+                var isEnc = b.encrypted || b.name.endsWith('.gpg');
                 var dt = parseBackupDate(b.name);
                 var dateStr = dt ? dt.toLocaleString('pl') : new Date(b.modified).toLocaleString('pl');
                 var locHtml = b.location ? '<span class="bak-badge' + (b.location.startsWith('USB') ? ' bak-badge-blue' : '') + '"><i class="fas ' + (b.location.startsWith('USB') ? 'fa-usb' : 'fa-hdd') + '"></i> ' + b.location + '</span>' : '';
+                var encBadge = isEnc ? '<span class="bak-badge bak-badge-orange"><i class="fas fa-lock"></i> Szyfrowany</span>' : '';
                 html += '<div class="bak-backup-card">'
                     + '<div class="bak-backup-card-left">'
-                    + '<div class="bak-backup-icon ' + (isIncr ? 'bak-icon-purple' : 'bak-icon-green') + '"><i class="fas fa-archive"></i></div>'
+                    + '<div class="bak-backup-icon ' + (isIncr ? 'bak-icon-purple' : (isEnc ? 'bak-icon-orange' : 'bak-icon-green')) + '"><i class="fas fa-' + (isEnc ? 'lock' : 'archive') + '"></i></div>'
                     + '<div class="bak-backup-info">'
                     + '<strong class="bak-backup-name">' + b.name + '</strong>'
                     + '<div class="bak-backup-meta">'
                     + '<span><i class="fas fa-calendar"></i> ' + dateStr + '</span>'
                     + '<span><i class="fas fa-weight-hanging"></i> ' + formatSize(b.size) + '</span>'
                     + (isIncr ? '<span class="bak-badge bak-badge-purple">' + t('Tylko zmiany') + '</span>' : '<span class="bak-badge bak-badge-green">' + t('Pełna kopia') + '</span>')
+                    + encBadge
                     + locHtml
                     + '</div></div></div>'
                     + '<div class="bak-backup-card-actions">'
@@ -1577,10 +1773,20 @@ function renderBackupApp(body) {
                 + '<h4 class="bak-m0">' + data.filename + '</h4>'
                 + '<div class="bak-row-mt6-wrap">'
                 + '<span class="bak-badge">' + (data.size/1048576).toFixed(1) + ' MB</span>'
-                + '<span class="bak-badge">' + data.total_files + ` ${t('plików')}</span>`
-                + (data.is_incremental ? '<span class="bak-badge bak-badge-purple">Przyrostowy</span>' : `<span class="bak-badge bak-badge-green">${t('Pełny')}</span>`)
+                + (data.encrypted ? '' : '<span class="bak-badge">' + data.total_files + ` ${t('plików')}</span>`)
+                + (data.encrypted ? '<span class="bak-badge bak-badge-orange"><i class="fas fa-lock"></i> Zaszyfrowany</span>' : (data.is_incremental ? '<span class="bak-badge bak-badge-purple">Przyrostowy</span>' : `<span class="bak-badge bak-badge-green">${t('Pełny')}</span>`))
                 + '<span class="bak-badge">' + new Date(data.modified).toLocaleString('pl') + '</span>'
                 + '</div></div>';
+
+            // Encrypted notice
+            if (data.encrypted) {
+                html += '<div class="bak-encrypt-warning">'
+                    + '<i class="fas fa-lock"></i> <strong>Backup jest zaszyfrowany (AES-256)</strong>'
+                    + '<br>Podgląd zawartości niedostępny bez hasła. Możesz przywrócić backup — zostaniesz poproszony o hasło.'
+                    + '</div>';
+                QS('#bak-preview-body').innerHTML = html;
+                return;
+            }
 
             // Incremental chain
             if (data.chain && data.chain.length > 1) {
@@ -1649,9 +1855,18 @@ function renderBackupApp(body) {
             ? t('UWAGA: Pliki zostaną przywrócone do oryginalnej lokalizacji. Nowsze wersje zostaną NADPISANE starszymi!') + '\n\n' + t('Przywrócić z "') + filename + '"?'
             : t('Pliki zostaną przywrócone do: ') + target + '\n\n' + t('Przywrócić z "') + filename + '"?';
         if (!confirm(msg)) return;
+
+        // Prompt for passphrase if backup is encrypted
+        var decryptPassphrase = null;
+        if (filename.endsWith('.gpg')) {
+            decryptPassphrase = await promptPassphrase('Hasło odszyfrowania backupu', false);
+            if (!decryptPassphrase) return;
+        }
+
         try {
             var body = { backup_file: filename, target_path: target };
             if (fullPath) body.backup_path = fullPath;
+            if (decryptPassphrase) body.decrypt_passphrase = decryptPassphrase;
             await api('/backup/restore', { method: 'POST', body: body });
             state.busy = true;
             switchTab('backup');

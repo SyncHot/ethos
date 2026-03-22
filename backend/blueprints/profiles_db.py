@@ -40,5 +40,9 @@ def init_profiles_db():
         c.execute('ALTER TABLE profiles ADD COLUMN incremental INTEGER DEFAULT 0')
     except sqlite3.OperationalError:
         pass
+    try:
+        c.execute('ALTER TABLE profiles ADD COLUMN encryption TEXT DEFAULT NULL')
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
     conn.close()

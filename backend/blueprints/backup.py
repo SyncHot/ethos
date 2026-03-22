@@ -52,6 +52,83 @@ backup_bp = Blueprint('backup', __name__, url_prefix='/api/backup')
 # Thread pool for filesystem calls that may hang on stale mounts
 _fs_executor = ThreadPoolExecutor(max_workers=4)
 
+
+# ── Encryption helpers ──
+
+def encrypt_backup_gpg(file_path, passphrase):
+    """Encrypt a backup file using GPG symmetric AES-256.
+    Returns the path of the encrypted file (.gpg)."""
+    encrypted_path = file_path + '.gpg'
+    result = subprocess.run(
+        ['gpg', '--symmetric', '--cipher-algo', 'AES256',
+         '--batch', '--yes', '--passphrase-fd', '0',
+         '--output', encrypted_path, file_path],
+        input=passphrase,
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        raise Exception(f"Błąd szyfrowania GPG: {result.stderr.strip()[:300]}")
+    return encrypted_path
+
+
+def decrypt_backup_gpg(encrypted_path, passphrase, output_path):
+    """Decrypt a GPG-encrypted backup file.
+    Returns output_path on success, raises on failure."""
+    result = subprocess.run(
+        ['gpg', '--decrypt', '--batch', '--yes', '--passphrase-fd', '0',
+         '--output', output_path, encrypted_path],
+        input=passphrase,
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        raise Exception(f"Błąd deszyfrowania GPG (nieprawidłowe hasło?): {result.stderr.strip()[:300]}")
+    return output_path
+
+
+def _resolve_encryption_passphrase(enc):
+    """Return the encryption passphrase for the given encryption config dict.
+
+    For mode='key': decrypts and returns the stored key (scheduled backups work).
+    For mode='passphrase': returns None — caller must supply the passphrase.
+    Returns None if encryption is not enabled."""
+    if not enc or not enc.get('enabled'):
+        return None
+    if enc.get('mode') == 'key':
+        stored = enc.get('stored_key')
+        if not stored:
+            raise Exception("Klucz szyfrowania nie został wygenerowany dla tego profilu.")
+        return decrypt_secret(stored)
+    return None  # passphrase mode — must be provided by caller
+
+
+def _prepare_encryption(enc_input, existing_enc=None):
+    """Normalise encryption config from API input.
+
+    - Preserves stored_key when mode='key' and client didn't send one.
+    - Generates a new stored_key when switching to mode='key' for the first time.
+    Returns (enc_dict_to_store, plaintext_key_for_user_or_None).
+    """
+    if not enc_input or not enc_input.get('enabled'):
+        return None, None
+
+    enc = dict(enc_input)
+    enc.setdefault('mode', 'passphrase')
+    generated_key = None
+
+    if enc['mode'] == 'key':
+        if enc.get('stored_key'):
+            pass  # Client re-sent an (unusable) stored_key — ignore, use existing
+        if existing_enc and existing_enc.get('mode') == 'key' and existing_enc.get('stored_key'):
+            enc['stored_key'] = existing_enc['stored_key']
+        else:
+            # First time switching to key mode — generate a fresh key
+            generated_key = secrets.token_hex(32)
+            enc['stored_key'] = encrypt_secret(generated_key)
+    else:
+        enc.pop('stored_key', None)
+
+    return enc, generated_key
+
 logger = logging.getLogger(__name__)
 
 # ── Config ──
@@ -302,6 +379,21 @@ def load_profiles():
             sched = json.loads(sched) if sched else None
         except Exception:
             pass
+        enc_raw = None
+        try:
+            enc_raw = row['encryption']
+        except Exception:
+            pass
+        enc = None
+        if enc_raw:
+            try:
+                enc = json.loads(enc_raw)
+            except Exception:
+                pass
+        # Strip stored_key before returning to clients (sensitive — never expose)
+        enc_public = None
+        if enc:
+            enc_public = {k: v for k, v in enc.items() if k != 'stored_key'}
         profiles.append({
             'id': str(row['id']),
             'name': row['name'],
@@ -311,6 +403,7 @@ def load_profiles():
             'options': row['options'],
             'retention': row['retention'] if row['retention'] else 0,
             'incremental': bool(row['incremental']) if row['incremental'] else False,
+            'encryption': enc_public,
         })
     conn.close()
     return profiles
@@ -514,12 +607,16 @@ def transfer_to_ssh(backup_path, ssh_config, backup_filename):
 
 # ── Retention ──
 
+def _is_backup_file(f):
+    return f.startswith('backup_') and (f.endswith('.tar.gz') or f.endswith('.tar.gz.gpg'))
+
+
 def apply_retention(retention, backup_dir, destination=None, profile_name=None):
     if not retention or retention <= 0:
         return
     try:
         local_backups = sorted(
-            [f for f in os.listdir(backup_dir) if f.startswith('backup_') and f.endswith('.tar.gz')],
+            [f for f in os.listdir(backup_dir) if _is_backup_file(f)],
             key=lambda f: os.path.getmtime(os.path.join(backup_dir, f)), reverse=True
         )
         # Never delete the latest level-0 (full) backup — incrementals depend on it
@@ -542,7 +639,7 @@ def apply_retention(retention, backup_dir, destination=None, profile_name=None):
             usb_path = destination['path']
             if os.path.isdir(usb_path):
                 usb_backups = sorted(
-                    [f for f in os.listdir(usb_path) if f.startswith('backup_') and f.endswith('.tar.gz')],
+                    [f for f in os.listdir(usb_path) if _is_backup_file(f)],
                     key=lambda f: os.path.getmtime(os.path.join(usb_path, f)), reverse=True
                 )
                 # Protect the latest full backup on USB too
@@ -570,7 +667,7 @@ def detect_incremental_chain(selected_file, search_dir=None):
         return [selected_file]
     d = search_dir or BACKUP_DIR
     all_backups = sorted(
-        [f for f in os.listdir(d) if f.startswith('backup_') and f.endswith('.tar.gz')]
+        [f for f in os.listdir(d) if _is_backup_file(f)]
     )
     full_backup = None
     for f in all_backups:
@@ -593,7 +690,7 @@ def detect_incremental_chain(selected_file, search_dir=None):
 
 # ── Backup ──
 
-def run_backup(paths, destination=None, profile_name=None, retention=0, incremental=False):
+def run_backup(paths, destination=None, profile_name=None, retention=0, incremental=False, encrypt_passphrase=None):
     global current_operation
     # USB: write tar directly to destination (no local copy needed)
     # SSH: still needs local copy + transfer
@@ -658,7 +755,7 @@ def run_backup(paths, destination=None, profile_name=None, retention=0, incremen
                 if dest_dir and os.path.isdir(dest_dir):
                     try:
                         has_full_backup = any(
-                            f.startswith('backup_') and f.endswith('.tar.gz') and '_incr' not in f
+                            _is_backup_file(f) and '_incr' not in f
                             for f in os.listdir(dest_dir)
                         )
                     except Exception:
@@ -667,7 +764,7 @@ def run_backup(paths, destination=None, profile_name=None, retention=0, incremen
                 if not has_full_backup and not dest_dir:
                     try:
                         has_full_backup = any(
-                            f.startswith('backup_') and f.endswith('.tar.gz') and '_incr' not in f
+                            _is_backup_file(f) and '_incr' not in f
                             for f in os.listdir(BACKUP_DIR)
                         )
                     except Exception:
@@ -770,6 +867,19 @@ def run_backup(paths, destination=None, profile_name=None, retention=0, incremen
         history_entry['size'] = final_size
         emit_log(f"Archiwum: {backup_filename} ({final_size / (1024*1024):.2f} MB)", 'success')
 
+        # ── Encryption step ──
+        if encrypt_passphrase:
+            emit_log("Etap: Szyfrowanie archiwum (AES-256)...", 'info')
+            encrypted_path = encrypt_backup_gpg(backup_path, encrypt_passphrase)
+            os.remove(backup_path)
+            backup_path = encrypted_path
+            backup_filename = backup_filename + '.gpg'
+            history_entry['archive_file'] = backup_filename
+            enc_size = os.path.getsize(backup_path)
+            history_entry['size'] = enc_size
+            history_entry['encrypted'] = True
+            emit_log(f"Zaszyfrowano: {backup_filename} ({enc_size / (1024*1024):.2f} MB)", 'success')
+
         final_location = backup_path
         if destination:
             if destination['type'] == 'usb':
@@ -803,7 +913,7 @@ def run_backup(paths, destination=None, profile_name=None, retention=0, incremen
         if has_transfer:
             try:
                 for f in os.listdir(BACKUP_DIR):
-                    if f.startswith('backup_') and f.endswith('.tar.gz'):
+                    if f.startswith('backup_') and (f.endswith('.tar.gz') or f.endswith('.tar.gz.gpg')):
                         try:
                             os.remove(os.path.join(BACKUP_DIR, f))
                         except Exception:
@@ -828,11 +938,36 @@ def run_backup(paths, destination=None, profile_name=None, retention=0, incremen
 
 # ── Restore ──
 
-def run_restore(backup_file, target_path=None, archive_dir=None):
+def run_restore(backup_file, target_path=None, archive_dir=None, decrypt_passphrase=None):
     global current_operation
     d = archive_dir or BACKUP_DIR
+    temp_decrypted_files = []
     try:
+        # ── Decryption step for encrypted backups ──
+        if backup_file.endswith('.tar.gz.gpg'):
+            if not decrypt_passphrase:
+                raise Exception("Backup jest zaszyfrowany. Podaj hasło do odszyfrowania.")
+            decrypted_name = backup_file[:-4]  # strip .gpg
+            decrypted_path = os.path.join(d, decrypted_name)
+            temp_decrypted_files.append(decrypted_path)
+            emit_log("Odszyfrowanie archiwum (AES-256)...", 'info')
+            decrypt_backup_gpg(os.path.join(d, backup_file), decrypt_passphrase, decrypted_path)
+            emit_log("Odszyfrowano pomyślnie", 'success')
+            backup_file = decrypted_name
+
         chain = detect_incremental_chain(backup_file, search_dir=d)
+
+        # ── Decrypt any remaining encrypted chain members (e.g. full base of an incremental chain) ──
+        for i, cf in enumerate(chain):
+            if cf.endswith('.tar.gz.gpg'):
+                if not decrypt_passphrase:
+                    raise Exception(f"Plik łańcucha {cf} jest zaszyfrowany — podaj hasło.")
+                cf_decrypted_name = cf[:-4]
+                cf_decrypted_path = os.path.join(d, cf_decrypted_name)
+                emit_log(f"Odszyfrowanie: {cf}...", 'info')
+                decrypt_backup_gpg(os.path.join(d, cf), decrypt_passphrase, cf_decrypted_path)
+                temp_decrypted_files.append(cf_decrypted_path)
+                chain[i] = cf_decrypted_name
         extract_to = target_path if target_path else '/'
         if target_path:
             os.makedirs(target_path, exist_ok=True)
@@ -902,6 +1037,13 @@ def run_restore(backup_file, target_path=None, archive_dir=None):
             progress_state['last'] = None
         _emit('backup_error', {'message': str(e)})
     finally:
+        # Clean up all temporary decrypted files (sensitive data)
+        for tmp in temp_decrypted_files:
+            if tmp and os.path.exists(tmp):
+                try:
+                    os.remove(tmp)
+                except Exception:
+                    pass
         with operation_lock:
             current_operation = None
 
@@ -1026,9 +1168,38 @@ def _scheduler_worker():
 def _run_scheduled_backup(profile, destination, retention, incremental):
     """Wrapper for run_backup that logs scheduler outcome."""
     profile_name = profile['name']
+    encryption = profile.get('encryption')
+
+    # Resolve encryption passphrase for this scheduled run
+    encrypt_passphrase = None
+    if encryption and encryption.get('enabled'):
+        enc_mode = encryption.get('mode', 'passphrase')
+        if enc_mode == 'key':
+            # Key mode: load stored_key from DB (load_profiles strips it for security)
+            try:
+                conn = get_db_connection()
+                row = conn.execute('SELECT encryption FROM profiles WHERE id = ?', (profile['id'],)).fetchone()
+                conn.close()
+                if row and row['encryption']:
+                    enc_full = json.loads(row['encryption'])
+                    encrypt_passphrase = _resolve_encryption_passphrase(enc_full)
+            except Exception as e:
+                log_scheduler(f"BACKUP FAILED - profile '{profile_name}': błąd klucza szyfrowania: {e}", 'ERROR')
+                with operation_lock:
+                    if current_operation == 'backup':
+                        current_operation = None
+                return
+        else:
+            log_scheduler(f"BACKUP SKIPPED - profile '{profile_name}' wymaga hasła szyfrowania — zaplanowane backupy nie obsługują szyfrowania z hasłem. Użyj trybu 'Klucz automatyczny'.", 'WARNING')
+            emit_log(f"Zaplanowany backup '{profile_name}' pominięty — profil używa szyfrowania hasłem. Zmień na 'Klucz automatyczny' lub uruchom ręcznie.", 'warning')
+            with operation_lock:
+                if current_operation == 'backup':
+                    current_operation = None
+            return
+
     start = time.time()
     try:
-        run_backup(profile['paths'], destination, profile_name, retention, incremental)
+        run_backup(profile['paths'], destination, profile_name, retention, incremental, encrypt_passphrase)
         duration = round(time.time() - start, 1)
         log_scheduler(f"BACKUP COMPLETED - profile '{profile_name}' in {duration}s")
     except Exception as e:
@@ -1177,14 +1348,16 @@ def list_backups():
         prof = dir_to_profile.get(directory, {})
         try:
             for item in _fs_call_with_timeout(os.listdir, directory, timeout=5):
-                if item.endswith('.tar.gz') and item.startswith('backup_'):
+                is_backup = item.startswith('backup_') and (item.endswith('.tar.gz') or item.endswith('.tar.gz.gpg'))
+                if is_backup:
                     fpath = os.path.join(directory, item)
                     try:
                         st = _fs_call_with_timeout(os.stat, fpath, timeout=3)
                         entry = {
                             'name': item, 'size': st.st_size,
                             'modified': datetime.fromtimestamp(st.st_mtime).isoformat(),
-                            'location': location_label, 'path': fpath
+                            'location': location_label, 'path': fpath,
+                            'encrypted': item.endswith('.gpg'),
                         }
                         if prof:
                             entry['profile_id'] = prof['profile_id']
@@ -1213,7 +1386,7 @@ def list_backups():
 def delete_backup(filename):
     # Support deleting from a specific path (passed as query param)
     custom_path = request.args.get('path')
-    if custom_path and os.path.exists(custom_path) and custom_path.endswith('.tar.gz'):
+    if custom_path and os.path.exists(custom_path) and (custom_path.endswith('.tar.gz') or custom_path.endswith('.tar.gz.gpg')):
         os.remove(custom_path)
         return jsonify({'success': True})
     bp = os.path.join(BACKUP_DIR, filename)
@@ -1236,6 +1409,7 @@ def start_backup():
     destination = data.get('destination')
     retention = data.get('retention', 0)
     incremental = data.get('incremental', False)
+    encrypt_passphrase = data.get('encrypt_passphrase') or None
 
     if not paths:
         with operation_lock:
@@ -1265,14 +1439,14 @@ def start_backup():
                     return jsonify({'error': 'Serwer SSH nie znaleziony'}), 400
                 destination['config'] = ssh_cfg
 
-    _socketio.start_background_task(run_backup, valid_paths, destination, retention=retention, incremental=incremental)
+    _socketio.start_background_task(run_backup, valid_paths, destination, retention=retention, incremental=incremental, encrypt_passphrase=encrypt_passphrase)
     return jsonify({'success': True, 'message': 'Backup rozpoczęty'})
 
 
 @backup_bp.route('/backup-preview/<filename>')
 def backup_preview(filename):
     custom_path = request.args.get('path')
-    if custom_path and os.path.isfile(custom_path) and custom_path.endswith('.tar.gz'):
+    if custom_path and os.path.isfile(custom_path) and (custom_path.endswith('.tar.gz') or custom_path.endswith('.tar.gz.gpg')):
         bp = custom_path
         archive_dir = os.path.dirname(custom_path)
     else:
@@ -1281,6 +1455,15 @@ def backup_preview(filename):
     if not os.path.exists(bp):
         return jsonify({'error': 'Plik nie istnieje'}), 404
     st = os.stat(bp)
+    # Encrypted backups cannot be previewed without passphrase
+    if filename.endswith('.tar.gz.gpg') or bp.endswith('.tar.gz.gpg'):
+        return jsonify({
+            'filename': filename, 'size': st.st_size,
+            'modified': datetime.fromtimestamp(st.st_mtime).isoformat(),
+            'total_files': 0, 'is_incremental': '_incr' in filename,
+            'encrypted': True, 'chain': [], 'top_dirs': {},
+            'files': [], 'truncated': False
+        })
     result = subprocess.run(['tar', '-tzf', bp], capture_output=True, text=True, timeout=30)
     if result.returncode != 0:
         return jsonify({'error': 'Nie można odczytać archiwum'}), 500
@@ -1316,12 +1499,13 @@ def start_restore():
     backup_file = data.get('backup_file', '')
     backup_path = data.get('backup_path', '')
     target_path = data.get('target_path', '')
+    decrypt_passphrase = data.get('decrypt_passphrase') or None
     if not backup_file:
         with operation_lock:
             current_operation = None
         return jsonify({'error': 'Wybierz plik backupu'}), 400
     # Resolve archive location: prefer explicit path, fallback to BACKUP_DIR
-    if backup_path and os.path.isfile(backup_path) and backup_path.endswith('.tar.gz'):
+    if backup_path and os.path.isfile(backup_path) and (backup_path.endswith('.tar.gz') or backup_path.endswith('.tar.gz.gpg')):
         bp = backup_path
         archive_dir = os.path.dirname(backup_path)
     else:
@@ -1331,6 +1515,11 @@ def start_restore():
         with operation_lock:
             current_operation = None
         return jsonify({'error': 'Plik nie istnieje'}), 400
+    # Validate passphrase is provided for encrypted backups
+    if backup_file.endswith('.tar.gz.gpg') and not decrypt_passphrase:
+        with operation_lock:
+            current_operation = None
+        return jsonify({'error': 'Backup jest zaszyfrowany — podaj hasło do odszyfrowania', 'encrypted': True}), 400
     restore_target = target_path or None
     if restore_target:
         try:
@@ -1340,7 +1529,7 @@ def start_restore():
                 current_operation = None
             return jsonify({'error': f'Nie można utworzyć katalogu: {e}'}), 400
 
-    _socketio.start_background_task(run_restore, backup_file, restore_target, archive_dir)
+    _socketio.start_background_task(run_restore, backup_file, restore_target, archive_dir, decrypt_passphrase)
     return jsonify({'success': True, 'message': 'Przywracanie rozpoczęte'})
 
 
@@ -1553,19 +1742,26 @@ def create_profile():
         return jsonify({'error': 'Nazwa wymagana'}), 400
     if not data.get('paths'):
         return jsonify({'error': 'Ścieżki wymagane'}), 400
+    enc_input = data.get('encryption')
+    enc, generated_key = _prepare_encryption(enc_input)
     conn = get_db_connection()
     c = conn.cursor()
-    c.execute('INSERT INTO profiles (name, paths, destination, schedule, options, retention, incremental) VALUES (?, ?, ?, ?, ?, ?, ?)', (
+    c.execute('INSERT INTO profiles (name, paths, destination, schedule, options, retention, incremental, encryption) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', (
         data['name'], json.dumps(data['paths']),
         json.dumps(data.get('destination')) if data.get('destination') else None,
         json.dumps(data['schedule']) if data.get('schedule') else None,
         data.get('options'), data.get('retention', 0),
-        1 if data.get('incremental') else 0
+        1 if data.get('incremental') else 0,
+        json.dumps(enc) if enc else None,
     ))
     conn.commit()
     pid = c.lastrowid
     conn.close()
-    return jsonify({'success': True, 'profile': {'id': str(pid), 'name': data['name'], 'paths': data['paths'], 'destination': data.get('destination'), 'schedule': data.get('schedule'), 'retention': data.get('retention', 0), 'incremental': bool(data.get('incremental'))}})
+    enc_public = {k: v for k, v in enc.items() if k != 'stored_key'} if enc else None
+    resp = {'success': True, 'profile': {'id': str(pid), 'name': data['name'], 'paths': data['paths'], 'destination': data.get('destination'), 'schedule': data.get('schedule'), 'retention': data.get('retention', 0), 'incremental': bool(data.get('incremental')), 'encryption': enc_public}}
+    if generated_key:
+        resp['generated_key'] = generated_key
+    return jsonify(resp)
 
 
 @backup_bp.route('/profiles/export', methods=['GET'])
@@ -1586,6 +1782,7 @@ def export_profiles():
             'options': p.get('options'),
             'retention': p.get('retention', 0),
             'incremental': p.get('incremental', False),
+            'encryption': p.get('encryption'),
         })
     return jsonify(export_data)
 
@@ -1645,8 +1842,14 @@ def import_profiles():
 
                 destination = p.get('destination')
                 schedule = p.get('schedule')
+                enc_import = p.get('encryption')
+                # When importing, strip any stored_key (it was encrypted on the exporting machine)
+                # and regenerate a new key if needed
+                enc, generated_key = _prepare_encryption(
+                    {k: v for k, v in enc_import.items() if k != 'stored_key'} if enc_import else None
+                )
                 c.execute(
-                    'INSERT INTO profiles (name, paths, destination, schedule, options, retention, incremental) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                    'INSERT INTO profiles (name, paths, destination, schedule, options, retention, incremental, encryption) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
                     (
                         name,
                         json.dumps(paths) if isinstance(paths, list) else paths,
@@ -1655,6 +1858,7 @@ def import_profiles():
                         p.get('options'),
                         p.get('retention', 0),
                         1 if p.get('incremental') else 0,
+                        json.dumps(enc) if enc else None,
                     )
                 )
                 existing_names.add(name)
@@ -1703,7 +1907,14 @@ def update_profile(profile_id):
     if not row:
         conn.close()
         return jsonify({'error': 'Profil nie znaleziony'}), 404
-    c.execute('UPDATE profiles SET name=?, paths=?, destination=?, schedule=?, options=?, retention=?, incremental=? WHERE id=?', (
+    enc_input = data.get('encryption')
+    existing_enc = None
+    try:
+        existing_enc = json.loads(row['encryption']) if row['encryption'] else None
+    except Exception:
+        pass
+    enc, generated_key = _prepare_encryption(enc_input, existing_enc)
+    c.execute('UPDATE profiles SET name=?, paths=?, destination=?, schedule=?, options=?, retention=?, incremental=?, encryption=? WHERE id=?', (
         data.get('name', row['name']),
         json.dumps(data.get('paths', json.loads(row['paths']))),
         json.dumps(data.get('destination')) if data.get('destination') else row['destination'],
@@ -1711,21 +1922,31 @@ def update_profile(profile_id):
         data.get('options', row['options']),
         data.get('retention', row['retention'] or 0),
         1 if data.get('incremental') else 0,
+        json.dumps(enc) if enc is not None else None,
         profile_id
     ))
     conn.commit()
-    # Re-fetch updated profile
     updated = conn.execute('SELECT * FROM profiles WHERE id = ?', (profile_id,)).fetchone()
     conn.close()
     if updated:
-        return jsonify({'success': True, 'profile': {
+        enc_val = None
+        try:
+            enc_val = json.loads(updated['encryption']) if updated['encryption'] else None
+        except Exception:
+            pass
+        enc_public = {k: v for k, v in enc_val.items() if k != 'stored_key'} if enc_val else None
+        resp = {'success': True, 'profile': {
             'id': str(updated['id']), 'name': updated['name'],
             'paths': json.loads(updated['paths']),
             'destination': json.loads(updated['destination']) if updated['destination'] else None,
             'schedule': json.loads(updated['schedule']) if updated['schedule'] else None,
             'retention': updated['retention'] or 0,
-            'incremental': bool(updated['incremental'])
-        }})
+            'incremental': bool(updated['incremental']),
+            'encryption': enc_public,
+        }}
+        if generated_key:
+            resp['generated_key'] = generated_key
+        return jsonify(resp)
     return jsonify({'success': True})
 
 @backup_bp.route('/profiles/<profile_id>', methods=['DELETE'])
@@ -1744,14 +1965,34 @@ def run_profile(profile_id):
     if not row:
         conn.close()
         return jsonify({'error': 'Profil nie znaleziony'}), 404
+    enc = None
+    try:
+        enc = json.loads(row['encryption']) if row['encryption'] else None
+    except Exception:
+        pass
     profile = {
         'id': str(row['id']), 'name': row['name'],
         'paths': json.loads(row['paths']),
         'destination': json.loads(row['destination']) if row['destination'] else None,
         'retention': row['retention'] or 0,
         'incremental': bool(row['incremental']) if row['incremental'] else False,
+        'encryption': enc,
     }
     conn.close()
+
+    # Resolve encryption passphrase
+    data = request.json or {}
+    encrypt_passphrase = data.get('encrypt_passphrase') or None
+    if enc and enc.get('enabled'):
+        if enc.get('mode') == 'key':
+            # Key mode: resolve from stored key automatically
+            try:
+                encrypt_passphrase = _resolve_encryption_passphrase(enc)
+            except Exception as e:
+                return jsonify({'error': f'Błąd klucza szyfrowania: {e}'}), 500
+        elif not encrypt_passphrase:
+            return jsonify({'error': 'Profil ma włączone szyfrowanie — podaj hasło', 'needs_passphrase': True}), 400
+
     with operation_lock:
         if current_operation is not None:
             return jsonify({'error': 'Inna operacja jest w toku'}), 400
@@ -1766,8 +2007,30 @@ def run_profile(profile_id):
             if ssh_cfg:
                 destination['config'] = ssh_cfg
 
-    _socketio.start_background_task(run_backup, profile['paths'], destination, profile['name'], profile['retention'], profile['incremental'])
+    _socketio.start_background_task(run_backup, profile['paths'], destination, profile['name'], profile['retention'], profile['incremental'], encrypt_passphrase)
     return jsonify({'success': True, 'message': f'Backup "{profile["name"]}" rozpoczęty'})
+
+
+@backup_bp.route('/profiles/<profile_id>/key', methods=['GET'])
+def get_profile_key(profile_id):
+    """Return the plaintext encryption key for a key-mode profile (for user backup)."""
+    conn = get_db_connection()
+    row = conn.execute('SELECT * FROM profiles WHERE id = ?', (profile_id,)).fetchone()
+    conn.close()
+    if not row:
+        return jsonify({'error': 'Profil nie znaleziony'}), 404
+    enc = None
+    try:
+        enc = json.loads(row['encryption']) if row['encryption'] else None
+    except Exception:
+        pass
+    if not enc or not enc.get('enabled') or enc.get('mode') != 'key':
+        return jsonify({'error': 'Profil nie używa trybu klucza'}), 400
+    try:
+        key = _resolve_encryption_passphrase(enc)
+        return jsonify({'key': key})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @backup_bp.route('/scheduled-backups')
 def get_scheduled_backups():
