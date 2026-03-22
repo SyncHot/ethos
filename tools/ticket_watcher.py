@@ -177,7 +177,7 @@ TRANSIENT_ERROR_KILL_THRESHOLD = 5  # kill process after N transient API errors 
 TRANSIENT_SOFT_COOLDOWN_THRESHOLD = 3  # after exit 0, if this many transient errors → soft cooldown on model
 
 # ── Global attempt cap — prevents infinite retry loops on stuck tickets ───
-MAX_TOTAL_ATTEMPTS = 6  # max total dev runs per ticket before auto-shelving
+MAX_TOTAL_ATTEMPTS = 10  # max total dev runs per ticket before auto-shelving
 MAX_STRANDED_REQUEUES = 3  # max consecutive stranded detections before auto-shelving
 _ticket_attempt_counts = {}  # {ticket_id: total_attempts_across_all_cycles}
 _stranded_counts = {}  # {ticket_id: consecutive stranded detections}
@@ -981,7 +981,7 @@ MAX_EXECUTION_SECS = {
     "simple": 900,     # 15 min
 }
 MAX_TIMEOUT_RETRIES = 2  # max times a ticket can timeout before being shelved
-MAX_QA_CYCLES = 3  # max dev→QA round-trips before giving up
+MAX_QA_CYCLES = 5  # max dev→QA round-trips before giving up
 
 # Per-complexity QA settings — simple tickets get static-only, complex get full review
 QA_DEPTH = {
@@ -993,11 +993,14 @@ QA_DEPTH = {
 def _pre_qa_static_check(tid):
     """Run fast local checks before expensive model QA.
     Returns (passed: bool, errors: list[str]).
+    Scoped to committed changes only (HEAD~1..HEAD) to avoid false positives
+    from uncommitted work left by other agents.
     """
     errors = []
     try:
+        # Use HEAD~1..HEAD to check ONLY the last commit, not dirty working tree
         changed = subprocess.run(
-            ["git", "diff", "--name-only", "HEAD~1"],
+            ["git", "diff", "--name-only", "HEAD~1", "HEAD"],
             capture_output=True, text=True, cwd="/opt/ethos", timeout=10,
         )
         for f in changed.stdout.strip().splitlines():
@@ -1018,9 +1021,9 @@ def _pre_qa_static_check(tid):
                 )
                 if r.returncode != 0:
                     errors.append(f"JS error in {f}: {r.stderr.strip()[:200]}")
-        # Whitespace errors / conflict markers
+        # Whitespace errors / conflict markers — committed changes only
         r = subprocess.run(
-            ["git", "diff", "--check", "HEAD~1"],
+            ["git", "diff", "--check", "HEAD~1", "HEAD"],
             capture_output=True, text=True, cwd="/opt/ethos", timeout=10,
         )
         if r.returncode != 0:
