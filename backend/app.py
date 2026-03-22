@@ -101,6 +101,7 @@ from blueprints.packages import packages_bp
 from blueprints.users import users_bp, _load_privileges
 from blueprints.network import network_bp
 from blueprints.eventlog import eventlog_bp, init_eventlog, log as elog
+from audit import audit_log
 from blueprints.docker_manager import docker_bp
 from blueprints.sandbox_policy import sandbox_bp
 from blueprints.appstore import appstore_bp, init_appstore
@@ -682,7 +683,7 @@ _API_TO_APP = {
     '/api/raid/': 'raid',
     '/api/cron/': 'cron',
     '/api/dashboard/': 'dashboard',
-    '/api/dlna/': 'dlna',
+    '/api/dlna/': 'sharing',
     '/api/notifications/': 'notifications',
     '/api/rollback/': 'rollback',
     '/api/totp/': 'system-settings',
@@ -694,7 +695,7 @@ _ADMIN_ONLY_APPS = {
     'users', 'usb-flasher', 'builder', 'updates', 'services',
     'disk-repair', 'remote-log', 'surveillance',
     'system-settings', 'domains-manager', 'vm-manager', 'app-store',
-    'fail2ban', 'wireguard', 'power', 'ups', 'dlna', 'cloud-backup', 'rollback',
+    'fail2ban', 'wireguard', 'power', 'ups', 'cloud-backup', 'rollback',
     'raid', 'cron',
 }
 
@@ -833,6 +834,28 @@ def _blueprint_auth_guard():
                 return jsonify({'error': t('auth.no_app_permission')}), 403
 
 
+# ─── Endpoint rate limiter (in-memory, per-IP) ───
+from collections import defaultdict as _defaultdict
+
+class _EndpointRateLimiter:
+    def __init__(self):
+        self._attempts = _defaultdict(list)  # key -> [timestamps]
+
+    def is_limited(self, key, max_attempts=5, window_secs=300):
+        """Returns True if rate limited. Default: 5 attempts per 5 min."""
+        now = time.time()
+        self._attempts[key] = [t for t in self._attempts[key] if now - t < window_secs]
+        if len(self._attempts[key]) >= max_attempts:
+            return True
+        self._attempts[key].append(now)
+        return False
+
+    def reset(self, key):
+        self._attempts.pop(key, None)
+
+_rate_limiter = _EndpointRateLimiter()
+
+
 # ─── Brute-force protection ───
 _login_attempts = {}  # ip -> {'count': int, 'first': float, 'locked_until': float}
 _login_lock = __import__('threading').Lock()
@@ -863,6 +886,8 @@ def _log_auth_failure(username, ip):
 @app.route('/api/auth/login', methods=['POST'])
 def login():
     client_ip = request.remote_addr or '0.0.0.0'
+    if _rate_limiter.is_limited(f'login:{client_ip}'):
+        return jsonify({"error": "Zbyt wiele prób logowania. Spróbuj za 5 minut."}), 429
     now = time.time()
     with _login_lock:
         attempt = _login_attempts.get(client_ip)
@@ -903,6 +928,7 @@ def login():
                 _record_failed_login(client_ip)
                 _log_auth_failure('admin', client_ip)
                 elog('system', 'warning', 'Nieudane logowanie (złe hasło)')
+                audit_log('auth.login.failure', f'Failed login (no matching admin user) from {client_ip}', username='admin')
                 return jsonify({'error': t('auth.invalid_credentials')}), 401
 
     # User login — validate against host /etc/shadow
@@ -911,20 +937,24 @@ def login():
     if r.returncode != 0 or not r.stdout.strip():
         _record_failed_login(client_ip)
         _log_auth_failure(safe_user, client_ip)
+        audit_log('auth.login.failure', f'Unknown user "{safe_user}" from {client_ip}', username=safe_user)
         return jsonify({'error': 'Nieprawidłowy login lub hasło'}), 401
 
     shadow_fields = r.stdout.strip().split(':')
     stored_hash = shadow_fields[1] if len(shadow_fields) > 1 else ''
     if not stored_hash or stored_hash.startswith('!') or stored_hash == '*':
+        audit_log('auth.login.failure', f'Locked account "{safe_user}" from {client_ip}', username=safe_user)
         return jsonify({'error': 'Konto zablokowane'}), 401
 
     if not _verify_shadow_hash(password, stored_hash):
         _record_failed_login(client_ip)
         _log_auth_failure(safe_user, client_ip)
+        audit_log('auth.login.failure', f'Bad password for "{safe_user}" from {client_ip}', username=safe_user)
         return jsonify({'error': 'Nieprawidłowy login lub hasło'}), 401
 
     # Clear login attempts on success
     _login_attempts.pop(client_ip, None)
+    _rate_limiter.reset(f'login:{client_ip}')
 
     # ─── TOTP / 2FA check ───
     if is_totp_enabled(safe_user):
@@ -939,6 +969,7 @@ def login():
             totp_ok = verify_backup_code(safe_user, backup_code)
         if not totp_ok:
             _log_auth_failure(safe_user, client_ip)
+            audit_log('auth.login.failure', f'Invalid 2FA code for "{safe_user}" from {client_ip}', username=safe_user)
             return jsonify({'error': 'Invalid 2FA code'}), 401
 
     # Password OK — determine role
@@ -950,6 +981,7 @@ def login():
     # Ensure default folders exist in the user's home
     _ensure_user_home_structure(safe_user)
     elog('system', 'info', f'Logowanie: {safe_user} (rola: {role})')
+    audit_log('auth.login.success', f'User "{safe_user}" logged in (role: {role}) from {client_ip}', username=safe_user)
 
     pwd_change_required = _is_setup_done() and not os.path.exists(PASSWORD_CHANGED_MARKER)
 
@@ -1007,7 +1039,10 @@ def verify():
 
 @app.route('/api/auth/logout', methods=['POST'])
 def logout():
+    user = get_current_user()
+    logout_user = user['username'] if user else 'unknown'
     tokens.pop(get_token(), None)
+    audit_log('auth.logout', f'User "{logout_user}" logged out', username=logout_user)
     resp = jsonify({'ok': True})
     resp.delete_cookie('nas_token')
     resp.delete_cookie('csrf_token')
@@ -8327,17 +8362,6 @@ def get_apps():
             'category': 'Sieć',
             'description': 'Serwer VPN WireGuard — zarządzaj peerami, generuj QR kody',
             'admin_only': True
-        },
-        {
-            'id': 'dlna',
-            'name': 'DLNA / UPnP',
-            'icon': 'fa-play-circle',
-            'color': '#8b5cf6',
-            'type': 'builtin',
-            'category': 'Przechowywanie',
-            'description': 'Serwer mediów DLNA/UPnP — strumieniowanie do Smart TV i odtwarzaczy',
-            'admin_only': True,
-            'package': 'dlna'
         }
     ]
 
@@ -8648,18 +8672,6 @@ _ETHOS_PACKAGES = [
         'install_endpoint': '/api/websites/install',
         'uninstall_endpoint': '/api/websites/uninstall',
         'status_endpoint': '/api/websites/pkg-status',
-    },
-    {
-        'id': 'dlna',
-        'name': 'DLNA / UPnP',
-        'icon': 'fa-play-circle',
-        'color': '#8b5cf6',
-        'description': 'Serwer multimediów DLNA/UPnP — udostępnianie muzyki, filmów i zdjęć w sieci lokalnej.',
-        'app_id': 'dlna',
-        'deps_label': 'minidlna',
-        'install_endpoint': '/api/dlna/install',
-        'uninstall_endpoint': '/api/dlna/uninstall',
-        'status_endpoint': '/api/dlna/pkg-status',
     },
     {
         'id': 'cloud-backup',

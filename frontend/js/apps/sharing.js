@@ -269,66 +269,270 @@ async function renderSharingApp(body) {
             <span class="shr-title"><i class="fas fa-photo-video shr-icon-accent"></i>DLNA / UPnP</span>
             <span id="sh-dlna-st"></span>
             <div class="shr-spacer"></div>
-            <button class="fm-toolbar-btn" id="sh-dlna-rescan" title="${t('Reskan')}"><i class="fas fa-sync-alt"></i> ${t('Reskan')}</button>
-            <button class="fm-toolbar-btn" id="sh-dlna-ref"><i class="fas fa-sync-alt"></i></button>
+            <span id="sh-dlna-actions"></span>
+            <button class="fm-toolbar-btn" id="sh-dlna-ref" title="${t('Odśwież')}"><i class="fas fa-sync-alt"></i></button>
+        </div>
+        <div id="sh-dlna-stats" class="shr-dlna-stats" style="display:none">
+            <span class="shr-dlna-stat"><i class="fas fa-film"></i> <span id="sh-dlna-fcount">0</span> ${t('plików')}</span>
+            <span class="shr-dlna-stat"><i class="fas fa-network-wired"></i> Port: <span id="sh-dlna-port">8200</span></span>
+            <span class="shr-dlna-stat"><i class="fas fa-signature"></i> <span id="sh-dlna-fname">—</span></span>
         </div>
         <p class="shr-desc">${t('DLNA streamuje media (filmy, muzykę, zdjęcia) do Smart TV, konsol i innych urządzeń w sieci.')}</p>
-        <div id="sh-dlna-cfg"></div>`;
+        <div id="sh-dlna-install" style="display:none">
+            <div class="shr-empty-msg">
+                <p>MiniDLNA ${t('nie jest zainstalowany')}.</p>
+                <button class="fm-toolbar-btn btn-green" id="sh-dlna-install-btn"><i class="fas fa-download"></i> ${t('Zainstaluj MiniDLNA')}</button>
+            </div>
+        </div>
+        <div id="sh-dlna-cfg" style="display:none"></div>`;
 
-        async function load() {
+        let availableDrives = [];
+
+        async function loadStatus() {
             try {
-                const [status, config] = await Promise.all([api('/storage/dlna/status'), api('/storage/dlna/config').catch(() => ({ dirs: [], friendly_name: 'EthOS' }))]);
-                panel.querySelector('#sh-dlna-st').innerHTML = _shBadge(status.running);
-                renderCfg(config);
-            } catch (e) { panel.querySelector('#sh-dlna-cfg').innerHTML = `<div class="shr-error">${e.message}</div>`; }
+                const data = await api('/dlna/status');
+                if (!data.installed) {
+                    panel.querySelector('#sh-dlna-st').innerHTML = _shBadge(false, t('Nie zainstalowano'));
+                    panel.querySelector('#sh-dlna-install').style.display = '';
+                    panel.querySelector('#sh-dlna-cfg').style.display = 'none';
+                    panel.querySelector('#sh-dlna-stats').style.display = 'none';
+                    panel.querySelector('#sh-dlna-actions').innerHTML = '';
+                    return;
+                }
+                panel.querySelector('#sh-dlna-install').style.display = 'none';
+                panel.querySelector('#sh-dlna-cfg').style.display = '';
+                if (data.running) {
+                    panel.querySelector('#sh-dlna-st').innerHTML = _shBadge(true);
+                    panel.querySelector('#sh-dlna-stats').style.display = '';
+                    panel.querySelector('#sh-dlna-fcount').textContent = data.file_count || 0;
+                    panel.querySelector('#sh-dlna-port').textContent = data.port || 8200;
+                    panel.querySelector('#sh-dlna-fname').textContent = data.friendly_name || '—';
+                    panel.querySelector('#sh-dlna-actions').innerHTML =
+                        `<button class="fm-toolbar-btn btn-sm btn-red" id="sh-dlna-stop"><i class="fas fa-stop"></i> ${t('Zatrzymaj')}</button>`;
+                    panel.querySelector('#sh-dlna-stop').onclick = async () => {
+                        await api('/dlna/stop', { method: 'POST' });
+                        toast(t('DLNA zatrzymany'), 'success'); loadStatus();
+                    };
+                } else {
+                    panel.querySelector('#sh-dlna-st').innerHTML = _shBadge(false);
+                    panel.querySelector('#sh-dlna-stats').style.display = 'none';
+                    panel.querySelector('#sh-dlna-actions').innerHTML =
+                        `<button class="fm-toolbar-btn btn-sm btn-green" id="sh-dlna-start"><i class="fas fa-play"></i> ${t('Uruchom')}</button>`;
+                    panel.querySelector('#sh-dlna-start').onclick = async () => {
+                        await api('/dlna/start', { method: 'POST' });
+                        toast(t('DLNA uruchomiony'), 'success'); loadStatus();
+                    };
+                }
+            } catch (e) {
+                panel.querySelector('#sh-dlna-st').innerHTML = _shBadge(false, t('Błąd'));
+            }
+        }
+
+        async function loadConfig() {
+            try {
+                const data = await api('/dlna/config');
+                availableDrives = data.available_drives || [];
+                renderCfg(data);
+            } catch { /* handled by loadStatus */ }
+        }
+
+        function _dlnaEsc(s) {
+            const d = document.createElement('div');
+            d.textContent = s;
+            return d.innerHTML;
         }
 
         function renderCfg(config) {
             const w = panel.querySelector('#sh-dlna-cfg');
-            const dirs = config.dirs || [];
+            const mediaDirs = config.media_dirs || [];
+
+            // Parse selected dirs into a map: path → type prefix string
+            const selectedMap = {};
+            mediaDirs.forEach(d => {
+                const m = d.match(/^([AVP]+),(.+)$/);
+                if (m) selectedMap[m[2]] = m[1];
+                else selectedMap[d] = '';
+            });
+
+            let drivesHtml = '';
+            if (availableDrives.length) {
+                drivesHtml = availableDrives.map(drive => {
+                    const isSel = drive in selectedMap;
+                    const types = selectedMap[drive] || 'AVP';
+                    return `<div class="shr-dir-row shr-dlna-drive">
+                        <label class="shr-dlna-drv-check">
+                            <input type="checkbox" class="sh-dlna-drv-cb" data-drive="${_dlnaEsc(drive)}" ${isSel ? 'checked' : ''}>
+                            <span>${_dlnaEsc(drive)}</span>
+                        </label>
+                        <span class="shr-dlna-types" data-drive-types="${_dlnaEsc(drive)}">
+                            <button class="shr-dlna-type-tag ${types.includes('V') ? 'active' : ''}" data-type="V" title="Video">V</button>
+                            <button class="shr-dlna-type-tag ${types.includes('A') ? 'active' : ''}" data-type="A" title="Audio">A</button>
+                            <button class="shr-dlna-type-tag ${types.includes('P') ? 'active' : ''}" data-type="P" title="${t('Zdjęcia')}">P</button>
+                        </span>
+                    </div>`;
+                }).join('');
+            }
+
+            // Custom dirs (those not in availableDrives)
+            const customDirs = Object.keys(selectedMap).filter(p => !availableDrives.includes(p));
+
             w.innerHTML = `
-            <div style="margin-bottom:10px">
-                <label class="shr-label">${t('Nazwa urządzenia')}:</label>
-                <input type="text" id="sh-dlna-name" class="fm-input" value="${config.friendly_name || 'EthOS'}" style="width:200px;margin-left:8px">
-            </div>
-            <label class="shr-label">${t('Katalogi z mediami')}:</label>
-            <div id="sh-dlna-dirs" class="shr-dirs">${dirs.map((d, i) => `<div class="shr-dir-row">
-                <div class="shr-input-group" style="flex:1"><input type="text" class="fm-input sh-dlna-dir" value="${d}" style="flex:1;border-radius:6px 0 0 6px" readonly><button class="fm-toolbar-btn sh-dlna-br shr-input-group-btn" title="Przeglądaj"><i class="fas fa-folder-open"></i></button></div>
-                <button class="fm-toolbar-btn btn-sm btn-red sh-dlna-rm" data-i="${i}"><i class="fas fa-minus"></i></button>
-            </div>`).join('')}</div>
-            <div class="shr-btn-row">
-                <button class="fm-toolbar-btn" id="sh-dlna-adddir"><i class="fas fa-plus"></i> ${t('Dodaj katalog')}</button>
-                <button class="fm-toolbar-btn btn-green" id="sh-dlna-save"><i class="fas fa-save"></i> ${t('Zapisz')}</button>
+            <div class="shr-dlna-form">
+                <div class="shr-form-row-inline">
+                    <label class="shr-label">${t('Nazwa serwera')}:</label>
+                    <input type="text" id="sh-dlna-name" class="fm-input" value="${_dlnaEsc(config.friendly_name || 'EthOS Media Server')}" style="width:200px;margin-left:8px" maxlength="64">
+                </div>
+                <div class="shr-form-row-inline">
+                    <label class="shr-label">Port:</label>
+                    <input type="number" id="sh-dlna-port-in" class="fm-input" value="${config.port || 8200}" min="1024" max="65535" style="width:100px;margin-left:8px">
+                </div>
+                <label class="shr-label">${t('Katalogi z mediami')}:</label>
+                ${drivesHtml ? `<div class="shr-dlna-drives">${drivesHtml}</div>` : `<div class="shr-empty-msg" style="padding:6px 0">${t('Brak wykrytych dysków')}</div>`}
+                <div id="sh-dlna-custom" class="shr-dirs">${customDirs.map(d => {
+                    const types = selectedMap[d] || 'AVP';
+                    return `<div class="shr-dir-row">
+                        <div class="shr-input-group" style="flex:1"><input type="text" class="fm-input sh-dlna-cdir" value="${_dlnaEsc(d)}" style="flex:1;border-radius:6px 0 0 6px" readonly><button class="fm-toolbar-btn sh-dlna-br shr-input-group-btn" title="${t('Przeglądaj')}"><i class="fas fa-folder-open"></i></button></div>
+                        <span class="shr-dlna-types shr-dlna-ctypes">
+                            <button class="shr-dlna-type-tag ${types.includes('V') ? 'active' : ''}" data-type="V" title="Video">V</button>
+                            <button class="shr-dlna-type-tag ${types.includes('A') ? 'active' : ''}" data-type="A" title="Audio">A</button>
+                            <button class="shr-dlna-type-tag ${types.includes('P') ? 'active' : ''}" data-type="P" title="${t('Zdjęcia')}">P</button>
+                        </span>
+                        <button class="fm-toolbar-btn btn-sm btn-red sh-dlna-rmcdir"><i class="fas fa-minus"></i></button>
+                    </div>`;
+                }).join('')}</div>
+                <div class="shr-btn-row" style="margin-top:4px">
+                    <button class="fm-toolbar-btn" id="sh-dlna-adddir"><i class="fas fa-plus"></i> ${t('Dodaj katalog')}</button>
+                </div>
+                <div class="shr-form-row-inline">
+                    <label class="shr-dlna-toggle-label">
+                        <input type="checkbox" id="sh-dlna-inotify" ${config.inotify !== false ? 'checked' : ''}>
+                        inotify — ${t('wykrywaj nowe pliki automatycznie')}
+                    </label>
+                </div>
+                <div class="shr-btn-row">
+                    <button class="fm-toolbar-btn btn-green" id="sh-dlna-save"><i class="fas fa-save"></i> ${t('Zapisz')}</button>
+                    <button class="fm-toolbar-btn" id="sh-dlna-rescan"><i class="fas fa-sync-alt"></i> ${t('Pełne skanowanie')}</button>
+                </div>
             </div>`;
 
-            function _dlnaBrowseBind(btn) {
+            // Type tag toggles
+            w.querySelectorAll('.shr-dlna-type-tag').forEach(btn => {
+                btn.onclick = () => btn.classList.toggle('active');
+            });
+
+            // Browse buttons for custom dirs
+            function _bindBrowse(btn) {
                 btn.onclick = () => {
-                    const inp = btn.parentElement.querySelector('.sh-dlna-dir');
+                    const inp = btn.parentElement.querySelector('.sh-dlna-cdir');
                     openDirPicker(inp.value || '/home', t('Wybierz katalog mediów'), p => { inp.value = p; });
                 };
             }
-            w.querySelectorAll('.sh-dlna-br').forEach(_dlnaBrowseBind);
+            w.querySelectorAll('.sh-dlna-br').forEach(_bindBrowse);
 
+            // Remove custom dir
+            w.querySelectorAll('.sh-dlna-rmcdir').forEach(b => b.onclick = () => b.closest('.shr-dir-row').remove());
+
+            // Add custom dir
             panel.querySelector('#sh-dlna-adddir').onclick = () => {
-                const d = document.createElement('div');
-                d.className = 'shr-dir-row';
-                d.innerHTML = `<div class="shr-input-group" style="flex:1"><input type="text" class="fm-input sh-dlna-dir" placeholder="/home/media" style="flex:1;border-radius:6px 0 0 6px" readonly><button class="fm-toolbar-btn sh-dlna-br shr-input-group-btn" title="Przeglądaj"><i class="fas fa-folder-open"></i></button></div><button class="fm-toolbar-btn btn-sm btn-red sh-dlna-rmx"><i class="fas fa-minus"></i></button>`;
-                _dlnaBrowseBind(d.querySelector('.sh-dlna-br'));
-                d.querySelector('.sh-dlna-rmx').onclick = () => d.remove();
-                panel.querySelector('#sh-dlna-dirs').appendChild(d);
+                const row = document.createElement('div');
+                row.className = 'shr-dir-row';
+                row.innerHTML = `<div class="shr-input-group" style="flex:1"><input type="text" class="fm-input sh-dlna-cdir" placeholder="/home/media" style="flex:1;border-radius:6px 0 0 6px" readonly><button class="fm-toolbar-btn sh-dlna-br shr-input-group-btn" title="${t('Przeglądaj')}"><i class="fas fa-folder-open"></i></button></div>
+                    <span class="shr-dlna-types shr-dlna-ctypes">
+                        <button class="shr-dlna-type-tag active" data-type="V" title="Video">V</button>
+                        <button class="shr-dlna-type-tag active" data-type="A" title="Audio">A</button>
+                        <button class="shr-dlna-type-tag active" data-type="P" title="${t('Zdjęcia')}">P</button>
+                    </span>
+                    <button class="fm-toolbar-btn btn-sm btn-red sh-dlna-rmcdir"><i class="fas fa-minus"></i></button>`;
+                _bindBrowse(row.querySelector('.sh-dlna-br'));
+                row.querySelector('.sh-dlna-rmcdir').onclick = () => row.remove();
+                row.querySelectorAll('.shr-dlna-type-tag').forEach(btn => { btn.onclick = () => btn.classList.toggle('active'); });
+                panel.querySelector('#sh-dlna-custom').appendChild(row);
             };
-            w.querySelectorAll('.sh-dlna-rm').forEach(b => b.onclick = () => b.parentElement.remove());
+
+            // Collect all media dirs (drives + custom) with type prefixes
+            function collectMediaDirs() {
+                const dirs = [];
+                // Checked auto-detected drives
+                w.querySelectorAll('.sh-dlna-drv-cb').forEach(cb => {
+                    if (!cb.checked) return;
+                    const drive = cb.dataset.drive;
+                    const tc = w.querySelector(`[data-drive-types="${CSS.escape(drive)}"]`);
+                    let types = '';
+                    if (tc) tc.querySelectorAll('.shr-dlna-type-tag.active').forEach(t => { types += t.dataset.type; });
+                    dirs.push(types && types !== 'AVP' ? `${types},${drive}` : drive);
+                });
+                // Custom directory entries
+                panel.querySelectorAll('#sh-dlna-custom .shr-dir-row').forEach(row => {
+                    const p = row.querySelector('.sh-dlna-cdir')?.value?.trim();
+                    if (!p) return;
+                    const tc = row.querySelector('.shr-dlna-ctypes');
+                    let types = '';
+                    if (tc) tc.querySelectorAll('.shr-dlna-type-tag.active').forEach(t => { types += t.dataset.type; });
+                    dirs.push(types && types !== 'AVP' ? `${types},${p}` : p);
+                });
+                return dirs;
+            }
+
+            // Save
             panel.querySelector('#sh-dlna-save').onclick = async () => {
-                const ds = [...panel.querySelectorAll('.sh-dlna-dir')].map(i => i.value.trim()).filter(Boolean);
-                const name = panel.querySelector('#sh-dlna-name').value.trim() || 'EthOS';
-                await api('/storage/dlna/config', { method: 'POST', body: { dirs: ds, friendly_name: name } });
-                toast(t('Zapisano i zrestartowano DLNA'), 'success'); load();
+                const btn = panel.querySelector('#sh-dlna-save');
+                btn.disabled = true;
+                try {
+                    const payload = {
+                        friendly_name: panel.querySelector('#sh-dlna-name').value.trim() || 'EthOS Media Server',
+                        port: parseInt(panel.querySelector('#sh-dlna-port-in').value, 10) || 8200,
+                        media_dirs: collectMediaDirs(),
+                        inotify: panel.querySelector('#sh-dlna-inotify').checked,
+                    };
+                    const data = await api('/dlna/config', { method: 'PUT', body: payload });
+                    if (data.success) {
+                        toast(t('Konfiguracja DLNA zapisana'), 'success');
+                        loadStatus(); loadConfig();
+                    } else {
+                        toast(data.error || t('Nie udało się zapisać'), 'error');
+                    }
+                } catch (e) { toast(`${t('Błąd')}: ${e.message}`, 'error'); }
+                finally { btn.disabled = false; }
+            };
+
+            // Rescan
+            panel.querySelector('#sh-dlna-rescan').onclick = async () => {
+                const btn = panel.querySelector('#sh-dlna-rescan');
+                btn.disabled = true;
+                btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${t('Skanowanie…')}`;
+                try {
+                    const data = await api('/dlna/rescan', { method: 'POST' });
+                    if (data.success) {
+                        toast(t('Skanowanie rozpoczęte'), 'success');
+                        setTimeout(loadStatus, 3000);
+                    } else {
+                        toast(data.error || t('Skanowanie nie powiodło się'), 'error');
+                    }
+                } catch (e) { toast(`${t('Błąd')}: ${e.message}`, 'error'); }
+                finally { btn.disabled = false; btn.innerHTML = `<i class="fas fa-sync-alt"></i> ${t('Pełne skanowanie')}`; }
             };
         }
 
-        panel.querySelector('#sh-dlna-rescan').onclick = async () => { await api('/storage/dlna/rescan', { method: 'POST' }); toast(t('Reskan rozpoczęty'), 'success'); };
-        panel.querySelector('#sh-dlna-ref').onclick = () => load();
-        load();
+        // Install button
+        panel.querySelector('#sh-dlna-install-btn').onclick = async () => {
+            const btn = panel.querySelector('#sh-dlna-install-btn');
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${t('Instalowanie…')}`;
+            try {
+                const data = await api('/dlna/install', { method: 'POST' });
+                if (data.success) {
+                    toast(t('MiniDLNA zainstalowano pomyślnie'), 'success');
+                    loadStatus(); loadConfig();
+                } else {
+                    toast(data.error || t('Instalacja nie powiodła się'), 'error');
+                }
+            } catch (e) { toast(`${t('Błąd')}: ${e.message}`, 'error'); }
+            finally { btn.disabled = false; btn.innerHTML = `<i class="fas fa-download"></i> ${t('Zainstaluj MiniDLNA')}`; }
+        };
+
+        panel.querySelector('#sh-dlna-ref').onclick = () => { loadStatus(); loadConfig(); };
+        loadStatus();
+        loadConfig();
     }
 
     /* ══════════════════════════════════════════
