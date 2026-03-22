@@ -277,7 +277,7 @@ AppRegistry['packages'] = function (appDef) {
                     badge.style.display = 'none';
                 }
             } catch (e) {
-                /* silenced */
+                console.error('Stats error:', e);
             }
         }
 

@@ -136,7 +136,7 @@ function renderUPSApp(body) {
             status = stat;
             updateUI();
         } catch (e) {
-            /* silenced */
+            console.error(e);
         }
     }
 

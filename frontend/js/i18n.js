@@ -70,7 +70,7 @@ async function setLanguage(lang, save = true) {
                 I18n.lang = lang;
             }
         } catch (e) {
-            /* silenced */
+            console.warn(`[i18n] Failed to load locale "${lang}":`, e);
         }
     }
 

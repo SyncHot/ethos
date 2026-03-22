@@ -327,18 +327,18 @@ function renderRaidApp(body) {
     }
 
     async function deleteArray(name) {
-        if (!confirm(t('Delete array /dev/') + name + '? ' + t('This will destroy the array. Data may be lost!'))) return;
+        if (!await confirmDialog(t('Potwierdzenie'), t('Delete array /dev/') + name + '? ' + t('This will destroy the array. Data may be lost!'))) return;
         try {
             await api(`/raid/arrays/${encodeURIComponent(name)}`, { method: 'DELETE' });
             state.selectedArray = null;
             loadArrays();
         } catch (e) {
-            alert(t('Failed to delete array'));
+            toast(t('Failed to delete array'), 'error');
         }
     }
 
     async function removeDiskFromArray(arrName, device) {
-        if (!confirm(t('Remove ') + device + t(' from /dev/') + arrName + '?')) return;
+        if (!await confirmDialog(t('Potwierdzenie'), t('Remove ') + device + t(' from /dev/') + arrName + '?')) return;
         try {
             await api(`/raid/arrays/${encodeURIComponent(arrName)}/remove`, {
                 method: 'POST', body: { device }
@@ -346,7 +346,7 @@ function renderRaidApp(body) {
             renderArrayDetail();
             loadArrays();
         } catch (e) {
-            alert(t('Failed to remove disk'));
+            toast(t('Failed to remove disk'), 'error');
         }
     }
 
@@ -384,7 +384,7 @@ function renderRaidApp(body) {
                 loadArrays();
                 renderArrayDetail();
             } catch (e) {
-                alert(t('Failed to add disk'));
+                toast(t('Failed to add disk'), 'error');
             }
         };
     }
@@ -457,11 +457,11 @@ function renderRaidApp(body) {
             const activeCount = devices.length - spares;
             const needed = minDisks[level] || 2;
             if (activeCount < needed) {
-                alert(t('RAID ') + level + t(' requires at least ') + needed + t(' active disks. Selected: ') + activeCount);
+                toast(t('RAID ') + level + t(' requires at least ') + needed + t(' active disks. Selected: ') + activeCount, 'warning');
                 return;
             }
 
-            if (!confirm(t('Create RAID ') + level + t(' with ') + devices.length + t(' disks?') +
+            if (!await confirmDialog(t('Potwierdzenie'), t('Create RAID ') + level + t(' with ') + devices.length + t(' disks?') +
                 (level === '0' ? '\n⚠️ ' + t('RAID 0 has NO redundancy!') : ''))) return;
 
             const btn = wizard.querySelector('#raid-wiz-create');
@@ -475,7 +475,7 @@ function renderRaidApp(body) {
                 wizard.innerHTML = '';
                 loadArrays();
             } catch (e) {
-                alert(t('Failed to create array: ') + (e.message || e));
+                toast(t('Failed to create array: ') + (e.message || e), 'error');
                 btn.disabled = false;
                 btn.innerHTML = `<i class="fas fa-check"></i> ${t('Create')}`;
             }
@@ -554,13 +554,13 @@ function renderRaidApp(body) {
             btn.onclick = async (e) => {
                 e.stopPropagation();
                 const vgName = btn.dataset.vg;
-                if (!confirm(t('Delete volume group ') + vgName + '?')) return;
+                if (!await confirmDialog(t('Potwierdzenie'), t('Delete volume group ') + vgName + '?')) return;
                 try {
                     const res = await api(`/raid/lvm/vg/${encodeURIComponent(vgName)}`, { method: 'DELETE' });
                     if (res.error) throw new Error(res.error);
                     loadLVM();
                 } catch (e) {
-                    alert(t('Failed to delete VG: ') + (e.message || e));
+                    toast(t('Failed to delete VG: ') + (e.message || e), 'error');
                 }
             };
         });
@@ -600,8 +600,8 @@ function renderRaidApp(body) {
         wizard.querySelector('#lvm-vg-confirm').onclick = async () => {
             const name = wizard.querySelector('#lvm-vg-name').value.trim();
             const devices = [...wizard.querySelectorAll('#lvm-vg-disks input:checked')].map(cb => cb.value);
-            if (!name) { alert(t('VG name is required')); return; }
-            if (!devices.length) { alert(t('Select at least one device')); return; }
+            if (!name) { toast(t('VG name is required'), 'warning'); return; }
+            if (!devices.length) { toast(t('Select at least one device'), 'warning'); return; }
             const btn = wizard.querySelector('#lvm-vg-confirm');
             btn.disabled = true;
             try {
@@ -610,7 +610,7 @@ function renderRaidApp(body) {
                 wizard.innerHTML = '';
                 loadLVM();
             } catch (e) {
-                alert(t('Failed: ') + (e.message || e));
+                toast(t('Failed: ') + (e.message || e), 'error');
                 btn.disabled = false;
             }
         };
@@ -641,13 +641,13 @@ function renderRaidApp(body) {
         area.querySelectorAll('.lvm-del-lv').forEach(btn => {
             btn.onclick = async () => {
                 const vg = btn.dataset.vg, lv = btn.dataset.lv;
-                if (!confirm(t('Delete logical volume ') + vg + '/' + lv + '?')) return;
+                if (!await confirmDialog(t('Potwierdzenie'), t('Delete logical volume ') + vg + '/' + lv + '?')) return;
                 try {
                     const res = await api(`/raid/lvm/lv/${encodeURIComponent(vg)}/${encodeURIComponent(lv)}`, { method: 'DELETE' });
                     if (res.error) throw new Error(res.error);
                     loadLVM();
                 } catch (e) {
-                    alert(t('Failed: ') + (e.message || e));
+                    toast(t('Failed: ') + (e.message || e), 'error');
                 }
             };
         });
@@ -692,8 +692,8 @@ function renderRaidApp(body) {
             const name = wizard.querySelector('#lvm-lv-name').value.trim();
             const size = sizeInput.value.trim();
             const use_all = useAllCb.checked;
-            if (!name) { alert(t('LV name is required')); return; }
-            if (!use_all && !size) { alert(t('Specify size or use all free space')); return; }
+            if (!name) { toast(t('LV name is required'), 'warning'); return; }
+            if (!use_all && !size) { toast(t('Specify size or use all free space'), 'warning'); return; }
             const btn = wizard.querySelector('#lvm-lv-confirm');
             btn.disabled = true;
             try {
@@ -702,7 +702,7 @@ function renderRaidApp(body) {
                 wizard.innerHTML = '';
                 loadLVM();
             } catch (e) {
-                alert(t('Failed: ') + (e.message || e));
+                toast(t('Failed: ') + (e.message || e), 'error');
                 btn.disabled = false;
             }
         };

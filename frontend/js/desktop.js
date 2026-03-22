@@ -3,11 +3,6 @@
    Window Manager, Taskbar, Main Menu, Auth, Core
    ═══════════════════════════════════════════════════════════ */
 
-// Global handler for unhandled promise rejections
-window.addEventListener('unhandledrejection', function(event) {
-    event.preventDefault(); // suppress browser default logging
-});
-
 const NAS = {
     token: null,
     nasName: 'EthOS',
@@ -16,6 +11,7 @@ const NAS = {
     apps: [],
     socket: null,
     stats: { cpu: 0, memory_percent: 0, net_up: 0, net_down: 0 },
+    toast: null,  // set after toast() is defined
 };
 
 // ─────────────────────────── API Helper ───────────────────────────
@@ -30,29 +26,7 @@ async function api(path, options = {}) {
         headers['Content-Type'] = 'application/json';
         options.body = JSON.stringify(options.body);
     }
-
-    // Timeout support via AbortController
-    const timeoutMs = options.timeout || 0;
-    let controller;
-    let timeoutId;
-    if (timeoutMs > 0) {
-        controller = new AbortController();
-        timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-        options.signal = controller.signal;
-    }
-
-    let resp;
-    try {
-        resp = await fetch(`/api${path}`, { ...options, headers });
-    } catch (err) {
-        if (timeoutId) clearTimeout(timeoutId);
-        if (err.name === 'AbortError') {
-            throw new Error('Przekroczono limit czasu żądania');
-        }
-        throw err;
-    }
-    if (timeoutId) clearTimeout(timeoutId);
-
+    const resp = await fetch(`/api${path}`, { ...options, headers });
     if (resp.status === 401) {
         showLogin();
         throw new Error('Unauthorized');
@@ -63,17 +37,10 @@ async function api(path, options = {}) {
             showPasswordChangeModal();
             throw new Error('Password change required');
         }
+        // For other 403s, we might want to throw or return data.
+        // Assuming other 403s are handled by caller or just return error json.
+        // But if we consume json here, we need to return it.
         return data;
-    }
-    if (resp.status >= 500) {
-        let msg = `Błąd serwera (${resp.status})`;
-        try { const errData = await resp.json(); msg = errData.error || msg; } catch { /* non-JSON error response */ }
-        throw new Error(msg);
-    }
-    if (resp.status === 404) {
-        let msg = 'Nie znaleziono zasobu';
-        try { const errData = await resp.json(); msg = errData.error || msg; } catch { /* non-JSON 404 response */ }
-        throw new Error(msg);
     }
     return resp.json();
 }
@@ -115,7 +82,7 @@ function toastWithAction(message, type = 'info', actionLabel, actionFn) {
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
             if (typeof actionFn === 'function') {
-                try { actionFn(); } catch (err) { /* silenced */ }
+                try { actionFn(); } catch (err) { console.error(err); }
             }
             _dismissToastElement(el);
         });
@@ -124,6 +91,11 @@ function toastWithAction(message, type = 'info', actionLabel, actionFn) {
     document.getElementById('toast-container').appendChild(el);
     setTimeout(() => _dismissToastElement(el), 3500);
 }
+
+// Expose toast under all aliases used across apps
+NAS.toast = toast;
+window.showToast = toast;
+window.showNotification = toast;
 
 // ───────────────────── Global Task Progress Stack ─────────────────────
 
@@ -381,6 +353,7 @@ function showLogin() {
     NAS.token = null;
     NAS.user = null;
     NAS.sudoMode = false;
+    desktopInitialized = false;
     localStorage.removeItem('nas_token');
     document.getElementById('login-screen').classList.remove('hidden', 'fade-out');
     document.getElementById('desktop').classList.add('hidden');
@@ -1208,7 +1181,7 @@ document.getElementById('notifications-btn').addEventListener('click', (e) => {
 document.getElementById('notif-clear').addEventListener('click', async () => {
     try {
         await api('/notifications/clear', { method: 'POST' });
-    } catch { /* non-critical — UI already cleared below */ }
+    } catch {}
     document.getElementById('notif-list').innerHTML = `<p class="notif-empty">${t('Brak powiadomień')}</p>`;
     document.getElementById('notif-badge').classList.add('hidden');
 });
@@ -1301,7 +1274,10 @@ async function loadPowerUptime() {
         if (el && data.uptime) {
             el.innerHTML = `<i class="fas fa-clock"></i> Uptime: ${formatUptime(data.uptime)} &nbsp;|&nbsp; Load: ${data.load.join(', ')}`;
         }
-    } catch { /* non-critical — uptime display is informational */ }
+    } catch {}
+}
+
+document.getElementById('power-btn').addEventListener('click', (e) => {
     e.stopPropagation();
     powerMenuOpen = !powerMenuOpen;
     document.getElementById('power-menu').classList.toggle('hidden', !powerMenuOpen);
@@ -1449,7 +1425,8 @@ function showRestartOverlay(msg, isShutdown = false) {
                     }, 400);
                     return;
                 }
-            } catch { /* expected during restart — retry loop continues */ }
+            } catch {}
+            if (attempts >= maxAttempts) {
                 clearInterval(interval);
                 statusEl.textContent = t('Nie udało się połączyć. Odśwież stronę ręcznie.');
             } else {
@@ -1482,7 +1459,7 @@ document.getElementById('user-btn').addEventListener('click', (e) => {
 });
 
 document.getElementById('btn-logout').addEventListener('click', async () => {
-    try { await api('/auth/logout', { method: 'POST' }); } catch { /* non-critical — proceeding to login screen */ }
+    try { await api('/auth/logout', { method: 'POST' }); } catch {}
     showLogin();
     closeUserMenu();
 });
