@@ -260,6 +260,16 @@ case "$COMMAND" in
         blockdev --rereadpt "$DEV"
         ;;
 
+    sysctl)
+        ARG="$1"
+        if [[ "$ARG" == "--system" ]]; then
+            exec /sbin/sysctl --system
+        else
+            echo "Error: Only sysctl --system allowed" >&2
+            exit 1
+        fi
+        ;;
+
     *)
         echo "Error: Unknown command '$COMMAND'" >&2
         exit 1

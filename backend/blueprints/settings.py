@@ -1498,7 +1498,7 @@ def restart_sysctl():
 
     try:
         # Reload sysctl settings from all system files
-        r = _host_run('sysctl --system', timeout=30)
+        r = _host_run('sudo /opt/ethos/tools/ethos-system-helper.sh sysctl --system', timeout=30)
         if r.returncode == 0:
             return jsonify({'ok': True, 'message': 'Ustawienia kernela (sysctl) przeładowane pomyślnie.'})
         else:
