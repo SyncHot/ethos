@@ -9,6 +9,13 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="manifest" href="/manifest.json">
+
+    <!-- iOS support -->
+    <link rel="apple-touch-icon" href="/img/icon-192.png">
+    <meta name="apple-mobile-web-app-status-bar" content="#1e293b">
+    <meta name="theme-color" content="#1e293b">
+
     <script src="js/i18n.js?v=2"></script>
 </head>
 <body>
@@ -140,6 +147,9 @@
             </div>
             <div class="pm-uptime" id="pm-uptime" data-i18n="Ładowanie...">Ładowanie...</div>
             <div class="um-divider"></div>
+            <button class="um-item pm-action hidden" id="pwa-install-btn" style="color:#38bdf8">
+                <i class="fas fa-download"></i> <span data-i18n="Zainstaluj EthOS">Zainstaluj EthOS</span>
+            </button>
             <button class="um-item pm-action" data-action="restart-app">
                 <i class="fas fa-sync-alt" style="color:#22c55e"></i> <span data-i18n="Restart aplikacji">Restart aplikacji</span>
             </button>
@@ -212,5 +222,92 @@
     <script src="js/apps/wireguard.js?v=2"></script>
     <script src="js/apps/ups.js?v=1"></script>
     <script src="js/apps/power.js?v=1"></script>
+    <script>
+        let deferredPrompt;
+        const VAPID_PUBLIC_KEY = 'BEF7XjErpRw0e6NDpheHYFuCYVWsqb6bDJ3WKM62w-JiVNfPejVq6l-aAJCa7Ew9dGdDD_zFrvr-i9o7cvHxehY';
+
+        window.addEventListener('beforeinstallprompt', (e) => {
+            // Prevent Chrome 67 and earlier from automatically showing the prompt
+            e.preventDefault();
+            // Stash the event so it can be triggered later.
+            deferredPrompt = e;
+            // Update UI to notify the user they can add to home screen
+            const installBtn = document.getElementById('pwa-install-btn');
+            if (installBtn) {
+                installBtn.classList.remove('hidden');
+
+                installBtn.onclick = (e) => {
+                    // hide our user interface that shows our A2HS button
+                    installBtn.classList.add('hidden');
+                    // Show the prompt
+                    deferredPrompt.prompt();
+                    // Wait for the user to respond to the prompt
+                    deferredPrompt.userChoice.then((choiceResult) => {
+                        if (choiceResult.outcome === 'accepted') {
+                            console.log('User accepted the A2HS prompt');
+                        } else {
+                            console.log('User dismissed the A2HS prompt');
+                            installBtn.classList.remove('hidden');
+                        }
+                        deferredPrompt = null;
+                    });
+                };
+            }
+        });
+
+        function urlBase64ToUint8Array(base64String) {
+            const padding = '='.repeat((4 - base64String.length % 4) % 4);
+            const base64 = (base64String + padding)
+                .replace(/-/g, '+')
+                .replace(/_/g, '/');
+
+            const rawData = window.atob(base64);
+            const outputArray = new Uint8Array(rawData.length);
+
+            for (let i = 0; i < rawData.length; ++i) {
+                outputArray[i] = rawData.charCodeAt(i);
+            }
+            return outputArray;
+        }
+
+        async function subscribeUserToPush() {
+            if (!('serviceWorker' in navigator)) return;
+
+            const registration = await navigator.serviceWorker.ready;
+            const subscription = await registration.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+            });
+
+            await fetch('/api/notifications/subscribe', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(subscription)
+            });
+            console.log('User subscribed to push notifications');
+        }
+
+    if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js').then(reg => {
+                    console.log('SW registered!', reg);
+                    // Ask for permission if not granted
+                    if (Notification.permission === 'default') {
+                        Notification.requestPermission().then(permission => {
+                            if (permission === 'granted') {
+                                subscribeUserToPush();
+                            }
+                        });
+                    } else if (Notification.permission === 'granted') {
+                        subscribeUserToPush();
+                    }
+                }).catch(err => {
+                    console.log('SW registration failed: ', err);
+                });
+            });
+        }
+    </script>
 </body>
 </html>

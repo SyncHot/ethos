@@ -22,3 +22,4 @@ gunicorn>=20.1.0
 Flask-Compress
 Flask-Caching
 Brotli
+pywebpush
