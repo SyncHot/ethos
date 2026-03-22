@@ -38,6 +38,7 @@ from PIL import Image
 import io
 import logging
 from logging.handlers import RotatingFileHandler
+from i18n import t
 
 # Setup Auth Logger for Fail2Ban
 AUTH_LOG_FILE = '/opt/ethos/logs/auth.log'
@@ -130,12 +131,15 @@ from blueprints.stickynotes import notes_bp
 from blueprints.tickets import tickets_bp, init_tickets
 from blueprints.familyhub import familyhub_bp
 from blueprints.sharing import sharing_bp
+from blueprints.cloud_backup import cloud_backup_bp
 from blueprints.installer import installer_bp
 from blueprints.ups import _ups_status
 from blueprints.power import power_bp
 from blueprints.notifications import notifications_bp
+from blueprints.dashboard import dashboard_bp
 from blueprints.admin_required import admin_required
 from blueprints.totp import totp_bp, is_totp_enabled, verify_totp_code, verify_backup_code
+from blueprints.cron_manager import cron_bp
 
 # ── Shadow password verification (avoids crypt DeprecationWarning) ──
 import warnings as _warnings
@@ -201,6 +205,8 @@ def check_password_change():
         '/api/setup/status',    # Needed for frontend logic
         '/api/setup/timezones', # Setup wizard data
         '/api/setup/locales',   # Setup wizard data
+        '/api/setup/languages', # Firstboot i18n
+        '/api/setup/translations/', # Firstboot i18n
         '/api/system/info',     # Often used by UI on load
         '/api/language',        # Needed for UI
     ]
@@ -210,7 +216,7 @@ def check_password_change():
         return
 
     # Block everything else with specific code for frontend to catch
-    return jsonify({'error': 'Wymagana zmiana hasła', 'code': 'PASSWORD_CHANGE_REQUIRED'}), 403
+    return jsonify({'error': t('auth.password_change_required'), 'code': 'PASSWORD_CHANGE_REQUIRED'}), 403
 
 @app.after_request
 def add_header(response):
@@ -278,13 +284,13 @@ def csrf_check():
         # If authenticated via cookie (nas_token), this is a CSRF attempt
         if request.cookies.get('nas_token'):
             auth_logger.warning(f'CSRF mismatch from {request.remote_addr}: cookie={cookie_token}, header={header_token}')
-            return jsonify({'error': 'CSRF validation failed'}), 403
+            return jsonify({'error': t('auth.csrf_failed')}), 403
 
         # If not authenticated, we still enforce CSRF for consistency, unless it's a public endpoint.
         # But most endpoints are protected. If we block here, we return 403.
         # If we let it pass, the auth check will fail (401).
         # Better to fail with CSRF error (403).
-        return jsonify({'error': 'CSRF token missing'}), 403
+        return jsonify({'error': t('auth.csrf_missing')}), 403
 
 # Security Headers (SameSite=Strict, CSP, etc.)
 @app.after_request
@@ -390,12 +396,15 @@ app.register_blueprint(notes_bp)
 app.register_blueprint(tickets_bp)
 app.register_blueprint(familyhub_bp)
 app.register_blueprint(sharing_bp)
+app.register_blueprint(cloud_backup_bp)
 app.register_blueprint(fail2ban_bp)
 app.register_blueprint(wireguard_bp)
 app.register_blueprint(ups_bp)
 app.register_blueprint(power_bp, url_prefix='/api/power')
 app.register_blueprint(notifications_bp)
 app.register_blueprint(totp_bp)
+app.register_blueprint(dashboard_bp)
+app.register_blueprint(cron_bp)
 init_appstore(socketio)
 init_downloads(socketio)
 init_update(socketio)
@@ -453,6 +462,7 @@ def _migrate_app_data():
 _migrate_app_data()
 
 NAS_NAME = os.environ.get('NAS_NAME', 'EthOS')
+BRAND_NAME = os.environ.get('BRAND_NAME', 'EthOS')
 PORT = int(os.environ.get('PORT', '9000'))
 SETUP_DONE_FILE = _data_path('setup_done')
 
@@ -660,6 +670,7 @@ _API_TO_APP = {
     '/api/wireguard/': 'wireguard',
     '/api/power/': 'power',
     '/api/ups/': 'ups',
+    '/api/cloud-backup/': 'cloud-backup',
 }
 
 # Admin-only apps — only role='admin' can access (matches admin_only: True in get_apps)
@@ -667,7 +678,7 @@ _ADMIN_ONLY_APPS = {
     'users', 'usb-flasher', 'builder', 'updates', 'services',
     'disk-repair', 'remote-log', 'surveillance',
     'system-settings', 'domains-manager', 'vm-manager', 'app-store',
-    'fail2ban', 'wireguard', 'power', 'ups',
+    'fail2ban', 'wireguard', 'power', 'ups', 'cloud-backup',
 }
 
 
@@ -761,11 +772,11 @@ def _blueprint_auth_guard():
         if target_app:
             # Admin-only apps block non-admins
             if target_app in _ADMIN_ONLY_APPS and role != 'admin':
-                return jsonify({'error': 'Brak uprawnień'}), 403
+                return jsonify({'error': t('auth.no_permission')}), 403
             # Check privilege-based access
             allowed = _user_allowed_apps(username, role)
             if allowed is not None and target_app not in allowed:
-                return jsonify({'error': 'Brak uprawnień do tej aplikacji'}), 403
+                return jsonify({'error': t('auth.no_app_permission')}), 403
 
 
 # ─── Brute-force protection ───
@@ -805,7 +816,7 @@ def login():
             # Check lockout
             if now < attempt.get('locked_until', 0):
                 remaining = int(attempt['locked_until'] - now)
-                return jsonify({'error': f'Zbyt wiele prób. Odczekaj {remaining}s'}), 429
+                return jsonify({'error': t('auth.too_many_attempts', remaining=remaining)}), 429
             # Reset window if expired
             if now - attempt['first'] > _ATTEMPT_WINDOW:
                 _login_attempts.pop(client_ip, None)
@@ -838,7 +849,7 @@ def login():
                 _record_failed_login(client_ip)
                 _log_auth_failure('admin', client_ip)
                 elog('system', 'warning', 'Nieudane logowanie (złe hasło)')
-                return jsonify({'error': 'Nieprawidłowe hasło'}), 401
+                return jsonify({'error': t('auth.invalid_credentials')}), 401
 
     # User login — validate against host /etc/shadow
     safe_user = re.sub(r'[^a-zA-Z0-9_.-]', '', username)
@@ -892,7 +903,7 @@ def login():
     csrf_token = secrets.token_hex(32)
 
     resp = jsonify({
-        'token': token, 'nas_name': NAS_NAME,
+        'token': token, 'nas_name': NAS_NAME, 'brand_name': BRAND_NAME,
         'user': {'username': safe_user, 'role': role, 'groups': groups,
                  'home_path': home_path},
         'sudo_mode': role == 'admin',
@@ -924,7 +935,7 @@ def verify():
 
         resp = jsonify({
             'valid': True,
-            'nas_name': NAS_NAME,
+            'nas_name': NAS_NAME, 'brand_name': BRAND_NAME,
             'user': {'username': info['username'], 'role': info['role'],
                      'home_path': home_path},
             'sudo_mode': info.get('role') == 'admin',
@@ -1130,6 +1141,32 @@ def setup_locales():
         {'code': 'ko_KR.UTF-8', 'name': '한국어'},
     ]
     return jsonify({'locales': locales, 'default': 'en_US.UTF-8'})
+
+
+@app.route('/api/setup/languages')
+def setup_languages():
+    """List available UI languages with their translations for firstboot i18n."""
+    from i18n import SUPPORTED_LANGUAGES, _ensure_loaded, _translations, _I18N_DIR
+    langs = []
+    for code in SUPPORTED_LANGUAGES:
+        _ensure_loaded(code)
+        data = _translations.get(code, {})
+        if data or os.path.exists(os.path.join(_I18N_DIR, f'{code}.json')):
+            name = {'en': 'English', 'pl': 'Polski', 'de': 'Deutsch',
+                    'fr': 'Français', 'es': 'Español'}.get(code, code)
+            langs.append({'code': code, 'name': name})
+    return jsonify({'languages': langs, 'default': 'en'})
+
+
+@app.route('/api/setup/translations/<lang>')
+def setup_translations(lang):
+    """Get full translation file for a language (preboot i18n)."""
+    import re
+    if not re.match(r'^[a-z]{2}$', lang):
+        return jsonify({'error': 'Invalid language code'}), 400
+    from i18n import _ensure_loaded, _translations
+    _ensure_loaded(lang)
+    return jsonify(_translations.get(lang, {}))
 
 
 # ── EthOS identification (public, no auth) ──
@@ -3665,7 +3702,7 @@ def folder_password_remove():
         else:
             elog('security', 'warning', f'Nieudana próba usunięcia hasła folderu: {path}',
                  {'user': username, 'path': path})
-            return jsonify({'error': 'Nieprawidłowe hasło'}), 403
+            return jsonify({'error': t('auth.invalid_password')}), 403
     del passwords[path]
     _save_folder_passwords(passwords)
     # Remove from all unlock sessions
@@ -3716,7 +3753,7 @@ def folder_unlock():
             _folder_unlock_attempts[fu_key] = attempt
         elog('security', 'warning', f'Nieudane odblokowanie folderu: {path}',
              {'user': username, 'path': path})
-        return jsonify({'error': 'Nieprawidłowe hasło'}), 403
+        return jsonify({'error': t('auth.invalid_password')}), 403
 
     # Successful unlock — clear attempts and record
     with _folder_unlock_lock:
@@ -3817,7 +3854,7 @@ def files_chmod():
             'group': group,
         })
     except PermissionError:
-        return jsonify({'error': 'Brak uprawnień do zmiany uprawnień pliku'}), 403
+        return jsonify({'error': t('auth.no_permission')}), 403
     except OSError as e:
         return jsonify({'error': str(e)}), 500
 _FAVORITES_GLOBAL = _data_path('favorites.json')  # legacy, used for migration
@@ -3890,7 +3927,7 @@ def files_chown():
             'group': new_group
         })
     except PermissionError:
-        return jsonify({'error': 'Brak uprawnień'}), 403
+        return jsonify({'error': t('auth.no_permission')}), 403
     except OSError as e:
         return jsonify({'error': str(e)}), 500
 
@@ -4207,7 +4244,7 @@ def files_list():
                     'permissions_symbolic': '---------',
                 })
     except PermissionError:
-        return jsonify({'error': 'Brak uprawnień'}), 403
+        return jsonify({'error': t('auth.no_permission')}), 403
     except TimeoutError:
         return jsonify({'error': 'Dysk nie odpowiada — spróbuj ponownie za chwilę'}), 504
 
@@ -7841,6 +7878,16 @@ def get_apps():
             'description': 'Tworzenie i przywracanie kopii'
         },
         {
+            'id': 'cloud-backup',
+            'name': 'Backup w chmurze',
+            'icon': 'fa-cloud-upload-alt',
+            'color': '#0ea5e9',
+            'type': 'builtin',
+            'category': 'Przechowywanie',
+            'description': 'Kopia zapasowa w chmurze (S3, B2, Google Drive, WebDAV, SFTP)',
+            'admin_only': True
+        },
+        {
             'id': 'resource-monitor',
             'name': 'Monitor zasobów',
             'icon': 'fa-chart-area',
@@ -7932,6 +7979,16 @@ def get_apps():
             'type': 'builtin',
             'category': 'System',
             'description': 'Zarządzanie zaporą sieciową i regułami',
+            'admin_only': True
+        },
+        {
+            'id': 'cron',
+            'name': 'Harmonogram',
+            'icon': 'fa-clock',
+            'color': '#6366f1',
+            'type': 'builtin',
+            'category': 'System',
+            'description': 'Zarządzanie zadaniami cron (harmonogram)',
             'admin_only': True
         },
         {
@@ -8606,7 +8663,7 @@ def install_ethos_package(pkg_id):
     """Mark package as installed. The actual install is triggered by the frontend
     calling the package's own install endpoint (e.g., /api/surveillance/install)."""
     if getattr(g, 'role', None) != 'admin':
-        return jsonify({'error': 'Brak uprawnień'}), 403
+        return jsonify({'error': t('auth.no_permission')}), 403
 
     pkg = next((p for p in _ETHOS_PACKAGES if p['id'] == pkg_id), None)
     if not pkg:
@@ -8626,7 +8683,7 @@ def install_ethos_package(pkg_id):
 def uninstall_ethos_package(pkg_id):
     """Uninstall a EthOS package — call its cleanup and mark as removed."""
     if getattr(g, 'role', None) != 'admin':
-        return jsonify({'error': 'Brak uprawnień'}), 403
+        return jsonify({'error': t('auth.no_permission')}), 403
 
     pkg = next((p for p in _ETHOS_PACKAGES if p['id'] == pkg_id), None)
     if not pkg:
