@@ -14,7 +14,7 @@ Complexity → Model mapping:
     simple   → gpt-5.1-codex-mini (fast, cost-effective)
 """
 
-import sys, time, json, os, argparse, requests, urllib3, subprocess, shlex, signal, threading, hashlib
+import sys, time, json, os, argparse, requests, urllib3, subprocess, shlex, signal, threading, hashlib, shutil
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -967,7 +967,7 @@ def load_docs_context(agent):
 
 # ── Execute ticket via Copilot CLI ────────────────────────────────────────
 
-COPILOT_BIN = os.environ.get("COPILOT_BIN_PATH", f"/home/{get_ethos_user()}/.local/bin/copilot")
+COPILOT_BIN = os.environ.get("COPILOT_BIN_PATH") or shutil.which("copilot") or f"/home/{os.environ.get('USER', 'marcin')}/.local/bin/copilot"
 COPILOT_LOG_DIR = "/opt/ethos/logs/copilot_tickets"
 LOCALAI_LOG_DIR = "/opt/ethos/logs/localai_tickets"
 MAX_AUTOPILOT = {
