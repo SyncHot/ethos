@@ -127,7 +127,7 @@ def _get_wg_keys():
 def _generate_keys():
     priv = subprocess.run("wg genkey", shell=True, capture_output=True, text=True).stdout.strip()
     # Use pipe or explicit input for pubkey to be safe
-    pub = subprocess.run(f"echo '{priv}' | wg pubkey", shell=True, capture_output=True, text=True).stdout.strip()
+    pub = subprocess.run(['wg', 'pubkey'], input=priv.encode(), capture_output=True).stdout.decode().strip()
     preshared = subprocess.run("wg genpsk", shell=True, capture_output=True, text=True).stdout.strip()
     return priv, pub, preshared
 
@@ -411,10 +411,17 @@ def delete_peer(public_key):
         return jsonify({'error': 'Peer not found'}), 404
         
     server_priv, _ = _get_wg_keys()
+    if not server_priv:
+        return jsonify({'error': 'Cannot read server private key'}), 500
     _write_config(server_priv, WG_PORT, new_peers)
     
-    # Reload
-    subprocess.run(f"sudo wg syncconf wg0 <(sudo wg-quick strip wg0)", shell=True, executable='/bin/bash')
+    # Reload — use pipe to avoid bash process substitution (same pattern as add_peer)
+    try:
+        strip_proc = subprocess.run(['sudo', 'wg-quick', 'strip', 'wg0'], capture_output=True)
+        if strip_proc.returncode == 0:
+            subprocess.run(['sudo', 'wg', 'syncconf', 'wg0', '/dev/stdin'], input=strip_proc.stdout)
+    except Exception as e:
+        print(f"Error syncing wg conf on delete: {e}")
     
     return jsonify({'success': True})
 

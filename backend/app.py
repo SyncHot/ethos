@@ -7795,16 +7795,6 @@ def get_apps():
             'admin_only': True
         },
         {
-            'id': 'wireguard',
-            'name': 'VPN (WireGuard)',
-            'icon': 'fa-shield-halved',
-            'color': '#7c3aed',
-            'type': 'builtin',
-            'category': 'System',
-            'description': 'Serwer VPN WireGuard — bezpieczny dostęp zdalny',
-            'admin_only': True
-        },
-        {
             'id': 'app-store',
             'name': 'Sklep z aplikacjami',
             'icon': 'fa-th',
