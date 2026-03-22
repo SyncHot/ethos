@@ -1318,7 +1318,7 @@ PROJECT: /opt/ethos/ (Flask backend + vanilla JS frontend, port 9000)
 CRITICAL FACTS:
 - Server runs on port 9000 (NOT 5000). API base: http://localhost:9000/api
 - Files may be owned by root — if EACCES on write, use: sudo tee <file> or sudo cp
-- Git push: sudo -u ${ETHOS_USER} git push
+- Git push: sudo -u {get_ethos_user()} git push
 
 HELPER TOOLS (use these instead of manual exploration — saves time and tokens):
   bash /opt/ethos/tools/agent_helpers/find_route.sh <pattern>       — find API routes by keyword
@@ -1336,7 +1336,7 @@ WORKFLOW:
 3. Validate: bash /opt/ethos/tools/agent_helpers/check_syntax.sh <changed files>
 4. If backend changes: bash /opt/ethos/tools/agent_helpers/safe_restart.sh {tid} "<reason>"
 5. Commit: git add <files> && git commit -m "[{tid}] <description>"
-6. Push: sudo -u ${ETHOS_USER} git push
+6. Push: sudo -u {get_ethos_user()} git push
 
 Be focused and efficient. Use the helper tools above instead of manual exploration."""
 
@@ -1497,7 +1497,7 @@ WORKFLOW:
 4. Validate: bash /opt/ethos/tools/agent_helpers/check_syntax.sh <changed files>
 5. If backend changes: bash /opt/ethos/tools/agent_helpers/safe_restart.sh {tid} "QA fix"
 6. Commit: git add <files> && git commit -m "[{tid}] fix: QA cycle {qa_cycle} — <description>"
-7. Push: sudo -u ${ETHOS_USER} git push
+7. Push: sudo -u {get_ethos_user()} git push
 
 IMPORTANT: You have the diff and QA analysis above. Go directly to fixing the issues.
 Do NOT explore the codebase from scratch — start from the specific files mentioned in the QA feedback."""
