@@ -3041,14 +3041,14 @@ def main():
             # Strict sequencing: never run QA alongside DEV to avoid git conflicts
             if args.auto and active_proc is None and qa_tickets and qa_proc is None:
                 # Inter-ticket pacing for QA — check against QA model
-                qa_complexity = qa_candidate.get("complexity", "medium") if qa_candidate else "medium"
+                qa_candidate = qa_tickets[0]
+                qa_complexity = qa_candidate.get("complexity", "medium")
                 qa_model_info = _select_qa_model(qa_complexity)
                 planned_qa_model = qa_model_info.get("model") if qa_model_info else None
                 wait_secs = _should_wait_before_next_ticket(planned_qa_model)
                 if wait_secs > 0:
                     print(f"QA_PACING | waiting {wait_secs:.0f}s before starting QA (model={planned_qa_model})", flush=True)
                     _interruptible_sleep(wait_secs)
-                qa_candidate = qa_tickets[0]
                 if qa_candidate["id"] != active_ticket_id:
                     qa_ticket_id = qa_candidate["id"]
                     qa_proc = run_qa_check(qa_candidate)
