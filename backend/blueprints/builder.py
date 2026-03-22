@@ -831,6 +831,7 @@ net.ipv4.tcp_wmem = 4096 65536 16777216
 vm.min_free_kbytes = 65536
 vm.dirty_expire_centisecs = 1500
 vm.dirty_writeback_centisecs = 300
+net.ipv4.ip_forward = 1
 IOTUNE
 
 cat > "$ROOT/etc/udev/rules.d/99-ethos-readahead.rules" <<'UDEV'
