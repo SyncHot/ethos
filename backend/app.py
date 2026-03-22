@@ -1985,6 +1985,7 @@ _KNOWN_SERVICES = {
     'vsftpd':     {'name': 'FTP (vsftpd)',     'pkg': 'vsftpd',           'icon': 'fa-upload',       'cat': 'Sharing'},
     'ssh':        {'name': 'SSH / SFTP',       'pkg': 'openssh-server',   'icon': 'fa-lock',         'cat': 'System'},
     'cups':       {'name': 'CUPS (drukarka)',   'pkg': 'cups',             'icon': 'fa-print',        'cat': 'System'},
+    'nut-server': {'name': 'UPS Server (NUT)',  'pkg': 'nut',              'icon': 'fa-battery-full', 'cat': 'System'},
     'docker':     {'name': 'Docker',           'pkg': 'docker-ce',        'icon': 'fa-cubes',        'cat': 'System'},
     'ethos':    {'name': 'EthOS',          'pkg': None,               'icon': 'fa-server',       'cat': 'System'},
     'avahi-daemon':{'name': 'Avahi (mDNS)',    'pkg': 'avahi-daemon',     'icon': 'fa-broadcast-tower','cat': 'System'},

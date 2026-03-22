@@ -71,7 +71,8 @@ def update_status():
         r = subprocess.run(['upsc', name], capture_output=True, text=True, timeout=2)
         if r.returncode == 0:
             raw = parse_ups_data(r.stdout)
-            _ups_status = {
+            # Update in-place to preserve reference imported by app.py
+            _ups_status.update({
                 'connected': True,
                 'model': raw.get('ups.model', 'Unknown'),
                 'battery_charge': int(float(raw.get('battery.charge', 0))),
@@ -79,7 +80,7 @@ def update_status():
                 'runtime': int(float(raw.get('battery.runtime', 0))),
                 'load': int(float(raw.get('ups.load', 0))),
                 'voltage': float(raw.get('input.voltage', 0))
-            }
+            })
         else:
             _ups_status['connected'] = False
             _ups_status['status'] = 'DISCONNECTED'

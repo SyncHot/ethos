@@ -4870,26 +4870,36 @@ function renderDashboard(body) {
             // UPS
             const upsCard = body.querySelector('#dash-ups');
             const upsContent = body.querySelector('#dash-ups-content');
-            if (upsCard && info.ups && info.ups.connected) {
+            if (upsCard && info.ups) {
                 upsCard.style.display = 'flex';
-                const charge = info.ups.battery_charge;
-                const status = info.ups.status;
-                const runtime = info.ups.runtime;
+                if (info.ups.connected) {
+                    const charge = info.ups.battery_charge;
+                    const status = info.ups.status;
+                    const runtime = info.ups.runtime;
 
-                let icon = 'fa-battery-full';
-                let color = 'var(--success)';
-                if (charge < 20) { icon = 'fa-battery-quarter'; color = 'var(--danger)'; }
-                else if (charge < 50) { icon = 'fa-battery-half'; color = 'var(--warning)'; }
+                    let icon = 'fa-battery-full';
+                    let color = 'var(--success)';
+                    if (charge < 20) { icon = 'fa-battery-quarter'; color = 'var(--danger)'; }
+                    else if (charge < 50) { icon = 'fa-battery-half'; color = 'var(--warning)'; }
 
-                if (status.includes('OB')) { color = 'var(--danger)'; icon = 'fa-plug-circle-xmark'; }
+                    if (status.includes('OB')) { color = 'var(--danger)'; icon = 'fa-plug-circle-xmark'; }
 
-                upsContent.innerHTML = `
-                    <div style="font-size:2em;color:${color}"><i class="fas ${icon}"></i> ${charge}%</div>
-                    <div class="app-sublabel">${info.ups.model}</div>
-                    <div class="app-stat-value" style="font-size:0.9em;margin-top:5px">
-                        ${status} ${runtime > 0 ? '· ' + formatUptime(runtime) : ''}
-                    </div>
-                `;
+                    upsContent.innerHTML = `
+                        <div style="font-size:2em;color:${color}"><i class="fas ${icon}"></i> ${charge}%</div>
+                        <div class="app-sublabel">${info.ups.model}</div>
+                        <div class="app-stat-value" style="font-size:0.9em;margin-top:5px">
+                            ${status} ${runtime > 0 ? '· ' + formatUptime(runtime) : ''}
+                        </div>
+                    `;
+                } else {
+                    upsContent.innerHTML = `
+                        <div style="font-size:2em;color:var(--text-muted)"><i class="fas fa-plug-circle-xmark"></i> --%</div>
+                        <div class="app-sublabel">Brak UPS</div>
+                        <div class="app-stat-value" style="font-size:0.9em;margin-top:5px">
+                            Nie wykryto urządzenia
+                        </div>
+                    `;
+                }
                 upsCard.onclick = () => openApp('ups');
                 upsCard.style.cursor = 'pointer';
             } else if (upsCard) {
