@@ -7876,7 +7876,8 @@ def get_apps():
             'type': 'builtin',
             'category': 'Przechowywanie',
             'description': 'Macierze RAID i woluminy LVM',
-            'admin_only': True
+            'admin_only': True,
+            'package': 'raid-lvm'
         },
         {
             'id': 'sharing',
@@ -7905,7 +7906,8 @@ def get_apps():
             'type': 'builtin',
             'category': 'Przechowywanie',
             'description': 'Kopia zapasowa w chmurze (S3, B2, Google Drive, WebDAV, SFTP)',
-            'admin_only': True
+            'admin_only': True,
+            'package': 'cloud-backup'
         },
         {
             'id': 'rollback',
@@ -8281,7 +8283,8 @@ def get_apps():
             'type': 'builtin',
             'category': 'Przechowywanie',
             'description': 'Serwer mediów DLNA/UPnP — strumieniowanie do Smart TV i odtwarzaczy',
-            'admin_only': True
+            'admin_only': True,
+            'package': 'dlna'
         }
     ]
 
@@ -8592,6 +8595,42 @@ _ETHOS_PACKAGES = [
         'install_endpoint': '/api/websites/install',
         'uninstall_endpoint': '/api/websites/uninstall',
         'status_endpoint': '/api/websites/pkg-status',
+    },
+    {
+        'id': 'dlna',
+        'name': 'DLNA / UPnP',
+        'icon': 'fa-play-circle',
+        'color': '#8b5cf6',
+        'description': 'Serwer multimediów DLNA/UPnP — udostępnianie muzyki, filmów i zdjęć w sieci lokalnej.',
+        'app_id': 'dlna',
+        'deps_label': 'minidlna',
+        'install_endpoint': '/api/dlna/install',
+        'uninstall_endpoint': '/api/dlna/uninstall',
+        'status_endpoint': '/api/dlna/pkg-status',
+    },
+    {
+        'id': 'cloud-backup',
+        'name': 'Backup w chmurze',
+        'icon': 'fa-cloud-upload-alt',
+        'color': '#0ea5e9',
+        'description': 'Kopie zapasowe na S3, Backblaze B2, Google Drive, WebDAV, SFTP — harmonogram i retencja.',
+        'app_id': 'cloud-backup',
+        'deps_label': 'rclone',
+        'install_endpoint': '/api/cloud-backup/install',
+        'uninstall_endpoint': '/api/cloud-backup/uninstall',
+        'status_endpoint': '/api/cloud-backup/pkg-status',
+    },
+    {
+        'id': 'raid-lvm',
+        'name': 'RAID / LVM',
+        'icon': 'fa-layer-group',
+        'color': '#f59e0b',
+        'description': 'Zarządzanie macierzami RAID (mdadm) i woluminami logicznymi LVM.',
+        'app_id': 'raid',
+        'deps_label': 'mdadm, lvm2',
+        'install_endpoint': '/api/raid/install',
+        'uninstall_endpoint': '/api/raid/uninstall',
+        'status_endpoint': '/api/raid/pkg-status',
     },
 ]
 

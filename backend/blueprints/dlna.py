@@ -303,3 +303,20 @@ def rescan_library():
     if r.returncode != 0:
         return jsonify({'error': r.stderr.strip() or 'Rescan failed'}), 500
     return jsonify({'success': True, 'message': 'Rescan started'})
+
+
+@dlna_bp.route('/pkg-status')
+@admin_required
+def pkg_status():
+    """Package status for AppStore integration."""
+    installed = _is_installed()
+    return jsonify({'installed': installed, 'status': 'active' if installed else 'not_installed'})
+
+
+@dlna_bp.route('/uninstall', methods=['POST'])
+@admin_required
+def uninstall_minidlna():
+    """Uninstall minidlna."""
+    from host import host_run
+    host_run('systemctl stop minidlna 2>/dev/null; apt-get remove -y minidlna 2>/dev/null || true', timeout=60)
+    return jsonify({'ok': True})

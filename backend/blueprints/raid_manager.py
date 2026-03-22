@@ -537,3 +537,34 @@ def lvm_delete_vg(vg_name):
         return jsonify({'error': r.stderr.strip() or 'Failed to delete VG'}), 500
 
     return jsonify({'ok': True})
+
+
+@raid_bp.route('/pkg-status')
+@admin_required
+def pkg_status():
+    """Package status for AppStore integration."""
+    import shutil
+    mdadm = shutil.which('mdadm') is not None
+    lvm = shutil.which('lvcreate') is not None
+    return jsonify({'installed': mdadm or lvm, 'mdadm': mdadm, 'lvm': lvm,
+                    'status': 'active' if (mdadm or lvm) else 'not_installed'})
+
+
+@raid_bp.route('/install', methods=['POST'])
+@admin_required
+def install_raid_tools():
+    """Install mdadm and LVM tools."""
+    from host import host_run
+    host_run('apt-get update -qq && apt-get install -y -qq mdadm lvm2', timeout=120)
+    import shutil
+    ok = shutil.which('mdadm') is not None
+    return jsonify({'ok': ok, 'message': 'mdadm + lvm2 installed' if ok else 'Install failed'})
+
+
+@raid_bp.route('/uninstall', methods=['POST'])
+@admin_required
+def uninstall_raid_tools():
+    """Uninstall mdadm and LVM tools."""
+    from host import host_run
+    host_run('apt-get remove -y mdadm lvm2 2>/dev/null || true', timeout=60)
+    return jsonify({'ok': True})

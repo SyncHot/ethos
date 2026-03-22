@@ -459,3 +459,32 @@ def get_history():
     history = _load_history()
     limit = request.args.get('limit', 50, type=int)
     return jsonify({'history': history[:limit]})
+
+
+@cloud_backup_bp.route('/pkg-status')
+@admin_required
+def pkg_status():
+    """Package status for AppStore integration."""
+    import shutil
+    installed = shutil.which('rclone') is not None
+    return jsonify({'installed': installed, 'status': 'active' if installed else 'not_installed'})
+
+
+@cloud_backup_bp.route('/install', methods=['POST'])
+@admin_required
+def install_rclone():
+    """Install rclone for cloud backup."""
+    from host import host_run
+    host_run('curl -fsSL https://rclone.org/install.sh | bash', timeout=120)
+    import shutil
+    ok = shutil.which('rclone') is not None
+    return jsonify({'ok': ok, 'message': 'rclone installed' if ok else 'Install failed'})
+
+
+@cloud_backup_bp.route('/uninstall', methods=['POST'])
+@admin_required
+def uninstall_rclone():
+    """Uninstall rclone."""
+    from host import host_run
+    host_run('apt-get remove -y rclone 2>/dev/null; rm -f /usr/bin/rclone', timeout=60)
+    return jsonify({'ok': True})
