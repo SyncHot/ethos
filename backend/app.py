@@ -7806,6 +7806,16 @@ def get_apps():
             'admin_only': True
         },
         {
+            'id': 'firewall',
+            'name': 'Firewall (UFW)',
+            'icon': 'fa-fire',
+            'color': '#e05d44',
+            'type': 'builtin',
+            'category': 'System',
+            'description': 'Zarządzanie zaporą sieciową i regułami',
+            'admin_only': True
+        },
+        {
             'id': 'app-store',
             'name': 'Sklep z aplikacjami',
             'icon': 'fa-th',
