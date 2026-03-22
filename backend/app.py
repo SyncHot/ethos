@@ -143,6 +143,7 @@ from blueprints.admin_required import admin_required
 from blueprints.totp import totp_bp, is_totp_enabled, verify_totp_code, verify_backup_code
 from blueprints.cron_manager import cron_bp
 from blueprints.raid_manager import raid_bp
+from blueprints.api_docs import api_docs_bp
 
 # ── Shadow password verification (avoids crypt DeprecationWarning) ──
 import warnings as _warnings
@@ -411,6 +412,7 @@ app.register_blueprint(dlna_bp)
 app.register_blueprint(dashboard_bp)
 app.register_blueprint(cron_bp)
 app.register_blueprint(raid_bp)
+app.register_blueprint(api_docs_bp)
 init_appstore(socketio)
 init_downloads(socketio)
 init_update(socketio)
