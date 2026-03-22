@@ -153,7 +153,7 @@ def manage_rules():
         # Apply default EthOS rules
         # 0. Reset everything
         run_ufw(['--force', 'reset'])
-        
+
         # 1. Enable logging
         run_ufw(['logging', 'on'])
 

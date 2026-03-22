@@ -6,7 +6,7 @@
 AppRegistry['firewall'] = function (appDef) {
     const win = createWindow('firewall', {
         title: 'Firewall',
-        icon: 'fa-fire', 
+        icon: 'fa-fire',
         iconColor: '#e05d44',
         width: 900,
         height: 700,
@@ -41,7 +41,7 @@ AppRegistry['firewall'] = function (appDef) {
             Ładowanie statusu...
         </div>
     `;
-    
+
     const toggleArea = document.createElement('div');
     toggleArea.innerHTML = `
         <label class="switch">
@@ -58,7 +58,7 @@ AppRegistry['firewall'] = function (appDef) {
     tabsContainer.style.display = 'flex';
     tabsContainer.style.borderBottom = '1px solid var(--border)';
     tabsContainer.style.background = 'var(--bg-surface)';
-    
+
     const tabRules = document.createElement('button');
     tabRules.className = 'tab-btn active';
     tabRules.textContent = 'Reguły';
@@ -234,7 +234,7 @@ AppRegistry['firewall'] = function (appDef) {
     body.appendChild(style);
 
     // ─── Logic ───
-    
+
     // Tab Switching
     function switchTab(tab) {
         if (tab === 'rules') {
@@ -257,13 +257,13 @@ AppRegistry['firewall'] = function (appDef) {
         const statusText = document.getElementById('fw-status-text');
         const toggle = document.getElementById('fw-toggle');
         const tbody = document.getElementById('fw-rules-tbody');
-        
+
         // Prevent triggering toggle event
-        toggle.onclick = null; 
+        toggle.onclick = null;
 
         try {
             const res = await api('/firewall/status');
-            
+
             // Update Header Status
             if (res.status === 'active') {
                 statusText.innerHTML = '<span style="color:#2ecc71">● Aktywny</span>';
@@ -272,31 +272,31 @@ AppRegistry['firewall'] = function (appDef) {
                 statusText.innerHTML = '<span style="color:#ef4444">● Nieaktywny</span>';
                 toggle.checked = false;
             }
-            
+
             // Bind Toggle
             toggle.onclick = async (e) => {
                 e.preventDefault(); // Don't switch yet
-                const newState = !toggle.checked; // Current state is technically already switched in UI? No, e.preventDefault stops it? 
-                // Wait, onclick happens after change? Usually input type checkbox uses onchange. 
+                const newState = !toggle.checked; // Current state is technically already switched in UI? No, e.preventDefault stops it?
+                // Wait, onclick happens after change? Usually input type checkbox uses onchange.
                 // Let's use logic: if checked, we want to uncheck (disable).
-                
+
                 // Better approach:
                 // Checkbox state is *before* the click unless we prevent default?
                 // Actually, let's just use the current visual state relative to data.
-                
+
                 const enable = !toggle.checked; // If it was checked, we clicked to uncheck
-                
+
                 // Confirm action
                 if (!confirm(`Czy na pewno chcesz ${enable ? 'włączyć' : 'wyłączyć'} firewall?`)) {
                     toggle.checked = !enable; // Revert visual
                     return;
                 }
-                
+
                 // Optimistic UI? No, wait for result.
                 try {
-                    const tRes = await api('/firewall/toggle', { 
-                        method: 'POST', 
-                        body: { enable: enable } 
+                    const tRes = await api('/firewall/toggle', {
+                        method: 'POST',
+                        body: { enable: enable }
                     });
                     if (tRes.success) {
                         toast(tRes.message, 'success');
@@ -316,14 +316,14 @@ AppRegistry['firewall'] = function (appDef) {
             toggle.onchange = async function() {
                 const enable = this.checked;
                 // Revert immediately to wait for confirmation/api
-                this.checked = !enable; 
-                
+                this.checked = !enable;
+
                 if (!confirm(`Czy na pewno chcesz ${enable ? 'włączyć' : 'wyłączyć'} firewall?`)) return;
 
                 try {
-                    const tRes = await api('/firewall/toggle', { 
-                        method: 'POST', 
-                        body: { enable: enable } 
+                    const tRes = await api('/firewall/toggle', {
+                        method: 'POST',
+                        body: { enable: enable }
                     });
                     if (tRes.success) {
                         toast(tRes.message, 'success');
@@ -346,9 +346,9 @@ AppRegistry['firewall'] = function (appDef) {
                 res.rules.forEach(rule => {
                     const tr = document.createElement('tr');
                     tr.style.borderBottom = '1px solid var(--border-subtle)';
-                    
+
                     const actionColor = rule.action.includes('ALLOW') ? '#2ecc71' : '#ef4444';
-                    
+
                     tr.innerHTML = `
                         <td style="padding:10px">${rule.id}</td>
                         <td style="padding:10px;font-family:monospace">${rule.to}</td>
@@ -363,7 +363,7 @@ AppRegistry['firewall'] = function (appDef) {
                     `;
                     tbody.appendChild(tr);
                 });
-                
+
                 // Bind delete buttons
                 tbody.querySelectorAll('.delete-rule-btn').forEach(btn => {
                     btn.onclick = () => deleteRule(btn.dataset.id);
@@ -447,11 +447,11 @@ AppRegistry['firewall'] = function (appDef) {
         try {
             const res = await api('/firewall/rules', {
                 method: 'POST',
-                body: { 
-                    action: 'add', 
-                    port: port, 
-                    proto: proto || null, 
-                    from: ip || 'any' 
+                body: {
+                    action: 'add',
+                    port: port,
+                    proto: proto || null,
+                    from: ip || 'any'
                 }
             });
             if (res.success) {
@@ -472,11 +472,11 @@ AppRegistry['firewall'] = function (appDef) {
     async function loadBanned() {
         const list = document.getElementById('fw-banned-list');
         list.innerHTML = 'Ładowanie...';
-        
+
         try {
             const res = await api('/firewall/banned');
             list.innerHTML = '';
-            
+
             if (res.error) {
                 list.innerHTML = `<div style="color:var(--text-error)">Błąd: ${res.error}</div>`;
                 return;
@@ -495,7 +495,7 @@ AppRegistry['firewall'] = function (appDef) {
                         <i class="fas fa-lock"></i> ${jail.name}
                     </h4>
                 `;
-                
+
                 if (jail.banned_ips && jail.banned_ips.length > 0) {
                     const ul = document.createElement('ul');
                     ul.style.listStyle = 'none';
@@ -504,7 +504,7 @@ AppRegistry['firewall'] = function (appDef) {
                     ul.style.background = 'var(--bg-base)';
                     ul.style.borderRadius = '6px';
                     ul.style.border = '1px solid var(--border-subtle)';
-                    
+
                     jail.banned_ips.forEach(ip => {
                         const li = document.createElement('li');
                         li.style.padding = '8px 10px';
@@ -522,7 +522,7 @@ AppRegistry['firewall'] = function (appDef) {
                     });
                     // remove last border
                     if (ul.lastChild) ul.lastChild.style.borderBottom = 'none';
-                    
+
                     jailDiv.appendChild(ul);
                 } else {
                     const empty = document.createElement('div');
@@ -532,7 +532,7 @@ AppRegistry['firewall'] = function (appDef) {
                     empty.style.paddingLeft = '10px';
                     jailDiv.appendChild(empty);
                 }
-                
+
                 list.appendChild(jailDiv);
             });
 
@@ -542,7 +542,7 @@ AppRegistry['firewall'] = function (appDef) {
                     const jail = btn.dataset.jail;
                     const ip = btn.dataset.ip;
                     if (!confirm(`Odblokować IP ${ip}?`)) return;
-                    
+
                     try {
                         const uRes = await api('/firewall/unban', {
                             method: 'POST',
