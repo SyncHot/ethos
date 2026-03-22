@@ -13,10 +13,8 @@ DB_PATH = os.environ.get('TICKETS_DB_PATH', data_path('tickets.db'))
 JSON_PATH = data_path('tickets.json')
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
+    from blueprints.db_pool import get_pooled_db
+    return get_pooled_db(DB_PATH)
 
 def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)

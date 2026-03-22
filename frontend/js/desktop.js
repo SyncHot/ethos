@@ -559,6 +559,7 @@ function createWindow(id, opts = {}) {
     const winData = {
         id,
         el: winEl,
+        body: document.getElementById(`win-body-${id}`),
         opts: o,
         minimized: false,
         maximized: false,

@@ -1,11 +1,12 @@
 AppRegistry['power'] = function (appDef, launchOpts) {
-    const w = WM.createWindow({
+    const w = createWindow('power', {
         title: 'Zarządzanie energią',
+        icon: 'fa-plug',
+        iconColor: '#f59e0b',
         width: 700,
         height: 600,
-        icon: 'power',
-        center: true
     });
+    const body = w.body;
 
     let state = {
         wol: {},
@@ -15,7 +16,7 @@ AppRegistry['power'] = function (appDef, launchOpts) {
     };
 
     const render = () => {
-        w.content.innerHTML = `
+        body.innerHTML = `
             <div class="app-body">
                 <div class="app-section">
                     <h3>Procesor i Wake-on-LAN</h3>
@@ -57,7 +58,7 @@ AppRegistry['power'] = function (appDef, launchOpts) {
         `;
         
         // Render Schedule List
-        const schedList = w.content.querySelector('#schedule-list');
+        const schedList = body.querySelector('#schedule-list');
         state.schedule.forEach((rule, idx) => {
             const item = document.createElement('div');
             item.className = 'list-item flex-row';
@@ -74,7 +75,7 @@ AppRegistry['power'] = function (appDef, launchOpts) {
         });
 
         // Render HDD List
-        const hddList = w.content.querySelector('#hdd-list');
+        const hddList = body.querySelector('#hdd-list');
         Object.keys(state.hdd).forEach(drive => {
             const val = state.hdd[drive];
             const item = document.createElement('div');
@@ -96,7 +97,7 @@ AppRegistry['power'] = function (appDef, launchOpts) {
         });
 
         // Bind events
-        w.content.querySelector('#add-schedule').onclick = () => {
+        body.querySelector('#add-schedule').onclick = () => {
             // Simple prompt for now, could be modal
             const daysStr = prompt("Dni tygodnia (0-6, np. 1,2,3,4,5 dla pn-pt):", "1,2,3,4,5");
             if (!daysStr) return;
@@ -110,7 +111,7 @@ AppRegistry['power'] = function (appDef, launchOpts) {
             render();
         };
 
-        w.content.querySelectorAll('.remove-sched').forEach(b => {
+        body.querySelectorAll('.remove-sched').forEach(b => {
             b.onclick = (e) => {
                 const idx = parseInt(e.target.dataset.idx);
                 state.schedule.splice(idx, 1);
@@ -118,26 +119,25 @@ AppRegistry['power'] = function (appDef, launchOpts) {
             };
         });
 
-        w.content.querySelectorAll('.hdd-select').forEach(s => {
+        body.querySelectorAll('.hdd-select').forEach(s => {
             s.onchange = (e) => {
                 state.hdd[e.target.dataset.drive] = parseInt(e.target.value);
             };
         });
 
-        w.content.querySelector('#save-power').onclick = async () => {
-            const cpuGov = w.content.querySelector('#cpu-gov').value;
-            const wolEnabled = w.content.querySelector('#wol-enabled').checked;
+        body.querySelector('#save-power').onclick = async () => {
+            const cpuGov = body.querySelector('#cpu-gov').value;
+            const wolEnabled = body.querySelector('#wol-enabled').checked;
             
             try {
-                await fetch('/api/power/save', {
+                await api('/power/save', {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
+                    body: {
                         cpu_governor: cpuGov,
                         wol_enabled: wolEnabled,
                         schedule: state.schedule,
                         hdd_spindown: state.hdd
-                    })
+                    }
                 });
                 toast("Zapisano ustawienia energii");
             } catch (e) {
@@ -148,12 +148,11 @@ AppRegistry['power'] = function (appDef, launchOpts) {
 
     const load = async () => {
         try {
-            const res = await fetch('/api/power/status');
-            const data = await res.json();
+            const data = await api('/power/status');
             state = data;
             render();
         } catch (e) {
-            w.content.innerHTML = `<div class="p-3">Błąd ładowania: ${e.message}</div>`;
+            body.innerHTML = `<div class="p-3">Błąd ładowania: ${e.message}</div>`;
         }
     };
 

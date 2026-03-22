@@ -702,4 +702,4 @@ if __name__ == '__main__':
     print(f'\n  EthOS Log Receiver & Dashboard')
     print(f'  Logs directory: {LOG_DIR}')
     print(f'  Dashboard:      http://0.0.0.0:5050\n')
-    app.run(host='0.0.0.0', port=5050, debug=True)
+    app.run(host='0.0.0.0', port=5050, debug=False)

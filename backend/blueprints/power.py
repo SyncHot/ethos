@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import shlex
 import shutil
 import subprocess
 import time
@@ -77,20 +78,30 @@ def save_settings():
 
     # Update Config
     if 'wol_enabled' in data:
+        if not isinstance(data['wol_enabled'], bool):
+            return jsonify({"error": "Invalid wol_enabled value"}), 400
         config['wol_enabled'] = data['wol_enabled']
         _apply_wol(config['wol_enabled'])
-        
+
     if 'schedule' in data:
+        if not isinstance(data['schedule'], list):
+            return jsonify({"error": "Invalid schedule value"}), 400
         config['schedule'] = data['schedule']
         _apply_schedule(config['schedule'])
-        
+
     if 'hdd_spindown' in data:
+        if not isinstance(data['hdd_spindown'], dict):
+            return jsonify({"error": "Invalid hdd_spindown value"}), 400
         config['hdd_spindown'] = data['hdd_spindown']
         _apply_hdd_spindown(config['hdd_spindown'])
-        
+
     if 'cpu_governor' in data:
-        config['cpu_governor'] = data['cpu_governor']
-        _apply_cpu_governor(config['cpu_governor'])
+        gov = data['cpu_governor']
+        allowed_govs = ('performance', 'powersave', 'ondemand', 'conservative', 'schedutil', 'userspace')
+        if gov not in allowed_govs:
+            return jsonify({"error": f"Invalid governor. Allowed: {', '.join(allowed_govs)}"}), 400
+        config['cpu_governor'] = gov
+        _apply_cpu_governor(gov)
         
     save_config(config)
     log('power', 'info', 'Power settings updated')
@@ -103,15 +114,14 @@ def _get_primary_iface():
 
 def _apply_wol(enabled):
     iface = _get_primary_iface()
-    if not iface: return
+    if not iface or not re.match(r'^[a-zA-Z0-9_-]+$', iface):
+        return
     val = 'g' if enabled else 'd'
-    # Apply now
-    run_cmd(f"ethtool -s {iface} wol {val}")
-    # Persist via NetworkManager if available
-    nm_con = run_cmd(f"nmcli -g GENERAL.CONNECTION dev show {iface} 2>/dev/null")
-    if nm_con:
+    run_cmd(f"ethtool -s {shlex.quote(iface)} wol {val}")
+    nm_con = run_cmd(f"nmcli -g GENERAL.CONNECTION dev show {shlex.quote(iface)} 2>/dev/null")
+    if nm_con and re.match(r'^[\w\s._-]+$', nm_con):
         nm_val = 'magic' if enabled else 'default'
-        run_cmd(f"nmcli con modify '{nm_con}' 802-3-ethernet.wake-on-lan {nm_val}")
+        run_cmd(f"nmcli con modify {shlex.quote(nm_con)} 802-3-ethernet.wake-on-lan {nm_val}")
     else:
         # Persist via systemd-networkd .link file
         link_dir = "/etc/systemd/network"
@@ -149,30 +159,40 @@ def _apply_schedule(schedule):
     # Reload cron? usually unnecessary for cron.d
 
 def _apply_hdd_spindown(hdd_config):
-    # hdd_config: {"sda": 120, "sdb": 0}
-    # Apply immediately
     for drive, val in hdd_config.items():
-        if not re.match(r'^[a-z]+$', drive): continue
+        if not re.match(r'^[a-z]+$', drive):
+            continue
+        try:
+            val = int(val)
+        except (ValueError, TypeError):
+            continue
+        if val < 0 or val > 255:
+            continue
         run_cmd(f"hdparm -S {val} /dev/{drive}")
         
     # Update udev rule for persistence
-    # We overwrite the rule file with specific rules for each drive
     rule_file = "/etc/udev/rules.d/99-ethos-power-custom.rules"
     rules = []
-    for drive, val in hdd_config.items():
-        if val == 0: continue
-        # Match by kernel name is risky if they change, but standard for simple setups.
-        # Ideally by UUID/Serial, but let's stick to simple implementation first.
-        rules.append(f'ACTION=="add|change", KERNEL=="{drive}", RUN+="/sbin/hdparm -S {val} /dev/%k"\n')
-        
+    for drive, raw_val in hdd_config.items():
+        if not re.match(r'^[a-z]+$', drive):
+            continue
+        try:
+            v = int(raw_val)
+        except (ValueError, TypeError):
+            continue
+        if v <= 0 or v > 255:
+            continue
+        rules.append(f'ACTION=="add|change", KERNEL=="{drive}", RUN+="/sbin/hdparm -S {v} /dev/%k"\n')
+
     with open(rule_file, 'w') as f:
         f.writelines(rules)
     run_cmd("udevadm control --reload-rules")
 
 def _apply_cpu_governor(gov):
-    # Apply to all CPUs
+    allowed = ('performance', 'powersave', 'ondemand', 'conservative', 'schedutil', 'userspace')
+    if gov not in allowed:
+        return
     run_cmd(f"cpufreq-set -r -g {gov}")
-    # Persist via cpufrequtils default
     try:
         with open("/etc/default/cpufrequtils", "w") as f:
             f.write(f'GOVERNOR="{gov}"\n')

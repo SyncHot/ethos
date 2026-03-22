@@ -623,6 +623,8 @@ echo "STEP:5:Przygotowywanie środowiska..."
 
 # Source config from the script but override with our values
 VERSION=$(python3 -c "import json; print(json.load(open('$NASOS/backend/version.json'))['version'])" 2>/dev/null || echo '2.4.0')
+BRAND_NAME=$(grep '^ETHOS_BRAND_NAME=' "$NASOS/install.conf" 2>/dev/null | cut -d'"' -f2)
+BRAND_NAME=${{BRAND_NAME:-EthOS}}
 FINAL_IMG="$NASOS/installer/images/ethos-x86.img"
 WORK_DIR="/tmp/ethos-x86-build-web"
 IMG_SIZE_GB=8
@@ -844,6 +846,38 @@ SUBSYSTEM=="block", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="1", RUN+="/sbin/
 SUBSYSTEM=="block", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="0", RUN+="/sbin/blockdev --setra 256 /dev/%k"
 SUBSYSTEM=="block", KERNEL=="nvme*", RUN+="/sbin/blockdev --setra 256 /dev/%k"
 UDEV
+
+# I/O scheduler: BFQ for HDD (better for mixed workloads), none for NVMe
+cat > "$ROOT/etc/udev/rules.d/60-ethos-scheduler.rules" <<'UDEV_SCHED'
+ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="1", ATTR{queue/scheduler}="bfq"
+ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="0", ATTR{queue/scheduler}="none"
+ACTION=="add|change", KERNEL=="nvme*", ATTR{queue/scheduler}="none"
+UDEV_SCHED
+
+# Logrotate policy for EthOS logs
+cat > "$ROOT/etc/logrotate.d/ethos" <<'LOGROTATE'
+/opt/ethos/logs/*.log {{
+    weekly
+    rotate 4
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    maxsize 50M
+}}
+
+/opt/ethos/logs/copilot_tickets/*.log {{
+    monthly
+    rotate 2
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    maxsize 100M
+}}
+LOGROTATE
 cat > "$ROOT/etc/hosts" <<HOSTS
 127.0.0.1   localhost
 127.0.1.1   $DEFAULT_HOSTNAME
@@ -1028,8 +1062,8 @@ chroot "$ROOT" passwd -l root
 
 # ── Branding: /etc/os-release ──
 cat > "$ROOT/etc/os-release" <<OSREL
-PRETTY_NAME="EthOS v${{VERSION}}"
-NAME="EthOS"
+PRETTY_NAME="$BRAND_NAME v${{VERSION}}"
+NAME="$BRAND_NAME"
 VERSION_ID="${{VERSION}}"
 VERSION="${{VERSION}}"
 ID=ethos
@@ -1037,11 +1071,11 @@ ID_LIKE=debian
 HOME_URL="https://ethos.local"
 OSREL
 
-cat > "$ROOT/etc/issue" <<'ISSUE'
-EthOS \\n \\l
+cat > "$ROOT/etc/issue" <<ISSUE
+$BRAND_NAME \\n \\l
 
 ISSUE
-echo "EthOS" > "$ROOT/etc/issue.net"
+echo "$BRAND_NAME" > "$ROOT/etc/issue.net"
 
 # ── GRUB defaults (so update-grub keeps EthOS name) ──
 cat > "$ROOT/etc/default/grub" <<GRUBDEF
@@ -1191,6 +1225,11 @@ cp -r "$NASOS/backend" "$ETHOS_DIR/"
 rm -rf "$ETHOS_DIR/backend/__pycache__" "$ETHOS_DIR/backend/blueprints/__pycache__"
 rm -f "$ETHOS_DIR/backend/blueprints/"*.bak 2>/dev/null || true
 
+# ── License & compliance ──
+for f in LICENSE NOTICE; do
+  [ -f "$NASOS/$f" ] && cp "$NASOS/$f" "$ETHOS_DIR/"
+done
+
 # ── Kopiowanie CAŁEGO frontend/ ──
 echo "LOG:Kopiowanie frontend..."
 cp -r "$NASOS/frontend" "$ETHOS_DIR/"
@@ -1218,6 +1257,7 @@ cp "$NASOS/installer/images/"*.sh     "$ETHOS_DIR/installer/images/" 2>/dev/null
 # ── Czyszczenie cache z kopiowanego kodu ──
 find "$ETHOS_DIR" -type d -name "__pycache__" -exec rm -rf {{}} + 2>/dev/null || true
 find "$ETHOS_DIR" -name "*.pyc" -delete 2>/dev/null || true
+rm -rf "$ETHOS_DIR/tests" "$ETHOS_DIR/logs" "$ETHOS_DIR/backups" 2>/dev/null || true
 
 echo "LOG:Pliki skopiowane — $(du -sh "$ETHOS_DIR" | awk '{{print $1}}')"
 
@@ -1268,7 +1308,8 @@ chmod +x "$ETHOS_DIR"/{{start,stop,rebuild}}.sh
 cat > "$ETHOS_DIR/install.conf" <<INSTCFG
 ETHOS_USER="$DEFAULT_USER"
 ETHOS_HOSTNAME="$DEFAULT_HOSTNAME"
-ETHOS_NAS_NAME="EthOS"
+ETHOS_NAS_NAME="$BRAND_NAME"
+ETHOS_BRAND_NAME="$BRAND_NAME"
 ETHOS_PORT=$NAS_PORT
 ETHOS_SETUP_WIZARD=yes
 INSTCFG

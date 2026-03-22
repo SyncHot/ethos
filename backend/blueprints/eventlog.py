@@ -23,10 +23,8 @@ CATEGORIES = ('system', 'files', 'backup', 'docker', 'storage',
               'network', 'printer', 'security', 'error')
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
+    from blueprints.db_pool import get_pooled_db
+    return get_pooled_db(DB_PATH)
 
 def init_eventlog(socketio_instance):
     global _socketio
@@ -187,6 +185,13 @@ def log(category, level, message, details=None):
                 ).start()
         except Exception:
             pass
+
+    # Notification channels hook
+    try:
+        from blueprints.notifications import notify_event
+        notify_event(category, level, message)
+    except Exception:
+        pass
 
 @eventlog_bp.route('/api/eventlog', methods=['POST'])
 def eventlog_create():

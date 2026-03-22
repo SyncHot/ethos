@@ -1,0 +1,81 @@
+{
+  "auth.too_many_attempts": "Too many attempts. Wait {remaining}s",
+  "auth.invalid_password": "Invalid password",
+  "auth.invalid_credentials": "Invalid username or password",
+  "auth.account_locked": "Account locked",
+  "auth.unauthorized": "Unauthorized",
+  "auth.no_permission": "No permission",
+  "auth.no_app_permission": "No permission for this application",
+  "auth.password_change_required": "Password change required",
+  "auth.csrf_failed": "CSRF validation failed",
+  "auth.csrf_missing": "CSRF token missing",
+  "auth.totp_required": "Two-factor authentication required",
+  "auth.totp_invalid": "Invalid 2FA code",
+
+  "setup.username_required": "Username is required (min. {min} characters)",
+  "setup.password_required": "Password is required (min. {min} characters)",
+  "setup.password_default": "Password cannot be the default (\"ethos\")",
+  "setup.already_done": "Setup already completed",
+
+  "error.not_found": "Not found",
+  "error.method_not_allowed": "Method not allowed",
+  "error.file_too_large": "File too large",
+  "error.internal": "Internal server error",
+  "error.path_not_found": "Path does not exist",
+  "error.path_required": "Path is required",
+  "error.invalid_input": "Invalid input",
+
+  "files.copy_in_progress": "A file operation is already in progress",
+  "files.no_access": "Access denied to this path",
+
+  "storage.already_mounted": "This disk is already mounted",
+  "storage.mount_failed": "Mount failed",
+  "storage.not_mounted": "Not mounted",
+  "storage.no_uuid": "No UUID found",
+
+  "backup.no_sources": "No backup sources specified",
+  "backup.destination_required": "Backup destination is required",
+
+  "docker.container_not_found": "Container not found",
+  "docker.image_pull_failed": "Failed to pull image",
+
+  "settings.restart_scheduled": "System restart scheduled",
+  "settings.shutdown_scheduled": "System shutdown scheduled",
+
+  "notifications.channel_required": "Channel name is required",
+  "notifications.test_sent": "Test notification sent",
+
+  "dashboard.title": "Dashboard",
+  "dashboard.system_info": "System Information",
+  "dashboard.cpu_usage": "CPU Usage",
+  "dashboard.ram_usage": "RAM Usage",
+  "dashboard.disk_usage": "Disk Usage",
+  "dashboard.network": "Network",
+  "dashboard.services": "Services",
+
+  "cron.job_created": "Scheduled task created",
+  "cron.job_updated": "Scheduled task updated",
+  "cron.job_deleted": "Scheduled task deleted",
+  "cron.invalid_schedule": "Invalid schedule format",
+
+  "raid.array_created": "RAID array created",
+  "raid.array_removed": "RAID array removed",
+  "raid.invalid_level": "Invalid RAID level",
+  "raid.not_enough_disks": "Not enough disks for this RAID level",
+
+  "cloud_backup.job_started": "Backup job started",
+  "cloud_backup.job_completed": "Backup completed successfully",
+  "cloud_backup.job_failed": "Backup failed",
+  "cloud_backup.provider_added": "Cloud provider added",
+
+  "rollback.snapshot_created": "System snapshot created",
+  "rollback.restore_started": "System restore started",
+  "rollback.restore_completed": "System restored successfully",
+
+  "dlna.started": "DLNA server started",
+  "dlna.stopped": "DLNA server stopped",
+  "dlna.config_updated": "DLNA configuration updated",
+
+  "totp.enabled": "Two-factor authentication enabled",
+  "totp.disabled": "Two-factor authentication disabled"
+}

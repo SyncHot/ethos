@@ -24,6 +24,11 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from host import data_path, log_path, ETHOS_ROOT
 from utils import load_json as _load_json, save_json as _save_json, register_pkg_routes
+from blueprints.remote_log_db import (
+    init_db, save_log, get_devices, get_device_logs, get_log_content, 
+    get_latest_log, delete_device_logs as db_delete_device_logs, 
+    delete_log as db_delete_log
+)
 
 remote_log_bp = Blueprint('remote_log', __name__)
 
@@ -341,6 +346,7 @@ def init_remote_log(socketio_instance):
     """Initialize remote logging background task."""
     global _socketio
     _socketio = socketio_instance
+    init_db()
     _load_config()
     _save_config()  # Ensure defaults written
     socketio_instance.start_background_task(_remote_log_loop)
@@ -414,20 +420,6 @@ def remote_log_status():
 #  Receiver — accept logs from other EthOS devices
 # ═══════════════════════════════════════════════════════════
 
-_DEVICE_LOG_DIR = None
-
-def _get_device_log_dir():
-    global _DEVICE_LOG_DIR
-    if _DEVICE_LOG_DIR is None:
-        _DEVICE_LOG_DIR = data_path('device_logs')
-        os.makedirs(_DEVICE_LOG_DIR, exist_ok=True)
-    return _DEVICE_LOG_DIR
-
-def _safe_id(s):
-    """Sanitize device ID for filesystem use."""
-    return _re_mod.sub(r'[^a-zA-Z0-9_-]', '', str(s))[:32]
-
-
 @remote_log_bp.route('/api/device-logs', methods=['POST'])
 def receive_device_logs():
     """Receive diagnostic report from a remote EthOS device."""
@@ -436,142 +428,80 @@ def receive_device_logs():
     except Exception:
         return jsonify({'error': 'Invalid JSON'}), 400
 
-    device_id = data.get('device_id', 'unknown')
-    reason = data.get('reason', 'unknown')
+    try:
+        filename = save_log(data)
+        
+        # Log to console
+        device_id = data.get('device_id', 'unknown')
+        reason = data.get('reason', 'unknown')
+        sys_info = data.get('system', {})
+        hostname = sys_info.get('hostname', '?')
+        version = sys_info.get('ethos_version', '?')
+        ip = sys_info.get('ip', '?')
+        errors = data.get('errors', [])
+        services = data.get('services', {})
+        failed = [s for s, v in services.items() if isinstance(v, dict) and v.get('active') == 'failed']
 
-    log_dir = _get_device_log_dir()
-    device_dir = os.path.join(log_dir, _safe_id(device_id))
-    os.makedirs(device_dir, exist_ok=True)
+        print(f'[device-log] {device_id[:12]}.. | {hostname} | {ip} | v{version} | {reason}'
+              + (f' | {len(errors)} err' if errors else '')
+              + (f' | FAIL: {",".join(failed)}' if failed else ''))
 
-    ts_slug = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-    filename = f'{ts_slug}_{reason}.json'
-    filepath = os.path.join(device_dir, filename)
-
-    with open(filepath, 'w') as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-
-    latest = os.path.join(device_dir, 'latest.json')
-    with open(latest, 'w') as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-
-    sys_info = data.get('system', {})
-    hostname = sys_info.get('hostname', '?')
-    version = sys_info.get('ethos_version', '?')
-    ip = sys_info.get('ip', '?')
-    errors = data.get('errors', [])
-    services = data.get('services', {})
-    failed = [s for s, v in services.items() if isinstance(v, dict) and v.get('active') == 'failed']
-
-    print(f'[device-log] {device_id[:12]}.. | {hostname} | {ip} | v{version} | {reason}'
-          + (f' | {len(errors)} err' if errors else '')
-          + (f' | FAIL: {",".join(failed)}' if failed else ''))
-
-    return jsonify({'ok': True, 'saved': filename})
+        return jsonify({'ok': True, 'saved': filename})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @remote_log_bp.route('/api/device-logs', methods=['GET'])
 def list_device_logs():
     """List all devices with latest report summary."""
-    log_dir = _get_device_log_dir()
-    devices = []
-    if not os.path.isdir(log_dir):
-        return jsonify({'devices': []})
-    for name in sorted(os.listdir(log_dir)):
-        device_dir = os.path.join(log_dir, name)
-        if not os.path.isdir(device_dir):
-            continue
-        latest = os.path.join(device_dir, 'latest.json')
-        info = {'device_id': name, 'reports': 0}
-        try:
-            info['reports'] = len([f for f in os.listdir(device_dir)
-                                   if f.endswith('.json') and f != 'latest.json'])
-        except Exception:
-            pass
-        if os.path.isfile(latest):
-            try:
-                with open(latest) as f:
-                    d = json.load(f)
-                si = d.get('system', {})
-                info['hostname'] = si.get('hostname', '?')
-                info['ip'] = si.get('ip', '?')
-                info['version'] = si.get('ethos_version', '?')
-                info['last_seen'] = d.get('timestamp', '?')
-                info['reason'] = d.get('reason', '?')
-                info['uptime_seconds'] = si.get('uptime_seconds', 0)
-                info['disk'] = si.get('disk_usage', '')
-                info['ram_mb'] = f"{si.get('ram_used_mb', '?')}/{si.get('ram_total_mb', '?')}"
-                info['kernel'] = si.get('kernel', '?')
-                info['arch'] = si.get('arch', '?')
-                info['installed_at'] = si.get('installed_at', '')
-                svcs = d.get('services', {})
-                info['failed_services'] = [s for s, v in svcs.items()
-                                           if isinstance(v, dict) and v.get('active') == 'failed']
-                info['error_count'] = len(d.get('errors', []))
-            except Exception:
-                pass
-        devices.append(info)
+    devices = get_devices()
     return jsonify({'devices': devices})
 
 
 @remote_log_bp.route('/api/device-logs/<device_id>')
 def device_log_detail(device_id):
     """Get latest report for a device."""
-    device_dir = os.path.join(_get_device_log_dir(), _safe_id(device_id))
-    latest = os.path.join(device_dir, 'latest.json')
-    if not os.path.isfile(latest):
+    log = get_latest_log(device_id)
+    if not log:
         return jsonify({'error': 'Device not found'}), 404
-    with open(latest) as f:
-        return jsonify(json.load(f))
+    return jsonify(log)
 
 
 @remote_log_bp.route('/api/device-logs/<device_id>/history')
 def device_log_history(device_id):
     """List all reports for a device."""
-    device_dir = os.path.join(_get_device_log_dir(), _safe_id(device_id))
-    if not os.path.isdir(device_dir):
-        return jsonify({'error': 'Device not found'}), 404
-    reports = []
-    for f in sorted(os.listdir(device_dir), reverse=True):
-        if f.endswith('.json') and f != 'latest.json':
-            fp = os.path.join(device_dir, f)
-            reason = f.rsplit('_', 1)[-1].replace('.json', '') if '_' in f else '?'
-            reports.append({
-                'filename': f,
-                'size': os.path.getsize(fp),
-                'reason': reason,
-            })
+    reports = get_device_logs(device_id)
+    # If no reports but device exists? get_device_logs returns [] if device not found or no logs
+    # But for API consistency we might want 404 if device strictly doesn't exist?
+    # For now, empty list is fine or we can check if reports is empty
+    if not reports:
+         # Double check if device exists at all? 
+         # Optimization: just return empty list or 404 if user expects 404
+         pass
+         
     return jsonify({'device_id': device_id, 'reports': reports})
 
 
 @remote_log_bp.route('/api/device-logs/<device_id>/<filename>')
 def device_log_report(device_id, filename):
     """Get a specific historical report."""
-    if '..' in filename or '/' in filename:
-        return jsonify({'error': 'Invalid'}), 400
-    filepath = os.path.join(_get_device_log_dir(), _safe_id(device_id), filename)
-    if not os.path.isfile(filepath):
+    content = get_log_content(device_id, filename)
+    if not content:
         return jsonify({'error': 'Not found'}), 404
-    with open(filepath) as f:
-        return jsonify(json.load(f))
+    return jsonify(content)
 
 
 @remote_log_bp.route('/api/device-logs/<device_id>', methods=['DELETE'])
 def delete_device_logs(device_id):
     """Delete all logs for a device."""
-    device_dir = os.path.join(_get_device_log_dir(), _safe_id(device_id))
-    if os.path.isdir(device_dir):
-        _shutil.rmtree(device_dir)
+    db_delete_device_logs(device_id)
     return jsonify({'ok': True})
 
 
 @remote_log_bp.route('/api/device-logs/<device_id>/<filename>', methods=['DELETE'])
 def delete_device_report(device_id, filename):
     """Delete a specific report."""
-    if '..' in filename or '/' in filename:
-        return jsonify({'error': 'Invalid'}), 400
-    filepath = os.path.join(_get_device_log_dir(), _safe_id(device_id), filename)
-    if os.path.isfile(filepath):
-        os.remove(filepath)
+    db_delete_log(device_id, filename)
     return jsonify({'ok': True})
 
 
@@ -580,7 +510,7 @@ def delete_device_report(device_id, filename):
 register_pkg_routes(
     remote_log_bp,
     install_message='Zdalne logi gotowe.',
-    wipe_files=[CONFIG_FILE],
-    wipe_dirs=[data_path('device_logs')],
+    wipe_files=[CONFIG_FILE, data_path('remote_logs.db')],
+    wipe_dirs=[],
     url_prefix='/api/remote-log',
 )

@@ -713,8 +713,10 @@ def mount_drive():
         mount_opts = f"rw,uid={uid},gid={gid},umask=000,nofail,remove_hiberfile"
     elif fstype in ("vfat", "exfat"):
         mount_opts = f"rw,uid={uid},gid={gid},umask=000,nofail"
-    elif fstype in ("ext4", "ext3", "ext2", "xfs", "btrfs"):
-        mount_opts = "defaults,nofail"
+    elif fstype in ("ext4", "ext3", "ext2"):
+        mount_opts = "defaults,nofail,noatime,commit=60"
+    elif fstype in ("xfs", "btrfs"):
+        mount_opts = "defaults,nofail,noatime"
     else:
         mount_opts = "rw,nofail"
 
@@ -737,15 +739,64 @@ def mount_drive():
         host_run(f"chmod 0777 {Q(mount_path)}")
         host_run(f"chown {uid}:{gid} {Q(mount_path)}")
 
+    auto_mount = data.get("auto_mount", False)
+    if auto_mount and uuid:
+        _fstab_add(uuid, mount_path, fstype, mount_opts)
+
     return jsonify({
         "success": True,
         "device": f"/dev/{drive_name}",
         "mountpoint": mount_path,
         "fstype": fstype,
+        "auto_mount": bool(auto_mount and uuid),
     })
 
 
-# /mount-path endpoint removed — fstab no longer managed
+def _fstab_add(uuid, mount_path, fstype, opts):
+    """Add a UUID-based fstab entry with nofail. Idempotent."""
+    fstab = host_run("cat /etc/fstab").stdout or ""
+    marker = f"# ethos-auto:{mount_path}"
+    if marker in fstab or f"UUID={uuid}" in fstab:
+        return
+    line = f"UUID={uuid}  {mount_path}  {fstype}  {opts}  0  2  {marker}\n"
+    host_run(f"echo {Q(line)} >> /etc/fstab")
+
+
+def _fstab_remove(mount_path):
+    """Remove ethos-auto fstab entries for a mount point."""
+    escaped = mount_path.replace('/', '\\/')
+    marker = f"# ethos-auto:{escaped}"
+    host_run(f"sed -i '/{marker}/d' /etc/fstab 2>/dev/null || true")
+
+
+@storage_bp.route('/auto-mount', methods=['POST'])
+def toggle_auto_mount():
+    """Enable/disable auto-mount on boot for a drive."""
+    data = request.json or {}
+    mount_path = data.get("path", "").strip()
+    enable = data.get("enable", True)
+    if not mount_path:
+        return jsonify({"error": "path required"}), 400
+
+    if enable:
+        r = host_run(f"findmnt -n -o SOURCE {Q(mount_path)} 2>/dev/null")
+        device = r.stdout.strip()
+        if not device:
+            return jsonify({"error": "Not mounted"}), 400
+        uuid_r = host_run(f"lsblk -no UUID {Q(device)}")
+        uuid = uuid_r.stdout.strip()
+        fs_r = host_run(f"lsblk -no FSTYPE {Q(device)}")
+        fstype = fs_r.stdout.strip() or "auto"
+        if not uuid:
+            return jsonify({"error": "No UUID found"}), 400
+        opts = "defaults,nofail,noatime"
+        if fstype in ("ntfs", "ntfs3", "ntfs-3g"):
+            opts = "rw,uid=1000,gid=1000,umask=000,nofail"
+        _fstab_add(uuid, mount_path, fstype, opts)
+    else:
+        _fstab_remove(mount_path)
+
+    return jsonify({"ok": True, "auto_mount": enable})
 
 
 @storage_bp.route('/unmount', methods=['POST'])
@@ -937,6 +988,17 @@ if [ ! -f /etc/samba/smb.conf ] || ! grep -q 'map to guest' /etc/samba/smb.conf 
     unix extensions = yes
     wide links = no
     follow symlinks = yes
+
+    # Performance tuning
+    socket options = TCP_NODELAY IPTOS_LOWDELAY SO_RCVBUF=131072 SO_SNDBUF=131072
+    read raw = yes
+    write raw = yes
+    max xmit = 65535
+    dead time = 15
+    getwd cache = yes
+    use sendfile = yes
+    aio read size = 16384
+    aio write size = 16384
 SMBEOF
 fi
 echo '::STEP::Enabling Samba services...'
@@ -1272,6 +1334,9 @@ def nfs_install():
         if r.returncode != 0:
             return jsonify({"error": f"Instalacja nie powiodła się: {r.stderr[-200:]}"}), 500
     host_run("systemctl enable nfs-server && systemctl start nfs-server", timeout=15)
+    # Set optimal NFS thread count
+    host_run("sed -i 's/^RPCNFSDCOUNT=.*/RPCNFSDCOUNT=16/' /etc/default/nfs-kernel-server 2>/dev/null || echo 'RPCNFSDCOUNT=16' >> /etc/default/nfs-kernel-server")
+    host_run("systemctl restart nfs-server", timeout=15)
     return jsonify({"ok": True, "message": "NFS zainstalowany"})
 
 
@@ -1300,7 +1365,7 @@ def nfs_export_add():
     data = request.json or {}
     path = data.get("path", "").strip()
     network = data.get("network", "*").strip() or "*"
-    options = data.get("options", "rw,sync,no_subtree_check,no_root_squash,insecure").strip()
+    options = data.get("options", "rw,async,no_subtree_check,no_root_squash,insecure").strip()
     if not path or not os.path.isdir(path):
         return jsonify({"error": "Ścieżka nie istnieje"}), 400
 

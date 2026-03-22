@@ -1,0 +1,81 @@
+{
+  "auth.too_many_attempts": "Zbyt wiele prób. Odczekaj {remaining}s",
+  "auth.invalid_password": "Nieprawidłowe hasło",
+  "auth.invalid_credentials": "Nieprawidłowy login lub hasło",
+  "auth.account_locked": "Konto zablokowane",
+  "auth.unauthorized": "Brak autoryzacji",
+  "auth.no_permission": "Brak uprawnień",
+  "auth.no_app_permission": "Brak uprawnień do tej aplikacji",
+  "auth.password_change_required": "Wymagana zmiana hasła",
+  "auth.csrf_failed": "Weryfikacja CSRF nie powiodła się",
+  "auth.csrf_missing": "Brak tokenu CSRF",
+  "auth.totp_required": "Wymagane uwierzytelnianie dwuskładnikowe",
+  "auth.totp_invalid": "Nieprawidłowy kod 2FA",
+
+  "setup.username_required": "Nazwa użytkownika jest wymagana (min. {min} znaki)",
+  "setup.password_required": "Hasło jest wymagane (min. {min} znaki)",
+  "setup.password_default": "Hasło nie może być domyślne (\"ethos\")",
+  "setup.already_done": "Konfiguracja już zakończona",
+
+  "error.not_found": "Nie znaleziono",
+  "error.method_not_allowed": "Metoda niedozwolona",
+  "error.file_too_large": "Plik za duży",
+  "error.internal": "Wewnętrzny błąd serwera",
+  "error.path_not_found": "Ścieżka nie istnieje",
+  "error.path_required": "Ścieżka jest wymagana",
+  "error.invalid_input": "Nieprawidłowe dane wejściowe",
+
+  "files.copy_in_progress": "Operacja na plikach jest już w toku",
+  "files.no_access": "Brak dostępu do tej ścieżki",
+
+  "storage.already_mounted": "Ten dysk jest już zamontowany",
+  "storage.mount_failed": "Montowanie nie powiodło się",
+  "storage.not_mounted": "Nie zamontowany",
+  "storage.no_uuid": "Nie znaleziono UUID",
+
+  "backup.no_sources": "Nie podano źródeł kopii zapasowej",
+  "backup.destination_required": "Cel kopii zapasowej jest wymagany",
+
+  "docker.container_not_found": "Nie znaleziono kontenera",
+  "docker.image_pull_failed": "Nie udało się pobrać obrazu",
+
+  "settings.restart_scheduled": "Zaplanowano restart systemu",
+  "settings.shutdown_scheduled": "Zaplanowano wyłączenie systemu",
+
+  "notifications.channel_required": "Nazwa kanału jest wymagana",
+  "notifications.test_sent": "Wysłano powiadomienie testowe",
+
+  "dashboard.title": "Pulpit",
+  "dashboard.system_info": "Informacje o systemie",
+  "dashboard.cpu_usage": "Użycie CPU",
+  "dashboard.ram_usage": "Użycie RAM",
+  "dashboard.disk_usage": "Użycie dysku",
+  "dashboard.network": "Sieć",
+  "dashboard.services": "Usługi",
+
+  "cron.job_created": "Utworzono zadanie zaplanowane",
+  "cron.job_updated": "Zaktualizowano zadanie zaplanowane",
+  "cron.job_deleted": "Usunięto zadanie zaplanowane",
+  "cron.invalid_schedule": "Nieprawidłowy format harmonogramu",
+
+  "raid.array_created": "Utworzono macierz RAID",
+  "raid.array_removed": "Usunięto macierz RAID",
+  "raid.invalid_level": "Nieprawidłowy poziom RAID",
+  "raid.not_enough_disks": "Za mało dysków dla tego poziomu RAID",
+
+  "cloud_backup.job_started": "Rozpoczęto zadanie kopii zapasowej",
+  "cloud_backup.job_completed": "Kopia zapasowa zakończona pomyślnie",
+  "cloud_backup.job_failed": "Kopia zapasowa nie powiodła się",
+  "cloud_backup.provider_added": "Dodano dostawcę chmury",
+
+  "rollback.snapshot_created": "Utworzono migawkę systemu",
+  "rollback.restore_started": "Rozpoczęto przywracanie systemu",
+  "rollback.restore_completed": "System przywrócony pomyślnie",
+
+  "dlna.started": "Uruchomiono serwer DLNA",
+  "dlna.stopped": "Zatrzymano serwer DLNA",
+  "dlna.config_updated": "Zaktualizowano konfigurację DLNA",
+
+  "totp.enabled": "Włączono uwierzytelnianie dwuskładnikowe",
+  "totp.disabled": "Wyłączono uwierzytelnianie dwuskładnikowe"
+}
