@@ -7918,6 +7918,16 @@ def get_apps():
             'admin_only': True
         },
         {
+            'id': 'ups',
+            'name': 'UPS',
+            'icon': 'fa-battery-full',
+            'color': '#f59e0b',
+            'type': 'builtin',
+            'category': 'System',
+            'description': 'Status i zarządzanie zasilaczem awaryjnym UPS',
+            'admin_only': True
+        },
+        {
             'id': 'services',
             'name': 'Usługi',
             'icon': 'fa-cogs',
