@@ -66,8 +66,8 @@ AppRegistry['file-manager'] = function (appDef, launchOpts) {
         _dirSizePollInterval: 1500, // current poll interval (ms), grows with backoff
         // Lazy thumbnail IntersectionObserver
         _thumbObserver: null,
-        // Navigation lock to prevent concurrent navigateTo calls
-        _navigating: false,
+        // Navigation version counter — only the latest navigateTo renders
+        _navVersion: 0,
     };
 
     createWindow('file-manager', {
@@ -401,7 +401,10 @@ function renderFM(body, state) {
             </button>` : ''}
         `;
         sidebar.querySelectorAll('.fm-tree-item[data-path]').forEach(btn => {
-            btn.addEventListener('click', () => navigateTo(btn.dataset.path));
+            btn.addEventListener('click', () => {
+                console.log(`[FM] sidebar click: "${btn.textContent.trim()}" → path="${btn.dataset.path}"`);
+                navigateTo(btn.dataset.path);
+            });
         });
         sidebar.querySelector('#fm-open-dup-app')?.addEventListener('click', () => {
             const dupApp = NAS.apps?.find(a => a.id === 'duplicates') || { id: 'duplicates', name: t('Duplikaty zdjęć'), icon: 'fa-clone', color: '#a78bfa', type: 'builtin' };
@@ -533,7 +536,9 @@ function renderFM(body, state) {
     }
 
     function renderFileList() {
+        console.log(`[FM] renderFileList: path="${state.path}", items=${state.items?.length}`);
         const list = body.querySelector('#fm-file-list');
+        list.style.opacity = '1';  // restore from loading indicator
         // Set ARIA attributes on list container
         list.setAttribute('role', 'listbox');
         list.setAttribute('tabindex', '0');
@@ -1789,13 +1794,12 @@ function renderFM(body, state) {
     // (Duplicate Photo Finder is now a standalone app — see apps/duplicates.js)
 
     async function navigateTo(path) {
-        // Prevent concurrent navigations — wait for previous to finish
-        if (state._navigating) return;
-        state._navigating = true;
-        try { await _navigateToInner(path); } finally { state._navigating = false; }
-    }
-
-    async function _navigateToInner(path) {
+        // Bump version so any in-flight navigation knows it's stale
+        const myVersion = ++state._navVersion;
+        console.log(`[FM] navigateTo("${path}") v${myVersion}, current="${state.path}"`);
+        // Show loading indicator immediately so user sees response
+        const _fmList = body.querySelector('#fm-file-list');
+        if (_fmList) _fmList.style.opacity = '0.5';
         // Exit select mode on navigation
         if (state.selectMode) {
             state.selectMode = false;
@@ -1808,6 +1812,7 @@ function renderFM(body, state) {
             let data;
             if (path === '/__photo_favorites__') {
                 data = await api('/photos/favorites/files');
+                if (myVersion !== state._navVersion) return;
             } else if (path === '/__shared_with_me__') {
                 state.path = '/__shared_with_me__';
                 state.items = [];
@@ -1844,8 +1849,16 @@ function renderFM(body, state) {
                 if (_prefetched && (Date.now() - _prefetched.ts) < _FM_PREFETCH_TTL) {
                     data = _prefetched.data;
                     _fmPrefetchCache.delete(path);  // consume the cached entry
+                    console.log(`[FM] navigateTo: using PREFETCH cache for "${path}", ${data.items?.length} items`);
                 } else {
+                    console.log(`[FM] navigateTo: fetching API for "${path}"`);
                     data = await api(`/files/list?path=${encodeURIComponent(path)}`);
+                    console.log(`[FM] navigateTo: API returned path="${data?.path}", ${data?.items?.length} items`);
+                    // If a newer navigation started while we were waiting, bail out
+                    if (myVersion !== state._navVersion) {
+                        console.log(`[FM] navigateTo: STALE v${myVersion} (current v${state._navVersion}), bailing`);
+                        return;
+                    }
                 }
                 // Handle locked folder response
                 if (data.locked) {
@@ -1864,6 +1877,7 @@ function renderFM(body, state) {
             state._lastRealPath = data.path;  // remember for dup scanner
             state.items = data.items;
             state.selected.clear();
+            console.log(`[FM] navigateTo: loaded "${data.path}", ${data.items?.length} items (was "${oldPath}")`);
 
             // Restore focus if going up
             state.focusedIndex = -1;
