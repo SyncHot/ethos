@@ -22,7 +22,7 @@ const ASSETS_TO_CACHE = [
     '/js/apps/duplicates.js',
     '/js/apps/gallery.js',
     '/js/apps/editor.js',
-    '/js/apps/code_editor.js',
+    '/js/apps/code-editor.js',
     '/js/apps/downloads.js',
     '/js/apps/flasher.js',
     '/js/apps/builder.js',

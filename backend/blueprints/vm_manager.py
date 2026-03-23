@@ -354,7 +354,7 @@ def create_vm():
     }
     _save_vms(vms)
 
-    return jsonify({'ok': True, 'id': vm_id, 'message': f'VM "{name}" utworzona'})
+    return jsonify({'status': 'ok', 'id': vm_id, 'name': name})
 
 
 @vm_bp.route('/machines/<vm_id>', methods=['PUT'])
@@ -415,7 +415,7 @@ def delete_vm(vm_id):
 
     del vms[vm_id]
     _save_vms(vms)
-    return jsonify({'ok': True, 'message': f'VM usunięta'})
+    return jsonify({'status': 'ok'})
 
 
 # ═══════════════════════════════════════════════════════════
@@ -721,7 +721,7 @@ def stop_vm(vm_id):
 
     _stop_websockify(info)
     _running_vms.pop(vm_id, None)
-    return jsonify({'ok': True, 'message': 'VM zatrzymana'})
+    return jsonify({'status': 'ok'})
 
 
 @vm_bp.route('/machines/<vm_id>/restart', methods=['POST'])
@@ -827,7 +827,7 @@ def copy_builder_image():
         return jsonify({'error': f'Plik "{os.path.basename(src)}" już istnieje w obrazach VM'}), 409
     try:
         _shutil.copy2(real_src, dest)
-        return jsonify({'ok': True, 'message': f'Skopiowano {os.path.basename(src)}', 'name': os.path.basename(src)})
+        return jsonify({'status': 'ok', 'name': os.path.basename(src)})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -938,7 +938,7 @@ def resize_disk(vm_id):
     try:
         r = host_run(f'qemu-img resize "{disk_file}" {new_size}', timeout=30)
         if r.returncode == 0:
-            return jsonify({'ok': True, 'message': f'Dysk powiększony o {new_size}'})
+            return jsonify({'status': 'ok', 'new_size': new_size})
         return jsonify({'error': r.stderr}), 500
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -1009,7 +1009,7 @@ def create_snapshot(vm_id):
     try:
         r = host_run(f'qemu-img snapshot -c "{tag}" "{disk_file}"', timeout=30)
         if r.returncode == 0:
-            return jsonify({'ok': True, 'message': f'Snapshot "{tag}" utworzony'})
+            return jsonify({'status': 'ok', 'snapshot': tag})
         return jsonify({'error': r.stderr}), 500
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -1033,7 +1033,7 @@ def restore_snapshot(vm_id, tag):
     try:
         r = host_run(f'qemu-img snapshot -a "{safe_tag}" "{disk_file}"', timeout=30)
         if r.returncode == 0:
-            return jsonify({'ok': True, 'message': f'Snapshot "{safe_tag}" przywrócony'})
+            return jsonify({'status': 'ok', 'snapshot': safe_tag})
         return jsonify({'error': r.stderr}), 500
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -1091,7 +1091,7 @@ def convert_image():
     try:
         r = host_run(f'qemu-img convert -O {target_format} "{source_real}" "{dest}"', timeout=600)
         if r.returncode == 0:
-            return jsonify({'ok': True, 'output': dest, 'message': f'Skonwertowano do {target_format}'})
+            return jsonify({'status': 'ok', 'output': dest, 'target_format': target_format})
         return jsonify({'error': r.stderr}), 500
     except subprocess.TimeoutExpired:
         return jsonify({'error': 'Konwersja przekroczyła limit czasu (10 min)'}), 500

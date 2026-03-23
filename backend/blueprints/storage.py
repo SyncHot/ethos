@@ -1506,12 +1506,12 @@ def dlna_rescan():
 def dlna_pkg_install():
     r = host_run("command -v minidlnad")
     if r.returncode == 0:
-        return jsonify({'ok': True, 'message': 'MiniDLNA jest już zainstalowany.'})
+        return jsonify({'status': 'ok', 'installed': True})
     ok, msg = claim_dep('minidlnad', 'sharing-dlna')
     if not ok:
         return jsonify({'ok': False, 'error': msg or 'Instalacja MiniDLNA nie powiodła się'}), 500
     host_run("systemctl enable minidlna", timeout=10)
-    return jsonify({'ok': True, 'message': 'MiniDLNA zainstalowany.'})
+    return jsonify({'status': 'ok'})
 
 
 @storage_bp.route('/dlna/pkg-uninstall', methods=['POST'])
@@ -1596,7 +1596,7 @@ def sftp_pkg_install():
              "echo 'Subsystem sftp /usr/lib/openssh/sftp-server' >> /etc/ssh/sshd_config")
     host_run("sed -i 's/^#Subsystem.*sftp/Subsystem sftp \\/usr\\/lib\\/openssh\\/sftp-server/g' /etc/ssh/sshd_config")
     host_run("systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null", timeout=10)
-    return jsonify({'ok': True, 'message': 'SFTP włączony.'})
+    return jsonify({'status': 'ok'})
 
 
 @storage_bp.route('/sftp/pkg-uninstall', methods=['POST'])
@@ -1769,12 +1769,12 @@ def webdav_remove():
 def webdav_pkg_install():
     r = host_run("command -v lighttpd")
     if r.returncode == 0:
-        return jsonify({'ok': True, 'message': 'WebDAV (lighttpd) jest już zainstalowany.'})
+        return jsonify({'status': 'ok', 'installed': True})
     ok, msg = claim_dep('lighttpd', 'sharing-webdav')
     if not ok:
         return jsonify({'ok': False, 'error': msg or 'Instalacja lighttpd nie powiodła się'}), 500
     host_run("lighttpd-enable-mod webdav 2>/dev/null || true")
-    return jsonify({'ok': True, 'message': 'WebDAV zainstalowany.'})
+    return jsonify({'status': 'ok'})
 
 
 @storage_bp.route('/webdav/pkg-uninstall', methods=['POST'])
@@ -1861,12 +1861,12 @@ def ftp_toggle():
 def ftp_pkg_install():
     r = host_run("command -v vsftpd")
     if r.returncode == 0:
-        return jsonify({'ok': True, 'message': 'FTP (vsftpd) jest już zainstalowany.'})
+        return jsonify({'status': 'ok', 'installed': True})
     ok, msg = claim_dep('vsftpd', 'sharing-ftp')
     if not ok:
         return jsonify({'ok': False, 'error': msg or 'Instalacja vsftpd nie powiodła się'}), 500
     host_run("systemctl enable vsftpd && systemctl restart vsftpd", timeout=10)
-    return jsonify({'ok': True, 'message': 'FTP zainstalowany.'})
+    return jsonify({'status': 'ok'})
 
 
 @storage_bp.route('/ftp/pkg-uninstall', methods=['POST'])
