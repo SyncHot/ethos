@@ -684,7 +684,7 @@ def start_vm(vm_id):
             'vnc_display': vnc_display,
             'ws_port': _running_vms[vm_id].get('ws_port'),
             'kvm': kvm,
-            'message': f'VM uruchomiona (VNC: :{vnc_display})',
+            'message': f'VM started (VNC: :{vnc_display})',
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -1021,7 +1021,7 @@ def create_snapshot(vm_id):
 def restore_snapshot(vm_id, tag):
     """Restore a disk snapshot (VM must be stopped)."""
     if _check_vm_process(vm_id):
-        return jsonify({'error': 'Zatrzymaj VM przed przywracaniem snapshotu'}), 409
+        return jsonify({'error': 'Stop VM before restoring snapshot'}), 409
 
     vms = _load_vms()
     vm = vms.get(vm_id)

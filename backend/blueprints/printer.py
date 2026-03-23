@@ -867,14 +867,14 @@ def api_print():
 
     file = request.files['file']
     if file.filename == '':
-        return jsonify({'success': False, 'error': 'Nie wybrano pliku'}), 400
+        return jsonify({'success': False, 'error': 'No file selected'}), 400
 
     if not allowed_file(file.filename):
         return jsonify({'success': False, 'error': f'Unsupported format. Allowed: {", ".join(sorted(ALLOWED_EXTENSIONS))}'}), 400
 
     printer = request.form.get('printer')
     if not printer:
-        return jsonify({'success': False, 'error': 'Nie wybrano drukarki'}), 400
+        return jsonify({'success': False, 'error': 'No printer selected'}), 400
 
     wake_printer(printer)
 
