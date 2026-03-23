@@ -1071,7 +1071,7 @@ function renderFM(body, state) {
         async function deleteCurrent() {
             const file = mediaFiles[currentIdx];
             if (!file) return;
-            const sure = await confirmDialog(t('Usuń'), `Czy na pewno usunąć "${file.name}"?`);
+            const sure = await confirmDialog(t('Usuń'), `${t('Czy na pewno usunąć')} "${file.name}"?`);
             if (!sure) return;
             await _doDelete(file);
         }
@@ -1650,12 +1650,12 @@ function renderFM(body, state) {
 
         // Restore all
         list.querySelector('.fm-trash-restore-all')?.addEventListener('click', async () => {
-            const sure = await confirmDialog(t('Przywróć wszystko'), `Przywrócić ${items.length} elementów z kosza?`);
+            const sure = await confirmDialog(t('Przywróć wszystko'), `${t('Przywrócić')} ${items.length} ${t('elementów z kosza?')}`);
             if (!sure) return;
             try {
                 const r = await api('/files/trash/restore', { method: 'POST', body: { trash_ids: items.map(i => i.trash_id) } });
-                toast(`Przywrócono ${(r.restored || []).length} elementów`, 'success');
-                if (r.errors?.length) toast(`Błędy: ${r.errors.join(', ')}`, 'warning');
+                toast(`${t('Przywrócono')} ${(r.restored || []).length} ${t('elementów')}`, 'success');
+                if (r.errors?.length) toast(`${t('Błędy:')} ${r.errors.join(', ')}`, 'warning');
                 renderTrashView();
             } catch { toast(t('Błąd przywracania'), 'error'); }
         });
@@ -1666,7 +1666,7 @@ function renderFM(body, state) {
             if (!sure) return;
             try {
                 const r = await api('/files/trash/empty', { method: 'POST' });
-                toast(`Kosz opróżniony (${r.removed || 0} elementów)`, 'success');
+                toast(`${t('Kosz opróżniony')} (${r.removed || 0} ${t('elementów')})`, 'success');
                 renderTrashView();
             } catch { toast(t('Błąd opróżniania kosza'), 'error'); }
         });
@@ -1677,7 +1677,7 @@ function renderFM(body, state) {
                 const tid = btn.dataset.trashId;
                 try {
                     const r = await api('/files/trash/restore', { method: 'POST', body: { trash_ids: [tid] } });
-                    toast(`Przywrócono: ${(r.restored || []).join(', ')}`, 'success');
+                    toast(`${t('Przywrócono:')} ${(r.restored || []).join(', ')}`, 'success');
                     if (r.errors?.length) toast(r.errors.join(', '), 'warning');
                     renderTrashView();
                 } catch { toast(t('Błąd przywracania'), 'error'); }
@@ -1728,7 +1728,7 @@ function renderFM(body, state) {
             <div class="fm-trash-header">
                 <div class="fm-trash-info">
                     <i class="fas fa-share-alt app-icon-share"></i>
-                    Pliki i foldery udostępnione Ci przez innych użytkowników.
+                    ${t('Pliki i foldery udostępnione Ci przez innych użytkowników.')}
                 </div>
             </div>
             <div class="fm-trash-items">
@@ -1747,7 +1747,7 @@ function renderFM(body, state) {
                                 </div>
                             </div>
                             <div class="fm-trash-item-actions">
-                                <button class="fm-trash-btn fm-shared-open" data-share-token="${s.token}" title="Otwórz">
+                                <button class="fm-trash-btn fm-shared-open" data-share-token="${s.token}" title="${t('Otwórz')}">
                                     <i class="fas fa-external-link-alt"></i>
                                 </button>
                             </div>
@@ -1975,7 +1975,7 @@ function renderFM(body, state) {
         let cancelled = false;
 
         const allDone = () => {
-            finishFileOpProgress(true, { channel: 'fm', message: `Przesłano ${total} plik(ów)` });
+            finishFileOpProgress(true, { channel: 'fm', message: `${t('Przesłano')} ${total} ${t('plik(ów)')}` });
             _fmPrefetchCache.delete(state.path);
             navigateTo(state.path);
         };
@@ -2035,7 +2035,7 @@ function renderFM(body, state) {
         let done = 0;
 
         const allDone = () => {
-            finishFileOpProgress(true, { channel: 'fm', message: `Przesłano ${total} plik(ów)` });
+            finishFileOpProgress(true, { channel: 'fm', message: `${t('Przesłano')} ${total} ${t('plik(ów)')}` });
             _fmPrefetchCache.delete(state.path);
             navigateTo(state.path);
         };
@@ -2273,7 +2273,7 @@ function renderFM(body, state) {
                     if (e.message === 'abort') return 'abort';
                     retries++;
                     if (retries >= _CHUNK_MAX_RETRIES) {
-                        toast(`Błąd przesyłania fragmentu ${i + 1}/${numChunks}: ${e.message}`, 'error');
+                        toast(`${t('Błąd przesyłania fragmentu')} ${i + 1}/${numChunks}: ${e.message}`, 'error');
                         try { await api('/files/upload-abort', { method: 'POST', body: { session_id: sessionId } }); } catch {}
                         return false;
                     }
@@ -2359,7 +2359,7 @@ function renderFM(body, state) {
                     iframe.src = url;
                     document.body.appendChild(iframe);
                     setTimeout(() => { try { iframe.remove(); } catch(e) {} }, 120000);
-                    toast(`Pobieranie ${r.name || 'archiwum'} rozpoczęte`, 'success');
+                    toast(`${t('Pobieranie')} ${r.name || 'archiwum'} ${t('rozpoczęte')}`, 'success');
                 } else if (r.error) {
                     clearInterval(iv);
                     finishFileOpProgress(false, { channel: 'bg', message: r.error });
@@ -2402,7 +2402,7 @@ function renderFM(body, state) {
         const path = itemFullPath(oldName);
         try {
             await api('/files/rename', { method: 'POST', body: { path, new_name: newName } });
-            toast(`Zmieniono nazwę na "${newName}"`, 'success');
+            toast(`${t('Zmieniono nazwę na')} "${newName}"`, 'success');
             navigateTo(state.path);
         } catch {
             toast(t('Błąd zmiany nazwy'), 'error');
@@ -2525,7 +2525,7 @@ function renderFM(body, state) {
                 const count = (r.copied || []).length;
                 const skipCount = (r.skipped || []).length;
                 let msg = t('Copied') + ' ' + count + ' ' + t('item(s)');
-                if (skipCount) msg += `, pominięto ${skipCount}`;
+                if (skipCount) msg += `, ${t('pominięto')} ${skipCount}`;
                 toast(msg, 'success');
                 if (r.errors && r.errors.length) toast(r.errors.join('; '), 'warning');
             } else {
@@ -2540,7 +2540,7 @@ function renderFM(body, state) {
                 const count = (r.moved || []).length;
                 const skipCount = (r.skipped || []).length;
                 let msg = t('Moved') + ' ' + count + ' ' + t('item(s)');
-                if (skipCount) msg += `, pominięto ${skipCount}`;
+                if (skipCount) msg += `, ${t('pominięto')} ${skipCount}`;
                 toast(msg, 'success');
                 if (r.errors && r.errors.length) toast(r.errors.join('; '), 'warning');
                 state.clipboard = null;
@@ -2569,18 +2569,18 @@ function renderFM(body, state) {
                     <div class="modal-header"><i class="fas fa-exclamation-triangle app-hdr-icon app-hdr-icon--warning"></i>Konflikty przy ${modeLabel}</div>
                     <div class="modal-body">
                         <div class="app-desc">
-                            ${conflicts.length === 1 ? t('Poniższy element już istnieje') : `Poniższe ${conflicts.length} elementy już istnieją`} w docelowym folderze:
+                            ${conflicts.length === 1 ? t('Poniższy element już istnieje') : `${t('Poniższe')} ${conflicts.length} ${t('elementy już istnieją')}`} w docelowym folderze:
                         </div>
                         <div class="app-scroll-box">
                             ${listHtml}
                         </div>
-                        <div class="app-sublabel">Co chcesz zrobić?</div>
+                        <div class="app-sublabel">${t('Co chcesz zrobić?')}</div>
                     </div>
                     <div class="modal-footer app-row-wrap">
                         <button class="btn" id="conflict-cancel" class="app-mr-auto">Anuluj</button>
-                        <button class="btn" id="conflict-skip" title="Nie kopiuj istniejących"><i class="fas fa-forward"></i> Pomiń</button>
-                        <button class="btn" id="conflict-rename" title="Zachowaj oba z nową nazwą"><i class="fas fa-clone"></i> Zachowaj oba</button>
-                        <button class="btn btn-primary" id="conflict-overwrite" title="Zastąp istniejące"><i class="fas fa-sync-alt"></i> Nadpisz</button>
+                        <button class="btn" id="conflict-skip" title="${t('Nie kopiuj istniejących')}"><i class="fas fa-forward"></i> ${t('Pomiń')}</button>
+                        <button class="btn" id="conflict-rename" title="${t('Zachowaj oba z nową nazwą')}"><i class="fas fa-clone"></i> ${t('Zachowaj oba')}</button>
+                        <button class="btn btn-primary" id="conflict-overwrite" title="${t('Zastąp istniejące')}"><i class="fas fa-sync-alt"></i> ${t('Nadpisz')}</button>
                     </div>
                 </div>
             `;
@@ -2702,7 +2702,7 @@ function renderFM(body, state) {
             </div>
             <div style="display:flex;gap:10px;margin-bottom:12px">
                 <input type="text" id="fm-logs-search" placeholder="${t('Szukaj...')}" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border,#444);background:var(--bg-base,#181825);color:var(--text-primary)">
-                <select id="fm-logs-filter" class="fm-input" title="Kategoria logów">
+                <select id="fm-logs-filter" class="fm-input" title="${t('Kategoria logów')}">
                     <option value="">${t('Wszystkie')}</option>
                     <option value="files" selected>${t('Operacje plików')}</option>
                     <option value="security">${t('Bezpieczeństwo')}</option>
@@ -2949,7 +2949,7 @@ function renderFM(body, state) {
         // Build transfer dialog
         const selNames = [...state.selected];
         const selLabel = selNames.length > 3
-            ? `${selNames.slice(0, 3).join(', ')} +${selNames.length - 3} więcej`
+            ? `${selNames.slice(0, 3).join(', ')} +${selNames.length - 3} ${t('więcej')}`
             : selNames.join(', ');
 
         const result = await new Promise((resolve) => {
@@ -2969,7 +2969,7 @@ function renderFM(body, state) {
                         <select class="modal-input" id="transfer-server" class="app-mb-md">
                             ${servers.map(s => `<option value="${s.id}">${s.name} (${s.host})</option>`).join('')}
                         </select>
-                        <label class="modal-label">Ścieżka zdalna:</label>
+                        <label class="modal-label">${t('Ścieżka zdalna:')}</label>
                         <input class="modal-input" id="transfer-remote-path" value="${servers[0]?.remote_path || '~/'}" placeholder="np. ~/received">
                         <div class="app-hint app-mt-xs">
                             Folder docelowy na zdalnym serwerze. Zostanie utworzony automatycznie.
@@ -3030,13 +3030,13 @@ function renderFM(body, state) {
             const op = data.operation || '';
             if (op === 'download') return; // handled by fileop_download_ready
             const labels = { copy: 'Kopiowanie', move: 'Przenoszenie', compress: 'Kompresja', extract: 'Rozpakowywanie', transfer: 'Transfer do NAS' };
-            toast(`${labels[op] || 'Operacja'} zakończona: ${data.message || ''}`, 'success');
+            toast(`${labels[op] || t('Operacja')} ${t('zakończona:')} ${data.message || ''}`, 'success');
             navigateTo(state.path);
         });
         NAS.socket.on('fileop_error', (data) => {
             const op = data.operation || '';
             const labels = { copy: 'Kopiowanie', move: 'Przenoszenie', compress: 'Kompresja', extract: 'Rozpakowywanie', download: 'Pobieranie ZIP', transfer: 'Transfer do NAS' };
-            toast(`${labels[op] || 'Operacja'} — błąd: ${data.message || ''}`, 'error');
+            toast(`${labels[op] || t('Operacja')} — ${t('błąd:')} ${data.message || ''}`, 'error');
             navigateTo(state.path);
         });
         NAS.socket.on('fileop_download_ready', (data) => {
@@ -3066,13 +3066,13 @@ function renderFM(body, state) {
             overlay.className = 'modal-overlay';
             overlay.innerHTML = `
                 <div class="modal">
-                    <div class="modal-header"><i class="fas fa-link app-hdr-icon"></i>Udostępnij przez link</div>
+                    <div class="modal-header"><i class="fas fa-link app-hdr-icon"></i>${t('Udostępnij przez link')}</div>
                     <div class="modal-body">
                         <div class="app-mb-md">
                             <span class="app-label-muted">Plik/folder:</span><br>
                             <code class="app-path">${fullPath}</code>
                         </div>
-                        <label class="modal-label">Wygaśnięcie:</label>
+                        <label class="modal-label">${t('Wygaśnięcie:')}</label>
                         <select class="modal-input" id="share-link-expiry">
                             <option value="0">Nigdy</option>
                             <option value="1">1 godzina</option>
@@ -3083,7 +3083,7 @@ function renderFM(body, state) {
                         ${allUsers.length ? `
                         <div class="app-mt-md">
                             <label class="modal-label app-label-row">
-                                <input type="checkbox" id="share-link-user-toggle"> Udostępnij konkretnemu użytkownikowi
+                                <input type="checkbox" id="share-link-user-toggle"> ${t('Udostępnij konkretnemu użytkownikowi')}
                             </label>
                             <div id="share-link-users" class="app-user-list hidden">
                                 ${allUsers.map(u => `
@@ -3097,7 +3097,7 @@ function renderFM(body, state) {
                     </div>
                     <div class="modal-footer">
                         <button class="btn" id="share-link-cancel">Anuluj</button>
-                        <button class="btn btn-primary" id="share-link-ok"><i class="fas fa-link"></i> Utwórz link</button>
+                        <button class="btn btn-primary" id="share-link-ok"><i class="fas fa-link"></i> ${t('Utwórz link')}</button>
                     </div>
                 </div>
             `;
@@ -3146,7 +3146,7 @@ function renderFM(body, state) {
                 <div class="modal">
                     <div class="modal-header"><i class="fas fa-check-circle app-hdr-icon app-hdr-icon--success"></i>Link utworzony</div>
                     <div class="modal-body">
-                        <div class="app-note">Udostępniono: <strong>${name}</strong></div>
+                        <div class="app-note">${t('Udostępniono:')} <strong>${name}</strong></div>
                         ${isUserShare ? `<div class="app-note app-note--accent"><i class="fas fa-users"></i> Dla: ${result.shared_with.join(', ')}</div>` : ''}
                         <div class="app-row">
                             <input class="modal-input" id="share-link-url" value="${shareUrl}" readonly class="app-mono-input">
@@ -3207,24 +3207,24 @@ function renderFM(body, state) {
             overlay.className = 'modal-overlay';
             overlay.innerHTML = `
                 <div class="modal">
-                    <div class="modal-header">Udostępnij folder (Samba)</div>
+                    <div class="modal-header">${t('Udostępnij folder (Samba)')}</div>
                     <div class="modal-body">
                         <div class="app-mb-md">
-                            <span class="app-label-muted">Ścieżka:</span><br>
+                            <span class="app-label-muted">${t('Ścieżka:')}</span><br>
                             <code class="app-path">${fullPath}</code>
                         </div>
-                        <label class="modal-label">Nazwa udziału sieciowego:</label>
+                        <label class="modal-label">${t('Nazwa udziału sieciowego:')}</label>
                         <input class="modal-input" id="samba-share-name" value="${name}">
                         <div class="app-mt-md">
                             <label class="app-check-label app-check-label--secondary">
                                 <input type="checkbox" id="samba-guest-ok" checked class="app-checkbox">
-                                Dostęp jako gość (bez hasła)
+                                ${t('Dostęp jako gość (bez hasła)')}
                             </label>
                         </div>
                     </div>
                     <div class="modal-footer">
                         <button class="btn" id="samba-dlg-cancel">Anuluj</button>
-                        <button class="btn btn-primary" id="samba-dlg-ok">Udostępnij</button>
+                        <button class="btn btn-primary" id="samba-dlg-ok">${t('Udostępnij')}</button>
                     </div>
                 </div>
             `;
@@ -3256,7 +3256,7 @@ function renderFM(body, state) {
             if (resp.error) {
                 toast(t('Błąd: ') + resp.error, 'error');
             } else {
-                toast(`Folder "${name}" udostępniony jako „${result.shareName}"`, 'success');
+                toast(`${t('Folder')} "${name}" ${t('udostępniony jako')} "${result.shareName}"`, 'success');
                 await loadSambaShares();
                 renderFileList();
             }
@@ -3275,7 +3275,7 @@ function renderFM(body, state) {
         if (!share) { toast(t('Ten folder nie jest udostępniony'), 'error'); return; }
 
         const ok = await confirmDialog(t('Cofnij udostępnianie'),
-            `Czy na pewno chcesz cofnąć udostępnianie „${share.name}"?`);
+            `${t('Czy na pewno chcesz cofnąć udostępnianie')} "${share.name}"?`);
         if (!ok) return;
 
         try {
@@ -3286,7 +3286,7 @@ function renderFM(body, state) {
             if (resp.error) {
                 toast(t('Błąd: ') + resp.error, 'error');
             } else {
-                toast(`Udostępnianie „${share.name}" cofnięte`, 'success');
+                toast(`${t('Udostępnianie')} "${share.name}" ${t('cofnięte')}`, 'success');
                 await loadSambaShares();
                 renderFileList();
             }
@@ -4077,40 +4077,40 @@ function renderFM(body, state) {
         overlay.className = 'fm-shortcuts-overlay';
         overlay.setAttribute('role', 'dialog');
         overlay.setAttribute('aria-modal', 'true');
-        overlay.setAttribute('aria-label', 'Skróty klawiszowe');
+        overlay.setAttribute('aria-label', t('Skróty klawiszowe'));
         overlay.innerHTML = `
             <div class="fm-shortcuts-panel">
                 <div class="fm-shortcuts-header">
-                    <span><i class="fas fa-keyboard"></i> Skróty klawiszowe</span>
+                    <span><i class="fas fa-keyboard"></i> ${t('Skróty klawiszowe')}</span>
                     <button class="fm-shortcuts-close" aria-label="Zamknij"><i class="fas fa-times"></i></button>
                 </div>
                 <div class="fm-shortcuts-body">
                     <div class="fm-shortcuts-col">
                         <div class="fm-shortcuts-section">Nawigacja</div>
-                        <div class="fm-shortcut-row"><kbd>↑</kbd><kbd>↓</kbd> <span>Poruszaj się po liście</span></div>
-                        <div class="fm-shortcut-row"><kbd>←</kbd> <span>Folder nadrzędny</span></div>
-                        <div class="fm-shortcut-row"><kbd>→</kbd> <span>Otwórz folder</span></div>
-                        <div class="fm-shortcut-row"><kbd>Enter</kbd> <span>Otwórz plik/folder</span></div>
-                        <div class="fm-shortcut-row"><kbd>Backspace</kbd> <span>Folder nadrzędny</span></div>
+                        <div class="fm-shortcut-row"><kbd>↑</kbd><kbd>↓</kbd> <span>${t('Poruszaj się po liście')}</span></div>
+                        <div class="fm-shortcut-row"><kbd>←</kbd> <span>${t('Folder nadrzędny')}</span></div>
+                        <div class="fm-shortcut-row"><kbd>→</kbd> <span>${t('Otwórz folder')}</span></div>
+                        <div class="fm-shortcut-row"><kbd>Enter</kbd> <span>${t('Otwórz plik/folder')}</span></div>
+                        <div class="fm-shortcut-row"><kbd>Backspace</kbd> <span>${t('Folder nadrzędny')}</span></div>
                         <div class="fm-shortcut-row"><kbd>Home</kbd><kbd>End</kbd> <span>Pierwszy/ostatni</span></div>
-                        <div class="fm-shortcut-row"><kbd>PageUp</kbd><kbd>PageDown</kbd> <span>Strona wyników</span></div>
-                        <div class="fm-shortcut-row"><kbd>F5</kbd> <span>Odśwież</span></div>
+                        <div class="fm-shortcut-row"><kbd>PageUp</kbd><kbd>PageDown</kbd> <span>${t('Strona wyników')}</span></div>
+                        <div class="fm-shortcut-row"><kbd>F5</kbd> <span>${t('Odśwież')}</span></div>
                     </div>
                     <div class="fm-shortcuts-col">
                         <div class="fm-shortcuts-section">Zaznaczanie</div>
                         <div class="fm-shortcut-row"><kbd>Space</kbd> <span>Zaznacz/odznacz</span></div>
                         <div class="fm-shortcut-row"><kbd>Ctrl+A</kbd> <span>Zaznacz wszystko</span></div>
                         <div class="fm-shortcut-row"><kbd>Shift+↑↓</kbd> <span>Zaznacz zakres</span></div>
-                        <div class="fm-shortcut-row"><kbd>Shift+Home/End</kbd> <span>Zaznacz do końca</span></div>
+                        <div class="fm-shortcut-row"><kbd>Shift+Home/End</kbd> <span>${t('Zaznacz do końca')}</span></div>
                         <div class="fm-shortcut-row"><kbd>Escape</kbd> <span>${t('Deselect All')}</span></div>
                         <div class="fm-shortcuts-section" style="margin-top:10px">Operacje</div>
                         <div class="fm-shortcut-row"><kbd>Ctrl+C</kbd> <span>${t('Copy')}</span></div>
                         <div class="fm-shortcut-row"><kbd>Ctrl+X</kbd> <span>${t('Cut')}</span></div>
                         <div class="fm-shortcut-row"><kbd>Ctrl+V</kbd> <span>Wklej</span></div>
                         <div class="fm-shortcut-row"><kbd>Delete</kbd> <span>${t('Move to Trash')}</span></div>
-                        <div class="fm-shortcut-row"><kbd>F2</kbd> <span>Zmień nazwę</span></div>
+                        <div class="fm-shortcut-row"><kbd>F2</kbd> <span>${t('Zmień nazwę')}</span></div>
                         <div class="fm-shortcut-row"><kbd>Ctrl+N</kbd> <span>Nowy folder</span></div>
-                        <div class="fm-shortcut-row"><kbd>Ctrl+U</kbd> <span>Prześlij pliki</span></div>
+                        <div class="fm-shortcut-row"><kbd>Ctrl+U</kbd> <span>${t('Prześlij pliki')}</span></div>
                         <div class="fm-shortcut-row"><kbd>Ctrl+F</kbd> <span>Wyszukaj</span></div>
                         <div class="fm-shortcut-row"><kbd>F1</kbd> <span>Ten ekran pomocy</span></div>
                     </div>
@@ -4271,7 +4271,7 @@ function renderFM(body, state) {
                 state.page = 0;
                 renderFileList();
                 if (data.truncated) {
-                    toast(`Pokazano ${state.searchResults.length} wyników (więcej wyników obcięto)`, 'info');
+                    toast(`${t('Pokazano')} ${state.searchResults.length} ${t('wyników (więcej wyników obcięto)')}`, 'info');
                 }
             } catch {
                 toast(t('Błąd wyszukiwania'), 'error');
@@ -4387,7 +4387,7 @@ function renderFM(body, state) {
     async function calcDirSizes() {
         const dirs = state.items.filter(i => i.is_dir);
         if (!dirs.length) { toast(t('Brak folderów'), 'info'); return; }
-        toast(`Obliczanie rozmiaru ${dirs.length} folder(ów)...`, 'info');
+        toast(`${t('Obliczanie rozmiaru')} ${dirs.length} ${t('folder(ów)...')}`, 'info');
         const paths = dirs.map(d => itemFullPath(d));
         try {
             const data = await api('/files/dir-sizes', { method: 'POST', body: { paths } });
@@ -4521,7 +4521,7 @@ function renderFM(body, state) {
             renderAnaBreadcrumbs();
             if (anaState.activeTab === 'dirs') renderAnaDirs(); else renderAnaFiles();
         } catch (e) {
-            content.innerHTML = `<div class="app-empty app-empty--error"><i class="fas fa-exclamation-triangle app-spinner-lg"></i><div class="app-mt-md">Błąd: ${e.message}</div></div>`;
+            content.innerHTML = `<div class="app-empty app-empty--error"><i class="fas fa-exclamation-triangle app-spinner-lg"></i><div class="app-mt-md">${t('Błąd:')} ${e.message}</div></div>`;
         } finally { clearInterval(timerId); anaState.loading = false; }
     }
 
@@ -4533,7 +4533,7 @@ function renderFM(body, state) {
         const other = Math.max(0, anaState.totalSize - topSum);
         el.innerHTML = `
             <div class="app-summary-row">
-                <div class="app-stat-block"><div class="app-stat-hero">${data.total_size_human}</div><div class="app-sublabel">Łącznie</div></div>
+                <div class="app-stat-block"><div class="app-stat-hero">${data.total_size_human}</div><div class="app-sublabel">${t('Łącznie')}</div></div>
                 <div class="app-flex-fill-200">
                     <div class="app-bar-track">
                         ${top5.map((e, i) => `<div title="${e.name}: ${e.size_human} (${e.percent}%)" style="width:${e.percent}%;background:${palette[i]};min-width:${e.percent > 0.5 ? '2px' : '0'}"></div>`).join('')}
@@ -4753,7 +4753,7 @@ function renderDashboard(body) {
 
                 <div class="dash-card" id="dash-ram">
                     <div class="dash-card-header">
-                        <div class="dash-card-title"><i class="fas fa-memory"></i> Pamięć RAM</div>
+                        <div class="dash-card-title"><i class="fas fa-memory"></i> ${t('Pamięć RAM')}</div>
                     </div>
                     <div class="dash-gauge" id="dash-ram-gauge">
                         <svg viewBox="0 0 100 100" width="100" height="100">
@@ -4769,12 +4769,12 @@ function renderDashboard(body) {
 
                 <div class="dash-card" id="dash-net">
                     <div class="dash-card-header">
-                        <div class="dash-card-title"><i class="fas fa-network-wired"></i> Sieć</div>
+                        <div class="dash-card-title"><i class="fas fa-network-wired"></i> ${t('Sieć')}</div>
                     </div>
                     <div class="app-stats-row">
                         <div class="app-text-center">
                             <div class="app-sublabel">
-                                <i class="fas fa-arrow-up app-icon-success"></i> Wysyłanie
+                                <i class="fas fa-arrow-up app-icon-success"></i> ${t('Wysyłanie')}
                             </div>
                             <div class="app-stat-value" id="dash-net-up">0 B/s</div>
                         </div>
@@ -4896,7 +4896,7 @@ function renderDashboard(body) {
                         <div style="font-size:2em;color:var(--text-muted)"><i class="fas fa-plug-circle-xmark"></i> --%</div>
                         <div class="app-sublabel">Brak UPS</div>
                         <div class="app-stat-value" style="font-size:0.9em;margin-top:5px">
-                            Nie wykryto urządzenia
+                            ${t('Nie wykryto urządzenia')}
                         </div>
                     `;
                 }
@@ -4964,7 +4964,7 @@ function renderDashboard(body) {
                                 <span class="ddisk-pct" style="color:${color}">${Math.round(d.percent)}%</span>
                             </div>
                             <div class="ddisk-sizes">
-                                <span><b>${formatBytes(d.used)}</b> zajęte</span>
+                                <span><b>${formatBytes(d.used)}</b> ${t('zajęte')}</span>
                                 <span><b>${formatBytes(freeBytes)}</b> wolne</span>
                                 <span>z <b>${formatBytes(d.total)}</b></span>
                             </div>
@@ -5351,7 +5351,7 @@ function renderDockerManager(body) {
                     toast(`${name}: ${action}`, 'success');
                     setTimeout(async () => { await loadContainers(); fillContainersTable(); }, 1000);
                 } catch (err) {
-                    toast(`Błąd: ${action} ${name}`, 'error');
+                    toast(`${t('Błąd:')} ${action} ${name}`, 'error');
                 }
             });
         });
@@ -5525,8 +5525,8 @@ function renderDockerManager(body) {
                 db.innerHTML = `
                     <div class="dkr-stats-grid">
                         <div class="dkr-stat-card"><div class="dkr-stat-icon"><i class="fas fa-microchip"></i></div><div class="dkr-stat-label">CPU</div><div class="dkr-stat-value">${s.cpu || '—'}</div></div>
-                        <div class="dkr-stat-card"><div class="dkr-stat-icon"><i class="fas fa-memory"></i></div><div class="dkr-stat-label">Pamięć</div><div class="dkr-stat-value">${s.mem || '—'}</div><div class="dkr-stat-sub">${s.mem_perc || ''}</div></div>
-                        <div class="dkr-stat-card"><div class="dkr-stat-icon"><i class="fas fa-network-wired"></i></div><div class="dkr-stat-label">Sieć I/O</div><div class="dkr-stat-value">${s.net || '—'}</div></div>
+                        <div class="dkr-stat-card"><div class="dkr-stat-icon"><i class="fas fa-memory"></i></div><div class="dkr-stat-label">${t('Pamięć')}</div><div class="dkr-stat-value">${s.mem || '—'}</div><div class="dkr-stat-sub">${s.mem_perc || ''}</div></div>
+                        <div class="dkr-stat-card"><div class="dkr-stat-icon"><i class="fas fa-network-wired"></i></div><div class="dkr-stat-label">${t('Sieć I/O')}</div><div class="dkr-stat-value">${s.net || '—'}</div></div>
                         <div class="dkr-stat-card"><div class="dkr-stat-icon"><i class="fas fa-hdd"></i></div><div class="dkr-stat-label">Dysk I/O</div><div class="dkr-stat-value">${s.block || '—'}</div></div>
                         <div class="dkr-stat-card"><div class="dkr-stat-icon"><i class="fas fa-stream"></i></div><div class="dkr-stat-label">PID-y</div><div class="dkr-stat-value">${s.pids || '—'}</div></div>
                     </div>
@@ -5614,7 +5614,7 @@ function renderDockerManager(body) {
                             <div class="dkr-project-info">
                                 <span class="dkr-project-name"><i class="fas fa-layer-group"></i> ${esc(p.name)}${isProt ? ' <i class="fas fa-shield-alt app-shield-icon" title="Projekt chroniony"></i>' : ''}</span>
                                 <span class="dkr-project-status ${statusCls}">${statusLabel}</span>
-                                <span class="dkr-muted">${p.running}/${p.total} kontenerów</span>
+                                <span class="dkr-muted">${p.running}/${p.total} ${t('kontenerów')}</span>
                             </div>
                             <div class="dkr-project-actions">
                                 ${p.status !== 'running' ? `<button class="dkr-act-btn success" data-paction="up" title="Uruchom"><i class="fas fa-play"></i></button>` : ''}
@@ -5623,8 +5623,8 @@ function renderDockerManager(body) {
                                 <button class="dkr-act-btn" data-paction="pull" title="Pobierz obrazy"><i class="fas fa-download"></i></button>
                                 ${!isProt ? `<button class="dkr-act-btn danger" data-paction="down" title="Down"><i class="fas fa-power-off"></i></button>` : ''}
                                 <button class="dkr-compose-btn" data-project="${esc(p.name)}" title="docker-compose.yaml"><i class="fas fa-file-code"></i></button>
-                                <button class="dkr-logs-btn" data-project="${esc(p.name)}" data-services="${servicesData}" title="Logi kontenerów"><i class="fas fa-rectangle-list"></i></button>
-                                ${!isProt ? `<button class="dkr-act-btn danger dkr-delete-proj-btn" data-project="${esc(p.name)}" title="Usuń projekt"><i class="fas fa-trash-alt"></i></button>` : ''}
+                                <button class="dkr-logs-btn" data-project="${esc(p.name)}" data-services="${servicesData}" title="${t('Logi kontenerów')}"><i class="fas fa-rectangle-list"></i></button>
+                                ${!isProt ? `<button class="dkr-act-btn danger dkr-delete-proj-btn" data-project="${esc(p.name)}" title="${t('Usuń projekt')}"><i class="fas fa-trash-alt"></i></button>` : ''}
                             </div>
                         </div>
                         ${p.containers.length ? `<div class="dkr-project-containers">${p.containers.map(c => {
@@ -5660,7 +5660,7 @@ function renderDockerManager(body) {
                     try {
                         await api(`/docker/projects/${project}/action`, { method: 'POST', body: { action } });
                         toast(`${project}: ${action} OK`, 'success');
-                    } catch (err) { toast(`${project}: błąd ${action}`, 'error'); }
+                    } catch (err) { toast(`${project}: ${t('błąd')} ${action}`, 'error'); }
                     setTimeout(async () => { await loadProjects(); fillProjects(); }, 2000);
                 });
             });
@@ -5682,11 +5682,11 @@ function renderDockerManager(body) {
                     b.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
                     try {
                         await api(`/docker/projects/${project}`, { method: 'DELETE' });
-                        toast(`Projekt ${project} usunięty`, 'success');
+                        toast(`${t('Projekt')} ${project} ${t('usunięty')}`, 'success');
                         await loadProjects();
                         fillProjects();
                     } catch (err) {
-                        toast(`Błąd usuwania projektu ${project}`, 'error');
+                        toast(`${t('Błąd usuwania projektu')} ${project}`, 'error');
                         b.disabled = false;
                         b.innerHTML = '<i class="fas fa-trash-alt"></i>';
                     }
@@ -5782,7 +5782,7 @@ function renderDockerManager(body) {
                     <button class="dkr-modal-close" id="dkr-compose-close"><i class="fas fa-times"></i></button>
                 </div>
                 <div class="dkr-modal-body">
-                    <textarea class="dkr-compose-editor" id="dkr-compose-text" spellcheck="false">Ładowanie...</textarea>
+                    <textarea class="dkr-compose-editor" id="dkr-compose-text" spellcheck="false">${t('Ładowanie...')}</textarea>
                 </div>
                 <div class="dkr-modal-footer">
                     <button class="dkr-btn" id="dkr-compose-cancel">Anuluj</button>
@@ -5903,7 +5903,7 @@ services:
             <div class="dkr-toolbar">
                 <span class="dkr-toolbar-title"><i class="fas fa-clone"></i> Obrazy <span class="dkr-badge" id="dkr-img-count">0</span></span>
                 <input class="dkr-filter" id="dkr-img-filter" placeholder="Filtruj...">
-                <button class="dkr-btn danger" id="dkr-img-prune" title="Usuń nieużywane"><i class="fas fa-broom"></i> Wyczyść</button>
+                <button class="dkr-btn danger" id="dkr-img-prune" title="${t('Usuń nieużywane')}"><i class="fas fa-broom"></i> ${t('Wyczyść')}</button>
                 <button class="dkr-btn" id="dkr-img-refresh"><i class="fas fa-sync-alt"></i></button>
             </div>
             <div class="dkr-table-wrap">
@@ -5948,7 +5948,7 @@ services:
                     <td class="dkr-muted">${esc((i.id||'').replace('sha256:','').substring(0,12))}</td>
                     <td>${esc(i.size)}</td>
                     <td class="dkr-muted dkr-ellipsis">${esc(i.created)}</td>
-                    <td><button class="dkr-act-btn danger" data-imgdel="${esc(i.id)}" title="Usuń"><i class="fas fa-trash"></i></button></td>
+                    <td><button class="dkr-act-btn danger" data-imgdel="${esc(i.id)}" title="${t('Usuń')}"><i class="fas fa-trash"></i></button></td>
                 </tr>
             `).join('');
             tbody.querySelectorAll('[data-imgdel]').forEach(b => {
@@ -5972,7 +5972,7 @@ services:
             main.innerHTML = `
                 <div class="dkr-toolbar">
                     <span class="dkr-toolbar-title"><i class="fas fa-server"></i> Docker System</span>
-                    <button class="dkr-btn danger" id="dkr-vol-prune"><i class="fas fa-broom"></i> Wyczyść wolumeny</button>
+                    <button class="dkr-btn danger" id="dkr-vol-prune"><i class="fas fa-broom"></i> ${t('Wyczyść wolumeny')}</button>
                 </div>
                 <div class="dkr-system">
                     <div class="dkr-sys-grid">
@@ -5988,7 +5988,7 @@ services:
                             <div class="dkr-sys-card-title">Kontenery</div>
                             <div class="dkr-sys-big-num">${info.containers}</div>
                             <div class="dkr-sys-row">
-                                <span class="dkr-sys-label success"><i class="fas fa-play"></i> ${info.containers_running} działa</span>
+                                <span class="dkr-sys-label success"><i class="fas fa-play"></i> ${info.containers_running} ${t('działa')}</span>
                                 <span class="dkr-sys-label muted"><i class="fas fa-stop"></i> ${info.containers_stopped} zatrzym.</span>
                                 <span class="dkr-sys-label warning"><i class="fas fa-pause"></i> ${info.containers_paused} wstrzym.</span>
                             </div>
@@ -6001,7 +6001,7 @@ services:
                     ${info.disk_usage && info.disk_usage.length ? `
                         <div class="dkr-inspect-section"><h3>Wykorzystanie dysku</h3>
                         <table class="dkr-table dkr-table-compact">
-                            <thead><tr><th>Typ</th><th>Całkowity</th><th>Aktywne</th><th>Rozmiar</th><th>Do odzyskania</th></tr></thead>
+                            <thead><tr><th>${t('Typ')}</th><th>${t('Całkowity')}</th><th>${t('Aktywne')}</th><th>${t('Rozmiar')}</th><th>${t('Do odzyskania')}</th></tr></thead>
                             <tbody>${info.disk_usage.map(d => `
                                 <tr><td>${d.type}</td><td>${d.total}</td><td>${d.active}</td><td>${d.size}</td><td>${d.reclaimable}</td></tr>
                             `).join('')}</tbody>
@@ -6164,7 +6164,7 @@ function renderVMManager(body) {
                         ? `<button class="vm-btn vm-btn-sm vm-btn-warn" data-action="stop" data-id="${esc(vm.id)}" title="Zatrzymaj"><i class="fas fa-stop"></i></button>
                            <button class="vm-btn vm-btn-sm" data-action="restart" data-id="${esc(vm.id)}" title="Restart"><i class="fas fa-redo"></i></button>`
                         : `<button class="vm-btn vm-btn-sm vm-btn-success" data-action="start" data-id="${esc(vm.id)}" title="Uruchom"><i class="fas fa-play"></i></button>`}
-                    <button class="vm-btn vm-btn-sm vm-btn-danger" data-action="delete" data-id="${esc(vm.id)}" title="Usuń"><i class="fas fa-trash"></i></button>
+                    <button class="vm-btn vm-btn-sm vm-btn-danger" data-action="delete" data-id="${esc(vm.id)}" title="${t('Usuń')}"><i class="fas fa-trash"></i></button>
                 </td>
             </tr>`;
         }).join('');
@@ -6202,7 +6202,7 @@ function renderVMManager(body) {
             const r = await api(`/vm/machines/${id}/${action}`, { method: 'POST' });
             toast(r.message || `${action} OK`, 'success');
         } catch (e) {
-            toast(e.message || `Błąd: ${action}`, 'error');
+            toast(e.message || `${t('Błąd:')} ${action}`, 'error');
         }
     }
 
@@ -6272,7 +6272,7 @@ function renderVMManager(body) {
                 </div>
                 <div class="vm-modal-footer">
                     <button class="vm-btn" id="vm-modal-cancel">Anuluj</button>
-                    <button class="vm-btn vm-btn-primary" id="vm-modal-ok">Utwórz</button>
+                    <button class="vm-btn vm-btn-primary" id="vm-modal-ok">${t('Utwórz')}</button>
                 </div>
             </div>
         `;
@@ -6316,7 +6316,7 @@ function renderVMManager(body) {
 
         main.innerHTML = `
             <div class="vm-toolbar">
-                <button class="vm-btn" id="vm-back"><i class="fas fa-arrow-left"></i> Powrót</button>
+                <button class="vm-btn" id="vm-back"><i class="fas fa-arrow-left"></i> ${t('Powrót')}</button>
                 <span class="vm-toolbar-title app-ml-md">${esc(vm.name)}</span>
                 <span class="app-toolbar-actions">
                     ${running
@@ -6328,13 +6328,13 @@ function renderVMManager(body) {
             ${running && vm.ws_port ? `
             <div class="vm-vnc-bar">
                 <i class="fas fa-tv"></i>
-                <span>Konsola dostępna w zakładce <strong>Konsola</strong> poniżej</span>
+                <span>${t('Konsola dostępna w zakładce')} <strong>${t('Konsola')}</strong> ${t('poniżej')}</span>
                 <span class="vm-vnc-hint">VNC: ${location.hostname}:${vm.vnc_port} | WS: ${vm.ws_port}</span>
             </div>` : running && vm.vnc_port ? `
             <div class="vm-vnc-bar">
                 <i class="fas fa-tv"></i>
-                <span>VNC: <strong>${location.hostname}:${vm.vnc_port}</strong></span>
-                <span class="vm-vnc-hint">Połącz klientem VNC (np. TigerVNC, Remmina)</span>
+                <span>${t('VNC:')} <strong>${location.hostname}:${vm.vnc_port}</strong></span>
+                <span class="vm-vnc-hint">${t('Połącz klientem VNC (np. TigerVNC, Remmina)')}</span>
             </div>` : ''}
             <div class="vm-detail-tabs">
                 ${running && vm.ws_port ? `<div class="vm-dtab ${S.detailTab === 'console' ? 'active' : ''}" data-t="console"><i class="fas fa-tv"></i> Konsola</div>` : ''}
@@ -6406,7 +6406,7 @@ function renderVMManager(body) {
                 <div class="vm-console-toolbar">
                     <span><i class="fas fa-tv"></i> Konsola — ${esc(vm.name)}</span>
                     <a href="http://${wsHost}:${vm.ws_port}/vnc_lite.html?host=${wsHost}&port=${vm.ws_port}&autoconnect=true&resize=scale&reconnect=true" target="_blank" class="vm-btn vm-btn-sm" title="Otwórz w nowej karcie"><i class="fas fa-external-link-alt"></i></a>
-                    <button class="vm-btn vm-btn-sm" id="vm-console-fullscreen" title="Pełny ekran"><i class="fas fa-expand"></i></button>
+                    <button class="vm-btn vm-btn-sm" id="vm-console-fullscreen" title="${t('Pełny ekran')}"><i class="fas fa-expand"></i></button>
                 </div>
                 <iframe id="vm-console-frame" class="vm-console-iframe" src="${novncUrl}" allowfullscreen></iframe>
             </div>
@@ -6563,8 +6563,8 @@ function renderVMManager(body) {
                         <td>${esc(s.vm_size)}</td>
                         <td>${esc(s.date)} ${esc(s.time)}</td>
                         <td>
-                            <button class="vm-btn vm-btn-sm vm-btn-success" data-restore="${esc(s.tag)}" title="Przywróć"><i class="fas fa-undo"></i></button>
-                            <button class="vm-btn vm-btn-sm vm-btn-danger" data-del-snap="${esc(s.tag)}" title="Usuń"><i class="fas fa-trash"></i></button>
+                            <button class="vm-btn vm-btn-sm vm-btn-success" data-restore="${esc(s.tag)}" title="${t('Przywróć')}"><i class="fas fa-undo"></i></button>
+                            <button class="vm-btn vm-btn-sm vm-btn-danger" data-del-snap="${esc(s.tag)}" title="${t('Usuń')}"><i class="fas fa-trash"></i></button>
                         </td>
                     </tr>
                 `).join('')}</tbody>
@@ -6583,7 +6583,7 @@ function renderVMManager(body) {
 
         dc.querySelectorAll('[data-restore]').forEach(btn => {
             btn.addEventListener('click', async () => {
-                if (!confirm(`Przywrócić snapshot "${btn.dataset.restore}"?`)) return;
+                if (!confirm(`${t('Przywrócić snapshot')} "${btn.dataset.restore}"?`)) return;
                 try {
                     const r = await api(`/vm/machines/${vm.id}/snapshots/${encodeURIComponent(btn.dataset.restore)}`, { method: 'POST' });
                     toast(r.message || t('Snapshot przywrócony'), 'success');
@@ -6593,7 +6593,7 @@ function renderVMManager(body) {
 
         dc.querySelectorAll('[data-del-snap]').forEach(btn => {
             btn.addEventListener('click', async () => {
-                if (!confirm(`Usunąć snapshot "${btn.dataset.delSnap}"?`)) return;
+                if (!confirm(`${t('Usunąć snapshot')} "${btn.dataset.delSnap}"?`)) return;
                 try {
                     await api(`/vm/machines/${vm.id}/snapshots/${encodeURIComponent(btn.dataset.delSnap)}`, { method: 'DELETE' });
                     toast(t('Snapshot usunięty'), 'success');
@@ -6624,7 +6624,7 @@ function renderVMManager(body) {
                 <div class="vm-info-row"><span>Plik:</span><span class="vm-mono app-text-xs">${esc(d.filename)}</span></div>
             </div>
             <div class="app-mt-lg">
-                <button class="vm-btn vm-btn-primary vm-btn-sm" id="vm-disk-resize"><i class="fas fa-expand-arrows-alt"></i> Powiększ dysk</button>
+                <button class="vm-btn vm-btn-primary vm-btn-sm" id="vm-disk-resize"><i class="fas fa-expand-arrows-alt"></i> ${t('Powiększ dysk')}</button>
             </div>
         `;
 
@@ -6650,7 +6650,7 @@ function renderVMManager(body) {
             <div class="vm-toolbar">
                 <span class="vm-toolbar-title"><i class="fas fa-compact-disc"></i> Obrazy ISO/IMG <span class="vm-badge" id="vm-img-cnt">0</span></span>
                 <label class="vm-btn vm-btn-primary" id="vm-upload-label">
-                    <i class="fas fa-upload"></i> Prześlij obraz
+                    <i class="fas fa-upload"></i> ${t('Prześlij obraz')}
                     <input type="file" id="vm-upload-input" accept=".iso,.img,.raw,.qcow2,.vdi,.vmdk" class="hidden">
                 </label>
                 <button class="vm-btn" id="vm-img-refresh"><i class="fas fa-sync-alt"></i></button>
@@ -6697,13 +6697,13 @@ function renderVMManager(body) {
                 <td>${esc(img.type)}</td>
                 <td>${esc(img.size_human)}</td>
                 <td>${esc(img.modified)}</td>
-                <td><button class="vm-btn vm-btn-sm vm-btn-danger" data-del-img="${esc(img.name)}" title="Usuń"><i class="fas fa-trash"></i></button></td>
+                <td><button class="vm-btn vm-btn-sm vm-btn-danger" data-del-img="${esc(img.name)}" title="${t('Usuń')}"><i class="fas fa-trash"></i></button></td>
             </tr>
         `).join('');
 
         tbody.querySelectorAll('[data-del-img]').forEach(btn => {
             btn.addEventListener('click', async () => {
-                if (!confirm(`Usunąć obraz "${btn.dataset.delImg}"?`)) return;
+                if (!confirm(`${t('Usunąć obraz')} "${btn.dataset.delImg}"?`)) return;
                 try {
                     await api(`/vm/images/${encodeURIComponent(btn.dataset.delImg)}`, { method: 'DELETE' });
                     toast(t('Obraz usunięty'), 'success');
@@ -6729,14 +6729,14 @@ function renderVMManager(body) {
                 <td>${esc(img.size_human)}</td>
                 <td>${esc(img.modified)}</td>
                 <td>
-                    <button class="vm-btn vm-btn-sm vm-btn-primary" data-copy-builder="${esc(img.path)}" data-name="${esc(img.name)}" title="Kopiuj do obrazów VM"><i class="fas fa-copy"></i> Kopiuj</button>
+                    <button class="vm-btn vm-btn-sm vm-btn-primary" data-copy-builder="${esc(img.path)}" data-name="${esc(img.name)}" title="${t('Kopiuj do obrazów VM')}"><i class="fas fa-copy"></i> Kopiuj</button>
                 </td>
             </tr>
         `).join('');
         tbody.querySelectorAll('[data-copy-builder]').forEach(btn => {
             btn.addEventListener('click', async () => {
                 const name = btn.dataset.name;
-                if (!confirm(`Skopiować "${name}" do obrazów VM?\nPlik może być duży — to zajmie chwilę.`)) return;
+                if (!confirm(`${t('Skopiować')} "${name}" ${t('do obrazów VM?')}\n${t('Plik może być duży — to zajmie chwilę.')}`)) return;
                 btn.disabled = true;
                 btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Kopiowanie...';
                 try {
@@ -6813,7 +6813,7 @@ function renderVMManager(body) {
                 <div class="vm-info-card">
                     <h4><i class="fas fa-bolt"></i> KVM</h4>
                     <div class="vm-info-row">
-                        <span>Akceleracja sprzętowa:</span>
+                        <span>${t('Akceleracja sprzętowa:')}</span>
                         <span>${st.kvm
                             ? `<span class="app-text-ok"><i class="fas fa-check-circle"></i> ${t('Dostępna')}</span>`
                             : `<span class="app-text-warn"><i class="fas fa-exclamation-triangle"></i> ${t('Niedostępna (QEMU będzie wolniejszy)')}</span>`}</span>
@@ -6892,8 +6892,8 @@ function renderEventLog(body) {
                     </select>
                     <select id="elog-level-filter" class="elog-select" title="Poziom">
                         <option value="">Wszystkie poziomy</option>
-                        <option value="error">Błędy</option>
-                        <option value="warning">Ostrzeżenia</option>
+                        <option value="error">${t('Błędy')}</option>
+                        <option value="warning">${t('Ostrzeżenia')}</option>
                         <option value="info">Info</option>
                         <option value="debug">Debug</option>
                     </select>
@@ -6903,8 +6903,8 @@ function renderEventLog(body) {
                     </div>
                 </div>
                 <div class="elog-actions">
-                    <button class="elog-btn" id="elog-refresh" title="Odśwież"><i class="fas fa-sync-alt"></i></button>
-                    <button class="elog-btn elog-btn-danger" id="elog-clear" title="Wyczyść dziennik"><i class="fas fa-trash"></i> Wyczyść</button>
+                    <button class="elog-btn" id="elog-refresh" title="${t('Odśwież')}"><i class="fas fa-sync-alt"></i></button>
+                    <button class="elog-btn elog-btn-danger" id="elog-clear" title="${t('Wyczyść dziennik')}"><i class="fas fa-trash"></i> ${t('Wyczyść')}</button>
                 </div>
             </div>
             <div class="elog-stats" id="elog-stats"></div>
@@ -6969,7 +6969,7 @@ function renderEventLog(body) {
 
         // Update statusbar
         body.querySelector('#elog-statusbar').textContent =
-            `Wyświetlono ${state.events.length} z ${state.total} zdarzeń`;
+            `${t('Wyświetlono')} ${state.events.length} ${t('z')} ${state.total} ${t('zdarzeń')}`;
     }
 
     function escapeHtml(str) {
@@ -7006,7 +7006,7 @@ function renderEventLog(body) {
             renderEvents();
         } catch (e) {
             body.querySelector('#elog-list').innerHTML =
-                '<div class="elog-empty"><i class="fas fa-exclamation-triangle"></i><p>Błąd ładowania logów</p></div>';
+                `<div class="elog-empty"><i class="fas fa-exclamation-triangle"></i><p>${t('Błąd ładowania logów')}</p></div>`;
         }
     }
 
@@ -7133,7 +7133,7 @@ function renderAppStore(body) {
             applyFilter();
             render();
         } catch (e) {
-            body.innerHTML = `<div class="as-error">Błąd ładowania katalogu: ${e.message}</div>`;
+            body.innerHTML = `<div class="as-error">${t('Błąd ładowania katalogu:')} ${e.message}</div>`;
         }
     };
 
@@ -7207,10 +7207,10 @@ function renderAppStore(body) {
                 <option value="all">Wszystkie kat.</option>
                 ${S.categories.map(c => `<option value="${c}" ${c === S.category ? 'selected' : ''}>${c}</option>`).join('')}
             </select>
-            <button class="as-refresh-btn" title="Odśwież katalog"><i class="fas fa-sync-alt"></i></button>
-            <button class="as-repos-btn" title="Zarządzaj repozytoriami"><i class="fas fa-cog"></i></button>
+            <button class="as-refresh-btn" title="${t('Odśwież katalog')}"><i class="fas fa-sync-alt"></i></button>
+            <button class="as-repos-btn" title="${t('Zarządzaj repozytoriami')}"><i class="fas fa-cog"></i></button>
             ${S.cacheStats && S.cacheStats.catalog_age_seconds !== null
-                ? `<span class="as-cache-meta" title="Czas od ostatniego odświeżenia cache">
+                ? `<span class="as-cache-meta" title="${t('Czas od ostatniego odświeżenia cache')}">
                         <i class="fas fa-clock"></i> Cache: ${formatAge(S.cacheStats.catalog_age_seconds)} temu
                    </span>`
                 : ''}
@@ -7285,7 +7285,7 @@ function renderAppStore(body) {
                 <div class="as-card-footer">
                     ${app.repo_name ? `<span class="as-card-repo">${app.repo_name}</span>` : ''}
                     ${(app.host_ports && app.host_ports.length) ? `<a class="as-card-port" href="http://${location.hostname}:${app.host_ports[0]}" target="_blank" rel="noopener" title="Port :${app.host_ports[0]}">:${app.host_ports[0]}</a>` : (app.port_map ? `<a class="as-card-port" href="http://${location.hostname}:${app.port_map}" target="_blank" rel="noopener" title="Otwórz :${app.port_map}">:${app.port_map}</a>` : '')}
-                    ${app.service_count > 1 ? `<span class="as-card-svc" title="${app.service_count} serwisów"><i class="fas fa-layer-group"></i> ${app.service_count}</span>` : ''}
+                    ${app.service_count > 1 ? `<span class="as-card-svc" title="${app.service_count} ${t('serwisów')}"><i class="fas fa-layer-group"></i> ${app.service_count}</span>` : ''}
                     ${app.installed ? `<span class="as-badge-installed">${t('Zainstalowana')}</span>` : ''}
                 </div>
             `;
@@ -7490,7 +7490,7 @@ function renderAppStore(body) {
              if (!val) { warningEl.textContent = ''; warningEl.classList.add('hidden'); return; }
              const sensitive = ['/', '/usr', '/etc', '/var', '/boot', '/proc', '/sys', '/dev'];
              if (sensitive.some(s => val === s || val.startsWith(s + '/'))) {
-                 warningEl.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Ścieżka systemowa!';
+                 warningEl.innerHTML = '<i class="fas fa-exclamation-triangle"></i> ' + t('Ścieżka systemowa!');
                  warningEl.classList.remove('hidden');
              } else {
                  warningEl.classList.add('hidden');
@@ -7721,7 +7721,7 @@ function renderAppStore(body) {
         try {
             S.allRepos = await api('/appstore/repos');
         } catch (e) {
-            body.innerHTML = `<div class="as-error">Błąd: ${e.message}</div>`;
+            body.innerHTML = `<div class="as-error">${t('Błąd:')} ${e.message}</div>`;
             return;
         }
 
@@ -7731,7 +7731,7 @@ function renderAppStore(body) {
         toolbar.className = 'as-toolbar';
         toolbar.innerHTML = `
             <button class="as-btn" id="as-repos-back"><i class="fas fa-arrow-left"></i> Katalog</button>
-            <span class="as-toolbar-title"><i class="fas fa-database"></i> Zarządzanie repozytoriami</span>
+            <span class="as-toolbar-title"><i class="fas fa-database"></i> ${t('Zarządzanie repozytoriami')}</span>
             <button class="as-btn as-btn-install" id="as-repos-add"><i class="fas fa-plus"></i> Dodaj</button>
         `;
         body.appendChild(toolbar);
@@ -7763,7 +7763,7 @@ function renderAppStore(body) {
                         <input type="checkbox" ${repo.enabled ? 'checked' : ''} data-repoid="${repo.id}">
                         <span class="as-toggle-slider"></span>
                     </label>
-                    <button class="as-repo-del-btn" data-repoid="${repo.id}" title="Usuń"><i class="fas fa-trash"></i></button>
+                    <button class="as-repo-del-btn" data-repoid="${repo.id}" title="${t('Usuń')}"><i class="fas fa-trash"></i></button>
                 </div>
             `;
             list.appendChild(row);
@@ -7795,10 +7795,10 @@ function renderAppStore(body) {
             btn.addEventListener('click', async () => {
                 const repoId = btn.dataset.repoid;
                 const repo = S.allRepos.find(r => r.id === repoId);
-                if (!confirm(`Usunąć repozytorium "${repo?.name || repoId}"?`)) return;
+                if (!confirm(`${t('Usunąć repozytorium')} "${repo?.name || repoId}"?`)) return;
                 try {
                     await api(`/appstore/repos/${repoId}`, { method: 'DELETE' });
-                    toast(`Usunięto ${repo?.name || repoId}`, 'success');
+                    toast(`${t('Usunięto')} ${repo?.name || repoId}`, 'success');
                     renderReposView();
                 } catch (e) {
                     toast(t('Błąd usuwania'), 'error');
@@ -7830,7 +7830,7 @@ function renderAppStore(body) {
                     <label class="as-form-label">URL do ZIP</label>
                     <input type="text" class="as-form-input" id="as-repo-add-url"
                            placeholder="https://github.com/user/repo/archive/refs/heads/main.zip">
-                    <div class="as-form-hint">Repozytorium musi zawierać katalog Apps/ ze strukturą CasaOS</div>
+                    <div class="as-form-hint">${t('Repozytorium musi zawierać katalog Apps/ ze strukturą CasaOS')}</div>
                 </div>
                 <div id="as-repo-add-error" class="app-error-text hidden"></div>
             </div>
@@ -7878,7 +7878,7 @@ function renderAppStore(body) {
             S.packages = await api('/ethos-packages');
             render();
         } catch (e) {
-            body.innerHTML = `<div class="as-error">Błąd ładowania pakietów: ${e.message}</div>`;
+            body.innerHTML = `<div class="as-error">${t('Błąd ładowania pakietów:')} ${e.message}</div>`;
         }
     };
 
@@ -7890,7 +7890,7 @@ function renderAppStore(body) {
                 <div class="gp-header-icon"><i class="fas fa-cube"></i></div>
                 <div>
                     <h3 class="gp-title">Pakiety EthOS</h3>
-                    <p class="gp-subtitle">Zarządzaj wbudowanymi rozszerzeniami systemu. Zainstaluj lub odinstaluj pakiety według potrzeb.</p>
+                    <p class="gp-subtitle">${t('Zarządzaj wbudowanymi rozszerzeniami systemu. Zainstaluj lub odinstaluj pakiety według potrzeb.')}</p>
                 </div>
             </div>
             <div class="gp-grid" id="gp-grid">
@@ -7907,11 +7907,11 @@ function renderAppStore(body) {
                         </div>
                         <div class="gp-card-actions">
                             ${pkg.installed
-                                ? `<span class="gp-status gp-status-on"><i class="fas fa-check-circle"></i> Zainstalowany</span>
-                                   <button class="gp-btn gp-btn-open" data-pkg="${pkg.id}" data-app="${pkg.app_id}"><i class="fas fa-external-link-alt"></i> Otwórz</button>
-                                   <button class="gp-btn gp-btn-remove" data-pkg="${pkg.id}"><i class="fas fa-trash"></i> Odinstaluj</button>`
-                                : `<span class="gp-status gp-status-off"><i class="fas fa-times-circle"></i> Nie zainstalowany</span>
-                                   <button class="gp-btn gp-btn-install" data-pkg="${pkg.id}"><i class="fas fa-download"></i> Zainstaluj</button>`
+                                ? `<span class="gp-status gp-status-on"><i class="fas fa-check-circle"></i> ${t('Zainstalowany')}</span>
+                                   <button class="gp-btn gp-btn-open" data-pkg="${pkg.id}" data-app="${pkg.app_id}"><i class="fas fa-external-link-alt"></i> ${t('Otwórz')}</button>
+                                   <button class="gp-btn gp-btn-remove" data-pkg="${pkg.id}"><i class="fas fa-trash"></i> ${t('Odinstaluj')}</button>`
+                                : `<span class="gp-status gp-status-off"><i class="fas fa-times-circle"></i> ${t('Nie zainstalowany')}</span>
+                                   <button class="gp-btn gp-btn-install" data-pkg="${pkg.id}"><i class="fas fa-download"></i> ${t('Zainstaluj')}</button>`
                             }
                         </div>
                     </div>
@@ -7982,7 +7982,7 @@ function renderAppStore(body) {
                         progressEl.className = 'gp-progress';
                         progressEl.innerHTML = `
                             <div class="gp-progress-bar"><div class="gp-progress-fill"></div></div>
-                            <div class="gp-progress-msg">Instalowanie zależności…</div>
+                            <div class="gp-progress-msg">${t('Instalowanie zależności…')}</div>
                         `;
                         btn.parentElement.appendChild(progressEl);
 
@@ -8186,10 +8186,10 @@ function renderRemoteLog(body) {
 
     body.innerHTML = CSS + `<div class="rl-wrap">
         <div class="rl-card">
-            <h3><i class="fas fa-satellite-dish app-hdr-icon"></i>Zdalne raportowanie logów</h3>
+            <h3><i class="fas fa-satellite-dish app-hdr-icon"></i>${t('Zdalne raportowanie logów')}</h3>
             <div id="rl-loading" class="app-empty app-empty--loading">
                 <i class="fas fa-spinner fa-spin app-spinner-md"></i>
-                <div class="app-mt-sm">Ładowanie konfiguracji...</div>
+                <div class="app-mt-sm">${t('Ładowanie konfiguracji...')}</div>
             </div>
             <div id="rl-content" class="hidden"></div>
         </div>
@@ -8202,7 +8202,7 @@ function renderRemoteLog(body) {
             config = await api('/remote-log/config');
             render();
         } catch (e) {
-            body.querySelector('#rl-loading').innerHTML = `<div class="app-text-error">Błąd: ${esc(e.message)}</div>`;
+            body.querySelector('#rl-loading').innerHTML = `<div class="app-text-error">${t('Błąd:')} ${esc(e.message)}</div>`;
         }
     }
 
@@ -8223,7 +8223,7 @@ function renderRemoteLog(body) {
                 </div>
                 <div class="rl-stat">
                     <div class="val">${config.send_count || 0}</div>
-                    <div class="lbl">Wysłano</div>
+                    <div class="lbl">${t('Wysłano')}</div>
                 </div>
                 <div class="rl-stat">
                     <div class="val app-text-sm">${esc(lastSend)}</div>
@@ -8233,7 +8233,7 @@ function renderRemoteLog(body) {
             ${config.last_error ? `<div class="rl-msg rl-msg-err app-mt-md"><i class="fas fa-exclamation-triangle"></i> ${esc(config.last_error)}</div>` : ''}
             <div class="app-mt-lg">
                 <div class="rl-row">
-                    <label>Włączone</label>
+                    <label>${t('Włączone')}</label>
                     <label class="rl-toggle"><input type="checkbox" id="rl-enabled" ${config.enabled ? 'checked' : ''}><span class="slider"></span></label>
                 </div>
                 <div class="rl-row">
@@ -8241,19 +8241,19 @@ function renderRemoteLog(body) {
                     <input class="rl-input" id="rl-url" value="${esc(config.server_url || '')}">
                 </div>
                 <div class="rl-row">
-                    <label>Interwał (min)</label>
+                    <label>${t('Interwał (min)')}</label>
                     <input class="rl-input" id="rl-interval" type="number" min="5" value="${config.interval_minutes || 60}" class="app-input-narrow">
                 </div>
                 <div class="rl-row">
-                    <label>Wyślij przy starcie</label>
+                    <label>${t('Wyślij przy starcie')}</label>
                     <label class="rl-toggle"><input type="checkbox" id="rl-boot" ${config.send_on_boot ? 'checked' : ''}><span class="slider"></span></label>
                 </div>
                 <div class="rl-row">
-                    <label>Wyślij przy błędzie</label>
+                    <label>${t('Wyślij przy błędzie')}</label>
                     <label class="rl-toggle"><input type="checkbox" id="rl-error" ${config.send_on_error ? 'checked' : ''}><span class="slider"></span></label>
                 </div>
                 <div class="rl-row">
-                    <label>Kategorie logów</label>
+                    <label>${t('Kategorie logów')}</label>
                     <div class="rl-cats">
                         ${allCats.map(c => `<div class="rl-cat ${activeCats.includes(c) ? 'active' : ''}" data-cat="${c}">${c}</div>`).join('')}
                     </div>
@@ -8265,8 +8265,8 @@ function renderRemoteLog(body) {
             </div>
             <div class="app-actions">
                 <button class="rl-btn rl-btn-primary" id="rl-save"><i class="fas fa-save"></i> Zapisz</button>
-                <button class="rl-btn rl-btn-secondary" id="rl-send"><i class="fas fa-paper-plane"></i> Wyślij teraz</button>
-                <button class="rl-btn rl-btn-secondary" id="rl-preview"><i class="fas fa-eye"></i> Podgląd</button>
+                <button class="rl-btn rl-btn-secondary" id="rl-send"><i class="fas fa-paper-plane"></i> ${t('Wyślij teraz')}</button>
+                <button class="rl-btn rl-btn-secondary" id="rl-preview"><i class="fas fa-eye">${t('Podgląd')}</button>
             </div>
             <div id="rl-feedback"></div>
             <div id="rl-preview-box"></div>
