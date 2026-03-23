@@ -1172,6 +1172,29 @@ def _select_qa_model(complexity="medium"):
     return {"model": soonest, "label": f"{soonest} (QA)", "reason": "QA review agent (post-cooldown)"}
 
 
+def _run_visual_qa(ticket, tid):
+    """Run visual QA tests for a ticket if it has manual_tests defined.
+
+    Returns None if no tests, or a dict with verdict/summary/steps.
+    """
+    manual_tests = ticket.get("manual_tests", [])
+    if not manual_tests:
+        return None
+
+    print(f"VIS_QA_START | {tid} | {len(manual_tests)} test steps", flush=True)
+    try:
+        import sys
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
+        from visual_qa.runner import run_visual_tests_sync
+
+        vis_log = os.path.join(COPILOT_LOG_DIR, f"{tid}_visual_{int(time.time())}.log")
+        result = run_visual_tests_sync(tid, use_vision=True, log_file=vis_log)
+        return result
+    except Exception as e:
+        print(f"VIS_QA_ERROR | {tid} | {e}", flush=True)
+        return None
+
+
 def run_qa_check(ticket):
     """Launch Copilot CLI as QA agent with fallback model selection.
 
@@ -1251,6 +1274,28 @@ def run_qa_check(ticket):
                 return self.returncode
         return _StaticPass(log_file)
 
+    # --- Visual QA: run Playwright manual tests if defined ---
+    vis_result = _run_visual_qa(ticket, tid)
+    if vis_result and vis_result.get("verdict") == "VIS_QA_FAIL":
+        os.makedirs(COPILOT_LOG_DIR, exist_ok=True)
+        log_file = os.path.join(COPILOT_LOG_DIR, f"{tid}_qa_{int(time.time())}.log")
+        with open(log_file, "w") as f:
+            f.write(f"=== QA Review: {tid} | {ticket['title']} ===\n")
+            f.write(f"=== Visual QA (Playwright + Vision) ===\n\n")
+            f.write(f"QA_FAIL: Visual QA failed:\n{vis_result.get('summary', 'Visual tests failed')}\n")
+        print(f"VIS_QA_FAIL | {tid} | {vis_result.get('summary', '')[:200]}", flush=True)
+        class _VisualFail:
+            def __init__(self, lf):
+                self._log_file = lf
+                self._qa_mode = True
+                self.pid = 0
+                self.returncode = 1
+            def poll(self):
+                return self.returncode
+        return _VisualFail(log_file)
+    elif vis_result and vis_result.get("verdict") == "VIS_QA_PASS":
+        print(f"VIS_QA_PASS | {tid} | {vis_result.get('summary', '')[:200]}", flush=True)
+
     # --- Medium/Complex: full model QA ---
     model_info = _select_qa_model(complexity)
     model = model_info["model"]
@@ -1312,7 +1357,9 @@ def parse_qa_verdict(log_file):
             if line.startswith("QA_FAIL:"):
                 return "fail", line[8:].strip()
         # If no explicit verdict, check for keywords
-        if "QA_PASS" in content:
+        if "VIS_QA_FAIL" in content:
+            return "fail", "Visual QA failed"
+        if "QA_PASS" in content or "VIS_QA_PASS" in content:
             return "pass", "Implicit pass found in output"
         if "QA_FAIL" in content:
             return "fail", "Implicit fail found in output"

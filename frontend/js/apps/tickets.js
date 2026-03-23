@@ -1651,6 +1651,31 @@ async function renderTickets(body, launchOpts) {
                     ${ticket.updated ? '<div>' + t('Zaktualizowany') + ': ' + new Date(ticket.updated * 1000).toLocaleString('pl') + '</div>' : ''}
                 </div>
 
+                <div class="tk-manual-tests-section" style="margin-top:16px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.1);">
+                    <label><i class="fas fa-vial" style="margin-right:4px;"></i> ${t('Testy manualne')}</label>
+                    <div id="tk-df-manual-tests" style="margin-top:8px;">
+                        ${(ticket.manual_tests || []).map((mt, i) => `
+                        <div class="tk-mt-step" data-step="${i}" style="display:flex;gap:6px;align-items:flex-start;margin-bottom:6px;background:rgba(255,255,255,0.03);padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.08);">
+                            <span style="min-width:22px;color:rgba(255,255,255,0.4);font-size:0.8rem;padding-top:6px;">${i + 1}.</span>
+                            <div style="flex:1;display:flex;flex-direction:column;gap:4px;">
+                                <input type="text" class="tk-input tk-mt-action" value="${_escHtml(mt.action || '')}" placeholder="${t('Akcja (np. Otwórz apkę Dashboard)')}" style="font-size:0.85rem;" />
+                                <input type="text" class="tk-input tk-mt-expected" value="${_escHtml(mt.expected || '')}" placeholder="${t('Oczekiwany wynik')}" style="font-size:0.85rem;opacity:0.8;" />
+                            </div>
+                            <label style="display:flex;align-items:center;gap:4px;padding-top:6px;cursor:pointer;white-space:nowrap;font-size:0.75rem;opacity:0.7;" title="${t('Screenshot')}">
+                                <input type="checkbox" class="tk-mt-screenshot" ${mt.screenshot ? 'checked' : ''} /> <i class="fas fa-camera"></i>
+                            </label>
+                            <button class="tk-mt-remove" style="background:none;border:none;color:rgba(255,255,255,0.3);cursor:pointer;padding:6px;" title="${t('Usuń krok')}">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                        `).join('')}
+                    </div>
+                    <div style="display:flex;gap:6px;margin-top:6px;">
+                        <button class="tk-btn tk-btn-small" id="tk-df-add-test-step"><i class="fas fa-plus"></i> ${t('Dodaj krok')}</button>
+                        <button class="tk-btn tk-btn-small" id="tk-df-ai-gen-tests" style="opacity:0.8;" title="${t('AI wygeneruje kroki testowe z opisu ticketu')}"><i class="fas fa-magic"></i> ${t('Generuj z AI')}</button>
+                    </div>
+                </div>
+
                 <div class="tk-attachments-section" style="margin-top:16px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.1);">
                     <label>${t('Załączniki')}</label>
                     <div class="tk-attachments-list" id="tk-df-attachments" style="display:grid;grid-template-columns:repeat(auto-fill, minmax(100px, 1fr));gap:8px;margin-top:8px;">
@@ -1770,6 +1795,12 @@ async function renderTickets(body, launchOpts) {
                     complexity: modal.querySelector('#tk-df-complexity').value,
                     assignee: modal.querySelector('#tk-df-assignee').value,
                     labels: updatedLabels,
+                    manual_tests: Array.from(modal.querySelectorAll('.tk-mt-step')).map((el, i) => ({
+                        step: i + 1,
+                        action: el.querySelector('.tk-mt-action').value.trim(),
+                        expected: el.querySelector('.tk-mt-expected').value.trim(),
+                        screenshot: el.querySelector('.tk-mt-screenshot').checked,
+                    })).filter(s => s.action),
                 });
             }
         );
@@ -1823,6 +1854,77 @@ async function renderTickets(body, launchOpts) {
                 overlay.querySelector('#tk-df-add-label').click();
             }
         });
+
+        /* ── manual tests logic ── */
+        function _mtAddStep(action = '', expected = '', screenshot = true) {
+            const container = overlay.querySelector('#tk-df-manual-tests');
+            const steps = container.querySelectorAll('.tk-mt-step');
+            const idx = steps.length;
+            const div = document.createElement('div');
+            div.className = 'tk-mt-step';
+            div.dataset.step = idx;
+            div.style.cssText = 'display:flex;gap:6px;align-items:flex-start;margin-bottom:6px;background:rgba(255,255,255,0.03);padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.08);';
+            div.innerHTML = `
+                <span style="min-width:22px;color:rgba(255,255,255,0.4);font-size:0.8rem;padding-top:6px;">${idx + 1}.</span>
+                <div style="flex:1;display:flex;flex-direction:column;gap:4px;">
+                    <input type="text" class="tk-input tk-mt-action" value="${_escHtml(action)}" placeholder="${t('Akcja (np. Otwórz apkę Dashboard)')}" style="font-size:0.85rem;" />
+                    <input type="text" class="tk-input tk-mt-expected" value="${_escHtml(expected)}" placeholder="${t('Oczekiwany wynik')}" style="font-size:0.85rem;opacity:0.8;" />
+                </div>
+                <label style="display:flex;align-items:center;gap:4px;padding-top:6px;cursor:pointer;white-space:nowrap;font-size:0.75rem;opacity:0.7;" title="${t('Screenshot')}">
+                    <input type="checkbox" class="tk-mt-screenshot" ${screenshot ? 'checked' : ''} /> <i class="fas fa-camera"></i>
+                </label>
+                <button class="tk-mt-remove" style="background:none;border:none;color:rgba(255,255,255,0.3);cursor:pointer;padding:6px;" title="${t('Usuń krok')}">
+                    <i class="fas fa-times"></i>
+                </button>`;
+            container.appendChild(div);
+            _mtBindRemove();
+            div.querySelector('.tk-mt-action').focus();
+        }
+
+        function _mtBindRemove() {
+            overlay.querySelectorAll('.tk-mt-remove').forEach(btn => {
+                btn.onclick = () => {
+                    btn.closest('.tk-mt-step').remove();
+                    _mtRenumber();
+                };
+            });
+        }
+
+        function _mtRenumber() {
+            overlay.querySelectorAll('.tk-mt-step').forEach((el, i) => {
+                el.dataset.step = i;
+                el.querySelector('span').textContent = (i + 1) + '.';
+            });
+        }
+
+        _mtBindRemove();
+
+        overlay.querySelector('#tk-df-add-test-step').onclick = () => _mtAddStep();
+
+        overlay.querySelector('#tk-df-ai-gen-tests').onclick = async () => {
+            const btn = overlay.querySelector('#tk-df-ai-gen-tests');
+            const desc = overlay.querySelector('#tk-df-desc').value.trim();
+            const title = overlay.querySelector('#tk-df-title').value.trim();
+            if (!title && !desc) { toast(t('Wpisz tytuł lub opis ticketu'), 'warning'); return; }
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Generuję...');
+            try {
+                const resp = await api('/tickets/tickets/' + ticket.id + '/generate-tests', {
+                    method: 'POST',
+                    body: JSON.stringify({ title, description: desc }),
+                });
+                if (resp && resp.tests && resp.tests.length) {
+                    resp.tests.forEach(s => _mtAddStep(s.action || '', s.expected || '', s.screenshot !== false));
+                    toast(t('Wygenerowano') + ' ' + resp.tests.length + ' ' + t('kroków'), 'success');
+                } else {
+                    toast(t('Nie udało się wygenerować testów'), 'warning');
+                }
+            } catch (e) {
+                toast(t('Błąd generowania testów: ') + (e.message || e), 'error');
+            }
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-magic"></i> ' + t('Generuj z AI');
+        };
 
         /* ── attachments logic ── */
         overlay.querySelector('#tk-df-upload-btn').onclick = () => {

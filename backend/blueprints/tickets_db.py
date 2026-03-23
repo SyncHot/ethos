@@ -67,6 +67,11 @@ def init_db():
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_tickets_project_id ON tickets(project_id)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_tickets_updated ON tickets(updated)')
 
+    # Migration: add manual_tests column if missing
+    cols = [r[1] for r in cursor.execute("PRAGMA table_info(tickets)").fetchall()]
+    if 'manual_tests' not in cols:
+        cursor.execute("ALTER TABLE tickets ADD COLUMN manual_tests TEXT DEFAULT '[]'")
+
     conn.commit()
     conn.close()
     
@@ -131,7 +136,7 @@ def migrate_from_json():
 def _row_to_dict(row):
     d = dict(row)
     # Parse JSON fields
-    for field in ['members', 'columns', 'labels', 'comments', 'attachments']:
+    for field in ['members', 'columns', 'labels', 'comments', 'attachments', 'manual_tests']:
         if field in d and d[field]:
             try:
                 d[field] = json.loads(d[field])
@@ -294,15 +299,17 @@ def create_ticket(data):
         conn.execute(
             '''INSERT INTO tickets (
                 id, project_id, title, description, column, priority, 
-                assignee, reporter, labels, comments, attachments, "order", created, updated
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                assignee, reporter, labels, comments, attachments, "order",
+                created, updated, manual_tests
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
             (
                 data['id'], data.get('project_id'), data.get('title', ''),
                 data.get('description', ''), data.get('column', ''),
                 data.get('priority', 'medium'), data.get('assignee', ''),
                 data.get('reporter', ''), json.dumps(data.get('labels', [])),
                 json.dumps(data.get('comments', [])), json.dumps(data.get('attachments', [])), data.get('order', 0),
-                data.get('created', now), data.get('updated', now)
+                data.get('created', now), data.get('updated', now),
+                json.dumps(data.get('manual_tests', []))
             )
         )
         conn.commit()
@@ -321,7 +328,7 @@ def update_ticket(ticket_id, data):
         'column': 'column', 'priority': 'priority', 'assignee': 'assignee',
         'reporter': 'reporter', 'order': '"order"'
     }
-    json_mappings = {'labels': 'labels', 'comments': 'comments', 'attachments': 'attachments'}
+    json_mappings = {'labels': 'labels', 'comments': 'comments', 'attachments': 'attachments', 'manual_tests': 'manual_tests'}
 
     for k, v in mappings.items():
         if k in data:

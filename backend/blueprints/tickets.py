@@ -270,6 +270,7 @@ def api_create_ticket():
         'labels': body.get('labels', []),
         'comments': [],
         'attachments': [],
+        'manual_tests': body.get('manual_tests', []),
         'order': 0, # Should calculate max order + 1? Or just 0 and let UI handle?
                     # Original logic added to end? No, order=0 usually top.
         'created': now,
@@ -317,6 +318,8 @@ def api_update_ticket(ticket_id):
     if 'assignee' in body: updates['assignee'] = body['assignee']
     if 'column' in body and body['column'] in project.get('columns', []):
         updates['column'] = body['column']
+    if 'manual_tests' in body and isinstance(body['manual_tests'], list):
+        updates['manual_tests'] = body['manual_tests']
 
     updated_ticket = update_ticket(ticket_id, updates)
     _emit('ticket_updated', ticket['project_id'], {'ticket': updated_ticket})
@@ -465,6 +468,65 @@ def remove_label(ticket_id, label):
         _emit('ticket_updated', ticket['project_id'], {'ticket': updated_ticket})
 
     return jsonify({'ok': True})
+
+# ---------------------------------------------------------------------------
+# Manual Tests — AI Generation
+# ---------------------------------------------------------------------------
+
+@tickets_bp.route('/tickets/<ticket_id>/generate-tests', methods=['POST'])
+def generate_tests(ticket_id):
+    """Generate manual test steps from ticket title + description using Ollama."""
+    ticket = get_ticket(ticket_id)
+    if not ticket:
+        return jsonify({'error': 'Ticket not found'}), 404
+    project = get_project(ticket['project_id'])
+    if not _is_member(project):
+        return jsonify({'error': 'Access denied'}), 403
+
+    body = request.get_json(silent=True) or {}
+    title = body.get('title', ticket.get('title', ''))
+    description = body.get('description', ticket.get('description', ''))
+
+    prompt = (
+        "Jesteś testerem QA dla systemu EthOS (web UI, SPA, desktop-like z oknami apek).\n"
+        "Na podstawie ticketu wygeneruj kroki testów manualnych.\n\n"
+        f"Tytuł: {title}\nOpis: {description}\n\n"
+        "Każdy krok to JSON z polami: action (co zrobić), expected (oczekiwany wynik), screenshot (bool).\n"
+        "Akcje po polsku. Dostępne komendy:\n"
+        "- 'Otwórz apkę X' — otwiera okno aplikacji\n"
+        "- 'Kliknij X' — klika element\n"
+        "- 'Wpisz \"tekst\" w pole X' — wypełnia pole\n"
+        "- 'Czekaj N sekund' — czeka\n"
+        "- 'Sprawdź: X jest widoczny' — weryfikacja DOM\n"
+        "- 'Przewiń w dół' — scroll\n"
+        "- 'Screenshot: opis' — zrób screenshot\n\n"
+        "Odpowiedz WYŁĄCZNIE jako JSON array, bez markdown, np:\n"
+        '[{"action":"Otwórz apkę Dashboard","expected":"Dashboard widoczny z widgetami","screenshot":true}]'
+    )
+
+    try:
+        import requests as req
+        resp = req.post('http://127.0.0.1:11434/api/generate', json={
+            'model': 'llama3.2-vision:11b',
+            'prompt': prompt,
+            'stream': False,
+            'options': {'temperature': 0.3, 'num_predict': 1024},
+        }, timeout=600)
+        resp.raise_for_status()
+        raw = resp.json().get('response', '').strip()
+
+        # Extract JSON array from response
+        start = raw.find('[')
+        end = raw.rfind(']')
+        if start >= 0 and end > start:
+            tests = json.loads(raw[start:end + 1])
+            for i, t_step in enumerate(tests):
+                t_step['step'] = i + 1
+                t_step.setdefault('screenshot', True)
+            return jsonify({'ok': True, 'tests': tests})
+        return jsonify({'ok': False, 'tests': [], 'error': 'No JSON array in response'}), 200
+    except Exception as e:
+        return jsonify({'ok': False, 'tests': [], 'error': str(e)}), 200
 
 # ---------------------------------------------------------------------------
 # Attachments
