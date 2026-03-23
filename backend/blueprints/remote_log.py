@@ -1,5 +1,5 @@
 """
-EthOS — Remote Log Reporter (Zdalne raportowanie logów)
+EthOS — Remote Log Reporter
 
 Sends diagnostic logs to a central server for remote debugging.
 Collects: boot logs, service journals, system info, eventlog errors.
@@ -509,7 +509,7 @@ def delete_device_report(device_id, filename):
 
 register_pkg_routes(
     remote_log_bp,
-    install_message='Zdalne logi gotowe.',
+    install_message='Remote logs ready.',
     wipe_files=[CONFIG_FILE, data_path('remote_logs.db')],
     wipe_dirs=[],
     url_prefix='/api/remote-log',

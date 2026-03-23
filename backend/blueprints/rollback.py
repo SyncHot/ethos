@@ -192,7 +192,7 @@ def create_snapshot():
 
     with _operation_lock:
         if _current_op is not None:
-            return jsonify({'error': f'Inna operacja w toku: {_current_op}'}), 409
+            return jsonify({'error': f'Another operation in progress: {_current_op}'}), 409
 
     data = request.get_json(silent=True) or {}
     description = str(data.get('description', ''))[:200]
@@ -200,7 +200,7 @@ def create_snapshot():
     estimated = _estimate_snapshot_size()
     size_warning = None
     if estimated > SIZE_WARN_BYTES:
-        size_warning = f'Szacowany rozmiar: {estimated / (1024*1024):.0f} MB (powyżej 500 MB)'
+        size_warning = f'Estimated size: {estimated / (1024*1024):.0f} MB (above 500 MB)'
 
     _ensure_snapshots_dir()
     snap_id = _generate_snapshot_id()
@@ -219,7 +219,7 @@ def create_snapshot():
             include_args.append(q(rel))
 
     if not include_args:
-        return jsonify({'error': 'Brak plików do archiwizacji'}), 400
+        return jsonify({'error': 'No files to archive'}), 400
 
     tar_cmd = (
         f'tar czf {q(archive_path)} '
@@ -229,14 +229,14 @@ def create_snapshot():
 
     with _operation_lock:
         if _current_op is not None:
-            return jsonify({'error': f'Inna operacja w toku: {_current_op}'}), 409
+            return jsonify({'error': f'Another operation in progress: {_current_op}'}), 409
         _current_op = 'create'
 
     try:
         result = host_run(tar_cmd, timeout=300)
         if result.returncode != 0:
             logger.error('Snapshot tar failed: %s', result.stderr)
-            return jsonify({'error': 'Tworzenie snapshotu nie powiodło się',
+            return jsonify({'error': 'Snapshot creation failed',
                             'details': result.stderr[:500]}), 500
 
         archive_size = os.path.getsize(archive_path)
@@ -278,17 +278,17 @@ def restore_snapshot(snap_id):
     global _current_op
 
     if not _validate_snapshot_id(snap_id):
-        return jsonify({'error': 'Nieprawidłowy identyfikator snapshotu'}), 400
+        return jsonify({'error': 'Invalid snapshot ID'}), 400
 
     meta_path = _snapshot_meta_path(snap_id)
     archive_path = _snapshot_archive_path(snap_id)
 
     if not os.path.isfile(meta_path) or not os.path.isfile(archive_path):
-        return jsonify({'error': 'Snapshot nie znaleziony'}), 404
+        return jsonify({'error': 'Snapshot not found'}), 404
 
     with _operation_lock:
         if _current_op is not None:
-            return jsonify({'error': f'Inna operacja w toku: {_current_op}'}), 409
+            return jsonify({'error': f'Another operation in progress: {_current_op}'}), 409
         _current_op = 'restore'
 
     try:
@@ -313,7 +313,7 @@ def restore_snapshot(snap_id):
             if pre_result.returncode == 0:
                 pre_meta = {
                     'id': pre_id,
-                    'description': f'Automatyczna kopia przed przywróceniem {snap_id}',
+                    'description': f'Automatic backup before restoring {snap_id}',
                     'created_at': datetime.now().isoformat(),
                     'includes': SNAPSHOT_INCLUDES,
                     'size': os.path.getsize(pre_archive),
@@ -331,7 +331,7 @@ def restore_snapshot(snap_id):
         result = host_run(extract_cmd, timeout=300)
         if result.returncode != 0:
             logger.error('Snapshot restore failed: %s', result.stderr)
-            return jsonify({'error': 'Przywracanie nie powiodło się',
+            return jsonify({'error': 'Restore failed',
                             'details': result.stderr[:500]}), 500
 
         # 3. Schedule a service restart (non-blocking)
@@ -339,7 +339,7 @@ def restore_snapshot(snap_id):
 
         return jsonify({
             'success': True,
-            'message': 'Snapshot przywrócony. System zostanie zrestartowany.',
+            'message': 'Snapshot restored. System will restart.',
             'pre_restore_id': pre_id,
         })
 
@@ -364,13 +364,13 @@ def _delayed_restart():
 @admin_required
 def delete_snapshot(snap_id):
     if not _validate_snapshot_id(snap_id):
-        return jsonify({'error': 'Nieprawidłowy identyfikator snapshotu'}), 400
+        return jsonify({'error': 'Invalid snapshot ID'}), 400
 
     meta_path = _snapshot_meta_path(snap_id)
     archive_path = _snapshot_archive_path(snap_id)
 
     if not os.path.isfile(meta_path):
-        return jsonify({'error': 'Snapshot nie znaleziony'}), 404
+        return jsonify({'error': 'Snapshot not found'}), 404
 
     for p in (archive_path, meta_path):
         try:

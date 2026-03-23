@@ -67,7 +67,7 @@ def encrypt_backup_gpg(file_path, passphrase):
         capture_output=True, text=True
     )
     if result.returncode != 0:
-        raise Exception(f"Błąd szyfrowania GPG: {result.stderr.strip()[:300]}")
+        raise Exception(f"GPG encryption error: {result.stderr.strip()[:300]}")
     return encrypted_path
 
 
@@ -81,7 +81,7 @@ def decrypt_backup_gpg(encrypted_path, passphrase, output_path):
         capture_output=True, text=True
     )
     if result.returncode != 0:
-        raise Exception(f"Błąd deszyfrowania GPG (nieprawidłowe hasło?): {result.stderr.strip()[:300]}")
+        raise Exception(f"GPG decryption error (wrong password?): {result.stderr.strip()[:300]}")
     return output_path
 
 
@@ -96,7 +96,7 @@ def _resolve_encryption_passphrase(enc):
     if enc.get('mode') == 'key':
         stored = enc.get('stored_key')
         if not stored:
-            raise Exception("Klucz szyfrowania nie został wygenerowany dla tego profilu.")
+            raise Exception("Encryption key was not generated for this profile.")
         return decrypt_secret(stored)
     return None  # passphrase mode — must be provided by caller
 
@@ -195,7 +195,7 @@ def get_backup_notifications():
     if op and prog:
         pct = prog.get('overall_percent', prog.get('percent', 0))
         stage = prog.get('stage', 'archive')
-        stage_label = 'Transfer' if stage == 'transfer' else 'Archiwizacja'
+        stage_label = 'Transfer' if stage == 'transfer' else 'Archiving'
         notifs.append({
             'type': 'progress',
             'title': 'Backup w toku',
@@ -225,7 +225,7 @@ def get_backup_notifications():
                 duration = entry.get('duration', 0)
                 notifs.append({
                     'type': 'success',
-                    'title': 'Backup zakończony',
+                    'title': 'Backup completed',
                     'message': f'{entry.get("archive_file", "?")} — {size_mb} MB, {round(duration)}s',
                     'time': entry_time,
                     'action': {'app': 'backup', 'tab': 'history'}
@@ -233,8 +233,8 @@ def get_backup_notifications():
             elif status == 'failed':
                 notifs.append({
                     'type': 'error',
-                    'title': 'Backup nieudany',
-                    'message': entry.get('error', 'Nieznany błąd'),
+                    'title': 'Backup failed',
+                    'message': entry.get('error', 'Unknown error'),
                     'time': entry_time,
                     'action': {'app': 'backup', 'tab': 'history'}
                 })
@@ -574,13 +574,13 @@ def transfer_to_ssh(backup_path, ssh_config, backup_filename):
     if not HAS_SSH:
         return False, "paramiko not installed"
     try:
-        emit_log(f"Kopiowanie do SSH: {ssh_config['host']}", 'info')
+        emit_log(f"Copying to SSH: {ssh_config['host']}", 'info')
         source_size = os.path.getsize(backup_path)
 
         def progress_callback(filename, size, sent):
             percent = (sent / size * 100) if size > 0 else 0
             emit_progress(
-                operation=f"Kopiowanie do SSH: {ssh_config['host']}",
+                operation=f"Copying to SSH: {ssh_config['host']}",
                 percent=50 + percent * 0.5,
                 current_file=filename.decode() if isinstance(filename, bytes) else filename,
                 files_done=1 if sent >= size else 0,
@@ -631,9 +631,9 @@ def apply_retention(retention, backup_dir, destination=None, profile_name=None):
                     continue
                 try:
                     os.remove(os.path.join(backup_dir, f))
-                    emit_log(f"Rotacja: usunięto {f}", 'info')
+                    emit_log(f"Rotation: removed {f}", 'info')
                 except Exception as e:
-                    emit_log(f"Rotacja: błąd usuwania {f}: {e}", 'warning')
+                    emit_log(f"Rotation: deletion error {f}: {e}", 'warning')
 
         if destination and destination.get('type') == 'usb' and destination.get('path'):
             usb_path = destination['path']
@@ -657,7 +657,7 @@ def apply_retention(retention, backup_dir, destination=None, profile_name=None):
                         except Exception:
                             pass
     except Exception as e:
-        emit_log(f"Błąd rotacji: {e}", 'warning')
+        emit_log(f"Rotation error: {e}", 'warning')
 
 
 # ── Incremental chain detection ──
@@ -707,18 +707,18 @@ def run_backup(paths, destination=None, profile_name=None, retention=0, incremen
     }
     start_time = time.time()
     try:
-        mode_label = "przyrostowy" if incremental else "pełny"
-        emit_log(f"Backup {mode_label} — {len(paths)} ścieżek...", 'info')
+        mode_label = "incremental" if incremental else "full"
+        emit_log(f"Backup {mode_label} — {len(paths)} paths...", 'info')
 
         # Validate paths before starting
         missing = [p for p in paths if not os.path.exists(p)]
         if missing:
-            raise Exception(f"Ścieżki źródłowe nie istnieją: {', '.join(missing)}")
+            raise Exception(f"Source paths do not exist: {', '.join(missing)}")
 
         if direct_to_usb:
             dest_dir = destination['path']
             if not os.path.isdir(dest_dir):
-                raise Exception(f"Katalog docelowy nie istnieje: {dest_dir}")
+                raise Exception(f"Destination directory does not exist: {dest_dir}")
 
         total_bytes = 0
         total_files = 0
@@ -727,7 +727,7 @@ def run_backup(paths, destination=None, profile_name=None, retention=0, incremen
                 total_bytes += get_size(path, exclude=True)
                 total_files += count_files(path, exclude=True)
         history_entry['files_count'] = total_files
-        emit_log(f"Rozmiar: {total_bytes / (1024**3):.2f} GB, plików: {total_files}", 'info')
+        emit_log(f"Size: {total_bytes / (1024**3):.2f} GB, files: {total_files}", 'info')
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -772,7 +772,7 @@ def run_backup(paths, destination=None, profile_name=None, retention=0, incremen
 
                 if not has_full_backup:
                     os.remove(snapshot_path)
-                    emit_log("Brak pełnego backupu bazowego — resetuję snapshot i tworzę nowy pełny backup", 'warning')
+                    emit_log("No full base backup — resetting snapshot and creating new full backup", 'warning')
 
             # After the safety check, if snapshot still exists → true incremental
             is_true_incremental = os.path.exists(snapshot_path)
@@ -786,7 +786,7 @@ def run_backup(paths, destination=None, profile_name=None, retention=0, incremen
             usb_dir = destination['path']
             os.makedirs(usb_dir, exist_ok=True)
             backup_path = os.path.join(usb_dir, backup_filename)
-            emit_log(f"Archiwum tworzone bezpośrednio na USB: {usb_dir}", 'info')
+            emit_log(f"Archive being created directly on USB: {usb_dir}", 'info')
         else:
             backup_path = os.path.join(BACKUP_DIR, backup_filename)
         history_entry['archive_file'] = backup_filename
@@ -795,9 +795,9 @@ def run_backup(paths, destination=None, profile_name=None, retention=0, incremen
         if snapshot_path is not None:
             cmd.append(f'--listed-incremental={snapshot_path}')
             if is_true_incremental:
-                emit_log("Backup przyrostowy — archiwizacja tylko zmienionych plików", 'info')
+                emit_log("Incremental backup — archiving only changed files", 'info')
             else:
-                emit_log("Pierwszy backup — tworzenie pełnego archiwum z plikiem snapshot", 'info')
+                emit_log("First backup — creating full archive with snapshot file", 'info')
 
         for path in paths:
             if os.path.exists(path):
@@ -810,7 +810,7 @@ def run_backup(paths, destination=None, profile_name=None, retention=0, incremen
             if os.path.exists(path):
                 cmd.extend(['-C', '/', path.lstrip('/')])
 
-        emit_log("Etap 1: Archiwizacja...", 'info')
+        emit_log("Step 1: Archiving...", 'info')
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
         files_done = 0
         bytes_done = 0
@@ -838,7 +838,7 @@ def run_backup(paths, destination=None, profile_name=None, retention=0, incremen
                     last_progress_time = now
                     overall = percent * archive_weight / 100
                     emit_progress(
-                        operation=f"Archiwizacja: {backup_filename}",
+                        operation=f"Archiving: {backup_filename}",
                         percent=overall, current_file=line[-50:] if len(line) > 50 else line,
                         files_done=files_done, total_files=total_files,
                         bytes_done=bytes_done, total_bytes=total_bytes,
@@ -855,13 +855,13 @@ def run_backup(paths, destination=None, profile_name=None, retention=0, incremen
 
         process.wait()
         if process.returncode >= 2:
-            err_detail = stderr_output.strip()[:500] if stderr_output.strip() else 'brak szczegółów'
+            err_detail = stderr_output.strip()[:500] if stderr_output.strip() else 'no details'
             emit_log(f"tar stderr: {err_detail}", 'error')
-            raise Exception(f"Błąd archiwizacji (kod: {process.returncode}): {err_detail}")
+            raise Exception(f"Archive error (code: {process.returncode}): {err_detail}")
         elif process.returncode == 1:
             if stderr_output.strip():
-                emit_log(f"Ostrzeżenia tar: {stderr_output.strip()[:300]}", 'warning')
-            emit_log("Archiwizacja z ostrzeżeniami", 'warning')
+                emit_log(f"tar warnings: {stderr_output.strip()[:300]}", 'warning')
+            emit_log("Archive completed with warnings", 'warning')
 
         final_size = os.path.getsize(backup_path) if os.path.exists(backup_path) else 0
         history_entry['size'] = final_size
@@ -869,7 +869,7 @@ def run_backup(paths, destination=None, profile_name=None, retention=0, incremen
 
         # ── Encryption step ──
         if encrypt_passphrase:
-            emit_log("Etap: Szyfrowanie archiwum (AES-256)...", 'info')
+            emit_log("Step: Encrypting archive (AES-256)...", 'info')
             encrypted_path = encrypt_backup_gpg(backup_path, encrypt_passphrase)
             os.remove(backup_path)
             backup_path = encrypted_path
@@ -878,16 +878,16 @@ def run_backup(paths, destination=None, profile_name=None, retention=0, incremen
             enc_size = os.path.getsize(backup_path)
             history_entry['size'] = enc_size
             history_entry['encrypted'] = True
-            emit_log(f"Zaszyfrowano: {backup_filename} ({enc_size / (1024*1024):.2f} MB)", 'success')
+            emit_log(f"Encrypted: {backup_filename} ({enc_size / (1024*1024):.2f} MB)", 'success')
 
         final_location = backup_path
         if destination:
             if destination['type'] == 'usb':
                 # Archive already created directly on USB — no transfer needed
                 final_location = backup_path
-                emit_log(f"Archiwum zapisane na USB: {backup_path}", 'success')
+                emit_log(f"Archive saved to USB: {backup_path}", 'success')
             elif destination['type'] == 'ssh':
-                emit_log("Etap 2: Kopiowanie do SSH...", 'info')
+                emit_log("Step 2: Copying to SSH...", 'info')
                 ok, result = transfer_to_ssh(backup_path, destination['config'], backup_filename)
                 if ok:
                     final_location = result
@@ -900,8 +900,8 @@ def run_backup(paths, destination=None, profile_name=None, retention=0, incremen
         add_to_history(history_entry)
         with _progress_lock:
             progress_state['last'] = None
-        emit_log(f"Backup zakończony: {final_location}", 'success')
-        _emit('backup_complete', {'message': f'Backup zakończony: {backup_filename}'})
+        emit_log(f"Backup completed: {final_location}", 'success')
+        _emit('backup_complete', {'message': f'Backup completed: {backup_filename}'})
 
         if retention and retention > 0:
             # For USB: apply retention on USB directory (archives are there)
@@ -918,7 +918,7 @@ def run_backup(paths, destination=None, profile_name=None, retention=0, incremen
                             os.remove(os.path.join(BACKUP_DIR, f))
                         except Exception:
                             pass
-                emit_log("Kopie lokalne usunięte (backup na dysku zewnętrznym)", 'info')
+                emit_log("Local copies removed (backup on external drive)", 'info')
             except Exception:
                 pass
 
@@ -929,7 +929,7 @@ def run_backup(paths, destination=None, profile_name=None, retention=0, incremen
         add_to_history(history_entry)
         with _progress_lock:
             progress_state['last'] = None
-        emit_log(f"Błąd backupu: {e}", 'error')
+        emit_log(f"Backup error: {e}", 'error')
         _emit('backup_error', {'message': str(e)})
     finally:
         with operation_lock:
@@ -946,13 +946,13 @@ def run_restore(backup_file, target_path=None, archive_dir=None, decrypt_passphr
         # ── Decryption step for encrypted backups ──
         if backup_file.endswith('.tar.gz.gpg'):
             if not decrypt_passphrase:
-                raise Exception("Backup jest zaszyfrowany. Podaj hasło do odszyfrowania.")
+                raise Exception("Backup is encrypted. Enter the decryption password.")
             decrypted_name = backup_file[:-4]  # strip .gpg
             decrypted_path = os.path.join(d, decrypted_name)
             temp_decrypted_files.append(decrypted_path)
-            emit_log("Odszyfrowanie archiwum (AES-256)...", 'info')
+            emit_log("Decrypting archive (AES-256)...", 'info')
             decrypt_backup_gpg(os.path.join(d, backup_file), decrypt_passphrase, decrypted_path)
-            emit_log("Odszyfrowano pomyślnie", 'success')
+            emit_log("Decrypted successfully", 'success')
             backup_file = decrypted_name
 
         chain = detect_incremental_chain(backup_file, search_dir=d)
@@ -961,10 +961,10 @@ def run_restore(backup_file, target_path=None, archive_dir=None, decrypt_passphr
         for i, cf in enumerate(chain):
             if cf.endswith('.tar.gz.gpg'):
                 if not decrypt_passphrase:
-                    raise Exception(f"Plik łańcucha {cf} jest zaszyfrowany — podaj hasło.")
+                    raise Exception(f"Chain file {cf} is encrypted — enter password.")
                 cf_decrypted_name = cf[:-4]
                 cf_decrypted_path = os.path.join(d, cf_decrypted_name)
-                emit_log(f"Odszyfrowanie: {cf}...", 'info')
+                emit_log(f"Decrypting: {cf}...", 'info')
                 decrypt_backup_gpg(os.path.join(d, cf), decrypt_passphrase, cf_decrypted_path)
                 temp_decrypted_files.append(cf_decrypted_path)
                 chain[i] = cf_decrypted_name
@@ -973,19 +973,19 @@ def run_restore(backup_file, target_path=None, archive_dir=None, decrypt_passphr
             os.makedirs(target_path, exist_ok=True)
 
         if len(chain) > 1:
-            emit_log(f"Łańcuch przyrostowy — {len(chain)} archiwów", 'info')
+            emit_log(f"Incremental chain — {len(chain)} archives", 'info')
         else:
-            emit_log(f"Przywracanie z {backup_file}...", 'info')
+            emit_log(f"Restoring from {backup_file}...", 'info')
 
         if target_path:
-            emit_log(f"Cel: {target_path}", 'info')
+            emit_log(f"Target: {target_path}", 'info')
 
         total_files = 0
         total_bytes = 0
         for f in chain:
             fpath = os.path.join(d, f)
             if not os.path.exists(fpath):
-                raise Exception(f"Brak pliku: {f}")
+                raise Exception(f"File not found: {f}")
             total_bytes += os.path.getsize(fpath)
             result = subprocess.run(['tar', '-tzf', fpath], capture_output=True, text=True)
             if result.returncode == 0:
@@ -1013,7 +1013,7 @@ def run_restore(backup_file, target_path=None, archive_dir=None, decrypt_passphr
                     if total_files <= 100 or files_done % 10 == 0 or files_done == total_files or (now - last_progress_time) >= 0.5:
                         last_progress_time = now
                         emit_progress(
-                            operation=f"Przywracanie: {archive_file}",
+                            operation=f"Restoring: {archive_file}",
                             percent=percent, current_file=line[-60:] if len(line) > 60 else line,
                             files_done=files_done, total_files=total_files,
                             bytes_done=int(total_bytes * percent / 100),
@@ -1022,17 +1022,17 @@ def run_restore(backup_file, target_path=None, archive_dir=None, decrypt_passphr
 
             process.wait()
             if process.returncode >= 2:
-                raise Exception(f"Błąd rozpakowywania {archive_file} (kod: {process.returncode})")
+                raise Exception(f"Extraction error for {archive_file} (code: {process.returncode})")
             elif process.returncode == 1:
-                emit_log(f"Ostrzeżenia przy rozpakowywaniu {archive_file}", 'warning')
+                emit_log(f"Warnings during extraction of {archive_file}", 'warning')
 
-        emit_log(f"Przywracanie zakończone pomyślnie! → {target_path or 'oryginalne lokalizacje'}", 'success')
+        emit_log(f"Restore completed successfully! → {target_path or 'original locations'}", 'success')
         with _progress_lock:
             progress_state['last'] = None
-        _emit('backup_complete', {'message': f'Przywracanie zakończone: {backup_file}'})
+        _emit('backup_complete', {'message': f'Restore completed: {backup_file}'})
 
     except Exception as e:
-        emit_log(f"Błąd przywracania: {e}", 'error')
+        emit_log(f"Restore error: {e}", 'error')
         with _progress_lock:
             progress_state['last'] = None
         _emit('backup_error', {'message': str(e)})
@@ -1184,14 +1184,14 @@ def _run_scheduled_backup(profile, destination, retention, incremental):
                     enc_full = json.loads(row['encryption'])
                     encrypt_passphrase = _resolve_encryption_passphrase(enc_full)
             except Exception as e:
-                log_scheduler(f"BACKUP FAILED - profile '{profile_name}': błąd klucza szyfrowania: {e}", 'ERROR')
+                log_scheduler(f"BACKUP FAILED - profile '{profile_name}': encryption key error: {e}", 'ERROR')
                 with operation_lock:
                     if current_operation == 'backup':
                         current_operation = None
                 return
         else:
-            log_scheduler(f"BACKUP SKIPPED - profile '{profile_name}' wymaga hasła szyfrowania — zaplanowane backupy nie obsługują szyfrowania z hasłem. Użyj trybu 'Klucz automatyczny'.", 'WARNING')
-            emit_log(f"Zaplanowany backup '{profile_name}' pominięty — profil używa szyfrowania hasłem. Zmień na 'Klucz automatyczny' lub uruchom ręcznie.", 'warning')
+            log_scheduler(f"BACKUP SKIPPED - profile '{profile_name}' requires passphrase encryption — scheduled backups do not support passphrase encryption. Use 'Auto key' mode.", 'WARNING')
+            emit_log(f"Scheduled backup '{profile_name}' skipped — profile uses passphrase encryption. Switch to 'Auto key' or run manually.", 'warning')
             with operation_lock:
                 if current_operation == 'backup':
                     current_operation = None
@@ -1228,7 +1228,7 @@ def browse_roots():
 def browse_directory():
     allowed = _effective_browse_roots()
     if not allowed:
-        return jsonify({'error': 'Brak dostępu'}), 403
+        return jsonify({'error': 'Access denied'}), 403
     path = request.args.get('path', allowed[0])
     if not any(path.startswith(r) for r in allowed):
         path = allowed[0]
@@ -1268,14 +1268,14 @@ def browse_mkdir():
     parent = data.get('path', '')
     name = data.get('name', '').strip()
     if not parent or not name:
-        return jsonify({'error': 'Ścieżka i nazwa wymagane'}), 400
+        return jsonify({'error': 'Path and name required'}), 400
     if not any(parent.startswith(r) for r in allowed):
-        return jsonify({'error': 'Nieprawidłowa ścieżka'}), 400
+        return jsonify({'error': 'Invalid path'}), 400
     if '/' in name or '..' in name:
-        return jsonify({'error': 'Nieprawidłowa nazwa'}), 400
+        return jsonify({'error': 'Invalid name'}), 400
     new_path = os.path.join(parent, name)
     if os.path.exists(new_path):
-        return jsonify({'error': 'Folder już istnieje'}), 400
+        return jsonify({'error': 'Folder already exists'}), 400
     try:
         os.makedirs(new_path)
         return jsonify({'success': True, 'path': new_path})
@@ -1292,9 +1292,9 @@ def add_path():
     data = request.json or {}
     path = data.get('path', '').strip()
     if not path:
-        return jsonify({'error': 'Ścieżka jest wymagana'}), 400
+        return jsonify({'error': 'Path is required'}), 400
     if not os.path.exists(path):
-        return jsonify({'error': f'Ścieżka nie istnieje: {path}'}), 400
+        return jsonify({'error': f'Path does not exist: {path}'}), 400
     paths = load_paths()
     if path not in paths:
         paths.append(path)
@@ -1393,7 +1393,7 @@ def delete_backup(filename):
     if os.path.exists(bp):
         os.remove(bp)
         return jsonify({'success': True})
-    return jsonify({'error': 'Backup nie istnieje'}), 404
+    return jsonify({'error': 'Backup does not exist'}), 404
 
 
 @backup_bp.route('/backup', methods=['POST'])
@@ -1414,20 +1414,20 @@ def start_backup():
     if not paths:
         with operation_lock:
             current_operation = None
-        return jsonify({'error': 'Wybierz przynajmniej jedną ścieżkę'}), 400
+        return jsonify({'error': 'Select at least one path'}), 400
 
     valid_paths = [p for p in paths if os.path.exists(p)]
     if not valid_paths:
         with operation_lock:
             current_operation = None
-        return jsonify({'error': 'Żadna ścieżka nie istnieje'}), 400
+        return jsonify({'error': 'No paths exist'}), 400
 
     if destination:
         if destination['type'] == 'usb':
             if not os.path.exists(destination.get('path', '')):
                 with operation_lock:
                     current_operation = None
-                return jsonify({'error': 'USB nie jest dostępne'}), 400
+                return jsonify({'error': 'USB is not available'}), 400
         elif destination['type'] == 'ssh':
             ssh_id = destination.get('server_id')
             if ssh_id:
@@ -1453,7 +1453,7 @@ def backup_preview(filename):
         bp = os.path.join(BACKUP_DIR, filename)
         archive_dir = BACKUP_DIR
     if not os.path.exists(bp):
-        return jsonify({'error': 'Plik nie istnieje'}), 404
+        return jsonify({'error': 'File does not exist'}), 404
     st = os.stat(bp)
     # Encrypted backups cannot be previewed without passphrase
     if filename.endswith('.tar.gz.gpg') or bp.endswith('.tar.gz.gpg'):
@@ -1466,7 +1466,7 @@ def backup_preview(filename):
         })
     result = subprocess.run(['tar', '-tzf', bp], capture_output=True, text=True, timeout=30)
     if result.returncode != 0:
-        return jsonify({'error': 'Nie można odczytać archiwum'}), 500
+        return jsonify({'error': 'Cannot read archive'}), 500
     all_files = [l for l in result.stdout.strip().split('\n') if l]
     top_dirs = {}
     for f in all_files:
@@ -1514,12 +1514,12 @@ def start_restore():
     if not os.path.exists(bp):
         with operation_lock:
             current_operation = None
-        return jsonify({'error': 'Plik nie istnieje'}), 400
+        return jsonify({'error': 'File does not exist'}), 400
     # Validate passphrase is provided for encrypted backups
     if backup_file.endswith('.tar.gz.gpg') and not decrypt_passphrase:
         with operation_lock:
             current_operation = None
-        return jsonify({'error': 'Backup jest zaszyfrowany — podaj hasło do odszyfrowania', 'encrypted': True}), 400
+        return jsonify({'error': 'Backup is encrypted — enter decryption password', 'encrypted': True}), 400
     restore_target = target_path or None
     if restore_target:
         try:
@@ -1527,7 +1527,7 @@ def start_restore():
         except Exception as e:
             with operation_lock:
                 current_operation = None
-            return jsonify({'error': f'Nie można utworzyć katalogu: {e}'}), 400
+            return jsonify({'error': f'Cannot create directory: {e}'}), 400
 
     _socketio.start_background_task(run_restore, backup_file, restore_target, archive_dir, decrypt_passphrase)
     return jsonify({'status': 'ok'})
@@ -1551,7 +1551,7 @@ def get_usb_drives():
 def browse_usb():
     path = request.args.get('path', '')
     if not path:
-        return jsonify({'error': 'Ścieżka jest wymagana'}), 400
+        return jsonify({'error': 'Path is required'}), 400
     allowed = ['/data/media', '/data/run_media', '/data/mnt', '/media', '/run/media', '/mnt']
     items, err = _list_dir(path, allowed_prefix=allowed, dirs_only=True, timeout=5)
     if err:
@@ -1574,15 +1574,15 @@ def create_usb_folder():
     parent = data.get('path', '')
     name = data.get('name', '').strip()
     if not parent or not name:
-        return jsonify({'error': 'Ścieżka i nazwa wymagane'}), 400
+        return jsonify({'error': 'Path and name required'}), 400
     allowed = ['/data/media', '/data/run_media', '/data/mnt', '/media', '/run/media', '/mnt']
     if not any(parent.startswith(p) for p in allowed):
-        return jsonify({'error': 'Nieprawidłowa ścieżka'}), 400
+        return jsonify({'error': 'Invalid path'}), 400
     if '/' in name or '..' in name:
-        return jsonify({'error': 'Nieprawidłowa nazwa'}), 400
+        return jsonify({'error': 'Invalid name'}), 400
     new_path = os.path.join(parent, name)
     if os.path.exists(new_path):
-        return jsonify({'error': 'Folder istnieje'}), 400
+        return jsonify({'error': 'Folder already exists'}), 400
     try:
         os.makedirs(new_path)
         return jsonify({'success': True, 'path': new_path})
@@ -1712,7 +1712,7 @@ def test_ssh():
         remote_path = data.get('remote_path')
 
     if not host or not username:
-        return jsonify({'success': False, 'error': 'Brak hosta lub użytkownika'}), 400
+        return jsonify({'success': False, 'error': 'Host or username missing'}), 400
 
     ok, result = test_ssh_connection(host, port, username, password, key_path, remote_path)
     if ok:
@@ -1739,9 +1739,9 @@ def get_profiles():
 def create_profile():
     data = request.json or {}
     if not data.get('name'):
-        return jsonify({'error': 'Nazwa wymagana'}), 400
+        return jsonify({'error': 'Name required'}), 400
     if not data.get('paths'):
-        return jsonify({'error': 'Ścieżki wymagane'}), 400
+        return jsonify({'error': 'Paths required'}), 400
     enc_input = data.get('encryption')
     enc, generated_key = _prepare_encryption(enc_input)
     conn = get_db_connection()
@@ -1799,7 +1799,7 @@ def import_profiles():
             import_data = request.json or {}
 
         if not import_data:
-            return jsonify({'error': 'Brak danych do importu'}), 400
+            return jsonify({'error': 'No data to import'}), 400
 
         # Support both wrapped format (with 'profiles' key) and raw array
         if isinstance(import_data, list):
@@ -1807,10 +1807,10 @@ def import_profiles():
         elif isinstance(import_data, dict):
             profiles_to_import = import_data.get('profiles', [])
         else:
-            return jsonify({'error': 'Nieprawidłowy format danych'}), 400
+            return jsonify({'error': 'Invalid data format'}), 400
 
         if not profiles_to_import:
-            return jsonify({'error': 'Brak profili do importu'}), 400
+            return jsonify({'error': 'No profiles to import'}), 400
 
         imported = 0
         skipped = 0
@@ -1829,7 +1829,7 @@ def import_profiles():
                     skipped += 1
                     continue
                 if not paths:
-                    errors.append(f'Profil "{name}": brak ścieżek')
+                    errors.append(f'Profile "{name}": no paths')
                     skipped += 1
                     continue
 
@@ -1875,12 +1875,12 @@ def import_profiles():
             'imported': imported,
             'skipped': skipped,
             'errors': errors,
-            'message': f'Zaimportowano {imported} profili' + (f', pominięto {skipped}' if skipped else '')
+            'message': f'Imported {imported} profiles' + (f', skipped {skipped}' if skipped else '')
         })
     except json.JSONDecodeError:
-        return jsonify({'error': 'Nieprawidłowy format JSON'}), 400
+        return jsonify({'error': 'Invalid JSON format'}), 400
     except Exception as e:
-        return jsonify({'error': f'Błąd importu: {str(e)}'}), 500
+        return jsonify({'error': f'Import error: {str(e)}'}), 500
 
 
 @backup_bp.route('/profiles/<profile_id>/schedule', methods=['PUT'])
@@ -1989,9 +1989,9 @@ def run_profile(profile_id):
             try:
                 encrypt_passphrase = _resolve_encryption_passphrase(enc)
             except Exception as e:
-                return jsonify({'error': f'Błąd klucza szyfrowania: {e}'}), 500
+                return jsonify({'error': f'Encryption key error: {e}'}), 500
         elif not encrypt_passphrase:
-            return jsonify({'error': 'Profil ma włączone szyfrowanie — podaj hasło', 'needs_passphrase': True}), 400
+            return jsonify({'error': 'Profile has encryption enabled — enter password', 'needs_passphrase': True}), 400
 
     with operation_lock:
         if current_operation is not None:
@@ -2025,7 +2025,7 @@ def get_profile_key(profile_id):
     except Exception:
         pass
     if not enc or not enc.get('enabled') or enc.get('mode') != 'key':
-        return jsonify({'error': 'Profil nie używa trybu klucza'}), 400
+        return jsonify({'error': 'Profile does not use key mode'}), 400
     try:
         key = _resolve_encryption_passphrase(enc)
         return jsonify({'key': key})
@@ -2201,7 +2201,7 @@ def create_snapshot():
     else:
         logger.error("SocketIO not initialized — cannot start snapshot worker")
         _snapshot_state['status'] = 'error'
-        _snapshot_state['message'] = 'Błąd wewnętrzny: SocketIO niezainicjalizowane'
+        _snapshot_state['message'] = 'Internal error: SocketIO not initialized'
     return jsonify({'status': 'ok'})
 
 
@@ -2209,10 +2209,10 @@ def create_snapshot():
 def browse_snapshot(snap_id):
     """Browse the contents of a snapshot directory."""
     if not re.match(r'^snap_\d{8}_\d{6}$', snap_id):
-        return jsonify({'error': 'Nieprawidłowy identyfikator snapshota'}), 400
+        return jsonify({'error': 'Invalid snapshot identifier'}), 400
     snap_dir = os.path.join(SNAPSHOTS_DIR, snap_id)
     if not os.path.isdir(snap_dir):
-        return jsonify({'error': 'Snapshot nie istnieje'}), 404
+        return jsonify({'error': 'Snapshot does not exist'}), 404
     tree = []
     for root, dirs, files in os.walk(snap_dir):
         rel = os.path.relpath(root, snap_dir)
@@ -2266,7 +2266,7 @@ def delete_snapshot(snap_id):
     """Delete a snapshot."""
     snap_dir = os.path.join(SNAPSHOTS_DIR, snap_id)
     if not os.path.isdir(snap_dir):
-        return jsonify({'error': 'Snapshot nie istnieje'}), 404
+        return jsonify({'error': 'Snapshot does not exist'}), 404
     shutil.rmtree(snap_dir, ignore_errors=True)
     return jsonify({'ok': True})
 
@@ -2279,7 +2279,7 @@ def restore_snapshot(snap_id):
 
     snap_dir = os.path.join(SNAPSHOTS_DIR, snap_id)
     if not os.path.isdir(snap_dir):
-        return jsonify({'error': 'Snapshot nie istnieje'}), 404
+        return jsonify({'error': 'Snapshot does not exist'}), 404
 
     data = request.json or {}
     restore_docker = data.get('restore_docker', True)
@@ -2306,14 +2306,14 @@ def download_snapshot(snap_id):
     from flask import send_file as _send
     snap_dir = os.path.join(SNAPSHOTS_DIR, snap_id)
     if not os.path.isdir(snap_dir):
-        return jsonify({'error': 'Snapshot nie istnieje'}), 404
+        return jsonify({'error': 'Snapshot does not exist'}), 404
     archive = os.path.join(SNAPSHOTS_DIR, f'{snap_id}.tar.gz')
     if not os.path.isfile(archive):
         subprocess.run(['tar', '-czf', archive, '-C', SNAPSHOTS_DIR, snap_id],
                        capture_output=True, timeout=600)
     if os.path.isfile(archive):
         return _send(archive, as_attachment=True, download_name=f'snapshot-{snap_id}.tar.gz')
-    return jsonify({'error': 'Nie udało się spakować'}), 500
+    return jsonify({'error': 'Failed to compress'}), 500
 
 
 # ── NAS-to-NAS snapshot transfer ──
@@ -2328,12 +2328,12 @@ def transfer_snapshot(snap_id):
 
     snap_dir = os.path.join(SNAPSHOTS_DIR, snap_id)
     if not os.path.isdir(snap_dir):
-        return jsonify({'error': 'Snapshot nie istnieje'}), 404
+        return jsonify({'error': 'Snapshot does not exist'}), 404
 
     data = request.json or {}
     server_id = data.get('server_id')
     if not server_id:
-        return jsonify({'error': 'Nie wybrano serwera'}), 400
+        return jsonify({'error': 'No server selected'}), 400
 
     configs = load_ssh_configs()
     srv = next((c for c in configs if c.get('id') == server_id), None)
@@ -2372,7 +2372,7 @@ def _ssh_resolve_remote_path(ssh, raw_path):
 def _transfer_snapshot_worker(snap_id, snap_dir, ssh_config):
     """Background: tar snapshot, SCP to remote, optionally extract."""
     try:
-        _snap_update(percent=5, message='Pakowanie snapshota...', log=f'Archiwizuję {snap_id}...')
+        _snap_update(percent=5, message='Packing snapshot...', log=f'Archiving {snap_id}...')
 
         archive = os.path.join(SNAPSHOTS_DIR, f'{snap_id}.tar.gz')
         if not os.path.isfile(archive):
@@ -2381,18 +2381,18 @@ def _transfer_snapshot_worker(snap_id, snap_dir, ssh_config):
                 capture_output=True, text=True, timeout=600
             )
             if r.returncode != 0:
-                _snap_update(status='error', message=f'Błąd archiwizacji: {r.stderr[:200]}')
+                _snap_update(status='error', message=f'Archive error: {r.stderr[:200]}')
                 return
 
         arc_size = os.path.getsize(archive)
-        _snap_update(percent=15, message='Łączenie z serwerem...',
+        _snap_update(percent=15, message='Connecting to server...',
                      log=f'Archiwum: {arc_size / 1048576:.1f} MB')
 
         ssh = _get_ssh_client(ssh_config['host'], ssh_config.get('port', 22),
                               ssh_config['username'],
                               password=ssh_config.get('password'),
                               key_path=ssh_config.get('key_path'), timeout=30)
-        _snap_update(percent=20, message='Połączono, przygotowuję...', log=f'SSH → {ssh_config["host"]}')
+        _snap_update(percent=20, message='Connected, preparing...', log=f'SSH → {ssh_config["host"]}')
 
         # Resolve the remote path (handle ~, $HOME, relative paths)
         raw_remote_path = ssh_config.get('remote_path', '~/backups')
@@ -2403,7 +2403,7 @@ def _transfer_snapshot_worker(snap_id, snap_dir, ssh_config):
         writable, _ = _ssh_ensure_writable_dir(ssh, remote_snap_dir)
 
         if not writable:
-            _snap_update(log=f'Brak uprawnień do {remote_snap_dir} — szukam alternatywnej ścieżki...')
+            _snap_update(log=f'No write permissions for {remote_snap_dir} — searching for alternative path...')
             # Try $HOME/backups/snapshots as fallback
             remote_home = _ssh_resolve_home(ssh)
             fallback_paths = []
@@ -2416,18 +2416,18 @@ def _transfer_snapshot_worker(snap_id, snap_dir, ssh_config):
                 fb_ok, _ = _ssh_ensure_writable_dir(ssh, fb_path)
                 if fb_ok:
                     remote_snap_dir = fb_path
-                    _snap_update(log=f'Używam ścieżki: {remote_snap_dir}')
+                    _snap_update(log=f'Using path: {remote_snap_dir}')
                     found_writable = True
                     break
 
             if not found_writable:
                 _snap_update(status='error',
-                             message=f'Brak uprawnień zapisu na zdalnym serwerze. Sprawdź ścieżkę: {raw_remote_path}',
-                             log=f'BŁĄD: Nie można zapisać do {remote_snap_dir} ani do ścieżek fallback')
+                             message=f'No write permissions on remote server. Check path: {raw_remote_path}',
+                             log=f'ERROR: Cannot write to {remote_snap_dir} or fallback paths')
                 ssh.close()
                 return
 
-        _snap_update(percent=22, message='Przesyłam...', log=f'Docelowy katalog: {remote_snap_dir}')
+        _snap_update(percent=22, message='Uploading...', log=f'Target directory: {remote_snap_dir}')
 
         remote_file = f'{remote_snap_dir}/{snap_id}.tar.gz'
 
@@ -2435,33 +2435,33 @@ def _transfer_snapshot_worker(snap_id, snap_dir, ssh_config):
             pct = int(22 + (sent / max(size, 1)) * 58)
             _snap_update(
                 percent=pct,
-                message=f'Przesyłanie... {sent / 1048576:.0f}/{size / 1048576:.0f} MB'
+                message=f'Uploading... {sent / 1048576:.0f}/{size / 1048576:.0f} MB'
             )
 
         with SCPClient(ssh.get_transport(), progress=scp_progress) as scp:
             scp.put(archive, remote_file)
 
-        _snap_update(percent=85, message='Rozpakowywanie na zdalnym serwerze...',
-                     log='Transfer zakończony, rozpakowuję...')
+        _snap_update(percent=85, message='Extracting on remote server...',
+                     log='Transfer complete, extracting...')
 
         # Extract on remote
         cmd = f'cd {remote_snap_dir} && tar -xzf {snap_id}.tar.gz && rm -f {snap_id}.tar.gz'
         stdin_, stdout_, stderr_ = ssh.exec_command(cmd, timeout=300)
         exit_code = stdout_.channel.recv_exit_status()
         if exit_code == 0:
-            _snap_update(log='Rozpakowano na zdalnym serwerze ✓')
+            _snap_update(log='Extracted on remote server ✓')
         else:
             err_txt = stderr_.read().decode()[:200]
-            _snap_update(log=f'Rozpakowanie: kod {exit_code} — {err_txt}')
+            _snap_update(log=f'Extraction: code {exit_code} — {err_txt}')
 
         ssh.close()
 
         _snap_update(status='done', percent=100,
-                     message=f'Snapshot przesłany do {ssh_config["host"]}:{remote_snap_dir}')
+                     message=f'Snapshot transferred to {ssh_config["host"]}:{remote_snap_dir}')
 
     except Exception as e:
-        _snap_update(status='error', percent=0, message=f'Błąd transferu: {e}',
-                     log=f'WYJĄTEK: {e}')
+        _snap_update(status='error', percent=0, message=f'Transfer error: {e}',
+                     log=f'EXCEPTION: {e}')
         logger.exception("Snapshot transfer failed")
 
 
@@ -2473,7 +2473,7 @@ def import_snapshot():
 
     f = request.files.get('file')
     if not f or not f.filename:
-        return jsonify({'error': 'Brak pliku'}), 400
+        return jsonify({'error': 'No file'}), 400
 
     if not f.filename.endswith('.tar.gz'):
         return jsonify({'error': 'Wymagany plik .tar.gz'}), 400
@@ -2485,7 +2485,7 @@ def import_snapshot():
     try:
         f.save(tmp_archive)
         _snap_update(status='creating', percent=30,
-                     message='Rozpakowywanie importu...', log=['Plik otrzymany, rozpakowuję...'])
+                     message='Extracting import...', log=['File received, extracting...'])
 
         # Extract
         r = subprocess.run(
@@ -2493,8 +2493,8 @@ def import_snapshot():
             capture_output=True, text=True, timeout=600
         )
         if r.returncode != 0:
-            _snap_update(status='error', message=f'Błąd rozpakowywania: {r.stderr[:200]}')
-            return jsonify({'error': f'Błąd rozpakowywania: {r.stderr[:200]}'}), 500
+            _snap_update(status='error', message=f'Extraction error: {r.stderr[:200]}')
+            return jsonify({'error': f'Extraction error: {r.stderr[:200]}'}), 500
 
         # Find extracted snapshot (directory with meta.json)
         imported_name = None
@@ -2511,15 +2511,15 @@ def import_snapshot():
                     pass
 
         if not imported_name:
-            _snap_update(status='error', message='Nie znaleziono snapshota w archiwum')
-            return jsonify({'error': 'Nie znaleziono snapshota w archiwum'}), 400
+            _snap_update(status='error', message='Snapshot not found in archive')
+            return jsonify({'error': 'Snapshot not found in archive'}), 400
 
         _snap_update(status='done', percent=100,
-                     message=f'Snapshot "{imported_name}" zaimportowany!')
+                     message=f'Snapshot "{imported_name}" imported!')
         return jsonify({'ok': True, 'snapshot': imported_name})
 
     except Exception as e:
-        _snap_update(status='error', message=f'Błąd importu: {e}')
+        _snap_update(status='error', message=f'Import error: {e}')
         return jsonify({'error': str(e)}), 500
     finally:
         # Cleanup temp archive
@@ -2648,11 +2648,11 @@ def adopt_received_snapshot():
     # Validate the source path contains a valid snapshot
     meta_file = os.path.join(source_path, 'meta.json')
     if not os.path.isfile(meta_file):
-        return jsonify({'error': 'Nieprawidłowa ścieżka snapshota'}), 404
+        return jsonify({'error': 'Invalid snapshot path'}), 404
 
     local_dest = os.path.join(SNAPSHOTS_DIR, snap_dir_name)
     if os.path.exists(local_dest):
-        return jsonify({'error': 'Snapshot o tej nazwie już istnieje lokalnie'}), 409
+        return jsonify({'error': 'Snapshot with this name already exists locally'}), 409
 
     try:
         # Copy the snapshot directory into local SNAPSHOTS_DIR
@@ -2677,7 +2677,7 @@ def restore_received_snapshot():
 
     meta_file = os.path.join(source_path, 'meta.json')
     if not os.path.isfile(meta_file):
-        return jsonify({'error': 'Nieprawidłowa ścieżka snapshota'}), 404
+        return jsonify({'error': 'Invalid snapshot path'}), 404
 
     restore_ethos = data.get('restore_ethos', True)
     restore_system = data.get('restore_system', True)
@@ -2686,7 +2686,7 @@ def restore_received_snapshot():
 
     _snapshot_state['status'] = 'restoring'
     _snapshot_state['percent'] = 0
-    _snapshot_state['message'] = 'Przywracanie z otrzymanego snapshota...'
+    _snapshot_state['message'] = 'Restoring from received snapshot...'
     _snapshot_state['log'] = []
     _snapshot_state['_started'] = time.time()
 
@@ -2707,7 +2707,7 @@ def list_remote_snapshots():
     data = request.json or {}
     server_id = data.get('server_id')
     if not server_id:
-        return jsonify({'error': 'Nie wybrano serwera'}), 400
+        return jsonify({'error': 'No server selected'}), 400
 
     configs = load_ssh_configs()
     srv = next((c for c in configs if c.get('id') == server_id), None)
@@ -2780,7 +2780,7 @@ def pull_remote_snapshot():
 
     _snapshot_state['status'] = 'transferring'
     _snapshot_state['percent'] = 0
-    _snapshot_state['message'] = 'Pobieranie ze zdalnego NAS...'
+    _snapshot_state['message'] = 'Downloading from remote NAS...'
     _snapshot_state['log'] = []
 
     if _socketio:
@@ -2794,7 +2794,7 @@ def _pull_snapshot_worker(snap_id, ssh_config):
     """Background: SCP snapshot from remote NAS to local."""
     tmp_archive = None
     try:
-        _snap_update(percent=5, message='Łączenie z serwerem...', log=f'Łączę z {ssh_config["host"]}...')
+        _snap_update(percent=5, message='Connecting to server...', log=f'Connecting to {ssh_config["host"]}...')
 
         ssh = _get_ssh_client(ssh_config['host'], ssh_config.get('port', 22),
                               ssh_config['username'],
@@ -2808,19 +2808,19 @@ def _pull_snapshot_worker(snap_id, ssh_config):
         remote_archive = f'/tmp/_ethos_pull_{snap_id}.tar.gz'
 
         # Archive snapshot on remote
-        _snap_update(percent=10, message='Pakowanie na zdalnym serwerze...',
-                     log='Archiwizacja na zdalnym...')
+        _snap_update(percent=10, message='Packing on remote server...',
+                     log='Archiving on remote...')
         cmd = f'tar -czf {remote_archive} -C {remote_snap_dir} {snap_id}'
         stdin_, stdout_, stderr_ = ssh.exec_command(cmd, timeout=600)
         exit_code = stdout_.channel.recv_exit_status()
         if exit_code != 0:
             err = stderr_.read().decode()[:200]
-            _snap_update(status='error', message=f'Błąd pakowania: {err}')
+            _snap_update(status='error', message=f'Packing error: {err}')
             ssh.close()
             return
 
-        _snap_update(percent=20, message='Pobieranie...',
-                     log='Transfer ze zdalnego serwera...')
+        _snap_update(percent=20, message='Downloading...',
+                     log='Transfer from remote server...')
 
         os.makedirs(SNAPSHOTS_DIR, exist_ok=True)
         tmp_archive = os.path.join(SNAPSHOTS_DIR, f'_pull_{snap_id}.tar.gz')
@@ -2829,7 +2829,7 @@ def _pull_snapshot_worker(snap_id, ssh_config):
             pct = int(20 + (sent / max(size, 1)) * 60)
             _snap_update(
                 percent=pct,
-                message=f'Pobieranie... {sent / 1048576:.0f}/{size / 1048576:.0f} MB'
+                message=f'Downloading... {sent / 1048576:.0f}/{size / 1048576:.0f} MB'
             )
 
         with SCPClient(ssh.get_transport(), progress=scp_progress) as scp:
@@ -2839,23 +2839,23 @@ def _pull_snapshot_worker(snap_id, ssh_config):
         ssh.exec_command(f'rm -f {remote_archive}')
         ssh.close()
 
-        _snap_update(percent=85, message='Rozpakowywanie...',
-                     log='Rozpakowuję snapshot...')
+        _snap_update(percent=85, message='Extracting...',
+                     log='Extracting snapshot...')
 
         r = subprocess.run(
             ['tar', '-xzf', tmp_archive, '-C', SNAPSHOTS_DIR],
             capture_output=True, text=True, timeout=600
         )
         if r.returncode != 0:
-            _snap_update(status='error', message=f'Błąd rozpakowywania: {r.stderr[:200]}')
+            _snap_update(status='error', message=f'Extraction error: {r.stderr[:200]}')
             return
 
         _snap_update(status='done', percent=100,
-                     message=f'Snapshot {snap_id} pobrany ze zdalnego NAS!')
+                     message=f'Snapshot {snap_id} downloaded from remote NAS!')
 
     except Exception as e:
-        _snap_update(status='error', percent=0, message=f'Błąd: {e}',
-                     log=f'WYJĄTEK: {e}')
+        _snap_update(status='error', percent=0, message=f'Error: {e}',
+                     log=f'EXCEPTION: {e}')
         logger.exception("Snapshot pull failed")
     finally:
         if tmp_archive and os.path.isfile(tmp_archive):
@@ -3032,7 +3032,7 @@ def _create_snapshot_worker(label, include_docker, include_volumes,
         if include_ethos:
             step_i += 1
             pct = int(step_i / steps_total * 90)
-            _snap_update(percent=pct, message='Backupuję EthOS...', log='Kopiowanie konfiguracji EthOS...')
+            _snap_update(percent=pct, message='Backing up EthOS...', log='Copying EthOS configuration...')
 
             ethos_root = os.environ.get('ETHOS_ROOT', f'/home/{get_ethos_user()}/docker/nasos')
             ethos_dir = os.path.join(snap_dir, 'ethos')
@@ -3059,13 +3059,13 @@ def _create_snapshot_worker(label, include_docker, include_volumes,
                 if os.path.isfile(src):
                     shutil.copy2(src, os.path.join(ethos_dir, extra))
 
-            _snap_update(log='EthOS — gotowe')
+            _snap_update(log='EthOS — done')
 
         # ── 2. System configs ──
         if include_system:
             step_i += 1
             pct = int(step_i / steps_total * 90)
-            _snap_update(percent=pct, message='Backupuję konfigurację systemu...', log='Kopiowanie konfiguracji systemu...')
+            _snap_update(percent=pct, message='Backing up system configuration...', log='Copying system configuration...')
 
             sys_dir = os.path.join(snap_dir, 'system')
             os.makedirs(sys_dir, exist_ok=True)
@@ -3137,13 +3137,13 @@ def _create_snapshot_worker(label, include_docker, include_volumes,
             except Exception:
                 pass
 
-            _snap_update(log='System config — gotowe')
+            _snap_update(log='System config — done')
 
         # ── 3. Docker compose projects ──
         if include_docker:
             step_i += 1
             pct = int(step_i / steps_total * 90)
-            _snap_update(percent=pct, message='Backupuję Docker...', log='Zapisywanie projektów Docker...')
+            _snap_update(percent=pct, message='Backing up Docker...', log='Saving Docker projects...')
 
             docker_dir = os.path.join(snap_dir, 'docker')
             os.makedirs(docker_dir, exist_ok=True)
@@ -3180,7 +3180,7 @@ def _create_snapshot_worker(label, include_docker, include_volumes,
                                 shutil.copy2(extra_path, os.path.join(proj_bak, extra_env))
 
                         projects.append(entry)
-                        _snap_update(log=f'  Projekt: {entry}')
+                        _snap_update(log=f'  Project: {entry}')
 
                 meta['docker_projects'] = projects
 
@@ -3198,7 +3198,7 @@ def _create_snapshot_worker(label, include_docker, include_volumes,
                     with open(os.path.join(docker_dir, 'containers.json'), 'w') as cf:
                         json.dump(containers, cf, indent=2)
                     meta['docker_containers'] = len(containers)
-                    _snap_update(log=f'Kontenerów: {len(containers)}')
+                    _snap_update(log=f'Containers: {len(containers)}')
 
                 # Docker images list
                 out, rc = _docker_cmd(['images', '--format', '{{json .}}'])
@@ -3213,7 +3213,7 @@ def _create_snapshot_worker(label, include_docker, include_volumes,
                                 pass
                     with open(os.path.join(docker_dir, 'images.json'), 'w') as cf:
                         json.dump(images, cf, indent=2)
-                    _snap_update(log=f'Obrazów Docker: {len(images)}')
+                    _snap_update(log=f'Docker images: {len(images)}')
 
                 # Networks
                 out, rc = _docker_cmd(['network', 'ls', '--format', '{{json .}}'])
@@ -3229,15 +3229,15 @@ def _create_snapshot_worker(label, include_docker, include_volumes,
                         json.dump(networks, cf, indent=2)
 
             else:
-                _snap_update(log='Docker niedostępny — pomijam')
+                _snap_update(log='Docker unavailable — skipping')
 
-            _snap_update(log='Docker projects — gotowe')
+            _snap_update(log='Docker projects — done')
 
         # ── 4. Docker volumes ──
         if include_volumes and include_docker:
             step_i += 1
             pct = int(step_i / steps_total * 90)
-            _snap_update(percent=pct, message='Backupuję Docker volumes...', log='Eksportowanie wolumenów Docker...')
+            _snap_update(percent=pct, message='Backing up Docker volumes...', log='Exporting Docker volumes...')
 
             vol_dir = os.path.join(snap_dir, 'docker', 'volumes')
             os.makedirs(vol_dir, exist_ok=True)
@@ -3275,7 +3275,7 @@ def _create_snapshot_worker(label, include_docker, include_volumes,
 
                     size_mb = vol_size / (1024 * 1024)
                     if vol_size > 5 * 1024 * 1024 * 1024:  # >5GB
-                        _snap_update(log=f'  Pomijam {vol} ({size_mb:.0f} MB — za duży)')
+                        _snap_update(log=f'  Skipping {vol} ({size_mb:.0f} MB — too large)')
                         continue
 
                     vol_pct = int(pct + (vi / max(len(vol_names), 1)) * (90 - pct))
@@ -3298,21 +3298,21 @@ def _create_snapshot_worker(label, include_docker, include_volumes,
                     if result.returncode == 0 and os.path.isfile(archive):
                         saved_vols.append(vol)
                     else:
-                        _snap_update(log=f'  BŁĄD eksportu {vol}: {result.stderr[:200]}')
+                        _snap_update(log=f'  Export ERROR {vol}: {result.stderr[:200]}')
 
                 meta['docker_volumes'] = saved_vols
-                _snap_update(log=f'Volumes: {len(saved_vols)}/{len(vol_names)} wyeksportowane')
+                _snap_update(log=f'Volumes: {len(saved_vols)}/{len(vol_names)} exported')
             else:
-                _snap_update(log='Docker niedostępny — pomijam volumes')
+                _snap_update(log='Docker unavailable — skipping volumes')
 
         # ── Save metadata ──
-        _snap_update(percent=92, message='Zapisywanie metadanych...')
+        _snap_update(percent=92, message='Saving metadata...')
         with open(os.path.join(snap_dir, 'meta.json'), 'w') as mf:
             json.dump(meta, mf, indent=2)
 
         # ── Copy to USB if requested ──
         if dest_type == 'usb' and dest_path:
-            _snap_update(percent=93, message='Kopiowanie na USB...', log=f'Transfer na USB: {dest_path}')
+            _snap_update(percent=93, message='Copying to USB...', log=f'USB transfer: {dest_path}')
             usb_snap_dir = os.path.join(dest_path, 'ethos-snapshots')
             os.makedirs(usb_snap_dir, exist_ok=True)
             archive_name = f'{snap_name}.tar.gz'
@@ -3323,14 +3323,14 @@ def _create_snapshot_worker(label, include_docker, include_volumes,
             )
             if r.returncode == 0:
                 sz = os.path.getsize(archive_path) if os.path.isfile(archive_path) else 0
-                _snap_update(log=f'USB: zapisano {archive_name} ({sz / 1048576:.1f} MB)')
+                _snap_update(log=f'USB: saved {archive_name} ({sz / 1048576:.1f} MB)')
             else:
-                _snap_update(log=f'USB: błąd zapisu — {r.stderr[:200]}')
+                _snap_update(log=f'USB: write error — {r.stderr[:200]}')
 
-        _snap_update(status='done', percent=100, message=f'Snapshot "{meta["label"]}" gotowy!')
+        _snap_update(status='done', percent=100, message=f'Snapshot "{meta["label"]}" ready!')
 
     except Exception as e:
-        _snap_update(status='error', percent=0, message=f'Błąd: {e}', log=f'WYJĄTEK: {e}')
+        _snap_update(status='error', percent=0, message=f'Error: {e}', log=f'EXCEPTION: {e}')
         logger.exception("Snapshot creation failed")
 
 
@@ -3342,13 +3342,13 @@ def _restore_snapshot_worker(snap_dir, restore_docker, restore_volumes,
     try:
         meta_file = os.path.join(snap_dir, 'meta.json')
         if not os.path.isfile(meta_file):
-            _snap_update(status='error', message='Brak meta.json w snapshocie')
+            _snap_update(status='error', message='No meta.json in snapshot')
             return
 
         with open(meta_file) as f:
             meta = json.load(f)
 
-        _snap_update(percent=5, message='Przywracanie rozpoczęte...', log=f'Przywracanie: {meta.get("label", "?")}')
+        _snap_update(percent=5, message='Restore started...', log=f'Restoring: {meta.get("label", "?")}')
 
         steps_total = sum([restore_ethos, restore_system, restore_docker, restore_volumes])
         step_i = 0
@@ -3357,7 +3357,7 @@ def _restore_snapshot_worker(snap_dir, restore_docker, restore_volumes,
         if restore_ethos:
             step_i += 1
             pct = int(step_i / steps_total * 85)
-            _snap_update(percent=pct, message='Przywracanie EthOS...', log='Przywracanie konfiguracji EthOS...')
+            _snap_update(percent=pct, message='Restoring EthOS...', log='Restoring EthOS configuration...')
 
             ethos_root = os.environ.get('ETHOS_ROOT', f'/home/{get_ethos_user()}/docker/nasos')
             ethos_bak = os.path.join(snap_dir, 'ethos')
@@ -3367,7 +3367,7 @@ def _restore_snapshot_worker(snap_dir, restore_docker, restore_volumes,
                 env_src = os.path.join(ethos_bak, 'ethos.env')
                 if os.path.isfile(env_src):
                     shutil.copy2(env_src, os.path.join(ethos_root, 'ethos.env'))
-                    _snap_update(log='  ethos.env przywrócony')
+                    _snap_update(log='  ethos.env restored')
 
                 # data/
                 data_tar = os.path.join(ethos_bak, 'data.tar.gz')
@@ -3379,12 +3379,12 @@ def _restore_snapshot_worker(snap_dir, restore_docker, restore_volumes,
                         if os.path.isdir(pre_restore):
                             shutil.rmtree(pre_restore, ignore_errors=True)
                         shutil.copytree(data_current, pre_restore)
-                        _snap_update(log='  Obecne data/ skopiowane do data.pre-restore/')
+                        _snap_update(log='  Current data/ copied to data.pre-restore/')
                     subprocess.run(
                         ['tar', '-xzf', data_tar, '-C', ethos_root],
                         capture_output=True, timeout=120
                     )
-                    _snap_update(log='  data/ przywrócone')
+                    _snap_update(log='  data/ restored')
 
                 # install.conf
                 for extra in ['install.conf']:
@@ -3392,15 +3392,15 @@ def _restore_snapshot_worker(snap_dir, restore_docker, restore_volumes,
                     if os.path.isfile(src):
                         shutil.copy2(src, os.path.join(ethos_root, extra))
 
-                _snap_update(log='EthOS — przywrócone')
+                _snap_update(log='EthOS — restored')
             else:
-                _snap_update(log='Brak danych EthOS w snapshocie')
+                _snap_update(log='No EthOS data in snapshot')
 
         # ── 2. System configs ──
         if restore_system:
             step_i += 1
             pct = int(step_i / steps_total * 85)
-            _snap_update(percent=pct, message='Przywracanie konfiguracji systemu...', log='Przywracanie systemu...')
+            _snap_update(percent=pct, message='Restoring system configuration...', log='Restoring system...')
 
             sys_bak = os.path.join(snap_dir, 'system')
             if os.path.isdir(sys_bak):
@@ -3440,7 +3440,7 @@ def _restore_snapshot_worker(snap_dir, restore_docker, restore_volumes,
                     )
                     subprocess.run(['nmcli', 'connection', 'reload'],
                                    capture_output=True, timeout=10)
-                    _snap_update(log='  NetworkManager connections przywrócone')
+                    _snap_update(log='  NetworkManager connections restored')
 
                 # Nginx sites
                 nginx_tar = os.path.join(sys_bak, 'nginx-sites.tar.gz')
@@ -3451,7 +3451,7 @@ def _restore_snapshot_worker(snap_dir, restore_docker, restore_volumes,
                     )
                     subprocess.run(['systemctl', 'reload', 'nginx'],
                                    capture_output=True, timeout=10)
-                    _snap_update(log='  Nginx sites przywrócone')
+                    _snap_update(log='  Nginx sites restored')
 
                 # Let's Encrypt
                 le_tar = os.path.join(sys_bak, 'letsencrypt.tar.gz')
@@ -3460,7 +3460,7 @@ def _restore_snapshot_worker(snap_dir, restore_docker, restore_volumes,
                         ['tar', '-xzf', le_tar, '-C', '/etc'],
                         capture_output=True, timeout=60
                     )
-                    _snap_update(log='  Let\'s Encrypt certs przywrócone')
+                    _snap_update(log='  Let\'s Encrypt certs restored')
 
                 # Samba
                 smb_f = os.path.join(sys_bak, 'smb.conf')
@@ -3468,30 +3468,30 @@ def _restore_snapshot_worker(snap_dir, restore_docker, restore_volumes,
                     shutil.copy2(smb_f, '/etc/samba/smb.conf')
                     subprocess.run(['systemctl', 'restart', 'smbd'],
                                    capture_output=True, timeout=10)
-                    _snap_update(log='  Samba config przywrócony')
+                    _snap_update(log='  Samba config restored')
 
                 # fstab (copy but don't apply — user must reboot)
                 fstab_f = os.path.join(sys_bak, 'fstab')
                 if os.path.isfile(fstab_f):
                     shutil.copy2(fstab_f, '/etc/fstab')
-                    _snap_update(log='  fstab przywrócony (wymaga reboot)')
+                    _snap_update(log='  fstab restored (reboot required)')
 
                 # Crontab
                 cron_f = os.path.join(sys_bak, 'crontab')
                 if os.path.isfile(cron_f):
                     subprocess.run(['crontab', cron_f],
                                    capture_output=True, timeout=10)
-                    _snap_update(log='  Crontab przywrócony')
+                    _snap_update(log='  Crontab restored')
 
-                _snap_update(log='System config — przywrócone')
+                _snap_update(log='System config — restored')
             else:
-                _snap_update(log='Brak konfiguracji systemu w snapshocie')
+                _snap_update(log='No system configuration in snapshot')
 
         # ── 3. Docker compose projects ──
         if restore_docker:
             step_i += 1
             pct = int(step_i / steps_total * 85)
-            _snap_update(percent=pct, message='Przywracanie Docker...', log='Przywracanie projektów Docker...')
+            _snap_update(percent=pct, message='Restoring Docker...', log='Restoring Docker projects...')
 
             docker_bak = os.path.join(snap_dir, 'docker')
             proj_bak = os.path.join(docker_bak, 'projects')
@@ -3516,7 +3516,7 @@ def _restore_snapshot_worker(snap_dir, restore_docker, restore_volumes,
                             shutil.copy2(src, dst)
 
                     # Pull images + start project
-                    _snap_update(log=f'  Projekt {proj_name}: pobieranie obrazów...')
+                    _snap_update(log=f'  Project {proj_name}: pulling images...')
                     subprocess.run(
                         ['docker', 'compose', 'pull'],
                         capture_output=True, timeout=300, cwd=proj_dest
@@ -3526,20 +3526,20 @@ def _restore_snapshot_worker(snap_dir, restore_docker, restore_volumes,
                         capture_output=True, text=True, timeout=120, cwd=proj_dest
                     )
                     if r.returncode == 0:
-                        _snap_update(log=f'  Projekt {proj_name}: uruchomiony ✓')
+                        _snap_update(log=f'  Project {proj_name}: started ✓')
                         restored += 1
                     else:
-                        _snap_update(log=f'  Projekt {proj_name}: BŁĄD — {r.stderr[:200]}')
+                        _snap_update(log=f'  Project {proj_name}: ERROR — {r.stderr[:200]}')
 
-                _snap_update(log=f'Docker projects: {restored} przywróconych')
+                _snap_update(log=f'Docker projects: {restored} restored')
             else:
-                _snap_update(log='Brak projektów Docker w snapshocie lub Docker niedostępny')
+                _snap_update(log='No Docker projects in snapshot or Docker unavailable')
 
         # ── 4. Docker volumes ──
         if restore_volumes and restore_docker:
             step_i += 1
             pct = int(step_i / steps_total * 85)
-            _snap_update(percent=pct, message='Przywracanie Docker volumes...', log='Import wolumenów Docker...')
+            _snap_update(percent=pct, message='Restoring Docker volumes...', log='Importing Docker volumes...')
 
             vol_bak = os.path.join(snap_dir, 'docker', 'volumes')
             if os.path.isdir(vol_bak) and _docker_ok():
@@ -3564,7 +3564,7 @@ def _restore_snapshot_worker(snap_dir, restore_docker, restore_volumes,
                     for cid in containers_using:
                         _docker_cmd(['stop', cid], timeout=30)
                         stopped.append(cid)
-                        _snap_update(log=f'    Zatrzymano kontener {cid[:12]}')
+                        _snap_update(log=f'    Stopped container {cid[:12]}')
 
                     # Import volume data
                     archive_path = os.path.join(vol_bak, vf)
@@ -3579,22 +3579,22 @@ def _restore_snapshot_worker(snap_dir, restore_docker, restore_volumes,
                     if r.returncode == 0:
                         restored_vols += 1
                     else:
-                        _snap_update(log=f'    BŁĄD importu {vol_name}: {r.stderr[:200]}')
+                        _snap_update(log=f'    Import ERROR {vol_name}: {r.stderr[:200]}')
 
                     # Restart stopped containers
                     for cid in stopped:
                         _docker_cmd(['start', cid], timeout=30)
-                        _snap_update(log=f'    Uruchomiono ponownie {cid[:12]}')
+                        _snap_update(log=f'    Restarted {cid[:12]}')
 
-                _snap_update(log=f'Volumes: {restored_vols}/{len(vol_archives)} przywrócone')
+                _snap_update(log=f'Volumes: {restored_vols}/{len(vol_archives)} restored')
             else:
-                _snap_update(log='Brak volumes w snapshocie lub Docker niedostępny')
+                _snap_update(log='No volumes in snapshot or Docker unavailable')
 
         _snap_update(status='done', percent=100,
-                     message=f'Przywracanie "{meta.get("label", "")}" zakończone!')
+                     message=f'Restoring "{meta.get("label", "")}" completed!')
 
     except Exception as e:
-        _snap_update(status='error', percent=0, message=f'Błąd: {e}', log=f'WYJĄTEK: {e}')
+        _snap_update(status='error', percent=0, message=f'Error: {e}', log=f'EXCEPTION: {e}')
         logger.exception("Snapshot restore failed")
 
 

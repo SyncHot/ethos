@@ -747,7 +747,7 @@ def api_cups_status():
     installed = _cups_installed()
     return jsonify({
         'installed': installed,
-        'message': None if installed else 'CUPS nie jest zainstalowany. Zainstaluj aby dodawać i zarządzać drukarkami.'
+        'message': None if installed else 'CUPS is not installed. Install it to add and manage printers.'
     })
 
 
@@ -780,7 +780,7 @@ def api_drivers():
 def _require_cups():
     """Return error response if CUPS is not installed, else None."""
     if not _cups_installed():
-        return jsonify({'success': False, 'error': 'CUPS nie jest zainstalowany. Zainstaluj CUPS w ustawieniach drukarki.'}), 503
+        return jsonify({'success': False, 'error': 'CUPS is not installed. Install CUPS in printer settings.'}), 503
     return None
 
 
@@ -792,7 +792,7 @@ def api_add_printer():
     name = data.get('name', '').strip()
     uri = data.get('uri', '').strip()
     if not name or not uri:
-        return jsonify({'success': False, 'error': 'Nazwa i URI są wymagane'}), 400
+        return jsonify({'success': False, 'error': 'Name and URI are required'}), 400
     result = add_printer(
         name, uri,
         ppd=data.get('ppd'),
@@ -863,14 +863,14 @@ def api_print():
     err = _require_cups()
     if err: return err
     if 'file' not in request.files:
-        return jsonify({'success': False, 'error': 'Brak pliku'}), 400
+        return jsonify({'success': False, 'error': 'No file'}), 400
 
     file = request.files['file']
     if file.filename == '':
         return jsonify({'success': False, 'error': 'Nie wybrano pliku'}), 400
 
     if not allowed_file(file.filename):
-        return jsonify({'success': False, 'error': f'Nieobsługiwany format. Dozwolone: {", ".join(sorted(ALLOWED_EXTENSIONS))}'}), 400
+        return jsonify({'success': False, 'error': f'Unsupported format. Allowed: {", ".join(sorted(ALLOWED_EXTENSIONS))}'}), 400
 
     printer = request.form.get('printer')
     if not printer:

@@ -73,7 +73,7 @@ def update_note(note_id):
     data = _load_notes()
     note = next((n for n in data['notes'] if n['id'] == note_id), None)
     if not note:
-        return jsonify({'error': 'Nie znaleziono notatki'}), 404
+        return jsonify({'error': 'Note not found'}), 404
     body = request.json or {}
     if 'title' in body:
         note['title'] = str(body['title']).strip()[:100]

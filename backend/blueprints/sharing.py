@@ -74,9 +74,9 @@ def _verify_shared_with_auth(share):
     from app import tokens
     tinfo = tokens.get(auth_token)
     if not tinfo or tinfo['expires'] < datetime.now():
-        return False, (jsonify({'error': 'Wymagane logowanie'}), 401)
+        return False, (jsonify({'error': 'Login required'}), 401)
     if tinfo['username'] not in share['shared_with'] and tinfo['username'] != share.get('creator', ''):
-        return False, (jsonify({'error': 'Brak dostępu do tego udostępnienia'}), 403)
+        return False, (jsonify({'error': 'No access to this share'}), 403)
     return True, None
 
 
@@ -127,7 +127,7 @@ def create_share():
     from app import safe_path
     real = safe_path(path)
     if not real or not os.path.exists(real):
-        return jsonify({'error': 'Ścieżka nie istnieje'}), 404
+        return jsonify({'error': 'Path not found'}), 404
 
     is_dir = os.path.isdir(real)
     name = os.path.basename(real) or path
@@ -170,9 +170,9 @@ def delete_share(token):
     shares = _load_shares()
     target = next((s for s in shares if s['token'] == token), None)
     if not target:
-        return jsonify({'error': 'Nie znaleziono udostępnienia'}), 404
+        return jsonify({'error': 'Share not found'}), 404
     if me and target.get('creator') and target['creator'] != me and role != 'admin':
-        return jsonify({'error': 'Brak uprawnień'}), 403
+        return jsonify({'error': 'Permission denied'}), 403
     new = [s for s in shares if s['token'] != token]
     _save_shares(new)
     audit_log('file.share.delete', f'Unshared "{target.get("path", "")}" (token: {token})')
@@ -186,7 +186,7 @@ def public_share_info(token):
     """Get share info + file listing for directory shares."""
     share = _find_share(token)
     if not share:
-        return jsonify({'error': 'Link wygasł lub nie istnieje'}), 404
+        return jsonify({'error': 'Link expired or not found'}), 404
 
     ok, err = _verify_shared_with_auth(share)
     if not ok:
@@ -195,7 +195,7 @@ def public_share_info(token):
     sub = request.args.get('path', '')
     real = _share_real_path(share, sub)
     if not real or not os.path.exists(real):
-        return jsonify({'error': 'Nie znaleziono'}), 404
+        return jsonify({'error': 'Not found'}), 404
 
     if os.path.isfile(real):
         return jsonify({
@@ -219,7 +219,7 @@ def public_share_info(token):
             except (PermissionError, OSError):
                 pass
     except PermissionError:
-        return jsonify({'error': 'Brak uprawnień'}), 403
+        return jsonify({'error': 'Permission denied'}), 403
 
     return jsonify({
         'share': {'name': share['name'], 'is_dir': True, 'token': token},
@@ -233,7 +233,7 @@ def public_share_download(token):
     """Download a file from a share (no auth for public, auth for user-targeted)."""
     share = _find_share(token)
     if not share:
-        return jsonify({'error': 'Link wygasł lub nie istnieje'}), 404
+        return jsonify({'error': 'Link expired or not found'}), 404
 
     ok, err = _verify_shared_with_auth(share)
     if not ok:
@@ -242,7 +242,7 @@ def public_share_download(token):
     sub = request.args.get('path', '')
     real = _share_real_path(share, sub)
     if not real or not os.path.exists(real):
-        return jsonify({'error': 'Nie znaleziono'}), 404
+        return jsonify({'error': 'Not found'}), 404
 
     if os.path.isfile(real):
         return send_file(real, as_attachment=True)
@@ -257,7 +257,7 @@ def public_share_download(token):
             except OSError:
                 pass
             if total_size > _MAX_ZIP_BYTES:
-                return jsonify({'error': 'Folder za duży na pobranie jako ZIP (limit 2 GB)'}), 400
+                return jsonify({'error': 'Folder too large to download as ZIP (2 GB limit)'}), 400
     buf = io.BytesIO()
     with _zf.ZipFile(buf, 'w', _zf.ZIP_DEFLATED) as zf:
         for root, dirs, files in os.walk(real):
@@ -278,7 +278,7 @@ def public_share_preview(token):
     """Preview / stream a file from a share. Supports thumbnails and Range."""
     share = _find_share(token)
     if not share:
-        return jsonify({'error': 'Link wygasł lub nie istnieje'}), 404
+        return jsonify({'error': 'Link expired or not found'}), 404
 
     ok, err = _verify_shared_with_auth(share)
     if not ok:
@@ -287,7 +287,7 @@ def public_share_preview(token):
     sub = request.args.get('path', '')
     real = _share_real_path(share, sub)
     if not real or not os.path.isfile(real):
-        return jsonify({'error': 'Nie znaleziono'}), 404
+        return jsonify({'error': 'Not found'}), 404
 
     w = request.args.get('w', type=int)
     h = request.args.get('h', type=int)
@@ -303,5 +303,5 @@ def public_share_page(token):
     from flask import current_app
     share = _find_share(token)
     if not share:
-        return '<h2 style="font-family:sans-serif;color:#888;text-align:center;margin-top:80px">Link wygasł lub nie istnieje</h2>', 404
+        return '<h2 style="font-family:sans-serif;color:#888;text-align:center;margin-top:80px">Link expired or not found</h2>', 404
     return send_from_directory(current_app.static_folder, 'share.html')

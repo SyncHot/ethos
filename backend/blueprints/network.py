@@ -219,7 +219,7 @@ def wifi_scan():
         # Find WiFi interface
         wifi_iface = _find_wifi_iface()
         if not wifi_iface:
-            return jsonify({'error': 'Brak interfejsu WiFi'}), 404
+            return jsonify({'error': 'No WiFi interface'}), 404
 
         # Bring up interface if down
         _host(f"sudo {_HELPER} ip-link {shlex.quote(wifi_iface)} up 2>/dev/null")
@@ -315,11 +315,11 @@ def wifi_connect():
     password = data.get('password', '').strip()
 
     if not ssid:
-        return jsonify({'error': 'Podaj SSID'}), 400
+        return jsonify({'error': 'SSID required'}), 400
 
     wifi_iface = _find_wifi_iface()
     if not wifi_iface:
-        return jsonify({'error': 'Brak interfejsu WiFi'}), 404
+        return jsonify({'error': 'No WiFi interface'}), 404
 
     try:
         # Bring interface up
@@ -378,11 +378,11 @@ def wifi_connect():
 
         # Check common errors
         if 'no network with SSID' in output.lower():
-            return jsonify({'error': 'Nie znaleziono sieci o podanej nazwie'}), 400
+            return jsonify({'error': 'Network with specified name not found'}), 400
         if 'password' in output.lower() or 'secrets' in output.lower():
-            return jsonify({'error': 'Nieprawidłowe hasło WiFi'}), 401
+            return jsonify({'error': 'Invalid WiFi password'}), 401
 
-        return jsonify({'error': output or 'Nie udało się połączyć'}), 400
+        return jsonify({'error': output or 'Connection failed'}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -392,7 +392,7 @@ def wifi_disconnect():
     """Disconnect WiFi."""
     wifi_iface = _find_wifi_iface()
     if not wifi_iface:
-        return jsonify({'error': 'Brak interfejsu WiFi'}), 404
+        return jsonify({'error': 'No WiFi interface'}), 404
     try:
         r = _host(f"sudo {_HELPER} nmcli device disconnect {shlex.quote(wifi_iface)} 2>&1")
         return jsonify({'status': 'ok', 'output': (r.stdout or '').strip()})
@@ -406,7 +406,7 @@ def wifi_forget():
     data = request.json or {}
     name = data.get('name', '').strip()
     if not name:
-        return jsonify({'error': 'Podaj nazwę połączenia'}), 400
+        return jsonify({'error': 'Connection name required'}), 400
     try:
         r = _host(f"sudo {_HELPER} nmcli connection delete {shlex.quote(name)} 2>&1")
         if r.returncode == 0:
@@ -425,7 +425,7 @@ def wifi_status():
     """Get current WiFi connection details."""
     wifi_iface = _find_wifi_iface()
     if not wifi_iface:
-        return jsonify({'error': 'Brak interfejsu WiFi'}), 404
+        return jsonify({'error': 'No WiFi interface'}), 404
     try:
         r = _host(f"nmcli -t -f active,ssid,signal,security,freq,bssid device wifi list ifname {shlex.quote(wifi_iface)} 2>/dev/null")
         connected = None
@@ -513,7 +513,7 @@ def ap_start():
         output = (r.stdout or '').strip()
         if r.returncode == 0:
             return jsonify({'status': 'ok', 'output': output})
-        return jsonify({'error': output or 'Nie udało się uruchomić hotspota'}), 400
+        return jsonify({'error': output or 'Failed to start hotspot'}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

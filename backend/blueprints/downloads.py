@@ -1,5 +1,5 @@
 """
-EthOS — Menedżer pobierania (Download Manager)
+EthOS — Download Manager
 Backend API for managing downloads with debrid service support
 (AllDebrid, Real-Debrid, Premiumize, direct HTTP/FTP, torrents/magnets)
 """
@@ -493,7 +493,7 @@ def _load_state():
         # Reset stuck extracting status from interrupted extraction
         if p.get('status') == 'extracting':
             p['status'] = 'completed'
-            p['extract_error'] = 'Ekstrakcja przerwana przez restart'
+            p['extract_error'] = 'Extraction interrupted by restart'
         _packages[p['id']] = p
 
 
@@ -1132,7 +1132,7 @@ def _add_torrent_to_debrid(url, config, torrent_file=None):
         return _torrent_realdebrid(url, config['realdebrid_api_key'], torrent_file)
     elif service == 'premiumize' and config.get('premiumize_api_key'):
         return _torrent_premiumize(url, config['premiumize_api_key'], torrent_file)
-    raise Exception("Brak skonfigurowanego serwisu debrid do obsługi torrentów")
+    raise Exception("No debrid service configured for torrent handling")
 
 
 def _poll_torrent(torrent_info, dl):
@@ -1207,7 +1207,7 @@ def _download_single_url(dl, download_url, filename, filesize, dest_dir, config)
                 free_gb = free_bytes / (1024 ** 3)
                 need_gb = filesize / (1024 ** 3)
                 raise Exception(
-                    f"Brak miejsca na dysku: wolne {free_gb:.1f} GB, potrzeba {need_gb:.1f} GB"
+                    f"Not enough disk space: {free_gb:.1f} GB free, {need_gb:.1f} GB needed"
                 )
         except OSError:
             pass  # can't check — proceed anyway
@@ -1388,7 +1388,7 @@ def _download_worker(dl_id):
                 return
 
             if not file_links:
-                raise Exception("Brak plików do pobrania z torrenta")
+                raise Exception("No files to download from torrent")
 
             # Try to auto-categorize torrent if using default path
             if config.get('auto_categorize', True):
@@ -1566,7 +1566,7 @@ def _download_worker(dl_id):
                 delay = RETRY_BASE_DELAY * (2 ** attempt)
                 with _lock:
                     dl['status'] = 'resolving'  # visual: "retrying"
-                    dl['error'] = f'Ponowna próba {attempt + 1}/{max_retries} za {delay}s: {err_str}'
+                    dl['error'] = f'Retry {attempt + 1}/{max_retries} in {delay}s: {err_str}'
                     dl['retry_count'] = attempt + 1
                 _emit('dl:update', _sanitize(dl))
                 time.sleep(delay)
@@ -1870,14 +1870,14 @@ def _extract_single(archive_path, dest_dir, password=''):
     elif fn_lower.endswith(('.cab', '.iso')):
         cmd = ['7z', 'x', '-y', f'-o{dest_dir}', archive_path]
     else:
-        return False, f'Nieobsługiwany format: {os.path.basename(archive_path)}'
+        return False, f'Unsupported format: {os.path.basename(archive_path)}'
 
     try:
         # Auto-install 7z if missing
         from host import ensure_dep
         ok, msg = ensure_dep('7z', install=True)
         if not ok:
-            return False, f'Brak 7z: {msg}'
+            return False, f'Missing 7z: {msg}'
 
         logging.info('[extract] cmd=%s', ' '.join(cmd))
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
@@ -1887,12 +1887,12 @@ def _extract_single(archive_path, dest_dir, password=''):
             err = result.stderr.strip() or result.stdout.strip()
             # Check for password errors
             if 'Wrong password' in err or 'incorrect password' in err.lower():
-                return False, 'Nieprawidłowe hasło archiwum'
+                return False, 'Invalid archive password'
             return False, err[:500]
         return True, ''
     except subprocess.TimeoutExpired:
         logging.error('[extract] Timeout extracting %s', archive_path)
-        return False, 'Timeout — ekstrakcja trwała zbyt długo'
+        return False, 'Timeout — extraction took too long'
     except Exception as e:
         logging.exception('[extract] Error extracting %s', archive_path)
         return False, str(e)[:500]
@@ -2069,11 +2069,11 @@ def _run_package_extract(package_id):
                  package_id, dest_dir, pkg_files, delete_after)
 
     if not dest_dir or not os.path.isdir(dest_dir):
-        err_msg = f'Folder docelowy nie istnieje: {dest_dir}'
+        err_msg = f'Target folder not found: {dest_dir}'
         logging.error('[extract] %s', err_msg)
         with _lock:
             pkg['status'] = 'extract_failed'
-            pkg['extract_error'] = 'Folder docelowy nie istnieje'
+            pkg['extract_error'] = 'Target folder not found'
             _save_state()
         _emit('dl:package_update', _sanitize_package(pkg))
         return
@@ -2096,7 +2096,7 @@ def _run_package_extract(package_id):
         else:
             pkg['status'] = 'extracted'
             if errors:
-                pkg['extract_error'] = f'Wypakowano {total}, błędy: ' + '; '.join(errors[:3])
+                pkg['extract_error'] = f'Extracted {total}, errors: ' + '; '.join(errors[:3])
             else:
                 pkg['extract_error'] = ''
         pkg['has_archives'] = _scan_for_archives(dest_dir)
@@ -2345,7 +2345,7 @@ def add_download():
     _valid_prefixes = ('http://', 'https://', 'ftp://', 'magnet:')
     invalid = [u for u in urls if not any(u.strip().lower().startswith(p) for p in _valid_prefixes)]
     if invalid:
-        return jsonify({'error': f'Nieprawid\u0142owy link: {invalid[0][:80]}'}), 400
+        return jsonify({'error': f'Invalid link: {invalid[0][:80]}'}), 400
 
     dest_dir = data.get('dest_dir', '').strip()
     use_debrid = data.get('use_debrid', True)
@@ -2461,16 +2461,16 @@ def check_processed_torrents():
 def add_torrent_file():
     """Upload .torrent file and add to download queue."""
     if 'file' not in request.files:
-        return jsonify({'error': 'Brak pliku .torrent'}), 400
+        return jsonify({'error': 'No .torrent file'}), 400
 
     f = request.files['file']
     if not f.filename:
-        return jsonify({'error': 'Brak pliku .torrent'}), 400
+        return jsonify({'error': 'No .torrent file'}), 400
 
     dest_dir = request.form.get('dest_dir', '').strip()
     torrent_data = f.read()
     if len(torrent_data) > 5 * 1024 * 1024:  # Max 5 MB
-        return jsonify({'error': 'Plik .torrent za duży'}), 400
+        return jsonify({'error': '.torrent file too large'}), 400
 
     dl_id = str(uuid.uuid4())[:8]
 
@@ -2645,7 +2645,7 @@ def reorder_download():
         if not dl:
             return jsonify({'error': 'Not found'}), 404
         if dl['status'] not in ('pending', 'paused'):
-            return jsonify({'error': 'Można zmieniać kolejność tylko oczekujących'}), 400
+            return jsonify({'error': 'Can only reorder pending items'}), 400
         current = dl.get('priority', 0)
         if direction == 'up':
             dl['priority'] = current + 1
@@ -2707,15 +2707,15 @@ def extract_package():
             if not dl:
                 return jsonify({'error': 'Not found'}), 404
             if dl.get('status') != 'completed':
-                return jsonify({'error': 'Pobieranie nie jest zakończone'}), 400
+                return jsonify({'error': 'Download not completed'}), 400
             dest = dl.get('dest_dir', '')
             if not dest:
-                return jsonify({'error': 'Brak folderu docelowego'}), 400
+                return jsonify({'error': 'Target folder not found'}), 400
         # Create temporary package for this single download
         package_id = 'pkg_' + str(uuid.uuid4())[:8]
         pkg = {
             'id': package_id,
-            'name': dl.get('filename', 'Ekstrakcja'),
+            'name': dl.get('filename', 'Extraction'),
             'dl_ids': [dl_id],
             'dest_dir': dest,
             'status': 'downloading',
@@ -2737,7 +2737,7 @@ def extract_package():
         if not pkg:
             return jsonify({'error': 'Package not found'}), 404
         if pkg.get('status') == 'extracting':
-            return jsonify({'error': 'Ekstrakcja już trwa'}), 400
+            return jsonify({'error': 'Extraction already in progress'}), 400
         # Update password/delete if provided
         if password:
             pkg['extract_password'] = password
@@ -2824,7 +2824,7 @@ def test_debrid():
     api_key = data.get('api_key', '')
 
     if not api_key:
-        return jsonify({'ok': False, 'error': 'Brak klucza API'})
+        return jsonify({'ok': False, 'error': 'API key missing'})
 
     return _do_test_debrid(service, api_key)
 
@@ -2837,7 +2837,7 @@ def test_saved_debrid():
     cfg = _load_config()
     api_key = cfg.get(f'{service}_api_key', '')
     if not api_key:
-        return jsonify({'ok': False, 'error': 'Brak zapisanego klucza API dla tego serwisu'})
+        return jsonify({'ok': False, 'error': 'No saved API key for this service'})
     return _do_test_debrid(service, api_key)
 
 
@@ -2850,8 +2850,8 @@ def _do_test_debrid(service, api_key):
             )
             if result.get('status') == 'success':
                 user = result.get('data', {}).get('user', {})
-                return jsonify({'ok': True, 'info': f"Użytkownik: {user.get('username', '?')}, Premium: {'Tak' if user.get('isPremium') else 'Nie'}"})
-            return jsonify({'ok': False, 'error': result.get('error', {}).get('message', 'Błąd')})
+                return jsonify({'ok': True, 'info': f"User: {user.get('username', '?')}, Premium: {'Yes' if user.get('isPremium') else 'No'}"})
+            return jsonify({'ok': False, 'error': result.get('error', {}).get('message', 'Error')})
 
         elif service == 'realdebrid':
             result = _http_get_json(
@@ -2859,17 +2859,17 @@ def _do_test_debrid(service, api_key):
                 headers={'Authorization': f'Bearer {api_key}'}
             )
             if result.get('username'):
-                prem = 'Tak' if result.get('premium', 0) > 0 else 'Nie'
-                return jsonify({'ok': True, 'info': f"Użytkownik: {result['username']}, Premium: {prem}"})
-            return jsonify({'ok': False, 'error': 'Nieprawidłowy klucz'})
+                prem = 'Yes' if result.get('premium', 0) > 0 else 'No'
+                return jsonify({'ok': True, 'info': f"User: {result['username']}, Premium: {prem}"})
+            return jsonify({'ok': False, 'error': 'Invalid key'})
 
         elif service == 'premiumize':
             result = _http_get_json(
                 f"https://www.premiumize.me/api/account/info?apikey={urllib.parse.quote(api_key)}"
             )
             if result.get('status') == 'success':
-                return jsonify({'ok': True, 'info': f"Użytkownik: {result.get('customer_id', '?')}, Premium: {'Tak' if result.get('premium_until') else 'Nie'}"})
-            return jsonify({'ok': False, 'error': result.get('message', 'Błąd')})
+                return jsonify({'ok': True, 'info': f"User: {result.get('customer_id', '?')}, Premium: {'Yes' if result.get('premium_until') else 'No'}"})
+            return jsonify({'ok': False, 'error': result.get('message', 'Error')})
 
 
         elif service == 'debridlink':
@@ -2879,9 +2879,9 @@ def _do_test_debrid(service, api_key):
             )
             if result.get('success') and result.get('value'):
                 val = result['value']
-                prem = 'Tak' if val.get('premiumLeft', 0) > 0 else 'Nie'
-                return jsonify({'ok': True, 'info': f"Użytkownik: {val.get('pseudo', '?')}, Premium: {prem}"})
-            return jsonify({'ok': False, 'error': result.get('error', 'Nieprawidłowy klucz')})
+                prem = 'Yes' if val.get('premiumLeft', 0) > 0 else 'No'
+                return jsonify({'ok': True, 'info': f"User: {val.get('pseudo', '?')}, Premium: {prem}"})
+            return jsonify({'ok': False, 'error': result.get('error', 'Invalid key')})
 
         elif service == 'torbox':
             result = _http_get_json(
@@ -2890,11 +2890,11 @@ def _do_test_debrid(service, api_key):
             )
             if result.get('success') and result.get('data'):
                 d = result['data']
-                prem = 'Tak' if d.get('plan', 0) > 0 else 'Nie'
-                return jsonify({'ok': True, 'info': f"Użytkownik: {d.get('email', '?')}, Premium: {prem}"})
-            return jsonify({'ok': False, 'error': result.get('detail', 'Nieprawidłowy klucz')})
+                prem = 'Yes' if d.get('plan', 0) > 0 else 'No'
+                return jsonify({'ok': True, 'info': f"User: {d.get('email', '?')}, Premium: {prem}"})
+            return jsonify({'ok': False, 'error': result.get('detail', 'Invalid key')})
 
-        return jsonify({'ok': False, 'error': 'Nieznany serwis'})
+        return jsonify({'ok': False, 'error': 'Unknown service'})
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)[:200]})
 
@@ -2925,7 +2925,7 @@ def _downloads_on_uninstall(wipe):
 
 register_pkg_routes(
     downloads_bp,
-    install_message='Menedżer pobierania gotowy.',
+    install_message='Download Manager ready.',
     wipe_files=[DOWNLOADS_STATE_FILE, DOWNLOADS_CONFIG_FILE,
                 DOWNLOADS_PACKAGES_FILE, DOWNLOADS_HISTORY_FILE],
     wipe_dirs=[TORRENT_CACHE_DIR],

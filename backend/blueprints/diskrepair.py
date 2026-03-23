@@ -283,7 +283,7 @@ def smart_detail(disk):
 
     sdata = _try_smartctl(disk, timeout=30)
     if not sdata:
-        return jsonify({'error': 'SMART niedostępny dla tego dysku (brak obsługi lub odmowa dostępu)'}), 400
+        return jsonify({'error': 'SMART not available for this disk (not supported or access denied)'}), 400
 
     device = sdata.get('device', {})
     info = {
@@ -799,7 +799,7 @@ def _diskrepair_on_uninstall(wipe):
 
 register_pkg_routes(
     diskrepair_bp,
-    install_message='Naprawa dysków gotowa.',
+    install_message='Disk repair ready.',
     install_deps=['smartctl'],
     wipe_files=[_REPAIR_STATE_FILE, _HISTORY_FILE],
     on_uninstall=_diskrepair_on_uninstall,

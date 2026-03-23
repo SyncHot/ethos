@@ -670,26 +670,26 @@ def kill_process(pid, signal='TERM'):
 
 # USB device class descriptions
 _USB_CLASS_NAMES = {
-    '00': 'Urządzenie kompozytowe',
+    '00': 'Composite device',
     '01': 'Audio',
-    '02': 'Komunikacja (CDC)',
-    '03': 'HID (klawiatura/mysz)',
-    '05': 'Urządzenie fizyczne',
-    '06': 'Obraz (aparat/skaner)',
-    '07': 'Drukarka',
-    '08': 'Pamięć masowa (dysk)',
-    '09': 'Hub USB',
-    '0a': 'Dane CDC',
+    '02': 'Communication (CDC)',
+    '03': 'HID (keyboard/mouse)',
+    '05': 'Physical device',
+    '06': 'Image (camera/scanner)',
+    '07': 'Printer',
+    '08': 'Mass storage (disk)',
+    '09': 'USB Hub',
+    '0a': 'CDC Data',
     '0b': 'Smart Card',
-    '0d': 'Zabezpieczenia',
-    '0e': 'Kamera wideo',
-    '0f': 'Zdrowie osobiste',
-    '10': 'Audio/Wideo',
-    'dc': 'Diagnostyka',
-    'e0': 'Bezprzewodowe (WiFi/BT)',
-    'ef': 'Różne',
-    'fe': 'Specyficzne dla aplikacji',
-    'ff': 'Specyficzne dla producenta',
+    '0d': 'Security',
+    '0e': 'Video camera',
+    '0f': 'Personal health',
+    '10': 'Audio/Video',
+    'dc': 'Diagnostics',
+    'e0': 'Wireless (WiFi/BT)',
+    'ef': 'Miscellaneous',
+    'fe': 'Application specific',
+    'ff': 'Vendor specific',
 }
 
 
@@ -708,7 +708,7 @@ def get_usb_devices():
                         'device': match.group(2),
                         'vendor_id': match.group(3),
                         'product_id': match.group(4),
-                        'product': match.group(5).strip() or 'Nieznane urządzenie',
+                        'product': match.group(5).strip() or 'Unknown device',
                         'manufacturer': '',
                         'serial': '',
                         'device_class': '',
@@ -877,7 +877,7 @@ def _check_resource_alert(container):
 
     msg = None
     if mem_pct > 90:
-        msg = f'Wysokie zużycie pamięci przez kontener {name}: {mem_pct:.1f}%'
+        msg = f'High memory usage by container {name}: {mem_pct:.1f}%'
 
     if msg:
         now = time.time()

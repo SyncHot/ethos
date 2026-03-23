@@ -139,8 +139,8 @@ def extract_image_metadata(path):
 
     # Filename as semantic info (replace separators with spaces)
     clean_name = re.sub(r'[-_.]', ' ', name_no_ext)
-    meta_parts.append(f"Zdjęcie: {clean_name}")
-    meta_parts.append(f"Plik: {basename}")
+    meta_parts.append(f"Photo: {clean_name}")
+    meta_parts.append(f"File: {basename}")
 
     # Directory info (often meaningful: "Wakacje 2024", "Urodziny")
     parent = os.path.basename(os.path.dirname(path))
@@ -564,21 +564,21 @@ class RAGIndexer:
         """Index all eligible files in a directory. Runs synchronously.
         Call in a thread for background indexing."""
         if self._indexing:
-            return {'error': 'Indeksowanie już trwa'}
+            return {'error': 'Indexing already in progress'}
 
         directory = os.path.realpath(directory)
 
         # Safety: only index under allowed base paths (never /, /etc, /sys, etc.)
         if not any(directory.startswith(prefix) or directory == prefix.rstrip('/') for prefix in _SAFE_INDEX_ROOTS):
-            return {'error': f'Indeksowanie dozwolone tylko w: {", ".join(_SAFE_INDEX_ROOTS)}'}
+            return {'error': f'Indexing only allowed in: {", ".join(_SAFE_INDEX_ROOTS)}'}
 
         # Sandbox check for non-admin users
         if self.sandbox_root:
             if not (directory.startswith(self.sandbox_root + '/') or directory == self.sandbox_root):
-                return {'error': 'Dostęp ograniczony do katalogu domowego'}
+                return {'error': 'Access restricted to home directory'}
 
         if not os.path.isdir(directory):
-            return {'error': 'Katalog nie istnieje'}
+            return {'error': 'Directory does not exist'}
 
         self._indexing = True
         self._progress = {'status': 'scanning', 'indexed': 0, 'total': 0, 'current': ''}
@@ -780,18 +780,18 @@ def build_rag_context(results, query):
                 'score': r['score'],
             })
 
-        type_label = '📷 Galeria' if idx_type == 'gallery' else '📄 Dokument'
+        type_label = '📷 Gallery' if idx_type == 'gallery' else '📄 Document'
         parts.append(f"[{type_label}: {basename}]\n{text}")
 
     context = (
-        "KONTEKST Z BAZY WIEDZY UŻYTKOWNIKA:\n"
-        "Poniższe fragmenty zostały automatycznie wyszukane z plików użytkownika "
-        "na podstawie jego pytania. Wykorzystaj je w odpowiedzi i powołuj się na źródła.\n"
+        "CONTEXT FROM USER KNOWLEDGE BASE:\n"
+        "The following fragments were automatically retrieved from user files "
+        "based on their question. Use them in your response and cite sources.\n"
         "---\n" +
         "\n---\n".join(parts) +
         "\n---\n"
-        "INSTRUKCJA: Odpowiedz na pytanie użytkownika na podstawie powyższego kontekstu. "
-        "Na końcu odpowiedzi wymień źródła w formacie: 📎 Źródło: [nazwa_pliku]"
+        "INSTRUCTION: Answer the user's question based on the above context. "
+        "At the end, list sources in format: 📎 Source: [filename]"
     )
 
     return context, sources

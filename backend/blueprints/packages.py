@@ -322,7 +322,7 @@ def apt_clean():
     """Clean apt cache and autoremove."""
     def generate():
         for line in host_run_stream(
-            "DEBIAN_FRONTEND=noninteractive apt-get autoremove -y 2>&1 && apt-get clean 2>&1 && echo '--- Czyszczenie zakończone ---'"
+            "DEBIAN_FRONTEND=noninteractive apt-get autoremove -y 2>&1 && apt-get clean 2>&1 && echo '--- Cleanup complete ---'"
         ):
             yield f"data: {line}\n\n"
     return Response(stream_with_context(generate()), mimetype='text/event-stream')
@@ -332,7 +332,7 @@ def apt_clean():
 def fix_dpkg():
     """Run dpkg --configure -a (streamed)."""
     def generate():
-        yield f"data: Uruchamianie dpkg --configure -a...\n\n"
+        yield f"data: Running dpkg --configure -a...\n\n"
         for line in host_run_stream("dpkg --configure -a 2>&1"):
             yield f"data: {line}\n\n"
     return Response(stream_with_context(generate()), mimetype='text/event-stream')

@@ -134,7 +134,7 @@ def _require_qemu(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if not _qemu_available():
-            return jsonify({'error': 'QEMU nie jest zainstalowany. Zainstaluj paczkę VM Manager.'}), 503
+            return jsonify({'error': 'QEMU is not installed. Install the VM Manager package.'}), 503
         return f(*args, **kwargs)
     return decorated
 
@@ -245,7 +245,7 @@ def vm_status():
         'available': qemu_ok,
         'kvm': kvm_ok,
         'arm': _arm_qemu_available(),
-        'message': None if qemu_ok else 'QEMU nie jest zainstalowany.',
+        'message': None if qemu_ok else 'QEMU is not installed.',
     })
 
 
@@ -295,7 +295,7 @@ def create_vm():
     data = request.get_json(force=True) if request.data else {}
     name = data.get('name', '').strip()
     if not name:
-        return jsonify({'error': 'Nazwa VM jest wymagana'}), 400
+        return jsonify({'error': 'VM name is required'}), 400
 
     cpu = int(data.get('cpu', 2))
     ram = int(data.get('ram', 1024))  # MB
@@ -311,11 +311,11 @@ def create_vm():
     if ram < 256 or ram > 65536:
         return jsonify({'error': 'RAM: 256 MB - 64 GB'}), 400
     if not re.match(r'^\d+[GMK]?$', disk_size):
-        return jsonify({'error': 'Nieprawidłowy rozmiar dysku (np. 20G, 512M)'}), 400
+        return jsonify({'error': 'Invalid disk size (e.g. 20G, 512M)'}), 400
     if boot_image:
         boot_image_real = os.path.realpath(boot_image)
         if not _is_allowed_image_path(boot_image_real):
-            return jsonify({'error': 'Niedozwolona ścieżka obrazu'}), 403
+            return jsonify({'error': 'Image path not allowed'}), 403
         boot_image = boot_image_real
 
     vm_id = _sanitize_name(name).lower().replace(' ', '-')
@@ -334,7 +334,7 @@ def create_vm():
             timeout=60
         )
         if r.returncode != 0:
-            return jsonify({'error': f'Błąd tworzenia dysku: {r.stderr}'}), 500
+            return jsonify({'error': f'Disk creation error: {r.stderr}'}), 500
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -363,11 +363,11 @@ def create_vm():
 def update_vm(vm_id):
     """Update VM configuration (only when VM is stopped)."""
     if _check_vm_process(vm_id):
-        return jsonify({'error': 'Zatrzymaj VM przed edycją konfiguracji'}), 409
+        return jsonify({'error': 'Stop VM before editing configuration'}), 409
 
     vms = _load_vms()
     if vm_id not in vms:
-        return jsonify({'error': 'VM nie znaleziona'}), 404
+        return jsonify({'error': 'VM not found'}), 404
 
     data = request.get_json(force=True) if request.data else {}
     vm = vms[vm_id]
@@ -385,7 +385,7 @@ def update_vm(vm_id):
         if new_boot:
             real_boot = os.path.realpath(new_boot)
             if not _is_allowed_image_path(real_boot):
-                return jsonify({'error': 'Niedozwolona ścieżka obrazu'}), 403
+                return jsonify({'error': 'Image path not allowed'}), 403
             new_boot = real_boot
         vm['boot_image'] = new_boot
     if 'description' in data:
@@ -401,11 +401,11 @@ def update_vm(vm_id):
 def delete_vm(vm_id):
     """Delete a virtual machine and its disk files."""
     if _check_vm_process(vm_id):
-        return jsonify({'error': 'Zatrzymaj VM przed usunięciem'}), 409
+        return jsonify({'error': 'Stop VM before deletion'}), 409
 
     vms = _load_vms()
     if vm_id not in vms:
-        return jsonify({'error': 'VM nie znaleziona'}), 404
+        return jsonify({'error': 'VM not found'}), 404
 
     # Remove VM directory
     vm_path = _vm_dir(vm_id)
@@ -428,12 +428,12 @@ def delete_vm(vm_id):
 def start_vm(vm_id):
     """Start a virtual machine."""
     if _check_vm_process(vm_id):
-        return jsonify({'error': 'VM już działa'}), 409
+        return jsonify({'error': 'VM already running'}), 409
 
     vms = _load_vms()
     vm = vms.get(vm_id)
     if not vm:
-        return jsonify({'error': 'VM nie znaleziona'}), 404
+        return jsonify({'error': 'VM not found'}), 404
 
     vnc_display, vnc_port = _next_vnc_port()
     kvm = _kvm_available()
@@ -441,7 +441,7 @@ def start_vm(vm_id):
     boot_image = vm.get('boot_image', '')
     boot_image_real = os.path.realpath(boot_image) if boot_image else ''
     if boot_image and not _is_allowed_image_path(boot_image_real):
-        return jsonify({'error': 'Niedozwolona ścieżka obrazu'}), 403
+        return jsonify({'error': 'Image path not allowed'}), 403
     boot_image = boot_image_real
 
     is_arm = _is_arm_image(boot_image, vm.get('name', ''))
@@ -450,9 +450,9 @@ def start_vm(vm_id):
     # ── Raspberry Pi VM (raspi3b machine) ─────────────────────
     if is_rpi:
         if not _arm_qemu_available():
-            return jsonify({'error': 'qemu-system-aarch64 nie jest zainstalowany. Zainstaluj: apt install qemu-system-arm'}), 503
+            return jsonify({'error': 'qemu-system-aarch64 is not installed. Install: apt install qemu-system-arm'}), 503
         if not _raspi_machine_available():
-            return jsonify({'error': 'QEMU nie obsługuje maszyny raspi3b. Zaktualizuj QEMU do wersji >= 8.0'}), 503
+            return jsonify({'error': 'QEMU does not support raspi3b machine. Update QEMU to version >= 8.0'}), 503
 
         # The boot image (RPi OS .img) is the main SD card — must be writable.
         # We work on a copy so the original stays intact.
@@ -461,10 +461,10 @@ def start_vm(vm_id):
             sd_copy = os.path.join(vm_path, 'sd-card.img')
             if not os.path.exists(sd_copy):
                 import shutil
-                _logger.info('Kopiowanie obrazu RPi jako SD card: %s → %s', boot_image, sd_copy)
+                _logger.info('Copying RPi image as SD card: %s → %s', boot_image, sd_copy)
                 shutil.copy2(boot_image, sd_copy)
         else:
-            return jsonify({'error': 'Brak obrazu boot RPi (.img)'}), 400
+            return jsonify({'error': 'No RPi boot image (.img)'}), 400
 
         # ── Extract kernel + DTB from boot partition ──
         # QEMU raspi3b does NOT emulate GPU firmware (bootcode.bin/start.elf),
@@ -488,12 +488,12 @@ def start_vm(vm_id):
             )
             r = host_run(extract_script, timeout=30)
             if 'OK' not in r.stdout:
-                return jsonify({'error': f'Nie udało się wyodrębnić kernela/DTB z obrazu RPi: {r.stderr[-200:]}'}), 500
+                return jsonify({'error': f'Failed to extract kernel/DTB from RPi image: {r.stderr[-200:]}'}), 500
 
         if not os.path.exists(kernel_path):
-            return jsonify({'error': 'Brak kernel8.img w obrazie RPi'}), 400
+            return jsonify({'error': 'No kernel8.img in RPi image'}), 400
         if not os.path.exists(dtb_path):
-            return jsonify({'error': 'Brak pliku DTB (bcm2710-rpi-3-b*.dtb) w obrazie RPi'}), 400
+            return jsonify({'error': 'No DTB file (bcm2710-rpi-3-b*.dtb) in RPi image'}), 400
 
         cmd = ['qemu-system-aarch64']
         cmd += ['-machine', 'raspi3b']
@@ -528,7 +528,7 @@ def start_vm(vm_id):
     # ── Generic ARM (aarch64) VM ──────────────────────────────
     elif is_arm:
         if not _arm_qemu_available():
-            return jsonify({'error': 'qemu-system-aarch64 nie jest zainstalowany. Zainstaluj: apt install qemu-system-arm qemu-efi-aarch64'}), 503
+            return jsonify({'error': 'qemu-system-aarch64 is not installed. Install: apt install qemu-system-arm qemu-efi-aarch64'}), 503
 
         cmd = ['qemu-system-aarch64']
         cmd += ['-machine', 'virt']
@@ -658,7 +658,7 @@ def start_vm(vm_id):
         time.sleep(1)
         if proc.poll() is not None:
             stderr = proc.stderr.read().decode('utf-8', errors='replace')
-            return jsonify({'error': f'QEMU nie uruchomił się: {stderr[:500]}'}), 500
+            return jsonify({'error': f'QEMU failed to start: {stderr[:500]}'}), 500
 
         _running_vms[vm_id] = {
             'proc': proc,
@@ -696,14 +696,14 @@ def start_vm(vm_id):
 def stop_vm(vm_id):
     """Stop (gracefully or forcefully) a virtual machine."""
     if not _check_vm_process(vm_id):
-        return jsonify({'error': 'VM nie działa'}), 409
+        return jsonify({'error': 'VM not running'}), 409
 
     data = request.get_json(force=True) if request.data else {}
     force = data.get('force', False)
 
     info = _running_vms.get(vm_id)
     if not info:
-        return jsonify({'error': 'VM nie znaleziona'}), 404
+        return jsonify({'error': 'VM not found'}), 404
 
     proc = info['proc']
     try:
@@ -816,15 +816,15 @@ def copy_builder_image():
     data = request.get_json(force=True) if request.data else {}
     src = data.get('path', '')
     if not src or not os.path.isfile(src):
-        return jsonify({'error': 'Plik źródłowy nie istnieje'}), 404
+        return jsonify({'error': 'Source file not found'}), 404
     # Security: only allow files from the builder images directory
     images_dir = os.path.realpath(_app_path('installer/images'))
     real_src = os.path.realpath(src)
     if not real_src.startswith(images_dir + '/'):
-        return jsonify({'error': 'Niedozwolona ścieżka'}), 403
+        return jsonify({'error': 'Path not allowed'}), 403
     dest = os.path.join(_iso_root(), os.path.basename(src))
     if os.path.exists(dest):
-        return jsonify({'error': f'Plik "{os.path.basename(src)}" już istnieje w obrazach VM'}), 409
+        return jsonify({'error': f'File "{os.path.basename(src)}" already exists in VM images'}), 409
     try:
         _shutil.copy2(real_src, dest)
         return jsonify({'status': 'ok', 'name': os.path.basename(src)})
@@ -838,16 +838,16 @@ def copy_builder_image():
 def upload_image():
     """Upload an ISO/IMG/QCOW2 image."""
     if 'file' not in request.files:
-        return jsonify({'error': 'Brak pliku'}), 400
+        return jsonify({'error': 'No file'}), 400
 
     f = request.files['file']
     if not f.filename:
-        return jsonify({'error': 'Brak nazwy pliku'}), 400
+        return jsonify({'error': 'No filename provided'}), 400
 
     valid_exts = {'.iso', '.img', '.raw', '.qcow2', '.vdi', '.vmdk'}
     ext = os.path.splitext(f.filename)[1].lower()
     if ext not in valid_exts:
-        return jsonify({'error': f'Nieobsługiwany format: {ext}. Dozwolone: {", ".join(valid_exts)}'}), 400
+        return jsonify({'error': f'Unsupported format: {ext}. Allowed: {", ".join(valid_exts)}'}), 400
 
     safe_name = re.sub(r'[^\w\s\-.]', '', f.filename)
     dest = os.path.join(_iso_root(), safe_name)
@@ -863,13 +863,13 @@ def delete_image(filename):
     """Delete an image file."""
     fpath = os.path.join(_iso_root(), os.path.basename(filename))
     if not os.path.isfile(fpath):
-        return jsonify({'error': 'Plik nie znaleziony'}), 404
+        return jsonify({'error': 'File not found'}), 404
 
     # Check if any VM uses this image
     vms = _load_vms()
     for vm_id, vm in vms.items():
         if vm.get('boot_image') == fpath:
-            return jsonify({'error': f'Obraz używany przez VM "{vm.get("name", vm_id)}"'}), 409
+            return jsonify({'error': f'Image in use by VM "{vm.get("name", vm_id)}"'}), 409
 
     os.remove(fpath)
     return jsonify({'ok': True})
@@ -887,11 +887,11 @@ def disk_info(vm_id):
     vms = _load_vms()
     vm = vms.get(vm_id)
     if not vm:
-        return jsonify({'error': 'VM nie znaleziona'}), 404
+        return jsonify({'error': 'VM not found'}), 404
 
     disk_file = vm.get('disk_file', '')
     if not disk_file or not os.path.exists(disk_file):
-        return jsonify({'error': 'Brak pliku dysku'}), 404
+        return jsonify({'error': 'Disk file not found'}), 404
 
     try:
         r = host_run(f'qemu-img info --output=json "{disk_file}"', timeout=10)
@@ -916,24 +916,24 @@ def disk_info(vm_id):
 def resize_disk(vm_id):
     """Resize a VM's disk (expand only, VM must be stopped)."""
     if _check_vm_process(vm_id):
-        return jsonify({'error': 'Zatrzymaj VM przed zmianą rozmiaru dysku'}), 409
+        return jsonify({'error': 'Stop VM before resizing disk'}), 409
 
     vms = _load_vms()
     vm = vms.get(vm_id)
     if not vm:
-        return jsonify({'error': 'VM nie znaleziona'}), 404
+        return jsonify({'error': 'VM not found'}), 404
 
     data = request.get_json(force=True) if request.data else {}
     new_size = data.get('size', '')
     if not re.match(r'^\+?\d+[GMK]$', new_size):
-        return jsonify({'error': 'Nieprawidłowy rozmiar (np. +10G, +512M)'}), 400
+        return jsonify({'error': 'Invalid size (e.g. +10G, +512M)'}), 400
 
     if not new_size.startswith('+'):
         new_size = '+' + new_size
 
     disk_file = vm.get('disk_file', '')
     if not disk_file or not os.path.exists(disk_file):
-        return jsonify({'error': 'Brak pliku dysku'}), 404
+        return jsonify({'error': 'Disk file not found'}), 404
 
     try:
         r = host_run(f'qemu-img resize "{disk_file}" {new_size}', timeout=30)
@@ -956,14 +956,14 @@ def list_snapshots(vm_id):
     vms = _load_vms()
     vm = vms.get(vm_id)
     if not vm:
-        return jsonify({'error': 'VM nie znaleziona'}), 404
+        return jsonify({'error': 'VM not found'}), 404
 
     disk_file = vm.get('disk_file', '')
     if not disk_file or not os.path.exists(disk_file):
         return jsonify({'snapshots': []})
 
     if vm.get('disk_format') != 'qcow2':
-        return jsonify({'error': 'Snapshoty dostępne tylko dla dysków QCOW2'}), 400
+        return jsonify({'error': 'Snapshots only available for QCOW2 disks'}), 400
 
     try:
         r = host_run(f'qemu-img snapshot -l "{disk_file}"', timeout=10)
@@ -992,15 +992,15 @@ def list_snapshots(vm_id):
 def create_snapshot(vm_id):
     """Create a disk snapshot (VM must be stopped, disk must be QCOW2)."""
     if _check_vm_process(vm_id):
-        return jsonify({'error': 'Zatrzymaj VM przed tworzeniem snapshotu'}), 409
+        return jsonify({'error': 'Stop VM before creating snapshot'}), 409
 
     vms = _load_vms()
     vm = vms.get(vm_id)
     if not vm:
-        return jsonify({'error': 'VM nie znaleziona'}), 404
+        return jsonify({'error': 'VM not found'}), 404
 
     if vm.get('disk_format') != 'qcow2':
-        return jsonify({'error': 'Snapshoty dostępne tylko dla QCOW2'}), 400
+        return jsonify({'error': 'Snapshots only available for QCOW2'}), 400
 
     data = request.get_json(force=True) if request.data else {}
     tag = _sanitize_name(data.get('name', f'snap-{int(time.time())}'))
@@ -1026,7 +1026,7 @@ def restore_snapshot(vm_id, tag):
     vms = _load_vms()
     vm = vms.get(vm_id)
     if not vm:
-        return jsonify({'error': 'VM nie znaleziona'}), 404
+        return jsonify({'error': 'VM not found'}), 404
 
     disk_file = vm.get('disk_file', '')
     safe_tag = _sanitize_name(tag)
@@ -1047,7 +1047,7 @@ def delete_snapshot(vm_id, tag):
     vms = _load_vms()
     vm = vms.get(vm_id)
     if not vm:
-        return jsonify({'error': 'VM nie znaleziona'}), 404
+        return jsonify({'error': 'VM not found'}), 404
 
     disk_file = vm.get('disk_file', '')
     safe_tag = _sanitize_name(tag)
@@ -1074,19 +1074,19 @@ def convert_image():
     target_format = data.get('format', 'qcow2')
 
     if target_format not in ('raw', 'qcow2', 'vdi', 'vmdk'):
-        return jsonify({'error': 'Nieobsługiwany format docelowy'}), 400
+        return jsonify({'error': 'Unsupported target format'}), 400
 
     if not source or not os.path.exists(source):
-        return jsonify({'error': 'Plik źródłowy nie istnieje'}), 404
+        return jsonify({'error': 'Source file not found'}), 404
 
     source_real = os.path.realpath(source)
     if not _is_allowed_image_path(source_real):
-        return jsonify({'error': 'Niedozwolona ścieżka źródłowa'}), 403
+        return jsonify({'error': 'Source path not allowed'}), 403
 
     base, _ = os.path.splitext(source_real)
     dest = os.path.realpath(f'{base}.{target_format}')
     if not _is_allowed_image_path(dest):
-        return jsonify({'error': 'Niedozwolona ścieżka docelowa'}), 403
+        return jsonify({'error': 'Target path not allowed'}), 403
 
     try:
         r = host_run(f'qemu-img convert -O {target_format} "{source_real}" "{dest}"', timeout=600)
@@ -1094,7 +1094,7 @@ def convert_image():
             return jsonify({'status': 'ok', 'output': dest, 'target_format': target_format})
         return jsonify({'error': r.stderr}), 500
     except subprocess.TimeoutExpired:
-        return jsonify({'error': 'Konwersja przekroczyła limit czasu (10 min)'}), 500
+        return jsonify({'error': 'Conversion timed out (10 min)'}), 500
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

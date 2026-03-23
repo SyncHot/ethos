@@ -56,7 +56,7 @@ def _require_docker(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if not _docker_available():
-            return jsonify({'error': 'Docker nie jest zainstalowany lub uruchomiony'}), 503
+            return jsonify({'error': 'Docker is not installed or not running'}), 503
         return f(*args, **kwargs)
     return decorated
 
@@ -66,7 +66,7 @@ def _require_admin(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if getattr(g, 'role', None) != 'admin':
-            return jsonify({'error': 'Brak uprawnień — wymagana rola administratora'}), 403
+            return jsonify({'error': 'Permission denied — admin role required'}), 403
         return f(*args, **kwargs)
     return decorated
 
@@ -90,7 +90,7 @@ def docker_status():
     available = _docker_available()
     return jsonify({
         'available': available,
-        'message': None if available else 'Docker nie jest zainstalowany. Zainstaluj aby zarządzać kontenerami.'
+        'message': None if available else 'Docker is not installed. Install it to manage containers.'
     })
 
 
@@ -190,10 +190,10 @@ def container_action(container_id):
     data = request.get_json(force=True) if request.data else {}
     action = data.get('action', '')
     if action not in ('start', 'stop', 'restart', 'pause', 'unpause', 'remove', 'kill'):
-        return jsonify({'error': 'Nieprawidłowa akcja'}), 400
+        return jsonify({'error': 'Invalid action'}), 400
 
     if action in _DESTRUCTIVE_CONTAINER_ACTIONS and getattr(g, 'role', None) != 'admin':
-        return jsonify({'error': 'Brak uprawnień — tylko administrator może wykonać tę akcję'}), 403
+        return jsonify({'error': 'Permission denied — only admin can perform this action'}), 403
 
     cmd_map = {'remove': 'rm'}
     cmd = cmd_map.get(action, action)
@@ -456,9 +456,9 @@ def _ensure_sandbox_override(project_name, project_path, main_filename):
     compose_files = _compose_files_for_project(project_path, main_filename)
     services, err = _list_compose_services(project_path, compose_files)
     if err:
-        return None, f'Błąd odczytu usług compose: {err}'
+        return None, f'Error reading compose services: {err}'
     if not services:
-        return None, 'Brak usług w pliku docker-compose'
+        return None, 'No services in docker-compose file'
 
     limits = _policy_to_service_limits(policy)
     if not limits:
@@ -476,7 +476,7 @@ def _ensure_sandbox_override(project_name, project_path, main_filename):
             with open(override_path, 'w') as f:
                 json.dump(override, f, indent=2)
     except OSError as exc:
-        return None, f'Nie można zapisać pliku polityki sandbox: {exc}'
+        return None, f'Cannot write sandbox policy file: {exc}'
 
     return override_path, None
 
@@ -552,19 +552,19 @@ def project_action(project_name):
     data = request.get_json(force=True) if request.data else {}
     action = data.get('action', '')
     if action not in ('up', 'down', 'restart', 'pull', 'build', 'stop', 'start'):
-        return jsonify({'error': 'Nieprawidłowa akcja'}), 400
+        return jsonify({'error': 'Invalid action'}), 400
 
     if action in _DESTRUCTIVE_PROJECT_ACTIONS and getattr(g, 'role', None) != 'admin':
-        return jsonify({'error': 'Brak uprawnień — tylko administrator może wykonać tę akcję'}), 403
+        return jsonify({'error': 'Permission denied — only admin can perform this action'}), 403
 
     # Protect critical projects from destructive actions
     if project_name in _PROTECTED_PROJECTS and action in ('down', 'stop', 'remove'):
-        return jsonify({'error': f'Projekt "{project_name}" jest chroniony — nie można go zatrzymać z poziomu interfejsu'}), 403
+        return jsonify({'error': f'Project "{project_name}" is protected — cannot stop from interface'}), 403
 
     projects = _find_compose_projects()
     project = next((p for p in projects if p['name'] == project_name), None)
     if not project:
-        return jsonify({'error': f'Projekt {project_name} nie znaleziony'}), 404
+        return jsonify({'error': ff'Project {project_name} not found'}), 404
 
     # Use the real host path for docker compose (runs via nsenter on host)
     host_path = os.path.join(_compose_root(), project_name)
@@ -598,7 +598,7 @@ def project_action(project_name):
             return jsonify({'ok': True, 'output': combined})
         return jsonify({'error': combined}), 500
     except subprocess.TimeoutExpired:
-        return jsonify({'error': 'Operacja przekroczyła limit czasu (120s)'}), 500
+        return jsonify({'error': 'Operation timed out (120s)'}), 500
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -609,12 +609,12 @@ def delete_project(project_name):
     """Delete a docker-compose project: stop containers, remove directory."""
     # Protect critical projects
     if project_name in _PROTECTED_PROJECTS:
-        return jsonify({'error': f'Projekt "{project_name}" jest chroniony i nie może być usunięty'}), 403
+        return jsonify({'error': f'Project "{project_name}" is protected and cannot be removed'}), 403
 
     projects = _find_compose_projects()
     project = next((p for p in projects if p['name'] == project_name), None)
     if not project:
-        return jsonify({'error': f'Projekt {project_name} nie znaleziony'}), 404
+        return jsonify({'error': ff'Project {project_name} not found'}), 404
 
     project_path = os.path.join(_compose_root(), project_name)
 
@@ -622,7 +622,7 @@ def delete_project(project_name):
     real_root = os.path.realpath(_compose_root())
     real_path = os.path.realpath(project_path)
     if not real_path.startswith(real_root + '/'):
-        return jsonify({'error': 'Nieprawidłowa ścieżka projektu'}), 400
+        return jsonify({'error': 'Invalid project path'}), 400
 
     # First, docker compose down (stop and remove containers/networks)
     try:
@@ -636,7 +636,7 @@ def delete_project(project_name):
             shutil.rmtree(real_path)
         return jsonify({'status': 'ok', 'project': project_name})
     except Exception as e:
-        return jsonify({'error': f'Błąd usuwania katalogu: {str(e)}'}), 500
+        return jsonify({'error': f'Directory removal error: {str(e)}'}), 500
 
 
 @docker_bp.route('/projects/<project_name>/logs')
@@ -658,7 +658,7 @@ def project_logs(project_name):
     projects = _find_compose_projects()
     project = next((p for p in projects if p['name'] == project_name), None)
     if not project:
-        return jsonify({'error': f'Projekt {project_name} nie znaleziony'}), 404
+        return jsonify({'error': ff'Project {project_name} not found'}), 404
 
     host_path = os.path.join(_compose_root(), project_name)
     cmd = f'docker compose logs --tail {lines} --timestamps'
@@ -688,7 +688,7 @@ def project_compose(project_name):
     projects = _find_compose_projects()
     project = next((p for p in projects if p['name'] == project_name), None)
     if not project:
-        return jsonify({'error': f'Projekt {project_name} nie znaleziony'}), 404
+        return jsonify({'error': ff'Project {project_name} not found'}), 404
 
     try:
         with open(project['compose_file'], 'r') as f:
@@ -704,19 +704,19 @@ def project_compose_save(project_name):
     projects = _find_compose_projects()
     project = next((p for p in projects if p['name'] == project_name), None)
     if not project:
-        return jsonify({'error': f'Projekt {project_name} nie znaleziony'}), 404
+        return jsonify({'error': ff'Project {project_name} not found'}), 404
 
     data = request.get_json(force=True)
     content = data.get('content', '')
     if not content:
-        return jsonify({'error': 'Brak treści'}), 400
+        return jsonify({'error': 'No content'}), 400
 
     # Validate YAML syntax before saving
     try:
         import yaml
         yaml.safe_load(content)
     except yaml.YAMLError as ye:
-        return jsonify({'error': f'Błąd składni YAML: {str(ye)}'}), 400
+        return jsonify({'error': f'YAML syntax error: {str(ye)}'}), 400
     except ImportError:
         pass  # If pyyaml not installed, skip validation
 
@@ -885,20 +885,20 @@ def create_project():
     content = data.get('content', '').strip()
 
     if not name:
-        return jsonify({'error': 'Nazwa projektu jest wymagana'}), 400
+        return jsonify({'error': 'Project name is required'}), 400
 
     # Validate name: only alphanumeric, dash, underscore
     if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9_-]*$', name):
-        return jsonify({'error': 'Nazwa projektu może zawierać tylko litery, cyfry, myślnik i podkreślenie'}), 400
+        return jsonify({'error': 'Project name may only contain letters, numbers, hyphens, and underscores'}), 400
 
     if len(name) > 64:
-        return jsonify({'error': 'Nazwa projektu zbyt długa (max 64 znaki)'}), 400
+        return jsonify({'error': 'Project name too long (max 64 characters)'}), 400
 
     root = _compose_root()
     project_path = os.path.join(root, name)
 
     if os.path.exists(project_path):
-        return jsonify({'error': f'Projekt "{name}" już istnieje'}), 409
+        return jsonify({'error': f'Project "{name}" already exists'}), 409
 
     # Default compose content if none provided
     if not content:
@@ -916,7 +916,7 @@ services:
         import yaml
         yaml.safe_load(content)
     except yaml.YAMLError as ye:
-        return jsonify({'error': f'Błąd składni YAML: {str(ye)}'}), 400
+        return jsonify({'error': f'YAML syntax error: {str(ye)}'}), 400
     except ImportError:
         pass
 
@@ -951,6 +951,6 @@ def get_project_policy(project_name):
 
 register_pkg_routes(
     docker_bp,
-    install_message='Docker Manager gotowy.',
+    install_message='Docker Manager ready.',
     status_extras=lambda: {'docker_available': check_dep('docker')},
 )

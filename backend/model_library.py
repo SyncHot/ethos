@@ -1,7 +1,7 @@
 """
 EthOS — Model Library
-Katalog modeli LLM z automatycznym dopasowaniem do sprzętu,
-pobieraniem z Hugging Face i zarządzaniem ścieżką.
+LLM model catalog with automatic hardware matching,
+Hugging Face downloading, and path management.
 Includes hardware-agnostic benchmark, tier system, and CPU feature detection.
 """
 
@@ -137,7 +137,7 @@ def get_tier(tps):
             'name': 'Ultra',
             'icon': 'fa-bolt',
             'color': '#10b981',
-            'description': 'Szybki, płynny czat — idealne doświadczenie',
+            'description': 'Fast, smooth chat — ideal experience',
             'recommended_params': '8B+',
             'max_context': 8192,
         }
@@ -147,7 +147,7 @@ def get_tier(tps):
             'name': 'Balanced',
             'icon': 'fa-balance-scale',
             'color': '#f59e0b',
-            'description': 'Dobry balans szybkości i jakości',
+            'description': 'Good balance of speed and quality',
             'recommended_params': '3B–7B',
             'max_context': 4096,
         }
@@ -157,7 +157,7 @@ def get_tier(tps):
             'name': 'Light',
             'icon': 'fa-feather',
             'color': '#ef4444',
-            'description': 'Podstawowe działanie, mały model',
+            'description': 'Basic operation, small model',
             'recommended_params': '1B–3B',
             'max_context': 2048,
         }
@@ -189,7 +189,7 @@ MODEL_CATALOG = [
         'size_gb': 4.9,
         'ram_required_gb': 7,
         'vram_required_gb': 5,
-        'description': 'Meta Llama 3 — szybki, wszechstronny. Najlepszy stosunek jakość/wydajność.',
+        'description': 'Meta Llama 3 — fast, versatile. Best quality/performance ratio.',
         'hf_repo': 'bartowski/Meta-Llama-3-8B-Instruct-GGUF',
         'hf_filename': 'Meta-Llama-3-8B-Instruct-Q4_K_M.gguf',
         'context_length': 8192,
@@ -206,7 +206,7 @@ MODEL_CATALOG = [
         'size_gb': 8.5,
         'ram_required_gb': 11,
         'vram_required_gb': 9,
-        'description': 'Meta Llama 3 — wyższa jakość z Q8, wymaga więcej RAM.',
+        'description': 'Meta Llama 3 — higher quality with Q8, requires more RAM.',
         'hf_repo': 'bartowski/Meta-Llama-3-8B-Instruct-GGUF',
         'hf_filename': 'Meta-Llama-3-8B-Instruct-Q8_0.gguf',
         'context_length': 8192,
@@ -223,7 +223,7 @@ MODEL_CATALOG = [
         'size_gb': 4.9,
         'ram_required_gb': 7,
         'vram_required_gb': 5,
-        'description': 'Llama 3.1 — dłuższy kontekst (128K), ulepszone instrukcje.',
+        'description': 'Llama 3.1 — longer context (128K), improved instructions.',
         'hf_repo': 'bartowski/Meta-Llama-3.1-8B-Instruct-GGUF',
         'hf_filename': 'Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf',
         'context_length': 131072,
@@ -240,7 +240,7 @@ MODEL_CATALOG = [
         'size_gb': 8.5,
         'ram_required_gb': 11,
         'vram_required_gb': 9,
-        'description': 'Llama 3.1 Q8 — wyższa jakość, dłuższy kontekst.',
+        'description': 'Llama 3.1 Q8 — higher quality, longer context.',
         'hf_repo': 'bartowski/Meta-Llama-3.1-8B-Instruct-GGUF',
         'hf_filename': 'Meta-Llama-3.1-8B-Instruct-Q8_0.gguf',
         'context_length': 131072,
@@ -257,7 +257,7 @@ MODEL_CATALOG = [
         'size_gb': 4.4,
         'ram_required_gb': 6.5,
         'vram_required_gb': 5,
-        'description': 'Mistral 7B — lekki, szybki, dobry do chatu i kodu.',
+        'description': 'Mistral 7B — lightweight, fast, good for chat and code.',
         'hf_repo': 'bartowski/Mistral-7B-Instruct-v0.3-GGUF',
         'hf_filename': 'Mistral-7B-Instruct-v0.3-Q4_K_M.gguf',
         'context_length': 32768,
@@ -274,7 +274,7 @@ MODEL_CATALOG = [
         'size_gb': 7.7,
         'ram_required_gb': 10,
         'vram_required_gb': 8,
-        'description': 'Mistral 7B Q8 — lepsza jakość odpowiedzi.',
+        'description': 'Mistral 7B Q8 — better response quality.',
         'hf_repo': 'bartowski/Mistral-7B-Instruct-v0.3-GGUF',
         'hf_filename': 'Mistral-7B-Instruct-v0.3-Q8_0.gguf',
         'context_length': 32768,
@@ -291,7 +291,7 @@ MODEL_CATALOG = [
         'size_gb': 2.4,
         'ram_required_gb': 4,
         'vram_required_gb': 3,
-        'description': 'Microsoft Phi-3 Mini — ultra-lekki, zaskakująco zdolny. Idealny do słabszych maszyn.',
+        'description': 'Microsoft Phi-3 Mini — ultra-lightweight, surprisingly capable. Ideal for low-end hardware.',
         'hf_repo': 'bartowski/Phi-3-mini-4k-instruct-GGUF',
         'hf_filename': 'Phi-3-mini-4k-instruct-Q4_K_M.gguf',
         'context_length': 4096,
@@ -308,7 +308,7 @@ MODEL_CATALOG = [
         'size_gb': 4.1,
         'ram_required_gb': 6,
         'vram_required_gb': 5,
-        'description': 'Phi-3 Mini Q8 — lepsza jakość dla szybkiej inferencji.',
+        'description': 'Phi-3 Mini Q8 — better quality for fast inference.',
         'hf_repo': 'bartowski/Phi-3-mini-4k-instruct-GGUF',
         'hf_filename': 'Phi-3-mini-4k-instruct-Q8_0.gguf',
         'context_length': 4096,
@@ -325,7 +325,7 @@ MODEL_CATALOG = [
         'size_gb': 8.6,
         'ram_required_gb': 11,
         'vram_required_gb': 9,
-        'description': 'Phi-3 Medium — duży model Microsoft, mocny w rozumowaniu i kodzie.',
+        'description': 'Phi-3 Medium — large Microsoft model, strong at reasoning and code.',
         'hf_repo': 'bartowski/Phi-3-medium-4k-instruct-GGUF',
         'hf_filename': 'Phi-3-medium-4k-instruct-Q4_K_M.gguf',
         'context_length': 4096,
@@ -342,7 +342,7 @@ MODEL_CATALOG = [
         'size_gb': 5.8,
         'ram_required_gb': 8,
         'vram_required_gb': 6,
-        'description': 'Google Gemma 2 — wielojęzyczny, dobry do konwersacji i reasoning.',
+        'description': 'Google Gemma 2 — multilingual, good for conversation and reasoning.',
         'hf_repo': 'bartowski/gemma-2-9b-it-GGUF',
         'hf_filename': 'gemma-2-9b-it-Q4_K_M.gguf',
         'context_length': 8192,
@@ -359,7 +359,7 @@ MODEL_CATALOG = [
         'size_gb': 10.1,
         'ram_required_gb': 13,
         'vram_required_gb': 11,
-        'description': 'Gemma 2 Q8 — wyższa jakość generacji.',
+        'description': 'Gemma 2 Q8 — higher generation quality.',
         'hf_repo': 'bartowski/gemma-2-9b-it-GGUF',
         'hf_filename': 'gemma-2-9b-it-Q8_0.gguf',
         'context_length': 8192,
@@ -376,7 +376,7 @@ MODEL_CATALOG = [
         'size_gb': 4.7,
         'ram_required_gb': 7,
         'vram_required_gb': 5,
-        'description': 'Alibaba Qwen 2.5 — bardzo dobry w kodowaniu i matematyce.',
+        'description': 'Alibaba Qwen 2.5 — very good at coding and math.',
         'hf_repo': 'bartowski/Qwen2.5-7B-Instruct-GGUF',
         'hf_filename': 'Qwen2.5-7B-Instruct-Q4_K_M.gguf',
         'context_length': 131072,
@@ -393,7 +393,7 @@ MODEL_CATALOG = [
         'size_gb': 9,
         'ram_required_gb': 12,
         'vram_required_gb': 10,
-        'description': 'Qwen 2.5 14B — mocniejsza wersja, coding benchmark champion.',
+        'description': 'Qwen 2.5 14B — stronger version, coding benchmark champion.',
         'hf_repo': 'bartowski/Qwen2.5-14B-Instruct-GGUF',
         'hf_filename': 'Qwen2.5-14B-Instruct-Q4_K_M.gguf',
         'context_length': 131072,
@@ -410,7 +410,7 @@ MODEL_CATALOG = [
         'size_gb': 4.2,
         'ram_required_gb': 6.5,
         'vram_required_gb': 5,
-        'description': 'Meta CodeLlama — specjalizowany do generowania i analizy kodu.',
+        'description': 'Meta CodeLlama — specialized for code generation and analysis.',
         'hf_repo': 'TheBloke/CodeLlama-7B-Instruct-GGUF',
         'hf_filename': 'codellama-7b-instruct.Q4_K_M.gguf',
         'context_length': 16384,
@@ -428,7 +428,7 @@ MODEL_CATALOG = [
         'size_gb': 0.7,
         'ram_required_gb': 2,
         'vram_required_gb': 1,
-        'description': 'Ultralekki model 1.1B — idealny do testów i bardzo słabego sprzętu.',
+        'description': 'Ultra-lightweight 1.1B model — ideal for testing and very low-end hardware.',
         'hf_repo': 'TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF',
         'hf_filename': 'tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf',
         'context_length': 2048,
@@ -445,7 +445,7 @@ MODEL_CATALOG = [
         'size_gb': 1.2,
         'ram_required_gb': 3,
         'vram_required_gb': 2,
-        'description': 'TinyLlama Q8 — miniaturowy, ale lepsza jakość niż Q4.',
+        'description': 'TinyLlama Q8 — tiny, but better quality than Q4.',
         'hf_repo': 'TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF',
         'hf_filename': 'tinyllama-1.1b-chat-v1.0.Q8_0.gguf',
         'context_length': 2048,
@@ -463,7 +463,7 @@ MODEL_CATALOG = [
         'size_gb': 0.8,
         'ram_required_gb': 2,
         'vram_required_gb': 1,
-        'description': 'Meta Llama 3.2 1B — najlżejszy Llama, błyskawiczna odpowiedź.',
+        'description': 'Meta Llama 3.2 1B — lightest Llama, lightning-fast responses.',
         'hf_repo': 'bartowski/Llama-3.2-1B-Instruct-GGUF',
         'hf_filename': 'Llama-3.2-1B-Instruct-Q4_K_M.gguf',
         'context_length': 131072,
@@ -480,7 +480,7 @@ MODEL_CATALOG = [
         'size_gb': 1.3,
         'ram_required_gb': 3,
         'vram_required_gb': 2,
-        'description': 'Llama 3.2 1B Q8 — pełna precyzja w mini opakowaniu.',
+        'description': 'Llama 3.2 1B Q8 — full precision in a mini package.',
         'hf_repo': 'bartowski/Llama-3.2-1B-Instruct-GGUF',
         'hf_filename': 'Llama-3.2-1B-Instruct-Q8_0.gguf',
         'context_length': 131072,
@@ -497,7 +497,7 @@ MODEL_CATALOG = [
         'size_gb': 2.0,
         'ram_required_gb': 4,
         'vram_required_gb': 3,
-        'description': 'Llama 3.2 3B — świetny balans lekkości i jakości. Wielojęzyczny.',
+        'description': 'Llama 3.2 3B — great balance of lightness and quality. Multilingual.',
         'hf_repo': 'bartowski/Llama-3.2-3B-Instruct-GGUF',
         'hf_filename': 'Llama-3.2-3B-Instruct-Q4_K_M.gguf',
         'context_length': 131072,
@@ -514,7 +514,7 @@ MODEL_CATALOG = [
         'size_gb': 3.4,
         'ram_required_gb': 5.5,
         'vram_required_gb': 4,
-        'description': 'Llama 3.2 3B Q8 — wyższa precyzja, nadal lekki.',
+        'description': 'Llama 3.2 3B Q8 — higher precision, still lightweight.',
         'hf_repo': 'bartowski/Llama-3.2-3B-Instruct-GGUF',
         'hf_filename': 'Llama-3.2-3B-Instruct-Q8_0.gguf',
         'context_length': 131072,
@@ -532,7 +532,7 @@ MODEL_CATALOG = [
         'size_gb': 1.5,
         'ram_required_gb': 3,
         'vram_required_gb': 2,
-        'description': 'Google Gemma 2 2B — maleńki, szybki, wielojęzyczny.',
+        'description': 'Google Gemma 2 2B — tiny, fast, multilingual.',
         'hf_repo': 'bartowski/gemma-2-2b-it-GGUF',
         'hf_filename': 'gemma-2-2b-it-Q4_K_M.gguf',
         'context_length': 8192,
@@ -549,7 +549,7 @@ MODEL_CATALOG = [
         'size_gb': 2.7,
         'ram_required_gb': 4.5,
         'vram_required_gb': 3,
-        'description': 'Gemma 2 2B Q8 — pełna jakość w kompaktowym modelu.',
+        'description': 'Gemma 2 2B Q8 — full quality in a compact model.',
         'hf_repo': 'bartowski/gemma-2-2b-it-GGUF',
         'hf_filename': 'gemma-2-2b-it-Q8_0.gguf',
         'context_length': 8192,
@@ -567,7 +567,7 @@ MODEL_CATALOG = [
         'size_gb': 0.5,
         'ram_required_gb': 2,
         'vram_required_gb': 1,
-        'description': 'Qwen 2.5 0.5B — najlżejszy Qwen, natychmiastowe odpowiedzi.',
+        'description': 'Qwen 2.5 0.5B — lightest Qwen, instant responses.',
         'hf_repo': 'bartowski/Qwen2.5-0.5B-Instruct-GGUF',
         'hf_filename': 'Qwen2.5-0.5B-Instruct-Q8_0.gguf',
         'context_length': 32768,
@@ -584,7 +584,7 @@ MODEL_CATALOG = [
         'size_gb': 1.0,
         'ram_required_gb': 2.5,
         'vram_required_gb': 1.5,
-        'description': 'Qwen 2.5 1.5B — lekki, wielojęzyczny, zaskakująco zdolny.',
+        'description': 'Qwen 2.5 1.5B — lightweight, multilingual, surprisingly capable.',
         'hf_repo': 'bartowski/Qwen2.5-1.5B-Instruct-GGUF',
         'hf_filename': 'Qwen2.5-1.5B-Instruct-Q4_K_M.gguf',
         'context_length': 32768,
@@ -601,7 +601,7 @@ MODEL_CATALOG = [
         'size_gb': 2.0,
         'ram_required_gb': 4,
         'vram_required_gb': 3,
-        'description': 'Qwen 2.5 3B — kompaktowy, mocny w kodowaniu i matematyce.',
+        'description': 'Qwen 2.5 3B — compact, strong at coding and math.',
         'hf_repo': 'bartowski/Qwen2.5-3B-Instruct-GGUF',
         'hf_filename': 'Qwen2.5-3B-Instruct-Q4_K_M.gguf',
         'context_length': 32768,
@@ -618,7 +618,7 @@ MODEL_CATALOG = [
         'size_gb': 3.4,
         'ram_required_gb': 5.5,
         'vram_required_gb': 4,
-        'description': 'Qwen 2.5 3B Q8 — wyższa precyzja, lepsze odpowiedzi.',
+        'description': 'Qwen 2.5 3B Q8 — higher precision, better responses.',
         'hf_repo': 'bartowski/Qwen2.5-3B-Instruct-GGUF',
         'hf_filename': 'Qwen2.5-3B-Instruct-Q8_0.gguf',
         'context_length': 32768,
@@ -636,7 +636,7 @@ MODEL_CATALOG = [
         'size_gb': 1.0,
         'ram_required_gb': 2.5,
         'vram_required_gb': 1.5,
-        'description': 'Qwen Coder 1.5B — miniaturowy asystent kodowania.',
+        'description': 'Qwen Coder 1.5B — miniature coding assistant.',
         'hf_repo': 'bartowski/Qwen2.5-Coder-1.5B-Instruct-GGUF',
         'hf_filename': 'Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf',
         'context_length': 32768,
@@ -653,7 +653,7 @@ MODEL_CATALOG = [
         'size_gb': 4.7,
         'ram_required_gb': 7,
         'vram_required_gb': 5,
-        'description': 'Qwen Coder 7B — specjalizowany asystent kodowania, benchmark champion.',
+        'description': 'Qwen Coder 7B — specialized coding assistant, benchmark champion.',
         'hf_repo': 'bartowski/Qwen2.5-Coder-7B-Instruct-GGUF',
         'hf_filename': 'Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf',
         'context_length': 32768,
@@ -670,7 +670,7 @@ MODEL_CATALOG = [
         'size_gb': 8.1,
         'ram_required_gb': 11,
         'vram_required_gb': 9,
-        'description': 'Qwen Coder 7B Q8 — wyższa jakość generowania kodu.',
+        'description': 'Qwen Coder 7B Q8 — higher quality code generation.',
         'hf_repo': 'bartowski/Qwen2.5-Coder-7B-Instruct-GGUF',
         'hf_filename': 'Qwen2.5-Coder-7B-Instruct-Q8_0.gguf',
         'context_length': 32768,
@@ -688,7 +688,7 @@ MODEL_CATALOG = [
         'size_gb': 2.4,
         'ram_required_gb': 4,
         'vram_required_gb': 3,
-        'description': 'Microsoft Phi-3.5 Mini — ulepszona wersja, lepsza od Phi-3 w rozumowaniu.',
+        'description': 'Microsoft Phi-3.5 Mini — improved version, better than Phi-3 at reasoning.',
         'hf_repo': 'bartowski/Phi-3.5-mini-instruct-GGUF',
         'hf_filename': 'Phi-3.5-mini-instruct-Q4_K_M.gguf',
         'context_length': 131072,
@@ -705,7 +705,7 @@ MODEL_CATALOG = [
         'size_gb': 4.1,
         'ram_required_gb': 6,
         'vram_required_gb': 5,
-        'description': 'Phi-3.5 Mini Q8 — pełna jakość z długim kontekstem 128K.',
+        'description': 'Phi-3.5 Mini Q8 — full quality with 128K long context.',
         'hf_repo': 'bartowski/Phi-3.5-mini-instruct-GGUF',
         'hf_filename': 'Phi-3.5-mini-instruct-Q8_0.gguf',
         'context_length': 131072,
@@ -723,7 +723,7 @@ MODEL_CATALOG = [
         'size_gb': 8.4,
         'ram_required_gb': 11,
         'vram_required_gb': 9,
-        'description': 'Microsoft Phi-4 — najnowszy Phi, topowa jakość reasoning i kodu.',
+        'description': 'Microsoft Phi-4 — latest Phi, top-tier reasoning and code quality.',
         'hf_repo': 'bartowski/phi-4-GGUF',
         'hf_filename': 'phi-4-Q4_K_M.gguf',
         'context_length': 16384,
@@ -741,7 +741,7 @@ MODEL_CATALOG = [
         'size_gb': 7.5,
         'ram_required_gb': 10,
         'vram_required_gb': 8,
-        'description': 'Mistral Nemo 12B — mocniejszy niż 7B, wielojęzyczny, duży kontekst.',
+        'description': 'Mistral Nemo 12B — stronger than 7B, multilingual, large context.',
         'hf_repo': 'bartowski/Mistral-Nemo-Instruct-2407-GGUF',
         'hf_filename': 'Mistral-Nemo-Instruct-2407-Q4_K_M.gguf',
         'context_length': 131072,
@@ -759,7 +759,7 @@ MODEL_CATALOG = [
         'size_gb': 13.5,
         'ram_required_gb': 18,
         'vram_required_gb': 14,
-        'description': 'Mistral Small 22B — potężny, wymagający sprzętu. Zbliżona jakość do GPT-3.5.',
+        'description': 'Mistral Small 22B — powerful, hardware-demanding. Quality close to GPT-3.5.',
         'hf_repo': 'bartowski/Mistral-Small-Instruct-2409-GGUF',
         'hf_filename': 'Mistral-Small-Instruct-2409-Q4_K_M.gguf',
         'context_length': 32768,
@@ -777,7 +777,7 @@ MODEL_CATALOG = [
         'size_gb': 9.4,
         'ram_required_gb': 12,
         'vram_required_gb': 10,
-        'description': 'DeepSeek Coder V2 Lite — MoE model, świetny w kodzie i matematyce.',
+        'description': 'DeepSeek Coder V2 Lite — MoE model, excellent at code and math.',
         'hf_repo': 'bartowski/DeepSeek-Coder-V2-Lite-Instruct-GGUF',
         'hf_filename': 'DeepSeek-Coder-V2-Lite-Instruct-Q4_K_M.gguf',
         'context_length': 131072,
@@ -794,7 +794,7 @@ MODEL_CATALOG = [
         'size_gb': 1.6,
         'ram_required_gb': 3,
         'vram_required_gb': 2,
-        'description': 'DeepSeek R1 1.5B — lekki model reasoning z chain-of-thought.',
+        'description': 'DeepSeek R1 1.5B — lightweight reasoning model with chain-of-thought.',
         'hf_repo': 'bartowski/DeepSeek-R1-Distill-Qwen-1.5B-GGUF',
         'hf_filename': 'DeepSeek-R1-Distill-Qwen-1.5B-Q8_0.gguf',
         'context_length': 131072,
@@ -811,7 +811,7 @@ MODEL_CATALOG = [
         'size_gb': 4.7,
         'ram_required_gb': 7,
         'vram_required_gb': 5,
-        'description': 'DeepSeek R1 7B — reasoning model, myśli krok po kroku.',
+        'description': 'DeepSeek R1 7B — reasoning model, thinks step by step.',
         'hf_repo': 'bartowski/DeepSeek-R1-Distill-Qwen-7B-GGUF',
         'hf_filename': 'DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf',
         'context_length': 131072,
@@ -828,7 +828,7 @@ MODEL_CATALOG = [
         'size_gb': 9.0,
         'ram_required_gb': 12,
         'vram_required_gb': 10,
-        'description': 'DeepSeek R1 14B — mocny reasoning, zbliżona jakość do GPT-4o-mini.',
+        'description': 'DeepSeek R1 14B — strong reasoning, quality close to GPT-4o-mini.',
         'hf_repo': 'bartowski/DeepSeek-R1-Distill-Qwen-14B-GGUF',
         'hf_filename': 'DeepSeek-R1-Distill-Qwen-14B-Q4_K_M.gguf',
         'context_length': 131072,
@@ -846,7 +846,7 @@ MODEL_CATALOG = [
         'size_gb': 1.9,
         'ram_required_gb': 4,
         'vram_required_gb': 3,
-        'description': 'BigCode StarCoder2 3B — specjalista od kodu, 600+ języków programowania.',
+        'description': 'BigCode StarCoder2 3B — code specialist, 600+ programming languages.',
         'hf_repo': 'bartowski/starcoder2-3b-GGUF',
         'hf_filename': 'starcoder2-3b-Q4_K_M.gguf',
         'context_length': 16384,
@@ -863,7 +863,7 @@ MODEL_CATALOG = [
         'size_gb': 4.4,
         'ram_required_gb': 7,
         'vram_required_gb': 5,
-        'description': 'StarCoder2 7B — mocniejszy model do generowania i analizy kodu.',
+        'description': 'StarCoder2 7B — stronger model for code generation and analysis.',
         'hf_repo': 'bartowski/starcoder2-7b-GGUF',
         'hf_filename': 'starcoder2-7b-Q4_K_M.gguf',
         'context_length': 16384,
@@ -881,7 +881,7 @@ MODEL_CATALOG = [
         'size_gb': 3.7,
         'ram_required_gb': 6,
         'vram_required_gb': 4,
-        'description': '01.AI Yi 1.5 6B — chiński/angielski, dobry balans jakości i szybkości.',
+        'description': '01.AI Yi 1.5 6B — Chinese/English, good balance of quality and speed.',
         'hf_repo': 'bartowski/Yi-1.5-6B-Chat-GGUF',
         'hf_filename': 'Yi-1.5-6B-Chat-Q4_K_M.gguf',
         'context_length': 4096,
@@ -898,7 +898,7 @@ MODEL_CATALOG = [
         'size_gb': 5.5,
         'ram_required_gb': 8,
         'vram_required_gb': 6,
-        'description': 'Yi 1.5 9B — jeden z najlepszych modeli open-source w swojej kategorii.',
+        'description': 'Yi 1.5 9B — one of the best open-source models in its class.',
         'hf_repo': 'bartowski/Yi-1.5-9B-Chat-GGUF',
         'hf_filename': 'Yi-1.5-9B-Chat-Q4_K_M.gguf',
         'context_length': 4096,
@@ -916,7 +916,7 @@ MODEL_CATALOG = [
         'size_gb': 4.9,
         'ram_required_gb': 7,
         'vram_required_gb': 5,
-        'description': 'Hermes 2 Pro — fine-tuned Llama 3, świetny do instrukcji i function calling.',
+        'description': 'Hermes 2 Pro — fine-tuned Llama 3, excellent for instructions and function calling.',
         'hf_repo': 'NousResearch/Hermes-2-Pro-Llama-3-8B-GGUF',
         'hf_filename': 'Hermes-2-Pro-Llama-3-8B-Q4_K_M.gguf',
         'context_length': 8192,
@@ -934,7 +934,7 @@ MODEL_CATALOG = [
         'size_gb': 4.9,
         'ram_required_gb': 7,
         'vram_required_gb': 5,
-        'description': 'OpenChat 3.6 — zoptymalizowany pod konwersacje, bazujący na Llama 3.',
+        'description': 'OpenChat 3.6 — optimized for conversations, based on Llama 3.',
         'hf_repo': 'bartowski/openchat-3.6-8b-20240522-GGUF',
         'hf_filename': 'openchat-3.6-8b-20240522-Q4_K_M.gguf',
         'context_length': 8192,
@@ -952,8 +952,8 @@ MODEL_CATALOG = [
         'size_gb': 6.0,
         'ram_required_gb': 10,
         'vram_required_gb': 8,
-        'description': 'Llama 3.2 Vision 11B — multimodalny model rozpoznający obrazy. '
-                       'Opisywanie zdjęć, analiza wykresów, OCR, pytania o obraz.',
+        'description': 'Llama 3.2 Vision 11B — multimodal model with image recognition. '
+                       'Image captioning, chart analysis, OCR, image Q&A.',
         'hf_repo': 'leafspark/Llama-3.2-11B-Vision-Instruct-GGUF',
         'hf_filename': 'Llama-3.2-11B-Vision-Instruct.Q4_K_M.gguf',
         'context_length': 131072,
@@ -970,8 +970,8 @@ MODEL_CATALOG = [
         'size_gb': 10.4,
         'ram_required_gb': 14,
         'vram_required_gb': 12,
-        'description': 'Llama 3.2 Vision 11B Q8 — wyższa precyzja multimodalnego modelu. '
-                       'Lepsza jakość analizy obrazów kosztem większego zużycia RAM.',
+        'description': 'Llama 3.2 Vision 11B Q8 — higher precision multimodal model. '
+                       'Better image analysis quality at the cost of higher RAM usage.',
         'hf_repo': 'leafspark/Llama-3.2-11B-Vision-Instruct-GGUF',
         'hf_filename': 'Llama-3.2-11B-Vision-Instruct.Q8_0.gguf',
         'context_length': 131072,
@@ -989,8 +989,8 @@ MODEL_CATALOG = [
         'size_gb': 20.5,
         'ram_required_gb': 26,
         'vram_required_gb': 22,
-        'description': 'Meta Llama 3.3 70B — najlepszy open-source model. ' +
-                       'Ekstremalnie skompresowany (IQ2), wymaga dużo RAM.',
+        'description': 'Meta Llama 3.3 70B — best open-source model. ' +
+                       'Extremely compressed (IQ2), requires a lot of RAM.',
         'hf_repo': 'bartowski/Llama-3.3-70B-Instruct-GGUF',
         'hf_filename': 'Llama-3.3-70B-Instruct-IQ2_XS.gguf',
         'context_length': 131072,
@@ -1163,7 +1163,7 @@ class _ProgressTqdm:
         pct = (self.n / self.total * 100) if self.total else 0
         speed = self.n / elapsed if elapsed > 1 else 0
         speed_str = _fmt_bytes(int(speed)) + '/s' if speed > 0 else ''
-        status = (f'Pobieranie {self._filename}… '
+        status = (f'Downloading {self._filename}… '
                   f'{_fmt_bytes(self.n)} / {_fmt_bytes(self.total)}')
         if self._emit:
             self._emit(min(pct, 99.5), status, speed_str)
@@ -1225,7 +1225,7 @@ class ModelLibrary:
                 f.write('test')
             os.remove(test_file)
         except OSError as e:
-            return (False, f'Nie można zapisywać w {path}: {e}')
+            return (False, f'Cannot write to {path}: {e}')
         self._config['models_path'] = path
         self._save_config()
         return (True, None)
@@ -1260,7 +1260,7 @@ class ModelLibrary:
 
         Returns list of models with added fields:
           - status: 'recommended' | 'possible' | 'too_heavy'
-          - status_label: human-readable Polish label
+          - status_label: human-readable label
           - downloaded: bool
           - active: bool
         """
@@ -1284,13 +1284,13 @@ class ModelLibrary:
 
             if fits_ram and has_margin:
                 entry['status'] = 'recommended'
-                entry['status_label'] = 'Zalecany'
+                entry['status_label'] = 'Recommended'
             elif fits_ram:
                 entry['status'] = 'possible'
-                entry['status_label'] = 'Może działać wolno'
+                entry['status_label'] = 'May run slowly'
             else:
                 entry['status'] = 'too_heavy'
-                entry['status_label'] = 'Niezalecany — za mało RAM'
+                entry['status_label'] = 'Not recommended — not enough RAM'
 
             if vram_gb > 0:
                 if fits_vram:
@@ -1305,13 +1305,13 @@ class ModelLibrary:
                 gpu_type = hw['gpus'][0].get('type', '') if hw.get('gpus') else ''
                 if 'intel' in gpu_type or 'igpu' in gpu_type:
                     entry['gpu_status'] = 'igpu'
-                    entry['gpu_label'] = f'Intel iGPU (RAM współdzielony)'
+                    entry['gpu_label'] = f'Intel iGPU (shared RAM)'
                 else:
                     entry['gpu_status'] = 'gpu_shared'
-                    entry['gpu_label'] = f'GPU (RAM współdzielony)'
+                    entry['gpu_label'] = f'GPU (shared RAM)'
             else:
                 entry['gpu_status'] = 'cpu_only'
-                entry['gpu_label'] = 'Tylko CPU'
+                entry['gpu_label'] = 'CPU only'
 
             dl = downloaded.get(m['id'])
             entry['downloaded'] = dl is not None
@@ -1336,24 +1336,24 @@ class ModelLibrary:
         """Pre-download checks. Returns (ok, error_message)."""
         model = self.get_model(model_id)
         if not model:
-            return (False, 'Model nieznaleziony w katalogu')
+            return (False, 'Model not found in catalog')
         if not _HAS_HF:
-            return (False, 'Biblioteka huggingface_hub nie jest zainstalowana. Uruchom: pip install huggingface_hub')
+            return (False, 'huggingface_hub library is not installed. Run: pip install huggingface_hub')
         disk = self.get_disk_space()
         required_gb = model.get('size_gb', 0) * 1.1
         if disk['free_gb'] < required_gb:
-            return (False, f"Za mało miejsca na dysku. Wymagane: {required_gb:.1f} GB, dostępne: {disk['free_gb']:.1f} GB w {self.models_path}")
+            return (False, f"Not enough disk space. Required: {required_gb:.1f} GB, available: {disk['free_gb']:.1f} GB in {self.models_path}")
         try:
             os.makedirs(self.models_path, exist_ok=True)
         except OSError as e:
-            return (False, f'Nie można utworzyć katalogu modeli: {e}')
+            return (False, f'Cannot create models directory: {e}')
         return (True, None)
 
     def start_download(self, model_id, socketio=None):
         """Start model download in background. Returns (ok, error_message)."""
         with _download_lock:
             if _download_state['active']:
-                return (False, 'Inne pobieranie jest w toku')
+                return (False, 'Another download is in progress')
 
         ok, err = self.check_before_download(model_id)
         if not ok:
@@ -1365,7 +1365,7 @@ class ModelLibrary:
             _download_state['active'] = True
             _download_state['model_id'] = model_id
             _download_state['progress'] = 0
-            _download_state['status'] = 'Rozpoczynanie pobierania…'
+            _download_state['status'] = 'Starting download…'
             _download_state['error'] = None
             _download_state['speed'] = ''
             _download_state['downloaded_bytes'] = 0
@@ -1432,14 +1432,14 @@ class ModelLibrary:
                 speed = (cur - prev_bytes) / 0.8 if prev_bytes > 0 else (cur / elapsed if elapsed > 1 else 0)
                 prev_bytes = cur
                 speed_str = _fmt_bytes(int(max(speed, 0))) + '/s' if speed > 0 else ''
-                status = f'Pobieranie {hf_file}… {_fmt_bytes(cur)} / {_fmt_bytes(expected_bytes)}'
+                status = f'Downloading {hf_file}… {_fmt_bytes(cur)} / {_fmt_bytes(expected_bytes)}'
                 with _download_lock:
                     _download_state['downloaded_bytes'] = cur
                     _download_state['total_bytes'] = expected_bytes
                 emit_progress(pct, status, speed_str)
 
         try:
-            emit_progress(0, f'Pobieranie {hf_file}…')
+            emit_progress(0, f'Downloading {hf_file}…')
 
             target_path = os.path.join(self.models_path, hf_file)
 
@@ -1458,7 +1458,7 @@ class ModelLibrary:
                 if os.path.isfile(target_path):
                     downloaded_path = target_path
                 else:
-                    raise FileNotFoundError(f'Plik nie znaleziony po pobraniu: {hf_file}')
+                    raise FileNotFoundError(f'File not found after download: {hf_file}')
 
             file_size = os.path.getsize(downloaded_path)
             size_gb = round(file_size / 1073741824, 2)
@@ -1471,7 +1471,7 @@ class ModelLibrary:
             }
             self._save_config()
 
-            emit_progress(100, 'Pobrano pomyślnie')
+            emit_progress(100, 'Downloaded successfully')
 
             if socketio:
                 socketio.emit('model_download_complete', {
@@ -1482,7 +1482,7 @@ class ModelLibrary:
         except Exception as e:
             with _download_lock:
                 _download_state['error'] = str(e)
-                _download_state['status'] = f'Błąd: {e}'
+                _download_state['status'] = f'Error: {e}'
             if socketio:
                 socketio.emit('model_download_error', {
                     'model_id': model_id,
@@ -1503,8 +1503,8 @@ class ModelLibrary:
         mark as cancelled so UI can reflect."""
         with _download_lock:
             _download_state['active'] = False
-            _download_state['status'] = 'Anulowano'
-            _download_state['error'] = 'Pobieranie anulowane'
+            _download_state['status'] = 'Cancelled'
+            _download_state['error'] = 'Download cancelled'
 
     def download_sync(self, model_id):
         """Synchronous download — blocks until done. For small wizard benchmark models."""
@@ -1513,7 +1513,7 @@ class ModelLibrary:
             return (False, err)
         model = self.get_model(model_id)
         if not model:
-            return (False, f'Model {model_id} nie istnieje')
+            return (False, f'Model {model_id} does not exist')
         hf_repo = model['hf_repo']
         hf_file = model['hf_filename']
         try:
@@ -1527,7 +1527,7 @@ class ModelLibrary:
                 if os.path.isfile(target_path):
                     downloaded_path = target_path
                 else:
-                    return (False, f'Plik nie znaleziony: {hf_file}')
+                    return (False, f'File not found: {hf_file}')
             file_size = os.path.getsize(downloaded_path)
             size_gb = round(file_size / 1073741824, 2)
             self._config.setdefault('downloaded', {})[model_id] = {
@@ -1546,13 +1546,13 @@ class ModelLibrary:
         downloaded = self._config.get('downloaded', {})
         dl = downloaded.get(model_id)
         if not dl:
-            return (False, 'Model nie jest pobrany')
+            return (False, 'Model is not downloaded')
         path = dl.get('path', '')
         if path and os.path.isfile(path):
             try:
                 os.remove(path)
             except OSError as e:
-                return (False, f'Nie można usunąć pliku: {e}')
+                return (False, f'Cannot delete file: {e}')
         del downloaded[model_id]
         if self._config.get('active_model_id') == model_id:
             self._config['active_model_id'] = None
@@ -1564,9 +1564,9 @@ class ModelLibrary:
         if model_id is not None:
             dl = self._config.get('downloaded', {}).get(model_id)
             if not dl:
-                return (False, 'Model nie jest pobrany')
+                return (False, 'Model is not downloaded')
             if not os.path.isfile(dl.get('path', '')):
-                return (False, 'Plik modelu nie istnieje na dysku')
+                return (False, 'Model file does not exist on disk')
         # Unload previous model if switching
         if model_id != self._config.get('active_model_id'):
             self.unload_model()
@@ -1628,7 +1628,7 @@ class ModelLibrary:
         if model_id is None:
             model_id = self._config.get('active_model_id')
         if not model_id:
-            return (None, 'Brak aktywnego modelu')
+            return (None, 'No active model')
 
         with self._model_lock:
             # Already loaded
@@ -1640,10 +1640,10 @@ class ModelLibrary:
 
             dl = self._config.get('downloaded', {}).get(model_id)
             if not dl:
-                return (None, 'Model nie jest pobrany')
+                return (None, 'Model is not downloaded')
             path = dl.get('path', '')
             if not os.path.isfile(path):
-                return (None, 'Plik modelu nie istnieje na dysku')
+                return (None, 'Model file does not exist on disk')
 
             # RAM guard: check if enough memory is available
             try:
@@ -1656,16 +1656,16 @@ class ModelLibrary:
                 min_free_gb = 0.5
                 if usable_gb - needed_gb < min_free_gb:
                     return (None,
-                            f'Za mało pamięci RAM. Model wymaga ~{needed_gb:.1f} GB, '
-                            f'dostępne: {available_gb:.1f} GB (minimum {min_free_gb} GB musi pozostać wolne). '
-                            f'Zamknij inne aplikacje lub wybierz mniejszy model.')
+                            f'Not enough RAM. Model requires ~{needed_gb:.1f} GB, '
+                            f'available: {available_gb:.1f} GB (minimum {min_free_gb} GB must remain free). '
+                            f'Close other applications or choose a smaller model.')
             except Exception:
                 pass
 
             try:
                 from llama_cpp import Llama
             except ImportError:
-                return (None, 'llama-cpp-python nie jest zainstalowany')
+                return (None, 'llama-cpp-python is not installed')
 
             try:
                 # GPU layers — only if llama-cpp has a real GPU backend
@@ -1735,11 +1735,11 @@ class ModelLibrary:
                 except gevent.Timeout:
                     ModelLibrary._loading_in_progress = False
                     print("[ai-local] Model loading timed out (>10 min)", flush=True)
-                    return (None, 'Ładowanie modelu trwa zbyt długo (>10 min). '
-                                  'Spróbuj mniejszy model.')
+                    return (None, 'Model loading taking too long (>10 min). '
+                                  'Try a smaller model.')
                 except Exception as ex:
                     ModelLibrary._loading_in_progress = False
-                    return (None, f'Błąd ładowania modelu: {ex}')
+                    return (None, f'Error loading model: {ex}')
                 finally:
                     ModelLibrary._loading_in_progress = False
 
@@ -1753,7 +1753,7 @@ class ModelLibrary:
                 return (llm, None)
             except Exception as ex:
                 ModelLibrary._loading_in_progress = False
-                return (None, f'Błąd ładowania modelu: {ex}')
+                return (None, f'Error loading model: {ex}')
 
     def unload_model(self):
         """Unload the currently loaded model from memory."""
@@ -1808,7 +1808,7 @@ class ModelLibrary:
         Returns dict with: tps, ttft, tokens_generated, total_time_s, tier, model_id
         """
         if ModelLibrary._benchmark_running:
-            return {'error': 'Benchmark jest już uruchomiony'}
+            return {'error': 'Benchmark is already running'}
 
         with self._benchmark_lock:
             ModelLibrary._benchmark_running = True
@@ -1858,11 +1858,11 @@ class ModelLibrary:
                         n_tokens += 1
                         total_text += content
             except Exception as ex:
-                return {'error': f'Błąd inferencji podczas benchmarku: {ex}'}
+                return {'error': f'Inference error during benchmark: {ex}'}
 
             total_time = time.time() - start
             if n_tokens == 0:
-                return {'error': 'Model nie wygenerował żadnych tokenów'}
+                return {'error': 'Model did not generate any tokens'}
 
             tps = n_tokens / total_time if total_time > 0 else 0
             if ttft is None:
@@ -1912,29 +1912,29 @@ class ModelLibrary:
         try:
             import llama_cpp  # noqa: F401
             score += 20
-            details.append({'key': 'deps', 'label': 'Zależności', 'score': 20, 'max': 20, 'ok': True})
+            details.append({'key': 'deps', 'label': 'Dependencies', 'score': 20, 'max': 20, 'ok': True})
         except ImportError:
-            details.append({'key': 'deps', 'label': 'Zależności', 'score': 0, 'max': 20, 'ok': False,
-                            'hint': 'Zainstaluj llama-cpp-python'})
+            details.append({'key': 'deps', 'label': 'Dependencies', 'score': 0, 'max': 20, 'ok': False,
+                            'hint': 'Install llama-cpp-python'})
 
         # 2. Active model (20 pts)
         active = self.get_active_model()
         if active:
             score += 20
-            details.append({'key': 'model', 'label': 'Aktywny model', 'score': 20, 'max': 20, 'ok': True,
+            details.append({'key': 'model', 'label': 'Active model', 'score': 20, 'max': 20, 'ok': True,
                             'hint': active.get('name', '')})
         else:
-            details.append({'key': 'model', 'label': 'Aktywny model', 'score': 0, 'max': 20, 'ok': False,
-                            'hint': 'Pobierz i aktywuj model'})
+            details.append({'key': 'model', 'label': 'Active model', 'score': 0, 'max': 20, 'ok': False,
+                            'hint': 'Download and activate a model'})
 
         # 3. Model loaded in RAM (15 pts)
         loaded, _ = self.get_loaded_model()
         if loaded is not None:
             score += 15
-            details.append({'key': 'loaded', 'label': 'Model w pamięci', 'score': 15, 'max': 15, 'ok': True})
+            details.append({'key': 'loaded', 'label': 'Model in memory', 'score': 15, 'max': 15, 'ok': True})
         else:
-            details.append({'key': 'loaded', 'label': 'Model w pamięci', 'score': 0, 'max': 15, 'ok': False,
-                            'hint': 'Model auto-ładuje się przy pierwszym czacie'})
+            details.append({'key': 'loaded', 'label': 'Model in memory', 'score': 0, 'max': 15, 'ok': False,
+                            'hint': 'Model auto-loads on first chat'})
 
         # 4. RAM headroom (20 pts)
         mem = psutil.virtual_memory()
@@ -1947,9 +1947,9 @@ class ModelLibrary:
             ram_score = 0
         score += ram_score
         details.append({
-            'key': 'ram', 'label': 'Pamięć RAM',
+            'key': 'ram', 'label': 'RAM',
             'score': ram_score, 'max': 20, 'ok': ram_score >= 10,
-            'hint': f'{available_pct:.0f}% wolne'
+            'hint': f'{available_pct:.0f}% free'
         })
 
         # 5. Benchmark / TPS (15 pts)
@@ -1966,15 +1966,15 @@ class ModelLibrary:
                 bench_score = 0
             score += bench_score
             details.append({
-                'key': 'perf', 'label': 'Wydajność',
+                'key': 'perf', 'label': 'Performance',
                 'score': bench_score, 'max': 15, 'ok': bench_score >= 10,
                 'hint': f'{tps} tok/s'
             })
         else:
             details.append({
-                'key': 'perf', 'label': 'Wydajność',
+                'key': 'perf', 'label': 'Performance',
                 'score': 0, 'max': 15, 'ok': False,
-                'hint': 'Uruchom benchmark'
+                'hint': 'Run benchmark'
             })
 
         # 6. Disk space (10 pts)
@@ -1987,9 +1987,9 @@ class ModelLibrary:
             disk_score = 0
         score += disk_score
         details.append({
-            'key': 'disk', 'label': 'Dysk',
+            'key': 'disk', 'label': 'Disk',
             'score': disk_score, 'max': 10, 'ok': disk_score >= 5,
-            'hint': f'{disk["free_gb"]} GB wolne'
+            'hint': f'{disk["free_gb"]} GB free'
         })
 
         return {
@@ -2044,7 +2044,7 @@ class ModelLibrary:
                 repo = m.group(1)
                 filename = m.group(2) or ''
             else:
-                return (None, 'Nie można sparsować URL-a Hugging Face')
+                return (None, 'Cannot parse Hugging Face URL')
         elif '/' in hf_url:
             parts = hf_url.split('/')
             if len(parts) >= 3:
@@ -2053,22 +2053,22 @@ class ModelLibrary:
             elif len(parts) == 2:
                 repo = hf_url
             else:
-                return (None, 'Nieprawidłowy format. Użyj: USER/REPO/PLIK.gguf')
+                return (None, 'Invalid format. Use: USER/REPO/FILE.gguf')
         else:
-            return (None, 'Nieprawidłowy format. Podaj URL lub USER/REPO/PLIK.gguf')
+            return (None, 'Invalid format. Provide a URL or USER/REPO/FILE.gguf')
 
         if not repo:
-            return (None, 'Nie znaleziono nazwy repozytorium')
+            return (None, 'Repository name not found')
 
         # Security check: prevent directory traversal in filename
         if filename and ('..' in filename or filename.startswith('/') or filename.startswith('\\')):
-             return (None, 'Niedozwolona nazwa pliku (zawiera ".." lub zaczyna się od /)')
+             return (None, 'Invalid filename (contains ".." or starts with /)')
 
         # Sanitize each path component with secure_filename to strip special chars
         if filename:
             _parts = [secure_filename(p) for p in filename.split('/') if p]
             if not _parts or not all(_parts):
-                return (None, 'Nieprawidłowa nazwa pliku po sanitizacji')
+                return (None, 'Invalid filename after sanitization')
             filename = '/'.join(_parts)
 
         if not filename:
@@ -2078,12 +2078,12 @@ class ModelLibrary:
                     files = api.list_repo_files(repo)
                     gguf_files = [f for f in files if f.endswith('.gguf')]
                     if not gguf_files:
-                        return (None, f'Brak plików .gguf w repozytorium {repo}')
+                        return (None, f'No .gguf files in repository {repo}')
                     filename = next((f for f in gguf_files if 'Q4_K_M' in f), gguf_files[0])
                 except Exception as e:
-                    return (None, f'Nie można pobrać listy plików z {repo}: {e}')
+                    return (None, f'Cannot retrieve file list from {repo}: {e}')
             else:
-                return (None, 'Podaj pełną ścieżkę z nazwą pliku (huggingface_hub nie zainstalowany)')
+                return (None, 'Provide full path with filename (huggingface_hub not installed)')
 
         model_id = f"custom_{repo.replace('/', '_')}_{filename.replace('/', '_').replace('.', '_')}"
 
@@ -2096,7 +2096,7 @@ class ModelLibrary:
             'size_gb': 0,
             'ram_required_gb': 0,
             'vram_required_gb': 0,
-            'description': f'Niestandardowy model z {repo}',
+            'description': f'Custom model from {repo}',
             'hf_repo': repo,
             'hf_filename': filename,
             'context_length': 0,
@@ -2108,7 +2108,7 @@ class ModelLibrary:
 
         customs = self._config.get('custom_models', [])
         if any(c['id'] == model_id for c in customs):
-            return (None, 'Ten model jest już dodany')
+            return (None, 'This model is already added')
 
         customs.append(entry)
         self._config['custom_models'] = customs
@@ -2120,7 +2120,7 @@ class ModelLibrary:
         customs = self._config.get('custom_models', [])
         found = next((c for c in customs if c['id'] == model_id), None)
         if not found:
-            return (False, 'Model niestandardowy nie znaleziony')
+            return (False, 'Custom model not found')
 
         self.delete_model(model_id)
         self._config['custom_models'] = [c for c in customs if c['id'] != model_id]

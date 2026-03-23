@@ -1,7 +1,7 @@
 """
-EthOS — Websites (Prosty CMS / Kreator stron)
-Pozwala użytkownikom tworzyć i zarządzać statycznymi stronami WWW
-z prostym edytorem wizualnym i szablonami.
+EthOS — Websites (Simple CMS / Site Builder)
+Allows users to create and manage static websites
+with a simple visual editor and templates.
 """
 
 import os
@@ -44,7 +44,7 @@ def _seed_ethos_site():
     pages = [
         {
             'slug': 'index',
-            'title': 'Strona główna',
+            'title': 'Home Page',
             'content': '''
 <section class="hero-landing">
   <div class="hero-glow"></div>
@@ -52,83 +52,83 @@ def _seed_ethos_site():
   <div class="hero-content">
     <div class="hero-badge">Open Source &middot; Self-Hosted &middot; Private</div>
     <h1 class="hero-title">
-      Twój serwer.<br>
-      <span class="gradient-text">Twoje zasady.</span>
+      Your server.<br>
+      <span class="gradient-text">Your rules.</span>
     </h1>
     <p class="hero-desc">
-      EthOS to kompletny system operacyjny dla domowego NAS.<br>
-      Pliki, backupy, monitoring, multimedia, drukarka — wszystko<br>
-      w jednym pięknym interfejsie, bez chmury, bez abonamentu.
+      EthOS is a complete operating system for your home NAS.<br>
+      Files, backups, monitoring, multimedia, printer — everything<br>
+      in one beautiful interface, without cloud, without subscription.
     </p>
     <div class="hero-actions">
-      <a href="instalacja.html" class="btn-primary btn-lg">Zainstaluj za darmo <span class="btn-arrow">→</span></a>
-      <a href="funkcje.html" class="btn-ghost">Zobacz funkcje</a>
+      <a href="installation.html" class="btn-primary btn-lg">Install for free <span class="btn-arrow">→</span></a>
+      <a href="features.html" class="btn-ghost">See features</a>
     </div>
     <div class="hero-stats">
-      <div class="stat"><span class="stat-num">25+</span><span class="stat-label">Aplikacji</span></div>
+      <div class="stat"><span class="stat-num">25+</span><span class="stat-label">Apps</span></div>
       <div class="stat-sep"></div>
-      <div class="stat"><span class="stat-num">0 zł</span><span class="stat-label">Na zawsze</span></div>
+      <div class="stat"><span class="stat-num">Free</span><span class="stat-label">Forever</span></div>
       <div class="stat-sep"></div>
-      <div class="stat"><span class="stat-num">100%</span><span class="stat-label">Prywatny</span></div>
+      <div class="stat"><span class="stat-num">100%</span><span class="stat-label">Private</span></div>
     </div>
   </div>
 </section>
 
 <section class="section">
   <div class="section-header">
-    <span class="section-tag">Ekosystem</span>
-    <h2>Wszystko, czego potrzebujesz</h2>
-    <p class="section-desc">Jeden system. Dziesiątki możliwości. Zero kompromisów.</p>
+    <span class="section-tag">Ecosystem</span>
+    <h2>Everything you need</h2>
+    <p class="section-desc">One system. Dozens of possibilities. Zero compromises.</p>
   </div>
   <div class="bento">
     <div class="bento-item bento-wide card-glow">
       <div class="bento-icon"><svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg></div>
-      <h3>Menedżer plików</h3>
-      <p>Drag &amp; drop, podgląd, udostępnianie — jak Finder, ale w przeglądarce. Obsługuje wiele dysków jednocześnie.</p>
+      <h3>File Manager</h3>
+      <p>Drag &amp; drop, preview, sharing — like Finder, but in your browser. Supports multiple drives simultaneously.</p>
     </div>
     <div class="bento-item card-glow">
       <div class="bento-icon" style="color:#f59e0b"><svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 15V3m0 12l-4-4m4 4l4-4"/><path d="M2 17l.621 2.485A2 2 0 004.561 21h14.878a2 2 0 001.94-1.515L22 17"/></svg></div>
       <h3>Backup &amp; Sync</h3>
-      <p>rsync, harmonogramy, szyfrowanie, snapshoty — backupy między NAS-ami przez SSH.</p>
+      <p>rsync, schedules, encryption, snapshots — backups between NAS devices over SSH.</p>
     </div>
     <div class="bento-item card-glow">
       <div class="bento-icon" style="color:#ef4444"><svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg></div>
-      <h3>Monitoring</h3>
-      <p>Kamery IP, RTSP, nagrywanie ruchu, oś czasu — jak Synology Surveillance bez licencji.</p>
+      <h3>Surveillance</h3>
+      <p>IP cameras, RTSP, motion recording, timeline — like Synology Surveillance without a license.</p>
     </div>
     <div class="bento-item card-glow">
       <div class="bento-icon" style="color:#8b5cf6"><svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M12 18h.01"/></svg></div>
-      <h3>Galeria</h3>
-      <p>Tysiące zdjęć z miniaturami, albumy, sortowanie — Twoje Google Photos na Twoim sprzęcie.</p>
+      <h3>Gallery</h3>
+      <p>Thousands of photos with thumbnails, albums, sorting — your own Google Photos on your own hardware.</p>
     </div>
     <div class="bento-item bento-wide card-glow">
       <div class="bento-icon" style="color:#22c55e"><svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8m-4-4v4"/></svg></div>
-      <h3>Jeszcze więcej w środku</h3>
-      <p>Terminal SSH, edytor kodu, Docker manager, drukarka sieciowa, DDNS, AI chat, kreator stron, sklep z apkami i dziesięatki innych narzędzi.</p>
+      <h3>Even more inside</h3>
+      <p>SSH terminal, code editor, Docker manager, network printer, DDNS, AI chat, site builder, app store, and dozens of other tools.</p>
     </div>
   </div>
 </section>
 
 <section class="section">
   <div class="section-header">
-    <span class="section-tag">Filozofia</span>
-    <h2>Dlaczego EthOS?</h2>
+    <span class="section-tag">Philosophy</span>
+    <h2>Why EthOS?</h2>
   </div>
   <div class="grid-3">
     <div class="feature-card card-glow">
       <div class="feature-icon-wrap"><svg width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></div>
-      <h3>Prywatność bez kompromisów</h3>
-      <p>Zero chmury, zero telemetrii. Dane fizycznie nie opuszczają Twojego domu. Nikt nie czyta Twoich plików.</p>
+      <h3>Privacy without compromise</h3>
+      <p>Zero cloud, zero telemetry. Data physically never leaves your home. No one reads your files.</p>
     </div>
     <div class="feature-card card-glow">
       <div class="feature-icon-wrap" style="background:rgba(139,92,246,.12);color:#8b5cf6"><svg width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M13 2L3 7l10 5 10-5-10-5z"/><path d="M3 17l10 5 10-5M3 12l10 5 10-5"/></svg></div>
-      <h3>Modularny jak LEGO</h3>
-      <p>Instaluj tylko to, co potrzebujesz. Sklep z pakietami — jedno kliknięcie i masz nową funkcję.</p>
+      <h3>Modular like LEGO</h3>
+      <p>Install only what you need. Package store — one click and you have a new feature.</p>
     </div>
     <div class="feature-card card-glow">
       <div class="feature-icon-wrap" style="background:rgba(34,197,94,.12);color:#22c55e"><svg width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10A15.3 15.3 0 0112 2z"/></svg></div>
-      <h3>Bez abonamentu</h3>
-      <p>Darmowy, open-source, na zawsze. Żadnych ukrytych kosztów, subskrypcji ani limitów.</p>
+      <h3>No subscription</h3>
+      <p>Free, open-source, forever. No hidden costs, subscriptions, or limits.</p>
     </div>
   </div>
 </section>
@@ -136,109 +136,109 @@ def _seed_ethos_site():
 <section class="cta-section">
   <div class="cta-glow"></div>
   <div class="cta-content">
-    <h2>Gotowy na własny serwer?</h2>
-    <p>5 minut. Dowolny komputer z Linuxem. Zero doświadczenia.</p>
-    <a href="instalacja.html" class="btn-primary btn-lg">Zacznij teraz <span class="btn-arrow">→</span></a>
+    <h2>Ready for your own server?</h2>
+    <p>5 minutes. Any computer with Linux. Zero experience needed.</p>
+    <a href="installation.html" class="btn-primary btn-lg">Get started now <span class="btn-arrow">→</span></a>
   </div>
 </section>'''
         },
         {
-            'slug': 'funkcje',
-            'title': 'Funkcje',
+            'slug': 'features',
+            'title': 'Features',
             'content': '''
 <section class="page-hero">
-  <span class="section-tag">Platforma</span>
-  <h1>Ponad 25 wbudowanych<br><span class="gradient-text">aplikacji</span></h1>
-  <p class="hero-desc" style="max-width:560px;margin:0 auto;">Pełen ekosystem do zarządzania domowym serwerem — od plików po monitoring kamer.</p>
+  <span class="section-tag">Platform</span>
+  <h1>Over 25 built-in<br><span class="gradient-text">applications</span></h1>
+  <p class="hero-desc" style="max-width:560px;margin:0 auto;">A complete ecosystem for managing your home server — from files to camera surveillance.</p>
 </section>
 
 <section class="section">
-  <div class="section-header"><span class="section-tag">Pliki &amp; storage</span><h2>Zarządzanie danymi</h2></div>
+  <div class="section-header"><span class="section-tag">Files &amp; Storage</span><h2>Data Management</h2></div>
   <div class="grid-2">
     <div class="feature-card card-glow">
       <div class="feature-icon-wrap"><svg width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg></div>
-      <h3>Menedżer plików</h3>
-      <p>Przeglądaj, kopiuj, przenoś, udostępniaj. Drag &amp; drop, podgląd miniatur, wbudowane wyszukiwanie. Obsługa wielu dysków i partycji.</p>
+      <h3>File Manager</h3>
+      <p>Browse, copy, move, share. Drag &amp; drop, thumbnail preview, built-in search. Supports multiple drives and partitions.</p>
     </div>
     <div class="feature-card card-glow">
       <div class="feature-icon-wrap" style="background:rgba(34,197,94,.12);color:#22c55e"><svg width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg></div>
-      <h3>Udostępnianie sieciowe</h3>
-      <p>Automatyczna konfiguracja SMB — Twoje foldery widoczne na każdym urządzeniu w sieci domowej bez żadnej konfiguracji.</p>
+      <h3>Network Sharing</h3>
+      <p>Automatic SMB configuration — your folders visible on every device in your home network without any setup.</p>
     </div>
   </div>
 </section>
 
 <section class="section">
-  <div class="section-header"><span class="section-tag">Ochrona danych</span><h2>Kopie zapasowe</h2></div>
+  <div class="section-header"><span class="section-tag">Data Protection</span><h2>Backups</h2></div>
   <div class="grid-2">
     <div class="feature-card card-glow">
       <div class="feature-icon-wrap" style="background:rgba(245,158,11,.12);color:#f59e0b"><svg width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M12 15V3m0 12l-4-4m4 4l4-4"/><path d="M2 17l.621 2.485A2 2 0 004.561 21h14.878a2 2 0 001.94-1.515L22 17"/></svg></div>
       <h3>Backup Scheduler</h3>
-      <p>Harmonogramy rsync — co godzinę, codziennie, co tydzień. Kompresja, szyfrowanie, retencja. Backupy między NAS-ami przez SSH.</p>
+      <p>rsync schedules — hourly, daily, weekly. Compression, encryption, retention. Backups between NAS devices over SSH.</p>
     </div>
     <div class="feature-card card-glow">
       <div class="feature-icon-wrap" style="background:rgba(6,182,212,.12);color:#06b6d4"><svg width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></div>
-      <h3>Przywracanie snapshotów</h3>
-      <p>Przeglądaj snapshoty z innych NAS-ów, przywracaj pojedyncze pliki lub całe foldery jednym kliknięciem.</p>
+      <h3>Snapshot Recovery</h3>
+      <p>Browse snapshots from other NAS devices, restore individual files or entire folders with one click.</p>
     </div>
   </div>
 </section>
 
 <section class="section">
-  <div class="section-header"><span class="section-tag">Media &amp; rozrywka</span><h2>Multimedia</h2></div>
+  <div class="section-header"><span class="section-tag">Media &amp; Entertainment</span><h2>Multimedia</h2></div>
   <div class="grid-2">
     <div class="feature-card card-glow">
       <div class="feature-icon-wrap" style="background:rgba(139,92,246,.12);color:#8b5cf6"><svg width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></div>
-      <h3>Galeria zdjęć</h3>
-      <p>Automatyczne miniatury, sortowanie po dacie, albumy. Płynne przeglądanie tysięcy zdjęć — Twoje własne Google Photos.</p>
+      <h3>Photo Gallery</h3>
+      <p>Automatic thumbnails, date sorting, albums. Smooth browsing of thousands of photos — your own Google Photos.</p>
     </div>
     <div class="feature-card card-glow">
       <div class="feature-icon-wrap" style="background:rgba(236,72,153,.12);color:#ec4899"><svg width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></div>
-      <h3>Menedżer pobierania</h3>
-      <p>Torrenty przez Real-Debrid, linki bezpośrednie, YouTube. Wbudowana kolejka z priorytetami — wszystko na Twój NAS.</p>
+      <h3>Download Manager</h3>
+      <p>Torrents via Real-Debrid, direct links, YouTube. Built-in queue with priorities — everything to your NAS.</p>
     </div>
   </div>
 </section>
 
 <section class="section">
-  <div class="section-header"><span class="section-tag">Bezpieczeństwo</span><h2>Monitoring &amp; sieć</h2></div>
+  <div class="section-header"><span class="section-tag">Security</span><h2>Surveillance &amp; Network</h2></div>
   <div class="grid-2">
     <div class="feature-card card-glow">
       <div class="feature-icon-wrap" style="background:rgba(239,68,68,.12);color:#ef4444"><svg width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg></div>
       <h3>Surveillance Station</h3>
-      <p>Kamery IP (RTSP/ONVIF), podgląd na żywo, nagrywanie ruchu, oś czasu, eksport klipów. Jak Synology — za darmo.</p>
+      <p>IP cameras (RTSP/ONVIF), live view, motion recording, timeline, clip export. Like Synology — for free.</p>
     </div>
     <div class="feature-card card-glow">
       <div class="feature-icon-wrap" style="background:rgba(20,184,166,.12);color:#14b8a6"><svg width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>
-      <h3>Dynamic DNS &amp; użytkownicy</h3>
-      <p>Dostęp zdalny z DuckDNS/Cloudflare. Konta z rolami, uprawnienia do aplikacji, pełna kontrola dostępu.</p>
+      <h3>Dynamic DNS &amp; Users</h3>
+      <p>Remote access with DuckDNS/Cloudflare. Accounts with roles, app permissions, full access control.</p>
     </div>
   </div>
 </section>
 
 <section class="section">
-  <div class="section-header"><span class="section-tag">Dev tools</span><h2>Narzędzia</h2></div>
+  <div class="section-header"><span class="section-tag">Dev tools</span><h2>Tools</h2></div>
   <div class="grid-3">
-    <div class="mini-card card-glow"><div class="mini-icon">⌨️</div><strong>Terminal SSH</strong><p>Pełny terminal w przeglądarce</p></div>
-    <div class="mini-card card-glow"><div class="mini-icon">📝</div><strong>Edytor kodu</strong><p>Syntax highlighting, Git</p></div>
-    <div class="mini-card card-glow"><div class="mini-icon">🐳</div><strong>Docker</strong><p>Zarządzanie kontenerami</p></div>
-    <div class="mini-card card-glow"><div class="mini-icon">🖨️</div><strong>Drukarka</strong><p>Serwer druku CUPS</p></div>
-    <div class="mini-card card-glow"><div class="mini-icon">🤖</div><strong>AI Chat</strong><p>Wbudowany asystent</p></div>
-    <div class="mini-card card-glow"><div class="mini-icon">🌐</div><strong>Kreator WWW</strong><p>Strony z CMS</p></div>
-    <div class="mini-card card-glow"><div class="mini-icon">📦</div><strong>AppStore</strong><p>Instaluj pakiety</p></div>
-    <div class="mini-card card-glow"><div class="mini-icon">🔄</div><strong>Updater</strong><p>Aktualizacje OTA</p></div>
+    <div class="mini-card card-glow"><div class="mini-icon">⌨️</div><strong>SSH Terminal</strong><p>Full terminal in the browser</p></div>
+    <div class="mini-card card-glow"><div class="mini-icon">📝</div><strong>Code Editor</strong><p>Syntax highlighting, Git</p></div>
+    <div class="mini-card card-glow"><div class="mini-icon">🐳</div><strong>Docker</strong><p>Container management</p></div>
+    <div class="mini-card card-glow"><div class="mini-icon">🖨️</div><strong>Printer</strong><p>CUPS print server</p></div>
+    <div class="mini-card card-glow"><div class="mini-icon">🤖</div><strong>AI Chat</strong><p>Built-in assistant</p></div>
+    <div class="mini-card card-glow"><div class="mini-icon">🌐</div><strong>Site Builder</strong><p>Pages with CMS</p></div>
+    <div class="mini-card card-glow"><div class="mini-icon">📦</div><strong>AppStore</strong><p>Install packages</p></div>
+    <div class="mini-card card-glow"><div class="mini-icon">🔄</div><strong>Updater</strong><p>OTA updates</p></div>
     <div class="mini-card card-glow"><div class="mini-icon">🔧</div><strong>Disk Repair</strong><p>fsck &amp; SMART</p></div>
   </div>
 </section>'''
         },
         {
-            'slug': 'instalacja',
-            'title': 'Instalacja',
+            'slug': 'installation',
+            'title': 'Installation',
             'content': '''
 <section class="page-hero">
-  <span class="section-tag">Szybki start</span>
-  <h1>Zainstaluj w <span class="gradient-text">5 minut</span></h1>
-  <p class="hero-desc" style="max-width:480px;margin:0 auto;">Dowolny komputer z Linuxem. Jedna komenda. Zero doświadczenia.</p>
+  <span class="section-tag">Quick Start</span>
+  <h1>Install in <span class="gradient-text">5 minutes</span></h1>
+  <p class="hero-desc" style="max-width:480px;margin:0 auto;">Any computer with Linux. One command. Zero experience needed.</p>
 </section>
 
 <section class="section">
@@ -246,73 +246,73 @@ def _seed_ethos_site():
     <div class="install-step card-glow">
       <div class="step-num">1</div>
       <div class="step-body">
-        <h3>Otwórz terminal</h3>
-        <p>SSH do serwera lub otwórz terminal lokalnie na maszynie z Debian/Ubuntu.</p>
+        <h3>Open a terminal</h3>
+        <p>SSH into your server or open a terminal locally on a Debian/Ubuntu machine.</p>
       </div>
     </div>
     <div class="install-step card-glow">
       <div class="step-num">2</div>
       <div class="step-body">
-        <h3>Uruchom instalator</h3>
+        <h3>Run the installer</h3>
         <pre>curl -fsSL https://get.ethos.local/install.sh | sudo bash</pre>
-        <p>Instalator pobierze zależności, skonfiguruje systemd i uruchomi serwer.</p>
+        <p>The installer will download dependencies, configure systemd, and start the server.</p>
       </div>
     </div>
     <div class="install-step card-glow">
       <div class="step-num">3</div>
       <div class="step-body">
-        <h3>Otwórz przeglądarkę</h3>
-        <pre>http://&lt;IP-SERWERA&gt;:9000</pre>
-        <p>Ustaw login admina i zacznij korzystać — to wszystko.</p>
+        <h3>Open your browser</h3>
+        <pre>http://&lt;SERVER-IP&gt;:9000</pre>
+        <p>Set up an admin login and start using it — that's all.</p>
       </div>
     </div>
   </div>
 </section>
 
 <section class="section">
-  <div class="section-header"><span class="section-tag">Sprzęt</span><h2>Wymagania systemowe</h2></div>
+  <div class="section-header"><span class="section-tag">Hardware</span><h2>System Requirements</h2></div>
   <div class="grid-2">
     <div class="feature-card card-glow">
-      <h3 style="color:var(--text-muted);text-transform:uppercase;font-size:.75em;letter-spacing:.1em;margin-bottom:12px;">Minimalne</h3>
+      <h3 style="color:var(--text-muted);text-transform:uppercase;font-size:.75em;letter-spacing:.1em;margin-bottom:12px;">Minimum</h3>
       <ul class="spec-list">
-        <li><span class="spec-label">CPU</span> <span>x86_64 lub ARM64</span></li>
+        <li><span class="spec-label">CPU</span> <span>x86_64 or ARM64</span></li>
         <li><span class="spec-label">RAM</span> <span>1 GB</span></li>
-        <li><span class="spec-label">Dysk</span> <span>8 GB</span></li>
+        <li><span class="spec-label">Disk</span> <span>8 GB</span></li>
         <li><span class="spec-label">OS</span> <span>Debian 11+ / Ubuntu 20.04+</span></li>
       </ul>
     </div>
     <div class="feature-card card-glow" style="border-color:var(--accent-glow);">
-      <h3 style="color:var(--accent);text-transform:uppercase;font-size:.75em;letter-spacing:.1em;margin-bottom:12px;">⭐ Zalecane</h3>
+      <h3 style="color:var(--accent);text-transform:uppercase;font-size:.75em;letter-spacing:.1em;margin-bottom:12px;">⭐ Recommended</h3>
       <ul class="spec-list">
         <li><span class="spec-label">CPU</span> <span>Intel N100 / Ryzen</span></li>
         <li><span class="spec-label">RAM</span> <span>4 GB+</span></li>
-        <li><span class="spec-label">Dysk</span> <span>SSD 32 GB + HDD 1-4 TB</span></li>
-        <li><span class="spec-label">Sieć</span> <span>Ethernet (1 Gbps)</span></li>
+        <li><span class="spec-label">Disk</span> <span>SSD 32 GB + HDD 1-4 TB</span></li>
+        <li><span class="spec-label">Network</span> <span>Ethernet (1 Gbps)</span></li>
       </ul>
     </div>
   </div>
 </section>
 
 <section class="section">
-  <div class="section-header"><span class="section-tag">Rekomendacje</span><h2>Na czym postawić NAS?</h2></div>
+  <div class="section-header"><span class="section-tag">Recommendations</span><h2>What to run NAS on?</h2></div>
   <div class="grid-3">
     <div class="feature-card card-glow" style="text-align:center;">
       <div style="font-size:2.5em;margin-bottom:12px;filter:grayscale(0);">🍓</div>
       <h3>Raspberry Pi 4/5</h3>
-      <p>Cichy, tani, energooszczędny. Idealny na start — pliki, backup, drukarka.</p>
-      <span class="price-tag">od ~250 zł</span>
+      <p>Quiet, cheap, energy-efficient. Perfect to start — files, backup, printer.</p>
+      <span class="price-tag">from ~$60</span>
     </div>
     <div class="feature-card card-glow" style="text-align:center;border-color:var(--accent-glow);">
       <div style="font-size:2.5em;margin-bottom:12px;">🖥️</div>
       <h3>Mini PC (N100)</h3>
-      <p>Nasz faworyt. Monitoring, Docker, transcodowanie — wszystko bez problemu.</p>
-      <span class="price-tag" style="background:var(--accent);color:#fff;">od ~500 zł ⭐</span>
+      <p>Our favorite. Surveillance, Docker, transcoding — everything without a problem.</p>
+      <span class="price-tag" style="background:var(--accent);color:#fff;">from ~$120 ⭐</span>
     </div>
     <div class="feature-card card-glow" style="text-align:center;">
       <div style="font-size:2.5em;margin-bottom:12px;">💻</div>
-      <h3>Stary laptop/PC</h3>
-      <p>Daj drugie życie staremu sprzętowi. Debian + EthOS = gotowy NAS.</p>
-      <span class="price-tag">0 zł</span>
+      <h3>Old Laptop/PC</h3>
+      <p>Give a second life to old hardware. Debian + EthOS = ready NAS.</p>
+      <span class="price-tag">Free</span>
     </div>
   </div>
 </section>
@@ -320,20 +320,20 @@ def _seed_ethos_site():
 <section class="cta-section">
   <div class="cta-glow"></div>
   <div class="cta-content">
-    <h2>Potrzebujesz pomocy?</h2>
-    <p>Napisz do nas — chętnie pomożemy z instalacją i konfiguracją.</p>
-    <a href="kontakt.html" class="btn-primary btn-lg">Skontaktuj się <span class="btn-arrow">→</span></a>
+    <h2>Need help?</h2>
+    <p>Contact us — we are happy to help with installation and configuration.</p>
+    <a href="contact.html" class="btn-primary btn-lg">Get in touch <span class="btn-arrow">→</span></a>
   </div>
 </section>'''
         },
         {
-            'slug': 'galeria',
-            'title': 'Galeria',
+            'slug': 'gallery',
+            'title': 'Gallery',
             'content': '''
 <section class="page-hero">
-  <span class="section-tag">Podgląd</span>
-  <h1>EthOS <span class="gradient-text">w akcji</span></h1>
-  <p class="hero-desc" style="max-width:480px;margin:0 auto;">Zobacz jak wygląda codzienna praca z domowym serwerem.</p>
+  <span class="section-tag">Preview</span>
+  <h1>EthOS <span class="gradient-text">in action</span></h1>
+  <p class="hero-desc" style="max-width:480px;margin:0 auto;">See what daily work with a home server looks like.</p>
 </section>
 
 <section class="section">
@@ -341,43 +341,43 @@ def _seed_ethos_site():
     <div class="gallery-card card-glow">
       <div class="gallery-preview"><svg width="48" height="48" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" opacity=".5"><rect x="4" y="4" width="40" height="32" rx="3"/><circle cx="14" cy="14" r="3"/><path d="M4 28l8-8 6 6 8-10 12 12"/></svg></div>
       <div class="gallery-info">
-        <h3>Pulpit</h3>
-        <p>Desktop z ikonami aplikacji — jak macOS, ale w przeglądarce. Wielookienkowość, do drag &amp; drop.</p>
+        <h3>Desktop</h3>
+        <p>Desktop with app icons — like macOS, but in the browser. Multi-window, with drag &amp; drop.</p>
       </div>
     </div>
     <div class="gallery-card card-glow">
       <div class="gallery-preview" style="background:linear-gradient(135deg,rgba(139,92,246,.15),rgba(59,130,246,.15));"><svg width="48" height="48" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" opacity=".5"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg></div>
       <div class="gallery-info">
-        <h3>Menedżer plików</h3>
-        <p>Przeglądanie folderów, podgląd, kopiowanie między dyskami — intuicyjny jak systemowy eksplorator.</p>
+        <h3>File Manager</h3>
+        <p>Folder browsing, preview, copying between drives — intuitive like a system explorer.</p>
       </div>
     </div>
     <div class="gallery-card card-glow">
       <div class="gallery-preview" style="background:linear-gradient(135deg,rgba(239,68,68,.15),rgba(245,158,11,.15));"><svg width="48" height="48" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" opacity=".5"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg></div>
       <div class="gallery-info">
         <h3>Surveillance Station</h3>
-        <p>Live view, nagrywanie, timeline, eksport klipów — pełny system monitoringu bez licencji.</p>
+        <p>Live view, recording, timeline, clip export — full surveillance system without a license.</p>
       </div>
     </div>
     <div class="gallery-card card-glow">
       <div class="gallery-preview" style="background:linear-gradient(135deg,rgba(34,197,94,.15),rgba(6,182,212,.15));"><svg width="48" height="48" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" opacity=".5"><path d="M12 15V3m0 12l-4-4m4 4l4-4M2 17l.621 2.485A2 2 0 004.561 21h14.878a2 2 0 001.94-1.515L22 17"/></svg></div>
       <div class="gallery-info">
         <h3>Backup Manager</h3>
-        <p>Harmonogramy, postęp w czasie rzeczywistym, snapshoty — automatyzacja kopii zapasowych.</p>
+        <p>Schedules, real-time progress, snapshots — automated backup management.</p>
       </div>
     </div>
     <div class="gallery-card card-glow">
       <div class="gallery-preview" style="background:linear-gradient(135deg,rgba(236,72,153,.15),rgba(139,92,246,.15));"><svg width="48" height="48" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" opacity=".5"><rect x="6" y="3" width="12" height="18" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg></div>
       <div class="gallery-info">
-        <h3>Drukarka &amp; AI</h3>
-        <p>Serwer druku z kolejką + wbudowany chatbot AI do pytań i konfiguracji systemu.</p>
+        <h3>Printer &amp; AI</h3>
+        <p>Print server with queue + built-in AI chatbot for questions and system configuration.</p>
       </div>
     </div>
     <div class="gallery-card card-glow">
       <div class="gallery-preview" style="background:linear-gradient(135deg,rgba(20,184,166,.15),rgba(59,130,246,.15));"><svg width="48" height="48" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" opacity=".5"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8m-4-4v4"/></svg></div>
       <div class="gallery-info">
         <h3>Terminal &amp; Docker</h3>
-        <p>Pełne SSH w przeglądarce + graficzny manager kontenerów Docker bez CLI.</p>
+        <p>Full SSH in the browser + graphical Docker container manager without CLI.</p>
       </div>
     </div>
   </div>
@@ -386,20 +386,20 @@ def _seed_ethos_site():
 <section class="cta-section">
   <div class="cta-glow"></div>
   <div class="cta-content">
-    <h2>Przekonaj się sam</h2>
-    <p>Zainstaluj EthOS — 5 minut i masz to wszystko na swoim sprzęcie.</p>
-    <a href="instalacja.html" class="btn-primary btn-lg">Zainstaluj teraz <span class="btn-arrow">→</span></a>
+    <h2>See for yourself</h2>
+    <p>Install EthOS — 5 minutes and you have all of this on your own hardware.</p>
+    <a href="installation.html" class="btn-primary btn-lg">Install now <span class="btn-arrow">→</span></a>
   </div>
 </section>'''
         },
         {
-            'slug': 'kontakt',
-            'title': 'Kontakt',
+            'slug': 'contact',
+            'title': 'Contact',
             'content': '''
 <section class="page-hero">
-  <span class="section-tag">Kontakt</span>
-  <h1>Porozmawiajmy</h1>
-  <p class="hero-desc" style="max-width:420px;margin:0 auto;">Pytania, propozycje, współpraca — pisz śmiało.</p>
+  <span class="section-tag">Contact</span>
+  <h1>Let's talk</h1>
+  <p class="hero-desc" style="max-width:420px;margin:0 auto;">Questions, suggestions, collaboration — feel free to write.</p>
 </section>
 
 <section class="section">
@@ -407,27 +407,27 @@ def _seed_ethos_site():
     <div class="feature-card card-glow">
       <div class="feature-icon-wrap"><svg width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg></div>
       <h3>Email</h3>
-      <p style="font-size:1.1em;margin-top:4px;"><strong>kontakt@ethos.local</strong></p>
-      <p style="color:var(--text-muted);font-size:.9em;">Odpisujemy w ciągu 24h.</p>
+      <p style="font-size:1.1em;margin-top:4px;"><strong>contact@ethos.local</strong></p>
+      <p style="color:var(--text-muted);font-size:.9em;">We reply within 24 hours.</p>
     </div>
     <div class="feature-card card-glow">
       <div class="feature-icon-wrap" style="background:rgba(139,92,246,.12);color:#8b5cf6"><svg width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/></svg></div>
-      <h3>Społeczność</h3>
+      <h3>Community</h3>
       <p style="font-size:1.1em;margin-top:4px;"><strong>forum.ethos.local</strong></p>
-      <p style="color:var(--text-muted);font-size:.9em;">Forum użytkowników EthOS.</p>
+      <p style="color:var(--text-muted);font-size:.9em;">EthOS user forum.</p>
     </div>
   </div>
 </section>
 
 <section class="section">
   <div class="feature-card card-glow">
-    <h3>Współpraca &amp; Open Source</h3>
-    <p style="margin-bottom:16px;">EthOS to projekt open-source. Każdy wkład się liczy:</p>
+    <h3>Collaboration &amp; Open Source</h3>
+    <p style="margin-bottom:16px;">EthOS is an open-source project. Every contribution counts:</p>
     <div class="contrib-grid">
-      <div class="contrib-item"><span class="contrib-icon">🐛</span><div><strong>Zgłaszaj błędy</strong><p>Każdy raport poprawia system</p></div></div>
-      <div class="contrib-item"><span class="contrib-icon">💡</span><div><strong>Proponuj funkcje</strong><p>Twoje pomysły nas napędzają</p></div></div>
-      <div class="contrib-item"><span class="contrib-icon">📦</span><div><strong>Twórz pakiety</strong><p>Pisz aplikacje do AppStore</p></div></div>
-      <div class="contrib-item"><span class="contrib-icon">📖</span><div><strong>Dokumentacja</strong><p>Pomagaj innym zrozumieć system</p></div></div>
+      <div class="contrib-item"><span class="contrib-icon">🐛</span><div><strong>Report bugs</strong><p>Every report improves the system</p></div></div>
+      <div class="contrib-item"><span class="contrib-icon">💡</span><div><strong>Suggest features</strong><p>Your ideas drive us forward</p></div></div>
+      <div class="contrib-item"><span class="contrib-icon">📦</span><div><strong>Create packages</strong><p>Write apps for the AppStore</p></div></div>
+      <div class="contrib-item"><span class="contrib-icon">📖</span><div><strong>Documentation</strong><p>Help others understand the system</p></div></div>
     </div>
   </div>
 </section>
@@ -436,8 +436,8 @@ def _seed_ethos_site():
   <div class="cta-glow"></div>
   <div class="cta-content">
     <svg width="48" height="48" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" style="opacity:.6;margin-bottom:12px;"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>
-    <h2>Dziękujemy za zainteresowanie</h2>
-    <p>Tworzony z pasji do prywatności, wolności i prostoty.</p>
+    <h2>Thank you for your interest</h2>
+    <p>Built with passion for privacy, freedom, and simplicity.</p>
   </div>
 </section>'''
         }
@@ -447,7 +447,7 @@ def _seed_ethos_site():
         'id': site_id,
         'name': 'EthOS',
         'slug': 'ethos',
-        'description': 'EthOS — prywatny, darmowy system NAS z 25+ wbudowanymi aplikacjami.',
+        'description': 'EthOS — private, free NAS system with 25+ built-in applications.',
         'template': 'landing',
         'theme': 'dark',
         'custom_css': '',
@@ -515,120 +515,120 @@ def _sanitize_slug(s):
     s = re.sub(r'[żźž]', 'z', s)
     s = re.sub(r'[^a-z0-9\-]', '-', s)
     s = re.sub(r'-+', '-', s).strip('-')
-    return s or 'strona'
+    return s or 'page'
 
 
 # ── Templates ──
 
 _TEMPLATES = {
     'blank': {
-        'name': 'Pusta strona',
-        'description': 'Zupełnie czysta strona — zacznij od zera',
+        'name': 'Blank Page',
+        'description': 'Completely empty page — start from scratch',
         'icon': 'fa-file',
         'color': '#64748b',
         'pages': [
-            {'slug': 'index', 'title': 'Strona główna', 'content': '<h1>Moja strona</h1>\n<p>Witaj na mojej stronie!</p>'}
+            {'slug': 'index', 'title': 'Home Page', 'content': '<h1>My Website</h1>\n<p>Welcome to my website!</p>'}
         ]
     },
     'portfolio': {
         'name': 'Portfolio',
-        'description': 'Strona portfolio z sekcjami „O mnie", projekty i kontakt',
+        'description': 'Portfolio page with "About Me", projects, and contact sections',
         'icon': 'fa-briefcase',
         'color': '#6366f1',
         'pages': [
-            {'slug': 'index', 'title': 'Strona główna', 'content': '''<section class="hero">
-  <h1>Jan Kowalski</h1>
+            {'slug': 'index', 'title': 'Home Page', 'content': '''<section class="hero">
+  <h1>John Smith</h1>
   <p class="subtitle">Web Developer & Designer</p>
-  <p>Tworzę nowoczesne strony i aplikacje internetowe.</p>
+  <p>I create modern websites and web applications.</p>
 </section>
 
 <section class="about" id="about">
-  <h2>O mnie</h2>
-  <p>Jestem doświadczonym programistą z pasją do tworzenia pięknych i funkcjonalnych stron internetowych. Specjalizuję się w HTML, CSS, JavaScript i nowoczesnych frameworkach.</p>
+  <h2>About Me</h2>
+  <p>I am an experienced developer with a passion for creating beautiful and functional websites. I specialize in HTML, CSS, JavaScript, and modern frameworks.</p>
 </section>
 
 <section class="projects" id="projects">
-  <h2>Projekty</h2>
+  <h2>Projects</h2>
   <div class="grid-3">
     <div class="card">
-      <h3>🌐 Strona firmowa</h3>
-      <p>Responsywna strona dla lokalnej firmy z systemem rezerwacji.</p>
+      <h3>🌐 Business Website</h3>
+      <p>Responsive website for a local business with a booking system.</p>
     </div>
     <div class="card">
-      <h3>🛒 Sklep online</h3>
-      <p>E-commerce z integracją płatności i panelem administracyjnym.</p>
+      <h3>🛒 Online Store</h3>
+      <p>E-commerce with payment integration and admin panel.</p>
     </div>
     <div class="card">
-      <h3>📱 Aplikacja mobilna</h3>
-      <p>PWA do zarządzania zadaniami z synchronizacją w chmurze.</p>
+      <h3>📱 Mobile App</h3>
+      <p>PWA for task management with cloud synchronization.</p>
     </div>
   </div>
 </section>'''},
-            {'slug': 'kontakt', 'title': 'Kontakt', 'content': '''<h1>Kontakt</h1>
-<p>Chcesz nawiązać współpracę? Napisz do mnie!</p>
+            {'slug': 'contact', 'title': 'Contact', 'content': '''<h1>Contact</h1>
+<p>Want to collaborate? Write to me!</p>
 <div class="contact-info">
-  <p>📧 <strong>Email:</strong> jan@example.com</p>
-  <p>📱 <strong>Telefon:</strong> +48 123 456 789</p>
-  <p>🌍 <strong>Lokalizacja:</strong> Warszawa, Polska</p>
+  <p>📧 <strong>Email:</strong> john@example.com</p>
+  <p>📱 <strong>Phone:</strong> +1 234 567 890</p>
+  <p>🌍 <strong>Location:</strong> New York, USA</p>
 </div>'''}
         ]
     },
     'blog': {
         'name': 'Blog',
-        'description': 'Prosty blog z artykułami i stroną „O mnie"',
+        'description': 'Simple blog with articles and an "About Me" page',
         'icon': 'fa-pen-nib',
         'color': '#ec4899',
         'pages': [
-            {'slug': 'index', 'title': 'Blog', 'content': '''<h1>Mój blog</h1>
-<p class="subtitle">Dzielę się wiedzą i doświadczeniem</p>
+            {'slug': 'index', 'title': 'Blog', 'content': '''<h1>My Blog</h1>
+<p class="subtitle">Sharing knowledge and experience</p>
 
 <article class="post">
-  <h2>Pierwszy wpis na blogu</h2>
+  <h2>First blog post</h2>
   <p class="post-meta">📅 ''' + datetime.now().strftime('%d.%m.%Y') + ''' · ✍️ Admin</p>
-  <p>Witaj na moim blogu! To jest mój pierwszy wpis. Będę tutaj dzielić się przemyśleniami na temat technologii, programowania i życia.</p>
-  <p>Zapraszam do czytania i komentowania!</p>
+  <p>Welcome to my blog! This is my first post. I will be sharing my thoughts on technology, programming, and life here.</p>
+  <p>Feel free to read and comment!</p>
 </article>
 
 <article class="post">
-  <h2>Jak zacząć przygodę z programowaniem?</h2>
+  <h2>How to start your programming journey?</h2>
   <p class="post-meta">📅 ''' + datetime.now().strftime('%d.%m.%Y') + ''' · ✍️ Admin</p>
-  <p>Programowanie to fascynująca umiejętność, która otwiera wiele drzwi. W tym wpisie opiszę, od czego zacząć naukę i jakie technologie wybrać.</p>
+  <p>Programming is a fascinating skill that opens many doors. In this post, I will describe where to start learning and which technologies to choose.</p>
 </article>'''},
-            {'slug': 'o-mnie', 'title': 'O mnie', 'content': '''<h1>O mnie</h1>
-<p>Cześć! Jestem autorem tego bloga. Interesuję się technologią, programowaniem i dzieleniem się wiedzą z innymi.</p>
-<p>Jeśli chcesz się ze mną skontaktować, napisz na: <strong>kontakt@example.com</strong></p>'''}
+            {'slug': 'about', 'title': 'About Me', 'content': '''<h1>About Me</h1>
+<p>Hi! I am the author of this blog. I am interested in technology, programming, and sharing knowledge with others.</p>
+<p>If you want to get in touch, write to: <strong>contact@example.com</strong></p>'''}
         ]
     },
     'landing': {
         'name': 'Landing page',
-        'description': 'Jednostronicowa witryna promocyjna z CTA',
+        'description': 'Single-page promotional site with CTA',
         'icon': 'fa-rocket',
         'color': '#f59e0b',
         'pages': [
-            {'slug': 'index', 'title': 'Strona główna', 'content': '''<section class="hero" style="text-align:center;padding:60px 20px;">
-  <h1 style="font-size:2.5em;">Rewolucyjny produkt</h1>
-  <p class="subtitle" style="font-size:1.3em;opacity:.8;">Zmieni sposób, w jaki pracujesz</p>
-  <p style="margin:24px 0;">Dołącz do tysięcy zadowolonych użytkowników i odkryj nowe możliwości.</p>
-  <a href="#features" class="btn-primary" style="display:inline-block;padding:14px 32px;background:#3b82f6;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;">Dowiedz się więcej</a>
+            {'slug': 'index', 'title': 'Home Page', 'content': '''<section class="hero" style="text-align:center;padding:60px 20px;">
+  <h1 style="font-size:2.5em;">Revolutionary Product</h1>
+  <p class="subtitle" style="font-size:1.3em;opacity:.8;">It will change the way you work</p>
+  <p style="margin:24px 0;">Join thousands of satisfied users and discover new possibilities.</p>
+  <a href="#features" class="btn-primary" style="display:inline-block;padding:14px 32px;background:#3b82f6;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;">Learn more</a>
 </section>
 
 <section id="features" style="padding:40px 20px;">
-  <h2 style="text-align:center;">Dlaczego my?</h2>
+  <h2 style="text-align:center;">Why us?</h2>
   <div class="grid-3">
     <div class="card" style="text-align:center;">
       <div style="font-size:2.5em;">⚡</div>
-      <h3>Szybkość</h3>
-      <p>Błyskawiczne działanie dzięki najnowszym technologiom.</p>
+      <h3>Speed</h3>
+      <p>Lightning-fast performance thanks to the latest technologies.</p>
     </div>
     <div class="card" style="text-align:center;">
       <div style="font-size:2.5em;">🔒</div>
-      <h3>Bezpieczeństwo</h3>
-      <p>Twoje dane są bezpieczne dzięki szyfrowaniu end-to-end.</p>
+      <h3>Security</h3>
+      <p>Your data is safe with end-to-end encryption.</p>
     </div>
     <div class="card" style="text-align:center;">
       <div style="font-size:2.5em;">🎯</div>
-      <h3>Prostota</h3>
-      <p>Intuicyjny interfejs, który opanujesz w kilka minut.</p>
+      <h3>Simplicity</h3>
+      <p>Intuitive interface that you can master in minutes.</p>
     </div>
   </div>
 </section>'''}
@@ -641,7 +641,7 @@ _TEMPLATES = {
 
 _THEMES = {
     'light': {
-        'name': 'Jasny',
+        'name': 'Light',
         'css': '''
 :root { --bg: #fafbfc; --bg-surface: #f0f2f5; --text: #111827; --text-muted: #6b7280;
   --accent: #3b82f6; --accent-hover: #2563eb; --accent-glow: rgba(59,130,246,.12);
@@ -651,7 +651,7 @@ _THEMES = {
 '''
     },
     'dark': {
-        'name': 'Ciemny',
+        'name': 'Dark',
         'css': '''
 :root { --bg: #0a0e1a; --bg-surface: #111827; --text: #f1f5f9; --text-muted: #94a3b8;
   --accent: #3b82f6; --accent-hover: #60a5fa; --accent-glow: rgba(59,130,246,.15);
@@ -671,7 +671,7 @@ _THEMES = {
 '''
     },
     'forest': {
-        'name': 'Las',
+        'name': 'Forest',
         'css': '''
 :root { --bg: #071a0e; --bg-surface: #0c2615; --text: #dcfce7; --text-muted: #86efac;
   --accent: #22c55e; --accent-hover: #4ade80; --accent-glow: rgba(34,197,94,.15);
@@ -949,14 +949,14 @@ def _build_site_html(site, page, base_url=None):
         href = f"{prefix}index.html" if p['slug'] == 'index' else f"{prefix}{p['slug']}.html"
         nav_links += f'<a href="{href}"{active}>{p["title"]}</a>\n'
 
-    site_title = site.get('name', 'Moja strona')
+    site_title = site.get('name', 'My Website')
     page_title = page.get('title', site_title)
     footer = site.get('footer', f'&copy; {datetime.now().year} {site_title}')
     home_href = f"{prefix}index.html"
     base_tag = f'<base href="{prefix}">' if base_url else ''
 
     return f'''<!DOCTYPE html>
-<html lang="pl">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1041,11 +1041,11 @@ def create_site():
     description = data.get('description', '').strip()
 
     if not name:
-        return jsonify({'error': 'Nazwa strony jest wymagana'}), 400
+        return jsonify({'error': 'Site name is required'}), 400
 
     template = _TEMPLATES.get(template_id)
     if not template:
-        return jsonify({'error': 'Nieznany szablon'}), 400
+        return jsonify({'error': 'Unknown template'}), 400
 
     site_id = str(uuid.uuid4())[:8]
     slug = _sanitize_slug(name)
@@ -1093,7 +1093,7 @@ def get_site(site_id):
     """Get site details including pages."""
     site, _ = _find_site(site_id)
     if not site:
-        return jsonify({'error': 'Strona nie znaleziona'}), 404
+        return jsonify({'error': 'Site not found'}), 404
     return jsonify({'site': site})
 
 
@@ -1102,7 +1102,7 @@ def update_site(site_id):
     """Update site settings (name, theme, description, footer, custom_css)."""
     site, sites = _find_site(site_id)
     if not site:
-        return jsonify({'error': 'Strona nie znaleziona'}), 404
+        return jsonify({'error': 'Site not found'}), 404
 
     data = request.get_json(force=True, silent=True) or {}
     for key in ('name', 'description', 'theme', 'footer', 'custom_css'):
@@ -1126,7 +1126,7 @@ def delete_site(site_id):
     """Delete a site and all its files."""
     site, sites = _find_site(site_id)
     if not site:
-        return jsonify({'error': 'Strona nie znaleziona'}), 404
+        return jsonify({'error': 'Site not found'}), 404
 
     # Remove files
     sd = _site_dir(site_id)
@@ -1147,12 +1147,12 @@ def create_page(site_id):
     """Add a new page to a site."""
     site, sites = _find_site(site_id)
     if not site:
-        return jsonify({'error': 'Strona nie znaleziona'}), 404
+        return jsonify({'error': 'Site not found'}), 404
 
     data = request.get_json(force=True, silent=True) or {}
     title = data.get('title', '').strip()
     if not title:
-        return jsonify({'error': 'Tytuł podstrony jest wymagany'}), 400
+        return jsonify({'error': 'Page title is required'}), 400
 
     slug = _sanitize_slug(title)
     # Ensure unique slug
@@ -1166,7 +1166,7 @@ def create_page(site_id):
     page = {
         'slug': slug,
         'title': title,
-        'content': data.get('content', f'<h1>{title}</h1>\n<p>Treść strony...</p>')
+        'content': data.get('content', f'<h1>{title}</h1>\n<p>Page content...</p>')
     }
 
     site.setdefault('pages', []).append(page)
@@ -1182,7 +1182,7 @@ def update_page(site_id, slug):
     """Update a page's title and/or content."""
     site, sites = _find_site(site_id)
     if not site:
-        return jsonify({'error': 'Strona nie znaleziona'}), 404
+        return jsonify({'error': 'Site not found'}), 404
 
     page = None
     for p in site.get('pages', []):
@@ -1191,7 +1191,7 @@ def update_page(site_id, slug):
             break
 
     if not page:
-        return jsonify({'error': 'Podstrona nie znaleziona'}), 404
+        return jsonify({'error': 'Subpage not found'}), 404
 
     data = request.get_json(force=True, silent=True) or {}
     if 'title' in data:
@@ -1211,10 +1211,10 @@ def delete_page(site_id, slug):
     """Delete a page from a site."""
     site, sites = _find_site(site_id)
     if not site:
-        return jsonify({'error': 'Strona nie znaleziona'}), 404
+        return jsonify({'error': 'Site not found'}), 404
 
     if slug == 'index':
-        return jsonify({'error': 'Nie można usunąć strony głównej'}), 400
+        return jsonify({'error': 'Cannot delete the home page'}), 400
 
     site['pages'] = [p for p in site.get('pages', []) if p['slug'] != slug]
     site['updated_at'] = datetime.now().isoformat()
@@ -1238,7 +1238,7 @@ def preview_site(site_id, page_path='index.html'):
     """Serve a site page for preview — rendered dynamically with correct links."""
     site, _ = _find_site(site_id)
     if not site:
-        return jsonify({'error': 'Strona nie znaleziona'}), 404
+        return jsonify({'error': 'Site not found'}), 404
 
     if not page_path.endswith('.html'):
         page_path += '.html'
@@ -1254,7 +1254,7 @@ def preview_site(site_id, page_path='index.html'):
         # fallback to index
         page = next((p for p in site.get('pages', []) if p['slug'] == 'index'), None)
         if not page:
-            return jsonify({'error': 'Strona nie znaleziona'}), 404
+            return jsonify({'error': 'Site not found'}), 404
 
     base_url = f'/api/websites/{site_id}/preview'
     html = _build_site_html(site, page, base_url=base_url)
@@ -1268,7 +1268,7 @@ def publish_site(site_id):
     """Re-publish a site (regenerate all HTML)."""
     site, sites = _find_site(site_id)
     if not site:
-        return jsonify({'error': 'Strona nie znaleziona'}), 404
+        return jsonify({'error': 'Site not found'}), 404
 
     _publish_site(site)
     site['published'] = True
@@ -1282,7 +1282,7 @@ def unpublish_site(site_id):
     """Mark site as unpublished."""
     site, sites = _find_site(site_id)
     if not site:
-        return jsonify({'error': 'Strona nie znaleziona'}), 404
+        return jsonify({'error': 'Site not found'}), 404
 
     site['published'] = False
     _save_sites(sites)
@@ -1300,11 +1300,11 @@ def export_site(site_id):
 
     site, _ = _find_site(site_id)
     if not site:
-        return jsonify({'error': 'Strona nie znaleziona'}), 404
+        return jsonify({'error': 'Site not found'}), 404
 
     sd = _site_dir(site_id)
     if not os.path.isdir(sd):
-        return jsonify({'error': 'Brak plików strony'}), 404
+        return jsonify({'error': 'No site files'}), 404
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
@@ -1324,6 +1324,6 @@ def export_site(site_id):
 # ── Package install / uninstall ──
 register_pkg_routes(
     websites_bp,
-    install_message='Strony WWW gotowe.',
+    install_message='Websites ready.',
     wipe_dirs=[_DATA_DIR],
 )

@@ -81,7 +81,7 @@ def _load_state():
         _install_state['status'] = 'done'
         _install_state['phase'] = 'complete'
         _install_state['percent'] = 100
-        _install_state['message'] = 'Instalacja zakończona (preboot)'
+        _install_state['message'] = 'Installation complete (preboot)'
 
 
 def _log(msg):
@@ -302,7 +302,7 @@ def _discover_devices():
 
         # FS summary
         fstypes = list({p['fstype'] for p in partitions if p['fstype']})
-        fstype_summary = ', '.join(fstypes) if fstypes else 'brak partycji'
+        fstype_summary = ', '.join(fstypes) if fstypes else 'no partitions'
 
         # connection type
         if is_usb:
@@ -314,7 +314,7 @@ def _discover_devices():
         elif tran == 'sas':
             connection_type = 'SAS'
         else:
-            connection_type = tran.upper() if tran else 'Wewnętrzny'
+            connection_type = tran.upper() if tran else 'Internal'
 
         size_gb = round(size / 1e9, 1)
 
@@ -405,22 +405,22 @@ def _validate_plan(strategy, target_device, data_disks, devices_map, boot_medium
     errors = []
 
     if strategy not in ('usb', 'internal'):
-        errors.append('Nieprawidłowa strategia bootowania')
+        errors.append('Invalid boot strategy')
         return warnings, errors
 
     if strategy == 'internal':
         if not target_device:
-            errors.append('Nie wybrano dysku docelowego')
+            errors.append('No target disk selected')
             return warnings, errors
 
         dev = devices_map.get(target_device)
         if not dev:
-            errors.append(f'Dysk {target_device} nie znaleziony')
+            errors.append(f'Disk {target_device} not found')
             return warnings, errors
 
         # Hard block: cannot install on boot medium
         if dev.get('is_boot_medium'):
-            errors.append('Nie można zainstalować systemu na nośniku startowym (USB boot)')
+            errors.append('Cannot install system on boot media (USB boot)')
             return warnings, errors
 
         # Hard block: system drive cannot also be a data drive
@@ -428,43 +428,43 @@ def _validate_plan(strategy, target_device, data_disks, devices_map, boot_medium
         for dd_dev in data_disks:
             dd = devices_map.get(dd_dev, {})
             if dd.get('id', dd_dev) == target_id:
-                errors.append('Dysk nie może być jednocześnie systemowy i danych')
+                errors.append('Disk cannot be both system and data')
                 return warnings, errors
 
         if dev['is_usb']:
-            warnings.append(f'{target_device} jest dyskiem USB — instalacja na dysku wewnętrznym jest zalecana')
+            warnings.append(f'{target_device} is a USB disk — installation on an internal disk is recommended')
 
         if dev['size_gb'] < _MIN_SYSTEM_DISK_GB:
-            warnings.append(f'{target_device} ma tylko {dev["size_gb"]} GB — wymagane minimum {_MIN_SYSTEM_DISK_GB} GB')
+            warnings.append(f'{target_device} has only {dev["size_gb"]} GB — minimum {_MIN_SYSTEM_DISK_GB} GB required')
 
         if dev['is_raid_member']:
-            warnings.append(f'UWAGA: {target_device} jest członkiem macierzy RAID! Usunięcie danych może uszkodzić macierz.')
+            warnings.append(f'WARNING: {target_device} is a RAID array member! Removing data may damage the array.')
 
         if dev.get('smart_status') == 'FAILED':
-            warnings.append(f'SMART wykrył problemy z {target_device} — ryzyko awarii dysku')
+            warnings.append(f'SMART detected issues with {target_device} — disk failure risk')
 
     # Validate data disks
     for dd_dev in data_disks:
         dd = devices_map.get(dd_dev)
         if not dd:
-            errors.append(f'Dysk danych {dd_dev} nie znaleziony')
+            errors.append(f'Data disk {dd_dev} not found')
             continue
         if dd.get('is_boot_medium'):
-            errors.append(f'Dysk danych {dd_dev} jest nośnikiem startowym (USB boot)')
+            errors.append(f'Data disk {dd_dev} is a boot medium (USB boot)')
             continue
         if strategy == 'internal' and dd_dev == target_device:
             # Can't use same disk for system and data (will be handled by data partition)
             continue
         if dd['is_raid_member']:
-            warnings.append(f'Dysk danych {dd_dev} jest członkiem RAID')
+            warnings.append(f'Data disk {dd_dev} is a RAID member')
         if dd['size_gb'] < _MIN_DATA_DISK_GB:
-            warnings.append(f'Dysk danych {dd_dev} ma tylko {dd["size_gb"]} GB')
+            warnings.append(f'Data disk {dd_dev} has only {dd["size_gb"]} GB')
         if dd.get('smart_status') == 'FAILED':
-            warnings.append(f'SMART wykrył problemy z dyskiem danych {dd_dev} — ryzyko awarii')
+            warnings.append(f'SMART detected issues with data disk {dd_dev} — failure risk')
 
     # Overall warnings
     if not data_disks and strategy == 'internal':
-        warnings.append('Brak dysku danych — pliki użytkownika będą na partycji danych dysku systemowego')
+        warnings.append('No data disk — user files will be on system disk data partition')
 
     return warnings, errors
 
@@ -478,15 +478,15 @@ def _generate_summary(strategy, target_device, data_disks, devices_map, booted_f
     if strategy == 'usb':
         boot_dev = devices_map.get(booted_from_usb, {})
         boot_label = boot_dev.get('model', 'USB') if boot_dev else 'USB'
-        lines.append(f'System pozostanie na nośniku USB ({boot_label}).')
-        lines.append('Partycja persistence zostanie utworzona/zachowana na USB dla konfiguracji.')
+        lines.append(f'System will remain on USB media ({boot_label}).')
+        lines.append('Persistence partition will be created/preserved on USB for configuration.')
     else:
         dev = devices_map.get(target_device, {})
         label = dev.get('model', target_device)
         size = dev.get('size_gb', '?')
-        lines.append(f'System zostanie zainstalowany na: {label} ({size} GB)')
-        lines.append(f'Nośnik {target_device} zostanie CAŁKOWICIE wyczyszczony.')
-        lines.append('Partycje: EFI (256 MB) + BIOS grub (1 MB) + rootfs (reszta)')
+        lines.append(f'System will be installed on: {label} ({size} GB)')
+        lines.append(f'Media {target_device} will be COMPLETELY wiped.')
+        lines.append('Partitions: EFI (256 MB) + BIOS grub (1 MB) + rootfs (remaining)')
         plan['system'] = {
             'device': target_device,
             'id': dev.get('id', ''),
@@ -512,13 +512,13 @@ def _generate_summary(strategy, target_device, data_disks, devices_map, booted_f
                 'model': dd_model,
                 'action': f'WIPE + GPT + single ext4 (EthOS-Data-{i})',
             })
-        lines.append(f'Dyski danych: {", ".join(dd_labels)}')
-        lines.append('UWAGA: Wszystkie dane na wybranych dyskach danych zostaną usunięte!')
+        lines.append(f'Data disks: {", ".join(dd_labels)}')
+        lines.append('WARNING: All data on selected data disks will be erased!')
     else:
         if strategy == 'internal':
-            lines.append('Dane użytkownika na partycji danych dysku systemowego (wolne miejsce).')
+            lines.append('User data on system disk data partition (free space).')
         else:
-            lines.append('Dane użytkownika na dysku systemowym (USB).')
+            lines.append('User data on system disk (USB).')
 
     return '\n'.join(lines), plan
 
@@ -556,7 +556,7 @@ def _install_worker(strategy, target_device, data_disks, encrypt, passphrase,
         for i, dd_dev in enumerate(data_disks):
             pct = 85 + int(15 * (i / max(len(data_disks), 1)))
             _set_phase('data_disks', pct,
-                       f'Przygotowuję dysk danych {i+1}/{len(data_disks)}: {dd_dev}')
+                       f'Preparing data disk {i+1}/{len(data_disks)}: {dd_dev}')
             label = f'EthOS-Data-{i+1}'
             _prepare_data_disk(dd_dev, label=label)
             result_data['data_devices'].append({
@@ -570,21 +570,21 @@ def _install_worker(strategy, target_device, data_disks, encrypt, passphrase,
 
         _install_state['status'] = 'done'
         _install_state['percent'] = 100
-        _install_state['result'] = {'success': True, 'message': 'Instalacja zakończona pomyślnie'}
+        _install_state['result'] = {'success': True, 'message': 'Installation completed successfully'}
         _install_state['phase'] = 'complete'
-        _log('Instalacja zakończona pomyślnie!')
+        _log('Installation completed successfully!')
         _save_state()
 
     except Exception as e:
         _install_state['status'] = 'error'
         _install_state['result'] = {'success': False, 'message': str(e)}
-        _log(f'BŁĄD: {e}')
+        _log(f'ERROR: {e}')
         _save_state()
 
 
 def _install_usb_persistent():
     """Keep running from USB — ensure persistence partition exists."""
-    _set_phase('partitioning', 5, 'Sprawdzam partycję persistence na USB...')
+    _set_phase('partitioning', 5, 'Checking persistence partition on USB...')
 
     # Find the boot source device
     r = _sp_run(['findmnt', '-no', 'SOURCE', '/'], timeout=5)
@@ -601,15 +601,15 @@ def _install_usb_persistent():
             break
 
     if has_persistence:
-        _set_phase('complete', 85, 'Partycja persistence już istnieje na USB.')
-        _log('USB persistence OK — partycja znaleziona.')
+        _set_phase('complete', 85, 'Persistence partition already exists on USB.')
+        _log('USB persistence OK — partition found.')
         return
 
     # Check for free space on the USB drive
-    _set_phase('partitioning', 15, 'Sprawdzam wolne miejsce na USB...')
+    _set_phase('partitioning', 15, 'Checking free space on USB...')
     r = _sp_run(['parted', '-ms', root_disk, 'unit', 'B', 'print', 'free'], timeout=10)
     if r.returncode != 0:
-        raise RuntimeError(f'Błąd odczytu partycji USB: {r.stderr.strip()}')
+        raise RuntimeError(f'USB partition read error: {r.stderr.strip()}')
 
     free_start = free_end = None
     best_size = 0
@@ -627,12 +627,12 @@ def _install_usb_persistent():
                 pass
 
     if free_start is None or best_size < 500_000_000:
-        _log('Brak wolnego miejsca na USB — dane będą przechowywane na rootfs.')
-        _set_phase('complete', 85, 'USB gotowy (brak wolnego miejsca na persistence).')
+        _log('No free space on USB — data will be stored on rootfs.')
+        _set_phase('complete', 85, 'USB ready (no free space for persistence).')
         return
 
     # Create persistence partition
-    _set_phase('partitioning', 25, 'Tworzę partycję persistence na USB...')
+    _set_phase('partitioning', 25, 'Creating persistence partition on USB...')
 
     # Find highest partition number
     r = _sp_run(['parted', '-ms', root_disk, 'unit', 'B', 'print'], timeout=10)
@@ -650,7 +650,7 @@ def _install_usb_persistent():
          f'{free_start}B', f'{free_end}B'],
         timeout=30)
     if r.returncode != 0:
-        raise RuntimeError(f'Błąd tworzenia partycji: {r.stderr.strip()}')
+        raise RuntimeError(f'Partition creation error: {r.stderr.strip()}')
 
     _sp_run(['udevadm', 'settle', '--timeout=10'], timeout=15)
     time.sleep(1)
@@ -667,37 +667,37 @@ def _install_usb_persistent():
         time.sleep(1)
 
     if not os.path.exists(part_dev):
-        raise RuntimeError(f'Partycja {part_dev} nie pojawiła się')
+        raise RuntimeError(f'Partition {part_dev} did not appear')
 
     # Format
-    _set_phase('partitioning', 40, f'Formatuję {part_dev} jako EthOS-Data...')
+    _set_phase('partitioning', 40, f'Formatting {part_dev} as EthOS-Data...')
     r = _sp_run(['mkfs.ext4', '-F', '-L', 'EthOS-Data', part_dev], timeout=120)
     if r.returncode != 0:
-        raise RuntimeError(f'Błąd formatowania: {r.stderr.strip()}')
+        raise RuntimeError(f'Format error: {r.stderr.strip()}')
 
     # Mount
     os.makedirs('/mnt/data', mode=0o755, exist_ok=True)
     r = _sp_run(['mount', part_dev, '/mnt/data'], timeout=15)
     if r.returncode != 0:
-        raise RuntimeError(f'Błąd montowania: {r.stderr.strip()}')
+        raise RuntimeError(f'Mount error: {r.stderr.strip()}')
 
-    _set_phase('complete', 85, 'USB persistence utworzone i zamontowane.')
-    _log(f'Partycja {part_dev} (EthOS-Data) gotowa.')
+    _set_phase('complete', 85, 'USB persistence created and mounted.')
+    _log(f'Partition {part_dev} (EthOS-Data) ready.')
 
 
 def _install_to_internal(target_device, encrypt=False, passphrase=''):
     """Clone system from USB/current rootfs onto an internal disk."""
-    _set_phase('partitioning', 5, f'Przygotowuję {target_device}...')
+    _set_phase('partitioning', 5, f'Preparing {target_device}...')
 
     # Safety: don't destroy current root if target IS the boot source
     r = _sp_run(['findmnt', '-no', 'SOURCE', '/'], timeout=5)
     root_src = r.stdout.strip()
     root_disk = re.sub(r'p?\d+$', '', root_src)
     if target_device == root_disk:
-        raise RuntimeError('Nie można zainstalować na aktywnym dysku systemowym!')
+        raise RuntimeError('Cannot install on active system disk!')
 
     # 1. Unmount all partitions on target
-    _log(f'Odmontowuję partycje na {target_device}...')
+    _log(f'Unmounting partitions on {target_device}...')
     r = _sp_run(['lsblk', '-nlo', 'NAME,MOUNTPOINT', target_device], timeout=5)
     for line in r.stdout.strip().splitlines():
         parts = line.split(None, 1)
@@ -705,12 +705,12 @@ def _install_to_internal(target_device, encrypt=False, passphrase=''):
             _sp_run(['umount', '-f', parts[1].strip()], timeout=10)
 
     # 2. Wipe
-    _set_phase('partitioning', 10, f'Czyszczę {target_device}...')
+    _set_phase('partitioning', 10, f'Wiping {target_device}...')
     _sp_run(['wipefs', '-af', target_device], timeout=30)
 
     # 3. Create partition table (GPT)
     # Layout: p1=ESP(256MB), p2=BIOS grub(1MB), p3=rootfs(rest)
-    _set_phase('partitioning', 15, 'Tworzę tablicę partycji GPT...')
+    _set_phase('partitioning', 15, 'Creating GPT partition table...')
     cmds = [
         ['parted', '-s', target_device, 'mklabel', 'gpt'],
         ['parted', '-s', target_device, 'mkpart', 'ESP', 'fat32', '1MiB', '257MiB'],
@@ -722,7 +722,7 @@ def _install_to_internal(target_device, encrypt=False, passphrase=''):
     for cmd in cmds:
         r = _sp_run(cmd, timeout=15)
         if r.returncode != 0:
-            raise RuntimeError(f'Błąd partycjonowania: {" ".join(cmd)} → {r.stderr.strip()}')
+            raise RuntimeError(f'Partitioning error: {" ".join(cmd)} → {r.stderr.strip()}')
 
     _sp_run(['udevadm', 'settle', '--timeout=10'], timeout=15)
     time.sleep(1)
@@ -742,19 +742,19 @@ def _install_to_internal(target_device, encrypt=False, passphrase=''):
 
     for pdev in (p1, p3):
         if not os.path.exists(pdev):
-            raise RuntimeError(f'Partycja {pdev} nie pojawiła się')
+            raise RuntimeError(f'Partition {pdev} did not appear')
 
     # 4. Format partitions
-    _set_phase('partitioning', 25, 'Formatuję partycje...')
+    _set_phase('partitioning', 25, 'Formatting partitions...')
     r = _sp_run(['mkfs.vfat', '-F32', p1], timeout=30)
     if r.returncode != 0:
-        raise RuntimeError(f'Błąd formatowania ESP: {r.stderr.strip()}')
+        raise RuntimeError(f'ESP format error: {r.stderr.strip()}')
 
     root_dev = p3
     if encrypt:
         if shutil.which('cryptsetup') is None:
-            raise RuntimeError('Brak programu cryptsetup. Zainstaluj pakiet cryptsetup lub wyłącz szyfrowanie LUKS.')
-        _set_phase('partitioning', 30, 'Szyfrowanie LUKS...')
+            raise RuntimeError('cryptsetup not found. Install the cryptsetup package or disable LUKS encryption.')
+        _set_phase('partitioning', 30, 'LUKS encryption...')
         os.makedirs('/etc/ethos', mode=0o700, exist_ok=True)
         keyfile = '/etc/ethos/luks_system.key'
         _sp_run(['dd', 'if=/dev/urandom', f'of={keyfile}', 'bs=4096', 'count=1'], timeout=10)
@@ -762,41 +762,41 @@ def _install_to_internal(target_device, encrypt=False, passphrase=''):
 
         r = _sp_run(['cryptsetup', 'luksFormat', '--batch-mode', '--key-file', keyfile, p3], timeout=120)
         if r.returncode != 0:
-            raise RuntimeError(f'Błąd LUKS format: {r.stderr.strip()}')
+            raise RuntimeError(f'LUKS format error: {r.stderr.strip()}')
 
         if passphrase:
             r = _sp_run(['cryptsetup', 'luksAddKey', '--key-file', keyfile, p3],
                         input=passphrase, timeout=60)
             if r.returncode != 0:
-                _log(f'Ostrzeżenie: nie udało się dodać hasła awaryjnego: {r.stderr.strip()}')
+                _log(f'Warning: failed to add recovery passphrase: {r.stderr.strip()}')
 
         r = _sp_run(['cryptsetup', 'luksOpen', '--key-file', keyfile, p3, 'ethos_root'], timeout=30)
         if r.returncode != 0:
-            raise RuntimeError(f'Błąd LUKS open: {r.stderr.strip()}')
+            raise RuntimeError(f'LUKS open error: {r.stderr.strip()}')
 
         root_dev = '/dev/mapper/ethos_root'
 
     r = _sp_run(['mkfs.ext4', '-F', '-L', 'ethos-root', root_dev], timeout=300)
     if r.returncode != 0:
-        raise RuntimeError(f'Błąd formatowania rootfs: {r.stderr.strip()}')
+        raise RuntimeError(f'rootfs format error: {r.stderr.strip()}')
 
     # 5. Mount target
-    _set_phase('cloning', 35, 'Montuję partycje docelowe...')
+    _set_phase('cloning', 35, 'Mounting target partitions...')
     target_root = '/mnt/installer_target'
     os.makedirs(target_root, mode=0o755, exist_ok=True)
     r = _sp_run(['mount', root_dev, target_root], timeout=15)
     if r.returncode != 0:
-        raise RuntimeError(f'Błąd montowania rootfs: {r.stderr.strip()}')
+        raise RuntimeError(f'rootfs mount error: {r.stderr.strip()}')
 
     efi_mount = os.path.join(target_root, 'boot/efi')
     os.makedirs(efi_mount, mode=0o755, exist_ok=True)
     r = _sp_run(['mount', p1, efi_mount], timeout=15)
     if r.returncode != 0:
-        raise RuntimeError(f'Błąd montowania ESP: {r.stderr.strip()}')
+        raise RuntimeError(f'ESP mount error: {r.stderr.strip()}')
 
     try:
         # 6. Clone rootfs using rsync
-        _set_phase('cloning', 40, 'Kopiuję system (rsync)... to zajmie kilka minut')
+        _set_phase('cloning', 40, 'Cloning system (rsync)... this will take a few minutes')
         _log('rsync / → ' + target_root)
 
         exclude_list = [
@@ -842,19 +842,19 @@ def _install_to_internal(target_device, encrypt=False, passphrase=''):
 
         proc.wait(timeout=600)
         if proc.returncode != 0:
-            raise RuntimeError(f'rsync zakończył się kodem {proc.returncode}')
+            raise RuntimeError(f'rsync exited with code {proc.returncode}')
 
         # Ensure critical dirs exist on target
         for d in ['proc', 'sys', 'dev', 'run', 'tmp', 'mnt', 'media']:
             os.makedirs(os.path.join(target_root, d), mode=0o755, exist_ok=True)
 
         # 7. Fix fstab on target
-        _set_phase('grub', 76, 'Konfiguruję fstab...')
+        _set_phase('grub', 76, 'Configuring fstab...')
         root_uuid = _get_uuid(root_dev)
         efi_uuid = _get_uuid(p1)
 
         if not root_uuid:
-            raise RuntimeError(f'Nie udało się odczytać UUID partycji root: {root_dev}')
+            raise RuntimeError(f'Failed to read root partition UUID: {root_dev}')
 
         fstab_lines = [
             '# EthOS System Disk (auto-generated by installer)',
@@ -886,10 +886,10 @@ def _install_to_internal(target_device, encrypt=False, passphrase=''):
         fstab_path = os.path.join(target_root, 'etc/fstab')
         with open(fstab_path, 'w') as f:
             f.write('\n'.join(unique_lines))
-        _log(f'fstab zapisany (root UUID={root_uuid})')
+        _log(f'fstab written (root UUID={root_uuid})')
 
         # 8. Install GRUB
-        _set_phase('grub', 80, 'Instaluję bootloader (GRUB)...')
+        _set_phase('grub', 80, 'Installing bootloader (GRUB)...')
         _install_grub(target_root, target_device, root_dev, p1)
 
     finally:
@@ -898,7 +898,7 @@ def _install_to_internal(target_device, encrypt=False, passphrase=''):
         if encrypt:
             _sp_run(['cryptsetup', 'close', 'ethos_root'], timeout=15)
 
-    _set_phase('verify', 84, 'Weryfikuję instalację...')
+    _set_phase('verify', 84, 'Verifying installation...')
     # Quick verify: mount target, check for /etc/fstab and /sbin/init
     # Skip verify mount if encrypted — we closed LUKS above
     if not encrypt:
@@ -910,15 +910,15 @@ def _install_to_internal(target_device, encrypt=False, passphrase=''):
                          or os.path.islink(os.path.join(target_root, 'sbin/init')))
             _sp_run(['umount', target_root], timeout=15)
             if ok:
-                _log('Weryfikacja OK — system zainstalowany poprawnie')
+                _log('Verification OK — system installed correctly')
             else:
-                _log('OSTRZEŻENIE: weryfikacja niekompletna (brak init lub fstab)')
+                _log('WARNING: verification incomplete (missing init or fstab)')
         else:
-            _log('Pominięto weryfikację — nie udało się zamontować')
+            _log('Verification skipped — failed to mount')
     else:
-        _log('Pominięto weryfikację (LUKS zamknięty)')
+        _log('Verification skipped (LUKS closed)')
 
-    _set_phase('complete', 85, 'Instalacja systemu zakończona.')
+    _set_phase('complete', 85, 'System installation complete.')
 
 
 def _get_uuid(dev_path):
@@ -948,7 +948,7 @@ def _install_grub(target_root, target_device, root_dev, efi_part):
 
         if arch in ('x86_64', 'i686'):
             # BIOS (i386-pc) install to MBR/GPT
-            _log('Instaluję GRUB (BIOS i386-pc)...')
+            _log('Installing GRUB (BIOS i386-pc)...')
             r = _sp_run(
                 ['chroot', target_root, 'grub-install',
                  '--target=i386-pc', '--boot-directory=/boot',
@@ -958,7 +958,7 @@ def _install_grub(target_root, target_device, root_dev, efi_part):
                 _log(f'GRUB BIOS: {r.stderr.strip()}')
 
             # UEFI (x86_64-efi)
-            _log('Instaluję GRUB (UEFI x86_64-efi)...')
+            _log('Installing GRUB (UEFI x86_64-efi)...')
             r = _sp_run(
                 ['chroot', target_root, 'grub-install',
                  '--target=x86_64-efi', '--efi-directory=/boot/efi',
@@ -969,11 +969,11 @@ def _install_grub(target_root, target_device, root_dev, efi_part):
                 _log(f'GRUB UEFI: {r.stderr.strip()}')
 
         elif arch.startswith('aarch64') or arch.startswith('arm'):
-            _log('Architektura ARM — pomijam GRUB (U-Boot/DTB).')
+            _log('ARM architecture — skipping GRUB (U-Boot/DTB).')
             return
 
         # Generate grub.cfg
-        _log('Generuję grub.cfg...')
+        _log('Generating grub.cfg...')
         r = _sp_run(
             ['chroot', target_root, 'update-grub'],
             timeout=60)
@@ -1027,14 +1027,14 @@ def _write_installer_result(result_data, plan_meta=None):
         os.makedirs(os.path.dirname(_INSTALLER_RESULT_FILE), exist_ok=True)
         with open(_INSTALLER_RESULT_FILE, 'w') as f:
             _json.dump(payload, f, indent=2)
-        _log(f'Zapisano installer_result.json → {_INSTALLER_RESULT_FILE}')
+        _log(f'Saved installer_result.json → {_INSTALLER_RESULT_FILE}')
     except Exception as e:
-        _log(f'OSTRZEŻENIE: nie udało się zapisać installer_result.json: {e}')
+        _log(f'WARNING: failed to save installer_result.json: {e}')
 
 
 def _prepare_data_disk(device, label='EthOS-Data'):
     """Format and prepare a data disk with a given label (sequential)."""
-    _log(f'Przygotowuję dysk danych: {device} (label={label})')
+    _log(f'Preparing data disk: {device} (label={label})')
 
     # Unmount existing
     r = _sp_run(['lsblk', '-nlo', 'NAME,MOUNTPOINT', device], timeout=5)
@@ -1047,11 +1047,11 @@ def _prepare_data_disk(device, label='EthOS-Data'):
     _sp_run(['wipefs', '-af', device], timeout=30)
     r = _sp_run(['parted', '-s', device, 'mklabel', 'gpt'], timeout=15)
     if r.returncode != 0:
-        raise RuntimeError(f'Błąd tablicy partycji na {device}: {r.stderr.strip()}')
+        raise RuntimeError(f'Partition table error on {device}: {r.stderr.strip()}')
 
     r = _sp_run(['parted', '-s', device, 'mkpart', 'primary', 'ext4', '1MiB', '100%'], timeout=15)
     if r.returncode != 0:
-        raise RuntimeError(f'Błąd partycjonowania {device}: {r.stderr.strip()}')
+        raise RuntimeError(f'Partitioning error on {device}: {r.stderr.strip()}')
 
     _sp_run(['udevadm', 'settle', '--timeout=10'], timeout=15)
     time.sleep(1)
@@ -1068,13 +1068,13 @@ def _prepare_data_disk(device, label='EthOS-Data'):
         time.sleep(1)
 
     if not os.path.exists(part):
-        raise RuntimeError(f'Partycja {part} nie pojawiła się')
+        raise RuntimeError(f'Partition {part} did not appear')
 
     r = _sp_run(['mkfs.ext4', '-F', '-L', label, part], timeout=300)
     if r.returncode != 0:
-        raise RuntimeError(f'Błąd formatowania {part}: {r.stderr.strip()}')
+        raise RuntimeError(f'Format error on {part}: {r.stderr.strip()}')
 
-    _log(f'Dysk danych {device} → {part} ({label}) gotowy')
+    _log(f'Data disk {device} → {part} ({label}) ready')
 
 
 # ─────────────────────── API Endpoints ───────────────────────
@@ -1110,7 +1110,7 @@ def api_validate():
     warnings, errors = _validate_plan(
         strategy, target_device, data_disks, devices_map, boot_medium_id)
     if encrypt and shutil.which('cryptsetup') is None:
-        errors.append('Szyfrowanie LUKS wymaga zainstalowanego pakietu cryptsetup.')
+        errors.append('LUKS encryption requires the cryptsetup package to be installed.')
     summary_text, plan = _generate_summary(
         strategy, target_device, data_disks, devices_map,
         disc.get('boot_source_disk', ''))
@@ -1135,7 +1135,7 @@ def api_execute():
 
     with _install_lock:
         if _install_state['status'] == 'running':
-            return jsonify({'error': 'Instalacja już trwa'}), 409
+            return jsonify({'error': 'Installation already in progress'}), 409
 
     data = request.json or {}
     strategy = data.get('strategy', '')
@@ -1148,7 +1148,7 @@ def api_execute():
     # Typed confirmation — user must type exact token
     if token != _CONFIRMATION_TOKEN:
         return jsonify({
-            'error': f'Wymagane wpisanie "{_CONFIRMATION_TOKEN}" w polu potwierdzenia.'
+            'error': f'Required to type "{_CONFIRMATION_TOKEN}" in the confirmation field.'
         }), 400
 
     # Re-validate
@@ -1159,7 +1159,7 @@ def api_execute():
         strategy, target_device, data_disks, devices_map, boot_medium_id)
 
     if errors:
-        return jsonify({'error': 'Walidacja nieudana', 'errors': errors}), 400
+        return jsonify({'error': 'Validation failed', 'errors': errors}), 400
 
     # Resolve persistent IDs to /dev paths at execution time
     resolved_target = ''
@@ -1167,7 +1167,7 @@ def api_execute():
         resolved_target = _resolve_persistent_id(target_device)
         if not resolved_target:
             return jsonify({
-                'error': f'Nie można rozwiązać urządzenia systemowego: {target_device}'
+                'error': f'Cannot resolve system device: {target_device}'
             }), 400
 
     resolved_data = []
@@ -1175,7 +1175,7 @@ def api_execute():
         dd_dev = _resolve_persistent_id(dd_id)
         if not dd_dev:
             return jsonify({
-                'error': f'Nie można rozwiązać dysku danych: {dd_id}'
+                'error': f'Cannot resolve data disk: {dd_id}'
             }), 400
         resolved_data.append(dd_dev)
 
@@ -1190,8 +1190,8 @@ def api_execute():
     if danger_devices and not data.get('confirm_raid', False):
         return jsonify({
             'error': 'danger_zone',
-            'message': f'Dyski {", ".join(danger_devices)} są członkami macierzy RAID. '
-                       f'Wymagane dodatkowe potwierdzenie (confirm_raid: true).',
+            'message': f'Disks {", ".join(danger_devices)} are RAID array members. '
+                       f'Additional confirmation required (confirm_raid: true).',
             'raid_devices': danger_devices,
         }), 409
 
@@ -1210,7 +1210,7 @@ def api_execute():
         'status': 'running',
         'phase': 'discovery',
         'percent': 0,
-        'message': 'Rozpoczynam instalację...',
+        'message': 'Starting installation...',
         'logs': [],
         'start_time': time.time(),
         'result': None,
@@ -1270,7 +1270,7 @@ def api_reset():
     """Reset installer state (for retrying after error)."""
     with _install_lock:
         if _install_state['status'] == 'running':
-            return jsonify({'error': 'Instalacja trwa — nie można zresetować'}), 409
+            return jsonify({'error': 'Installation in progress — cannot reset'}), 409
 
     _install_state.update({
         'status': 'idle',

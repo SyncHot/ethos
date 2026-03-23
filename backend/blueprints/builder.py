@@ -71,8 +71,8 @@ def _load_build_state():
                 _build_state.update(saved)
             else:
                 saved['status'] = 'error'
-                saved['message'] = 'Build przerwany (proces zakończony)'
-                saved['result'] = {'success': False, 'message': 'Build przerwany po restarcie'}
+                saved['message'] = 'Build interrupted (process terminated)'
+                saved['result'] = {'success': False, 'message': 'Build interrupted after restart'}
                 _build_state.update(saved)
         else:
             _build_state.update(saved)
@@ -248,8 +248,8 @@ def build_status():
         if _build_state['status'] == 'building' and _build_state['pid']:
             if not _is_pid_alive(_build_state['pid']):
                 _build_state['status'] = 'error'
-                _build_state['message'] = 'Build przerwany (proces zakończony)'
-                _build_state['result'] = {'success': False, 'message': 'Build przerwany'}
+                _build_state['message'] = 'Build interrupted (process terminated)'
+                _build_state['result'] = {'success': False, 'message': 'Build interrupted'}
                 _save_build_state()
         elapsed = 0
         if _build_state['start_time'] and _build_state['status'] == 'building':
@@ -273,13 +273,13 @@ def cancel_build():
     """Cancel a running build by killing its process tree."""
     with _build_lock:
         if _build_state['status'] != 'building':
-            return jsonify({'error': 'Brak aktywnego buildu'}), 400
+            return jsonify({'error': 'No active build'}), 400
         pid = _build_state['pid']
     if pid:
         # Kill the whole process group
         _host_run(f"kill -TERM -{pid} 2>/dev/null; sleep 1; kill -KILL -{pid} 2>/dev/null || kill -KILL {pid} 2>/dev/null", timeout=10)
-    _update_build(status='error', message='Anulowano przez użytkownika',
-                  result={'success': False, 'message': 'Build anulowany'})
+    _update_build(status='error', message='Cancelled by user',
+                  result={'success': False, 'message': 'Build cancelled'})
     return jsonify({'ok': True})
 
 
@@ -288,7 +288,7 @@ def dismiss_build():
     """Reset build state back to idle (dismiss done/error result)."""
     with _build_lock:
         if _build_state['status'] == 'building':
-            return jsonify({'error': 'Build w toku — nie można odrzucić'}), 409
+            return jsonify({'error': 'Build in progress — cannot dismiss'}), 409
         _build_state.update({
             'status': 'idle',
             'build_type': '',
@@ -331,7 +331,7 @@ def cache_clear():
 def build_release():
     """Build a release package. Streams progress via SSE."""
     if _build_state['status'] == 'building':
-        return jsonify({'error': 'Build jest już w toku. Poczekaj na zakończenie lub anuluj.'}), 409
+        return jsonify({'error': 'Build already in progress. Wait for completion or cancel.'}), 409
     data = request.json or {}
     bump = data.get('bump', '')  # patch, minor, major or empty
     changelog_title = data.get('changelog_title', '').strip()
@@ -342,21 +342,21 @@ def build_release():
 
     def generate():
         try:
-            yield _sse({'type': 'step', 'message': 'Odczytywanie wersji...', 'percent': 5})
-            _update_build(percent=5, message='Odczytywanie wersji...')
+            yield _sse({'type': 'step', 'message': 'Reading version...', 'percent': 5})
+            _update_build(percent=5, message='Reading version...')
 
             # Read current version
             r = _host_run(f"cat {nasos}/backend/version.json")
             if r.returncode != 0:
-                _update_build(status='error', message='Nie można odczytać version.json')
-                yield _sse({'type': 'done', 'success': False, 'message': 'Nie można odczytać version.json'})
+                _update_build(status='error', message='Cannot read version.json')
+                yield _sse({'type': 'done', 'success': False, 'message': 'Cannot read version.json'})
                 return
 
             try:
                 ver_data = json.loads(r.stdout)
             except Exception:
-                _update_build(status='error', message='Błąd parsowania version.json')
-                yield _sse({'type': 'done', 'success': False, 'message': 'Błąd parsowania version.json'})
+                _update_build(status='error', message='Error parsing version.json')
+                yield _sse({'type': 'done', 'success': False, 'message': 'Error parsing version.json'})
                 return
 
             current = ver_data.get('version', '0.0.0')
@@ -379,7 +379,7 @@ def build_release():
 
             # Update version.json if changed
             if new_ver != current or changelog_title:
-                yield _sse({'type': 'log', 'message': 'Aktualizuję version.json...'})
+                yield _sse({'type': 'log', 'message': 'Updating version.json...'})
 
                 ver_data['version'] = new_ver
                 ver_data['build_date'] = str(date.today())
@@ -403,7 +403,7 @@ def build_release():
                 yield _sse({'type': 'log', 'message': f'version.json → {new_ver}'})
 
             # Build release package
-            yield _sse({'type': 'step', 'message': 'Buduję pakiet release...', 'percent': 20})
+            yield _sse({'type': 'step', 'message': 'Building release package...', 'percent': 20})
 
             pkg_name = f"ethos-{new_ver}"
             build_dir = f"/tmp/ethos-release-web-$$"
@@ -435,9 +435,9 @@ cp "$NASOS/frontend/css/"*.css "$BUILD_DIR/$PKG/frontend/css/"
 cp "$NASOS/frontend/js/"*.js "$BUILD_DIR/$PKG/frontend/js/"
 cp "$NASOS/frontend/js/apps/"*.js "$BUILD_DIR/$PKG/frontend/js/apps/"
 
-echo "STEP:50:Kopiowanie plików..."
+echo "STEP:50:Copying files..."
 
-echo "STEP:60:Czyszczenie cache..."
+echo "STEP:60:Cleaning cache..."
 find "$BUILD_DIR" -type d -name "__pycache__" -exec rm -rf {{}} + 2>/dev/null || true
 find "$BUILD_DIR" -name "*.pyc" -delete 2>/dev/null || true
 
@@ -477,7 +477,7 @@ rm -rf "$BUILD_DIR"
                     if code == 0:
                         size_h = _human_size(int(result_info.get('size', 0)))
                         files = result_info.get('files', '?')
-                        msg = f'Release {new_ver} zbudowany! ({size_h}, {files} plików)'
+                        msg = f'Release {new_ver} built! ({size_h}, {files} files)'
                         res = {'success': True, 'message': msg, 'version': new_ver}
                         _update_build(status='done', percent=100, message=msg, result=res)
                         yield _sse({
@@ -486,7 +486,7 @@ rm -rf "$BUILD_DIR"
                             'version': new_ver,
                         })
                     else:
-                        msg = f'Błąd budowania (kod: {code})'
+                        msg = f'Build error (code: {code})'
                         _update_build(status='error', message=msg, result={'success': False, 'message': msg})
                         yield _sse({'type': 'done', 'success': False, 'message': msg})
                 elif line.startswith('STEP:'):
@@ -505,7 +505,7 @@ rm -rf "$BUILD_DIR"
                     _update_build(log=line)
                     yield _sse({'type': 'log', 'message': line})
         except Exception as e:
-            msg = f'Wyjątek: {e}'
+            msg = f'Exception: {e}'
             _update_build(status='error', message=msg, result={'success': False, 'message': msg})
             yield _sse({'type': 'done', 'success': False, 'message': msg})
 
@@ -524,7 +524,7 @@ rm -rf "$BUILD_DIR"
 def build_image():
     """Build a bootable system image in background thread."""
     if _build_state['status'] == 'building':
-        return jsonify({'error': 'Build jest już w toku. Poczekaj na zakończenie lub anuluj.'}), 409
+        return jsonify({'error': 'Build already in progress. Wait for completion or cancel.'}), 409
     nasos = _get_host_nasos_dir()
 
     _reset_build('image')
@@ -565,7 +565,7 @@ def _build_image_worker(nasos):
                     }
                     _update_build(status='done', percent=100, message=msg, result=res)
                 else:
-                    msg = f'Błąd budowania obrazu (kod: {code}, czas: {elapsed_m}min {elapsed_s}s)'
+                    msg = f'Image build error (code: {code}, time: {elapsed_m}min {elapsed_s}s)'
                     _update_build(status='error', message=msg, result={'success': False, 'message': msg})
             elif line.startswith('STEP:'):
                 parts = line.split(':', 2)
@@ -581,7 +581,7 @@ def _build_image_worker(nasos):
             elif line.strip():
                 _update_build(log=line)
     except Exception as e:
-        msg = f'Wyjątek: {e}'
+        msg = f'Exception: {e}'
         _update_build(status='error', message=msg, result={'success': False, 'message': msg})
 
 
@@ -600,10 +600,10 @@ export DEBIAN_FRONTEND=noninteractive
 NASOS="{nasos}"
 
 # Check dependencies
-echo "STEP:2:Sprawdzanie zależności..."
+echo "STEP:2:Checking dependencies..."
 for cmd in debootstrap parted mkfs.ext4 mkfs.vfat grub-install; do
     if ! command -v "$cmd" &>/dev/null; then
-        echo "STEP:3:Instalacja zależności..."
+        echo "STEP:3:Installing dependencies..."
         apt-get update -qq
         apt-get install -y -qq debootstrap parted dosfstools e2fsprogs \\
             grub-pc-bin grub-efi-amd64-bin grub-common grub2-common \\
@@ -614,12 +614,12 @@ done
 
 # Ensure debian-archive-keyring is present (needed on Ubuntu hosts)
 if [ ! -f /usr/share/keyrings/debian-archive-keyring.gpg ]; then
-    echo "LOG:Instalacja debian-archive-keyring..."
+    echo "LOG:Installing debian-archive-keyring..."
     apt-get update -qq 2>/dev/null
     apt-get install -y -qq debian-archive-keyring 2>/dev/null || true
 fi
 
-echo "STEP:5:Przygotowywanie środowiska..."
+echo "STEP:5:Preparing environment..."
 
 # Source config from the script but override with our values
 VERSION=$(python3 -c "import json; print(json.load(open('$NASOS/backend/version.json'))['version'])" 2>/dev/null || echo '2.4.0')
@@ -639,11 +639,11 @@ TOTAL_RAM_MB=$(awk '/MemAvailable/{{print int($2/1024)}}' /proc/meminfo 2>/dev/n
 USE_TMPFS=0
 if [ "$TOTAL_RAM_MB" -gt 10000 ]; then
     USE_TMPFS=1
-    echo "LOG:RAM dostępna: ${{TOTAL_RAM_MB}}MB — budowanie w tmpfs (RAM) dla prędkości"
+    echo "LOG:Available RAM: ${{TOTAL_RAM_MB}}MB — building in tmpfs (RAM) for speed"
     mkdir -p "$WORK_DIR"
     mount -t tmpfs -o size=${{IMG_SIZE_GB}}G,nr_inodes=0 tmpfs "$WORK_DIR"
 else
-    echo "LOG:RAM dostępna: ${{TOTAL_RAM_MB}}MB — za mało na tmpfs, budowanie na dysku"
+    echo "LOG:Available RAM: ${{TOTAL_RAM_MB}}MB — not enough for tmpfs, building on disk"
     mkdir -p "$WORK_DIR"
 fi
 OUTPUT_IMG="$WORK_DIR/ethos-x86.img"
@@ -704,10 +704,10 @@ mount "${{LOOP_DEV}}p1" "$WORK_DIR/root/boot/efi"
 echo "STEP:14:Obraz dysku utworzony"
 
 # ── Step 2: Debootstrap ──
-echo "STEP:15:Debootstrap — instalacja minimalna Debian (to potrwa kilka minut)..."
+echo "STEP:15:Debootstrap — minimal Debian install (this will take a few minutes)..."
 PKG_COUNT=0
 if [ -d "$DEBOOTSTRAP_CACHE" ] && [ "$(ls -A "$DEBOOTSTRAP_CACHE" 2>/dev/null)" ]; then
-    echo "LOG:Używam cache debootstrap ($(du -sh "$DEBOOTSTRAP_CACHE" | cut -f1))"
+    echo "LOG:Using debootstrap cache ($(du -sh "$DEBOOTSTRAP_CACHE" | cut -f1))"
 fi
 debootstrap --cache-dir="$DEBOOTSTRAP_CACHE" --variant=minbase --include=\\
 systemd,systemd-sysv,dbus,\\
@@ -729,14 +729,14 @@ kmod,udev \\
         if echo "$line" | grep -qE "^I: Retrieving"; then
             PKG_COUNT=$((PKG_COUNT + 1))
             if (( PKG_COUNT % 20 == 0 )); then
-                echo "LOG:Pobieranie pakietów... ($PKG_COUNT pobranych)"
+                echo "LOG:Downloading packages... ($PKG_COUNT downloaded)"
             fi
         elif echo "$line" | grep -qE "^I: Validating"; then
             echo "LOG:$line"
         elif echo "$line" | grep -qE "^I: Extracting"; then
             PKG_COUNT=$((PKG_COUNT + 1))
             if (( PKG_COUNT % 30 == 0 )); then
-                echo "LOG:Rozpakowywanie... ($PKG_COUNT)"
+                echo "LOG:Extracting... ($PKG_COUNT)"
             fi
         elif echo "$line" | grep -qE "^I: Unpacking|^I: Configuring"; then
             echo "LOG:$line"
@@ -747,12 +747,12 @@ kmod,udev \\
 
 # Verify debootstrap succeeded
 if [ ! -d "$WORK_DIR/root/dev" ] || [ ! -d "$WORK_DIR/root/etc" ]; then
-    echo "LOG:BŁĄD: debootstrap nie utworzył rootfs — sprawdź logi"
-    echo "STEP:45:Debootstrap nie powiódł się"
+    echo "LOG:ERROR: debootstrap did not create rootfs — check logs"
+    echo "STEP:45:Debootstrap failed"
     exit 1
 fi
 
-echo "STEP:45:Debian zainstalowany. Konfiguracja systemu..."
+echo "STEP:45:Debian installed. Configuring system..."
 
 # ── Step 3: Configure system ──
 ROOT="$WORK_DIR/root"
@@ -773,34 +773,34 @@ echo "LOG:Apt cache bind-mounted ($(du -sh "$APT_CACHE" 2>/dev/null | cut -f1) c
 # Host resolv.conf may be systemd-resolved stub (127.0.0.53) which won't work in chroot
 if [ -f /run/systemd/resolve/resolv.conf ]; then
     cp /run/systemd/resolve/resolv.conf "$ROOT/etc/resolv.conf"
-    echo "LOG:DNS: skopiowano resolv.conf z hosta"
+    echo "LOG:DNS: copied resolv.conf from host"
 else
     echo "nameserver 8.8.8.8" > "$ROOT/etc/resolv.conf"
     echo "nameserver 1.1.1.1" >> "$ROOT/etc/resolv.conf"
-    echo "LOG:DNS: użyto 8.8.8.8 / 1.1.1.1"
+    echo "LOG:DNS: using 8.8.8.8 / 1.1.1.1"
 fi
 
 # Fix any broken packages left by debootstrap (polkitd etc.)
-echo "LOG:Naprawianie pakietów po debootstrap..."
+echo "LOG:Fixing packages after debootstrap..."
 chroot "$ROOT" dpkg --configure -a 2>&1 | tail -3 || true
 chroot "$ROOT" bash -c 'DEBIAN_FRONTEND=noninteractive apt --fix-broken install -y' 2>&1 | tail -3 || true
-echo "LOG:Pakiety naprawione"
+echo "LOG:Packages fixed"
 
 # Install network-manager in chroot (needs systemd bind-mounts for polkitd)
-echo "LOG:Instalacja network-manager w chroocie..."
+echo "LOG:Installing network-manager in chroot..."
 chroot "$ROOT" apt-get update -qq 2>&1 | tail -3 || true
 chroot "$ROOT" bash -c 'DEBIAN_FRONTEND=noninteractive apt-get install -y -qq network-manager dbus-user-session' 2>&1 | tail -5 || echo "LOG:network-manager install issue"
 
-echo "LOG:Tworzenie fstab, hostname, locale..."
+echo "LOG:Creating fstab, hostname, locale..."
 ROOT_UUID=$(blkid -s UUID -o value "${{LOOP_DEV}}p3")
 EFI_UUID=$(blkid -s UUID -o value "${{LOOP_DEV}}p1")
 
 if [ -z "$ROOT_UUID" ]; then
-    echo "LOG:ERROR: Nie udało się odczytać UUID partycji root (${{LOOP_DEV}}p3)"
+    echo "LOG:ERROR: Failed to read root partition UUID (${{LOOP_DEV}}p3)"
     exit 1
 fi
 if [ -z "$EFI_UUID" ]; then
-    echo "LOG:ERROR: Nie udało się odczytać UUID partycji EFI (${{LOOP_DEV}}p1)"
+    echo "LOG:ERROR: Failed to read EFI partition UUID (${{LOOP_DEV}}p1)"
     exit 1
 fi
 
@@ -897,7 +897,7 @@ deb http://security.debian.org/debian-security $DEBIAN_RELEASE-security main con
 deb http://deb.debian.org/debian $DEBIAN_RELEASE-backports main contrib non-free non-free-firmware
 APT
 
-echo "LOG:Tworzenie użytkownika $DEFAULT_USER..."
+echo "LOG:Creating user $DEFAULT_USER..."
 PASS_HASH=$(openssl passwd -6 "$USER_PASS")
 chroot "$ROOT" useradd -m -s /bin/bash -G sudo -p "$PASS_HASH" "$DEFAULT_USER"
 ALLOWED_CMDS="/opt/ethos/tools/ethos-system-helper.sh, /opt/ethos/tools/ethos-power-*, /usr/bin/systemctl restart ethos, /usr/sbin/smartctl, /usr/bin/docker, /opt/ethos/venv/bin/gunicorn"
@@ -1086,14 +1086,14 @@ GRUB_CMDLINE_LINUX_DEFAULT="quiet net.ifnames=0 biosdevname=0"
 GRUB_CMDLINE_LINUX=""
 GRUBDEF
 
-echo "STEP:52:System skonfigurowany"
+echo "STEP:52:System configured"
 
 # ── Step 4: GRUB ──
-echo "STEP:53:Instalacja GRUB (BIOS + UEFI)..."
+echo "STEP:53:Installing GRUB (BIOS + UEFI)..."
 
-echo "LOG:apt-get update w chroocie..."
+echo "LOG:apt-get update in chroot..."
 chroot "$ROOT" apt-get update -qq 2>&1 | tail -3 || true
-echo "LOG:Instalacja pakietów GRUB..."
+echo "LOG:Installing GRUB packages..."
 chroot "$ROOT" bash -c 'DEBIAN_FRONTEND=noninteractive apt-get install -y -qq grub-efi-amd64 grub-pc-bin grub-common efibootmgr' 2>&1 | tail -5 || true
 
 echo "LOG:GRUB BIOS install..."
@@ -1105,7 +1105,7 @@ mkdir -p "$ROOT/boot/efi/EFI/BOOT"
 echo "LOG:GRUB UEFI install..."
 chroot "$ROOT" grub-install --target=x86_64-efi --efi-directory=/boot/efi \\
     --boot-directory=/boot --removable --no-nvram 2>/dev/null || {{
-    echo "STEP:0:BŁĄD: UEFI grub-install nie powiódł się!"; exit 1;
+    echo "STEP:0:ERROR: UEFI grub-install failed!"; exit 1;
 }}
 
 KERN=$(ls "$ROOT/boot/vmlinuz-"* 2>/dev/null | sort -V | tail -1 | sed "s|$ROOT||")
@@ -1132,17 +1132,17 @@ GRUBCFG
 
 cp "$ROOT/boot/grub/grub.cfg" "$ROOT/boot/efi/EFI/BOOT/grub.cfg"
 
-echo "STEP:60:GRUB zainstalowany"
+echo "STEP:60:GRUB installed"
 
 # From here on, individual failures should not abort the whole build
 set +e
 
-# ── Step 5: Instalacja zależności (native) ──
-echo "STEP:61:Instalacja zależności..."
+# ── Step 5: Install dependencies (native) ──
+echo "STEP:61:Installing dependencies..."
 echo "LOG:apt-get update in chroot..."
 chroot "$ROOT" apt-get update -qq 2>&1 | tail -3 || echo "LOG:apt-get update failed but continuing"
 
-echo "LOG:Instalacja minimalnych pakietów..."
+echo "LOG:Installing minimal packages..."
 chroot "$ROOT" apt-get install -y -qq \
     python3 python3-pip python3-venv \
     avahi-daemon \
@@ -1151,44 +1151,44 @@ chroot "$ROOT" apt-get install -y -qq \
     udevil udisks2 \
     zstd cron \
     gnupg age \
-    2>&1 | tail -10 || echo "LOG:Niektóre pakiety pominięte"
+    2>&1 | tail -10 || echo "LOG:Some packages skipped"
 
-echo "LOG:Instalacja firmware..."
+echo "LOG:Installing firmware..."
 chroot "$ROOT" apt-get install -y -qq \
     firmware-atheros firmware-realtek firmware-brcm80211 \
     firmware-misc-nonfree firmware-linux-nonfree bluez firmware-intel-sound \
-    2>&1 | tail -10 || echo "LOG:Niektóre firmware pominięte"
+    2>&1 | tail -10 || echo "LOG:Some firmware skipped"
 
 # All other packages (storage tools, sensors, printer, archives, etc.)
 # are installed lazily by EthOS (ensure_dep) when user enables features.
 
-echo "STEP:73:Instalacja kernela i firmware z backports..."
+echo "STEP:73:Installing kernel and firmware from backports..."
 
 # First clean apt cache to free space before big installs
 chroot "$ROOT" apt-get clean 2>/dev/null || true
 echo "LOG:Disk usage before backports:"
 df -h "$ROOT" 2>/dev/null | tail -1 || true
 
-echo "LOG:Instalacja linux-image-amd64 z backports..."
-chroot "$ROOT" apt-get install -y -qq -t ${{DEBIAN_RELEASE}}-backports linux-image-amd64 2>&1 | tail -5 || echo "LOG:Backports kernel pominięty"
+echo "LOG:Installing linux-image-amd64 from backports..."
+chroot "$ROOT" apt-get install -y -qq -t ${{DEBIAN_RELEASE}}-backports linux-image-amd64 2>&1 | tail -5 || echo "LOG:Backports kernel skipped"
 
 # Remove OLD kernel to save ~200MB and avoid initramfs for 2 kernels
 OLD_KERN=$(ls "$ROOT/boot/vmlinuz-"* 2>/dev/null | sort -V | head -1 | sed 's|.*/vmlinuz-||')
 NEW_KERN=$(ls "$ROOT/boot/vmlinuz-"* 2>/dev/null | sort -V | tail -1 | sed 's|.*/vmlinuz-||')
 if [[ -n "$OLD_KERN" && -n "$NEW_KERN" && "$OLD_KERN" != "$NEW_KERN" ]]; then
-    echo "LOG:Usuwam stary kernel $OLD_KERN (zostaje $NEW_KERN)"
+    echo "LOG:Removing old kernel $OLD_KERN (keeping $NEW_KERN)"
     chroot "$ROOT" apt-get remove -y --purge "linux-image-$OLD_KERN" 2>&1 | tail -3 || true
     rm -f "$ROOT/boot/vmlinuz-$OLD_KERN" "$ROOT/boot/initrd.img-$OLD_KERN" "$ROOT/boot/System.map-$OLD_KERN" "$ROOT/boot/config-$OLD_KERN" 2>/dev/null
     rm -rf "$ROOT/lib/modules/$OLD_KERN" 2>/dev/null
-    echo "LOG:Stary kernel usunięty"
+    echo "LOG:Old kernel removed"
 fi
 
-echo "LOG:Instalacja firmware-iwlwifi z backports..."
-chroot "$ROOT" apt-get install -y -qq -t ${{DEBIAN_RELEASE}}-backports firmware-iwlwifi 2>&1 | tail -5 || echo "LOG:Backports iwlwifi pominięty"
-echo "LOG:Instalacja firmware-realtek z backports..."
-chroot "$ROOT" apt-get install -y -qq -t ${{DEBIAN_RELEASE}}-backports firmware-realtek 2>&1 | tail -5 || echo "LOG:Backports realtek pominięty"
-echo "LOG:Instalacja firmware-misc-nonfree z backports..."
-chroot "$ROOT" apt-get install -y -qq -t ${{DEBIAN_RELEASE}}-backports firmware-misc-nonfree 2>&1 | tail -5 || echo "LOG:Backports misc pominięty"
+echo "LOG:Installing firmware-iwlwifi from backports..."
+chroot "$ROOT" apt-get install -y -qq -t ${{DEBIAN_RELEASE}}-backports firmware-iwlwifi 2>&1 | tail -5 || echo "LOG:Backports iwlwifi skipped"
+echo "LOG:Installing firmware-realtek from backports..."
+chroot "$ROOT" apt-get install -y -qq -t ${{DEBIAN_RELEASE}}-backports firmware-realtek 2>&1 | tail -5 || echo "LOG:Backports realtek skipped"
+echo "LOG:Installing firmware-misc-nonfree from backports..."
+chroot "$ROOT" apt-get install -y -qq -t ${{DEBIAN_RELEASE}}-backports firmware-misc-nonfree 2>&1 | tail -5 || echo "LOG:Backports misc skipped"
 
 # Disable standalone dnsmasq (NM uses its own for AP mode)
 chroot "$ROOT" systemctl disable dnsmasq 2>/dev/null || true
@@ -1211,16 +1211,16 @@ else
     chroot "$ROOT" update-initramfs -u -k all 2>/dev/null || echo "LOG:initramfs update failed"
 fi
 
-echo "STEP:75:Zależności zainstalowane"
+echo "STEP:75:Dependencies installed"
 
-# ── Step 6: Inject EthOS (cały pakiet) ──
-echo "STEP:76:Wstrzykiwanie EthOS..."
+# ── Step 6: Inject EthOS (full package) ──
+echo "STEP:76:Injecting EthOS..."
 
 ETHOS_DIR="$ROOT/opt/ethos"
 mkdir -p "$ETHOS_DIR"/{{data,backups,logs,uploads,cups-config}}
 
-# ── Kopiowanie CAŁEGO backend/ ──
-echo "LOG:Kopiowanie backend..."
+# ── Copy entire backend/ ──
+echo "LOG:Copying backend..."
 cp -r "$NASOS/backend" "$ETHOS_DIR/"
 rm -rf "$ETHOS_DIR/backend/__pycache__" "$ETHOS_DIR/backend/blueprints/__pycache__"
 rm -f "$ETHOS_DIR/backend/blueprints/"*.bak 2>/dev/null || true
@@ -1230,12 +1230,12 @@ for f in LICENSE NOTICE; do
   [ -f "$NASOS/$f" ] && cp "$NASOS/$f" "$ETHOS_DIR/"
 done
 
-# ── Kopiowanie CAŁEGO frontend/ ──
-echo "LOG:Kopiowanie frontend..."
+# ── Copy entire frontend/ ──
+echo "LOG:Copying frontend..."
 cp -r "$NASOS/frontend" "$ETHOS_DIR/"
 
-# ── Kopiowanie narzędzi ──
-echo "LOG:Kopiowanie tools..."
+# ── Copy tools ──
+echo "LOG:Copying tools..."
 mkdir -p "$ETHOS_DIR/tools"
 cp "$NASOS/tools/ethos-power-config.sh" "$ETHOS_DIR/tools/"
 cp "$NASOS/tools/ethos-system-helper.sh" "$ETHOS_DIR/tools/"
@@ -1249,27 +1249,27 @@ if [[ -d "$NASOS/cups-config" ]]; then
     cp -r "$NASOS/cups-config/"* "$ETHOS_DIR/cups-config/" 2>/dev/null || true
 fi
 
-# ── Installer scripts (do przyszłych aktualizacji) ──
+# ── Installer scripts (for future updates) ──
 mkdir -p "$ETHOS_DIR/installer/images"
 cp "$NASOS/installer/"*.sh         "$ETHOS_DIR/installer/"     2>/dev/null || true
 cp "$NASOS/installer/images/"*.sh     "$ETHOS_DIR/installer/images/" 2>/dev/null || true
 
-# ── Czyszczenie cache z kopiowanego kodu ──
+# ── Clean cache from copied code ──
 find "$ETHOS_DIR" -type d -name "__pycache__" -exec rm -rf {{}} + 2>/dev/null || true
 find "$ETHOS_DIR" -name "*.pyc" -delete 2>/dev/null || true
 rm -rf "$ETHOS_DIR/tests" "$ETHOS_DIR/logs" "$ETHOS_DIR/backups" 2>/dev/null || true
 
-echo "LOG:Pliki skopiowane — $(du -sh "$ETHOS_DIR" | awk '{{print $1}}')"
+echo "LOG:Files copied — $(du -sh "$ETHOS_DIR" | awk '{{print $1}}')"
 
 # ── Python venv + environment file ──
-echo "LOG:Tworzenie Python venv..."
+echo "LOG:Creating Python venv..."
 # Install build deps needed by some pip packages (pyudev needs libudev-dev)
 chroot "$ROOT" apt-get install -y -qq libudev-dev libffi-dev 2>&1 | tail -3 || echo "LOG:build deps issue"
 chroot "$ROOT" python3 -m venv /opt/ethos/venv 2>&1 | tail -3 || echo "LOG:venv creation issue"
 echo "LOG:pip install requirements..."
 chroot "$ROOT" /opt/ethos/venv/bin/pip install --no-cache-dir -r /opt/ethos/backend/requirements.txt 2>&1 | tail -15 || echo "LOG:pip install issue"
 # Verify critical imports work
-chroot "$ROOT" /opt/ethos/venv/bin/python -c "import flask; import psutil; import gevent; import pyudev; print('OK: all imports')" 2>&1 || echo "LOG:UWAGA: Brak niektórych modułów Python!"
+chroot "$ROOT" /opt/ethos/venv/bin/python -c "import flask; import psutil; import gevent; import pyudev; print('OK: all imports')" 2>&1 || echo "LOG:WARNING: Some Python modules missing!"
 
 # Remove build deps no longer needed (saves ~50MB)
 chroot "$ROOT" apt-get remove -y --purge libudev-dev libffi-dev 2>&1 | tail -3 || true
@@ -1319,34 +1319,34 @@ touch "$ETHOS_DIR/.installer-mode"
 echo "LOG:Installer-mode marker created"
 
 # ── WiFi AP script ──
-echo "LOG:Kopiowanie ethos-ap.sh..."
+echo "LOG:Copying ethos-ap.sh..."
 cp "$NASOS/installer/images/ethos-ap.sh" "$ROOT/usr/local/bin/ethos-ap"
 chmod +x "$ROOT/usr/local/bin/ethos-ap"
 if [[ ! -f "$ROOT/usr/local/bin/ethos-ap" ]]; then
-    echo "LOG:BŁĄD — ethos-ap nie skopiowany!"
+    echo "LOG:ERROR — ethos-ap not copied!"
     ls -la "$NASOS/installer/images/ethos-ap.sh" 2>&1 || true
     exit 1
 fi
 echo "LOG:ethos-ap.sh OK"
 
-# ── Firstboot script (kopia ze źródła — obsługuje oba tryby) ──
-echo "LOG:Kopiowanie firstboot.sh..."
+# ── Firstboot script (copy from source — supports both modes) ──
+echo "LOG:Copying firstboot.sh..."
 cp "$NASOS/installer/images/firstboot.sh" "$ROOT/opt/ethos-firstboot.sh"
 chmod +x "$ROOT/opt/ethos-firstboot.sh"
 if [[ ! -f "$ROOT/opt/ethos-firstboot.sh" ]]; then
-    echo "LOG:BŁĄD — firstboot.sh nie skopiowany!"
+    echo "LOG:ERROR — firstboot.sh not copied!"
     exit 1
 fi
 echo "LOG:firstboot.sh OK"
 
 # ── Diagnostic script ──
-echo "LOG:Kopiowanie ethos-diag.sh..."
+echo "LOG:Copying ethos-diag.sh..."
 if [[ -f "$NASOS/installer/images/ethos-diag.sh" ]]; then
     cp "$NASOS/installer/images/ethos-diag.sh" "$ROOT/usr/local/bin/ethos-diag"
     chmod +x "$ROOT/usr/local/bin/ethos-diag"
     echo "LOG:ethos-diag OK"
 else
-    echo "LOG:OSTRZEŻENIE — brak ethos-diag.sh (pomijam)"
+    echo "LOG:WARNING — ethos-diag.sh not found (skipping)"
 fi
 
 # ── Firstboot systemd service ──
@@ -1387,19 +1387,19 @@ ln -sf /etc/systemd/system/ethos-ap.service "$ROOT/etc/systemd/system/multi-user
 
 # Pre-boot setup server (headless WiFi config)
 mkdir -p "$ROOT/opt/ethos-installer"
-echo "LOG:Kopiowanie preboot-server.py z $NASOS/installer/images/ do $ROOT/opt/ethos-installer/"
+echo "LOG:Copying preboot-server.py from $NASOS/installer/images/ to $ROOT/opt/ethos-installer/"
 if [[ -f "$NASOS/installer/images/preboot-server.py" ]]; then
     cp "$NASOS/installer/images/preboot-server.py" "$ROOT/opt/ethos-installer/preboot-server.py"
     chmod +x "$ROOT/opt/ethos-installer/preboot-server.py"
-    echo "LOG:preboot-server.py skopiowany OK"
+    echo "LOG:preboot-server.py copied OK"
 else
-    echo "LOG:BŁĄD — brak pliku źródłowego preboot-server.py w $NASOS/installer/images/"
-    echo "LOG:Zawartość $NASOS/installer/images/:"
+    echo "LOG:ERROR — source file preboot-server.py not found in $NASOS/installer/images/"
+    echo "LOG:Contents of $NASOS/installer/images/:"
     ls -la "$NASOS/installer/images/" 2>&1 || true
 fi
 # Verify file landed in chroot
 if [[ ! -f "$ROOT/opt/ethos-installer/preboot-server.py" ]]; then
-    echo "LOG:KRYTYCZNY BŁĄD — preboot-server.py nie istnieje w obrazie!"
+    echo "LOG:CRITICAL ERROR — preboot-server.py does not exist in image!"
     exit 1
 fi
 
@@ -1483,7 +1483,7 @@ if [ ! -f /opt/ethos/.installed ]; then
     if [ -n "$IP" ]; then
     echo "  =>  http://${{IP}}:9000"
     else
-    echo "  Brak sieci — polacz sie z hotspot WiFi:"
+    echo "  No network — connect to WiFi hotspot:"
     echo "    SSID:  ethos  (bez hasla)"
     echo "    Adres: http://192.168.42.1:9000"
     echo ""
@@ -1509,10 +1509,10 @@ fi
 USERPROFILE
 chown $(chroot "$ROOT" id -u $DEFAULT_USER):$(chroot "$ROOT" id -g $DEFAULT_USER) "$ROOT/home/$DEFAULT_USER/.bash_profile"
 
-echo "STEP:85:EthOS wstrzyknięty"
+echo "STEP:85:EthOS injected"
 
 # ── Step 7: Cleanup & finalize ──
-echo "STEP:86:Finalizacja..."
+echo "STEP:86:Finalizing..."
 # Unmount apt cache BEFORE cleaning (it's bind-mounted to host cache)
 umount "$ROOT/var/cache/apt/archives" 2>/dev/null || true
 chroot "$ROOT" apt-get clean 2>/dev/null || true
@@ -1625,7 +1625,7 @@ def delete_artifact():
         paths = [single]
 
     if not paths:
-        return jsonify({'error': 'Brak ścieżek'}), 400
+        return jsonify({'error': 'No paths provided'}), 400
 
     nasos = _get_host_nasos_dir()
     allowed_root = os.path.realpath(nasos + '/installer')
@@ -1638,13 +1638,13 @@ def delete_artifact():
             continue
         real = os.path.realpath(p)
         if not real.startswith(allowed_root + '/'):
-            errors.append(f'{os.path.basename(p)}: niedozwolona ścieżka')
+            errors.append(f'{os.path.basename(p)}: path not allowed')
             continue
         r = _host_run(f"rm -f {_q(real)}")
         if r.returncode == 0:
             deleted.append(os.path.basename(p))
         else:
-            errors.append(f'{os.path.basename(p)}: nie udało się usunąć')
+            errors.append(f'{os.path.basename(p)}: failed to delete')
 
     return jsonify({'ok': True, 'deleted': deleted, 'errors': errors})
 
@@ -1659,14 +1659,14 @@ def download_artifact():
     from flask import send_file as _send
     path = request.args.get('path', '').strip()
     if not path:
-        return jsonify({'error': 'Brak ścieżki'}), 400
+        return jsonify({'error': 'Path required'}), 400
 
     nasos = _get_host_nasos_dir()
     # Security: resolve symlinks/.. before checking prefix
     allowed_root = os.path.realpath(nasos + '/installer')
     real_check = os.path.realpath(path)
     if not real_check.startswith(allowed_root + '/'):
-        return jsonify({'error': 'Niedozwolona ścieżka'}), 403
+        return jsonify({'error': 'Path not allowed'}), 403
 
     # Try direct path first (native mode), then Docker container mapping
     if os.path.isfile(path):
@@ -1675,7 +1675,7 @@ def download_artifact():
         real_path = path.replace('/home/', '/data/home/', 1)
 
     if not os.path.isfile(real_path):
-        return jsonify({'error': 'Plik nie istnieje'}), 404
+        return jsonify({'error': 'File not found'}), 404
 
     filename = os.path.basename(path)
     return _send(real_path, as_attachment=True, download_name=filename)

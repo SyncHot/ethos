@@ -42,49 +42,49 @@ _last_error: str = ''
 PROVIDERS = {
     'duckdns': {
         'name': 'DuckDNS',
-        'description': 'Darmowy DDNS — logowanie przez GitHub/Google/Reddit. Brak formularzy rejestracji.',
+        'description': 'Free DDNS — login via GitHub/Google/Reddit. No registration forms.',
         'website': 'https://www.duckdns.org',
         'fields': [
-            {'key': 'domain',   'label': 'Subdomena (bez .duckdns.org)', 'type': 'text',     'required': True, 'placeholder': 'moj-nas'},
+            {'key': 'domain',   'label': 'Subdomain (without .duckdns.org)', 'type': 'text',     'required': True, 'placeholder': 'my-nas'},
             {'key': 'token',    'label': 'Token',                        'type': 'password',  'required': True, 'placeholder': 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'},
         ],
         'no_registration': True,
     },
     'dynv6': {
         'name': 'dynv6',
-        'description': 'Darmowy DDNS z obsługą IPv4 i IPv6. Wystarcza e-mail do rejestracji.',
+        'description': 'Free DDNS with IPv4 and IPv6 support. Only an e-mail is needed to register.',
         'website': 'https://dynv6.com',
         'fields': [
-            {'key': 'hostname', 'label': 'Hostname (np. mynas.dynv6.net)', 'type': 'text',     'required': True},
+            {'key': 'hostname', 'label': 'Hostname (e.g. mynas.dynv6.net)', 'type': 'text',     'required': True},
             {'key': 'token',    'label': 'HTTP Token',                      'type': 'password',  'required': True},
         ],
         'no_registration': False,
     },
     'noip': {
         'name': 'No-IP',
-        'description': 'Popularny dostawca DDNS z darmowym planem. Wymaga potwierdzenia co 30 dni.',
+        'description': 'Popular DDNS provider with a free plan. Requires confirmation every 30 days.',
         'website': 'https://www.noip.com',
         'fields': [
             {'key': 'hostname', 'label': 'Hostname',   'type': 'text',     'required': True, 'placeholder': 'mynas.ddns.net'},
             {'key': 'username', 'label': 'Login',       'type': 'text',     'required': True},
-            {'key': 'password', 'label': 'Hasło',       'type': 'password', 'required': True},
+            {'key': 'password', 'label': 'Password',    'type': 'password', 'required': True},
         ],
         'no_registration': False,
     },
     'cloudflare': {
         'name': 'Cloudflare',
-        'description': 'Aktualizuj rekord DNS A/AAAA na własnej domenie podpiętej pod Cloudflare.',
+        'description': 'Update a DNS A/AAAA record on your own domain managed by Cloudflare.',
         'website': 'https://dash.cloudflare.com',
         'fields': [
             {'key': 'zone_id',   'label': 'Zone ID',          'type': 'text',     'required': True},
-            {'key': 'record_name','label': 'Rekord (np. nas.example.com)', 'type': 'text', 'required': True},
+            {'key': 'record_name','label': 'Record (e.g. nas.example.com)', 'type': 'text', 'required': True},
             {'key': 'api_token', 'label': 'API Token',        'type': 'password', 'required': True},
         ],
         'no_registration': False,
     },
     'freedns': {
         'name': 'FreeDNS (afraid.org)',
-        'description': 'Darmowe subdomeny z dużego zbioru domen. Prosty update URL.',
+        'description': 'Free subdomains from a large pool of domains. Simple update URL.',
         'website': 'https://freedns.afraid.org',
         'fields': [
             {'key': 'update_key', 'label': 'Update Key / URL', 'type': 'text', 'required': True,
@@ -94,12 +94,12 @@ PROVIDERS = {
     },
     'custom': {
         'name': 'Custom URL',
-        'description': 'Dowolna usługa DDNS obsługująca aktualizację przez HTTP GET/POST.',
+        'description': 'Any DDNS service that supports updates via HTTP GET/POST.',
         'website': '',
         'fields': [
             {'key': 'update_url', 'label': 'Update URL',       'type': 'text',     'required': True,
              'placeholder': 'https://example.com/update?ip={{IP}}&key=abc'},
-            {'key': 'method',     'label': 'Metoda HTTP',       'type': 'select',   'required': True,
+            {'key': 'method',     'label': 'HTTP Method',       'type': 'select',   'required': True,
              'options': ['GET', 'POST'], 'default': 'GET'},
         ],
         'no_registration': False,
@@ -250,7 +250,7 @@ def _update_cloudflare(cfg, ip):
     with urllib.request.urlopen(req, timeout=15) as resp:
         data = json.loads(resp.read())
     if not data.get('success') or not data.get('result'):
-        return False, 'Nie znaleziono rekordu A dla ' + record_name
+        return False, 'No A record found for ' + record_name
 
     record = data['result'][0]
     record_id = record['id']
@@ -321,7 +321,7 @@ def _run_update(force=False):
     ip = _get_public_ip()
     if not ip:
         _last_status = 'error'
-        _last_error = 'Nie udało się pobrać publicznego IP'
+        _last_error = 'Failed to get public IP'
         log.warning('[ddns] Cannot determine public IP')
         return {'ok': False, 'error': _last_error}
 
@@ -338,12 +338,12 @@ def _run_update(force=False):
         _last_update = datetime.now().isoformat()
         if old_ip and old_ip != ip:
             log.info('[ddns] IP changed: %s -> %s (no active providers to update)', old_ip, ip)
-        return {'ok': True, 'ip': ip, 'message': 'Brak aktywnych providerów'}
+        return {'ok': True, 'ip': ip, 'message': 'No active providers'}
 
     # Skip if IP hasn't changed (unless forced)
     if ip == _current_ip and not force:
         _last_status = 'ok'
-        return {'ok': True, 'ip': ip, 'message': 'IP bez zmian', 'skipped': True}
+        return {'ok': True, 'ip': ip, 'message': 'IP unchanged', 'skipped': True}
 
     results = []
     all_ok = True
@@ -351,7 +351,7 @@ def _run_update(force=False):
         ptype = p.get('type', '')
         updater = _UPDATERS.get(ptype)
         if not updater:
-            results.append({'id': p.get('id'), 'ok': False, 'error': f'Nieznany provider: {ptype}'})
+            results.append({'id': p.get('id'), 'ok': False, 'error': f'Unknown provider: {ptype}'})
             all_ok = False
             continue
         try:

@@ -206,7 +206,7 @@ def _github_check(repo_path):
             break
 
     if not pkg_asset:
-        raise ValueError('Brak pakietu .tar.gz w najnowszym release na GitHub')
+        raise ValueError('No .tar.gz package in latest GitHub release')
 
     manifest = {
         'version': tag,
@@ -258,7 +258,7 @@ def check_for_update():
     config = _load_config()
     raw_url = config.get('update_url', '')
     if not raw_url:
-        return jsonify({'error': 'Nie skonfigurowano serwera aktualizacji'}), 400
+        return jsonify({'error': 'Update server not configured'}), 400
 
     _update_status['checking'] = True
     _update_status['error'] = None
@@ -316,27 +316,27 @@ def check_for_update():
                 'update_available': False,
                 'current_version': current,
                 'remote_version': remote,
-                'message': 'System jest aktualny',
+                'message': 'System is up to date',
             })
 
     except Exception as e:
         _update_status['checking'] = False
         _update_status['error'] = str(e)
         _emit('update_status', _update_status)
-        return jsonify({'error': f'Błąd sprawdzania: {e}'}), 500
+        return jsonify({'error': f'Check error: {e}'}), 500
 
 
 @update_bp.route('/apply', methods=['POST'])
 def apply_update():
     """Download and apply update."""
     if not _update_lock.acquire(blocking=False):
-        return jsonify({'error': 'Aktualizacja już w toku'}), 409
+        return jsonify({'error': 'Update already in progress'}), 409
 
     try:
         manifest = _update_status.get('available')
         if not manifest:
             _update_lock.release()
-            return jsonify({'error': 'Brak dostępnej aktualizacji — najpierw sprawdź'}), 400
+            return jsonify({'error': 'No update available — check first'}), 400
 
         # Start background update
         import gevent
@@ -352,14 +352,14 @@ def apply_update():
 def upload_update():
     """Upload update package manually (alternative to OTA)."""
     if 'file' not in request.files:
-        return jsonify({'error': 'Brak pliku'}), 400
+        return jsonify({'error': 'No file'}), 400
 
     f = request.files['file']
     if not f.filename.endswith('.tar.gz'):
-        return jsonify({'error': 'Wymagany plik .tar.gz'}), 400
+        return jsonify({'error': '.tar.gz file required'}), 400
 
     if not _update_lock.acquire(blocking=False):
-        return jsonify({'error': 'Aktualizacja już w toku'}), 409
+        return jsonify({'error': 'Update already in progress'}), 409
 
     try:
         os.makedirs(UPDATE_DIR, exist_ok=True)
@@ -391,7 +391,7 @@ def publish_update():
     """Package current installation as an update for other instances."""
     try:
         ver = _get_current_version()
-        _emit('update_log', {'message': f'Tworzenie pakietu aktualizacji v{ver}...'})
+        _emit('update_log', {'message': f'Creating update package v{ver}...'})
 
         os.makedirs(PUBLISH_DIR, exist_ok=True)
         pkg_name = f'ethos-{ver}'
@@ -434,11 +434,11 @@ def publish_update():
         with open(os.path.join(PUBLISH_DIR, 'latest.json'), 'w') as mf:
             json.dump(manifest, mf, indent=2)
 
-        _emit('update_log', {'message': f'Opublikowano {pkg_filename} ({size // 1024} KB)'})
+        _emit('update_log', {'message': f'Published {pkg_filename} ({size // 1024} KB)'})
         return jsonify({'success': True, 'manifest': manifest})
 
     except Exception as e:
-        return jsonify({'error': f'Błąd publikacji: {e}'}), 500
+        return jsonify({'error': f'Publish error: {e}'}), 500
 
 
 @update_bp.route('/serve/latest.json', methods=['GET'])
@@ -447,7 +447,7 @@ def serve_manifest():
     Returns the newest version from data/updates or installer/releases."""
     best_dir, _ = _best_update_dir()
     if not best_dir:
-        abort(404, description='Brak opublikowanej aktualizacji')
+        abort(404, description='No published update available')
     return send_from_directory(best_dir, 'latest.json', mimetype='application/json')
 
 
@@ -461,7 +461,7 @@ def serve_package(filename):
         fp = os.path.join(d, filename)
         if os.path.isfile(fp):
             return send_from_directory(d, filename)
-    abort(404, description='Plik nie istnieje')
+    abort(404, description='File does not exist')
 
 
 # ═══════════════════════════════════════════════════════════
@@ -474,7 +474,7 @@ def public_serve_manifest():
     Returns the newest version from data/updates or installer/releases."""
     best_dir, _ = _best_update_dir()
     if not best_dir:
-        abort(404, description='Brak opublikowanej aktualizacji')
+        abort(404, description='No published update available')
     return send_from_directory(best_dir, 'latest.json', mimetype='application/json')
 
 
@@ -488,7 +488,7 @@ def public_serve_package(filename):
         fp = os.path.join(d, filename)
         if os.path.isfile(fp):
             return send_from_directory(d, filename)
-    abort(404, description='Plik nie istnieje')
+    abort(404, description='File does not exist')
 
 
 # ═══════════════════════════════════════════════════════════
@@ -501,7 +501,7 @@ def _do_apply_update(manifest):
         _update_status['downloading'] = True
         _update_status['progress'] = 0
         _update_status['error'] = None
-        _update_status['message'] = 'Przygotowywanie pobierania…'
+        _update_status['message'] = 'Preparing download…'
         _emit('update_status', _update_status)
 
         filename = manifest['filename']
@@ -520,8 +520,8 @@ def _do_apply_update(manifest):
 
         # Download with progress
         import urllib.request
-        _update_status['message'] = f'Pobieranie {filename}…'
-        _emit('update_log', {'message': f'Pobieranie {filename}...'})
+        _update_status['message'] = f'Downloading {filename}…'
+        _emit('update_log', {'message': f'Downloading {filename}...'})
         _emit('update_status', _update_status)
 
         req = urllib.request.Request(download_url, headers={'User-Agent': 'EthOS-Updater'})
@@ -543,19 +543,19 @@ def _do_apply_update(manifest):
                         _update_status['progress'] = pct  # 0-50% for download
                         dl_mb = downloaded / 1048576
                         tot_mb = total / 1048576
-                        _update_status['message'] = f'Pobieranie… {dl_mb:.1f} / {tot_mb:.1f} MB'
+                        _update_status['message'] = f'Downloading… {dl_mb:.1f} / {tot_mb:.1f} MB'
                         _emit('update_status', _update_status)
 
-        _emit('update_log', {'message': f'Pobrano {downloaded} bajtów'})
+        _emit('update_log', {'message': f'Downloaded {downloaded} bytes'})
 
         # Verify checksum
         if expected_sha:
-            _update_status['message'] = 'Weryfikacja sumy kontrolnej…'
+            _update_status['message'] = 'Verifying checksum…'
             _emit('update_status', _update_status)
             actual_sha = hasher.hexdigest()
             if actual_sha != expected_sha:
                 raise ValueError(f'Checksum error: expected {expected_sha[:16]}..., got {actual_sha[:16]}...')
-            _emit('update_log', {'message': 'Suma kontrolna OK'})
+            _emit('update_log', {'message': 'Checksum OK'})
 
         _update_status['downloading'] = False
         _do_apply_from_file(pkg_path)
@@ -567,7 +567,7 @@ def _do_apply_update(manifest):
         _update_status['progress'] = 0
         _update_status['message'] = ''
         _emit('update_status', _update_status)
-        _emit('update_log', {'message': f'BŁĄD: {e}', 'error': True})
+        _emit('update_log', {'message': f'ERROR: {e}', 'error': True})
         _update_lock.release()
 
 
@@ -576,9 +576,9 @@ def _do_apply_from_file(pkg_path):
     try:
         _update_status['applying'] = True
         _update_status['progress'] = 55
-        _update_status['message'] = 'Rozpakowywanie pakietu…'
+        _update_status['message'] = 'Extracting package…'
         _emit('update_status', _update_status)
-        _emit('update_log', {'message': 'Rozpakowywanie...'})
+        _emit('update_log', {'message': 'Extracting...'})
 
         extract_dir = os.path.join(UPDATE_DIR, 'extracted')
         if os.path.exists(extract_dir):
@@ -591,30 +591,30 @@ def _do_apply_from_file(pkg_path):
         # Find the package directory (ethos-X.Y.Z/)
         subdirs = [d for d in os.listdir(extract_dir) if os.path.isdir(os.path.join(extract_dir, d))]
         if not subdirs:
-            raise ValueError('Pusty pakiet — brak katalogu wewnątrz')
+            raise ValueError('Empty package — no directory inside')
         pkg_dir = os.path.join(extract_dir, subdirs[0])
 
         _update_status['progress'] = 60
-        _update_status['message'] = 'Weryfikacja pakietu…'
+        _update_status['message'] = 'Verifying package…'
         _emit('update_status', _update_status)
 
         # Verify package has required structure
         for required in ['backend/app.py', 'backend/version.json', 'frontend/index.html']:
             if not os.path.exists(os.path.join(pkg_dir, required)):
-                raise ValueError(f'Nieprawidłowy pakiet — brak {required}')
+                raise ValueError(f'Invalid package — missing {required}')
 
-        _emit('update_log', {'message': 'Pakiet zweryfikowany'})
+        _emit('update_log', {'message': 'Package verified'})
 
         # Read new version
         with open(os.path.join(pkg_dir, 'backend', 'version.json')) as f:
             new_ver = json.load(f).get('version', '?')
-        _emit('update_log', {'message': f'Nowa wersja: {new_ver}'})
+        _emit('update_log', {'message': f'New version: {new_ver}'})
 
         # Backup current files
         _update_status['progress'] = 70
-        _update_status['message'] = 'Tworzenie kopii zapasowej…'
+        _update_status['message'] = 'Creating backup…'
         _emit('update_status', _update_status)
-        _emit('update_log', {'message': 'Tworzę kopię zapasową...'})
+        _emit('update_log', {'message': 'Creating backup...'})
 
         backup_dir = os.path.join(UPDATE_DIR, 'backup-' + datetime.now().strftime('%Y%m%d%H%M%S'))
         os.makedirs(backup_dir)
@@ -624,13 +624,13 @@ def _do_apply_from_file(pkg_path):
             if os.path.exists(src):
                 shutil.copytree(src, os.path.join(backup_dir, d))
 
-        _emit('update_log', {'message': f'Backup w {backup_dir}'})
+        _emit('update_log', {'message': f'Backup at {backup_dir}'})
 
         # Apply update — replace backend, frontend
         _update_status['progress'] = 80
-        _update_status['message'] = 'Aktualizacja plików…'
+        _update_status['message'] = 'Updating files…'
         _emit('update_status', _update_status)
-        _emit('update_log', {'message': 'Aktualizuję pliki...'})
+        _emit('update_log', {'message': 'Updating files...'})
 
         for d in ['backend', 'frontend']:
             src = os.path.join(pkg_dir, d)
@@ -641,9 +641,9 @@ def _do_apply_from_file(pkg_path):
                 shutil.copytree(src, dst)
 
         _update_status['progress'] = 85
-        _update_status['message'] = 'Pliki zaktualizowane'
+        _update_status['message'] = 'Files updated'
         _emit('update_status', _update_status)
-        _emit('update_log', {'message': 'Pliki zaktualizowane'})
+        _emit('update_log', {'message': 'Files updated'})
 
         # Update Python dependencies if requirements.txt changed
         new_reqs = os.path.join(INSTALL_DIR, 'backend', 'requirements.txt')
@@ -656,23 +656,23 @@ def _do_apply_from_file(pkg_path):
                     reqs_changed = f1.read().strip() != f2.read().strip()
             if reqs_changed:
                 _update_status['progress'] = 88
-                _update_status['message'] = 'Instalacja zależności Python…'
+                _update_status['message'] = 'Installing Python dependencies…'
                 _emit('update_status', _update_status)
-                _emit('update_log', {'message': 'Aktualizuję zależności Python...'})
+                _emit('update_log', {'message': 'Updating Python dependencies...'})
                 pip_result = subprocess.run(
                     [venv_pip, 'install', '--no-cache-dir', '-r', new_reqs],
                     capture_output=True, text=True, timeout=300
                 )
                 if pip_result.returncode == 0:
-                    _emit('update_log', {'message': 'Zależności zaktualizowane'})
+                    _emit('update_log', {'message': 'Dependencies updated'})
                 else:
                     _emit('update_log', {'message': f'pip install warning: {pip_result.stderr[-200:]}'})
 
         # Restart service
         _update_status['progress'] = 95
-        _update_status['message'] = 'Restartowanie serwisu…'
+        _update_status['message'] = 'Restarting service…'
         _emit('update_status', _update_status)
-        _emit('update_log', {'message': 'Restartuję serwis EthOS...'})
+        _emit('update_log', {'message': 'Restarting EthOS service...'})
         result = subprocess.run(
             ['systemctl', 'restart', 'ethos.service'],
             capture_output=True, text=True, timeout=60
@@ -681,7 +681,7 @@ def _do_apply_from_file(pkg_path):
         if result.returncode != 0:
             _emit('update_log', {'message': f'Restart stderr: {result.stderr[-500:]}'})
             # Try to rollback
-            _emit('update_log', {'message': 'BŁĄD — próbuję przywrócić...', 'error': True})
+            _emit('update_log', {'message': 'ERROR — attempting restore...', 'error': True})
             for d in ['backend', 'frontend']:
                 bak = os.path.join(backup_dir, d)
                 dst = os.path.join(INSTALL_DIR, d)
@@ -695,9 +695,9 @@ def _do_apply_from_file(pkg_path):
         _update_status['progress'] = 100
         _update_status['applying'] = False
         _update_status['available'] = None
-        _update_status['message'] = 'Gotowe!'
+        _update_status['message'] = 'Done!'
         _emit('update_status', _update_status)
-        _emit('update_log', {'message': f'Aktualizacja do {new_ver} zakończona! System się restartuje...'})
+        _emit('update_log', {'message': f'Update to {new_ver} complete! System restarting...'})
         _emit('update_complete', {'version': new_ver})
 
         # Cleanup
@@ -709,7 +709,7 @@ def _do_apply_from_file(pkg_path):
         _update_status['progress'] = 0
         _update_status['message'] = ''
         _emit('update_status', _update_status)
-        _emit('update_log', {'message': f'BŁĄD: {e}', 'error': True})
+        _emit('update_log', {'message': f'ERROR: {e}', 'error': True})
     finally:
         try:
             _update_lock.release()

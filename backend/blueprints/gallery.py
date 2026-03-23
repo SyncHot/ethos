@@ -303,17 +303,17 @@ def gallery_folders_add():
     path = data.get('path', '').strip().rstrip('/')
     label = data.get('label', '') or os.path.basename(path) or path
     if not path:
-        return jsonify({'error': 'Brak ścieżki'}), 400
+        return jsonify({'error': 'Path required'}), 400
     real = _safe_path(path)
     if not real or not os.path.isdir(real):
-        return jsonify({'error': 'Folder nie istnieje'}), 404
+        return jsonify({'error': 'Folder not found'}), 404
     folders = _load_gallery_folders()
     if any(f['path'] == path for f in folders):
-        return jsonify({'error': 'Folder już dodany'}), 409
+        return jsonify({'error': 'Folder already added'}), 409
     with _gallery_lock:
         folders = _load_gallery_folders()
         if any(f['path'] == path for f in folders):
-            return jsonify({'error': 'Folder już dodany'}), 409
+            return jsonify({'error': 'Folder already added'}), 409
         folders.append({'path': path, 'label': label, 'added': time.time()})
         _save_gallery_folders(folders)
     return jsonify({'ok': True, 'folders': folders})
@@ -526,7 +526,7 @@ def gallery_exif():
     path = request.args.get('path', '')
     real = _safe_path(path)
     if not real or not os.path.isfile(real):
-        return jsonify({'error': 'Plik nie znaleziony'}), 404
+        return jsonify({'error': 'File not found'}), 404
     return jsonify(_get_exif(real))
 
 
@@ -536,10 +536,10 @@ def gallery_video_thumb():
     path = request.args.get('path', '')
     real = _safe_path(path)
     if not real or not os.path.isfile(real):
-        return jsonify({'error': 'Plik nie znaleziony'}), 404
+        return jsonify({'error': 'File not found'}), 404
     ext = os.path.splitext(real)[1].lower()
     if ext not in VIDEO_EXTS:
-        return jsonify({'error': 'Nie jest plikiem wideo'}), 400
+        return jsonify({'error': 'Not a video file'}), 400
 
     mtime = os.path.getmtime(real)
     cache_key = hashlib.md5(f'{real}:{mtime}'.encode()).hexdigest()
@@ -549,7 +549,7 @@ def gallery_video_thumb():
         return send_file(thumb_path, mimetype='image/webp', max_age=86400)
 
     # Fallback: return a placeholder
-    return jsonify({'error': 'Nie udało się wygenerować miniatury'}), 500
+    return jsonify({'error': 'Failed to generate thumbnail'}), 500
 
 
 @gallery_bp.route('/video-info')
@@ -558,7 +558,7 @@ def gallery_video_info():
     path = request.args.get('path', '')
     real = _safe_path(path)
     if not real or not os.path.isfile(real):
-        return jsonify({'error': 'Plik nie znaleziony'}), 404
+        return jsonify({'error': 'File not found'}), 404
     duration = _video_duration(real)
     size = os.path.getsize(real)
     return jsonify({'duration': duration, 'size': size, 'path': path})
@@ -600,7 +600,7 @@ def gallery_browse_folders():
     path = request.args.get('path', '/')
     real = _safe_path(path)
     if not real or not os.path.isdir(real):
-        return jsonify({'error': 'Nieprawidłowa ścieżka'}), 400
+        return jsonify({'error': 'Invalid path'}), 400
 
     dirs = []
     media_count = 0
@@ -613,7 +613,7 @@ def gallery_browse_folders():
             elif entry.is_file() and _is_media(entry.name):
                 media_count += 1
     except PermissionError:
-        return jsonify({'error': 'Brak dostępu'}), 403
+        return jsonify({'error': 'Access denied'}), 403
 
     return jsonify({
         'path': path,
@@ -657,10 +657,10 @@ def gallery_favorites_add():
     data = request.get_json(force=True)
     path = data.get('path', '').strip()
     if not path:
-        return jsonify({'error': 'Brak ścieżki'}), 400
+        return jsonify({'error': 'Path required'}), 400
     real = _safe_path(path)
     if not real or not os.path.isfile(real):
-        return jsonify({'error': 'Plik nie istnieje'}), 404
+        return jsonify({'error': 'File not found'}), 404
     favs = _load_favorites()
     if any(f['path'] == path for f in favs):
         return jsonify({'ok': True, 'already': True})
@@ -910,9 +910,9 @@ def gallery_shared_serve(token):
     if share.get('shared_with'):
         me = _get_username()
         if not me:
-            return jsonify({'error': 'Wymagane logowanie'}), 401
+            return jsonify({'error': 'Login required'}), 401
         if me not in share['shared_with'] and me != share.get('creator', ''):
-            return jsonify({'error': 'Brak dostępu'}), 403
+            return jsonify({'error': 'Access denied'}), 403
 
     paths = share['paths']
     if len(paths) == 1:

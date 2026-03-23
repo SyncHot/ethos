@@ -139,7 +139,7 @@ def _log_startup():
     finally:
         conn.close()
 
-    log('system', 'info', 'EthOS uruchomiony', details=startup_details)
+    log('system', 'info', 'EthOS started', details=startup_details)
 
 def log(category, level, message, details=None):
     if level not in LEVELS: level = 'info'
@@ -275,7 +275,7 @@ def eventlog_clear():
     conn.execute('DELETE FROM events')
     conn.commit()
     conn.close()
-    log('system', 'info', 'Dziennik zdarzeń wyczyszczony')
+    log('system', 'info', 'Event log cleared')
     return jsonify({'ok': True})
 
 @eventlog_bp.route('/api/eventlog/stats')

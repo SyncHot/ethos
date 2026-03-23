@@ -2364,7 +2364,7 @@ def services_action():
                     socketio.emit('service_install_progress', {
                         'service': svc_name, 'pkg': svc_pkg,
                         'phase': 'install', 'progress': 20,
-                        'message': 'Instalowanie Docker CE…',
+                        'message': 'Installing Docker CE…',
                     })
                     from host import ensure_dep
                     ok, msg = ensure_dep('docker', install=True)
@@ -3557,7 +3557,7 @@ def _copy_with_progress(real_src, target, op_label, done_ref, total, gevent_yiel
         _chown_to_user(target, username)
         for item in os.listdir(real_src):
             if _check():
-                raise InterruptedError('Kopiowanie anulowane')
+                raise InterruptedError('Copy cancelled')
             s = os.path.join(real_src, item)
             d = os.path.join(target, item)
             if os.path.isdir(s):

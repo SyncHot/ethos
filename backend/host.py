@@ -576,21 +576,21 @@ def ensure_dep(binary, install=True):
         return True, None
     if not install:
         pkg = _DEP_CUSTOM_INSTALL.get(binary) and binary or _DEP_PACKAGES.get(binary, binary)
-        return False, f'Brak pakietu {pkg}. Zainstaluj aby korzystać z tej funkcji.'
+        return False, f'Package {pkg} not found. Install it to use this feature.'
     # Custom install (e.g. Docker via get.docker.com)
     if binary in _DEP_CUSTOM_INSTALL:
         r = host_run(_DEP_CUSTOM_INSTALL[binary], timeout=300)
         if r.returncode == 0 and check_dep(binary):
-            return True, f'{binary} zainstalowany'
-        return False, f'Instalacja {binary} nie powiodła się: {r.stderr[-300:]}'
+            return True, f'{binary} installed'
+        return False, f'Installation of {binary} failed: {r.stderr[-300:]}'
     # Standard apt install
     pkg = _DEP_PACKAGES.get(binary)
     if not pkg:
-        return False, f'Nie znaleziono pakietu dla: {binary}'
+        return False, f'Package not found for: {binary}'
     r = apt_install(pkg, timeout=300)
     if r.returncode == 0 and check_dep(binary):
-        return True, f'{pkg} zainstalowany'
-    return False, f'Instalacja {pkg} nie powiodła się: {r.stderr[-200:]}'
+        return True, f'{pkg} installed'
+    return False, f'Installation of {pkg} failed: {r.stderr[-200:]}'
 
 
 _DEP_OWNERS_FILE = data_path('dep_owners.json')
@@ -672,7 +672,7 @@ def release_dep(binary, owner):
             state[binary] = entry
             _save_dep_owners(state)
             err = (r.stderr or r.stdout or '').strip()
-            return False, f'Nie udało się odinstalować {pkg}: {err[-200:]}'
+            return False, f'Failed to uninstall {pkg}: {err[-200:]}'
 
     state.pop(binary, None)
     _save_dep_owners(state)

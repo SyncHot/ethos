@@ -392,7 +392,7 @@ def list_directory(path, *, allowed_prefix=None, show_hidden=False,
 # ── Package install/uninstall/status pattern ────────────────
 
 def register_pkg_routes(bp, *,
-                        install_message='Gotowe.',
+                        install_message='Done.',
                         install_deps=None,
                         wipe_files=None,
                         wipe_dirs=None,
@@ -430,9 +430,9 @@ def register_pkg_routes(bp, *,
                 try:
                     ok, msg = claim_dep(dep, owner_id)
                     if not ok:
-                        errors.append(msg or f'Instalacja {dep} nie powiodła się')
+                        errors.append(msg or f'Installation of {dep} failed')
                 except Exception as exc:
-                    errors.append(f'Błąd instalacji {dep}: {exc}')
+                    errors.append(f'Installation error for {dep}: {exc}')
         if errors:
             return jsonify({'ok': False, 'errors': errors}), 500
         return jsonify({'ok': True, 'message': install_message})
@@ -445,9 +445,9 @@ def register_pkg_routes(bp, *,
                 try:
                     ok, msg = release_dep(dep, owner_id)
                     if not ok:
-                        dep_errors.append(msg or f'Odinstalowanie zależności {dep} nie powiodło się')
+                        dep_errors.append(msg or f'Uninstallation of dependency {dep} failed')
                 except Exception as exc:
-                    dep_errors.append(f'Błąd odinstalowania {dep}: {exc}')
+                    dep_errors.append(f'Uninstallation error for {dep}: {exc}')
         if on_uninstall:
             on_uninstall(wipe)
         if wipe:

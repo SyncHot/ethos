@@ -67,7 +67,7 @@ def _load_flash_state():
             pid = _flash_state.get('pid', 0)
             if not pid or not is_pid_alive(pid):
                 _flash_state['status'] = 'error'
-                _flash_state['message'] = 'Proces flashowania przerwany (restart serwisu)'
+                _flash_state['message'] = 'Flash process interrupted (service restart)'
                 _flash_state['result'] = {'success': False, 'message': _flash_state['message']}
                 _save_flash_state()
     except Exception:
@@ -146,7 +146,7 @@ def flash_status():
             pid_dead = not _is_pid_alive(_flash_state.get('pid', 0))
             if thread_dead and pid_dead:
                 _flash_state['status'] = 'error'
-                _flash_state['message'] = 'Proces flashowania niespodziewanie zakończony'
+                _flash_state['message'] = 'Flash process unexpectedly terminated'
                 _flash_state['result'] = {'success': False, 'message': _flash_state['message']}
                 _save_flash_state()
 
@@ -173,12 +173,12 @@ def list_usb_drives():
         "sudo /opt/ethos/tools/ethos-system-helper.sh lsblk -J -o NAME,SIZE,TYPE,TRAN,HOTPLUG,MODEL,LABEL,MOUNTPOINT,RM 2>/dev/null"
     )
     if r.returncode != 0:
-        return jsonify({'error': 'Nie można odczytać listy dysków'}), 500
+        return jsonify({'error': 'Cannot read disk list'}), 500
 
     try:
         data = json.loads(r.stdout)
     except json.JSONDecodeError:
-        return jsonify({'error': 'Błąd parsowania lsblk'}), 500
+        return jsonify({'error': 'lsblk parse error'}), 500
 
     drives = []
     for dev in data.get('blockdevices', []):
@@ -287,12 +287,12 @@ def verify_image():
     """Quick check: does the image file exist and is it readable?"""
     path = request.args.get('path', '')
     if not path or not os.path.isfile(path):
-        return jsonify({'valid': False, 'error': 'Plik nie istnieje'}), 404
+        return jsonify({'valid': False, 'error': 'File not found'}), 404
 
     size = os.path.getsize(path)
     # Check if it looks like a valid image (> 1MB)
     if size < 1024 * 1024:
-        return jsonify({'valid': False, 'error': 'Plik za mały — prawdopodobnie nie jest obrazem'}), 400
+        return jsonify({'valid': False, 'error': 'File too small — probably not an image'}), 400
 
     # Detect compression
     low = path.lower()
@@ -349,24 +349,24 @@ def flash_drive():
     target_disk = data.get('disk', '').strip()
 
     if not image_path:
-        return jsonify({'error': 'Nie podano ścieżki obrazu'}), 400
+        return jsonify({'error': 'Image path not specified'}), 400
     if not target_disk:
-        return jsonify({'error': 'Nie wybrano dysku docelowego'}), 400
+        return jsonify({'error': 'Target disk not selected'}), 400
 
     # Validate disk name
     if not re.match(r'^[a-zA-Z0-9]+$', target_disk):
-        return jsonify({'error': 'Nieprawidłowa nazwa dysku'}), 400
+        return jsonify({'error': 'Invalid disk name'}), 400
 
     # Verify image exists
     if not os.path.isfile(image_path):
-        return jsonify({'error': f'Obraz nie istnieje: {image_path}'}), 404
+        return jsonify({'error': f'Image does not exist: {image_path}'}), 404
 
     image_size = os.path.getsize(image_path)
 
     # Verify target is a USB disk
     r = _host_run(f"sudo /opt/ethos/tools/ethos-system-helper.sh lsblk -ndo TRAN,HOTPLUG,TYPE /dev/{target_disk} 2>/dev/null")
     if r.returncode != 0:
-        return jsonify({'error': f'/dev/{target_disk} nie istnieje'}), 404
+        return jsonify({'error': f'/dev/{target_disk} does not exist'}), 404
 
     parts = r.stdout.strip().split()
     tran = parts[0] if parts else ''
@@ -374,9 +374,9 @@ def flash_drive():
     dtype = parts[2] if len(parts) > 2 else ''
 
     if dtype != 'disk':
-        return jsonify({'error': 'Wskaż cały dysk, nie partycję'}), 400
+        return jsonify({'error': 'Select the whole disk, not a partition'}), 400
     if tran != 'usb' and hotplug != '1':
-        return jsonify({'error': 'To nie jest urządzenie USB — odmowa zapisu'}), 400
+        return jsonify({'error': 'Not a USB device — write refused'}), 400
 
     # Protect system disk
     mount_check = _host_run(f"sudo /opt/ethos/tools/ethos-system-helper.sh lsblk -nlo MOUNTPOINT /dev/{target_disk} 2>/dev/null")
@@ -384,19 +384,19 @@ def flash_drive():
         mounts = [m.strip() for m in mount_check.stdout.strip().splitlines() if m.strip()]
         for mp in mounts:
             if mp in ('/', '/boot', '/boot/efi', '/home'):
-                return jsonify({'error': f'Dysk zawiera partycję systemową ({mp}) — odmowa zapisu!'}), 400
+                return jsonify({'error': f'Disk contains system partition ({mp}) — write refused!'}), 400
 
     # Check disk size
     size_r = _host_run(f"sudo /opt/ethos/tools/ethos-system-helper.sh blockdev --getsize64 /dev/{target_disk} 2>/dev/null")
     disk_size = int(size_r.stdout.strip()) if size_r.returncode == 0 and size_r.stdout.strip().isdigit() else 0
 
     if disk_size > 0 and image_size > disk_size:
-        return jsonify({'error': f'Obraz ({image_size // (1024**2)} MB) jest większy niż dysk ({disk_size // (1024**2)} MB)'}), 400
+        return jsonify({'error': f'Image ({image_size // (1024**2)} MB) is larger than disk ({disk_size // (1024**2)} MB)'}), 400
 
     # Reject if already flashing
     with _flash_lock:
         if _flash_state['status'] == 'flashing':
-            return jsonify({'error': 'Flashowanie już trwa'}), 409
+            return jsonify({'error': 'Flash already in progress'}), 409
 
     # Translate container path to host path for dd
     host_image_path = host_path(image_path)
@@ -424,7 +424,7 @@ def _flash_worker(host_image_path, target_disk, image_path, image_size, verify_a
     """Background worker that performs the actual flash operation."""
     try:
         # Step 1: Unmount all partitions on the target disk
-        msg = f'Odmontowywanie partycji na /dev/{target_disk}...'
+        msg = f'Unmounting partitions on /dev/{target_disk}...'
         _update_flash(percent=0, message=msg, log_line=msg)
 
         umount_r = _host_run(
@@ -436,10 +436,10 @@ def _flash_worker(host_image_path, target_disk, image_path, image_size, verify_a
                 if len(cols) >= 2 and cols[1].strip():
                     mp = cols[1].strip()
                     _host_run(f"sudo /opt/ethos/tools/ethos-system-helper.sh umount {_q(mp)} 2>/dev/null")
-                    _update_flash(log_line=f'Odmontowano {mp}')
+                    _update_flash(log_line=f'Unmounted {mp}')
 
         # Step 2: Write image with dd (no status=progress — we track via /proc)
-        msg2 = 'Zapisywanie obrazu na dysk USB...'
+        msg2 = 'Writing image to USB drive...'
         _update_flash(percent=1, message=msg2, log_line=msg2)
 
         bs = '4M'
@@ -504,7 +504,7 @@ def _flash_worker(host_image_path, target_disk, image_path, image_size, verify_a
 
             # Step 3: Optional data verification (BEFORE partprobe which may alter GPT)
             if verify_after and not compressed:
-                _update_flash(percent=96, message='Weryfikacja zapisu...', log_line='Weryfikacja zapisu...')
+                _update_flash(percent=96, message='Verifying write...', log_line='Verifying write...')
                 # Drop page cache so reads get fresh data from disk (not stale pre-dd cache)
                 _host_run('echo 1 > /proc/sys/vm/drop_caches 2>/dev/null', timeout=10)
                 # Compare checksums of a chunk from the middle of the image
@@ -520,23 +520,23 @@ def _flash_worker(host_image_path, target_disk, image_path, image_size, verify_a
                     img_hash = img_r.stdout.strip().split()[0] if img_r.returncode == 0 and img_r.stdout else ''
                     disk_hash = disk_r.stdout.strip().split()[0] if disk_r.returncode == 0 and disk_r.stdout else ''
                     if img_hash and img_hash == disk_hash:
-                        _update_flash(log_line=f'Weryfikacja OK — SHA256 {count_mb} MB @ offset {skip_mb} MB zgodne')
+                        _update_flash(log_line=f'Verification OK — SHA256 {count_mb} MB @ offset {skip_mb} MB match')
                     elif not img_hash or not disk_hash:
-                        _update_flash(log_line='Weryfikacja pominięta — nie udało się obliczyć sumy kontrolnej')
+                        _update_flash(log_line='Verification skipped — failed to calculate checksum')
                     else:
-                        err = f'SHA256 mismatch @ offset {skip_mb} MB: obraz={img_hash[:16]}… dysk={disk_hash[:16]}…'
-                        _update_flash(status='error', message=f'Weryfikacja FAILED: {err}',
-                                      result={'success': False, 'message': f'Weryfikacja niepomyślna: {err}'})
+                        err = f'SHA256 mismatch @ offset {skip_mb} MB: image={img_hash[:16]}… disk={disk_hash[:16]}…'
+                        _update_flash(status='error', message=f'Verification FAILED: {err}',
+                                      result={'success': False, 'message': f'Verification failed: {err}'})
                         elapsed = time.time() - start_time
                         _save_flash_history({
                             'image': image_path, 'disk': target_disk, 'success': False,
-                            'message': f'Weryfikacja niepomyślna: {err}',
+                            'message': f'Verification failed: {err}',
                             'timestamp': time.time(), 'size': image_size, 'elapsed': round(elapsed),
                         })
                         return
 
             # Step 4: Verify partition table
-            _update_flash(percent=98, message='Weryfikacja tablicy partycji...', log_line='Weryfikacja...')
+            _update_flash(percent=98, message='Verifying partition table...', log_line='Verifying...')
             verify_r = _host_run(f"partprobe /dev/{target_disk} 2>&1; fdisk -l /dev/{target_disk} 2>&1 | head -5")
             verify_msg = verify_r.stdout.strip() if verify_r.stdout else ''
             if verify_msg:
@@ -544,11 +544,11 @@ def _flash_worker(host_image_path, target_disk, image_path, image_size, verify_a
 
             elapsed = time.time() - start_time
             speed = (image_size / (1024 * 1024)) / elapsed if elapsed > 0 else 0
-            done_msg = f'Gotowe! {image_size // (1024**2)} MB zapisano w {elapsed:.0f}s ({speed:.1f} MB/s)'
+            done_msg = f'Done! {image_size // (1024**2)} MB written in {elapsed:.0f}s ({speed:.1f} MB/s)'
             _update_flash(log_line=done_msg)
 
             # Safe eject — ensure USB controller flushes internal cache
-            _update_flash(percent=99, message='Bezpieczne wysuwanie...', log_line='Bezpieczne wysuwanie urządzenia...')
+            _update_flash(percent=99, message='Safely ejecting...', log_line='Safely ejecting device...')
             _host_run(f'udisksctl power-off -b /dev/{target_disk} 2>/dev/null', timeout=15)
             _host_run(f'eject /dev/{target_disk} 2>/dev/null', timeout=10)
 
@@ -561,7 +561,7 @@ def _flash_worker(host_image_path, target_disk, image_path, image_size, verify_a
                 'size': image_size, 'elapsed': round(elapsed),
             })
         else:
-            err_msg = f'dd zakończył się błędem (kod: {code})'
+            err_msg = f'dd failed (code: {code})'
             if remaining:
                 err_msg += f' — {remaining[:200]}'
             elapsed = time.time() - start_time
@@ -573,7 +573,7 @@ def _flash_worker(host_image_path, target_disk, image_path, image_size, verify_a
                 'size': image_size, 'elapsed': round(elapsed),
             })
     except Exception as exc:
-        err_msg = f'Nieoczekiwany błąd: {exc}'
+        err_msg = f'Unexpected error: {exc}'
         elapsed = time.time() - start_time if 'start_time' in dir() else 0
         _update_flash(status='error', percent=0, message=err_msg,
                       result={'success': False, 'message': err_msg})
@@ -653,7 +653,7 @@ def cancel_flash():
     """Kill the running dd process."""
     with _flash_lock:
         if _flash_state['status'] != 'flashing':
-            return jsonify({'error': 'Brak aktywnego flashowania'}), 400
+            return jsonify({'error': 'No active flash in progress'}), 400
         pid = _flash_state.get('pid', 0)
     if pid and pid > 0:
         try:
@@ -665,8 +665,8 @@ def cancel_flash():
                 pass
         except OSError:
             pass
-    _update_flash(status='error', message='Flashowanie anulowane przez użytkownika',
-                  result={'success': False, 'message': 'Anulowano'})
+    _update_flash(status='error', message='Flash cancelled by user',
+                  result={'success': False, 'message': 'Cancelled'})
     return jsonify({'ok': True})
 
 
@@ -680,20 +680,20 @@ def start_checksum():
     data = request.json or {}
     path = data.get('path', '')
     if not path or not os.path.isfile(path):
-        return jsonify({'error': 'Plik nie istnieje'}), 404
+        return jsonify({'error': 'File not found'}), 404
     # Security: only allow files under allowed browse roots
     real = os.path.realpath(path)
     roots = browse_roots()
     if not any(real.startswith(os.path.realpath(r) + '/') or real == os.path.realpath(r) for r in roots):
-        return jsonify({'error': 'Niedozwolona ścieżka'}), 403
+        return jsonify({'error': 'Path not allowed'}), 403
     size = os.path.getsize(real)
     if size > 10 * 1024**3:
-        return jsonify({'error': 'Plik za duży na obliczenie sumy kontrolnej'}), 400
+        return jsonify({'error': 'File too large to calculate checksum'}), 400
     r = _host_run(f"sha256sum {_q(real)} 2>/dev/null", timeout=600)
     if r.returncode == 0 and r.stdout.strip():
         sha = r.stdout.strip().split()[0]
         return jsonify({'sha256': sha, 'path': path})
-    return jsonify({'error': 'Nie udało się obliczyć sumy kontrolnej'}), 500
+    return jsonify({'error': 'Failed to calculate checksum'}), 500
 
 
 # ---------------------------------------------------------------------------
@@ -709,19 +709,19 @@ def format_drive():
     label = data.get('label', 'USB').strip()[:16]
 
     if not disk or not re.match(r'^[a-zA-Z0-9]+$', disk):
-        return jsonify({'error': 'Nieprawidłowa nazwa dysku'}), 400
+        return jsonify({'error': 'Invalid disk name'}), 400
     if fs_type not in ('fat32', 'exfat', 'ext4', 'ntfs', 'wipe'):
-        return jsonify({'error': 'Nieobsługiwany system plików'}), 400
+        return jsonify({'error': 'Unsupported filesystem'}), 400
 
     # Verify USB
     r = _host_run(f"sudo /opt/ethos/tools/ethos-system-helper.sh lsblk -ndo TRAN,HOTPLUG,TYPE /dev/{disk} 2>/dev/null")
     if r.returncode != 0:
-        return jsonify({'error': f'/dev/{disk} nie istnieje'}), 404
+        return jsonify({'error': f'/dev/{disk} does not exist'}), 404
     parts = r.stdout.strip().split()
     tran = parts[0] if parts else ''
     hotplug = parts[1] if len(parts) > 1 else '0'
     if tran != 'usb' and hotplug != '1':
-        return jsonify({'error': 'To nie jest urządzenie USB'}), 400
+        return jsonify({'error': 'Not a USB device'}), 400
 
     # System disk protection
     mount_check = _host_run(f"sudo /opt/ethos/tools/ethos-system-helper.sh lsblk -nlo MOUNTPOINT /dev/{disk} 2>/dev/null")
@@ -729,7 +729,7 @@ def format_drive():
         mounts = [m.strip() for m in mount_check.stdout.strip().splitlines() if m.strip()]
         for mp in mounts:
             if mp in ('/', '/boot', '/boot/efi', '/home'):
-                return jsonify({'error': f'Dysk zawiera partycję systemową ({mp})!'}), 400
+                return jsonify({'error': f'Disk contains system partition ({mp})!'}), 400
 
     # Unmount all partitions
     umount_r = _host_run(f"sudo /opt/ethos/tools/ethos-system-helper.sh lsblk -nlo NAME,MOUNTPOINT /dev/{disk} 2>/dev/null")
@@ -810,7 +810,7 @@ def format_drive():
         result = _host_run(wipe_script, timeout=120)
         output = (result.stdout or '') + (result.stderr or '')
         if 'WIPE_DONE' not in output:
-            return jsonify({'error': f'Błąd czyszczenia: {output.strip()[-500:]}'}), 500
+            return jsonify({'error': f'Wipe error: {output.strip()[-500:]}'}), 500
 
         # Check if writes actually reached the physical media
         import re as _re
@@ -820,10 +820,10 @@ def format_drive():
         io_errors = int(ioerr_m.group(1)) if ioerr_m else 0
 
         if first_bytes != '00000000' or io_errors > 0:
-            msg = 'Dysk odrzuca zapisy (I/O errors w dmesg). '
+            msg = 'Disk rejects writes (I/O errors in dmesg). '
             if io_errors > 0:
-                msg += f'Znaleziono {io_errors} błędów I/O. '
-            msg += 'Sprawdź: (1) blokada zapisu na karcie SD, (2) uszkodzona karta, (3) wadliwy czytnik USB.'
+                msg += f'Found {io_errors} I/O errors. '
+            msg += 'Check: (1) SD card write lock, (2) damaged card, (3) faulty USB reader.'
             return jsonify({'error': msg}), 500
 
         return jsonify({'status': 'ok'})
@@ -832,10 +832,10 @@ def format_drive():
     result = _host_run(full_cmd, timeout=120)
 
     if result.returncode == 0:
-        msg = 'Dysk wyczyszczony (brak partycji)' if fs_type == 'wipe' else f'Dysk sformatowany jako {fs_type.upper()} ({label})'
+        msg = 'Disk wiped (no partitions)' if fs_type == 'wipe' else f'Disk formatted as {fs_type.upper()} ({label})'
         return jsonify({'status': 'ok', 'disk_type': fs_type, 'label': label if fs_type != 'wipe' else None})
     else:
-        return jsonify({'error': f'Błąd formatowania: {(result.stdout or "").strip()[-200:]}'}), 500
+        return jsonify({'error': f'Format error: {(result.stdout or "").strip()[-200:]}'}), 500
 
 
 # ---------------------------------------------------------------------------

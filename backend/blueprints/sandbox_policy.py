@@ -101,20 +101,20 @@ def _validate_limits(data):
     }
     unknown = set(data.keys()) - allowed_keys
     if unknown:
-        return None, f'Nieznane pola: {", ".join(sorted(unknown))}'
+        return None, f'Unknown fields: {", ".join(sorted(unknown))}'
 
     cleaned = {}
 
     if 'mem_limit' in data:
         v = str(data['mem_limit']).strip().lower()
         if v != '0' and not _MEM_RE.match(v):
-            return None, 'mem_limit: nieprawidłowy format (np. 512m, 2g, 0)'
+            return None, 'mem_limit: invalid format (e.g. 512m, 2g, 0)'
         cleaned['mem_limit'] = v
 
     if 'mem_reservation' in data:
         v = str(data['mem_reservation']).strip().lower()
         if v != '0' and not _MEM_RE.match(v):
-            return None, 'mem_reservation: nieprawidłowy format (np. 128m, 1g, 0)'
+            return None, 'mem_reservation: invalid format (e.g. 128m, 1g, 0)'
         cleaned['mem_reservation'] = v
 
     if 'cpu_quota' in data:
@@ -123,7 +123,7 @@ def _validate_limits(data):
             if v < 0 or v > 1000:
                 raise ValueError
         except (TypeError, ValueError):
-            return None, 'cpu_quota: oczekiwana liczba 0–1000 (% CPU, 0 = brak limitu)'
+            return None, 'cpu_quota: expected number 0–1000 (% CPU, 0 = no limit)'
         cleaned['cpu_quota'] = v
 
     if 'cpu_shares' in data:
@@ -132,7 +132,7 @@ def _validate_limits(data):
             if v < 2:  # Docker minimum is 2
                 raise ValueError
         except (TypeError, ValueError):
-            return None, 'cpu_shares: oczekiwana liczba całkowita >= 2 (domyślnie 1024)'
+            return None, 'cpu_shares: expected integer >= 2 (default 1024)'
         cleaned['cpu_shares'] = v
 
     if 'pids_limit' in data:
@@ -141,27 +141,27 @@ def _validate_limits(data):
             if v < 0:
                 raise ValueError
         except (TypeError, ValueError):
-            return None, 'pids_limit: oczekiwana nieujemna liczba całkowita (0 = brak limitu)'
+            return None, 'pids_limit: expected non-negative integer (0 = no limit)'
         cleaned['pids_limit'] = v
 
     if 'no_new_privileges' in data:
         if not isinstance(data['no_new_privileges'], bool):
-            return None, 'no_new_privileges: oczekiwana wartość boolowska'
+            return None, 'no_new_privileges: expected boolean value'
         cleaned['no_new_privileges'] = data['no_new_privileges']
 
     if 'read_only_root' in data:
         if not isinstance(data['read_only_root'], bool):
-            return None, 'read_only_root: oczekiwana wartość boolowska'
+            return None, 'read_only_root: expected boolean value'
         cleaned['read_only_root'] = data['read_only_root']
 
     if 'cap_drop' in data:
         if not isinstance(data['cap_drop'], list):
-            return None, 'cap_drop: oczekiwana lista stringów'
+            return None, 'cap_drop: expected list of strings'
         cleaned['cap_drop'] = [str(c).upper() for c in data['cap_drop']]
 
     if 'cap_add' in data:
         if not isinstance(data['cap_add'], list):
-            return None, 'cap_add: oczekiwana lista stringów'
+            return None, 'cap_add: expected list of strings'
         cleaned['cap_add'] = [str(c).upper() for c in data['cap_add']]
 
     return cleaned, None
@@ -173,7 +173,7 @@ def _require_admin(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if getattr(g, 'role', None) != 'admin':
-            return jsonify({'error': 'Brak uprawnień — wymagana rola administratora'}), 403
+            return jsonify({'error': 'Permission denied — admin role required'}), 403
         return f(*args, **kwargs)
     return decorated
 
@@ -222,12 +222,12 @@ def list_apps():
 def get_app_policy(app_name):
     """Get the stored override for *app_name* (does not include defaults)."""
     if not _APP_NAME_RE.match(app_name):
-        return jsonify({'error': 'Nieprawidłowa nazwa aplikacji'}), 400
+        return jsonify({'error': 'Invalid application name'}), 400
 
     store = _load_policies()
     override = store.get('apps', {}).get(app_name)
     if override is None:
-        return jsonify({'error': f'Brak polityki dla aplikacji "{app_name}"'}), 404
+        return jsonify({'error': f'No policy found for application "{app_name}"'}), 404
     return jsonify(override)
 
 
@@ -236,7 +236,7 @@ def get_app_policy(app_name):
 def set_app_policy(app_name):
     """Create or update a per-app resource policy (partial update supported)."""
     if not _APP_NAME_RE.match(app_name):
-        return jsonify({'error': 'Nieprawidłowa nazwa aplikacji'}), 400
+        return jsonify({'error': 'Invalid application name'}), 400
 
     body = request.get_json(force=True, silent=True) or {}
     cleaned, err = _validate_limits(body)
@@ -256,11 +256,11 @@ def set_app_policy(app_name):
 def delete_app_policy(app_name):
     """Remove the per-app override so the app falls back to defaults."""
     if not _APP_NAME_RE.match(app_name):
-        return jsonify({'error': 'Nieprawidłowa nazwa aplikacji'}), 400
+        return jsonify({'error': 'Invalid application name'}), 400
 
     store = _load_policies()
     if app_name not in store.get('apps', {}):
-        return jsonify({'error': f'Brak polityki dla aplikacji "{app_name}"'}), 404
+        return jsonify({'error': f'No policy found for application "{app_name}"'}), 404
 
     del store['apps'][app_name]
     _save_policies(store)
@@ -272,6 +272,6 @@ def delete_app_policy(app_name):
 def get_app_effective(app_name):
     """Return the fully resolved policy for *app_name* (defaults + override)."""
     if not _APP_NAME_RE.match(app_name):
-        return jsonify({'error': 'Nieprawidłowa nazwa aplikacji'}), 400
+        return jsonify({'error': 'Invalid application name'}), 400
 
     return jsonify(get_effective_policy(app_name))

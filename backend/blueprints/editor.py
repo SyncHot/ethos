@@ -1,5 +1,5 @@
 """
-EthOS — Edytor dokumentów (Document Editor)
+EthOS — Document Editor
 Backend API for opening/saving DOCX and exporting PDF
 """
 
@@ -37,7 +37,7 @@ def editor_open():
     path = data.get('path', '')
     real = _safe_path(path)
     if not real or not os.path.isfile(real):
-        return jsonify({'error': 'Plik nie istnieje'}), 404
+        return jsonify({'error': 'File not found'}), 404
 
     ext = os.path.splitext(real)[1].lower()
 
@@ -57,7 +57,7 @@ def editor_open():
                 'messages': messages
             })
         except Exception as e:
-            return jsonify({'error': f'Błąd odczytu DOCX: {str(e)}'}), 500
+            return jsonify({'error': f'DOCX read error: {str(e)}'}), 500
     elif ext == '.txt':
         try:
             with open(real, 'r', encoding='utf-8', errors='replace') as f:
@@ -71,7 +71,7 @@ def editor_open():
                 'messages': []
             })
         except Exception as e:
-            return jsonify({'error': f'Błąd odczytu: {str(e)}'}), 500
+            return jsonify({'error': f'Read error: {str(e)}'}), 500
     elif ext == '.html' or ext == '.htm':
         try:
             with open(real, 'r', encoding='utf-8', errors='replace') as f:
@@ -88,9 +88,9 @@ def editor_open():
                 'messages': []
             })
         except Exception as e:
-            return jsonify({'error': f'Błąd odczytu: {str(e)}'}), 500
+            return jsonify({'error': f'Read error: {str(e)}'}), 500
     else:
-        return jsonify({'error': f'Nieobsługiwany format: {ext}'}), 400
+        return jsonify({'error': f'Unsupported format: {ext}'}), 400
 
 
 def _convert_image_inline(image):
@@ -118,7 +118,7 @@ def editor_save_docx():
     filename = data.get('filename', 'dokument.docx')
 
     if not html:
-        return jsonify({'error': 'Brak treści do zapisania'}), 400
+        return jsonify({'error': 'No content to save'}), 400
 
     # Ensure .docx extension
     if not filename.lower().endswith('.docx'):
@@ -158,11 +158,11 @@ img {{ max-width: 100%; }}
         if path:
             real = _safe_path(path)
             if not real:
-                return jsonify({'error': 'Nieprawidłowa ścieżka'}), 400
+                return jsonify({'error': 'Invalid path'}), 400
             # Save in the same directory
             save_dir = os.path.dirname(real) if os.path.isfile(real) else real
             if not os.path.isdir(save_dir):
-                return jsonify({'error': 'Folder docelowy nie istnieje'}), 400
+                return jsonify({'error': 'Target folder not found'}), 400
             save_path = os.path.join(save_dir, filename)
             doc.save(save_path)
             # Compute user-visible path
@@ -176,7 +176,7 @@ img {{ max-width: 100%; }}
             return send_file(buf, mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
                              download_name=filename, as_attachment=True)
     except Exception as e:
-        return jsonify({'error': f'Błąd zapisu DOCX: {str(e)}'}), 500
+        return jsonify({'error': f'DOCX write error: {str(e)}'}), 500
 
 
 # ─── Save as PDF ───
@@ -190,7 +190,7 @@ def editor_save_pdf():
     filename = data.get('filename', 'dokument.pdf')
 
     if not html:
-        return jsonify({'error': 'Brak treści do eksportu'}), 400
+        return jsonify({'error': 'No content to export'}), 400
 
     if not filename.lower().endswith('.pdf'):
         filename = os.path.splitext(filename)[0] + '.pdf'
@@ -224,7 +224,7 @@ blockquote {{ border-left: 3px solid #ccc; margin-left: 0; padding-left: 12pt; c
 
             pdf_path = os.path.join(tmpdir, 'document.pdf')
             if not os.path.isfile(pdf_path):
-                return jsonify({'error': f'Konwersja PDF nie powiodła się: {result.stderr}'}), 500
+                return jsonify({'error': f'PDF conversion failed: {result.stderr}'}), 500
 
             with open(pdf_path, 'rb') as f:
                 pdf_bytes = f.read()
@@ -232,10 +232,10 @@ blockquote {{ border-left: 3px solid #ccc; margin-left: 0; padding-left: 12pt; c
         if path:
             real = _safe_path(path)
             if not real:
-                return jsonify({'error': 'Nieprawidłowa ścieżka'}), 400
+                return jsonify({'error': 'Invalid path'}), 400
             save_dir = os.path.dirname(real) if os.path.isfile(real) else real
             if not os.path.isdir(save_dir):
-                return jsonify({'error': 'Folder docelowy nie istnieje'}), 400
+                return jsonify({'error': 'Target folder not found'}), 400
             save_path = os.path.join(save_dir, filename)
             with open(save_path, 'wb') as f:
                 f.write(pdf_bytes)
@@ -246,9 +246,9 @@ blockquote {{ border-left: 3px solid #ccc; margin-left: 0; padding-left: 12pt; c
             buf.seek(0)
             return send_file(buf, mimetype='application/pdf', download_name=filename, as_attachment=True)
     except subprocess.TimeoutExpired:
-        return jsonify({'error': 'Konwersja PDF zajęła zbyt długo'}), 500
+        return jsonify({'error': 'PDF conversion timed out'}), 500
     except Exception as e:
-        return jsonify({'error': f'Błąd eksportu PDF: {str(e)}'}), 500
+        return jsonify({'error': f'PDF export error: {str(e)}'}), 500
 
 
 # ─── Save overwrite (same file) ───
@@ -261,11 +261,11 @@ def editor_save():
     path = data.get('path', '')
 
     if not html or not path:
-        return jsonify({'error': 'Brak treści lub ścieżki'}), 400
+        return jsonify({'error': 'Content or path required'}), 400
 
     real = _safe_path(path)
     if not real:
-        return jsonify({'error': 'Nieprawidłowa ścieżka'}), 400
+        return jsonify({'error': 'Invalid path'}), 400
 
     ext = os.path.splitext(real)[1].lower()
 
@@ -309,18 +309,18 @@ img {{ max-width: 100%; }}
                 f.write(text.strip())
 
         else:
-            return jsonify({'error': f'Nieobsługiwany format: {ext}'}), 400
+            return jsonify({'error': f'Unsupported format: {ext}'}), 400
 
         return jsonify({'ok': True, 'path': path})
     except Exception as e:
-        return jsonify({'error': f'Błąd zapisu: {str(e)}'}), 500
+        return jsonify({'error': f'Write error: {str(e)}'}), 500
 
 
 # ── Package: install / uninstall / status ──
 
 register_pkg_routes(
     editor_bp,
-    install_message='Edytor dokumentów gotowy.',
+    install_message='Document editor ready.',
     install_deps=['libreoffice'],
     url_prefix='/api/editor',
 )

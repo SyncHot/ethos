@@ -123,11 +123,11 @@ def monitor_loop():
             }
             
             if 'OB' in status and 'OL' in last_status:
-                log('system', 'warning', 'Zasilanie UPS: Przejście na baterię!', {'charge': charge})
+                log('system', 'warning', 'UPS: Switched to battery power!', {'charge': charge})
                 on_battery_start = time.time()
                 trigger_webhook(settings.get('webhook_url'), settings.get('webhook_method', 'POST'), webhook_payload)
             elif 'OL' in status and 'OB' in last_status:
-                log('system', 'info', 'Zasilanie UPS: Przywrócono zasilanie sieciowe', {'charge': charge})
+                log('system', 'info', 'UPS: AC power restored', {'charge': charge})
                 on_battery_start = 0
                 trigger_webhook(settings.get('webhook_url'), settings.get('webhook_method', 'POST'), webhook_payload)
             
@@ -137,7 +137,7 @@ def monitor_loop():
         if 'OB' in status: # On Battery
             # Check threshold
             if charge < int(settings.get('shutdown_threshold', 20)):
-                log('system', 'warning', f'UPS: Bateria krytyczna ({charge}%), zamykanie systemu...', {'charge': charge})
+                log('system', 'warning', f'UPS: Critical battery ({charge}%), shutting down...', {'charge': charge})
                 subprocess.run(['shutdown', '-h', 'now'])
             
             # Check timer
@@ -145,7 +145,7 @@ def monitor_loop():
             if limit > 0 and on_battery_start > 0:
                 elapsed = time.time() - on_battery_start
                 if elapsed > limit:
-                     log('system', 'warning', f'UPS: Limit czasu na baterii ({limit}s) osiągnięty, zamykanie...', {'elapsed': elapsed})
+                     log('system', 'warning', f'UPS: Battery time limit ({limit}s) reached, shutting down...', {'elapsed': elapsed})
                      subprocess.run(['shutdown', '-h', 'now'])
 
         time.sleep(5)

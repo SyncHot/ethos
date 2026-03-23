@@ -227,21 +227,21 @@ def ssl_status():
 @domains_mgr_bp.route('/ssl/install-certbot', methods=['POST'])
 def install_certbot():
     if g.role != 'admin':
-        return jsonify({'error': 'Tylko administrator'}), 403
+        return jsonify({'error': 'Admin access required'}), 403
     if _certbot_installed():
         return jsonify({'status': 'ok', 'installed': True})
     r = _apt_install('certbot', timeout=120)
     if r.returncode != 0:
-        return jsonify({'error': f'Instalacja nie powiodła się: {r.stderr.strip()[-200:]}'}), 500
+        return jsonify({'error': f'Installation failed: {r.stderr.strip()[-200:]}'}), 500
     return jsonify({'status': 'ok'})
 
 
 @domains_mgr_bp.route('/ssl/obtain', methods=['POST'])
 def ssl_obtain():
     if g.role != 'admin':
-        return jsonify({'error': 'Tylko administrator'}), 403
+        return jsonify({'error': 'Admin access required'}), 403
     if not _certbot_installed():
-        return jsonify({'error': 'Certbot nie jest zainstalowany'}), 400
+        return jsonify({'error': 'Certbot is not installed'}), 400
 
     data = request.json or {}
     domain = data.get('domain', '').strip().lower()
@@ -249,18 +249,18 @@ def ssl_obtain():
     try:
         https_port = int(data.get('https_port', 443))
     except (ValueError, TypeError):
-        return jsonify({'error': 'Nieprawidłowy port HTTPS'}), 400
+        return jsonify({'error': 'Invalid HTTPS port'}), 400
 
     if not domain:
-        return jsonify({'error': 'Domena jest wymagana'}), 400
+        return jsonify({'error': 'Domain is required'}), 400
     if not re.match(r'^[a-z0-9]([a-z0-9\-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9\-]*[a-z0-9])?)*$', domain):
-        return jsonify({'error': 'Nieprawidłowa domena'}), 400
+        return jsonify({'error': 'Invalid domain'}), 400
     if not email or '@' not in email:
-        return jsonify({'error': 'Prawidłowy email jest wymagany'}), 400
+        return jsonify({'error': 'A valid email is required'}), 400
 
     ok, err = _certbot_obtain(domain, email)
     if not ok:
-        code = 429 if 'limit' in err.lower() else (400 if 'nie wskazuje' in err else 500)
+        code = 429 if 'limit' in err.lower() else (400 if 'does not point' in err else 500)
         return jsonify({'error': err}), code
 
     fullchain, privkey = _cert_paths(domain)
@@ -273,7 +273,7 @@ def ssl_obtain():
 
     return jsonify({
         'ok': True,
-        'message': f'Certyfikat dla {domain} uzyskany pomyślnie!',
+        'message': f'Certificate for {domain} obtained successfully!',
         'cert': _cert_info(domain),
     })
 
@@ -281,7 +281,7 @@ def ssl_obtain():
 @domains_mgr_bp.route('/ssl/enable', methods=['POST'])
 def ssl_enable():
     if g.role != 'admin':
-        return jsonify({'error': 'Tylko administrator'}), 403
+        return jsonify({'error': 'Admin access required'}), 403
 
     data = request.json or {}
     enabled = data.get('enabled', False)
@@ -290,10 +290,10 @@ def ssl_enable():
     if enabled:
         domain = cfg.get('domain', '')
         if not domain:
-            return jsonify({'error': 'Najpierw uzyskaj certyfikat'}), 400
+            return jsonify({'error': 'Obtain a certificate first'}), 400
         fullchain, privkey = _cert_paths(domain)
         if not os.path.exists(fullchain):
-            return jsonify({'error': f'Brak certyfikatu dla {domain}'}), 400
+            return jsonify({'error': f'No certificate for {domain}'}), 400
 
         https_port = int(data.get('https_port', cfg.get('https_port', 443)))
         redirect_http = data.get('redirect_http', cfg.get('redirect_http', True))
@@ -311,7 +311,7 @@ def ssl_enable():
 
         return jsonify({
             'ok': True,
-            'message': f'HTTPS włączony na porcie {https_port}. Wymagany restart serwera.',
+            'message': f'HTTPS enabled on port {https_port}. Server restart required.',
             'restart_needed': True,
         })
     else:
@@ -320,7 +320,7 @@ def ssl_enable():
         _write_env_key('SSL_ENABLED', '0')
         return jsonify({
             'ok': True,
-            'message': 'HTTPS wyłączony. Wymagany restart serwera.',
+            'message': 'HTTPS disabled. Server restart required.',
             'restart_needed': True,
         })
 
@@ -328,9 +328,9 @@ def ssl_enable():
 @domains_mgr_bp.route('/ssl/renew', methods=['POST'])
 def ssl_renew():
     if g.role != 'admin':
-        return jsonify({'error': 'Tylko administrator'}), 403
+        return jsonify({'error': 'Admin access required'}), 403
     if not _certbot_installed():
-        return jsonify({'error': 'Certbot nie jest zainstalowany'}), 400
+        return jsonify({'error': 'Certbot is not installed'}), 400
 
     data = request.json or {}
     domain = data.get('domain', '').strip()
@@ -338,7 +338,7 @@ def ssl_renew():
         cfg = _load_ssl_config()
         domain = cfg.get('domain', '')
     if not domain:
-        return jsonify({'error': 'Brak skonfigurowanej domeny'}), 400
+        return jsonify({'error': 'No domain configured'}), 400
 
     _ensure_acme_webroot()
     r = _host_run(
@@ -347,13 +347,13 @@ def ssl_renew():
         timeout=120)
 
     if r.returncode != 0:
-        return jsonify({'error': f'Odnowienie nie powiodło się:\n{(r.stderr.strip() or r.stdout.strip())[-300:]}'}), 500
+        return jsonify({'error': f'Renewal failed:\n{(r.stderr.strip() or r.stdout.strip())[-300:]}'}), 500
 
     _nginx_reload()  # pick up renewed cert
 
     return jsonify({
         'ok': True,
-        'message': 'Certyfikat odnowiony pomyślnie!',
+        'message': 'Certificate renewed successfully!',
         'cert': _cert_info(domain),
     })
 
@@ -361,7 +361,7 @@ def ssl_renew():
 @domains_mgr_bp.route('/ssl/auto-renew', methods=['POST'])
 def ssl_auto_renew():
     if g.role != 'admin':
-        return jsonify({'error': 'Tylko administrator'}), 403
+        return jsonify({'error': 'Admin access required'}), 403
 
     data = request.json or {}
     enabled = data.get('enabled', True)
@@ -399,7 +399,7 @@ def ssl_auto_renew():
 @domains_mgr_bp.route('/ssl/test', methods=['POST'])
 def ssl_test():
     if g.role != 'admin':
-        return jsonify({'error': 'Tylko administrator'}), 403
+        return jsonify({'error': 'Admin access required'}), 403
 
     data = request.json or {}
     domain = data.get('domain', '').strip()
@@ -556,14 +556,14 @@ def _certbot_obtain(domain, email):
     if r.returncode != 0:
         msg = (r.stderr.strip() or r.stdout.strip())[-500:]
         if 'too many' in msg.lower():
-            return False, 'Przekroczono limit żądań Let\'s Encrypt. Spróbuj za godzinę.'
+            return False, 'Let\'s Encrypt rate limit exceeded. Try again in an hour.'
         if 'dns' in msg.lower() or 'resolve' in msg.lower():
-            return False, f'Domena {domain} nie wskazuje na ten serwer.'
-        return False, f'Certbot nie powiódł się:\n{msg}'
+            return False, f'Domain {domain} does not point to this server.'
+        return False, f'Certbot failed:\n{msg}'
 
     fullchain, _ = _cert_paths(domain)
     if not os.path.exists(fullchain):
-        return False, 'Certbot zakończył się, ale certyfikat nie został utworzony'
+        return False, 'Certbot completed but the certificate was not created'
 
     return True, ''
 
@@ -760,13 +760,13 @@ def list_domains():
 @domains_mgr_bp.route('/domains/install-nginx', methods=['POST'])
 def install_nginx():
     if g.role != 'admin':
-        return jsonify({'error': 'Tylko administrator'}), 403
+        return jsonify({'error': 'Admin access required'}), 403
     if _nginx_installed():
         return jsonify({'status': 'ok', 'installed': True})
 
     r = _apt_install('nginx', timeout=120)
     if r.returncode != 0:
-        return jsonify({'error': f'Instalacja nie powiodła się: {r.stderr.strip()[-200:]}'}), 500
+        return jsonify({'error': f'Installation failed: {r.stderr.strip()[-200:]}'}), 500
 
     _host_run('rm -f /etc/nginx/sites-enabled/default', timeout=5)
     _host_run('mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled', timeout=5)
@@ -779,8 +779,8 @@ def install_nginx():
     if r3.returncode != 0 or 'active' not in r3.stdout.strip():
         return jsonify({
             'ok': True,
-            'message': 'Nginx zainstalowany, ale nie udało się uruchomić. '
-                       'Uruchomi się automatycznie po dodaniu pierwszej domeny.',
+            'message': 'Nginx installed but failed to start. '
+                       'It will start automatically when the first domain is added.',
         })
     return jsonify({'status': 'ok'})
 
@@ -793,9 +793,9 @@ def local_services():
 @domains_mgr_bp.route('/domains', methods=['POST'])
 def add_domain():
     if g.role != 'admin':
-        return jsonify({'error': 'Tylko administrator'}), 403
+        return jsonify({'error': 'Admin access required'}), 403
     if not _nginx_installed():
-        return jsonify({'error': 'Nginx nie jest zainstalowany'}), 400
+        return jsonify({'error': 'Nginx is not installed'}), 400
 
     d = request.json or {}
     domain = d.get('domain', '').strip().lower()
@@ -807,22 +807,22 @@ def add_domain():
     description = d.get('description', '').strip()
 
     if not domain:
-        return jsonify({'error': 'Domena jest wymagana'}), 400
+        return jsonify({'error': 'Domain is required'}), 400
     if len(domain) > 253:
-        return jsonify({'error': 'Domena zbyt długa (max 253 znaków)'}), 400
+        return jsonify({'error': 'Domain too long (max 253 characters)'}), 400
     if not _DOMAIN_RE.match(domain):
-        return jsonify({'error': 'Nieprawidłowa domena (np. sub.example.com)'}), 400
+        return jsonify({'error': 'Invalid domain (e.g. sub.example.com)'}), 400
     if not target:
-        return jsonify({'error': 'Cel (target) jest wymagany — np. 127.0.0.1:8080'}), 400
+        return jsonify({'error': 'Target is required — e.g. 127.0.0.1:8080'}), 400
     if not _TARGET_RE.match(target):
-        return jsonify({'error': 'Nieprawidłowy cel — dozwolone: host:port lub http(s)://host:port/path'}), 400
+        return jsonify({'error': 'Invalid target — allowed: host:port or http(s)://host:port/path'}), 400
     if custom_config and _DANGEROUS_DIRECTIVES_RE.search(custom_config):
-        return jsonify({'error': 'Custom config zawiera zabronione dyrektywy (load_module, include, lua_, perl_, ssl_certificate)'}), 400
+        return jsonify({'error': 'Custom config contains forbidden directives (load_module, include, lua_, perl_, ssl_certificate)'}), 400
 
     data = _load_domains()
     for existing in data.get('domains', []):
         if existing['domain'] == domain:
-            return jsonify({'error': f'Domena {domain} jest już skonfigurowana'}), 409
+            return jsonify({'error': f'Domain {domain} is already configured'}), 409
 
     if ssl:
         fullchain, _ = _cert_paths(domain)
@@ -834,13 +834,13 @@ def add_domain():
                 ssl_cfg = _load_ssl_config()
                 email = ssl_cfg.get('email', '')
             if not email:
-                return jsonify({'error': 'SSL wymaga certyfikatu. Podaj email aby go automatycznie uzyskać.'}), 400
+                return jsonify({'error': 'SSL requires a certificate. Provide an email to obtain one automatically.'}), 400
             if not _certbot_installed():
-                return jsonify({'error': 'Certbot nie jest zainstalowany. Zainstaluj go w zakładce SSL.'}), 400
+                return jsonify({'error': 'Certbot is not installed. Install it in the SSL tab.'}), 400
             # Obtain certificate (webroot mode — nginx stays up)
             ok, err = _certbot_obtain(domain, email)
             if not ok:
-                code = 429 if 'limit' in err.lower() else (400 if 'nie wskazuje' in err else 500)
+                code = 429 if 'limit' in err.lower() else (400 if 'does not point' in err else 500)
                 return jsonify({'error': err}), code
             # Save email and domain for future use
             ssl_cfg = _load_ssl_config()
@@ -865,7 +865,7 @@ def add_domain():
 
     ok, err = _write_nginx_conf(entry)
     if not ok:
-        return jsonify({'error': f'Błąd konfiguracji nginx:\n{err[-300:]}'}), 500
+        return jsonify({'error': f'Nginx configuration error:\n{err[-300:]}'}), 500
 
     data.setdefault('domains', []).append(entry)
     _save_domains(data)
@@ -875,7 +875,7 @@ def add_domain():
 @domains_mgr_bp.route('/domains/<domain_id>', methods=['PUT'])
 def update_domain(domain_id):
     if g.role != 'admin':
-        return jsonify({'error': 'Tylko administrator'}), 403
+        return jsonify({'error': 'Admin access required'}), 403
 
     data = _load_domains()
     entry = None
@@ -884,7 +884,7 @@ def update_domain(domain_id):
             entry = e
             break
     if not entry:
-        return jsonify({'error': 'Nie znaleziono domeny'}), 404
+        return jsonify({'error': 'Domain not found'}), 404
 
     d = request.json or {}
     for k in ('target', 'ssl', 'force_https', 'websocket', 'custom_config', 'description', 'enabled'):
@@ -894,22 +894,22 @@ def update_domain(domain_id):
     # Validate target if provided
     new_target = d.get('target', '').strip() if 'target' in d else None
     if new_target is not None and new_target and not _TARGET_RE.match(new_target):
-        return jsonify({'error': 'Nieprawidłowy cel — dozwolone: host:port lub http(s)://host:port/path'}), 400
+        return jsonify({'error': 'Invalid target — allowed: host:port or http(s)://host:port/path'}), 400
     # Validate custom_config if provided
     new_cc = d.get('custom_config', '').strip() if 'custom_config' in d else None
     if new_cc and _DANGEROUS_DIRECTIVES_RE.search(new_cc):
-        return jsonify({'error': 'Custom config zawiera zabronione dyrektywy'}), 400
+        return jsonify({'error': 'Custom config contains forbidden directives'}), 400
 
     if 'domain' in d:
         new_domain = d['domain'].strip().lower()
         if new_domain and new_domain != entry['domain']:
             if len(new_domain) > 253:
-                return jsonify({'error': 'Domena zbyt długa (max 253 znaków)'}), 400
+                return jsonify({'error': 'Domain too long (max 253 characters)'}), 400
             if not _DOMAIN_RE.match(new_domain):
-                return jsonify({'error': 'Nieprawidłowa domena'}), 400
+                return jsonify({'error': 'Invalid domain'}), 400
             for other in data.get('domains', []):
                 if other['id'] != domain_id and other['domain'] == new_domain:
-                    return jsonify({'error': f'Domena {new_domain} jest już skonfigurowana'}), 409
+                    return jsonify({'error': f'Domain {new_domain} is already configured'}), 409
             # If SSL is enabled, check if cert exists for the new domain name.
             # If not — auto-disable SSL instead of blocking the rename.
             if entry.get('ssl') or d.get('ssl'):
@@ -930,7 +930,7 @@ def update_domain(domain_id):
 
     ok, err = _write_nginx_conf(entry)
     if not ok:
-        return jsonify({'error': f'Błąd konfiguracji nginx:\n{err[-300:]}'}), 500
+        return jsonify({'error': f'Nginx configuration error:\n{err[-300:]}'}), 500
 
     _save_domains(data)
     return jsonify({'ok': True, 'domain': entry})
@@ -939,7 +939,7 @@ def update_domain(domain_id):
 @domains_mgr_bp.route('/domains/<domain_id>', methods=['DELETE'])
 def delete_domain(domain_id):
     if g.role != 'admin':
-        return jsonify({'error': 'Tylko administrator'}), 403
+        return jsonify({'error': 'Admin access required'}), 403
 
     data = _load_domains()
     domains = data.get('domains', [])
@@ -949,7 +949,7 @@ def delete_domain(domain_id):
             found = i
             break
     if found is None:
-        return jsonify({'error': 'Nie znaleziono domeny'}), 404
+        return jsonify({'error': 'Domain not found'}), 404
 
     entry = domains.pop(found)
     _remove_nginx_conf(domain_id)
@@ -960,7 +960,7 @@ def delete_domain(domain_id):
 @domains_mgr_bp.route('/domains/<domain_id>/toggle', methods=['POST'])
 def toggle_domain(domain_id):
     if g.role != 'admin':
-        return jsonify({'error': 'Tylko administrator'}), 403
+        return jsonify({'error': 'Admin access required'}), 403
 
     data = _load_domains()
     entry = None
@@ -969,24 +969,24 @@ def toggle_domain(domain_id):
             entry = e
             break
     if not entry:
-        return jsonify({'error': 'Nie znaleziono domeny'}), 404
+        return jsonify({'error': 'Domain not found'}), 404
 
     entry['enabled'] = not entry.get('enabled', True)
     ok, err = _write_nginx_conf(entry)
     if not ok:
-        return jsonify({'error': f'Błąd nginx: {err[-200:]}'}), 500
+        return jsonify({'error': f'Nginx error: {err[-200:]}'}), 500
     _save_domains(data)
 
-    status_str = 'włączona' if entry['enabled'] else 'wyłączona'
+    status_str = 'enabled' if entry['enabled'] else 'disabled'
     return jsonify({'status': 'ok', 'enabled': entry['enabled'], 'domain': entry["domain"]})
 
 
 @domains_mgr_bp.route('/domains/<domain_id>/ssl', methods=['POST'])
 def domain_ssl(domain_id):
     if g.role != 'admin':
-        return jsonify({'error': 'Tylko administrator'}), 403
+        return jsonify({'error': 'Admin access required'}), 403
     if not _certbot_installed():
-        return jsonify({'error': 'Certbot nie jest zainstalowany.'}), 400
+        return jsonify({'error': 'Certbot is not installed.'}), 400
 
     data = _load_domains()
     entry = None
@@ -995,7 +995,7 @@ def domain_ssl(domain_id):
             entry = e
             break
     if not entry:
-        return jsonify({'error': 'Nie znaleziono domeny'}), 404
+        return jsonify({'error': 'Domain not found'}), 404
 
     domain = entry['domain']
     d = request.json or {}
@@ -1005,17 +1005,17 @@ def domain_ssl(domain_id):
         ssl_cfg = _load_ssl_config()
         email = ssl_cfg.get('email', '')
     if not email:
-        return jsonify({'error': 'Email jest wymagany (podaj go w sekcji SSL)'}), 400
+        return jsonify({'error': 'Email is required (provide it in the SSL section)'}), 400
 
     # Use webroot mode (nginx stays running) — same as add_domain
     ok, err = _certbot_obtain(domain, email)
     if not ok:
-        code = 429 if 'limit' in err.lower() else (400 if 'nie wskazuje' in err else 500)
+        code = 429 if 'limit' in err.lower() else (400 if 'does not point' in err else 500)
         return jsonify({'error': err}), code
 
     fullchain, _ = _cert_paths(domain)
     if not os.path.exists(fullchain):
-        return jsonify({'error': 'Certbot zakończył się, lecz certyfikat nie istnieje'}), 500
+        return jsonify({'error': 'Certbot completed but the certificate does not exist'}), 500
 
     entry['ssl'] = True
     entry['force_https'] = True
@@ -1032,7 +1032,7 @@ def domain_ssl(domain_id):
 
     return jsonify({
         'ok': True,
-        'message': f'Certyfikat SSL dla {domain} uzyskany!',
+        'message': f'SSL certificate for {domain} obtained!',
         'cert': _cert_info(domain),
     })
 
@@ -1046,7 +1046,7 @@ def domain_preview(domain_id):
             entry = e
             break
     if not entry:
-        return jsonify({'error': 'Nie znaleziono domeny'}), 404
+        return jsonify({'error': 'Domain not found'}), 404
     return jsonify({'config': _generate_nginx_conf(entry)})
 
 
@@ -1074,17 +1074,17 @@ def nginx_status():
 def nginx_action():
     """Restart / reload / start / stop nginx."""
     if g.role != 'admin':
-        return jsonify({'error': 'Tylko administrator'}), 403
+        return jsonify({'error': 'Admin access required'}), 403
     data = request.json or {}
     action = data.get('action', 'reload')
     if action not in ('restart', 'reload', 'start', 'stop'):
-        return jsonify({'error': 'Nieprawidłowa akcja'}), 400
+        return jsonify({'error': 'Invalid action'}), 400
     if action in ('restart', 'reload'):
         _ensure_nginx_map()
         r_test = _host_run('nginx -t 2>&1', timeout=10)
         if r_test.returncode != 0:
-            return jsonify({'error': f'Błąd konfiguracji nginx:\n{(r_test.stderr or r_test.stdout).strip()[-400:]}'}), 400
+            return jsonify({'error': f'Nginx configuration error:\n{(r_test.stderr or r_test.stdout).strip()[-400:]}'}), 400
     r = _host_run(f'systemctl {action} nginx', timeout=15)
     if r.returncode != 0:
-        return jsonify({'error': f'Nie udało się: {(r.stderr or r.stdout).strip()[-300:]}'}), 500
+        return jsonify({'error': f'Failed: {(r.stderr or r.stdout).strip()[-300:]}'}), 500
     return jsonify({'status': 'ok', 'action': action})

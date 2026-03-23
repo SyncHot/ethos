@@ -1,4 +1,4 @@
-# blueprints/firewall.py — Zarządzanie firewallem UFW i integracja z Fail2Ban
+# blueprints/firewall.py — UFW firewall management and Fail2Ban integration
 from flask import Blueprint, jsonify, request
 import subprocess
 import re

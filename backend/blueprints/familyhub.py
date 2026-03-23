@@ -1,6 +1,6 @@
 """
 EthOS — Family Hub Blueprint
-Centrum rodzinne: tablica ogłoszeń, listy zakupów, zadania, kalendarz.
+Family center: announcements board, shopping lists, chores, calendar.
 All routes under /api/familyhub.
 """
 
@@ -148,7 +148,7 @@ def _get_system_users():
         return []
 
 # ══════════════════════════════════════════════════════════════════
-#  TABLICA OGŁOSZEŃ (Posts / Announcements)
+#  ANNOUNCEMENTS BOARD (Posts / Announcements)
 # ══════════════════════════════════════════════════════════════════
 
 @familyhub_bp.route('/posts', methods=['GET'])
@@ -169,7 +169,7 @@ def create_post():
     body = request.json or {}
     title = str(body.get('title', '')).strip()[:200]
     if not title:
-        return jsonify({'error': 'Tytuł jest wymagany'}), 400
+        return jsonify({'error': 'Title is required'}), 400
     post = {
         'id': _uid(), 'author': _get_username(),
         'title': title,
@@ -191,7 +191,7 @@ def update_post(post_id):
     with _db() as conn:
         row = conn.execute('SELECT * FROM posts WHERE id=?', (post_id,)).fetchone()
         if not row:
-            return jsonify({'error': 'Nie znaleziono'}), 404
+            return jsonify({'error': 'Not found'}), 404
         sets, vals = [], []
         for field in ('title', 'content', 'color', 'pinned'):
             if field in body:
@@ -229,7 +229,7 @@ def react_post(post_id):
     body = request.json or {}
     emoji = str(body.get('emoji', ''))[:4]
     if not emoji:
-        return jsonify({'error': 'Brak emoji'}), 400
+        return jsonify({'error': 'Emoji required'}), 400
     username = _get_username()
     with _db() as conn:
         existing = conn.execute(
@@ -253,7 +253,7 @@ def react_post(post_id):
     return jsonify({'ok': True, 'reactions': reactions})
 
 # ══════════════════════════════════════════════════════════════════
-#  LISTY ZAKUPÓW (Shopping Lists)
+#  SHOPPING LISTS (Shopping Lists)
 # ══════════════════════════════════════════════════════════════════
 
 @familyhub_bp.route('/lists', methods=['GET'])
@@ -274,7 +274,7 @@ def create_list():
     body = request.json or {}
     name = str(body.get('name', '')).strip()[:100]
     if not name:
-        return jsonify({'error': 'Nazwa jest wymagana'}), 400
+        return jsonify({'error': 'Name is required'}), 400
     lst = {
         'id': _uid(), 'name': name,
         'color': str(body.get('color', '#3b82f6'))[:20],
@@ -316,7 +316,7 @@ def add_item(list_id):
     body = request.json or {}
     name = str(body.get('name', '')).strip()[:200]
     if not name:
-        return jsonify({'error': 'Nazwa jest wymagana'}), 400
+        return jsonify({'error': 'Name is required'}), 400
     item = {
         'id': _uid(), 'list_id': list_id, 'name': name,
         'category': str(body.get('category', '')).strip()[:50],
@@ -360,7 +360,7 @@ def delete_item(list_id, item_id):
     return jsonify({'ok': True})
 
 # ══════════════════════════════════════════════════════════════════
-#  ZADANIA DOMOWE (Chores)
+#  CHORES (Chores)
 # ══════════════════════════════════════════════════════════════════
 
 @familyhub_bp.route('/chores', methods=['GET'])
@@ -383,7 +383,7 @@ def create_chore():
     body = request.json or {}
     title = str(body.get('title', '')).strip()[:200]
     if not title:
-        return jsonify({'error': 'Tytuł jest wymagany'}), 400
+        return jsonify({'error': 'Title is required'}), 400
     chore = {
         'id': _uid(), 'title': title,
         'assigned_to': str(body.get('assigned_to', '')).strip()[:50],
@@ -438,7 +438,7 @@ def complete_chore(chore_id):
     with _db() as conn:
         chore = conn.execute('SELECT * FROM chores WHERE id=?', (chore_id,)).fetchone()
         if not chore:
-            return jsonify({'error': 'Nie znaleziono'}), 404
+            return jsonify({'error': 'Not found'}), 404
         completion_id = _uid()
         conn.execute(
             'INSERT INTO chore_completions (id,chore_id,completed_by,completed_at) VALUES (?,?,?,?)',
@@ -459,7 +459,7 @@ def complete_chore(chore_id):
     return jsonify({'ok': True, 'chore': chore})
 
 # ══════════════════════════════════════════════════════════════════
-#  KALENDARZ RODZINNY (Events)
+#  FAMILY CALENDAR (Events)
 # ══════════════════════════════════════════════════════════════════
 
 @familyhub_bp.route('/events', methods=['GET'])
@@ -483,7 +483,7 @@ def create_event():
     title = str(body.get('title', '')).strip()[:200]
     event_date = str(body.get('event_date', ''))[:10]
     if not title or not event_date:
-        return jsonify({'error': 'Tytuł i data są wymagane'}), 400
+        return jsonify({'error': 'Title and date are required'}), 400
     ev = {
         'id': _uid(), 'title': title,
         'description': str(body.get('description', '')).strip()[:2000],

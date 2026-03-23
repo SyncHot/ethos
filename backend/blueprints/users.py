@@ -179,7 +179,7 @@ def create_user():
     """
     client_ip = request.remote_addr or '0.0.0.0'
     if _rate_limiter.is_limited(f'create_user:{client_ip}'):
-        return jsonify({"error": "Zbyt wiele prób. Spróbuj za 5 minut."}), 429
+        return jsonify({"error": "Too many attempts. Try again in 5 minutes."}), 429
     data = request.json or {}
     username = _safe_name(data.get('username', ''))
     password = data.get('password', '')
@@ -191,14 +191,14 @@ def create_user():
         role = 'user'
 
     if not username or len(username) < 2:
-        return jsonify({'error': 'Nazwa użytkownika jest wymagana (min. 2 znaki)'}), 400
+        return jsonify({'error': 'Username is required (min. 2 characters)'}), 400
     if not password or len(password) < 4:
-        return jsonify({'error': 'Hasło jest wymagane (min. 4 znaki)'}), 400
+        return jsonify({'error': 'Password is required (min. 4 characters)'}), 400
 
     # Check if exists
     r = host_run(f"id {_sq(username)} 2>/dev/null")
     if r.returncode == 0:
-        return jsonify({'error': f'Użytkownik „{username}" już istnieje'}), 400
+        return jsonify({'error': f'User "{username}" already exists'}), 400
 
     # Ensure nasos group exists
     ensure_nasos_group()
@@ -215,12 +215,12 @@ def create_user():
 
     r = host_run(cmd)
     if r.returncode != 0:
-        return jsonify({'error': f'Błąd tworzenia: {r.stderr.strip()}'}), 500
+        return jsonify({'error': f'Creation error: {r.stderr.strip()}'}), 500
 
     # Set password
     r = host_run(f"echo {_sq(password)} | sudo {_HELPER} user-set-password {_sq(username)}")
     if r.returncode != 0:
-        return jsonify({'error': f'Błąd ustawiania hasła: {r.stderr.strip()}'}), 500
+        return jsonify({'error': f'Password setting error: {r.stderr.strip()}'}), 500
 
     # Add to nasos group (mark as EthOS-created user)
     host_run(f"sudo {_HELPER} user-mod {_sq(username)} group-append {_sq(NASOS_GROUP)}")
@@ -252,13 +252,13 @@ def delete_user():
     data = request.json or {}
     username = _safe_name(data.get('username', ''))
     if not username:
-        return jsonify({'error': 'Nazwa użytkownika jest wymagana'}), 400
+        return jsonify({'error': 'Username is required'}), 400
     if username == 'root':
-        return jsonify({'error': 'Nie można usunąć root'}), 400
+        return jsonify({'error': 'Cannot delete root'}), 400
 
     r = host_run(f"sudo {_HELPER} user-del {_sq(username)} 2>&1")
     if r.returncode != 0:
-        return jsonify({'error': f'Błąd: {r.stdout.strip() or r.stderr.strip()}'}), 500
+        return jsonify({'error': f'Error: {r.stdout.strip() or r.stderr.strip()}'}), 500
 
     _users_cache['data'] = None  # invalidate cache
     audit_log('user.delete', f'User "{username}" deleted')
@@ -270,11 +270,11 @@ def update_user():
     """Update user properties (password, shell, groups)."""
     client_ip = request.remote_addr or '0.0.0.0'
     if _rate_limiter.is_limited(f'update_user:{client_ip}'):
-        return jsonify({"error": "Zbyt wiele prób. Spróbuj za 5 minut."}), 429
+        return jsonify({"error": "Too many attempts. Try again in 5 minutes."}), 429
     data = request.json or {}
     username = _safe_name(data.get('username', ''))
     if not username:
-        return jsonify({'error': 'Nazwa użytkownika jest wymagana'}), 400
+        return jsonify({'error': 'Username is required'}), 400
 
     errors = []
 
@@ -283,7 +283,7 @@ def update_user():
     if password:
         r = host_run(f"echo {_sq(password)} | sudo {_HELPER} user-set-password {_sq(username)}")
         if r.returncode != 0:
-            errors.append(f'Hasło: {r.stderr.strip()}')
+            errors.append(f'Password: {r.stderr.strip()}')
         else:
             audit_log('user.password.change', f'Password changed for user "{username}"')
 
@@ -302,7 +302,7 @@ def update_user():
             groups_str = ','.join(_sq(g) for g in safe_groups)
             r = host_run(f"sudo {_HELPER} user-mod {_sq(username)} groups-set {groups_str}")
             if r.returncode != 0:
-                errors.append(f'Grupy: {r.stderr.strip()}')
+                errors.append(f'Groups: {r.stderr.strip()}')
 
     if errors:
         return jsonify({'error': '; '.join(errors)}), 500
@@ -350,11 +350,11 @@ def create_group():
     data = request.json or {}
     name = _safe_name(data.get('name', ''))
     if not name or len(name) < 2:
-        return jsonify({'error': 'Nazwa grupy jest wymagana (min. 2 znaki)'}), 400
+        return jsonify({'error': 'Group name is required (min. 2 characters)'}), 400
 
     r = host_run(f"sudo {_HELPER} group-add {_sq(name)} 2>&1")
     if r.returncode != 0:
-        return jsonify({'error': r.stdout.strip() or r.stderr.strip() or 'Błąd tworzenia grupy'}), 500
+        return jsonify({'error': r.stdout.strip() or r.stderr.strip() or 'Group creation error'}), 500
 
     # Set initial privileges if provided
     app_privileges = data.get('app_privileges', [])
@@ -372,11 +372,11 @@ def delete_group():
     data = request.json or {}
     name = _safe_name(data.get('name', ''))
     if not name:
-        return jsonify({'error': 'Nazwa grupy jest wymagana'}), 400
+        return jsonify({'error': 'Group name is required'}), 400
 
     r = host_run(f"sudo {_HELPER} group-del {_sq(name)} 2>&1")
     if r.returncode != 0:
-        return jsonify({'error': r.stdout.strip() or r.stderr.strip() or 'Błąd'}), 500
+        return jsonify({'error': r.stdout.strip() or r.stderr.strip() or 'Error'}), 500
 
     # Remove privileges
     privileges = _load_privileges()
@@ -397,7 +397,7 @@ def update_group_members():
     group = _safe_name(data.get('group', ''))
 
     if not group:
-        return jsonify({'error': 'Grupa jest wymagana'}), 400
+        return jsonify({'error': 'Group is required'}), 400
 
     # Support single-user format from frontend
     add_list = data.get('add', [])
@@ -416,14 +416,14 @@ def update_group_members():
         if u:
             r = host_run(f"sudo {_HELPER} user-mod {_sq(u)} group-append {_sq(group)}")
             if r.returncode != 0:
-                errors.append(f'Dodawanie {u}: {r.stderr.strip()}')
+                errors.append(f'Adding {u}: {r.stderr.strip()}')
 
     for u in remove_list:
         u = _safe_name(u)
         if u:
             r = host_run(f"sudo {_HELPER} group-mod {_sq(group)} {_sq(u)} remove 2>&1")
             if r.returncode != 0:
-                errors.append(f'Usuwanie {u}: {r.stdout.strip()}')
+                errors.append(f'Removing {u}: {r.stdout.strip()}')
 
     if errors:
         return jsonify({'error': '; '.join(errors)}), 500
@@ -445,9 +445,9 @@ def get_roles():
         role_apps = {}
     return jsonify({
         'roles': [
-            {'id': 'admin', 'name': 'Administrator', 'description': 'Pełny dostęp do systemu', 'apps': None},
-            {'id': 'user', 'name': 'Użytkownik', 'description': 'Dostęp do narzędzi pracy', 'apps': sorted(role_apps.get('user', []))},
-            {'id': 'family', 'name': 'Rodzina / Gość', 'description': 'Bezpieczny tryb z podstawowymi apkami', 'apps': sorted(role_apps.get('family', []))},
+            {'id': 'admin', 'name': 'Administrator', 'description': 'Full system access', 'apps': None},
+            {'id': 'user', 'name': 'User', 'description': 'Access to work tools', 'apps': sorted(role_apps.get('user', []))},
+            {'id': 'family', 'name': 'Family / Guest', 'description': 'Safe mode with basic apps', 'apps': sorted(role_apps.get('family', []))},
         ]
     })
 
@@ -460,11 +460,11 @@ def set_user_role():
     new_role = data.get('role', '')
 
     if not username:
-        return jsonify({'error': 'Nazwa użytkownika jest wymagana'}), 400
+        return jsonify({'error': 'Username is required'}), 400
     if new_role not in _VALID_ROLES:
-        return jsonify({'error': f'Nieprawidłowa rola. Dozwolone: {", ".join(sorted(_VALID_ROLES))}'}), 400
+        return jsonify({'error': f'Invalid role. Allowed: {", ".join(sorted(_VALID_ROLES))}'}), 400
     if username == 'root':
-        return jsonify({'error': 'Nie można zmienić roli root'}), 400
+        return jsonify({'error': 'Cannot change root role'}), 400
 
     # Remove from all role groups first
     host_run(f"sudo gpasswd -d {_sq(username)} sudo 2>/dev/null")
@@ -575,7 +575,7 @@ def validate_user():
     password = data.get('password', '')
 
     if not username or not password:
-        return jsonify({'valid': False, 'error': 'Wymagane login i hasło'}), 400
+        return jsonify({'valid': False, 'error': 'Username and password required'}), 400
 
     safe_user = _safe_name(username)
     # Use su to validate credentials
@@ -594,4 +594,4 @@ def validate_user():
                 auth_logger.warning(f'Failed login attempt for user {safe_user} from {ip}')
         except Exception:
             pass
-        return jsonify({'valid': False, 'error': 'Nieprawidłowy login lub hasło'}), 401
+        return jsonify({'valid': False, 'error': 'Invalid username or password'}), 401

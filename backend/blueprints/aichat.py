@@ -85,11 +85,11 @@ def admin_required(f):
             try:
                 # Local import to avoid circular dependency
                 from blueprints.eventlog import log
-                log('security', 'warning', f'Nieautoryzowana próba dostępu do {request.path}', 
+                log('security', 'warning', f'Unauthorized access attempt to {request.path}', 
                     details={'user': _get_username(), 'ip': request.remote_addr})
             except Exception:
                 pass
-            return jsonify({'error': 'Tylko admin'}), 403
+            return jsonify({'error': 'Admin only'}), 403
         return f(*args, **kwargs)
     return decorated_function
 
@@ -111,7 +111,7 @@ def _path_in_sandbox(path, sandbox_root=None):
     rpath = os.path.realpath(path)
     if rpath.startswith(sandbox_root + '/') or rpath == sandbox_root:
         return (True, None)
-    return (False, 'Dostęp ograniczony do katalogu domowego')
+    return (False, 'Access restricted to home directory')
 
 # ── Default config ─────────────────────────────────────────────────
 
@@ -152,14 +152,14 @@ _CONFIG_DEFAULTS = {
     'model': 'gpt-4o',
     'max_tokens': 768,              # N150-safe default
     'temperature': 0.7,
-    'system_prompt': 'Jesteś domowym asystentem NAS EthOS. Odpowiadaj krótko i konkretnie. '
-                     'Twoim zadaniem jest pomaganie użytkownikowi w zarządzaniu systemem NAS, '
-                     'przeglądaniu galerii zdjęć, wyszukiwaniu plików i zarządzaniu projektami. '
-                     'Masz dostęp do narzędzi: create_ticket (tworzenie zadań w Kanban), '
-                     'list_tickets (sprawdzanie stanu tablicy). '
-                     'Gdy użytkownik zgłasza problem lub prosi o zadanie — użyj create_ticket. '
-                     'Masz dostęp do bazy wiedzy użytkownika (RAG). '
-                     'Odpowiadaj po polsku, chyba że użytkownik pisze w innym języku.',
+    'system_prompt': 'You are a home NAS assistant for EthOS. Respond briefly and to the point. '
+                     'Your task is to help the user manage the NAS system, '
+                     'browse the photo gallery, search files, and manage projects. '
+                     'You have access to tools: create_ticket (creating tasks in Kanban), '
+                     'list_tickets (checking board status). '
+                     'When the user reports a problem or requests a task — use create_ticket. '
+                     'You have access to the user\'s knowledge base (RAG). '
+                     'Respond in English unless the user writes in another language.',
     'workspace': '',                # default workspace path for file browsing
     'rag_enabled': True,            # auto RAG context injection
     'rag_top_k': 3,                 # max context fragments (keep low for N150 prefill speed)
@@ -216,7 +216,7 @@ def _trim_messages_to_fit(messages, max_context_tokens, max_response_tokens):
         max_chars = avail * 3
         if len(content) > max_chars:
             last_msg = dict(last_msg)
-            last_msg['content'] = content[:max_chars] + '\n\n[...wiadomość skrócona z powodu limitu kontekstu]'
+            last_msg['content'] = content[:max_chars] + '\n\n[...message truncated due to context limit]'
         return [system_msg, last_msg], True
 
     # Fill from newest to oldest
@@ -243,14 +243,14 @@ TICKET_TOOLS = [
         "type": "function",
         "function": {
             "name": "create_ticket",
-            "description": "Tworzy nowy ticket w systemie Kanban EthOS. Użyj gdy użytkownik prosi o stworzenie zadania, zgłasza problem lub sugeruje ulepszenie.",
+            "description": "Creates a new ticket in the EthOS Kanban system. Use when the user asks to create a task, reports a problem, or suggests an improvement.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "title": {"type": "string", "description": "Krótki tytuł ticketa, prefixowany tagiem np. [FE], [BE], [DevOps]"},
-                    "description": {"type": "string", "description": "Szczegółowy opis problemu lub zadania"},
-                    "priority": {"type": "string", "enum": ["critical", "high", "medium", "low"], "description": "Priorytet ticketa"},
-                    "column": {"type": "string", "enum": ["Backlog", "Do zrobienia"], "description": "Kolumna docelowa, domyślnie Backlog"},
+                    "title": {"type": "string", "description": "Short ticket title, prefixed with a tag e.g. [FE], [BE], [DevOps]"},
+                    "description": {"type": "string", "description": "Detailed description of the problem or task"},
+                    "priority": {"type": "string", "enum": ["critical", "high", "medium", "low"], "description": "Ticket priority"},
+                    "column": {"type": "string", "enum": ["Backlog", "To Do"], "description": "Target column, defaults to Backlog"},
                 },
                 "required": ["title", "description", "priority"]
             }
@@ -260,11 +260,11 @@ TICKET_TOOLS = [
         "type": "function",
         "function": {
             "name": "list_tickets",
-            "description": "Pobiera listę ticketów z tablicy Kanban. Użyj do sprawdzenia stanu projektu.",
+            "description": "Retrieves a list of tickets from the Kanban board. Use to check project status.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "column": {"type": "string", "description": "Filtruj po kolumnie (opcjonalne)"},
+                    "column": {"type": "string", "description": "Filter by column (optional)"},
                 },
             }
         }
@@ -290,12 +290,12 @@ def _execute_tool(tool_name, args, username):
                     project = p
                     break
         if not project:
-            return "Brak dostępnych projektów. Utwórz projekt w systemie ticketów."
+            return "No available projects. Create a project in the ticket system."
 
         now = _now()
         ticket = {
             'id': _gen_id('t_'),
-            'title': args.get('title', 'Nowy ticket'),
+            'title': args.get('title', 'New ticket'),
             'description': args.get('description', ''),
             'project_id': project['id'],
             'column': args.get('column', 'Backlog'),
@@ -314,7 +314,7 @@ def _execute_tool(tool_name, args, username):
         # Emit socket event if available
         _emit('ticket_created', project['id'], {'ticket': ticket})
 
-        return f"Ticket utworzony: [{ticket['priority'].upper()}] {ticket['title']} (id: {ticket['id']}, projekt: {project['name']}, kolumna: {ticket['column']})"
+        return f"Ticket created: [{ticket['priority'].upper()}] {ticket['title']} (id: {ticket['id']}, project: {project['name']}, column: {ticket['column']})"
 
     elif tool_name == 'list_tickets':
         data = _load()
@@ -329,10 +329,10 @@ def _execute_tool(tool_name, args, username):
             for t in tickets:
                 results.append(f"[{t['column']}] [{t['priority'].upper()}] {t['title']} (id: {t['id']})")
         if not results:
-            return "Brak ticketów" + (f" w kolumnie '{col_filter}'" if col_filter else "")
-        return f"Znaleziono {len(results)} ticketów:\n" + "\n".join(results)
+            return "No tickets" + (f" in column '{col_filter}'" if col_filter else "")
+        return f"Found {len(results)} tickets:\n" + "\n".join(results)
 
-    return f"Nieznane narzędzie: {tool_name}"
+    return f"Unknown tool: {tool_name}"
 
 
 # ── Config helpers ─────────────────────────────────────────────────
@@ -438,7 +438,7 @@ def list_conversations():
     for conv in reversed(history):
         result.append({
             'id': conv['id'],
-            'title': conv.get('title', 'Nowa rozmowa'),
+            'title': conv.get('title', 'New conversation'),
             'created': conv.get('created', ''),
             'updated': conv.get('updated', ''),
             'message_count': len(conv.get('messages', [])),
@@ -454,7 +454,7 @@ def create_conversation():
     now = time.strftime('%Y-%m-%dT%H:%M:%S')
     conv = {
         'id': conv_id,
-        'title': 'Nowa rozmowa',
+        'title': 'New conversation',
         'messages': [],
         'created': now,
         'updated': now,
@@ -470,7 +470,7 @@ def get_conversation(conv_id):
     history = _load_history(username)
     conv = next((c for c in history if c['id'] == conv_id), None)
     if not conv:
-        return jsonify({'error': 'Nie znaleziono rozmowy'}), 404
+        return jsonify({'error': 'Conversation not found'}), 404
     return jsonify(conv)
 
 
@@ -489,11 +489,11 @@ def rename_conversation(conv_id):
     data = request.json or {}
     title = data.get('title', '').strip()
     if not title:
-        return jsonify({'error': 'Brak tytułu'}), 400
+        return jsonify({'error': 'No title'}), 400
     history = _load_history(username)
     conv = next((c for c in history if c['id'] == conv_id), None)
     if not conv:
-        return jsonify({'error': 'Nie znaleziono rozmowy'}), 404
+        return jsonify({'error': 'Conversation not found'}), 404
     conv['title'] = title[:120]
     _save_history(history, username)
     return jsonify({'ok': True})
@@ -507,7 +507,7 @@ def rename_conversation(conv_id):
 def browse_files():
     """List directory contents for the file picker. Admin: unrestricted. Non-admin: sandboxed to /home/<user>."""
     if not _is_authenticated():
-        return jsonify({'error': 'Brak uprawnień'}), 403
+        return jsonify({'error': 'Permission denied'}), 403
 
     sandbox = _user_sandbox_root()
     default_path = sandbox if sandbox else '/home'
@@ -541,13 +541,13 @@ def browse_files():
 def read_file_content():
     """Read file contents for AI context. Accepts multiple files. Sandboxed for non-admins."""
     if not _is_authenticated():
-        return jsonify({'error': 'Brak uprawnień'}), 403
+        return jsonify({'error': 'Permission denied'}), 403
 
     sandbox = _user_sandbox_root()
     data = request.json or {}
     paths = data.get('paths', [])
     if not paths:
-        return jsonify({'error': 'Brak plików'}), 400
+        return jsonify({'error': 'No files'}), 400
 
     # Sensitive paths that must never be exposed via AI chat
     _SENSITIVE_PREFIXES = ('/proc/', '/sys/', '/dev/')
@@ -562,15 +562,15 @@ def read_file_content():
             results.append({'path': p, 'error': err})
             continue
         if any(p.startswith(pfx) for pfx in _SENSITIVE_PREFIXES) or p in _SENSITIVE_FILES:
-            results.append({'path': p, 'error': 'Odmowa dostępu do pliku systemowego'})
+            results.append({'path': p, 'error': 'Access denied to system file'})
             continue
         if not os.path.isfile(p):
-            results.append({'path': p, 'error': 'Nie znaleziono'})
+            results.append({'path': p, 'error': 'Not found'})
             continue
         try:
             size = os.path.getsize(p)
             if size > _MAX_FILE_SIZE:
-                results.append({'path': p, 'error': f'Za duży ({size // 1024} KB > {_MAX_FILE_SIZE // 1024} KB)',
+                results.append({'path': p, 'error': f'Too large ({size // 1024} KB > {_MAX_FILE_SIZE // 1024} KB)',
                                 'size': size})
                 continue
             with open(p, 'r', errors='replace') as f:
@@ -586,7 +586,7 @@ def read_file_content():
 def write_file_content():
     """Write content to a file (for applying AI-suggested code). Sandboxed for non-admins."""
     if not _is_authenticated():
-        return jsonify({'error': 'Brak uprawnień'}), 403
+        return jsonify({'error': 'Permission denied'}), 403
 
     sandbox = _user_sandbox_root()
     data = request.json or {}
@@ -594,7 +594,7 @@ def write_file_content():
     content = data.get('content', '')
 
     if not path:
-        return jsonify({'error': 'Brak ścieżki'}), 400
+        return jsonify({'error': 'Path required'}), 400
 
     path = os.path.realpath(path)
 
@@ -606,7 +606,7 @@ def write_file_content():
     # Allowlist: only permit writes under user homes, /tmp, or the NAS data area
     _ALLOWED_PREFIXES = ('/home/', '/tmp/', data_path(''))
     if not any(path.startswith(pfx) for pfx in _ALLOWED_PREFIXES):
-        return jsonify({'error': 'Zapis dozwolony tylko w katalogach domowych i danych NAS'}), 403
+        return jsonify({'error': 'Writing allowed only in home directories and NAS data'}), 403
 
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -625,7 +625,7 @@ def write_file_content():
 def exec_command():
     """Execute a shell command and return output. Admin only."""
     if not _is_admin():
-        return jsonify({'error': 'Brak uprawnień'}), 403
+        return jsonify({'error': 'Permission denied'}), 403
 
     data = request.json or {}
     cmd = data.get('command', '').strip()
@@ -633,10 +633,10 @@ def exec_command():
     timeout = min(data.get('timeout', 30), 120)
 
     if not cmd:
-        return jsonify({'error': 'Brak komendy'}), 400
+        return jsonify({'error': 'No command'}), 400
 
     if cwd and not os.path.isdir(cwd):
-        return jsonify({'error': 'Katalog roboczy nie istnieje'}), 400
+        return jsonify({'error': 'Working directory does not exist'}), 400
 
     # Block destructive system-level commands
     import re as _re
@@ -645,7 +645,7 @@ def exec_command():
         _re.IGNORECASE,
     )
     if _DANGEROUS.search(cmd):
-        return jsonify({'error': 'Komenda zablokowana ze względów bezpieczeństwa'}), 403
+        return jsonify({'error': 'Command blocked for security reasons'}), 403
 
     try:
         result = subprocess.run(
@@ -659,7 +659,7 @@ def exec_command():
             'exit_code': result.returncode,
         })
     except subprocess.TimeoutExpired:
-        return jsonify({'ok': False, 'error': f'Przekroczono limit czasu ({timeout}s)',
+        return jsonify({'ok': False, 'error': f'Timeout exceeded ({timeout}s)',
                         'stdout': '', 'stderr': '', 'exit_code': -1})
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e),
@@ -680,7 +680,7 @@ def chat():
     attached_files = data.get('files', [])  # [{ path, content }]
 
     if not user_message:
-        return jsonify({'error': 'Brak wiadomości'}), 400
+        return jsonify({'error': 'No message'}), 400
 
     cfg = _load_config(username)
     provider = cfg.get('provider')
@@ -694,7 +694,7 @@ def chat():
     rag_enabled = cfg.get('rag_enabled', True) if req_rag_enabled is None else bool(req_rag_enabled)
     is_local = provider == 'local'
     if not is_local and not cfg.get('api_key'):
-        return jsonify({'error': 'Nie skonfigurowano klucza API. Otwórz ustawienia (⚙) i podaj klucz.'}), 400
+        return jsonify({'error': 'API key not configured. Open settings (⚙) and enter your key.'}), 400
 
     # Load/create conversation
     history = _load_history(username)
@@ -704,7 +704,7 @@ def chat():
     if not conv:
         conv_id = f"conv_{int(time.time() * 1000)}"
         now = time.strftime('%Y-%m-%dT%H:%M:%S')
-        conv = {'id': conv_id, 'title': 'Nowa rozmowa', 'messages': [], 'created': now, 'updated': now}
+        conv = {'id': conv_id, 'title': 'New conversation', 'messages': [], 'created': now, 'updated': now}
         history.append(conv)
 
     # ── RAG: auto-inject context if enabled and no manual files attached ──
@@ -733,12 +733,12 @@ def chat():
             fpath = af.get('path', '?')
             fcontent = af.get('content', '')
             if fcontent:
-                file_ctx_parts.append(f"--- {fpath} ---\n{fcontent}\n--- koniec {fpath} ---")
+                file_ctx_parts.append(f"--- {fpath} ---\n{fcontent}\n--- end {fpath} ---")
         if file_ctx_parts:
-            full_user_msg = "Dołączone pliki:\n\n" + "\n\n".join(file_ctx_parts) + "\n\n" + user_message
+            full_user_msg = "Attached files:\n\n" + "\n\n".join(file_ctx_parts) + "\n\n" + user_message
     elif rag_context:
         # Inject RAG context before the user question
-        full_user_msg = rag_context + "\n\nPytanie użytkownika: " + user_message
+        full_user_msg = rag_context + "\n\nUser question: " + user_message
 
     # Store compact display version (without file dump or RAG context)
     display_msg = user_message
@@ -754,7 +754,7 @@ def chat():
     if len(conv['messages']) > MAX_MESSAGES_PER_CONV:
         conv['messages'] = conv['messages'][-MAX_MESSAGES_PER_CONV:]
 
-    if conv['title'] == 'Nowa rozmowa' and user_message:
+    if conv['title'] == 'New conversation' and user_message:
         conv['title'] = user_message[:80] + ('\u2026' if len(user_message) > 80 else '')
 
     conv['updated'] = time.strftime('%Y-%m-%dT%H:%M:%S')
@@ -793,14 +793,14 @@ def chat():
                 lib = _get_ml()
                 active = lib.get_active_model()
                 if not active:
-                    yield f"data: {json.dumps({'type': 'error', 'error': 'Brak aktywnego modelu. Pobierz i aktywuj model w Bibliotece Modeli.'})}\n\n"
+                    yield f"data: {json.dumps({'type': 'error', 'error': 'No active model. Download and activate a model in the Model Library.'})}\n\n"
                     return
 
                 # Check if model needs loading — tell user to wait
                 _cur_loaded = lib.get_loaded_model()
                 if _cur_loaded[0] is None or _cur_loaded[1] != active.get('id'):
                     model_name = active.get('name', active.get('id', 'model'))
-                    yield f"data: {json.dumps({'type': 'token', 'content': f'⏳ Ładowanie modelu {model_name}… '})}\n\n"
+                    yield f"data: {json.dumps({'type': 'token', 'content': f'⏳ Loading model {model_name}… '})}\n\n"
 
                 llm, err = lib.load_model()
                 if err:
@@ -860,7 +860,7 @@ def chat():
                         yield f"data: {json.dumps({'type': 'token', 'content': tok})}\n\n"
 
                     if _error_ref[0]:
-                        yield f"data: {json.dumps({'type': 'error', 'error': f'Błąd inferencji: {_error_ref[0]}'})}\n\n"
+                        yield f"data: {json.dumps({'type': 'error', 'error': f'Inference error: {_error_ref[0]}'})}\n\n"
                         return
 
                     if _done_flag[0]:
@@ -1011,12 +1011,12 @@ def chat():
                 err_body = e.read().decode('utf-8', errors='replace')[:500]
             except Exception:
                 pass
-            msg = f"Błąd API ({e.code}): {err_body}" if err_body else f"Błąd API: HTTP {e.code}"
+            msg = f"API error ({e.code}): {err_body}" if err_body else f"API error: HTTP {e.code}"
             yield f"data: {json.dumps({'type': 'error', 'error': msg})}\n\n"
         except urllib.error.URLError as e:
-            yield f"data: {json.dumps({'type': 'error', 'error': f'Nie można połączyć z API: {e.reason}'})}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'error': f'Cannot connect to API: {e.reason}'})}\n\n"
         except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'error': f'Błąd: {str(e)}'})}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'error': f'Error: {str(e)}'})}\n\n"
 
     return Response(
         stream_with_context(generate()),
@@ -1093,7 +1093,7 @@ def rag_status():
 def rag_index():
     """Start indexing a directory. Runs in background thread."""
     if not _is_authenticated():
-        return jsonify({'error': 'Brak uprawnień'}), 403
+        return jsonify({'error': 'Permission denied'}), 403
 
     username = _get_username()
     sandbox = _user_sandbox_root()
@@ -1106,14 +1106,14 @@ def rag_index():
 
     # Validate directory: must exist and be within user's sandbox
     if not os.path.isdir(directory):
-        return jsonify({'error': 'Podana ścieżka nie jest katalogiem'}), 400
+        return jsonify({'error': 'Specified path is not a directory'}), 400
     ok, err = _path_in_sandbox(directory, sandbox)
     if not ok:
         return jsonify({'error': err}), 403
 
     indexer = _get_rag(username, sandbox)
     if indexer._indexing:
-        return jsonify({'error': 'Indeksowanie już trwa'}), 409
+        return jsonify({'error': 'Indexing already in progress'}), 409
 
     sio = None
     try:
@@ -1137,7 +1137,7 @@ def rag_index_internal():
     """Internal endpoint for cron/systemd — localhost only, no session auth."""
     remote = request.remote_addr or ''
     if remote not in ('127.0.0.1', '::1', 'localhost'):
-        return jsonify({'error': 'Tylko localhost'}), 403
+        return jsonify({'error': 'Localhost only'}), 403
 
     body = request.get_json(silent=True) or {}
     username = body.get('username', '').strip()
@@ -1150,14 +1150,14 @@ def rag_index_internal():
 
     # Validate directory: must exist and be within user's sandbox
     if not os.path.isdir(directory):
-        return jsonify({'error': 'Podana ścieżka nie jest katalogiem'}), 400
+        return jsonify({'error': 'Specified path is not a directory'}), 400
     ok, err = _path_in_sandbox(directory, sandbox)
     if not ok:
         return jsonify({'error': err}), 403
 
     indexer = _get_rag(username, sandbox)
     if indexer._indexing:
-        return jsonify({'error': 'Indeksowanie już trwa'}), 409
+        return jsonify({'error': 'Indexing already in progress'}), 409
 
     def _bg_index():
         indexer.index_directory(directory, recursive=True)
@@ -1173,7 +1173,7 @@ def rag_index_internal():
 def rag_search():
     """Manual RAG search. Returns matching chunks with scores."""
     if not _is_authenticated():
-        return jsonify({'error': 'Brak uprawnień'}), 403
+        return jsonify({'error': 'Permission denied'}), 403
 
     username = _get_username()
     sandbox = _user_sandbox_root()
@@ -1183,7 +1183,7 @@ def rag_search():
     top_k = min(int(body.get('top_k', 5)), 20)
 
     if not query:
-        return jsonify({'error': 'Brak zapytania'}), 400
+        return jsonify({'error': 'Query required'}), 400
 
     indexer = _get_rag(username, sandbox)
     results = indexer.search(query, index_type=index_type, top_k=top_k)
@@ -1194,7 +1194,7 @@ def rag_search():
 def rag_clear():
     """Clear the RAG index for current user."""
     if not _is_authenticated():
-        return jsonify({'error': 'Brak uprawnień'}), 403
+        return jsonify({'error': 'Permission denied'}), 403
 
     username = _get_username()
     sandbox = _user_sandbox_root()
@@ -1213,7 +1213,7 @@ def rag_scheduler_status():
 def rag_scheduler_toggle():
     """Enable/disable scheduler, change interval. Admin only."""
     if not _is_admin():
-        return jsonify({'error': 'Tylko admin'}), 403
+        return jsonify({'error': 'Admin only'}), 403
 
     body = request.get_json(silent=True) or {}
     action = body.get('action', '').strip()  # 'enable', 'disable', 'set_interval'
@@ -1241,12 +1241,12 @@ def rag_scheduler_toggle():
         elif action == 'set_interval':
             cal_value = _VALID_INTERVALS.get(interval, interval)
             if not cal_value:
-                return jsonify({'error': 'Brak interwału'}), 400
+                return jsonify({'error': 'Interval required'}), 400
 
             # Security check: validate systemd time format to prevent injection
             # Allow: alnum, space, *, /, -, :, comma. No newlines or control chars.
             if not re.match(r'^[a-zA-Z0-9\s*/:,\-]+$', cal_value):
-                return jsonify({'error': 'Nieprawidłowy format interwału (dozwolone znaki: a-z 0-9 * / : - , spacje)'}), 400
+                return jsonify({'error': 'Invalid interval format (allowed: a-z 0-9 * / : - , spaces)'}), 400
 
             # Rewrite timer file (needs root — use sudo tee)
             timer_content = (
@@ -1273,7 +1273,7 @@ def rag_scheduler_toggle():
             return jsonify({'status': 'ok', 'interval': cal_value})
 
         else:
-            return jsonify({'error': 'Nieznana akcja'}), 400
+            return jsonify({'error': 'Unknown action'}), 400
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -1310,19 +1310,19 @@ def models_hardware():
 def models_download():
     """Start downloading a model."""
     if not _is_admin():
-        return jsonify({'error': 'Tylko admin może pobierać modele'}), 403
+        return jsonify({'error': 'Only admin can download models'}), 403
     body = request.get_json(silent=True) or {}
     model_id = body.get('model_id', '').strip()
     if not model_id:
-        return jsonify({'error': 'Brak model_id'}), 400
+        return jsonify({'error': 'model_id required'}), 400
 
     # Fresh installs often miss huggingface_hub required for model downloads.
     if not _check_hf_hub():
         ok_hf, err_hf = _install_py_pkg('huggingface_hub', timeout=300)
         if not ok_hf:
-            return jsonify({'error': f'Brak biblioteki huggingface_hub i nie udało się jej zainstalować: {err_hf[-300:]}' }), 500
+            return jsonify({'error': f'huggingface_hub library not found and installation failed: {err_hf[-300:]}' }), 500
         if not _check_hf_hub():
-            return jsonify({'error': 'Biblioteka huggingface_hub nadal niedostępna po instalacji.'}), 500
+            return jsonify({'error': 'huggingface_hub library still unavailable after installation.'}), 500
 
     lib = _get_ml()
     # Pass socketio if available
@@ -1348,7 +1348,7 @@ def models_download_status():
 def models_download_cancel():
     """Cancel active download."""
     if not _is_admin():
-        return jsonify({'error': 'Tylko admin'}), 403
+        return jsonify({'error': 'Admin only'}), 403
     lib = _get_ml()
     lib.cancel_download()
     return jsonify({'ok': True})
@@ -1357,7 +1357,7 @@ def models_download_cancel():
 def models_delete(model_id):
     """Delete a downloaded model."""
     if not _is_admin():
-        return jsonify({'error': 'Tylko admin'}), 403
+        return jsonify({'error': 'Admin only'}), 403
     lib = _get_ml()
     ok, err = lib.delete_model(model_id)
     if not ok:
@@ -1373,7 +1373,7 @@ def models_active():
         return jsonify({'model': m})
 
     if not _is_admin():
-        return jsonify({'error': 'Tylko admin'}), 403
+        return jsonify({'error': 'Admin only'}), 403
     body = request.get_json(silent=True) or {}
     model_id = body.get('model_id')  # None = deactivate
     ok, err = lib.set_active_model(model_id)
@@ -1410,11 +1410,11 @@ def models_path():
         return jsonify({'path': lib.models_path, 'disk': lib.get_disk_space()})
 
     if not _is_admin():
-        return jsonify({'error': 'Tylko admin'}), 403
+        return jsonify({'error': 'Admin only'}), 403
     body = request.get_json(silent=True) or {}
     new_path = body.get('path', '').strip()
     if not new_path:
-        return jsonify({'error': 'Brak ścieżki'}), 400
+        return jsonify({'error': 'Path required'}), 400
     ok, err = lib.set_models_path(new_path)
     if not ok:
         return jsonify({'error': err}), 400
@@ -1424,11 +1424,11 @@ def models_path():
 def models_custom_add():
     """Add a custom model by HF URL."""
     if not _is_admin():
-        return jsonify({'error': 'Tylko admin'}), 403
+        return jsonify({'error': 'Admin only'}), 403
     body = request.get_json(silent=True) or {}
     url = body.get('url', '').strip()
     if not url:
-        return jsonify({'error': 'Brak URL'}), 400
+        return jsonify({'error': 'URL required'}), 400
     lib = _get_ml()
     entry, err = lib.add_custom_model(url)
     if not entry:
@@ -1439,7 +1439,7 @@ def models_custom_add():
 def models_custom_remove(model_id):
     """Remove a custom model."""
     if not _is_admin():
-        return jsonify({'error': 'Tylko admin'}), 403
+        return jsonify({'error': 'Admin only'}), 403
     lib = _get_ml()
     ok, err = lib.remove_custom_model(model_id)
     if not ok:
@@ -1469,7 +1469,7 @@ def full_hardware():
 def models_benchmark():
     """Run inference benchmark on active model. Returns TPS, TTFT, tier."""
     if not _is_admin():
-        return jsonify({'error': 'Tylko admin może uruchomić benchmark'}), 403
+        return jsonify({'error': 'Only admin can run benchmark'}), 403
     body = request.get_json(silent=True) or {}
     model_id = body.get('model_id')
     prompt = body.get('prompt')
@@ -1477,7 +1477,7 @@ def models_benchmark():
     lib = _get_ml()
     active = lib.get_active_model()
     if not active and not model_id:
-        return jsonify({'error': 'Brak aktywnego modelu — pobierz i aktywuj model w Bibliotece Modeli'}), 400
+        return jsonify({'error': 'No active model — download and activate a model in the Model Library'}), 400
 
     result = lib.run_benchmark(model_id=model_id, prompt=prompt)
     if 'error' in result:
@@ -1489,7 +1489,7 @@ def models_benchmark():
 def models_benchmark_auto():
     """Auto-benchmark: ensure smallest model is available, benchmark it, return TPS scaling for all models."""
     if not _is_admin():
-        return jsonify({'error': 'Tylko admin'}), 403
+        return jsonify({'error': 'Admin only'}), 403
 
     lib = _get_ml()
     hw = _get_hw()
@@ -1506,18 +1506,18 @@ def models_benchmark_auto():
         all_rec = [m for m in recs if m['status'] in ('recommended', 'possible')]
         all_rec.sort(key=lambda m: m.get('size_gb', 99))
         if not all_rec:
-            return jsonify({'error': 'Brak modeli pasujących do sprzętu'}), 400
+            return jsonify({'error': 'No models matching hardware'}), 400
         bench_model = all_rec[0]
 
         # Trigger synchronous download of the smallest model
         if not _check_hf_hub():
             ok_hf, err_hf = _install_py_pkg('huggingface_hub', timeout=300)
             if not ok_hf:
-                return jsonify({'error': f'Brak huggingface_hub: {err_hf[-200:]}'}), 500
+                return jsonify({'error': f'huggingface_hub not found: {err_hf[-200:]}'}), 500
 
         ok, err = lib.download_sync(bench_model['id'])
         if not ok:
-            return jsonify({'error': f'Nie udało się pobrać modelu testowego: {err}'}), 500
+            return jsonify({'error': f'Failed to download test model: {err}'}), 500
 
     # Activate and benchmark
     lib.set_active_model(bench_model['id'])
@@ -1682,7 +1682,7 @@ def _install_py_pkg(pkg_name, timeout=900):
         )
         if proc.returncode != 0:
             tail = '\n'.join((proc.stdout or '').splitlines()[-12:])
-            return (False, tail or f'Instalacja pakietu {pkg_name} nie powiodła się')
+            return (False, tail or f'Package {pkg_name} installation failed')
         return (True, '')
     except Exception as ex:
         return (False, str(ex))
@@ -1705,10 +1705,10 @@ def aichat_install():
 
     def _bg():
         try:
-            _emit('start', 0, 'Sprawdzanie zależności…')
+            _emit('start', 0, 'Checking dependencies…')
 
             if _check_llama_cpp():
-                _emit('done', 100, 'AI Chat gotowy — zależności już zainstalowane.')
+                _emit('done', 100, 'AI Chat ready — dependencies already installed.')
                 return
 
             # Find venv pip
@@ -1720,7 +1720,7 @@ def aichat_install():
                 import shutil as _sh
                 venv_pip = _sh.which('pip3') or _sh.which('pip') or 'pip'
 
-            _emit('progress', 10, 'Instalowanie llama-cpp-python (kompilacja C++ — to może potrwać kilka minut)…')
+            _emit('progress', 10, 'Installing llama-cpp-python (C++ compilation — this may take a few minutes)…')
 
             import subprocess
             proc = subprocess.Popen(
@@ -1740,7 +1740,7 @@ def aichat_install():
                     _emit('progress', progress, line_s[:150])
                 elif 'Building' in line_s:
                     progress = min(progress + 2, 80)
-                    _emit('progress', progress, 'Kompilacja llama.cpp…')
+                    _emit('progress', progress, 'Compiling llama.cpp…')
                 elif 'Installing' in line_s or 'Successfully' in line_s:
                     progress = min(progress + 5, 95)
                     _emit('progress', progress, line_s[:150])
@@ -1748,7 +1748,7 @@ def aichat_install():
             proc.wait()
             if proc.returncode != 0:
                 err = '\n'.join(lines[-10:])
-                _emit('error', 0, f'Instalacja nie powiodła się:\n{err[-400:]}')
+                _emit('error', 0, f'Installation failed:\n{err[-400:]}')
                 return
 
             # Verify import
@@ -1757,13 +1757,13 @@ def aichat_install():
                 importlib.invalidate_caches()
                 import llama_cpp  # noqa: F401
             except ImportError:
-                _emit('error', 0, 'Pakiet zainstalowany ale nie można go zaimportować. Restart serwera może być wymagany.')
+                _emit('error', 0, 'Package installed but cannot be imported. Server restart may be required.')
                 return
 
-            _emit('done', 100, 'AI Chat z obsługą lokalnych modeli gotowy!')
+            _emit('done', 100, 'AI Chat with local model support ready!')
 
         except Exception as ex:
-            _emit('error', 0, f'Błąd: {ex}')
+            _emit('error', 0, f'Error: {ex}')
 
     t = threading.Thread(target=_bg, daemon=True)
     t.start()

@@ -103,7 +103,7 @@ _APP_DIR_RE = re.compile(r'^[a-z0-9][a-z0-9._-]{0,63}$')
 
 def _require_admin(require_sudo=False):
     if getattr(g, 'role', None) != 'admin':
-        return jsonify({'error': 'Brak uprawnień'}), 403
+        return jsonify({'error': 'Permission denied'}), 403
     return None
 
 
@@ -143,10 +143,10 @@ def _is_safe_mount_path(path):
     sensitive_roots = ['/', '/boot', '/dev', '/etc', '/lib', '/proc', '/sys', '/usr', '/var/lib/docker']
     for s_root in sensitive_roots:
         if rp == s_root or rp.startswith(s_root + os.sep):
-            return False, f'Montowanie sciezki systemowej "{s_root}" jest zabronione'
+            return False, f'Mounting system path "{s_root}" is forbidden'
 
     if rp in ['/var/run/docker.sock', '/run/docker.sock']:
-        return False, 'Montowanie docker.sock jest niedozwolone'
+        return False, 'Mounting docker.sock is not allowed'
 
     # Check allowed roots
     allowed_roots = [os.path.realpath(_apps_root()), os.path.realpath(_compose_root())]
@@ -154,7 +154,7 @@ def _is_safe_mount_path(path):
         if rp == root or rp.startswith(root + os.sep):
             return True, None
 
-    return False, f'Sciezka montowania "{path}" jest poza dozwolonym obszarem'
+    return False, f'Mount path "{path}" is outside the allowed area'
 
 
 def _validate_compose_policy(compose_text):
@@ -168,13 +168,13 @@ def _validate_compose_policy(compose_text):
     try:
         data = yaml.safe_load(compose_text)
     except Exception:
-        return 'Nieprawidlowa skladnia compose YAML — sprawdz formatowanie pliku'
+        return 'Invalid compose YAML syntax — check file formatting'
 
     if not isinstance(data, dict):
-        return 'Nieprawidlowy plik compose — brak struktury YAML'
+        return 'Invalid compose file — missing YAML structure'
     services = data.get('services', {})
     if not isinstance(services, dict) or not services:
-        return 'Compose nie zawiera sekcji services'
+        return 'Compose file does not contain a services section'
 
     errors = []
 
@@ -184,21 +184,21 @@ def _validate_compose_policy(compose_text):
 
         # Check unsafe flags
         if svc.get('privileged') is True:
-            errors.append(f'Serwis {svc_name}: privileged=true jest niedozwolone.')
+            errors.append(f'Service {svc_name}: privileged=true is not allowed.')
 
         if svc.get('cap_add'):
-            errors.append(f'Serwis {svc_name}: cap_add jest niedozwolone.')
+            errors.append(f'Service {svc_name}: cap_add is not allowed.')
 
         if svc.get('devices'):
-            errors.append(f'Serwis {svc_name}: devices jest niedozwolone.')
+            errors.append(f'Service {svc_name}: devices is not allowed.')
 
         if svc.get('cgroup_parent'):
-            errors.append(f'Serwis {svc_name}: cgroup_parent jest niedozwolone.')
+            errors.append(f'Service {svc_name}: cgroup_parent is not allowed.')
 
         # Check unsafe namespaces
         for ns in ['network_mode', 'pid', 'ipc', 'userns_mode']:
             if str(svc.get(ns, '')).strip().lower() == 'host':
-                errors.append(f'Serwis {svc_name}: {ns}=host jest niedozwolone.')
+                errors.append(f'Service {svc_name}: {ns}=host is not allowed.')
 
         # Check security_opt
         sec_opts = svc.get('security_opt')
@@ -207,7 +207,7 @@ def _validate_compose_policy(compose_text):
                 sec_opts = [sec_opts]
             for opt in sec_opts:
                 if str(opt).strip().lower() not in ('no-new-privileges', 'no-new-privileges:true'):
-                    errors.append(f'Serwis {svc_name}: security_opt "{opt}" jest niedozwolone.')
+                    errors.append(f'Service {svc_name}: security_opt "{opt}" is not allowed.')
 
         # Check volumes
         for vol in (svc.get('volumes') or []):
@@ -224,7 +224,7 @@ def _validate_compose_policy(compose_text):
             if host_path:
                 is_safe, err_msg = _is_safe_mount_path(host_path)
                 if not is_safe:
-                    errors.append(f'Serwis {svc_name}: {err_msg}')
+                    errors.append(f'Service {svc_name}: {err_msg}')
 
     if errors:
         return '\n'.join(errors)
@@ -973,7 +973,7 @@ def _ensure_sandbox_override(app_name, project_path, compose_filename):
     if err:
         return None, err
     if not services:
-        return None, 'Brak usług w pliku docker-compose'
+        return None, 'No services in docker-compose file'
 
     limits = _policy_to_service_limits(policy)
     if not limits:
@@ -986,7 +986,7 @@ def _ensure_sandbox_override(app_name, project_path, compose_filename):
         with open(override_path, 'w') as f:
             yaml.safe_dump(override, f, sort_keys=False)
     except OSError as exc:
-        return None, f'Nie można zapisać pliku polityki sandbox: {exc}'
+        return None, f'Cannot write sandbox policy file: {exc}'
 
     return override_path, None
 
@@ -1089,7 +1089,7 @@ def _adapt_compose(compose_text, app_id):
                 # privileged=false / empty cap_add=[] are no-ops; skip warning
                 if val:
                     adapt_warnings.append(
-                        f'Serwis "{svc_name}": automatycznie usunieto {label}'
+                        f'Service "{svc_name}": automatically removed {label}'
                     )
 
             # Handle security_opt separately (allow safe values)
@@ -1114,14 +1114,14 @@ def _adapt_compose(compose_text, app_id):
                 
                 if removed_count > 0:
                     adapt_warnings.append(
-                        f'Serwis "{svc_name}": automatycznie usunieto niebezpieczne opcje security_opt'
+                        f'Service "{svc_name}": automatically removed unsafe security_opt options'
                     )
 
             for key, label in _UNSAFE_NS.items():
                 if str(svc.get(key, '')).strip().lower() == 'host':
                     svc.pop(key)
                     adapt_warnings.append(
-                        f'Serwis "{svc_name}": automatycznie usunieto {label}'
+                        f'Service "{svc_name}": automatically removed {label}'
                     )
 
             # Ensure restart policy is set
@@ -1183,7 +1183,7 @@ def _adapt_compose(compose_text, app_id):
                     is_safe, err_msg = _is_safe_mount_path(host_path_to_check)
                     if not is_safe:
                         adapt_warnings.append(
-                            f'Serwis "{svc_name}": automatycznie usunieto wolumen {host_path_to_check} ({err_msg})'
+                            f'Service "{svc_name}": automatically removed volume {host_path_to_check} ({err_msg})'
                         )
                         continue
 
@@ -1223,7 +1223,7 @@ def _adapt_compose(compose_text, app_id):
                         is_safe, err_msg = _is_safe_mount_path(host_path_to_check)
                         if not is_safe:
                             adapt_warnings.append(
-                                f'Serwis "{svc_name}": env_file {original_env} usunięto ({err_msg})'
+                                f'Service "{svc_name}": env_file {original_env} removed ({err_msg})'
                             )
                             continue
 
@@ -1289,7 +1289,7 @@ def _check_port_conflicts(compose_text):
 
         for port in needed_ports:
             if port in used_ports:
-                conflicts.append(f'Port {port} jest już zajęty przez inny kontener')
+                conflicts.append(f'Port {port} is already in use by another container')
     except Exception:
         pass
     return conflicts
@@ -1357,7 +1357,7 @@ def update_repos():
     for r in repos:
         rid = _normalize_repo_id((r or {}).get('id', ''))
         if not rid:
-            return jsonify({'error': 'Nieprawidłowe repo id'}), 400
+            return jsonify({'error': 'Invalid repo ID'}), 400
         r['id'] = rid
     _save_repos(repos)
     return jsonify({'ok': True})
@@ -1380,13 +1380,13 @@ def add_repo():
         repo_id = re.sub(r'[^a-z0-9]+', '-', (name or url.split('/')[-1]).lower()).strip('-')[:30]
     repo_id = _normalize_repo_id(repo_id)
     if not repo_id:
-        return jsonify({'error': 'Nieprawidłowe repo id (dozwolone: a-z, 0-9, -)'}), 400
+        return jsonify({'error': 'Invalid repo ID (allowed: a-z, 0-9, -)'}), 400
     if not name:
         name = repo_id.replace('-', ' ').title()
 
     repos = _load_repos()
     if any(r['id'] == repo_id for r in repos):
-        return jsonify({'error': f'Repozytorium "{repo_id}" już istnieje'}), 409
+        return jsonify({'error': f'Repository "{repo_id}" already exists'}), 409
 
     new_repo = {
         'id': repo_id,
@@ -1407,9 +1407,9 @@ def add_repo():
                 found_apps = True
                 break
         if not found_apps:
-            return jsonify({'error': 'Repozytorium nie zawiera katalogu Apps/'}), 400
+            return jsonify({'error': 'Repository does not contain an Apps/ directory'}), 400
     except Exception as e:
-        return jsonify({'error': f'Błąd pobierania: {str(e)}'}), 400
+        return jsonify({'error': f'Download error: {str(e)}'}), 400
 
     repos.append(new_repo)
     _save_repos(repos)
@@ -1428,11 +1428,11 @@ def delete_repo(repo_id):
         return deny
     repo_id = _normalize_repo_id(repo_id)
     if not repo_id:
-        return jsonify({'error': 'Nieprawidłowe repo id'}), 400
+        return jsonify({'error': 'Invalid repo ID'}), 400
     repos = _load_repos()
     new_repos = [r for r in repos if r['id'] != repo_id]
     if len(new_repos) == len(repos):
-        return jsonify({'error': 'Nie znaleziono'}), 404
+        return jsonify({'error': 'Not found'}), 404
     _save_repos(new_repos)
 
     repo_dir = os.path.join(CACHE_DIR, 'repos', repo_id)
@@ -1452,11 +1452,11 @@ def toggle_repo(repo_id):
         return deny
     repo_id = _normalize_repo_id(repo_id)
     if not repo_id:
-        return jsonify({'error': 'Nieprawidłowe repo id'}), 400
+        return jsonify({'error': 'Invalid repo ID'}), 400
     repos = _load_repos()
     repo = next((r for r in repos if r['id'] == repo_id), None)
     if not repo:
-        return jsonify({'error': 'Nie znaleziono'}), 404
+        return jsonify({'error': 'Not found'}), 404
 
     data = request.get_json(force=True) if request.data else {}
     repo['enabled'] = data.get('enabled', not repo.get('enabled'))
@@ -1552,7 +1552,7 @@ def validate_install():
     if deny:
         return deny
     if not _docker_available():
-        return jsonify({'error': 'Docker nie jest zainstalowany.'}), 503
+        return jsonify({'error': 'Docker is not installed.'}), 503
 
     data = request.json or {}
     app_id = data.get('app_id', '').strip()
@@ -1603,16 +1603,16 @@ def validate_install():
     if dir_name:
         installed = _get_installed_apps()
         if dir_name in installed:
-            warnings.append({'type': 'already_installed', 'message': f'{app_id} jest już zainstalowana'})
+            warnings.append({'type': 'already_installed', 'message': f'{app_id} is already installed'})
 
     # Disk space check
     try:
         st = os.statvfs(_compose_root())
         free_gb = (st.f_bavail * st.f_frsize) / (1024 ** 3)
         if free_gb < 1.0:
-            errors.append({'type': 'disk_space', 'message': f'Za mało miejsca na dysku ({free_gb:.1f} GB wolnego)'})
+            errors.append({'type': 'disk_space', 'message': f'Not enough disk space ({free_gb:.1f} GB free)'})
         elif free_gb < 5.0:
-            warnings.append({'type': 'disk_space', 'message': f'Niski poziom wolnego miejsca ({free_gb:.1f} GB)'})
+            warnings.append({'type': 'disk_space', 'message': f'Low disk space ({free_gb:.1f} GB)'})
     except Exception:
         pass
 
@@ -1629,7 +1629,7 @@ def _bg_install(task_id, app_id, app_title, adapted, dir_name, host_app_dir, con
     try:
         # Step 1: Write compose file
         _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'prepare',
-                        'percent': 5, 'message': 'Przygotowywanie plików…'})
+                        'percent': 5, 'message': 'Preparing files…'})
         os.makedirs(container_app_dir, exist_ok=True)
 
         # Atomic write of compose file
@@ -1662,7 +1662,7 @@ def _bg_install(task_id, app_id, app_title, adapted, dir_name, host_app_dir, con
 
         # Step 2: Pull images (streaming)
         _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'pull',
-                        'percent': 10, 'message': 'Pobieranie obrazów Docker…'})
+                        'percent': 10, 'message': 'Pulling Docker images…'})
 
         pull_lines = []
         pull_pct = [10]   # mutable for closure
@@ -1683,12 +1683,12 @@ def _bg_install(task_id, app_id, app_title, adapted, dir_name, host_app_dir, con
         )
         if pull_rc != 0:
             _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'error',
-                            'percent': 100, 'message': f'Błąd pobierania: {pull_output[-300:]}'})
+                            'percent': 100, 'message': f'Pull error: {pull_output[-300:]}'})
             return
 
         # Step 3: Start containers
         _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'start',
-                        'percent': 85, 'message': 'Uruchamianie kontenerów…'})
+                        'percent': 85, 'message': 'Starting containers…'})
 
         def on_up_line(line):
             _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'start',
@@ -1699,12 +1699,12 @@ def _bg_install(task_id, app_id, app_title, adapted, dir_name, host_app_dir, con
         )
         if up_rc != 0:
             _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'error',
-                            'percent': 100, 'message': f'Błąd uruchamiania: {up_output[-300:]}'})
+                            'percent': 100, 'message': f'Start error: {up_output[-300:]}'})
             return
 
         # Step 4: Verify containers started
         _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'verify',
-                        'percent': 95, 'message': 'Weryfikacja kontenerów…'})
+                        'percent': 95, 'message': 'Verifying containers…'})
         time.sleep(2)
         verify_out, _, verify_rc = _run_host(
             f'docker compose {files_arg} ps --format json', cwd=host_app_dir, timeout=15
@@ -1723,16 +1723,19 @@ def _bg_install(task_id, app_id, app_title, adapted, dir_name, host_app_dir, con
         if not running_ok:
             _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'warning',
                             'percent': 100,
-                            'message': f'{app_title} zainstalowana, ale niektóre kontenery mogą wymagać konfiguracji.'})
+                            'message': f'{app_title} installed, but some containers may require configuration.'})
         else:
             # Done!
             _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'done',
-                            'percent': 100, 'message': f'{app_title} zainstalowana!'})
+                            'percent': 100, 'message': f'{app_title} installed!'})
 
     except Exception as e:
         log.error('Install %s failed: %s', app_id, e)
         _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'error',
-                        'percent': 100, 'message': f'Błąd: {str(e)}'})
+                        'percent': 100, 'message': f'Error: {str(e)}'})
+
+
+
 
 
 @appstore_bp.route('/install', methods=['POST'])
@@ -1742,7 +1745,7 @@ def install_app():
     if deny:
         return deny
     if not _docker_available():
-        return jsonify({'error': 'Docker nie jest zainstalowany. Zainstaluj Docker w Menedżerze Docker.'}), 503
+        return jsonify({'error': 'Docker is not installed. Install Docker in Docker Manager.'}), 503
     data = request.json or {}
     app_id = data.get('app_id', '').strip()
     if not app_id:
@@ -1773,7 +1776,7 @@ def install_app():
 
     dir_name, safe_dir = _safe_compose_dir(app_id)
     if not dir_name:
-        return jsonify({'error': 'Nieprawidłowe app_id'}), 400
+        return jsonify({'error': 'Invalid app_id'}), 400
     host_app_dir = safe_dir
     container_app_dir = safe_dir
     app_title = app.get('title') or app_id
@@ -1803,7 +1806,7 @@ def reinstall_app():
     if deny:
         return deny
     if not _docker_available():
-        return jsonify({'error': 'Docker nie jest zainstalowany.'}), 503
+        return jsonify({'error': 'Docker is not installed.'}), 503
     data = request.json or {}
     app_id = data.get('app_id', '').strip()
     if not app_id:
@@ -1811,11 +1814,11 @@ def reinstall_app():
 
     dir_name, safe_dir = _safe_compose_dir(app_id)
     if not dir_name:
-        return jsonify({'error': 'Nieprawidłowe app_id'}), 400
+        return jsonify({'error': 'Invalid app_id'}), 400
 
     compose_file = os.path.join(safe_dir, 'docker-compose.yml')
     if not os.path.isfile(compose_file):
-        return jsonify({'error': 'Aplikacja nie jest zainstalowana'}), 404
+        return jsonify({'error': 'Application is not installed'}), 404
 
     # If compose_override provided, update the compose file first
     compose_override = data.get('compose_override', '').strip()
@@ -1866,31 +1869,31 @@ def reinstall_app():
             files_arg = _compose_files_args(compose_files)
 
             _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'prepare',
-                            'percent': 5, 'message': 'Zatrzymywanie kontenerów…'})
+                            'percent': 5, 'message': 'Stopping containers…'})
             _run_host_stream(f'docker compose {files_arg} down', cwd=safe_dir, timeout=120)
 
             _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'pull',
-                            'percent': 20, 'message': 'Pobieranie nowych obrazów…'})
+                            'percent': 20, 'message': 'Pulling new images…'})
             pull_out, pull_rc = _run_host_stream(f'docker compose {files_arg} pull', cwd=safe_dir, timeout=600)
             if pull_rc != 0:
                 _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'error',
-                                'percent': 100, 'message': f'Błąd: {pull_out[-300:]}'})
+                                'percent': 100, 'message': f'Error: {pull_out[-300:]}'})
                 return
 
             _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'start',
-                            'percent': 80, 'message': 'Uruchamianie kontenerów…'})
+                            'percent': 80, 'message': 'Starting containers…'})
             up_out, up_rc = _run_host_stream(f'docker compose {files_arg} up -d --remove-orphans', cwd=safe_dir, timeout=300)
             if up_rc != 0:
                 _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'error',
-                                'percent': 100, 'message': f'Błąd: {up_out[-300:]}'})
+                                'percent': 100, 'message': f'Error: {up_out[-300:]}'})
                 return
 
             _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'done',
-                            'percent': 100, 'message': f'{app_title} zaktualizowana!'})
+                            'percent': 100, 'message': f'{app_title} updated!'})
         except Exception as e:
             log.error('Reinstall %s failed: %s', app_id, e)
             _emit_install({'task_id': task_id, 'app_id': app_id, 'stage': 'error',
-                            'percent': 100, 'message': f'Błąd: {str(e)}'})
+                            'percent': 100, 'message': f'Error: {str(e)}'})
 
     if _socketio:
         _socketio.start_background_task(_bg_reinstall)
@@ -1907,7 +1910,7 @@ def uninstall_app():
     if deny:
         return deny
     if not _docker_available():
-        return jsonify({'error': 'Docker nie jest zainstalowany.'}), 503
+        return jsonify({'error': 'Docker is not installed.'}), 503
     data = request.json or {}
     app_id = data.get('app_id', '').strip()
     if not app_id:
@@ -1915,7 +1918,7 @@ def uninstall_app():
 
     dir_name, safe_dir = _safe_compose_dir(app_id)
     if not dir_name:
-        return jsonify({'error': 'Nieprawidłowe app_id'}), 400
+        return jsonify({'error': 'Invalid app_id'}), 400
     host_app_dir = safe_dir
     container_app_dir = safe_dir
 

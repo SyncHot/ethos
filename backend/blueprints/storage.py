@@ -313,7 +313,7 @@ def usb_monitor_loop(sio):
                 size_str = f" ({size})" if size else ""
                 evt = {
                     'type': 'success',
-                    'title': 'USB podłączony',
+                    'title': 'USB connected',
                     'message': f'{label}{size_str} — /dev/{dev_name}',
                     'time': time.time(),
                     'action': {'app': 'storage'},
@@ -332,7 +332,7 @@ def usb_monitor_loop(sio):
                 _cleanup_stale_mountpoint(dev_name)
                 evt = {
                     'type': 'warning',
-                    'title': 'USB odłączony',
+                    'title': 'USB disconnected',
                     'message': f'{label} (/dev/{dev_name})',
                     'time': time.time(),
                     'dev': dev_name,
@@ -476,12 +476,12 @@ def toggle_keepalive():
     enable = data.get('enable', True)
 
     if not dev_name or not _validate_drive_name(dev_name):
-        return jsonify({'error': 'Nieprawidłowa nazwa urządzenia'}), 400
+        return jsonify({'error': 'Invalid device name'}), 400
 
     if enable:
         mp = data.get('mountpoint', '').strip()
         if not mp:
-            return jsonify({'error': 'Wymagany punkt montowania'}), 400
+            return jsonify({'error': 'Mountpoint required'}), 400
         _keepalive_drives[dev_name] = {
             'mountpoint': mp,
             'fstype': data.get('fstype', 'auto'),
@@ -689,12 +689,10 @@ def mount_drive():
 
     # Validate drive name to prevent command injection
     if not _validate_drive_name(drive_name):
-        return jsonify({"error": "Nieprawidłowa nazwa urządzenia"}), 400
-
-    if not mount_path.startswith("/"):
+        return jsonify({"error": "Invalid device name"}), 400
         return jsonify({"error": "path must be absolute"}), 400
     if '..' in mount_path:
-        return jsonify({"error": "Ścieżka nie może zawierać '..' "}), 400
+        return jsonify({"error": "Path cannot contain '..'"}), 400
 
     mount_path = _sanitize_mount_path(mount_path)
 
@@ -837,19 +835,19 @@ def eject_drive():
     if not disk_name:
         return jsonify({"error": "disk is required"}), 400
     if not _validate_disk_name(disk_name):
-        return jsonify({"error": "Nieprawidłowa nazwa dysku"}), 400
+        return jsonify({"error": "Invalid disk name"}), 400
 
     dev_path = f"/dev/{disk_name}"
 
     # Verify it's a USB device
     r = host_run(f"lsblk -ndo TRAN,HOTPLUG {dev_path} 2>/dev/null")
     if r.returncode != 0:
-        return jsonify({"error": f"Urządzenie {dev_path} nie istnieje"}), 404
+        return jsonify({"error": f"Device {dev_path} does not exist"}), 404
     parts = r.stdout.strip().split()
     tran = parts[0] if parts else ''
     hotplug = parts[1] if len(parts) > 1 else '0'
     if tran != 'usb' and hotplug != '1':
-        return jsonify({"error": "To nie jest urządzenie USB"}), 400
+        return jsonify({"error": "Not a USB device"}), 400
 
     # Unmount all partitions
     r = host_run(f"lsblk -nlo NAME,MOUNTPOINT {dev_path} 2>/dev/null")
@@ -877,7 +875,7 @@ def eject_drive():
         "success": True,
         "disk": disk_name,
         "unmounted": unmounted,
-        "message": "Dysk został bezpiecznie wysunięty",
+        "message": "Disk safely ejected",
     })
 
 
@@ -886,7 +884,7 @@ def smart_info():
     """Get SMART info for a specific disk."""
     disk_name = request.args.get('disk', '').strip()
     if not disk_name or not _validate_disk_name(disk_name):
-        return jsonify({"error": "Nieprawidłowa nazwa dysku"}), 400
+        return jsonify({"error": "Invalid disk name"}), 400
 
     dev_path = f"/dev/{disk_name}"
     r = host_run(f"smartctl -A -H -i {dev_path} 2>/dev/null", timeout=15)
@@ -1063,7 +1061,7 @@ def samba_share_add():
     # Check if Samba is installed first
     r_smb = host_run("command -v smbd")
     if r_smb.returncode != 0:
-        return jsonify({"error": "Samba nie jest zainstalowana. Zainstaluj ją najpierw w Dyski → Samba."}), 400
+        return jsonify({"error": "Samba is not installed. Install it first in Disks → Samba."}), 400
 
     data = request.json or {}
     share_name = data.get("name", "").strip()
@@ -1075,19 +1073,19 @@ def samba_share_add():
 
     # Validate share name: alphanumeric, hyphens, underscores, spaces only
     if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9 _\-]{0,63}$', share_name):
-        return jsonify({"error": "Nazwa udziału może zawierać tylko litery, cyfry, spacje, - i _"}), 400
+        return jsonify({"error": "Share name may only contain letters, numbers, spaces, - and _"}), 400
 
     # Validate share path: must be absolute, no traversal, no suspicious chars
     if not share_path.startswith('/'):
-        return jsonify({"error": "Ścieżka musi być bezwzględna (zaczynać się od /)"}), 400
+        return jsonify({"error": "Path must be absolute (start with /)"}), 400
     if '..' in share_path:
-        return jsonify({"error": "Ścieżka nie może zawierać '..'"}), 400
+        return jsonify({"error": "Path cannot contain '..'"}), 400
     # Block sharing critical system directories
     _BLOCKED_PATHS = ('/', '/etc', '/proc', '/sys', '/dev', '/boot', '/root',
                        '/bin', '/sbin', '/usr', '/lib', '/lib64', '/var')
     norm_share = share_path.rstrip('/')
     if norm_share in _BLOCKED_PATHS or not norm_share:
-        return jsonify({"error": f"Nie można udostępnić ścieżki systemowej: {share_path}"}), 403
+        return jsonify({"error": f"Cannot share system path: {share_path}"}), 403
 
     uid_r = host_run("id -un")
     gid_r = host_run("id -gn")
@@ -1193,7 +1191,7 @@ def samba_share_remove():
 
     # Validate share name
     if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9 _\-]{0,63}$', share_name):
-        return jsonify({"error": "Nieprawidłowa nazwa udziału"}), 400
+        return jsonify({"error": "Invalid share name"}), 400
 
     script = """import json, re
 NL = chr(10)
@@ -1226,11 +1224,11 @@ def samba_password():
 
     # Validate username: alphanumeric + underscores
     if not re.match(r'^[a-zA-Z0-9_]{1,32}$', username):
-        return jsonify({"error": "Nazwa użytkownika może zawierać tylko litery, cyfry i _"}), 400
+        return jsonify({"error": "Username may only contain letters, numbers, and _"}), 400
 
     # Validate password length
     if len(password) < 1 or len(password) > 128:
-        return jsonify({"error": "Hasło musi mieć 1-128 znaków"}), 400
+        return jsonify({"error": "Password must be 1-128 characters"}), 400
 
     # Ensure user exists on the host
     host_run(f"id {Q(username)} || useradd -M -s /usr/sbin/nologin {Q(username)}")
@@ -1268,7 +1266,7 @@ def samba_pkg_install():
         return jsonify({'status': 'ok', 'installed': True})
     ok, msg = claim_dep('smbd', 'sharing-samba')
     if not ok:
-        return jsonify({'ok': False, 'error': msg or 'Instalacja Samba nie powiodła się'}), 500
+        return jsonify({'ok': False, 'error': msg or 'Samba installation failed'}), 500
     host_run("systemctl unmask smbd nmbd 2>/dev/null; systemctl enable smbd nmbd 2>/dev/null; systemctl start smbd nmbd 2>/dev/null || true")
     return jsonify({'status': 'ok'})
 
@@ -1293,12 +1291,12 @@ def samba_pkg_uninstall():
     # 4. Log event
     try:
         from blueprints.eventlog import log as elog
-        elog('packages', 'info', f'Samba odinstalowana (wipe={wipe})')
+        elog('packages', 'info', f'Samba uninstalled (wipe={wipe})')
     except Exception:
         pass
 
     if not ok:
-        return jsonify({'ok': False, 'error': dep_msg or 'Nie udało się usunąć zależności Samba'}), 500
+        return jsonify({'ok': False, 'error': dep_msg or 'Failed to remove Samba dependencies'}), 500
     return jsonify({'ok': True})
 
 
@@ -1332,7 +1330,7 @@ def nfs_install():
         # Try direct package name
         r = _apt_install('nfs-kernel-server', timeout=120)
         if r.returncode != 0:
-            return jsonify({"error": f"Instalacja nie powiodła się: {r.stderr[-200:]}"}), 500
+            return jsonify({"error": f"Installation failed: {r.stderr[-200:]}"}), 500
     host_run("systemctl enable nfs-server && systemctl start nfs-server", timeout=15)
     # Set optimal NFS thread count
     host_run("sed -i 's/^RPCNFSDCOUNT=.*/RPCNFSDCOUNT=16/' /etc/default/nfs-kernel-server 2>/dev/null || echo 'RPCNFSDCOUNT=16' >> /etc/default/nfs-kernel-server")
@@ -1367,14 +1365,14 @@ def nfs_export_add():
     network = data.get("network", "*").strip() or "*"
     options = data.get("options", "rw,async,no_subtree_check,no_root_squash,insecure").strip()
     if not path or not os.path.isdir(path):
-        return jsonify({"error": "Ścieżka nie istnieje"}), 400
+        return jsonify({"error": "Path not found"}), 400
 
     export_line = f'{path} {network}({options})'
     # Check for duplicates
     r = host_run("cat /etc/exports 2>/dev/null || echo ''")
     for line in r.stdout.splitlines():
         if line.strip().startswith(path + ' '):
-            return jsonify({"error": "Ten katalog jest już eksportowany"}), 409
+            return jsonify({"error": "This directory is already exported"}), 409
 
     host_run(f"echo {Q(export_line)} >> /etc/exports")
     host_run("exportfs -ra", timeout=10)
@@ -1386,7 +1384,7 @@ def nfs_export_remove():
     data = request.json or {}
     path = data.get("path", "").strip()
     if not path:
-        return jsonify({"error": "Ścieżka wymagana"}), 400
+        return jsonify({"error": "Path required"}), 400
     # Remove line from /etc/exports
     host_run(f"sed -i '\\|^{path} |d' /etc/exports")
     host_run("exportfs -ra", timeout=10)
@@ -1402,7 +1400,7 @@ def nfs_pkg_install():
         return jsonify({'status': 'ok', 'installed': True})
     ok, msg = claim_dep('exportfs', 'sharing-nfs')
     if not ok:
-        return jsonify({'ok': False, 'error': msg or 'Instalacja NFS nie powiodła się'}), 500
+        return jsonify({'ok': False, 'error': msg or 'NFS installation failed'}), 500
     host_run("systemctl enable nfs-server && systemctl start nfs-server", timeout=15)
     return jsonify({'status': 'ok'})
 
@@ -1417,11 +1415,11 @@ def nfs_pkg_uninstall():
         host_run("rm -f /etc/exports 2>/dev/null || true")
     try:
         from blueprints.eventlog import log as elog
-        elog('packages', 'info', f'NFS odinstalowany (wipe={wipe})')
+        elog('packages', 'info', f'NFS uninstalled (wipe={wipe})')
     except Exception:
         pass
     if not ok:
-        return jsonify({'ok': False, 'error': dep_msg or 'Nie udało się usunąć zależności NFS'}), 500
+        return jsonify({'ok': False, 'error': dep_msg or 'Failed to remove NFS dependencies'}), 500
     return jsonify({'ok': True})
 
 
@@ -1451,7 +1449,7 @@ def dlna_status():
 def dlna_install():
     r = _apt_install('minidlna', timeout=120)
     if r.returncode != 0:
-        return jsonify({"error": f"Instalacja nie powiodła się: {r.stderr[-200:]}"}), 500
+        return jsonify({"error": f"Installation failed: {r.stderr[-200:]}"}), 500
     host_run("systemctl enable minidlna", timeout=10)
     return jsonify({"status": "ok"})
 
@@ -1509,7 +1507,7 @@ def dlna_pkg_install():
         return jsonify({'status': 'ok', 'installed': True})
     ok, msg = claim_dep('minidlnad', 'sharing-dlna')
     if not ok:
-        return jsonify({'ok': False, 'error': msg or 'Instalacja MiniDLNA nie powiodła się'}), 500
+        return jsonify({'ok': False, 'error': msg or 'MiniDLNA installation failed'}), 500
     host_run("systemctl enable minidlna", timeout=10)
     return jsonify({'status': 'ok'})
 
@@ -1524,11 +1522,11 @@ def dlna_pkg_uninstall():
         host_run("rm -f /etc/minidlna.conf 2>/dev/null || true")
     try:
         from blueprints.eventlog import log as elog
-        elog('packages', 'info', f'MiniDLNA odinstalowany (wipe={wipe})')
+        elog('packages', 'info', f'MiniDLNA uninstalled (wipe={wipe})')
     except Exception:
         pass
     if not ok:
-        return jsonify({'ok': False, 'error': dep_msg or 'Nie udało się usunąć zależności MiniDLNA'}), 500
+        return jsonify({'ok': False, 'error': dep_msg or 'Failed to remove MiniDLNA dependencies'}), 500
     return jsonify({'ok': True})
 
 
@@ -1606,7 +1604,7 @@ def sftp_pkg_uninstall():
     host_run("systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null", timeout=10)
     try:
         from blueprints.eventlog import log as elog
-        elog('packages', 'info', 'SFTP wyłączony (subsystem disabled)')
+        elog('packages', 'info', 'SFTP disabled (subsystem disabled)')
     except Exception:
         pass
     return jsonify({'ok': True})
@@ -1689,7 +1687,7 @@ def webdav_status():
 def webdav_install():
     r = _apt_install('lighttpd', timeout=120)
     if r.returncode != 0:
-        return jsonify({"error": f"Instalacja nie powiodła się: {r.stderr[-200:]}"}), 500
+        return jsonify({"error": f"Installation failed: {r.stderr[-200:]}"}), 500
     # Enable WebDAV module
     host_run("lighttpd-enable-mod webdav 2>/dev/null || true")
     return jsonify({"status": "ok"})
@@ -1712,16 +1710,16 @@ def webdav_add():
     password = data.get("password", "").strip()
 
     if not fs_path or not os.path.isdir(fs_path):
-        return jsonify({"error": "Ścieżka nie istnieje"}), 400
+        return jsonify({"error": "Path not found"}), 400
     if not url_path:
         url_path = '/' + os.path.basename(fs_path)
 
     # Validate username/password — reject shell-dangerous characters
     import re as _re_val
     if username and not _re_val.match(r'^[a-zA-Z0-9._@-]+$', username):
-        return jsonify({"error": "Niedozwolone znaki w loginie"}), 400
+        return jsonify({"error": "Invalid characters in username"}), 400
     if password and any(c in password for c in "'\"\\`$"):
-        return jsonify({"error": "Niedozwolone znaki w haśle"}), 400
+        return jsonify({"error": "Invalid characters in password"}), 400
 
     # Set up htpasswd for this share if auth requested
     if username and password:
@@ -1772,7 +1770,7 @@ def webdav_pkg_install():
         return jsonify({'status': 'ok', 'installed': True})
     ok, msg = claim_dep('lighttpd', 'sharing-webdav')
     if not ok:
-        return jsonify({'ok': False, 'error': msg or 'Instalacja lighttpd nie powiodła się'}), 500
+        return jsonify({'ok': False, 'error': msg or 'lighttpd installation failed'}), 500
     host_run("lighttpd-enable-mod webdav 2>/dev/null || true")
     return jsonify({'status': 'ok'})
 
@@ -1789,11 +1787,11 @@ def webdav_pkg_uninstall():
         host_run("rm -f /etc/lighttpd/webdav_*.htpasswd 2>/dev/null || true")
     try:
         from blueprints.eventlog import log as elog
-        elog('packages', 'info', f'WebDAV odinstalowany (wipe={wipe})')
+        elog('packages', 'info', f'WebDAV uninstalled (wipe={wipe})')
     except Exception:
         pass
     if not ok:
-        return jsonify({'ok': False, 'error': dep_msg or 'Nie udało się usunąć zależności WebDAV'}), 500
+        return jsonify({'ok': False, 'error': dep_msg or 'Failed to remove WebDAV dependencies'}), 500
     return jsonify({'ok': True})
 
 
@@ -1823,7 +1821,7 @@ def ftp_status():
 def ftp_install():
     r = _apt_install('vsftpd', timeout=120)
     if r.returncode != 0:
-        return jsonify({"error": f"Instalacja nie powiodła się: {r.stderr[-200:]}"}), 500
+        return jsonify({"error": f"Installation failed: {r.stderr[-200:]}"}), 500
     # Sensible defaults
     config = """# EthOS vsftpd config
 listen=YES
@@ -1864,7 +1862,7 @@ def ftp_pkg_install():
         return jsonify({'status': 'ok', 'installed': True})
     ok, msg = claim_dep('vsftpd', 'sharing-ftp')
     if not ok:
-        return jsonify({'ok': False, 'error': msg or 'Instalacja vsftpd nie powiodła się'}), 500
+        return jsonify({'ok': False, 'error': msg or 'vsftpd installation failed'}), 500
     host_run("systemctl enable vsftpd && systemctl restart vsftpd", timeout=10)
     return jsonify({'status': 'ok'})
 
@@ -1879,11 +1877,11 @@ def ftp_pkg_uninstall():
         host_run("rm -f /etc/vsftpd.conf 2>/dev/null || true")
     try:
         from blueprints.eventlog import log as elog
-        elog('packages', 'info', f'FTP (vsftpd) odinstalowany (wipe={wipe})')
+        elog('packages', 'info', f'FTP (vsftpd) uninstalled (wipe={wipe})')
     except Exception:
         pass
     if not ok:
-        return jsonify({'ok': False, 'error': dep_msg or 'Nie udało się usunąć zależności FTP'}), 500
+        return jsonify({'ok': False, 'error': dep_msg or 'Failed to remove FTP dependencies'}), 500
     return jsonify({'ok': True})
 
 
@@ -1899,14 +1897,14 @@ def ftp_pkg_status():
 # ═══════════════════════════════════════════════════════════
 
 FORMAT_FS_OPTIONS = [
-    {"value": "ext4",  "label": "ext4",  "desc": "Najlepszy dla Linuxa — szybki, niezawodny, journaling", "linux": True,  "windows": False, "mac": False},
-    {"value": "btrfs", "label": "Btrfs", "desc": "Nowoczesny Linux — snapshoty, kompresja, RAID", "linux": True,  "windows": False, "mac": False},
-    {"value": "xfs",   "label": "XFS",   "desc": "Wysokowydajny Linux — duże pliki, serwery", "linux": True,  "windows": False, "mac": False},
-    {"value": "ntfs",  "label": "NTFS",  "desc": "Windows — pełna kompatybilność z Windows", "linux": True,  "windows": True,  "mac": True},
-    {"value": "exfat", "label": "exFAT", "desc": "Uniwersalny — Windows, Mac, Linux, duże pliki", "linux": True,  "windows": True,  "mac": True},
-    {"value": "vfat",  "label": "FAT32", "desc": "Maksymalna kompatybilność — limit pliku 4 GB", "linux": True,  "windows": True,  "mac": True},
-    {"value": "ext3",  "label": "ext3",  "desc": "Starszy Linux — journaling, kompatybilność", "linux": True,  "windows": False, "mac": False},
-    {"value": "f2fs",  "label": "F2FS",  "desc": "Flash-Friendly — SSD, pendrive, karty SD", "linux": True,  "windows": False, "mac": False},
+    {"value": "ext4",  "label": "ext4",  "desc": "Best for Linux — fast, reliable, journaling", "linux": True,  "windows": False, "mac": False},
+    {"value": "btrfs", "label": "Btrfs", "desc": "Modern Linux — snapshots, compression, RAID", "linux": True,  "windows": False, "mac": False},
+    {"value": "xfs",   "label": "XFS",   "desc": "High-performance Linux — large files, servers", "linux": True,  "windows": False, "mac": False},
+    {"value": "ntfs",  "label": "NTFS",  "desc": "Windows — full Windows compatibility", "linux": True,  "windows": True,  "mac": True},
+    {"value": "exfat", "label": "exFAT", "desc": "Universal — Windows, Mac, Linux, large files", "linux": True,  "windows": True,  "mac": True},
+    {"value": "vfat",  "label": "FAT32", "desc": "Maximum compatibility — 4 GB file size limit", "linux": True,  "windows": True,  "mac": True},
+    {"value": "ext3",  "label": "ext3",  "desc": "Legacy Linux — journaling, compatibility", "linux": True,  "windows": False, "mac": False},
+    {"value": "f2fs",  "label": "F2FS",  "desc": "Flash-Friendly — SSD, USB drives, SD cards", "linux": True,  "windows": False, "mac": False},
 ]
 
 # Mapping from fs value to mkfs command
@@ -1965,21 +1963,21 @@ def relabel_drive():
             if r_um.returncode != 0:
                 r_um = host_run(f"umount -l {Q(mountpoint)}")
                 if r_um.returncode != 0:
-                    return jsonify({'error': 'Nie udało się odmontować dysku NTFS'}), 500
+                    return jsonify({'error': 'Failed to unmount NTFS disk'}), 500
             needs_remount = True
         cmd = f"ntfslabel --force {Q(dev_path)} {Q(new_label)}"
     elif fstype in ('vfat', 'fat32', 'fat16'):
         if is_mounted:
             r_um = host_run(f"umount {Q(mountpoint)}")
             if r_um.returncode != 0:
-                return jsonify({'error': 'Nie udało się odmontować dysku FAT'}), 500
+                return jsonify({'error': 'Failed to unmount FAT disk'}), 500
             needs_remount = True
         cmd = f"fatlabel {Q(dev_path)} {Q(new_label)}"
     elif fstype == 'exfat':
         if is_mounted:
             r_um = host_run(f"umount {Q(mountpoint)}")
             if r_um.returncode != 0:
-                return jsonify({'error': 'Nie udało się odmontować dysku exFAT'}), 500
+                return jsonify({'error': 'Failed to unmount exFAT disk'}), 500
             needs_remount = True
         cmd = f"exfatlabel {Q(dev_path)} {Q(new_label)}"
     elif fstype == 'btrfs':
@@ -1988,18 +1986,18 @@ def relabel_drive():
         if is_mounted:
             r_um = host_run(f"umount {Q(mountpoint)}")
             if r_um.returncode != 0:
-                return jsonify({'error': 'Nie udało się odmontować dysku XFS'}), 500
+                return jsonify({'error': 'Failed to unmount XFS disk'}), 500
             needs_remount = True
         cmd = f"xfs_admin -L {Q(new_label)} {Q(dev_path)}"
     else:
-        return jsonify({'error': f'Zmiana etykiety nie jest obsługiwana dla {fstype}'}), 400
+        return jsonify({'error': f'Label change is not supported for {fstype}'}), 400
 
     r = host_run(cmd, timeout=15)
     if r.returncode != 0:
         # If we unmounted, try to remount before returning error
         if needs_remount and mountpoint:
             host_run(f"mount {Q(dev_path)} {Q(mountpoint)}", timeout=10)
-        return jsonify({'error': f'Błąd: {r.stderr.strip() or r.stdout.strip()}'}), 500
+        return jsonify({'error': f'Error: {r.stderr.strip() or r.stdout.strip()}'}), 500
 
     # Remount at new label path if it was auto-unmounted
     if needs_remount and mountpoint:
@@ -2057,27 +2055,27 @@ def format_drive():
     label = data.get("label", "").strip()
 
     if not drive_name or not fstype:
-        return jsonify({"error": "drive i fstype są wymagane"}), 400
+        return jsonify({"error": "drive and fstype are required"}), 400
 
     # Validate drive name (prevent injection)
     if not re.match(r'^[a-zA-Z0-9]+$', drive_name):
-        return jsonify({"error": "Nieprawidłowa nazwa urządzenia"}), 400
+        return jsonify({"error": "Invalid device name"}), 400
 
     # Validate fstype
     if fstype not in MKFS_CMDS:
-        return jsonify({"error": f"Nieobsługiwany system plików: {fstype}"}), 400
+        return jsonify({"error": f"Unsupported filesystem: {fstype}"}), 400
 
     dev_path = f"/dev/{drive_name}"
 
     # Check device exists
     r = host_run(f"lsblk -no NAME {dev_path} 2>/dev/null")
     if r.returncode != 0:
-        return jsonify({"error": f"Urządzenie {dev_path} nie istnieje"}), 404
+        return jsonify({"error": f"Device {dev_path} does not exist"}), 404
 
     # Check device is not mounted (including child partitions)
     r = host_run(f"findmnt -n -o TARGET {dev_path} 2>/dev/null")
     if r.returncode == 0 and r.stdout.strip():
-        return jsonify({"error": f"Urządzenie jest zamontowane na {r.stdout.strip()}. Odmontuj najpierw."}), 400
+        return jsonify({"error": f"Device is mounted on {r.stdout.strip()}. Unmount first."}), 400
 
     # Also check child devices (e.g. sda has sda1 mounted)
     r = host_run(f"lsblk -no MOUNTPOINT {dev_path} 2>/dev/null")
@@ -2087,15 +2085,15 @@ def format_drive():
             # Check for system mounts first
             for mp in mounted_children:
                 if mp in ('/', '/boot', '/boot/efi', '/home'):
-                    return jsonify({"error": f"Urządzenie jest używane przez system ({mp})!"}), 403
+                    return jsonify({"error": f"Device is in use by system ({mp})!"}), 403
             # Any other mount — must unmount first
-            return jsonify({"error": f"Partycja zamontowana na {mounted_children[0]}. Odmontuj najpierw."}), 400
+            return jsonify({"error": f"Partition is mounted on {mounted_children[0]}. Unmount first."}), 400
 
     # Safety: refuse to format system disk (robust check incl. LVM)
     # Extract base disk name for system check
     _base_disk = re.sub(r'p?\d+$', '', drive_name)
     if _is_system_disk(drive_name) or (_base_disk != drive_name and _is_system_disk(_base_disk)):
-        return jsonify({"error": "Nie można formatować dysku systemowego!"}), 403
+        return jsonify({"error": "Cannot format system disk!"}), 403
 
     # Build mkfs command
     mkfs_base = MKFS_CMDS[fstype]
@@ -2114,19 +2112,19 @@ def format_drive():
     cmd = f"{mkfs_base} {label_flag} {dev_path} 2>&1"
 
     def generate():
-        yield f"data: {json.dumps({'type': 'step', 'message': f'Formatowanie {dev_path} na {fstype}...'})}\n\n"
+        yield f"data: {json.dumps({'type': 'step', 'message': f'Formatting {dev_path} as {fstype}...'})}\n\n"
         if label:
-            yield f"data: {json.dumps({'type': 'step', 'message': f'Etykieta: {label}'})}\n\n"
+            yield f"data: {json.dumps({'type': 'step', 'message': f'Label: {label}'})}\n\n"
 
         for line in host_run_stream(cmd):
             line = line.rstrip("\n")
             if line.startswith("__EXIT_CODE__:"):
                 code = int(line.split(":")[1])
                 if code == 0:
-                    yield f"data: {json.dumps({'type': 'step', 'message': 'Formatowanie zakończone pomyślnie!'})}\n\n"
+                    yield f"data: {json.dumps({'type': 'step', 'message': 'Format completed successfully!'})}\n\n"
                     yield f"data: {json.dumps({'type': 'done', 'success': True})}\n\n"
                 else:
-                    yield f"data: {json.dumps({'type': 'step', 'message': f'Błąd formatowania (kod: {code})'})}\n\n"
+                    yield f"data: {json.dumps({'type': 'step', 'message': f'Format error (code: {code})'})}\n\n"
                     yield f"data: {json.dumps({'type': 'done', 'success': False})}\n\n"
             else:
                 yield f"data: {json.dumps({'type': 'log', 'message': line})}\n\n"
@@ -2154,28 +2152,28 @@ def merge_partitions():
     label = data.get("label", "").strip()
 
     if not disk_name or not fstype:
-        return jsonify({"error": "disk i fstype są wymagane"}), 400
+        return jsonify({"error": "disk and fstype are required"}), 400
 
     # Validate disk name (only base disk, no partition numbers)
     if not _validate_disk_name(disk_name):
-        return jsonify({"error": "Nieprawidłowa nazwa dysku (podaj dysk bazowy np. sdb, nie partycję)"}), 400
+        return jsonify({"error": "Invalid disk name (provide base disk e.g. sdb, not a partition)"}), 400
 
     if fstype not in MKFS_CMDS:
-        return jsonify({"error": f"Nieobsługiwany system plików: {fstype}"}), 400
+        return jsonify({"error": f"Unsupported filesystem: {fstype}"}), 400
 
     dev_path = f"/dev/{disk_name}"
 
     # Check device exists and is a disk
     r = host_run(f"lsblk -ndo TYPE {dev_path} 2>/dev/null")
     if r.returncode != 0:
-        return jsonify({"error": f"Urządzenie {dev_path} nie istnieje"}), 404
+        return jsonify({"error": f"Device {dev_path} does not exist"}), 404
     if r.stdout.strip() != 'disk':
-        return jsonify({"error": f"{dev_path} nie jest dyskiem bazowym"}), 400
+        return jsonify({"error": f"{dev_path} is not a base disk"}), 400
 
     # Get all partitions on this disk
     r = host_run(f"lsblk -nlo NAME,MOUNTPOINT {dev_path} 2>/dev/null")
     if r.returncode != 0:
-        return jsonify({"error": "Nie można odczytać partycji"}), 500
+        return jsonify({"error": "Cannot read partitions"}), 500
 
     parts_mounted = []
     for line in r.stdout.strip().split('\n'):
@@ -2187,11 +2185,11 @@ def merge_partitions():
                 parts_mounted.append(f"{pname} → {mp}")
 
     if parts_mounted:
-        return jsonify({"error": f"Partycje są zamontowane: {', '.join(parts_mounted)}. Odmontuj je najpierw."}), 400
+        return jsonify({"error": f"Partitions are mounted: {', '.join(parts_mounted)}. Unmount them first."}), 400
 
     # Safety: refuse system disk (robust check incl. LVM)
     if _is_system_disk(disk_name):
-        return jsonify({"error": "Nie można łączyć partycji dysku systemowego!"}), 403
+        return jsonify({"error": "Cannot merge partitions of system disk!"}), 403
 
     # Build label flags
     safe_label = ""
@@ -2199,16 +2197,16 @@ def merge_partitions():
         safe_label = re.sub(r'[^a-zA-Z0-9_\-.]', '_', label)[:16]
 
     def generate():
-        yield f"data: {json.dumps({'type': 'step', 'message': f'Łączenie partycji na {dev_path}...'})}\n\n"
+        yield f"data: {json.dumps({'type': 'step', 'message': f'Merging partitions on {dev_path}...'})}\n\n"
 
         # Step 1: Wipe existing partition signatures
-        yield f"data: {json.dumps({'type': 'step', 'message': 'Czyszczenie tablicy partycji...'})}\n\n"
+        yield f"data: {json.dumps({'type': 'step', 'message': 'Wiping partition table...'})}\n\n"
         for line in host_run_stream(f"wipefs -a {dev_path} 2>&1"):
             line = line.rstrip("\n")
             if line.startswith("__EXIT_CODE__:"):
                 code = int(line.split(":")[1])
                 if code != 0:
-                    yield f"data: {json.dumps({'type': 'step', 'message': f'Błąd wipefs (kod: {code})'})}\n\n"
+                    yield f"data: {json.dumps({'type': 'step', 'message': f'wipefs error (code: {code})'})}\n\n"
                     yield f"data: {json.dumps({'type': 'done', 'success': False})}\n\n"
                     return
             else:
@@ -2216,14 +2214,14 @@ def merge_partitions():
                     yield f"data: {json.dumps({'type': 'log', 'message': line})}\n\n"
 
         # Step 2: Create new GPT partition table with single partition
-        yield f"data: {json.dumps({'type': 'step', 'message': 'Tworzenie nowej tablicy partycji GPT...'})}\n\n"
+        yield f"data: {json.dumps({'type': 'step', 'message': 'Creating new GPT partition table...'})}\n\n"
         parted_cmd = f"parted -s {dev_path} mklabel gpt mkpart primary 0% 100% 2>&1"
         for line in host_run_stream(parted_cmd):
             line = line.rstrip("\n")
             if line.startswith("__EXIT_CODE__:"):
                 code = int(line.split(":")[1])
                 if code != 0:
-                    yield f"data: {json.dumps({'type': 'step', 'message': f'Błąd parted (kod: {code})'})}\n\n"
+                    yield f"data: {json.dumps({'type': 'step', 'message': f'parted error (code: {code})'})}\n\n"
                     yield f"data: {json.dumps({'type': 'done', 'success': False})}\n\n"
                     return
             else:
@@ -2231,7 +2229,7 @@ def merge_partitions():
                     yield f"data: {json.dumps({'type': 'log', 'message': line})}\n\n"
 
         # Wait for kernel to re-read partition table
-        yield f"data: {json.dumps({'type': 'step', 'message': 'Odświeżanie tablicy partycji...'})}\n\n"
+        yield f"data: {json.dumps({'type': 'step', 'message': 'Refreshing partition table...'})}\n\n"
         host_run(f"partprobe {dev_path} 2>/dev/null")
         host_run("sleep 2")
 
@@ -2250,11 +2248,11 @@ def merge_partitions():
         # Verify new partition exists
         r2 = host_run(f"lsblk -no NAME {new_part} 2>/dev/null")
         if r2.returncode != 0:
-            yield f"data: {json.dumps({'type': 'step', 'message': f'Partycja {new_part} nie została utworzona'})}\n\n"
+            yield f"data: {json.dumps({'type': 'step', 'message': f'Partition {new_part} was not created'})}\n\n"
             yield f"data: {json.dumps({'type': 'done', 'success': False})}\n\n"
             return
 
-        yield f"data: {json.dumps({'type': 'step', 'message': f'Utworzono partycję {new_part_name}'})}\n\n"
+        yield f"data: {json.dumps({'type': 'step', 'message': f'Created partition {new_part_name}'})}\n\n"
 
         # Step 3: Format the new partition
         mkfs_base = MKFS_CMDS[fstype]
@@ -2268,17 +2266,17 @@ def merge_partitions():
                 label_flag = f"-n {Q(safe_label[:11])}"
 
         fmt_cmd = f"{mkfs_base} {label_flag} {new_part} 2>&1"
-        yield f"data: {json.dumps({'type': 'step', 'message': f'Formatowanie na {fstype}...'})}\n\n"
+        yield f"data: {json.dumps({'type': 'step', 'message': f'Formatting as {fstype}...'})}\n\n"
 
         for line in host_run_stream(fmt_cmd):
             line = line.rstrip("\n")
             if line.startswith("__EXIT_CODE__:"):
                 code = int(line.split(":")[1])
                 if code == 0:
-                    yield f"data: {json.dumps({'type': 'step', 'message': 'Formatowanie zakończone pomyślnie!'})}\n\n"
+                    yield f"data: {json.dumps({'type': 'step', 'message': 'Format completed successfully!'})}\n\n"
                     yield f"data: {json.dumps({'type': 'done', 'success': True, 'partition': new_part_name})}\n\n"
                 else:
-                    yield f"data: {json.dumps({'type': 'step', 'message': f'Błąd formatowania (kod: {code})'})}\n\n"
+                    yield f"data: {json.dumps({'type': 'step', 'message': f'Format error (code: {code})'})}\n\n"
                     yield f"data: {json.dumps({'type': 'done', 'success': False})}\n\n"
             else:
                 if line.strip():
@@ -2312,49 +2310,49 @@ def partition_disk():
     partitions = data.get("partitions", [])
 
     if not disk_name:
-        return jsonify({"error": "Nazwa dysku jest wymagana"}), 400
+        return jsonify({"error": "Disk name is required"}), 400
     if not partitions or len(partitions) < 1:
-        return jsonify({"error": "Podaj przynajmniej jedną partycję"}), 400
+        return jsonify({"error": "Provide at least one partition"}), 400
     if len(partitions) > 8:
-        return jsonify({"error": "Maksymalnie 8 partycji"}), 400
+        return jsonify({"error": "Maximum 8 partitions"}), 400
 
     # Validate disk name
     if not _validate_disk_name(disk_name):
-        return jsonify({"error": "Nieprawidłowa nazwa dysku"}), 400
+        return jsonify({"error": "Invalid disk name"}), 400
 
     # Validate each partition
     for i, p in enumerate(partitions):
         fs = p.get("fstype", "").strip()
         if not fs:
-            return jsonify({"error": f"Partycja {i+1}: brak systemu plików"}), 400
+            return jsonify({"error": f"Partition {i+1}: no filesystem specified"}), 400
         if fs not in MKFS_CMDS:
-            return jsonify({"error": f"Partycja {i+1}: nieobsługiwany system plików '{fs}'"}), 400
+            return jsonify({"error": f"Partition {i+1}: unsupported filesystem '{fs}'"}), 400
 
     # Count how many use size_mb=0 (remaining space)
     remaining_count = sum(1 for p in partitions if not p.get("size_mb"))
     if remaining_count > 1:
-        return jsonify({"error": "Tylko jedna partycja może używać 'reszta miejsca'"}), 400
+        return jsonify({"error": "Only one partition can use 'remaining space'"}), 400
 
     dev_path = f"/dev/{disk_name}"
 
     # Check device exists and is a disk
     r = host_run(f"lsblk -ndo TYPE {dev_path} 2>/dev/null")
     if r.returncode != 0:
-        return jsonify({"error": f"Urządzenie {dev_path} nie istnieje"}), 404
+        return jsonify({"error": f"Device {dev_path} does not exist"}), 404
     if r.stdout.strip() != 'disk':
-        return jsonify({"error": f"{dev_path} nie jest dyskiem bazowym"}), 400
+        return jsonify({"error": f"{dev_path} is not a base disk"}), 400
 
     # Get disk size in bytes
     r = host_run(f"lsblk -ndbo SIZE {dev_path} 2>/dev/null")
     if r.returncode != 0:
-        return jsonify({"error": "Nie można odczytać rozmiaru dysku"}), 500
+        return jsonify({"error": "Cannot read disk size"}), 500
     disk_bytes = int(r.stdout.strip())
     disk_mb = disk_bytes // (1024 * 1024)
 
     # Validate total size
     total_requested_mb = sum(p.get("size_mb", 0) for p in partitions)
     if total_requested_mb > disk_mb:
-        return jsonify({"error": f"Suma partycji ({total_requested_mb} MB) przekracza rozmiar dysku ({disk_mb} MB)"}), 400
+        return jsonify({"error": f"Total partition size ({total_requested_mb} MB) exceeds disk size ({disk_mb} MB)"}), 400
 
     # Check all partitions unmounted
     r = host_run(f"lsblk -nlo NAME,MOUNTPOINT {dev_path} 2>/dev/null")
@@ -2362,11 +2360,11 @@ def partition_disk():
         for line in r.stdout.strip().split('\n'):
             cols = line.split(None, 1)
             if len(cols) >= 2 and cols[1].strip() and cols[0].strip() != disk_name:
-                return jsonify({"error": f"Partycja {cols[0].strip()} zamontowana na {cols[1].strip()}. Odmontuj najpierw."}), 400
+                return jsonify({"error": f"Partition {cols[0].strip()} is mounted on {cols[1].strip()}. Unmount first."}), 400
 
     # Safety: refuse system disk (robust check incl. LVM)
     if _is_system_disk(disk_name):
-        return jsonify({"error": "Nie można partycjonować dysku systemowego!"}), 403
+        return jsonify({"error": "Cannot partition system disk!"}), 403
 
     def _label_flag(fstype, label):
         if not label:
@@ -2379,27 +2377,27 @@ def partition_disk():
         return ""
 
     def generate():
-        yield f"data: {json.dumps({'type': 'step', 'message': f'Partycjonowanie {dev_path} na {len(partitions)} partycji...'})}\n\n"
+        yield f"data: {json.dumps({'type': 'step', 'message': f'Partitioning {dev_path} into {len(partitions)} partitions...'})}\n\n"
 
         # Step 1: Wipe
-        yield f"data: {json.dumps({'type': 'step', 'message': 'Czyszczenie tablicy partycji...'})}\n\n"
+        yield f"data: {json.dumps({'type': 'step', 'message': 'Wiping partition table...'})}\n\n"
         for line in host_run_stream(f"wipefs -a {dev_path} 2>&1"):
             line = line.rstrip("\n")
             if line.startswith("__EXIT_CODE__:"):
                 if int(line.split(":")[1]) != 0:
-                    yield f"data: {json.dumps({'type': 'step', 'message': 'Błąd wipefs'})}\n\n"
+                    yield f"data: {json.dumps({'type': 'step', 'message': 'wipefs error'})}\n\n"
                     yield f"data: {json.dumps({'type': 'done', 'success': False})}\n\n"
                     return
             elif line.strip():
                 yield f"data: {json.dumps({'type': 'log', 'message': line})}\n\n"
 
         # Step 2: Create GPT label
-        yield f"data: {json.dumps({'type': 'step', 'message': 'Tworzenie tablicy GPT...'})}\n\n"
+        yield f"data: {json.dumps({'type': 'step', 'message': 'Creating GPT table...'})}\n\n"
         for line in host_run_stream(f"parted -s {dev_path} mklabel gpt 2>&1"):
             line = line.rstrip("\n")
             if line.startswith("__EXIT_CODE__:"):
                 if int(line.split(":")[1]) != 0:
-                    yield f"data: {json.dumps({'type': 'step', 'message': 'Błąd parted mklabel'})}\n\n"
+                    yield f"data: {json.dumps({'type': 'step', 'message': 'parted mklabel error'})}\n\n"
                     yield f"data: {json.dumps({'type': 'done', 'success': False})}\n\n"
                     return
             elif line.strip():
@@ -2423,19 +2421,19 @@ def partition_disk():
             pnum = idx + 1
             end_str = "100%" if end == -1 else f"{end}MiB"
             parted_cmd = f"parted -s {dev_path} mkpart primary {start}MiB {end_str} 2>&1"
-            yield f"data: {json.dumps({'type': 'step', 'message': f'Tworzenie partycji {pnum}/{len(partitions)}...'})}\n\n"
+            yield f"data: {json.dumps({'type': 'step', 'message': f'Creating partition {pnum}/{len(partitions)}...'})}\n\n"
             for line in host_run_stream(parted_cmd):
                 line = line.rstrip("\n")
                 if line.startswith("__EXIT_CODE__:"):
                     if int(line.split(":")[1]) != 0:
-                        yield f"data: {json.dumps({'type': 'step', 'message': f'Błąd tworzenia partycji {pnum}'})}\n\n"
+                        yield f"data: {json.dumps({'type': 'step', 'message': f'Error creating partition {pnum}'})}\n\n"
                         yield f"data: {json.dumps({'type': 'done', 'success': False})}\n\n"
                         return
                 elif line.strip():
                     yield f"data: {json.dumps({'type': 'log', 'message': line})}\n\n"
 
         # Step 4: Re-read partition table
-        yield f"data: {json.dumps({'type': 'step', 'message': 'Odświeżanie tablicy partycji...'})}\n\n"
+        yield f"data: {json.dumps({'type': 'step', 'message': 'Refreshing partition table...'})}\n\n"
         host_run(f"partprobe {dev_path} 2>/dev/null")
         host_run("sleep 2")
 
@@ -2465,7 +2463,7 @@ def partition_disk():
             mkfs_base = MKFS_CMDS[fstype]
             lbl = _label_flag(fstype, label)
 
-            yield f"data: {json.dumps({'type': 'step', 'message': f'Formatowanie {pname} na {fstype}...'})}\n\n"
+            yield f"data: {json.dumps({'type': 'step', 'message': f'Formatting {pname} as {fstype}...'})}\n\n"
 
             fmt_ok = False
             for line in host_run_stream(f"{mkfs_base} {lbl} {pdev} 2>&1"):
@@ -2474,9 +2472,9 @@ def partition_disk():
                     code = int(line.split(":")[1])
                     if code == 0:
                         fmt_ok = True
-                        yield f"data: {json.dumps({'type': 'step', 'message': f'{pname} sformatowany ✓'})}\n\n"
+                        yield f"data: {json.dumps({'type': 'step', 'message': f'{pname} formatted ✓'})}\n\n"
                     else:
-                        yield f"data: {json.dumps({'type': 'step', 'message': f'Błąd formatowania {pname} (kod: {code})'})}\n\n"
+                        yield f"data: {json.dumps({'type': 'step', 'message': f'Format error for {pname} (code: {code})'})}\n\n"
                         yield f"data: {json.dumps({'type': 'done', 'success': False})}\n\n"
                         return
                 elif line.strip():
@@ -2485,7 +2483,7 @@ def partition_disk():
             created.append(pname)
 
         parts_str = ", ".join(created)
-        yield f"data: {json.dumps({'type': 'step', 'message': f'Partycjonowanie zakończone! Utworzono: {parts_str}'})}\n\n"
+        yield f"data: {json.dumps({'type': 'step', 'message': f'Partitioning complete! Created: {parts_str}'})}\n\n"
         yield f"data: {json.dumps({'type': 'done', 'success': True, 'partitions': created})}\n\n"
 
     return Response(
@@ -2536,19 +2534,19 @@ def install_deps():
     packages = packages_str.split()
     for pkg in packages:
         if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9.+\-:~]+$', pkg):
-            return jsonify({"error": f"Nieprawidłowa nazwa pakietu: {pkg}"}), 400
+            return jsonify({"error": f"Invalid package name: {pkg}"}), 400
     safe_packages = ' '.join(packages)
 
     def generate():
         install_script = f"""
 export DEBIAN_FRONTEND=noninteractive
-echo '::STEP::Naprawa menadżera pakietów...'
+echo '::STEP::Repairing package manager...'
 dpkg --configure -a 2>/dev/null || true
-echo '::STEP::Aktualizacja listy pakietów...'
+echo '::STEP::Updating package lists...'
 apt-get update -y 2>&1
-echo '::STEP::Instalacja {safe_packages}...'
+echo '::STEP::Installing {safe_packages}...'
 apt-get install -y {safe_packages} 2>&1
-echo '::STEP::Instalacja zakończona!'
+echo '::STEP::Installation complete!'
 echo '::DONE::'
 """
         for line in host_run_stream(install_script):

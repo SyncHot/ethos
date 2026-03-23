@@ -113,7 +113,7 @@ def api_generate_key():
     key_path = os.path.join(SSH_KEYS_DIR, key_name)
 
     if os.path.exists(key_path):
-        return jsonify({'error': f'Klucz o nazwie "{key_name}" już istnieje'}), 400
+        return jsonify({'error': f'Key named "{key_name}" already exists'}), 400
     if not comment:
         comment = f"ethos@{_socket.gethostname()}"
     if key_type not in ('ed25519', 'ecdsa', 'rsa'):
@@ -151,7 +151,7 @@ def api_delete_key(key_name):
     key_name = re.sub(r'[^a-zA-Z0-9_\-.]', '_', key_name)
     key_path = os.path.join(SSH_KEYS_DIR, key_name)
     if not os.path.exists(key_path):
-        return jsonify({'error': 'Klucz nie znaleziony'}), 404
+        return jsonify({'error': 'Key not found'}), 404
     try:
         os.remove(key_path)
         pub = key_path + '.pub'
@@ -167,7 +167,7 @@ def api_get_public(key_name):
     key_name = re.sub(r'[^a-zA-Z0-9_\-.]', '_', key_name)
     pub_path = os.path.join(SSH_KEYS_DIR, key_name + '.pub')
     if not os.path.isfile(pub_path):
-        return jsonify({'error': 'Klucz nie znaleziony'}), 404
+        return jsonify({'error': 'Key not found'}), 404
     with open(pub_path, 'r') as f:
         return jsonify({'public_key': f.read().strip()})
 
@@ -184,7 +184,7 @@ def api_deploy_key(key_name):
     key_name = re.sub(r'[^a-zA-Z0-9_\-.]', '_', key_name)
     pub_path = os.path.join(SSH_KEYS_DIR, key_name + '.pub')
     if not os.path.isfile(pub_path):
-        return jsonify({'error': 'Klucz nie znaleziony'}), 404
+        return jsonify({'error': 'Key not found'}), 404
 
     with open(pub_path, 'r') as f:
         pub_key = f.read().strip()
@@ -247,7 +247,7 @@ def api_test_auth():
     key_name = re.sub(r'[^a-zA-Z0-9_\-.]', '_', key_name)
     key_path = os.path.join(SSH_KEYS_DIR, key_name)
     if not os.path.isfile(key_path):
-        return jsonify({'error': 'Klucz nie znaleziony'}), 404
+        return jsonify({'error': 'Key not found'}), 404
 
     try:
         ssh = _get_ssh_client(host, port, username, key_path=key_path, timeout=10)
@@ -341,7 +341,7 @@ def _parse_known_hosts(username=None):
             matched_server = server_by_host.get(matched_host)
 
         entries.append({
-            'line': line_num, 'host': matched_host or '(zaszyfrowany)',
+            'line': line_num, 'host': matched_host or '(hashed)',
             'server_name': matched_server, 'key_type': key_type,
             'fingerprint': fingerprint, 'hashed': is_hashed,
         })
@@ -397,7 +397,7 @@ def api_remove_host():
         if r.returncode == 0:
             log.info('[%s] Removed known_hosts entry for %s', username, host)
             return jsonify({'status': 'ok', 'host': host})
-        return jsonify({'error': r.stderr.strip() or 'Host nie znaleziony'}), 400
+        return jsonify({'error': r.stderr.strip() or 'Host not found'}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -414,7 +414,7 @@ def api_remove_line():
         with open(kh, 'r') as f:
             lines = f.readlines()
         if line_num < 1 or line_num > len(lines):
-            return jsonify({'error': 'Numer linii poza zakresem'}), 400
+            return jsonify({'error': 'Line number out of range'}), 400
         removed = lines[line_num - 1].strip()
         del lines[line_num - 1]
         with open(kh, 'w') as f:

@@ -98,7 +98,7 @@ def _save_settings(s):
 def _probe_rtsp_url(url, timeout=7):
     """Test RTSP URL with ffprobe. Returns (ok: bool, message: str, details: dict)."""
     if not shutil.which('ffprobe'):
-        return True, 'ffprobe niedostępny — pomijam walidację', {}
+        return True, 'ffprobe unavailable — skipping validation', {}
     try:
         r = subprocess.run(
             ['ffprobe', '-v', 'error', '-rtsp_transport', 'tcp',
@@ -115,17 +115,17 @@ def _probe_rtsp_url(url, timeout=7):
                             'width': streams[0].get('width'), 'height': streams[0].get('height')}
             except Exception:
                 pass
-            return True, 'Połączenie OK', info
+            return True, 'Connection OK', info
         stderr = r.stderr.strip()
         return False, _friendly_rtsp_error(stderr, url), {'raw': stderr[-300:]}
     except subprocess.TimeoutExpired:
-        return False, 'Timeout — kamera nie odpowiada w ciągu {}s'.format(timeout), {}
+        return False, 'Timeout — camera not responding within {}s'.format(timeout), {}
     except Exception as e:
         return False, str(e), {}
 
 
 def _friendly_rtsp_error(stderr, url=''):
-    """Translate common ffmpeg/ffprobe RTSP errors into user-friendly Polish messages."""
+    """Translate common ffmpeg/ffprobe RTSP errors into user-friendly messages."""
     s = stderr.lower()
     # Extract host:port from URL for diagnostic hints
     host_port = ''
@@ -134,7 +134,7 @@ def _friendly_rtsp_error(stderr, url=''):
         host_port = m.group(1)
 
     if 'connection refused' in s:
-        msg = f'Połączenie odrzucone ({host_port}). Usługa RTSP nie nasłuchuje na tym porcie.'
+        msg = f'Connection refused ({host_port}). RTSP service not listening on this port.'
         # Check if this might be a go2rtc port mismatch (only for local URLs)
         host_only = host_port.split(':')[0] if host_port else ''
         is_local = host_only in ('127.0.0.1', 'localhost', _get_local_ip())
@@ -144,23 +144,23 @@ def _friendly_rtsp_error(stderr, url=''):
                 try:
                     port_in_url = int(host_port.split(':')[1]) if ':' in host_port else 554
                     if port_in_url != go2rtc_info['rtsp_port']:
-                        msg += f' Wykryto go2rtc na porcie {go2rtc_info["rtsp_port"]} (URL ma port {port_in_url}).'
+                        msg += f' go2rtc detected on port {go2rtc_info["rtsp_port"]} (URL has port {port_in_url}).'
                 except (ValueError, IndexError):
                     pass
         return msg
     if '401' in s or 'unauthorized' in s:
-        return 'Błąd autoryzacji (401). Sprawdź login i hasło w URL RTSP.'
+        return 'Authorization error (401). Check username and password in RTSP URL.'
     if '404' in s or 'not found' in s:
-        return 'Strumień nie znaleziony (404). Sprawdź ścieżkę w URL (np. /live0, /stream).'
+        return 'Stream not found (404). Check the path in URL (e.g. /live0, /stream).'
     if '403' in s or 'forbidden' in s:
-        return 'Dostęp zabroniony (403). Kamera odmawia połączenia.'
+        return 'Access forbidden (403). Camera refuses connection.'
     if 'no route to host' in s:
-        return f'Host nieosiągalny ({host_port}). Sprawdź adres IP i sieć.'
+        return f'Host unreachable ({host_port}). Check IP address and network.'
     if 'connection timed out' in s or 'timed out' in s:
-        return f'Timeout połączenia z {host_port}. Kamera nie odpowiada.'
+        return f'Connection timeout to {host_port}. Camera not responding.'
     if 'invalid data' in s:
-        return 'Nieprawidłowe dane — kamera odpowiada ale format jest nieznany.'
-    return stderr[:200] if stderr else 'Nieznany błąd połączenia'
+        return 'Invalid data — camera responds but format is unknown.'
+    return stderr[:200] if stderr else 'Unknown connection error'
 
 
 def _detect_native_go2rtc_port():
@@ -266,16 +266,16 @@ def install_deps():
                     'task_id': task_id, 'stage': stage, 'percent': pct, 'message': msg
                 })
 
-        _emit('start', 0, 'Instalowanie ffmpeg…')
+        _emit('start', 0, 'Installing ffmpeg…')
         try:
             r = subprocess.run(
                 ['apt-get', 'install', '-y', 'ffmpeg'],
                 capture_output=True, text=True, timeout=300
             )
             if r.returncode != 0:
-                _emit('error', 0, f'Błąd instalacji ffmpeg: {r.stderr[:300]}')
+                _emit('error', 0, f'ffmpeg installation error: {r.stderr[:300]}')
                 return
-            _emit('progress', 50, 'ffmpeg zainstalowany. Instalowanie python-onvif…')
+            _emit('progress', 50, 'ffmpeg installed. Installing python-onvif…')
 
             # Install ONVIF library
             pip = shutil.which('pip3') or shutil.which('pip')
@@ -285,7 +285,7 @@ def install_deps():
                     capture_output=True, text=True, timeout=120
                 )
                 if r2.returncode != 0:
-                    _emit('progress', 80, 'python-onvif nie zainstalowany (opcjonalny)')
+                    _emit('progress', 80, 'python-onvif not installed (optional)')
                 else:
                     _emit('progress', 90, 'python-onvif zainstalowany')
 
@@ -396,7 +396,7 @@ def _cleanup_dead_procs():
                 cam_url = cam.get('substream_url') or cam.get('url', '')
         except Exception:
             pass
-        friendly = _friendly_rtsp_error(stderr, cam_url) if stderr.strip() else f'ffmpeg zakończony z kodem {code}'
+        friendly = _friendly_rtsp_error(stderr, cam_url) if stderr.strip() else f'ffmpeg exited with code {code}'
         log.warning('[%s:%s] ffmpeg exited code=%s: %s', label, k, code, friendly)
         with _state_lock:
             d.pop(k, None)
@@ -413,7 +413,7 @@ def add_camera():
     name = data.get('name', '').strip()
     url = data.get('url', '').strip()         # RTSP URL
     if not name or not url:
-        return jsonify({'error': 'Nazwa i URL wymagane'}), 400
+        return jsonify({'error': 'Name and URL required'}), 400
 
     # Probe RTSP URL (non-blocking warning)
     probe_ok, probe_msg, probe_info = _probe_rtsp_url(url)
@@ -456,7 +456,7 @@ def update_camera(cam_id):
     cams = _load_cameras()
     cam = next((c for c in cams if c['id'] == cam_id), None)
     if not cam:
-        return jsonify({'error': 'Kamera nie znaleziona'}), 404
+        return jsonify({'error': 'Camera not found'}), 404
     for k in ('name', 'url', 'onvif_host', 'onvif_port', 'onvif_user', 'onvif_pass',
               'enabled', 'record', 'substream_url', 'recording_mode'):
         if k in data:
@@ -519,7 +519,7 @@ def diagnose_camera(cam_id):
     cams = _load_cameras()
     cam = next((c for c in cams if c['id'] == cam_id), None)
     if not cam:
-        return jsonify({'error': 'Kamera nie znaleziona'}), 404
+        return jsonify({'error': 'Camera not found'}), 404
 
     url = cam.get('substream_url') or cam['url']
     result = {'camera': cam['name'], 'url_masked': re.sub(r'://[^@]+@', '://***@', url), 'checks': []}
@@ -527,7 +527,7 @@ def diagnose_camera(cam_id):
     # 1. Parse host:port from RTSP URL
     m = re.search(r'rtsp://(?:[^@]+@)?([^/:]+)(?::(\d+))?', url)
     if not m:
-        result['checks'].append({'name': 'URL', 'ok': False, 'msg': 'Nieprawidłowy format URL RTSP'})
+        result['checks'].append({'name': 'URL', 'ok': False, 'msg': 'Invalid RTSP URL format'})
         return jsonify(result)
 
     host = m.group(1)
@@ -543,11 +543,11 @@ def diagnose_camera(cam_id):
             lm = re.search(r'time=(\S+)', r.stdout)
             if lm:
                 latency = lm.group(1) + 'ms'
-            result['checks'].append({'name': 'Ping', 'ok': True, 'msg': f'Host {host} osiągalny ({latency})'})
+            result['checks'].append({'name': 'Ping', 'ok': True, 'msg': f'Host {host} reachable ({latency})'})
         else:
-            result['checks'].append({'name': 'Ping', 'ok': False, 'msg': f'Host {host} nieosiągalny'})
+            result['checks'].append({'name': 'Ping', 'ok': False, 'msg': f'Host {host} unreachable'})
     except Exception:
-        result['checks'].append({'name': 'Ping', 'ok': False, 'msg': 'Nie udało się pingować'})
+        result['checks'].append({'name': 'Ping', 'ok': False, 'msg': 'Ping failed'})
 
     # 3. TCP port test
     try:
@@ -555,11 +555,11 @@ def diagnose_camera(cam_id):
         s.settimeout(3)
         s.connect((host, port))
         s.close()
-        result['checks'].append({'name': 'Port', 'ok': True, 'msg': f'Port {port} otwarty'})
+        result['checks'].append({'name': 'Port', 'ok': True, 'msg': f'Port {port} open'})
     except socket.timeout:
         result['checks'].append({'name': 'Port', 'ok': False, 'msg': f'Port {port} — timeout'})
     except ConnectionRefusedError:
-        result['checks'].append({'name': 'Port', 'ok': False, 'msg': f'Port {port} — połączenie odrzucone'})
+        result['checks'].append({'name': 'Port', 'ok': False, 'msg': f'Port {port} — connection refused'})
     except Exception as e:
         result['checks'].append({'name': 'Port', 'ok': False, 'msg': f'Port {port} — {e}'})
 
@@ -592,26 +592,26 @@ def diagnose_camera(cam_id):
                 result['checks'].append({
                     'name': 'go2rtc',
                     'ok': False,
-                    'msg': f'go2rtc nasłuchuje na porcie {actual_port} ({bind}), ale URL kamery ma port {port}',
+                    'msg': f'go2rtc listening on port {actual_port} ({bind}), but camera URL has port {port}',
                     'suggestion': re.sub(r':\d+/', f':{actual_port}/', url) if f':{port}/' in url else None,
                 })
             else:
                 result['checks'].append({
                     'name': 'go2rtc',
                     'ok': True,
-                    'msg': f'go2rtc wykryty na porcie {actual_port} ({bind}) — zgodny z URL'
+                    'msg': f'go2rtc detected on port {actual_port} ({bind}) — matches URL'
                 })
         else:
             result['checks'].append({
                 'name': 'go2rtc',
                 'ok': False,
-                'msg': 'URL wskazuje na localhost, ale go2rtc nie jest uruchomiony'
+                'msg': 'URL points to localhost, but go2rtc is not running'
             })
 
     # 6. Summary
     all_ok = all(c['ok'] for c in result['checks'])
     result['status'] = 'ok' if all_ok else 'error'
-    result['summary'] = 'Wszystkie testy OK' if all_ok else 'Wykryto problemy z połączeniem'
+    result['summary'] = 'All tests passed' if all_ok else 'Connection issues detected'
 
     return jsonify(result)
 
@@ -622,10 +622,10 @@ def camera_snapshot(cam_id):
     cams = _load_cameras()
     cam = next((c for c in cams if c['id'] == cam_id), None)
     if not cam:
-        return jsonify({'error': 'Kamera nie znaleziona'}), 404
+        return jsonify({'error': 'Camera not found'}), 404
 
     if not _all_deps_ok():
-        return jsonify({'error': 'ffmpeg nie zainstalowany'}), 503
+        return jsonify({'error': 'ffmpeg not installed'}), 503
 
     try:
         r = subprocess.run([
@@ -634,10 +634,10 @@ def camera_snapshot(cam_id):
             '-frames:v', '1', '-f', 'image2', '-'
         ], capture_output=True, timeout=10)
         if r.returncode != 0 or not r.stdout:
-            return jsonify({'error': 'Nie udało się pobrać klatki'}), 502
+            return jsonify({'error': 'Failed to capture frame'}), 502
         return Response(r.stdout, mimetype='image/jpeg')
     except subprocess.TimeoutExpired:
-        return jsonify({'error': 'Timeout połączenia z kamerą'}), 504
+        return jsonify({'error': 'Camera connection timeout'}), 504
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -690,7 +690,7 @@ def _start_stream(cam):
                 stderr = proc.stderr.read().decode(errors='replace')[-500:]
             except Exception:
                 pass
-            err_msg = _friendly_rtsp_error(stderr, url) if stderr else f'ffmpeg exited z kodem {proc.returncode}'
+            err_msg = _friendly_rtsp_error(stderr, url) if stderr else f'ffmpeg exited with code {proc.returncode}'
             log.error('[stream:%s] ffmpeg failed immediately: %s', cam_id, err_msg)
             with _state_lock:
                 _cam_errors[cam_id] = {
@@ -738,14 +738,14 @@ def _stop_stream(cam_id):
 @surveillance_bp.route('/stream/<cam_id>/start', methods=['POST'])
 def stream_start(cam_id):
     if not _all_deps_ok():
-        return jsonify({'error': 'ffmpeg nie zainstalowany'}), 503
+        return jsonify({'error': 'ffmpeg not installed'}), 503
     cams = _load_cameras()
     cam = next((c for c in cams if c['id'] == cam_id), None)
     if not cam:
-        return jsonify({'error': 'Kamera nie znaleziona'}), 404
+        return jsonify({'error': 'Camera not found'}), 404
     err = _start_stream(cam)
     if err:
-        return jsonify({'ok': False, 'error': f'Nie można uruchomić strumienia: {err}'}), 502
+        return jsonify({'ok': False, 'error': f'Cannot start stream: {err}'}), 502
     return jsonify({'ok': True, 'hls': f'/api/surveillance/stream/{cam_id}/hls/stream.m3u8'})
 
 
@@ -1011,7 +1011,7 @@ def _stop_recorder(cam_id):
 def recording_start():
     """Start recording all cameras that have record=True."""
     if not _all_deps_ok():
-        return jsonify({'error': 'ffmpeg nie zainstalowany'}), 503
+        return jsonify({'error': 'ffmpeg not installed'}), 503
     settings = _load_settings()
     settings['recording_enabled'] = True
     _save_settings(settings)
@@ -1045,7 +1045,7 @@ def trigger_event(cam_id):
     cams = _load_cameras()
     cam = next((c for c in cams if c['id'] == cam_id), None)
     if not cam:
-        return jsonify({'error': 'Kamera nie znaleziona'}), 404
+        return jsonify({'error': 'Camera not found'}), 404
     settings = _load_settings()
     duration = (request.json or {}).get('duration', settings.get('event_post_seconds', 15))
     _start_event_clip(cam, int(duration), settings)
@@ -1114,9 +1114,9 @@ def play_recording(rec_path):
     rec_base = settings.get('recordings_path', RECORDINGS_DIR)
     fpath = os.path.realpath(os.path.join(rec_base, rec_path))
     if not fpath.startswith(os.path.realpath(rec_base)):
-        return jsonify({'error': 'Nieprawidłowa ścieżka'}), 403
+        return jsonify({'error': 'Invalid path'}), 403
     if not os.path.isfile(fpath):
-        return jsonify({'error': 'Plik nie znaleziony'}), 404
+        return jsonify({'error': 'File not found'}), 404
     return send_file(fpath, mimetype='video/mp4')
 
 
@@ -1356,9 +1356,9 @@ def onvif_probe():
                 pass
         return jsonify({'ok': True, 'streams': streams, 'profiles': len(profiles)})
     except ImportError:
-        return jsonify({'error': 'python-onvif nie zainstalowany. Podaj URL RTSP ręcznie.'}), 503
+        return jsonify({'error': 'python-onvif not installed. Enter RTSP URL manually.'}), 503
     except Exception as e:
-        return jsonify({'error': f'Błąd ONVIF: {str(e)[:200]}'}), 502
+        return jsonify({'error': f'ONVIF error: {str(e)[:200]}'}), 502
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1460,11 +1460,11 @@ def _discover_native_go2rtc():
             found.append({
                 'ip': host_ip,
                 'port': rtsp_port,
-                'name': 'go2rtc (natywny)',
+                'name': 'go2rtc (native)',
                 'url': f'rtsp://{host_ip}:{rtsp_port}/',
                 'method': 'native_go2rtc',
                 'source': f'go2rtc (pid {pid})',
-                'note': 'Wykryto go2rtc ale nie udało się odczytać konfiguracji strumieni',
+                'note': 'go2rtc detected but failed to read stream configuration',
             })
     except Exception:
         pass
