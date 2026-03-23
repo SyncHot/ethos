@@ -1120,7 +1120,7 @@ def _on_uninstall(wipe):
 
 register_pkg_routes(
     vm_bp,
-    install_message='VM Manager gotowy — QEMU/KVM zainstalowane.',
+    install_message='VM Manager ready — QEMU/KVM installed.',
     install_deps=['qemu-system-x86_64'],
     status_extras=lambda: {
         'qemu_available': _qemu_available(),

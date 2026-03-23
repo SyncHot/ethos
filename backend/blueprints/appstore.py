@@ -1055,10 +1055,10 @@ def _adapt_compose(compose_text, app_id):
 
     # Unsafe per-service keys that grant excess host privileges
     _UNSAFE_KEYS = {
-        'privileged':    'tryb uprzywilejowany (privileged)',
-        'cap_add':       'dodatkowe uprawnienia linuksowe (cap_add)',
-        'devices':       'bezposredni dostep do urzadzen (devices)',
-        'cgroup_parent': 'nadrzedna grupa kontrolna (cgroup_parent)',
+        'privileged':    'privileged mode (privileged)',
+        'cap_add':       'additional Linux capabilities (cap_add)',
+        'devices':       'direct device access (devices)',
+        'cgroup_parent': 'parent control group (cgroup_parent)',
     }
     # Unsafe namespace-sharing modes (value must equal "host")
     _UNSAFE_NS = {

@@ -50,7 +50,7 @@ services:
     privileged: true
 """
         result = _validate_compose_policy(unsafe_yaml)
-        self.assertIn('privileged=true jest niedozwolone', result)
+        self.assertIn('privileged=true is not allowed', result)
 
     @patch('blueprints.appstore._apps_root')
     @patch('blueprints.appstore._compose_root')
@@ -91,7 +91,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
 """
         result = _validate_compose_policy(unsafe_yaml)
-        self.assertIn('Montowanie docker.sock jest niedozwolone', result)
+        self.assertIn('Mounting docker.sock is not allowed', result)
 
     @patch('blueprints.appstore._apps_root')
     @patch('blueprints.appstore._compose_root')
@@ -107,8 +107,8 @@ services:
 """
         result = _validate_compose_policy(unsafe_yaml)
         self.assertIsNotNone(result)
-        self.assertIn('userns_mode=host jest niedozwolone', result)
-        self.assertIn('zresetuj compose', result)
+        self.assertIn('userns_mode=host is not allowed', result)
+        self.assertIn('reset compose', result)
 
     @patch('blueprints.appstore._apps_root')
     @patch('blueprints.appstore._compose_root')
@@ -124,8 +124,8 @@ services:
 """
         result = _validate_compose_policy(unsafe_yaml)
         self.assertIsNotNone(result)
-        self.assertIn('cgroup_parent jest niedozwolone', result)
-        self.assertIn('zresetuj compose', result)
+        self.assertIn('cgroup_parent is not allowed', result)
+        self.assertIn('reset compose', result)
 
     @patch('blueprints.appstore._apps_root')
     @patch('blueprints.appstore._compose_root')
@@ -143,8 +143,8 @@ services:
 """
         result = _validate_compose_policy(unsafe_yaml)
         self.assertIsNotNone(result)
-        self.assertIn('security_opt "seccomp:unconfined" jest niedozwolone', result)
-        self.assertIn('zresetuj compose', result)
+        self.assertIn('security_opt "seccomp:unconfined" is not allowed', result)
+        self.assertIn('reset compose', result)
 
     @patch('blueprints.appstore._apps_root')
     @patch('blueprints.appstore._compose_root')

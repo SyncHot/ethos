@@ -557,7 +557,7 @@ def _build_image_worker(nasos):
                 elapsed_s = int(elapsed % 60)
                 if code == 0:
                     img_size = _human_size(int(result_info.get('img_size', 0)))
-                    msg = f'Obraz gotowy! IMG: {img_size}'
+                    msg = f'Image ready! IMG: {img_size}'
                     msg += f' (czas: {elapsed_m}min {elapsed_s}s)'
                     res = {
                         'success': True, 'message': msg,
@@ -1704,7 +1704,7 @@ def _builder_on_uninstall(wipe):
 
 register_pkg_routes(
     builder_bp,
-    install_message='Builder gotowy.',
+    install_message='Builder ready.',
     wipe_files=[_BUILD_STATE_FILE],
     wipe_dirs=[app_path('releases')],
     on_uninstall=_builder_on_uninstall,

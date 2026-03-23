@@ -2357,7 +2357,7 @@ def services_action():
                 socketio.emit('service_install_progress', {
                     'service': svc_name, 'pkg': svc_pkg,
                     'phase': 'start', 'progress': 0,
-                    'message': f'Przygotowywanie instalacji {svc_pkg}…',
+                    'message': f'Preparing installation of {svc_pkg}…',
                 })
 
                 if svc_pkg == 'docker-ce':
@@ -8808,7 +8808,7 @@ def install_ethos_package(pkg_id):
 
     pkg = next((p for p in _ETHOS_PACKAGES if p['id'] == pkg_id), None)
     if not pkg:
-        return jsonify({'error': 'Pakiet nie znaleziony'}), 404
+        return jsonify({'error': 'Package not found'}), 404
 
     state = _load_packages_state()
     state[pkg_id] = {
@@ -8828,7 +8828,7 @@ def uninstall_ethos_package(pkg_id):
 
     pkg = next((p for p in _ETHOS_PACKAGES if p['id'] == pkg_id), None)
     if not pkg:
-        return jsonify({'error': 'Pakiet nie znaleziony'}), 404
+        return jsonify({'error': 'Package not found'}), 404
 
     wipe = (request.json or {}).get('wipe_data', False)
 
@@ -9345,7 +9345,7 @@ def _watchdog_monitor():
             continue  # ticker hasn't started yet
         stall = _time.monotonic() - last
         if stall > STALL_LIMIT:
-            msg = f'[watchdog] Event loop zablokowany od {stall:.0f}s — wymuszam restart!'
+            msg = f'[watchdog] Event loop blocked for {stall:.0f}s — forcing restart!'
             try:
                 print(msg, flush=True)
                 elog('system', 'error', msg)

@@ -287,7 +287,7 @@ def install_deps():
                 if r2.returncode != 0:
                     _emit('progress', 80, 'python-onvif not installed (optional)')
                 else:
-                    _emit('progress', 90, 'python-onvif zainstalowany')
+                    _emit('progress', 90, 'python-onvif installed')
 
             _emit('done', 100, 'Surveillance Station gotowe!')
         except Exception as e:
@@ -1331,7 +1331,7 @@ def onvif_probe():
     password = data.get('password', '')
 
     if not host:
-        return jsonify({'error': 'Host wymagany'}), 400
+        return jsonify({'error': 'Host required'}), 400
 
     try:
         from onvif import ONVIFCamera

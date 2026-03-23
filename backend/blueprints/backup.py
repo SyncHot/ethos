@@ -1436,7 +1436,7 @@ def start_backup():
                 if not ssh_cfg:
                     with operation_lock:
                         current_operation = None
-                    return jsonify({'error': 'Serwer SSH nie znaleziony'}), 400
+                    return jsonify({'error': 'SSH server not found'}), 400
                 destination['config'] = ssh_cfg
 
     _socketio.start_background_task(run_backup, valid_paths, destination, retention=retention, incremental=incremental, encrypt_passphrase=encrypt_passphrase)
@@ -1657,7 +1657,7 @@ def add_ssh_server():
     data = request.json or {}
     for field in ['name', 'host', 'username']:
         if not data.get(field):
-            return jsonify({'error': f'{field} wymagane'}), 400
+            return jsonify({'error': f'{field} required'}), 400
     configs = load_ssh_configs()
     # Prevent duplicates (same host + username)
     for existing in configs:
@@ -1696,7 +1696,7 @@ def test_ssh():
         configs = load_ssh_configs()
         srv = next((c for c in configs if c.get('id') == server_id), None)
         if not srv:
-            return jsonify({'success': False, 'error': 'Serwer nie znaleziony'}), 404
+            return jsonify({'success': False, 'error': 'Server not found'}), 404
         host = srv.get('host')
         port = int(srv.get('port', 22))
         username = srv.get('username')
@@ -1891,7 +1891,7 @@ def update_profile_schedule(profile_id):
     c.execute('SELECT * FROM profiles WHERE id = ?', (profile_id,))
     if not c.fetchone():
         conn.close()
-        return jsonify({'error': 'Profil nie znaleziony'}), 404
+        return jsonify({'error': 'Profile not found'}), 404
     c.execute('UPDATE profiles SET schedule=? WHERE id=?', (json.dumps(data.get('schedule')) if data.get('schedule') else None, profile_id))
     conn.commit()
     conn.close()
@@ -1906,7 +1906,7 @@ def update_profile(profile_id):
     row = c.fetchone()
     if not row:
         conn.close()
-        return jsonify({'error': 'Profil nie znaleziony'}), 404
+        return jsonify({'error': 'Profile not found'}), 404
     enc_input = data.get('encryption')
     existing_enc = None
     try:
@@ -1964,7 +1964,7 @@ def run_profile(profile_id):
     row = conn.execute('SELECT * FROM profiles WHERE id = ?', (profile_id,)).fetchone()
     if not row:
         conn.close()
-        return jsonify({'error': 'Profil nie znaleziony'}), 404
+        return jsonify({'error': 'Profile not found'}), 404
     enc = None
     try:
         enc = json.loads(row['encryption']) if row['encryption'] else None
@@ -2018,7 +2018,7 @@ def get_profile_key(profile_id):
     row = conn.execute('SELECT * FROM profiles WHERE id = ?', (profile_id,)).fetchone()
     conn.close()
     if not row:
-        return jsonify({'error': 'Profil nie znaleziony'}), 404
+        return jsonify({'error': 'Profile not found'}), 404
     enc = None
     try:
         enc = json.loads(row['encryption']) if row['encryption'] else None
@@ -2322,7 +2322,7 @@ def download_snapshot(snap_id):
 def transfer_snapshot(snap_id):
     """Transfer (push) a snapshot to a remote NAS via SSH/SCP."""
     if not HAS_SSH:
-        return jsonify({'error': 'paramiko/scp nie zainstalowane'}), 500
+        return jsonify({'error': 'paramiko/scp not installed'}), 500
     if _snapshot_state['status'] in ('creating', 'restoring', 'transferring'):
         return jsonify({'error': 'Operacja snapshot w toku'}), 409
 
@@ -2338,7 +2338,7 @@ def transfer_snapshot(snap_id):
     configs = load_ssh_configs()
     srv = next((c for c in configs if c.get('id') == server_id), None)
     if not srv:
-        return jsonify({'error': 'Serwer SSH nie znaleziony'}), 404
+        return jsonify({'error': 'SSH server not found'}), 404
 
     _snapshot_state['status'] = 'transferring'
     _snapshot_state['percent'] = 0
@@ -2643,7 +2643,7 @@ def adopt_received_snapshot():
     source_path = data.get('source_path')
     snap_dir_name = data.get('snap_id')
     if not source_path or not snap_dir_name:
-        return jsonify({'error': 'source_path i snap_id wymagane'}), 400
+        return jsonify({'error': 'source_path and snap_id required'}), 400
 
     # Validate the source path contains a valid snapshot
     meta_file = os.path.join(source_path, 'meta.json')
@@ -2673,7 +2673,7 @@ def restore_received_snapshot():
     data = request.json or {}
     source_path = data.get('source_path')
     if not source_path:
-        return jsonify({'error': 'source_path wymagane'}), 400
+        return jsonify({'error': 'source_path required'}), 400
 
     meta_file = os.path.join(source_path, 'meta.json')
     if not os.path.isfile(meta_file):
@@ -2702,7 +2702,7 @@ def restore_received_snapshot():
 def list_remote_snapshots():
     """List snapshots on a remote NAS (via SSH)."""
     if not HAS_SSH:
-        return jsonify({'error': 'paramiko nie zainstalowane'}), 500
+        return jsonify({'error': 'paramiko not installed'}), 500
 
     data = request.json or {}
     server_id = data.get('server_id')
@@ -2712,7 +2712,7 @@ def list_remote_snapshots():
     configs = load_ssh_configs()
     srv = next((c for c in configs if c.get('id') == server_id), None)
     if not srv:
-        return jsonify({'error': 'Serwer SSH nie znaleziony'}), 404
+        return jsonify({'error': 'SSH server not found'}), 404
 
     try:
         ssh = _get_ssh_client(srv['host'], srv.get('port', 22),
@@ -2763,7 +2763,7 @@ def list_remote_snapshots():
 def pull_remote_snapshot():
     """Pull (download) a snapshot from remote NAS to local."""
     if not HAS_SSH:
-        return jsonify({'error': 'paramiko/scp nie zainstalowane'}), 500
+        return jsonify({'error': 'paramiko/scp not installed'}), 500
     if _snapshot_state['status'] in ('creating', 'restoring', 'transferring'):
         return jsonify({'error': 'Operacja snapshot w toku'}), 409
 
@@ -2771,12 +2771,12 @@ def pull_remote_snapshot():
     server_id = data.get('server_id')
     remote_snap_id = data.get('snap_id')
     if not server_id or not remote_snap_id:
-        return jsonify({'error': 'server_id i snap_id wymagane'}), 400
+        return jsonify({'error': 'server_id and snap_id required'}), 400
 
     configs = load_ssh_configs()
     srv = next((c for c in configs if c.get('id') == server_id), None)
     if not srv:
-        return jsonify({'error': 'Serwer SSH nie znaleziony'}), 404
+        return jsonify({'error': 'SSH server not found'}), 404
 
     _snapshot_state['status'] = 'transferring'
     _snapshot_state['percent'] = 0

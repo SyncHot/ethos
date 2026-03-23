@@ -813,7 +813,7 @@ def api_remove_printer():
     data = _get_body()
     name = data.get('name', '').strip()
     if not name:
-        return jsonify({'success': False, 'error': 'Nazwa wymagana'}), 400
+        return jsonify({'success': False, 'error': 'Name required'}), 400
     result = remove_printer(name)
     if result['success']:
         return jsonify(result)
@@ -827,7 +827,7 @@ def api_set_default():
     data = _get_body()
     name = data.get('name', '').strip()
     if not name:
-        return jsonify({'success': False, 'error': 'Nazwa wymagana'}), 400
+        return jsonify({'success': False, 'error': 'Name required'}), 400
     result = set_default(name)
     return jsonify(result)
 
@@ -839,7 +839,7 @@ def api_enable():
     data = _get_body()
     name = data.get('name', '').strip()
     if not name:
-        return jsonify({'success': False, 'error': 'Nazwa wymagana'}), 400
+        return jsonify({'success': False, 'error': 'Name required'}), 400
     enable_printer(name)
     return jsonify({'success': True})
 
@@ -851,7 +851,7 @@ def api_disable():
     data = _get_body()
     name = data.get('name', '').strip()
     if not name:
-        return jsonify({'success': False, 'error': 'Nazwa wymagana'}), 400
+        return jsonify({'success': False, 'error': 'Name required'}), 400
     disable_printer(name)
     return jsonify({'success': True})
 
@@ -943,7 +943,7 @@ def _printer_on_uninstall(wipe):
 
 register_pkg_routes(
     printer_bp,
-    install_message='Serwer druku gotowy.',
+    install_message='Print server ready.',
     install_deps=['lpadmin'],
     wipe_dirs=[UPLOAD_FOLDER],
     on_uninstall=_printer_on_uninstall,

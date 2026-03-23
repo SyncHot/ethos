@@ -557,7 +557,7 @@ def uninstall_ddns():
 
 register_pkg_routes(
     ddns_bp,
-    install_message='Dynamic DNS gotowy.',
+    install_message='Dynamic DNS ready.',
     wipe_files=[_CONFIG_FILE, _HISTORY_FILE],
     on_uninstall=_ddns_on_uninstall,
 )
