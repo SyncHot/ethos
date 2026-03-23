@@ -12,11 +12,11 @@ AppRegistry['network'] = function (appDef) {
         <div class="net-sidebar">
             <div class="net-sidebar-logo">
                 <i class="fas fa-network-wired"></i>
-                <span>Sieć</span>
+                <span>${t('Sieć')}</span>
             </div>
             <nav class="net-nav">
                 <button class="net-nav-btn active" data-tab="overview">
-                    <i class="fas fa-tachometer-alt"></i><span>Przegląd</span>
+                    <i class="fas fa-tachometer-alt"></i><span>${t('Przegląd')}</span>
                 </button>
                 <button class="net-nav-btn" data-tab="wifi">
                     <i class="fas fa-wifi"></i><span>WiFi</span>
@@ -36,18 +36,18 @@ AppRegistry['network'] = function (appDef) {
                 <div class="net-header">
                     <h2>Interfejsy sieciowe</h2>
                     <button class="net-btn net-btn-sm" id="net-refresh-ifaces">
-                        <i class="fas fa-sync-alt"></i> Odśwież
+                        <i class="fas fa-sync-alt"></i> ${t('Odśwież')}
                     </button>
                 </div>
                 <div class="net-info-bar" id="net-info-bar"></div>
                 <div class="net-iface-list" id="net-iface-list">
-                    <div class="net-loading"><i class="fas fa-spinner fa-spin"></i> Ładowanie...</div>
+                    <div class="net-loading"><i class="fas fa-spinner fa-spin"></i> ${t('Ładowanie...')}</div>
                 </div>
             </div>
             <!-- WiFi -->
             <div class="net-tab" id="net-tab-wifi">
                 <div class="net-header">
-                    <h2>Dostępne sieci WiFi</h2>
+                    <h2>${t('Dostępne sieci WiFi')}</h2>
                     <button class="net-btn net-btn-primary" id="net-wifi-scan">
                         <i class="fas fa-radar"></i> Skanuj
                     </button>
@@ -56,7 +56,7 @@ AppRegistry['network'] = function (appDef) {
                 <div class="net-wifi-list" id="net-wifi-list">
                     <div class="net-placeholder">
                         <i class="fas fa-wifi"></i>
-                        <p>Kliknij <b>Skanuj</b>, aby wyszukać dostępne sieci WiFi</p>
+                        <p>${t('Kliknij')} <b>${t('Skanuj')}</b>, ${t('aby wyszukać dostępne sieci WiFi')}</p>
                     </div>
                 </div>
             </div>
@@ -66,7 +66,7 @@ AppRegistry['network'] = function (appDef) {
                     <h2>Hotspot WiFi</h2>
                 </div>
                 <div id="net-ap-content">
-                    <div class="net-loading"><i class="fas fa-spinner fa-spin"></i> Ładowanie...</div>
+                    <div class="net-loading"><i class="fas fa-spinner fa-spin"></i> ${t('Ładowanie...')}</div>
                 </div>
             </div>
             <!-- Saved -->
@@ -74,11 +74,11 @@ AppRegistry['network'] = function (appDef) {
                 <div class="net-header">
                     <h2>Zapisane sieci WiFi</h2>
                     <button class="net-btn net-btn-sm" id="net-refresh-saved">
-                        <i class="fas fa-sync-alt"></i> Odśwież
+                        <i class="fas fa-sync-alt"></i> ${t('Odśwież')}
                     </button>
                 </div>
                 <div class="net-saved-list" id="net-saved-list">
-                    <div class="net-loading"><i class="fas fa-spinner fa-spin"></i> Ładowanie...</div>
+                    <div class="net-loading"><i class="fas fa-spinner fa-spin"></i> ${t('Ładowanie...')}</div>
                 </div>
             </div>
         </div>
@@ -165,12 +165,12 @@ AppRegistry['network'] = function (appDef) {
 
                     let wifiLine = '';
                     if (iface.wifi && iface.wifi.connection) {
-                        wifiLine = `<div class="net-iface-detail"><i class="fas fa-link"></i> Połączono z: <b>${esc(iface.wifi.connection)}</b></div>`;
+                        wifiLine = `<div class="net-iface-detail"><i class="fas fa-link"></i> ${t('Połączono z:')} <b>${esc(iface.wifi.connection)}</b></div>`;
                     }
 
                     let speedLine = '';
                     if (iface.speed && iface.speed > 0) {
-                        speedLine = `<div class="net-iface-detail"><i class="fas fa-tachometer-alt"></i> Prędkość: <b>${iface.speed} Mb/s</b></div>`;
+                        speedLine = `<div class="net-iface-detail"><i class="fas fa-tachometer-alt"></i> ${t('Prędkość:')} <b>${iface.speed} Mb/s</b></div>`;
                     }
 
                     card.innerHTML = `
@@ -185,8 +185,8 @@ AppRegistry['network'] = function (appDef) {
                             </div>
                             <div class="net-iface-actions">
                                 ${iface.state === 'UP'
-                                    ? `<button class="net-btn net-btn-sm net-btn-danger" data-action="down" data-iface="${esc(iface.name)}"><i class="fas fa-power-off"></i> Wyłącz</button>`
-                                    : `<button class="net-btn net-btn-sm net-btn-success" data-action="up" data-iface="${esc(iface.name)}"><i class="fas fa-power-off"></i> Włącz</button>`
+                                    ? `<button class="net-btn net-btn-sm net-btn-danger" data-action="down" data-iface="${esc(iface.name)}"><i class="fas fa-power-off"></i> ${t('Wyłącz')}</button>`
+                                    : `<button class="net-btn net-btn-sm net-btn-success" data-action="up" data-iface="${esc(iface.name)}"><i class="fas fa-power-off"></i> ${t('Włącz')}</button>`
                                 }
                             </div>
                         </div>
@@ -250,18 +250,18 @@ AppRegistry['network'] = function (appDef) {
                         <div class="net-wifi-conn-info connected">
                             <div>
                                 <i class="fas fa-wifi"></i>
-                                <span>Połączono z <b>${esc(data.connected.ssid)}</b></span>
+                                <span>${t('Połączono z')} <b>${esc(data.connected.ssid)}</b></span>
                                 <span class="net-wifi-signal">${signalIcon(data.connected.signal)} ${data.connected.signal}%</span>
                                 ${data.ip_address ? `<span class="net-wifi-ip"><i class="fas fa-map-marker-alt"></i> ${esc(data.ip_address)}</span>` : ''}
                             </div>
                             <button class="net-btn net-btn-sm net-btn-danger" id="net-wifi-disconnect">
-                                <i class="fas fa-unlink"></i> Rozłącz
+                                <i class="fas fa-unlink"></i> ${t('Rozłącz')}
                             </button>
                         </div>
                     `;
                     root.querySelector('#net-wifi-disconnect').addEventListener('click', disconnectWifi);
                 } else {
-                    statusEl.innerHTML = `<div class="net-wifi-conn-info disconnected"><i class="fas fa-wifi"></i> <span>Nie połączono z żadną siecią WiFi</span></div>`;
+                    statusEl.innerHTML = `<div class="net-wifi-conn-info disconnected"><i class="fas fa-wifi"></i> <span>${t('Nie połączono z żadną siecią WiFi')}</span></div>`;
                 }
             } catch (e) {
                 statusEl.innerHTML = '';
@@ -315,7 +315,7 @@ AppRegistry['network'] = function (appDef) {
                                 </div>
                             </div>
                             <button class="net-btn net-btn-primary net-btn-sm net-wifi-connect-btn" data-ssid="${esc(net.ssid)}" data-secured="${secured}">
-                                <i class="fas fa-plug"></i> Połącz
+                                <i class="fas fa-plug"></i> ${t('Połącz')}
                             </button>
                         </div>
                     `;
@@ -393,7 +393,7 @@ AppRegistry['network'] = function (appDef) {
                         </div>
                     `;
                     item.querySelector('[data-forget]').addEventListener('click', async () => {
-                        const ok = await confirmDialog(t('Zapomnij sieć'), `Czy na pewno chcesz zapomnieć sieć "${conn.name}"?`);
+                        const ok = await confirmDialog(t('Zapomnij sieć'), `${t('Czy na pewno chcesz zapomnieć sieć "')}${conn.name}"?`);
                         if (!ok) return;
                         try {
                             await api('/network/wifi/forget', { method: 'POST', body: { name: conn.name } });
@@ -439,13 +439,13 @@ AppRegistry['network'] = function (appDef) {
                             </div>
                         </div>
                         <div style="background:rgba(99,102,241,.06);border:1px solid rgba(99,102,241,.12);border-radius:10px;padding:16px;font-size:13px;line-height:1.7;color:var(--text-secondary);">
-                            <div style="font-weight:600;margin-bottom:6px;color:var(--text);"><i class="fas fa-info-circle" style="margin-right:6px;"></i>Jak to działa?</div>
+                            <div style="font-weight:600;margin-bottom:6px;color:var(--text);"><i class="fas fa-info-circle" style="margin-right:6px;"></i>${t('Jak to działa?')}</div>
                             <ul style="margin:0;padding-left:20px;">
-                                <li>Hotspot tworzy otwartą sieć WiFi <b>"ethos"</b> (bez hasła)</li>
-                                <li>Połącz się z telefonem lub laptopem do tej sieci</li>
-                                <li>Otwórz <b>http://192.168.42.1:9000</b> w przeglądarce</li>
-                                <li>W zakładce <b>WiFi</b> skonfiguruj docelową sieć</li>
-                                <li>Po połączeniu z WiFi hotspot wyłączy się automatycznie</li>
+                                <li>${t('Hotspot tworzy otwartą sieć WiFi')} <b>"ethos"</b> (${t('bez hasła')})</li>
+                                <li>${t('Połącz się z telefonem lub laptopem do tej sieci')}</li>
+                                <li>${t('Otwórz')} <b>http://192.168.42.1:9000</b> ${t('w przeglądarce')}</li>
+                                <li>${t('W zakładce')} <b>WiFi</b> ${t('skonfiguruj docelową sieć')}</li>
+                                <li>${t('Po połączeniu z WiFi hotspot wyłączy się automatycznie')}</li>
                             </ul>
                         </div>
                     </div>

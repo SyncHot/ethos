@@ -498,7 +498,7 @@ function renderBuilderApp(body) {
                 if (!confirm(t('Usunąć') + ` ${paths.length} ${label}?`)) return;
                 try {
                     const res = await api('/builder/delete', { method: 'POST', body: { paths } });
-                    if (res.deleted?.length) toast(`Usunięto ${res.deleted.length} plików`, 'success');
+                    if (res.deleted?.length) toast(`${t('Usunięto')} ${res.deleted.length} ${t('plików')}`, 'success');
                     if (res.errors?.length) toast(res.errors.join(', '), 'error');
                     loadInfo();
                 } catch (e) { toast(e.message, 'error'); }

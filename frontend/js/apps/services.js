@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════
-   EthOS — Usługi (Service Manager)
+   ${t('EthOS — Usługi (Service Manager)')}
    Start / Stop / Restart / Enable / Disable / Uninstall / Logs
    ═══════════════════════════════════════════════════════════ */
 
@@ -255,7 +255,7 @@ function renderServicesApp(body) {
             <i class="fas fa-rectangle-list" style="color:#64748b"></i>
             <span style="font-size:13px;font-weight:500">${svc}</span>
             <div style="flex:1"></div>
-            <button class="fm-toolbar-btn btn-sm" id="svc-logs-more" title="Więcej"><i class="fas fa-plus"></i> ${t('200 linii')}</button>
+            <button class="fm-toolbar-btn btn-sm" id="svc-logs-more" title="${t('Więcej')}"><i class="fas fa-plus"></i> ${t('200 linii')}</button>
             <button class="fm-toolbar-btn btn-sm" id="svc-logs-close"><i class="fas fa-times"></i></button>
         </div>
         <pre id="svc-logs-content" style="padding:8px 14px;font-size:11px;font-family:monospace;margin:0;white-space:pre-wrap;word-break:break-all;max-height:150px;overflow-y:auto;color:var(--text-muted)"><i class="fas fa-spinner fa-spin"></i></pre>`;

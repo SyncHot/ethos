@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════
    EthOS — Backup & Restore  (v2 — enhanced UI)
-   Kopia zapasowa — ścieżki, profile, USB/SSH, harmonogram,
-   podgląd archiwów, edycja profili, logi w czasie rzecz.
+   ${t('Kopia zapasowa — ścieżki, profile, USB/SSH, harmonogram,')}
+   ${t('podgląd archiwów, edycja profili, logi w czasie rzecz.')}
    ═══════════════════════════════════════════════════════════ */
 
 AppRegistry['backup'] = function (appDef) {
@@ -148,7 +148,7 @@ function renderBackupApp(body) {
         <!-- ═══ PROFILES TAB ═══ -->
         <div class="bak-panel" id="bak-panel-profiles">
             <div class="bak-section-header">
-                <h3><i class="fas fa-bookmark"></i> Profile backupów</h3>
+                <h3><i class="fas fa-bookmark"></i> ${t('Profile backupów')}</h3>
                 <div class="bak-row">
                     <button class="fm-toolbar-btn btn-green" id="bak-profile-new"><i class="fas fa-plus"></i> Nowy profil</button>
                     <button class="fm-toolbar-btn" id="bak-profile-export" title="Eksportuj profile"><i class="fas fa-file-export"></i> Eksportuj</button>
@@ -189,7 +189,7 @@ function renderBackupApp(body) {
                         <option value="ssh">SSH</option>
                     </select>
                     <select id="bak-dest-usb" class="fm-input hidden bak-w-usb-select"></select>
-                    <button class="fm-toolbar-btn hidden" id="bak-dest-usb-browse" title="Przeglądaj USB"><i class="fas fa-folder-open"></i></button>
+                    <button class="fm-toolbar-btn hidden" id="bak-dest-usb-browse" title="${t('Przeglądaj USB')}"><i class="fas fa-folder-open"></i></button>
                     <select id="bak-dest-ssh" class="fm-input hidden bak-w-auto"></select>
                 </div>
                 <div class="bak-dest-path-display hidden" id="bak-dest-path-display">
@@ -274,15 +274,15 @@ function renderBackupApp(body) {
                 <h4>${t('Nowe połączenie zdalne')}</h4>
                 <div class="storage-form-row"><label>Nazwa:</label><input type="text" id="bak-ssh-name" class="fm-input"></div>
                 <div class="storage-form-row"><label>Host:</label><input type="text" id="bak-ssh-host" class="fm-input"><label>Port:</label><input type="number" id="bak-ssh-port" class="fm-input bak-w80" value="22"></div>
-                <div class="storage-form-row"><label>Użytkownik:</label><input type="text" id="bak-ssh-user" class="fm-input"></div>
+                <div class="storage-form-row"><label>${t('Użytkownik:')}</label><input type="text" id="bak-ssh-user" class="fm-input"></div>
                 <div class="storage-form-row"><label>Uwierzytelnianie:</label>
                     <select id="bak-ssh-auth-type" class="fm-input bak-w180">
-                        <option value="password">Hasło</option>
+                        <option value="password">${t('Hasło')}</option>
                         <option value="key">Klucz SSH</option>
                     </select>
                 </div>
                 <div id="bak-ssh-auth-pw">
-                    <div class="storage-form-row"><label>Hasło:</label><input type="password" id="bak-ssh-pw" class="fm-input"></div>
+                    <div class="storage-form-row"><label>${t('Hasło:')}</label><input type="password" id="bak-ssh-pw" class="fm-input"></div>
                 </div>
                 <div id="bak-ssh-auth-key" class="hidden">
                     <div class="storage-form-row"><label>Klucz SSH:</label><select id="bak-ssh-key-select" class="fm-input"><option value="">-- wybierz klucz --</option></select></div>
@@ -342,7 +342,7 @@ function renderBackupApp(body) {
 
             <!-- Received snapshots refresh (hidden control for programmatic use) -->
             <div id="snap-received-section" class="bak-hidden">
-                <button class="fm-toolbar-btn" id="snap-received-refresh" title="Odśwież"><i class="fas fa-sync-alt"></i></button>
+                <button class="fm-toolbar-btn" id="snap-received-refresh" title="${t('Odśwież')}"><i class="fas fa-sync-alt"></i></button>
             </div>
         </div>
         </div><!-- /bak-content -->
@@ -533,15 +533,15 @@ function renderBackupApp(body) {
                     <div id="snap-addnas-info" class="bak-info-panel"></div>
                     <div class="bak-col-gap10">
                         <div>
-                            <label class="bak-label12-block">Użytkownik SSH:</label>
+                            <label class="bak-label12-block">${t('Użytkownik SSH:')}</label>
                             <input type="text" id="snap-addnas-user" placeholder="np. nasadmin" class="bak-textarea">
                         </div>
                         <div>
-                            <label class="bak-label12-block">Hasło:</label>
+                            <label class="bak-label12-block">${t('Hasło:')}</label>
                             <input type="password" id="snap-addnas-pass" placeholder="${t('Hasło SSH')}" class="bak-textarea">
                         </div>
                         <div>
-                            <label class="bak-label12-block">Ścieżka zdalna (backup dir):</label>
+                            <label class="bak-label12-block">${t('Ścieżka zdalna (backup dir):')}</label>
                             <input type="text" id="snap-addnas-path" value="/backups" class="bak-textarea">
                         </div>
                     </div>
@@ -558,14 +558,14 @@ function renderBackupApp(body) {
         <div class="bak-modal hidden" id="bak-preview-modal">
             <div class="bak-modal-content bak-modal-650">
                 <div class="bak-modal-header">
-                    <h3><i class="fas fa-search"></i> Podgląd kopii</h3>
+                    <h3><i class="fas fa-search"></i> ${t('Podgląd kopii')}</h3>
                     <button class="fm-toolbar-btn" id="bak-preview-close"><i class="fas fa-times"></i></button>
                 </div>
                 <div class="bak-preview-body bak-scroll-body" id="bak-preview-body">
                     <p class="bak-text-muted">${t('Ładowanie...')}</p>
                 </div>
                 <div class="bak-modal-footer">
-                    <button class="fm-toolbar-btn btn-green" id="bak-preview-restore"><i class="fas fa-undo"></i> Przywróć tę kopię</button>
+                    <button class="fm-toolbar-btn btn-green" id="bak-preview-restore"><i class="fas fa-undo"></i> ${t('Przywróć tę kopię')}</button>
                 </div>
             </div>
         </div>
@@ -580,7 +580,7 @@ function renderBackupApp(body) {
                 <div class="bak-scroll-body">
                     <div class="storage-form-row"><label>Nazwa:</label><input type="text" id="bak-pm-name" class="fm-input"></div>
 
-                    <label class="bak-block-mt12"><strong>Ścieżki:</strong></label>
+                    <label class="bak-block-mt12"><strong>${t('Ścieżki:')}</strong></label>
                     <div class="bak-pm-paths" id="bak-pm-paths"></div>
                     <div class="bak-mt6">
                         <button class="fm-toolbar-btn btn-green" id="bak-pm-browse"><i class="fas fa-folder-plus"></i> Dodaj folder</button>
@@ -594,7 +594,7 @@ function renderBackupApp(body) {
                             <option value="ssh">SSH</option>
                         </select>
                         <select id="bak-pm-dest-usb" class="fm-input hidden bak-w-usb-select"></select>
-                        <button class="fm-toolbar-btn hidden" id="bak-pm-dest-usb-browse" title="Przeglądaj USB"><i class="fas fa-folder-open"></i></button>
+                        <button class="fm-toolbar-btn hidden" id="bak-pm-dest-usb-browse" title="${t('Przeglądaj USB')}"><i class="fas fa-folder-open"></i></button>
                         <select id="bak-pm-dest-ssh" class="fm-input hidden bak-w-auto"></select>
                     </div>
                     <div class="bak-dest-path-display hidden" id="bak-pm-dest-path-display">
@@ -606,9 +606,9 @@ function renderBackupApp(body) {
                     <div class="storage-form-row bak-mt10">
                         <label>Harmonogram:</label>
                         <select id="bak-pm-sched-type" class="fm-input bak-w-auto">
-                            <option value="manual">Ręczny</option>
+                            <option value="manual">${t('Ręczny')}</option>
                             <option value="daily">Codziennie</option>
-                            <option value="weekly">Co tydzień</option>
+                            <option value="weekly">${t('Co tydzień')}</option>
                         </select>
                         <label>Godzina:</label>
                         <input type="time" id="bak-pm-sched-time" class="fm-input bak-w120" value="03:00">
@@ -616,7 +616,7 @@ function renderBackupApp(body) {
                     <div class="bak-pm-days hidden bak-tag-row" id="bak-pm-days">
                         <label class="bak-day-chip"><input type="checkbox" value="0"> Pn</label>
                         <label class="bak-day-chip"><input type="checkbox" value="1"> Wt</label>
-                        <label class="bak-day-chip"><input type="checkbox" value="2"> Śr</label>
+                        <label class="bak-day-chip"><input type="checkbox" value="2"> ${t('Śr')}</label>
                         <label class="bak-day-chip"><input type="checkbox" value="3"> Cz</label>
                         <label class="bak-day-chip"><input type="checkbox" value="4"> Pt</label>
                         <label class="bak-day-chip"><input type="checkbox" value="5"> So</label>
@@ -635,7 +635,7 @@ function renderBackupApp(body) {
                     <div class="hidden" id="bak-pm-encrypt-opts">
                         <div class="storage-form-row bak-mt10">
                             <label>Tryb klucza:</label>
-                            <label class="storage-check"><input type="radio" name="bak-pm-enc-mode" value="passphrase" id="bak-pm-enc-passphrase" checked> <i class="fas fa-keyboard"></i> Hasło (wpisywane)</label>
+                            <label class="storage-check"><input type="radio" name="bak-pm-enc-mode" value="passphrase" id="bak-pm-enc-passphrase" checked> <i class="fas fa-keyboard"></i> ${t('Hasło (wpisywane)')}</label>
                             <label class="storage-check"><input type="radio" name="bak-pm-enc-mode" value="key" id="bak-pm-enc-key"> <i class="fas fa-key"></i> Klucz automatyczny</label>
                         </div>
                         <div class="bak-encrypt-warning" id="bak-pm-encrypt-warning">
@@ -660,7 +660,7 @@ function renderBackupApp(body) {
     <div class="bak-modal hidden" id="bak-passphrase-modal">
         <div class="bak-modal-content bak-modal-400">
             <div class="bak-modal-header">
-                <h3 id="bak-passphrase-title"><i class="fas fa-lock"></i> Hasło szyfrowania</h3>
+                <h3 id="bak-passphrase-title"><i class="fas fa-lock"></i> ${t('Hasło szyfrowania')}</h3>
                 <button class="fm-toolbar-btn" id="bak-passphrase-close"><i class="fas fa-times"></i></button>
             </div>
             <div class="bak-scroll-body">
@@ -669,16 +669,16 @@ function renderBackupApp(body) {
                     <strong>${t('Zapamiętaj hasło!')}</strong> ${t('Bez niego backup jest bezużyteczny — nie ma możliwości odzyskania danych.')}
                 </div>
                 <div class="storage-form-row">
-                    <label>Hasło:</label>
+                    <label>${t('Hasło:')}</label>
                     <input type="password" id="bak-passphrase-input" class="fm-input" autocomplete="new-password" placeholder="${t('Hasło szyfrowania...')}">
                 </div>
                 <div class="storage-form-row" id="bak-passphrase-confirm-row">
-                    <label>Potwierdź:</label>
+                    <label>${t('Potwierdź:')}</label>
                     <input type="password" id="bak-passphrase-confirm" class="fm-input" autocomplete="new-password" placeholder="${t('Powtórz hasło...')}">
                 </div>
             </div>
             <div class="bak-modal-footer bak-gap8">
-                <button class="fm-toolbar-btn btn-green" id="bak-passphrase-ok"><i class="fas fa-check"></i> Potwierdź</button>
+                <button class="fm-toolbar-btn btn-green" id="bak-passphrase-ok"><i class="fas fa-check"></i> ${t('Potwierdź')}</button>
                 <button class="fm-toolbar-btn" id="bak-passphrase-cancel"><i class="fas fa-times"></i> Anuluj</button>
             </div>
         </div>

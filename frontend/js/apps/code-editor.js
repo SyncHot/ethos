@@ -358,7 +358,7 @@ function renderCodeEditor(body, launchOpts) {
             matches.push(idx);
             idx += query.length;
         }
-        findCountEl.textContent = matches.length ? `${matches.length} wyników` : t('Brak wyników');
+        findCountEl.textContent = matches.length ? `${matches.length} ${t('wyników')}` : t('Brak wyników');
         return matches;
     }
 

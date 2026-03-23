@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════
    EthOS — Przywracanie systemu (Rollback)
-   Snapshoty plików systemowych z opcją przywracania
+   ${t('Snapshoty plików systemowych z opcją przywracania')}
    ═══════════════════════════════════════════════════════════ */
 
 AppRegistry['rollback'] = function (appDef) {

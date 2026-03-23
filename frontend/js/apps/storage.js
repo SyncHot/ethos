@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════
    EthOS — Storage Manager  (card-based UI)
-   Zarządzanie dyskami: montowanie, formatowanie, partycje
+   ${t('Zarządzanie dyskami: montowanie, formatowanie, partycje')}
    ═══════════════════════════════════════════════════════════ */
 
 AppRegistry['storage-manager'] = function (appDef) {

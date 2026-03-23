@@ -224,7 +224,7 @@ AppRegistry['users'] = function (appDef) {
                         ${allGroups.map(g => `
                             <label class="usr-checkbox-label">
                                 <input type="checkbox" value="${g.name}" ${userGs.has(g.name) ? 'checked' : ''}>
-                                ${g.name} <small class="usr-muted">(${g.members?.length || 0} członków)</small>
+                                ${g.name} <small class="usr-muted">(${g.members?.length || 0} ${t('członków)')}</small>
                             </label>
                         `).join('')}
                     </div>
@@ -437,7 +437,7 @@ AppRegistry['users'] = function (appDef) {
             `;
             privActions.style.display = 'flex';
         } catch (err) {
-            privGrid.innerHTML = `<div class="usr-error"><i class="fas fa-exclamation-triangle"></i> Błąd: ${err.message}</div>`;
+            privGrid.innerHTML = `<div class="usr-error"><i class="fas fa-exclamation-triangle"></i> ${t('Błąd:')} ${err.message}</div>`;
             privActions.style.display = 'none';
         }
     }

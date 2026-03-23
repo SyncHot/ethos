@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════
    EthOS — WireGuard VPN Manager
-   Zarządzanie serwerem VPN: peery, QR kody, status
+   ${t('Zarządzanie serwerem VPN: peery, QR kody, status')}
    ═══════════════════════════════════════════════════════════ */
 
 AppRegistry['wireguard'] = function (appDef) {
@@ -33,10 +33,10 @@ AppRegistry['wireguard'] = function (appDef) {
                     <i class="fas fa-shield-halved" style="color:#7c3aed"></i>
                     WireGuard VPN
                 </h2>
-                <p style="margin:0;opacity:0.65;font-size:13px">Bezpieczny dostęp do sieci domowej z dowolnego miejsca</p>
+                <p style="margin:0;opacity:0.65;font-size:13px">${t('Bezpieczny dostęp do sieci domowej z dowolnego miejsca')}</p>
             </div>
             <div style="display:flex;align-items:center;gap:10px">
-                <span id="wg-status-badge" style="font-size:12px;padding:3px 10px;border-radius:20px;background:var(--bg-surface);border:1px solid var(--border)">Ładowanie...</span>
+                <span id="wg-status-badge" style="font-size:12px;padding:3px 10px;border-radius:20px;background:var(--bg-surface);border:1px solid var(--border)">${t('Ładowanie...')}</span>
                 <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px">
                     <span>VPN</span>
                     <div id="wg-toggle-wrap" style="position:relative;width:44px;height:24px">
@@ -56,21 +56,21 @@ AppRegistry['wireguard'] = function (appDef) {
         </div>
 
         <div style="display:flex;align-items:center;justify-content:space-between">
-            <h3 style="margin:0;font-size:15px">Peery (urządzenia)</h3>
+            <h3 style="margin:0;font-size:15px">${t('Peery (urządzenia)')}</h3>
             <button id="wg-add-btn" class="app-btn app-btn-accent" style="font-size:13px">
-                <i class="fas fa-plus"></i> Dodaj urządzenie
+                <i class="fas fa-plus"></i> ${t('Dodaj urządzenie')}
             </button>
         </div>
 
         <div id="wg-peers-list" style="display:flex;flex-direction:column;gap:10px">
-            <div style="opacity:0.5;text-align:center;padding:20px">Ładowanie...</div>
+            <div style="opacity:0.5;text-align:center;padding:20px">${t('Ładowanie...')}</div>
         </div>
 
         <!-- Add Peer Modal -->
         <div id="wg-add-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9999;align-items:center;justify-content:center">
             <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:12px;padding:24px;width:380px;max-width:95vw">
-                <h3 style="margin:0 0 16px 0">Dodaj urządzenie</h3>
-                <label style="display:block;margin-bottom:8px;font-size:13px;opacity:0.8">Nazwa urządzenia</label>
+                <h3 style="margin:0 0 16px 0">${t('Dodaj urządzenie')}</h3>
+                <label style="display:block;margin-bottom:8px;font-size:13px;opacity:0.8">${t('Nazwa urządzenia')}</label>
                 <input id="wg-peer-name" type="text" class="app-input" placeholder="np. Telefon, Laptop" style="width:100%;margin-bottom:16px;box-sizing:border-box">
                 <div style="display:flex;gap:10px;justify-content:flex-end">
                     <button id="wg-add-cancel" class="app-btn">Anuluj</button>
@@ -86,7 +86,7 @@ AppRegistry['wireguard'] = function (appDef) {
                 <p style="margin:0 0 16px 0;font-size:13px;opacity:0.7">Zeskanuj QR kodem lub pobierz plik .conf</p>
                 <div id="wg-qr-img-wrap" style="text-align:center;margin-bottom:16px">
                     <img id="wg-qr-img" style="max-width:220px;border-radius:8px;border:4px solid #fff" src="" alt="QR code">
-                    <div id="wg-qr-missing" style="display:none;opacity:0.5;font-size:13px;padding:20px">Brak QR (qrencode niedostępny)</div>
+                    <div id="wg-qr-missing" style="display:none;opacity:0.5;font-size:13px;padding:20px">${t('Brak QR (qrencode niedostępny)')}</div>
                 </div>
                 <textarea id="wg-conf-text" readonly style="width:100%;height:160px;font-family:monospace;font-size:11px;background:var(--bg-default);color:var(--text-default);border:1px solid var(--border);border-radius:6px;padding:8px;box-sizing:border-box;resize:vertical"></textarea>
                 <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px">
@@ -124,7 +124,7 @@ AppRegistry['wireguard'] = function (appDef) {
     function fmtHandshake(ts) {
         if (!ts) return 'Nigdy';
         const diff = Math.floor(Date.now() / 1000) - ts;
-        if (diff < 120) return 'Przed chwilą';
+        if (diff < 120) return t('Przed chwilą');
         if (diff < 3600) return Math.floor(diff / 60) + ' min temu';
         if (diff < 86400) return Math.floor(diff / 3600) + ' godz. temu';
         return Math.floor(diff / 86400) + ' dni temu';
@@ -133,7 +133,7 @@ AppRegistry['wireguard'] = function (appDef) {
     function renderPeers(peers) {
         if (!peers || peers.length === 0) {
             peersList.innerHTML = `<div style="opacity:0.5;text-align:center;padding:30px;border:1px dashed var(--border);border-radius:8px">
-                Brak peerów. Kliknij „Dodaj urządzenie" aby wygenerować pierwszą konfigurację.
+                ${t('Brak peerów. Kliknij „Dodaj urządzenie" aby wygenerować pierwszą konfigurację.')}
             </div>`;
             return;
         }
@@ -149,7 +149,7 @@ AppRegistry['wireguard'] = function (appDef) {
                         <div style="font-weight:600;font-size:14px">${name}</div>
                         <div style="font-family:monospace;font-size:11px;opacity:0.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(p.PublicKey)}</div>
                         <div style="font-size:12px;opacity:0.7;margin-top:2px">
-                            ${active ? `↓ ${fmtBytes(p.transfer_rx)} ↑ ${fmtBytes(p.transfer_tx)} · ostatnie połączenie: ${fmtHandshake(p.latest_handshake)}` : 'Nieaktywny'}
+                            ${active ? `↓ ${fmtBytes(p.transfer_rx)} ↑ ${fmtBytes(p.transfer_tx)} · ${t('ostatnie połączenie:')} ${fmtHandshake(p.latest_handshake)}` : t('Nieaktywny')}
                         </div>
                     </div>
                 </div>
@@ -188,8 +188,8 @@ AppRegistry['wireguard'] = function (appDef) {
             }
             renderPeers(r.peers);
         } catch (e) {
-            statusBadge.textContent = 'Błąd';
-            peersList.innerHTML = `<div style="color:#ef4444;padding:10px">Błąd: ${esc(String(e))}</div>`;
+            statusBadge.textContent = t('Błąd');
+            peersList.innerHTML = `<div style="color:#ef4444;padding:10px">${t('Błąd:')} ${esc(String(e))}</div>`;
         }
     }
 
@@ -202,8 +202,7 @@ AppRegistry['wireguard'] = function (appDef) {
             await api('/wireguard/toggle', { method: 'POST', body: { enable } });
             await loadStatus();
         } catch (e) {
-            showNotification('Błąd: ' + e.message, 'error');
-            await loadStatus();
+            showNotification(t('Błąd:') + ' ' + e.message, 'error');            await loadStatus();
         } finally {
             toggle.disabled = false;
         }
@@ -222,7 +221,7 @@ AppRegistry['wireguard'] = function (appDef) {
     body.querySelector('#wg-peer-name').addEventListener('keydown', e => { if (e.key === 'Enter') body.querySelector('#wg-add-confirm').click(); });
 
     body.querySelector('#wg-add-confirm').addEventListener('click', async () => {
-        const name = body.querySelector('#wg-peer-name').value.trim() || 'Urządzenie';
+        const name = body.querySelector('#wg-peer-name').value.trim() || t('Urządzenie');
         addModal.style.display = 'none';
         statusBadge.textContent = 'Generowanie…';
         try {
@@ -230,7 +229,7 @@ AppRegistry['wireguard'] = function (appDef) {
             showQR(name, r.config, r.qr_code);
             await loadStatus();
         } catch (e) {
-            showNotification('Błąd dodawania peera: ' + e.message, 'error');
+            showNotification(t('Błąd dodawania peera:') + ' ' + e.message, 'error');
             await loadStatus();
         }
     });
@@ -269,12 +268,12 @@ AppRegistry['wireguard'] = function (appDef) {
     });
 
     async function deletePeer(pubKey, name) {
-        if (!confirm(`Usunąć peera "${name}"?`)) return;
+        if (!confirm(t('Usunąć peera') + ` "${name}"?`)) return;
         try {
             await api('/wireguard/peer/' + encodeURIComponent(pubKey), { method: 'DELETE' });
             await loadStatus();
         } catch (e) {
-            showNotification('Błąd usuwania: ' + e.message, 'error');
+            showNotification(t('Błąd usuwania:') + ' ' + e.message, 'error');
         }
     }
 

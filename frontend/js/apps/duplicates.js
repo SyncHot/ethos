@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════
-   EthOS — Duplikaty zdjęć (standalone app)
+   ${t('EthOS — Duplikaty zdjęć (standalone app)')}
    ═══════════════════════════════════════════════════════════ */
 
 AppRegistry['duplicates'] = function (appDef, launchOpts) {
@@ -20,7 +20,7 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
         body.innerHTML = `
             <div class="dup-app" style="display:flex;flex-direction:column;height:100%;overflow:hidden;">
                 <div class="dup-app-statusbar" id="dup-statusbar" style="padding:4px 12px;font-size:11px;color:var(--text-muted);border-top:1px solid var(--border);background:var(--bg-secondary);flex-shrink:0;">
-                    Duplikaty zdjęć — gotowy
+                    ${t('Duplikaty zdjęć — gotowy')}
                 </div>
                 <div class="dup-app-content" id="dup-content" style="flex:1;overflow:auto;"></div>
             </div>
@@ -327,7 +327,7 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
                 if (!sure) return;
                 try {
                     await api('/files/delete', { method: 'DELETE', body: { paths } });
-                    toast(`Przeniesiono ${paths.length} duplikatów do kosza`, 'success');
+                    toast(`Przeniesiono ${paths.length} ${t('duplikatów do kosza')}`, 'success');
                     checked.forEach(cb => {
                         const fileEl = cb.closest('.fm-dup-file');
                         if (fileEl) fileEl.remove();
@@ -483,8 +483,8 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
                 header.innerHTML = `
                     <div class="fm-dup-results-info">
                         <i class="fas fa-check-circle" style="color:var(--accent)"></i>
-                        <strong>${data.groups}</strong> grup duplikatów &middot;
-                        <strong>${data.duplicates}</strong> nadmiarowych plików &middot;
+                        <strong>${data.groups}</strong> ${t('grup duplikatów &middot;')}
+                        <strong>${data.duplicates}</strong> ${t('nadmiarowych plików &middot;')}
                         <strong>${formatBytes(data.size)}</strong> do odzyskania
                     </div>
                     <div class="fm-dup-live-actions">
@@ -582,7 +582,7 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
                 <div class="fm-dup-results-header">
                     <div class="fm-dup-results-info">
                         <i class="fas fa-clone"></i>
-                        <strong>${groups.length}</strong> grup duplikatów &middot; <strong>${totalDups}</strong> nadmiarowych plików &middot; <strong>${formatBytes(totalSize)}</strong> do odzyskania
+                        <strong>${groups.length}</strong> ${t('grup duplikatów &middot;')} <strong>${totalDups}</strong> ${t('nadmiarowych plików &middot;')} <strong>${formatBytes(totalSize)}</strong> do odzyskania
                     </div>
                     <div class="fm-dup-results-actions">
                         <button class="fm-dup-btn" id="dup-autoselect"><i class="fas fa-magic"></i> Auto-zaznacz duplikaty</button>
@@ -706,7 +706,7 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
                 if (!sure) return;
                 try {
                     await api('/files/delete', { method: 'DELETE', body: { paths } });
-                    toast(`Przeniesiono ${paths.length} duplikatów do kosza`, 'success');
+                    toast(`Przeniesiono ${paths.length} ${t('duplikatów do kosza')}`, 'success');
                     await _showResults();
                 } catch { toast(t('Błąd usuwania'), 'error'); }
             });
@@ -903,11 +903,11 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
 
             content.querySelector('#dup-unignore-all')?.addEventListener('click', async () => {
                 const keys = items.map(i => i.key);
-                const sure = await confirmDialog(t('Przywróć wszystkie'), `Przywrócić ${keys.length} ignorowanych grup?`);
+                const sure = await confirmDialog(t('Przywróć wszystkie'), `${t('Przywrócić')} ${keys.length} ignorowanych grup?`);
                 if (!sure) return;
                 try {
                     await api('/files/duplicates/unignore', { method: 'POST', body: { keys } });
-                    toast(`Przywrócono ${keys.length} grup`, 'success');
+                    toast(`${t('Przywrócono')} ${keys.length} grup`, 'success');
                     _showIgnored();
                 } catch { toast(t('Błąd'), 'error'); }
             });

@@ -72,7 +72,7 @@ function _stickyInit(body, panelId) {
     function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
     function timeAgo(ts) {
         const s = Math.floor((Date.now() / 1000) - ts);
-        if (s < 60) return 'przed chwilą';
+        if (s < 60) return t('przed chwilą');
         if (s < 3600) return Math.floor(s / 60) + ' min temu';
         if (s < 86400) return Math.floor(s / 3600) + ' godz. temu';
         return new Date(ts * 1000).toLocaleDateString('pl', { day: 'numeric', month: 'short' });
@@ -261,7 +261,7 @@ function _stickyInit(body, panelId) {
             render();
             updateBadge();
         } catch (e) {
-            grid.innerHTML = `<div class="sn-empty"><i class="fas fa-exclamation-circle"></i><p>Błąd: ${esc(e.message)}</p></div>`;
+            grid.innerHTML = `<div class="sn-empty"><i class="fas fa-exclamation-circle"></i><p>${t('Błąd:')} ${esc(e.message)}</p></div>`;
         }
     }
 
@@ -298,7 +298,7 @@ function _stickyInit(body, panelId) {
                 <div class="sn-card-footer">${timeAgo(n.updated)}</div>
                 <div class="sn-card-actions">
                     <button class="sn-pin-btn" data-id="${n.id}" title="${n.pinned ? 'Odepnij' : 'Przypnij'}"><i class="fas fa-thumbtack"></i></button>
-                    <button class="sn-del-btn" data-id="${n.id}" title="Usuń"><i class="fas fa-trash"></i></button>
+                    <button class="sn-del-btn" data-id="${n.id}" title="${t('Usuń')}"><i class="fas fa-trash"></i></button>
                 </div>
             </div>`;
         }
@@ -332,7 +332,7 @@ function _stickyInit(body, panelId) {
             btn.addEventListener('click', async (e) => {
                 e.stopPropagation();
                 const n = notes.find(x => x.id === btn.dataset.id);
-                if (!confirm(`Usunąć karteczkę "${esc(n?.title || t('Bez tytułu'))}"?`)) return;
+                if (!confirm(`${t('Usunąć karteczkę "')}${esc(n?.title || t('Bez tytułu'))}"?`)) return;
                 try {
                     await api(`${API}/${btn.dataset.id}`, { method: 'DELETE' });
                     notes = notes.filter(x => x.id !== btn.dataset.id);

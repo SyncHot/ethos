@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════
-   EthOS — Printer (Serwer Druku + Zarządzanie drukarkami)
+   ${t('EthOS — Printer (Serwer Druku + Zarządzanie drukarkami)')}
    Print documents via CUPS + discover/add/remove/manage printers
    ═══════════════════════════════════════════════════════════ */
 
@@ -352,7 +352,7 @@ function renderPrinterApp(body) {
             loadPrinters();
             checkStatus();
         } catch (e) {
-            toast(`Błąd: ${e.message}`, 'error');
+            toast(`${t('Błąd:')} ${e.message}`, 'error');
         }
     }
 
@@ -420,7 +420,7 @@ function renderPrinterApp(body) {
                 toast(res.error || t('Błąd dodawania'), 'error');
             }
         } catch (e) {
-            toast(`Błąd: ${e.message}`, 'error');
+            toast(`${t('Błąd:')} ${e.message}`, 'error');
         }
     }
 
@@ -440,7 +440,7 @@ function renderPrinterApp(body) {
             const drivers = data.drivers || [];
             sel.innerHTML = '<option value="">Automatyczny (IPP Everywhere)</option>'
                 + drivers.map(d => `<option value="${d.ppd}">${d.description}</option>`).join('');
-            toast(`Załadowano ${drivers.length} sterowników`, 'success');
+            toast(`${t('Załadowano')} ${drivers.length} ${t('sterowników')}`, 'success');
         } catch (e) {
             sel.innerHTML = '<option value="">Automatyczny (IPP Everywhere)</option>';
             toast(t('Błąd ładowania sterowników'), 'error');
@@ -481,7 +481,7 @@ function renderPrinterApp(body) {
                 toast(res.error || t('Błąd'), 'error');
             }
         } catch (e) {
-            toast(`Błąd: ${e.message}`, 'error');
+            toast(`${t('Błąd:')} ${e.message}`, 'error');
         } finally {
             btn.disabled = false;
             btn.innerHTML = `<i class="fas fa-plus"></i> ${t('Dodaj drukarkę')}`;

@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════
-   EthOS — Disk Repair  (Naprawa dysków)
+   ${t('EthOS — Disk Repair  (Naprawa dysków)')}
    SMART diagnostics, fsck, badblocks scanner.
    ═══════════════════════════════════════════════════════════ */
 
@@ -135,7 +135,7 @@ function renderDiskRepairApp(body) {
         <div class="dr-sidebar">
             <div class="dr-sidebar-header">
                 <span><i class="fas fa-hard-drive"></i> Dyski</span>
-                <button class="dr-btn dr-btn-sm dr-btn-outline" id="dr-refresh-disks" title="Odśwież"><i class="fas fa-sync-alt"></i></button>
+                <button class="dr-btn dr-btn-sm dr-btn-outline" id="dr-refresh-disks" title="${t('Odśwież')}"><i class="fas fa-sync-alt"></i></button>
             </div>
             <div class="dr-disk-list" id="dr-disk-list"></div>
         </div>
@@ -152,7 +152,7 @@ function renderDiskRepairApp(body) {
             <div class="dr-tabs" id="dr-tabs">
                 <div class="dr-tab active" data-tab="info"><i class="fas fa-info-circle"></i> Info</div>
                 <div class="dr-tab" data-tab="smart"><i class="fas fa-heartbeat"></i> SMART</div>
-                <div class="dr-tab" data-tab="check"><i class="fas fa-search"></i> Sprawdź</div>
+                <div class="dr-tab" data-tab="check"><i class="fas fa-search"></i> ${t('Sprawdź')}</div>
                 <div class="dr-tab" data-tab="repair"><i class="fas fa-wrench"></i> Naprawa</div>
                 <div class="dr-tab" data-tab="history"><i class="fas fa-clock-rotate-left"></i> Historia</div>
             </div>
@@ -286,14 +286,14 @@ function renderDiskRepairApp(body) {
             <div class="dr-card">
                 <div class="dr-card-title"><i class="fas fa-hard-drive"></i> Informacje o dysku</div>
                 <div class="dr-kv">
-                    <span class="dr-kv-label">Urządzenie</span><span class="dr-kv-value">/dev/${escHtml(d.name)}</span>
+                    <span class="dr-kv-label">${t('Urządzenie')}</span><span class="dr-kv-value">/dev/${escHtml(d.name)}</span>
                     <span class="dr-kv-label">Model</span><span class="dr-kv-value">${escHtml(d.model || '—')}</span>
                     <span class="dr-kv-label">Rozmiar</span><span class="dr-kv-value">${humanSize(d.size)}</span>
                     <span class="dr-kv-label">SMART</span><span class="dr-kv-value">${noSmart ? `<span style="color:#f59e0b">${t('Niedostępny')}</span>` : (d.smart_healthy ? '<span style="color:#10b981">Zdrowy</span>' : '<span style="color:#ef4444">Problemy!</span>')}</span>
                     <span class="dr-kv-label">Temperatura</span><span class="dr-kv-value">${d.temperature != null ? d.temperature + '°C' : '—'}</span>
                     <span class="dr-kv-label">Godziny pracy</span><span class="dr-kv-value">${d.power_on_hours != null ? d.power_on_hours.toLocaleString() + ' h' : '—'}</span>
                     <span class="dr-kv-label">Realokowane sektory</span><span class="dr-kv-value">${d.reallocated_sectors != null ? `<span style="color:${d.reallocated_sectors > 0 ? '#f59e0b' : '#10b981'}">${d.reallocated_sectors}</span>` : '—'}</span>
-                    <span class="dr-kv-label">Oczekujące sektory</span><span class="dr-kv-value">${d.pending_sectors != null ? `<span style="color:${d.pending_sectors > 0 ? '#ef4444' : '#10b981'}">${d.pending_sectors}</span>` : '—'}</span>
+                    <span class="dr-kv-label">${t('Oczekujące sektory')}</span><span class="dr-kv-value">${d.pending_sectors != null ? `<span style="color:${d.pending_sectors > 0 ? '#ef4444' : '#10b981'}">${d.pending_sectors}</span>` : '—'}</span>
                 </div>
             </div>
             ${noSmart ? `<div class="dr-warning"><i class="fas fa-exclamation-triangle"></i> ${t('SMART niedostępny dla tego dysku (dyski USB mogą nie obsługiwać SMART).')}</div>` : ''}
@@ -301,7 +301,7 @@ function renderDiskRepairApp(body) {
                 <div class="dr-card-title"><i class="fas fa-table-cells"></i> Partycje</div>
                 ${d.partitions && d.partitions.length ? `
                 <table class="dr-table">
-                    <thead><tr><th>Nazwa</th><th>Rozmiar</th><th>System plików</th><th>Punkt montowania</th><th>Status</th><th></th></tr></thead>
+                    <thead><tr><th>${t('Nazwa')}</th><th>${t('Rozmiar')}</th><th>${t('System plików')}</th><th>${t('Punkt montowania')}</th><th>Status</th><th></th></tr></thead>
                     <tbody id="dr-partitions-body">
                     ${d.partitions.map(p => `
                         <tr>
@@ -310,7 +310,7 @@ function renderDiskRepairApp(body) {
                             <td>${escHtml(p.fstype || '—')}</td>
                             <td>${escHtml(p.mountpoint || '—')}</td>
                             <td>${p.mounted ? '<span style="color:#10b981"><i class="fas fa-circle" style="font-size:8px"></i> Zamontowany</span>' : '<span style="color:var(--text-muted)"><i class="far fa-circle" style="font-size:8px"></i> Niezamontowany</span>'}</td>
-                            <td><button class="dr-btn dr-btn-sm dr-btn-outline dr-part-check" data-part="${escHtml(p.name)}" ${isRunning() ? 'disabled' : ''}><i class="fas fa-search"></i> Sprawdź</button></td>
+                            <td><button class="dr-btn dr-btn-sm dr-btn-outline dr-part-check" data-part="${escHtml(p.name)}" ${isRunning() ? 'disabled' : ''}><i class="fas fa-search"></i> ${t('Sprawdź')}</button></td>
                         </tr>
                     `).join('')}
                     </tbody>
@@ -337,7 +337,7 @@ function renderDiskRepairApp(body) {
             state.smartData = smart;
             renderSmartContent(el, smart);
         } catch (e) {
-            el.innerHTML = `<div class="dr-warning"><i class="fas fa-times-circle"></i> Błąd ładowania SMART: ${escHtml(e.message)}</div>`;
+            el.innerHTML = `<div class="dr-warning"><i class="fas fa-times-circle"></i> ${t('Błąd ładowania SMART:')} ${escHtml(e.message)}</div>`;
         }
     }
 
@@ -370,7 +370,7 @@ function renderDiskRepairApp(body) {
                 <div class="dr-card-title"><i class="fas fa-list"></i> Atrybuty SMART</div>
                 <div style="overflow-x:auto">
                 <table class="dr-table">
-                    <thead><tr><th>ID</th><th>Nazwa</th><th>Wartość</th><th>Najgorsza</th><th>Próg</th><th>Raw</th><th>Status</th></tr></thead>
+                    <thead><tr><th>ID</th><th>${t('Nazwa')}</th><th>${t('Wartość')}</th><th>${t('Najgorsza')}</th><th>${t('Próg')}</th><th>Raw</th><th>Status</th></tr></thead>
                     <tbody>
                     ${smart.attributes.map(a => {
                         const failing = a.thresh && a.value && Number(a.value) <= Number(a.thresh);
@@ -390,11 +390,11 @@ function renderDiskRepairApp(body) {
                 </table>
                 </div>
             </div>` : ''}
-            ${smart.error_log ? `<div class="dr-card"><div class="dr-card-title"><i class="fas fa-exclamation-circle"></i> Log błędów</div><pre style="font-size:11px;color:var(--text-muted);white-space:pre-wrap;margin:0">${escHtml(smart.error_log)}</pre></div>` : ''}
-            ${smart.self_test_log ? `<div class="dr-card"><div class="dr-card-title"><i class="fas fa-vial"></i> Log testów</div><pre style="font-size:11px;color:var(--text-muted);white-space:pre-wrap;margin:0">${escHtml(smart.self_test_log)}</pre></div>` : ''}
+            ${smart.error_log ? `<div class="dr-card"><div class="dr-card-title"><i class="fas fa-exclamation-circle"></i> ${t('Log błędów')}</div><pre style="font-size:11px;color:var(--text-muted);white-space:pre-wrap;margin:0">${escHtml(smart.error_log)}</pre></div>` : ''}
+            ${smart.self_test_log ? `<div class="dr-card"><div class="dr-card-title"><i class="fas fa-vial"></i> ${t('Log testów')}</div><pre style="font-size:11px;color:var(--text-muted);white-space:pre-wrap;margin:0">${escHtml(smart.self_test_log)}</pre></div>` : ''}
             <div class="dr-row" style="margin-top:8px">
-                <button class="dr-btn" id="dr-smart-short" ${isRunning() ? 'disabled' : ''}><i class="fas fa-bolt"></i> Test krótki</button>
-                <button class="dr-btn dr-btn-warn" id="dr-smart-long" ${isRunning() ? 'disabled' : ''}><i class="fas fa-clock"></i> Test długi</button>
+                <button class="dr-btn" id="dr-smart-short" ${isRunning() ? 'disabled' : ''}><i class="fas fa-bolt"></i> ${t('Test krótki')}</button>
+                <button class="dr-btn dr-btn-warn" id="dr-smart-long" ${isRunning() ? 'disabled' : ''}><i class="fas fa-clock"></i> ${t('Test długi')}</button>
             </div>`;
 
         const shortBtn = el.querySelector('#dr-smart-short');
@@ -420,15 +420,15 @@ function renderDiskRepairApp(body) {
         const parts = (d.partitions || []).filter(p => p.fstype);
         el.innerHTML = `
             <div class="dr-card">
-                <div class="dr-card-title"><i class="fas fa-search"></i> Sprawdzanie systemu plików (fsck)</div>
+                <div class="dr-card-title"><i class="fas fa-search"></i> ${t('Sprawdzanie systemu plików (fsck)')}</div>
                 ${parts.length ? `
                 <div class="dr-row" style="margin-bottom:12px">
                     <select class="dr-select" id="dr-check-part" style="flex:1">
-                        <option value="">— Wybierz partycję —</option>
+                        <option value="">— ${t('Wybierz partycję')} —</option>
                         ${parts.map(p => `<option value="${escHtml(p.name)}">/dev/${escHtml(p.name)} (${escHtml(p.fstype)}, ${humanSize(p.size)})</option>`).join('')}
                     </select>
                     <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary);cursor:pointer">
-                        <input type="checkbox" id="dr-check-repair"> Napraw (fsck -y)
+                        <input type="checkbox" id="dr-check-repair"> ${t('Napraw (fsck -y)')}
                     </label>
                 </div>
                 <div class="dr-row">
@@ -438,7 +438,7 @@ function renderDiskRepairApp(body) {
             </div>
             <div id="dr-check-progress" style="display:none">
                 <div class="dr-card">
-                    <div class="dr-card-title"><i class="fas fa-cog fa-spin"></i> Postęp</div>
+                    <div class="dr-card-title"><i class="fas fa-cog fa-spin"></i> ${t('Postęp')}</div>
                     <div class="dr-progress-outer">
                         <div class="dr-progress-inner" id="dr-check-bar"></div>
                         <div class="dr-progress-text" id="dr-check-pct">0%</div>
@@ -487,10 +487,10 @@ function renderDiskRepairApp(body) {
         const d = state.selectedDisk;
         const parts = (d.partitions || []).filter(p => p.fstype);
         el.innerHTML = `
-            <div class="dr-warning"><i class="fas fa-exclamation-triangle"></i> Operacje naprawcze mogą trwać bardzo długo i mogą uszkodzić dane. Upewnij się, że masz kopię zapasową!</div>
+            <div class="dr-warning"><i class="fas fa-exclamation-triangle"></i> ${t('Operacje naprawcze mogą trwać bardzo długo i mogą uszkodzić dane. Upewnij się, że masz kopię zapasową!')}</div>
 
             <div class="dr-card">
-                <div class="dr-card-title"><i class="fas fa-search-plus"></i> Skanowanie uszkodzonych sektorów (badblocks)</div>
+                <div class="dr-card-title"><i class="fas fa-search-plus"></i> ${t('Skanowanie uszkodzonych sektorów (badblocks)')}</div>
                 <div class="dr-row" style="margin-bottom:10px">
                     <span style="font-size:12px;color:var(--text-secondary)">Dysk:</span>
                     <strong style="font-size:12px;color:var(--text-primary)">/dev/${escHtml(d.name)}</strong>
@@ -499,17 +499,17 @@ function renderDiskRepairApp(body) {
                         <option value="nondestructive">Niedestrukcyjny zapis</option>
                     </select>
                 </div>
-                <div class="dr-warning"><i class="fas fa-clock"></i> Badblocks może trwać wiele godzin, w zależności od rozmiaru dysku.</div>
+                <div class="dr-warning"><i class="fas fa-clock"></i> ${t('Badblocks może trwać wiele godzin, w zależności od rozmiaru dysku.')}</div>
                 <button class="dr-btn dr-btn-warn" id="dr-bb-start" ${isRunning() ? 'disabled' : ''}><i class="fas fa-play"></i> Rozpocznij skanowanie</button>
             </div>
 
             <div class="dr-card">
-                <div class="dr-card-title"><i class="fas fa-wrench"></i> Naprawa systemu plików</div>
+                <div class="dr-card-title"><i class="fas fa-wrench"></i> ${t('Naprawa systemu plików')}</div>
                 ${parts.length ? `
                 <div class="dr-row" style="margin-bottom:10px">
                     <select class="dr-select" id="dr-repair-part" style="flex:1">
-                        <option value="">— Wybierz partycję —</option>
-                        ${parts.map(p => `<option value="${escHtml(p.name)}">/dev/${escHtml(p.name)} (${escHtml(p.fstype)}, ${humanSize(p.size)})${p.mounted ? ' [zamontowany]' : ''}</option>`).join('')}
+                        <option value="">— ${t('Wybierz partycję')} —</option>
+                        ${parts.map(p => `<option value="${escHtml(p.name)}">/dev/${escHtml(p.name)} (${escHtml(p.fstype)}, ${humanSize(p.size)})${p.mounted ? ' [' + t('zamontowany') + ']' : ''}</option>`).join('')}
                     </select>
                     <button class="dr-btn dr-btn-sm dr-btn-outline" id="dr-repair-unmount"><i class="fas fa-eject"></i> Odmontuj</button>
                     <button class="dr-btn dr-btn-danger" id="dr-repair-start" ${isRunning() ? 'disabled' : ''}><i class="fas fa-wrench"></i> Napraw (fsck -y)</button>
@@ -519,7 +519,7 @@ function renderDiskRepairApp(body) {
 
             <div id="dr-repair-progress" style="display:none">
                 <div class="dr-card">
-                    <div class="dr-card-title"><i class="fas fa-cog fa-spin"></i> Postęp operacji</div>
+                    <div class="dr-card-title"><i class="fas fa-cog fa-spin"></i> ${t('Postęp operacji')}</div>
                     <div class="dr-progress-outer">
                         <div class="dr-progress-inner" id="dr-repair-bar"></div>
                         <div class="dr-progress-text" id="dr-repair-pct">0%</div>
@@ -610,7 +610,7 @@ function renderDiskRepairApp(body) {
                 }).join('')}
             </div>`;
         } catch (e) {
-            el.innerHTML = `<div class="dr-warning"><i class="fas fa-times-circle"></i> Błąd: ${escHtml(e.message)}</div>`;
+            el.innerHTML = `<div class="dr-warning"><i class="fas fa-times-circle"></i> ${t('Błąd:')} ${escHtml(e.message)}</div>`;
         }
     }
 

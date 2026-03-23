@@ -26,7 +26,7 @@ function _fhInit(root, winId) {
     const esc = s => { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; };
     const timeAgo = ts => {
         const s = Math.floor(Date.now() / 1000 - ts);
-        if (s < 60) return 'przed chwilą';
+        if (s < 60) return t('przed chwilą');
         if (s < 3600) return Math.floor(s / 60) + ' min temu';
         if (s < 86400) return Math.floor(s / 3600) + ' godz. temu';
         return new Date(ts * 1000).toLocaleDateString('pl', { day: 'numeric', month: 'short' });
@@ -42,8 +42,8 @@ function _fhInit(root, winId) {
     const getColor = id => COLORS.find(c => c.id === id) || COLORS[0];
     const EMOJIS = ['👍', '❤️', '😂', '🎉', '😮', '😢'];
     const LIST_COLORS = ['#3b82f6','#22c55e','#f97316','#ec4899','#8b5cf6','#eab308'];
-    const CATEGORIES = ['', 'Owoce', 'Warzywa', 'Nabiał', 'Mięso', 'Pieczywo', 'Napoje', 'Chemia', 'Inne'];
-    const RECURRENCE = { once: 'Jednorazowe', daily: 'Codziennie', weekly: 'Co tydzień', monthly: 'Co miesiąc' };
+    const CATEGORIES = ['', t('Owoce'), t('Warzywa'), t('Nabiał'), t('Mięso'), t('Pieczywo'), t('Napoje'), t('Chemia'), t('Inne')];
+    const RECURRENCE = { once: t('Jednorazowe'), daily: t('Codziennie'), weekly: t('Co tydzień'), monthly: t('Co miesiąc') };
     const USER_COLORS = ['#3b82f6','#22c55e','#f97316','#ec4899','#8b5cf6','#eab308','#ef4444','#14b8a6'];
     const getUserColor = u => USER_COLORS[Math.abs([...u].reduce((a,c) => a + c.charCodeAt(0), 0)) % USER_COLORS.length];
 
@@ -271,7 +271,7 @@ function _fhInit(root, winId) {
     }
 
     /* ═══════════════════════════════════════════════════════════
-       TABLICA OGŁOSZEŃ
+       ${t('TABLICA OGŁOSZEŃ')}
        ═══════════════════════════════════════════════════════════ */
     let posts = [];
     let _boardClickHandler = null;
@@ -311,7 +311,7 @@ function _fhInit(root, winId) {
                         const isMine = users.includes(NAS?.username || '');
                         return `<button class="fh-react-btn ${isMine ? 'mine' : ''}" data-action="react" data-id="${p.id}" data-emoji="${r.emoji}" title="${users.join(', ')}">${r.emoji} ${users.length}</button>`;
                     }).join('')}
-                    <span class="fh-react-add" data-action="react-pick" data-id="${p.id}" title="Dodaj reakcję">➕</span>
+                    <span class="fh-react-add" data-action="react-pick" data-id="${p.id}" title="${t('Dodaj reakcję')}">➕</span>
                 </div>
                 <div class="fh-card-actions">
                     <button class="fh-btn sm ghost" data-action="edit-post" data-id="${p.id}"><i class="fas fa-pen"></i></button>
@@ -405,7 +405,7 @@ function _fhInit(root, winId) {
     }
 
     /* ═══════════════════════════════════════════════════════════
-       LISTY ZAKUPÓW
+       ${t('LISTY ZAKUPÓW')}
        ═══════════════════════════════════════════════════════════ */
     let shoppingLists = [];
 
@@ -435,7 +435,7 @@ function _fhInit(root, winId) {
                     <div class="fh-list-dot" style="background:${lst.color}"></div>
                     <div class="fh-list-name">${esc(lst.name)}</div>
                     <div class="fh-list-count">${unchecked}/${total}</div>
-                    <span class="fh-list-del" data-action="del-list" data-id="${lst.id}" title="Usuń listę"><i class="fas fa-trash"></i></span>
+                    <span class="fh-list-del" data-action="del-list" data-id="${lst.id}" title="${t('Usuń listę')}"><i class="fas fa-trash"></i></span>
                 </div>
                 <div class="fh-list-items">`;
             for (const item of (lst.items || [])) {
@@ -633,8 +633,8 @@ function _fhInit(root, winId) {
     }
 
     function calendarRender() {
-        const MONTHS_PL = ['Styczeń','Luty','Marzec','Kwiecień','Maj','Czerwiec','Lipiec','Sierpień','Wrzesień','Październik','Listopad','Grudzień'];
-        const DAYS_PL = ['Pon','Wto','Śro','Czw','Pią','Sob','Nie'];
+        const MONTHS_PL = [t('Styczeń'),t('Luty'),t('Marzec'),t('Kwiecień'),t('Maj'),t('Czerwiec'),t('Lipiec'),t('Sierpień'),t('Wrzesień'),t('Październik'),t('Listopad'),t('Grudzień')];
+        const DAYS_PL = [t('Pon'),t('Wto'),t('Śro'),t('Czw'),t('Pią'),t('Sob'),t('Nie')];
         const today = new Date();
         const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
 

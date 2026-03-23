@@ -49,7 +49,7 @@ function renderUpdatesApp(body) {
                     <div style="font-size:13px;color:var(--text-secondary);" id="upd-ver-line">Wersja: <span id="upd-cur-ver">…</span></div>
                 </div>
                 <button class="btn btn-primary" id="upd-check-btn" style="gap:6px;font-size:13px;">
-                    <i class="fas fa-sync-alt"></i> Sprawdź aktualizacje
+                    <i class="fas fa-sync-alt"></i> ${t('Sprawdź aktualizacje')}
                 </button>
             </div>
             <div id="upd-status-bar" style="margin-top:12px;display:none;"></div>
@@ -70,14 +70,14 @@ function renderUpdatesApp(body) {
                                 <i class="fas fa-gift" style="font-size:16px;color:#fff"></i>
                             </div>
                             <div style="flex:1;">
-                                <div style="font-size:15px;font-weight:700;">Dostępna wersja <span id="upd-remote-ver"></span></div>
+                                <div style="font-size:15px;font-weight:700;">${t('Dostępna wersja')} <span id="upd-remote-ver"></span></div>
                                 <div style="font-size:12px;color:var(--text-secondary);" id="upd-pkg-size"></div>
                             </div>
                         </div>
                         <div id="upd-changelog" style="font-size:13px;line-height:1.6;margin-bottom:16px;max-height:180px;overflow-y:auto;"></div>
                         <div style="display:flex;gap:10px;">
                             <button class="btn btn-primary" id="upd-apply-btn" style="gap:6px;">
-                                <i class="fas fa-rocket"></i> Zainstaluj aktualizację
+                                <i class="fas fa-rocket"></i> ${t('Zainstaluj aktualizację')}
                             </button>
                         </div>
                     </div>
@@ -87,7 +87,7 @@ function renderUpdatesApp(body) {
                         <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
                             <i class="fas fa-spinner fa-spin" style="font-size:16px;color:var(--accent);"></i>
                             <div style="flex:1;">
-                                <div style="font-size:14px;font-weight:700;color:var(--text);" id="upd-progress-label">Aktualizuję…</div>
+                                <div style="font-size:14px;font-weight:700;color:var(--text);" id="upd-progress-label">${t('Aktualizuję…')}</div>
                                 <div style="font-size:12px;color:var(--text-secondary);margin-top:2px;" id="upd-progress-step"></div>
                             </div>
                             <div style="font-size:20px;font-weight:700;color:var(--accent);min-width:48px;text-align:right;" id="upd-progress-pct">0%</div>
@@ -108,12 +108,12 @@ function renderUpdatesApp(body) {
                 <!-- Manual upload -->
                 <div style="margin-top:24px;border-top:1px solid var(--border);padding-top:18px;">
                     <div style="font-size:13px;font-weight:600;margin-bottom:8px;">
-                        <i class="fas fa-file-upload" style="margin-right:6px;"></i> Ręczna aktualizacja z pliku
+                        <i class="fas fa-file-upload" style="margin-right:6px;"></i> ${t('Ręczna aktualizacja z pliku')}
                     </div>
                     <div style="display:flex;gap:10px;align-items:center;">
                         <input type="file" id="upd-file-input" accept=".tar.gz" style="font-size:12px;flex:1;">
                         <button class="btn btn-secondary" id="upd-upload-btn" style="font-size:12px;gap:4px;">
-                            <i class="fas fa-upload"></i> Wyślij
+                            <i class="fas fa-upload"></i> ${t('Wyślij')}
                         </button>
                     </div>
                 </div>
@@ -130,12 +130,12 @@ function renderUpdatesApp(body) {
                             <span style="font-size:14px;font-weight:700;">Serwer aktualizacji</span>
                         </div>
                         <div style="font-size:12px;color:var(--text-secondary);margin-bottom:12px;">
-                            Opublikuj obecną wersję, aby inne instancje EthOS mogły się do niej zaktualizować.
-                            Po publikacji wystarczy podać IP tego urządzenia jako źródło aktualizacji.
+                            ${t('Opublikuj obecną wersję, aby inne instancje EthOS mogły się do niej zaktualizować.')}
+                            ${t('Po publikacji wystarczy podać IP tego urządzenia jako źródło aktualizacji.')}
                         </div>
                         <div style="display:flex;gap:10px;align-items:center;">
                             <button class="btn btn-secondary" id="upd-publish-btn" style="gap:6px;font-size:13px;">
-                                <i class="fas fa-cloud-upload-alt"></i> Opublikuj obecną wersję
+                                <i class="fas fa-cloud-upload-alt"></i> ${t('Opublikuj obecną wersję')}
                             </button>
                             <span id="upd-publish-status" style="font-size:12px;color:var(--text-secondary);"></span>
                         </div>
@@ -143,13 +143,13 @@ function renderUpdatesApp(body) {
 
                     <!-- Update source URL -->
                     <div>
-                        <label style="font-size:13px;font-weight:600;display:block;margin-bottom:6px;">Źródło aktualizacji</label>
+                        <label style="font-size:13px;font-weight:600;display:block;margin-bottom:6px;">${t('Źródło aktualizacji')}</label>
                         <input type="text" id="upd-url" placeholder="192.168.1.100 lub ethos.local lub github:user/repo" style="width:100%;padding:9px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-secondary);color:var(--text);font-size:13px;box-sizing:border-box;">
                         <div style="font-size:11px;color:var(--text-secondary);margin-top:4px;line-height:1.5;">
-                            Podaj adres źródła aktualizacji — port nie jest wymagany:<br>
-                            <b>IP lub hostname</b> — np. <code>192.168.1.100</code> lub <code>ethos.local</code> (łączy z portem :9000 automatycznie)<br>
+                            ${t('Podaj adres źródła aktualizacji — port nie jest wymagany:')}<br>
+                            <b>${t('IP lub hostname')}</b> — ${t('np.')} <code>192.168.1.100</code> ${t('lub')} <code>ethos.local</code> (${t('łączy z portem :9000 automatycznie')})<br>
                             <b>GitHub</b> — <code>github:user/repo</code> (pobiera z GitHub Releases)<br>
-                            <b>Pełny URL</b> — np. <code>https://nas.example.com</code> lub <code>https://nas.example.com/updates</code>
+                            <b>${t('Pełny URL')}</b> — ${t('np.')} <code>https://nas.example.com</code> ${t('lub')} <code>https://nas.example.com/updates</code>
                         </div>
                     </div>
                     <div style="display:flex;gap:20px;">
@@ -161,7 +161,7 @@ function renderUpdatesApp(body) {
                         </label>
                     </div>
                     <div>
-                        <label style="font-size:13px;font-weight:600;display:block;margin-bottom:6px;">Interwał sprawdzania (godziny)</label>
+                        <label style="font-size:13px;font-weight:600;display:block;margin-bottom:6px;">${t('Interwał sprawdzania (godziny)')}</label>
                         <input type="number" id="upd-interval" min="1" max="720" value="24" style="width:120px;padding:9px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-secondary);color:var(--text);font-size:13px;">
                     </div>
                     <div>
@@ -370,7 +370,7 @@ function renderUpdatesApp(body) {
             } else if (data.update_available) {
                 status.checking = false;
                 status.available = data.manifest;
-                addLog(`Dostępna wersja ${data.remote_version} (obecna: ${data.current_version})`);
+                addLog(t('Dostępna wersja') + ` ${data.remote_version} (` + t('obecna:') + ` ${data.current_version})`);
             } else {
                 status.checking = false;
                 status.available = null;
@@ -410,9 +410,9 @@ function renderUpdatesApp(body) {
             toast('Wymagany plik .tar.gz', 'warning');
             return;
         }
-        if (!confirm(`Zainstalować z pliku ${file.name}? System zostanie zrestartowany.`)) return;
+        if (!confirm(t('Zainstalować z pliku') + ` ${file.name}? ` + t('System zostanie zrestartowany.'))) return;
 
-        addLog(`Przesyłanie pliku ${file.name} (${fmtBytes(file.size)})…`);
+        addLog(t('Przesyłanie pliku') + ` ${file.name} (${fmtBytes(file.size)})…`);
         const fd = new FormData();
         fd.append('file', file);
 
@@ -504,14 +504,14 @@ function renderUpdatesApp(body) {
         });
 
         socket.on('update_available', (data) => {
-            addLog(`Dostępna aktualizacja: ${data.remote} (obecna: ${data.current})`);
-            toast(`Dostępna aktualizacja EthOS ${data.remote}`, 'info');
+            addLog(t('Dostępna aktualizacja:') + ` ${data.remote} (` + t('obecna:') + ` ${data.current})`);
+            toast(`${t('Dostępna aktualizacja EthOS')} ${data.remote}`, 'info');
             loadStatus();
         });
 
         socket.on('update_complete', (data) => {
-            addLog(`Aktualizacja do ${data.version} zakończona!`);
-            toast(`EthOS zaktualizowany do wersji ${data.version}! Odśwież stronę.`, 'success');
+            addLog(t('Aktualizacja do') + ` ${data.version} ` + t('zakończona!'));
+            toast(`EthOS zaktualizowany do wersji ${data.version}${t('! Odśwież stronę.')}`, 'success');
             status.applying = false;
             status.downloading = false;
             status.available = null;
@@ -520,7 +520,7 @@ function renderUpdatesApp(body) {
 
             // Prompt reload after a brief delay (container restarts)
             setTimeout(() => {
-                if (confirm(`Aktualizacja do ${data.version} zakończona.\nOdświeżyć stronę?`)) {
+                if (confirm(t('Aktualizacja do') + ` ${data.version} ` + t('zakończona.') + '\n' + t('Odświeżyć stronę?'))) {
                     location.reload();
                 }
             }, 3000);

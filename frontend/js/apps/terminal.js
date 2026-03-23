@@ -13,9 +13,9 @@ AppRegistry['terminal'] = function (appDef) {
                         <i class="fas fa-terminal"></i>
                     </div>
                     <h3>Terminal</h3>
-                    <p class="term-login-sub">Wybierz użytkownika, aby otworzyć sesję</p>
+                    <p class="term-login-sub">${t('Wybierz użytkownika, aby otworzyć sesję')}</p>
                     <div class="term-user-list" id="${winId}-users">
-                        <div class="term-loading"><i class="fas fa-spinner fa-spin"></i> Ładowanie użytkowników…</div>
+                        <div class="term-loading"><i class="fas fa-spinner fa-spin"></i> ${t('Ładowanie użytkowników…')}</div>
                     </div>
                 </div>
             </div>
@@ -29,7 +29,7 @@ AppRegistry['terminal'] = function (appDef) {
                         <button class="term-topbar-btn" id="${winId}-reconnect" title="Reconnect">
                             <i class="fas fa-redo"></i>
                         </button>
-                        <button class="term-topbar-btn" id="${winId}-disconnect" title="Rozłącz">
+                        <button class="term-topbar-btn" id="${winId}-disconnect" title="${t('Rozłącz')}">
                             <i class="fas fa-sign-out-alt"></i>
                         </button>
                     </div>
@@ -104,7 +104,7 @@ AppRegistry['terminal'] = function (appDef) {
                 startTerminal(username);
             });
         } catch (e) {
-            listEl.innerHTML = `<div class="term-no-users">Błąd: ${e.message}</div>`;
+            listEl.innerHTML = `<div class="term-no-users">${t('Błąd:')} ${e.message}</div>`;
         }
     }
 

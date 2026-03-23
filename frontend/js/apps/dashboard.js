@@ -68,7 +68,7 @@ AppRegistry['dashboard'] = function (appDef, launchOpts) {
 
     /* ── render ─────────────────────────────────────────────── */
     const render = () => {
-        if (!S) { body.innerHTML = '<div class="p-3">Ładowanie…</div>'; return; }
+        if (!S) { body.innerHTML = '<div class="p-3">' + t('Ładowanie…') + '</div>'; return; }
 
         const temps = (S.temperatures || []).map(t =>
             `<span class="dashboard-temp">${t.label}: ${t.celsius}°C</span>`
@@ -103,7 +103,7 @@ AppRegistry['dashboard'] = function (appDef, launchOpts) {
                     <div class="dashboard-card-title"><i class="fas fa-cubes"></i> Docker</div>
                     <div class="dashboard-docker-stat">
                         <span class="dashboard-big-num">${S.docker.running}</span>
-                        <span>/ ${S.docker.total} kontenerów</span>
+                        <span>/ ${S.docker.total} ${t('kontenerów')}</span>
                     </div>
                 </div>`;
         }
@@ -152,12 +152,12 @@ AppRegistry['dashboard'] = function (appDef, launchOpts) {
                 <!-- Disks -->
                 <div class="dashboard-card dashboard-card--wide">
                     <div class="dashboard-card-title"><i class="fas fa-hdd"></i> Dyski</div>
-                    <div class="dashboard-disks">${disksHtml || '<div class="dashboard-empty">Brak dysków</div>'}</div>
+                    <div class="dashboard-disks">${disksHtml || '<div class="dashboard-empty">' + t('Brak dysków') + '</div>'}</div>
                 </div>
 
                 <!-- Network -->
                 <div class="dashboard-card">
-                    <div class="dashboard-card-title"><i class="fas fa-ethernet"></i> Sieć</div>
+                    <div class="dashboard-card-title"><i class="fas fa-ethernet"></i> ${t('Sieć')}</div>
                     <div class="dashboard-net">${netHtml || '<div class="dashboard-empty">—</div>'}</div>
                 </div>
 
@@ -166,7 +166,7 @@ AppRegistry['dashboard'] = function (appDef, launchOpts) {
 
                 <!-- Services & shares -->
                 <div class="dashboard-card">
-                    <div class="dashboard-card-title"><i class="fas fa-cogs"></i> Usługi</div>
+                    <div class="dashboard-card-title"><i class="fas fa-cogs"></i> ${t('Usługi')}</div>
                     <div class="dashboard-svc">${svcHtml}</div>
                     <div class="dashboard-shares">
                         <span><i class="fas fa-share-alt"></i> Samba: ${shares.samba || 0}</span>
@@ -183,7 +183,7 @@ AppRegistry['dashboard'] = function (appDef, launchOpts) {
             S = await api('/dashboard/summary');
             render();
         } catch (e) {
-            body.innerHTML = `<div class="p-3" style="color:var(--danger)">Błąd: ${e.message}</div>`;
+            body.innerHTML = `<div class="p-3" style="color:var(--danger)">${t('Błąd:')} ${e.message}</div>`;
         }
     };
 

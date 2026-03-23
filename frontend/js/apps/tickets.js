@@ -27,7 +27,7 @@ const PRIORITY_COLORS = {
 const PRIORITY_LABELS = {
     critical: 'Krytyczny',
     high: 'Wysoki',
-    medium: 'Średni',
+    medium: t('Średni'),
     low: 'Niski',
 };
 
@@ -47,8 +47,8 @@ const TICKET_TYPES = {
 
 const COMPLEXITY_LEVELS = {
     simple:  { label: 'Prosty', color: '#22c55e' },
-    medium:  { label: 'Średni', color: '#f59e0b' },
-    complex: { label: 'Złożony', color: '#ef4444' },
+    medium:  { label: t('Średni'), color: '#f59e0b' },
+    complex: { label: t('Złożony'), color: '#ef4444' },
 };
 
 const LABEL_COLORS = [
@@ -765,7 +765,7 @@ async function renderTickets(body, launchOpts) {
             
             let targetProject = projects.find(p => p.name === 'ETHOS');
             if (!targetProject) {
-                console.warn('Projekt ETHOS nie znaleziony, używam bieżącego');
+                console.warn(t('Projekt ETHOS nie znaleziony, używam bieżącego'));
                 targetProject = currentProject;
                 if (!targetProject) {
                      toast(t('Nie wybrano projektu'), 'error');
@@ -1107,7 +1107,7 @@ async function renderTickets(body, launchOpts) {
                 </div>
                 <div class="tk-epic-badge">
                     <i class="fas fa-layer-group"></i> EPIC · ${totalCount} subtask${totalCount !== 1 ? 's' : ''}
-                    <button class="tk-epic-toggle" title="${isCollapsed ? 'Rozwiń' : 'Zwiń'}">
+                    <button class="tk-epic-toggle" title="${isCollapsed ? t('Rozwiń') : t('Zwiń')}">
                         <i class="fas fa-chevron-${isCollapsed ? 'right' : 'down'}"></i>
                     </button>
                 </div>

@@ -30,13 +30,13 @@ AppRegistry['cron'] = function (appDef) {
         <div>
             <h2 style="margin:0;display:flex;align-items:center;gap:10px">
                 <i class="fas fa-clock" style="color:#6366f1"></i>
-                Harmonogram zadań
+                ${t('Harmonogram zadań')}
             </h2>
-            <div style="margin-top:4px;font-size:0.85em;opacity:0.7">Zarządzanie zadaniami cron (root)</div>
+            <div style="margin-top:4px;font-size:0.85em;opacity:0.7">${t('Zarządzanie zadaniami cron (root)')}</div>
         </div>
         <div style="display:flex;gap:8px">
             <button class="app-btn app-btn-sm" id="cron-refresh-btn">
-                <i class="fas fa-sync-alt"></i> Odśwież
+                <i class="fas fa-sync-alt"></i> ${t('Odśwież')}
             </button>
             <button class="app-btn app-btn-sm app-btn-primary" id="cron-add-btn">
                 <i class="fas fa-plus"></i> Dodaj zadanie
@@ -61,7 +61,7 @@ AppRegistry['cron'] = function (appDef) {
                     </tr>
                 </thead>
                 <tbody id="cron-tbody">
-                    <tr><td colspan="5" class="cron-loading">Ładowanie...</td></tr>
+                    <tr><td colspan="5" class="cron-loading">${t('Ładowanie...')}</td></tr>
                 </tbody>
             </table>
         </div>
@@ -81,10 +81,10 @@ AppRegistry['cron'] = function (appDef) {
             <div class="cron-dialog-body">
                 <label class="cron-label">Szybkie szablony</label>
                 <div class="cron-presets" id="cron-presets">
-                    <button class="app-btn app-btn-xs app-btn-secondary" data-preset="hourly">Co godzinę</button>
-                    <button class="app-btn app-btn-xs app-btn-secondary" data-preset="daily">Codziennie o północy</button>
-                    <button class="app-btn app-btn-xs app-btn-secondary" data-preset="weekly">Co tydzień (pon)</button>
-                    <button class="app-btn app-btn-xs app-btn-secondary" data-preset="monthly">Co miesiąc (1-szy)</button>
+                    <button class="app-btn app-btn-xs app-btn-secondary" data-preset="hourly">${t('Co godzinę')}</button>
+                    <button class="app-btn app-btn-xs app-btn-secondary" data-preset="daily">${t('Codziennie o północy')}</button>
+                    <button class="app-btn app-btn-xs app-btn-secondary" data-preset="weekly">${t('Co tydzień (pon)')}</button>
+                    <button class="app-btn app-btn-xs app-btn-secondary" data-preset="monthly">${t('Co miesiąc (1-szy)')}</button>
                 </div>
                 <div class="cron-fields-grid">
                     <div>
@@ -96,15 +96,15 @@ AppRegistry['cron'] = function (appDef) {
                         <input class="app-input cron-field-input" id="cron-f-hour" value="*" placeholder="0-23 lub *">
                     </div>
                     <div>
-                        <label class="cron-label">Dzień mies.</label>
+                        <label class="cron-label">${t('Dzień mies.')}</label>
                         <input class="app-input cron-field-input" id="cron-f-dom" value="*" placeholder="1-31 lub *">
                     </div>
                     <div>
-                        <label class="cron-label">Miesiąc</label>
+                        <label class="cron-label">${t('Miesiąc')}</label>
                         <input class="app-input cron-field-input" id="cron-f-month" value="*" placeholder="1-12 lub *">
                     </div>
                     <div>
-                        <label class="cron-label">Dzień tyg.</label>
+                        <label class="cron-label">${t('Dzień tyg.')}</label>
                         <input class="app-input cron-field-input" id="cron-f-dow" value="*" placeholder="0-7 lub *">
                     </div>
                 </div>
@@ -129,21 +129,21 @@ AppRegistry['cron'] = function (appDef) {
     // ── Schedule to human-readable ──
     function describeSchedule(m, h, dom, mon, dow) {
         if (m === '@reboot') return 'Przy starcie systemu';
-        if (m === '@hourly')  return 'Co godzinę';
-        if (m === '@daily' || m === '@midnight') return 'Codziennie o północy';
-        if (m === '@weekly')  return 'Co tydzień (niedziela)';
-        if (m === '@monthly') return 'Co miesiąc (1-szy)';
+        if (m === '@hourly')  return t('Co godzinę');
+        if (m === '@daily' || m === '@midnight') return t('Codziennie o północy');
+        if (m === '@weekly')  return t('Co tydzień (niedziela)');
+        if (m === '@monthly') return t('Co miesiąc (1-szy)');
         if (m === '@yearly' || m === '@annually') return 'Raz w roku (1 sty)';
 
         const parts = [];
 
         // Minute + Hour
         if (m === '*' && h === '*') {
-            parts.push('Co minutę');
+            parts.push(t('Co minutę'));
         } else if (h === '*' && m !== '*') {
-            parts.push(`Co godzinę o :${m.padStart(2, '0')}`);
+            parts.push(`${t('Co godzinę o :')}${m.padStart(2, '0')}`);
         } else if (m === '0' && h === '*') {
-            parts.push('Co godzinę');
+            parts.push(t('Co godzinę'));
         } else if (h !== '*' && m !== '*') {
             if (m.includes(',') || m.includes('-') || m.includes('/')) {
                 parts.push(`O ${h}:xx (min: ${m})`);
@@ -158,20 +158,20 @@ AppRegistry['cron'] = function (appDef) {
         if (dom !== '*') parts.push(`dnia ${dom}`);
 
         // Month
-        const monthNames = ['', 'sty','lut','mar','kwi','maj','cze','lip','sie','wrz','paź','lis','gru'];
+        const monthNames = ['', t('sty'),t('lut'),t('mar'),t('kwi'),t('maj'),t('cze'),t('lip'),t('sie'),t('wrz'),t('paź'),t('lis'),t('gru')];
         if (mon !== '*') {
             const mNum = parseInt(mon);
             parts.push(mNum >= 1 && mNum <= 12 ? monthNames[mNum] : `mies. ${mon}`);
         }
 
         // Day of week
-        const dowNames = ['niedz.','pon.','wt.','śr.','czw.','pt.','sob.','niedz.'];
+        const dowNames = [t('niedz.'),t('pon.'),t('wt.'),t('śr.'),t('czw.'),t('pt.'),t('sob.'),t('niedz.')];
         if (dow !== '*') {
             const dNum = parseInt(dow);
             if (dNum >= 0 && dNum <= 7) {
                 parts.push(dowNames[dNum]);
             } else {
-                parts.push(`dzień tyg. ${dow}`);
+                parts.push(t('dzień tyg.') + ` ${dow}`);
             }
         }
 
@@ -186,14 +186,14 @@ AppRegistry['cron'] = function (appDef) {
     // ── Load & render ──
     async function loadJobs() {
         const tbody = document.getElementById('cron-tbody');
-        tbody.innerHTML = '<tr><td colspan="5" class="cron-loading">Ładowanie...</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" class="cron-loading">' + t('Ładowanie...') + '</td></tr>';
         try {
             const res = await api('/cron/jobs');
             tbody.innerHTML = '';
             if (!res.jobs || res.jobs.length === 0) {
                 tbody.innerHTML = `<tr><td colspan="5" class="cron-empty">
                     <i class="fas fa-calendar-check"></i>
-                    Brak zaplanowanych zadań
+                    ${t('Brak zaplanowanych zadań')}
                 </td></tr>`;
                 return;
             }
@@ -244,7 +244,7 @@ AppRegistry['cron'] = function (appDef) {
                 btn.onclick = () => deleteJob(parseInt(btn.dataset.del));
             });
         } catch (e) {
-            tbody.innerHTML = `<tr><td colspan="5" class="cron-loading" style="color:#ef4444">Błąd: ${e.message}</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="5" class="cron-loading" style="color:#ef4444">${t('Błąd:')} ${e.message}</td></tr>`;
         }
     }
 
@@ -263,21 +263,21 @@ AppRegistry['cron'] = function (appDef) {
                 toast(res.message, 'success');
                 loadJobs();
             } else {
-                toast(res.error || 'Błąd', 'error');
+                toast(res.error || t('Błąd'), 'error');
             }
         } catch (e) { toast(e.message, 'error'); }
     }
 
     // ── Delete ──
     async function deleteJob(idx) {
-        if (!confirm('Czy na pewno usunąć to zadanie?')) return;
+        if (!confirm(t('Czy na pewno usunąć to zadanie?'))) return;
         try {
             const res = await api(`/cron/jobs/${idx}`, { method: 'DELETE' });
             if (res.success) {
                 toast('Zadanie usunięte', 'success');
                 loadJobs();
             } else {
-                toast(res.error || 'Błąd', 'error');
+                toast(res.error || t('Błąd'), 'error');
             }
         } catch (e) { toast(e.message, 'error'); }
     }
@@ -384,7 +384,7 @@ AppRegistry['cron'] = function (appDef) {
                 closeDialog();
                 loadJobs();
             } else {
-                toast(res.error || 'Błąd', 'error');
+                toast(res.error || t('Błąd'), 'error');
             }
         } catch (e) { toast(e.message, 'error'); }
     }

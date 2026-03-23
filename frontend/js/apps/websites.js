@@ -143,7 +143,7 @@ function renderWebsitesApp(body) {
             bodyEl.innerHTML = `<div class="ws-empty">
                 <i class="fas fa-globe"></i>
                 <div style="font-size:16px;font-weight:600;margin-bottom:6px;">Brak stron</div>
-                Kliknij „Nowa strona" aby stworzyć swoją pierwszą witrynę.
+                Kliknij „${t('Nowa strona')}" ${t('aby stworzyć swoją pierwszą witrynę.')}
             </div>`;
             return;
         }
@@ -165,7 +165,7 @@ function renderWebsitesApp(body) {
                 </div>
                 <div class="ws-site-actions">
                     <button class="ws-btn ws-btn-primary ws-btn-sm ws-edit-site" data-id="${esc(s.id)}"><i class="fas fa-edit"></i> Edytuj</button>
-                    <button class="ws-btn ws-btn-secondary ws-btn-sm ws-preview-site" data-id="${esc(s.id)}"><i class="fas fa-eye"></i> Podgląd</button>
+                    <button class="ws-btn ws-btn-secondary ws-btn-sm ws-preview-site" data-id="${esc(s.id)}"><i class="fas fa-eye"></i> ${t('Podgląd')}</button>
                     <button class="ws-btn ws-btn-secondary ws-btn-sm ws-export-site" data-id="${esc(s.id)}"><i class="fas fa-download"></i></button>
                     <button class="ws-btn ws-btn-danger ws-btn-sm ws-delete-site" data-id="${esc(s.id)}"><i class="fas fa-trash"></i></button>
                 </div>
@@ -198,7 +198,7 @@ function renderWebsitesApp(body) {
         view = 'create';
         headerEl.innerHTML = `
             <h2><i class="fas fa-plus-circle" style="color:#14b8a6"></i> Nowa strona</h2>
-            <button class="ws-btn ws-btn-secondary" id="ws-back-btn"><i class="fas fa-arrow-left"></i> Powrót</button>`;
+            <button class="ws-btn ws-btn-secondary" id="ws-back-btn"><i class="fas fa-arrow-left"></i> ${t('Powrót')}</button>`;
         QS('#ws-back-btn').onclick = () => loadSites();
 
         // Load templates + themes in parallel
@@ -243,7 +243,7 @@ function renderWebsitesApp(body) {
             </div>
             <div style="margin-top:20px;">
                 <button class="ws-btn ws-btn-primary" id="ws-c-submit" style="padding:10px 28px;font-size:14px;">
-                    <i class="fas fa-plus-circle"></i> Stwórz stronę
+                    <i class="fas fa-plus-circle"></i> ${t('Stwórz stronę')}
                 </button>
             </div>
         </div>`;
@@ -314,7 +314,7 @@ function renderWebsitesApp(body) {
             <button class="ws-btn ws-btn-secondary ws-btn-sm" id="ws-ed-back"><i class="fas fa-arrow-left"></i></button>
             <h2 style="font-size:14px;"><i class="fas fa-globe" style="color:#14b8a6"></i> ${esc(s.name)}</h2>
             <div style="flex:1;"></div>
-            <button class="ws-btn ws-btn-secondary ws-btn-sm" id="ws-ed-preview"><i class="fas fa-eye"></i> Podgląd</button>
+            <button class="ws-btn ws-btn-secondary ws-btn-sm" id="ws-ed-preview"><i class="fas fa-eye"></i> ${t('Podgląd')}</button>
             <button class="ws-btn ws-btn-primary ws-btn-sm" id="ws-ed-publish"><i class="fas fa-cloud-upload-alt"></i> Publikuj</button>`;
 
         QS('#ws-ed-back').onclick = () => loadSites();
@@ -322,7 +322,7 @@ function renderWebsitesApp(body) {
         QS('#ws-ed-publish').onclick = async () => {
             try {
                 await api('/websites/' + s.id + '/publish', { method: 'POST' });
-                toast('Strona opublikowana!', 'success');
+                toast(t('Strona opublikowana!'), 'success');
             } catch(e) { toast(t('Błąd: ') + e.message, 'error'); }
         };
 
@@ -333,7 +333,7 @@ function renderWebsitesApp(body) {
             <div class="ws-sidebar">
                 <div class="ws-sidebar-header">
                     <span>Podstrony</span>
-                    <button class="ws-btn ws-btn-primary ws-btn-sm" id="ws-add-page" title="Dodaj podstronę"><i class="fas fa-plus"></i></button>
+                    <button class="ws-btn ws-btn-primary ws-btn-sm" id="ws-add-page" title="${t('Dodaj podstronę')}"><i class="fas fa-plus"></i></button>
                 </div>
                 <div class="ws-page-list" id="ws-page-list"></div>
                 <div class="ws-sidebar-section">
@@ -346,7 +346,7 @@ function renderWebsitesApp(body) {
             </div>
             <div class="ws-main">
                 <div class="ws-edit-tabs">
-                    <button class="ws-edit-tab${editorTab==='visual'?' active':''}" data-tab="visual"><i class="fas fa-eye"></i> Podgląd</button>
+                    <button class="ws-edit-tab${editorTab==='visual'?' active':''}" data-tab="visual"><i class="fas fa-eye"></i> ${t('Podgląd')}</button>
                     <button class="ws-edit-tab${editorTab==='code'?' active':''}" data-tab="code"><i class="fas fa-code"></i> HTML</button>
                     <button class="ws-edit-tab${editorTab==='settings'?' active':''}" data-tab="settings"><i class="fas fa-cog"></i> Ustawienia</button>
                 </div>
@@ -399,7 +399,7 @@ function renderWebsitesApp(body) {
             html += `<div class="ws-page-item${isActive ? ' active' : ''}" data-slug="${esc(p.slug)}">
                 <i class="fas ${icon}"></i>
                 <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(p.title)}</span>
-                ${p.slug !== 'index' ? `<button class="ws-btn ws-btn-sm" style="padding:2px 5px;background:transparent;color:var(--text-muted);border:none;" data-del="${esc(p.slug)}" title="Usuń"><i class="fas fa-times" style="font-size:10px;"></i></button>` : ''}
+                ${p.slug !== 'index' ? `<button class="ws-btn ws-btn-sm" style="padding:2px 5px;background:transparent;color:var(--text-muted);border:none;" data-del="${esc(p.slug)}" title="${t('Usuń')}"><i class="fas fa-times" style="font-size:10px;"></i></button>` : ''}
             </div>`;
         });
         list.innerHTML = html;
@@ -420,7 +420,7 @@ function renderWebsitesApp(body) {
                 e.stopPropagation();
                 const slug = btn.dataset.del;
                 const page = currentSite.pages.find(p => p.slug === slug);
-                if (!confirm(`Usunąć podstronę „${page ? page.title : slug}"?`)) return;
+                if (!confirm(t('Usunąć podstronę') + ` „${page ? page.title : slug}"?`)) return;
                 try {
                     const r = await api('/websites/' + currentSite.id + '/pages/' + slug, { method: 'DELETE' });
                     currentSite = r.site;
@@ -478,7 +478,7 @@ function renderWebsitesApp(body) {
                     <input type="text" id="ws-s-footer" value="${esc(currentSite.footer || '')}" maxlength="200">
                 </div>
                 <div class="ws-form-row">
-                    <label>Własny CSS</label>
+                    <label>${t('Własny CSS')}</label>
                     <textarea id="ws-s-css" style="font-family:monospace;min-height:120px;">${esc(currentSite.custom_css || '')}</textarea>
                 </div>
                 <button class="ws-btn ws-btn-primary" id="ws-s-save"><i class="fas fa-save"></i> Zapisz ustawienia</button>
@@ -498,7 +498,7 @@ function renderWebsitesApp(body) {
                         }
                     });
                     currentSite = r.site;
-                    toast('Ustawienia zapisane', 'success');
+                    toast(t('Ustawienia zapisane'), 'success');
                     // Update header
                     const h2 = headerEl.querySelector('h2');
                     if (h2) h2.innerHTML = `<i class="fas fa-globe" style="color:#14b8a6"></i> ${esc(currentSite.name)}`;
@@ -523,7 +523,7 @@ function renderWebsitesApp(body) {
                 body: { content: ta.value }
             });
             currentSite = r.site;
-            toast('Zapisano!', 'success');
+            toast(t('Zapisano!'), 'success');
         } catch(e) { toast(t('Błąd: ') + e.message, 'error'); }
 
         if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-save"></i> Zapisz'; }
@@ -539,13 +539,13 @@ function renderWebsitesApp(body) {
             currentPage = r.page.slug;
             renderPageList();
             renderEditorContent();
-            toast(`Podstrona „${title}" dodana`, 'success');
+            toast(t('Podstrona') + ` „${title}" ` + t('dodana'), 'success');
         } catch(e) { toast(t('Błąd: ') + e.message, 'error'); }
     }
 
     async function deleteSite(siteId) {
         const site = sites.find(s => s.id === siteId);
-        if (!confirm(`Usunąć stronę „${site ? site.name : siteId}" i wszystkie jej pliki?`)) return;
+        if (!confirm(t('Usunąć stronę') + ` „${site ? site.name : siteId}" ` + t('i wszystkie jej pliki?'))) return;
         try {
             await api('/websites/' + siteId, { method: 'DELETE' });
             toast(t('Strona usunięta'), 'success');

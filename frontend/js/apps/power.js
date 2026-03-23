@@ -1,6 +1,6 @@
 AppRegistry['power'] = function (appDef, launchOpts) {
     const w = createWindow('power', {
-        title: 'Zarządzanie energią',
+        title: t('Zarządzanie energią'),
         icon: 'fa-plug',
         iconColor: '#f59e0b',
         width: 700,
@@ -21,7 +21,7 @@ AppRegistry['power'] = function (appDef, launchOpts) {
                 <div class="app-section">
                     <h3>Procesor i Wake-on-LAN</h3>
                     <div class="form-group">
-                        <label>Profil wydajności CPU</label>
+                        <label>${t('Profil wydajności CPU')}</label>
                         <select id="cpu-gov" class="form-control">
                             ${(state.cpu.available || []).map(g => 
                                 `<option value="${g}" ${g === state.cpu.target ? 'selected' : ''}>${g}</option>`
@@ -33,7 +33,7 @@ AppRegistry['power'] = function (appDef, launchOpts) {
                     <div class="form-group">
                         <label class="checkbox-container">
                             <input type="checkbox" id="wol-enabled" ${state.wol.enabled ? 'checked' : ''}>
-                            <span>Włącz Wake-on-LAN</span>
+                            <span>${t('Włącz Wake-on-LAN')}</span>
                         </label>
                         <small>Interfejs: ${state.wol.interface || 'Nie wykryto'} (${state.wol.status})</small>
                     </div>
@@ -41,9 +41,9 @@ AppRegistry['power'] = function (appDef, launchOpts) {
 
                 <div class="app-section">
                     <h3>Harmonogram pracy</h3>
-                    <p>Automatyczne wyłączanie i włączanie (Wake-on-RTC).</p>
+                    <p>${t('Automatyczne wyłączanie i włączanie (Wake-on-RTC).')}</p>
                     <div id="schedule-list" class="list-group"></div>
-                    <button class="btn btn-sm btn-primary mt-2" id="add-schedule">Dodaj regułę</button>
+                    <button class="btn btn-sm btn-primary mt-2" id="add-schedule">${t('Dodaj regułę')}</button>
                 </div>
 
                 <div class="app-section">
@@ -65,10 +65,10 @@ AppRegistry['power'] = function (appDef, launchOpts) {
             item.innerHTML = `
                 <div style="flex:1">
                     <div><strong>${_formatDays(rule.days)}</strong></div>
-                    <div>Wyłącz: ${rule.shutdown} | Włącz: ${rule.wakeup}</div>
+                    <div>${t('Wyłącz:')} ${rule.shutdown} ${t('| Włącz:')} ${rule.wakeup}</div>
                 </div>
                 <div>
-                    <button class="btn btn-sm btn-danger remove-sched" data-idx="${idx}">Usuń</button>
+                    <button class="btn btn-sm btn-danger remove-sched" data-idx="${idx}">${t('Usuń')}</button>
                 </div>
             `;
             schedList.appendChild(item);
@@ -83,7 +83,7 @@ AppRegistry['power'] = function (appDef, launchOpts) {
             item.innerHTML = `
                 <div style="flex:1"><strong>/dev/${drive}</strong></div>
                 <select class="form-control hdd-select" data-drive="${drive}" style="width:150px">
-                    <option value="0" ${val == 0 ? 'selected' : ''}>Wyłączone</option>
+                    <option value="0" ${val == 0 ? 'selected' : ''}>${t('Wyłączone')}</option>
                     <option value="60" ${val == 60 ? 'selected' : ''}>5 min</option>
                     <option value="120" ${val == 120 ? 'selected' : ''}>10 min</option>
                     <option value="180" ${val == 180 ? 'selected' : ''}>15 min</option>
@@ -152,12 +152,12 @@ AppRegistry['power'] = function (appDef, launchOpts) {
             state = data;
             render();
         } catch (e) {
-            body.innerHTML = `<div class="p-3">Błąd ładowania: ${e.message}</div>`;
+            body.innerHTML = `<div class="p-3">${t('Błąd ładowania:')} ${e.message}</div>`;
         }
     };
 
     const _formatDays = (days) => {
-        const names = ['Nd', 'Pn', 'Wt', 'Śr', 'Cz', 'Pt', 'So'];
+        const names = ['Nd', 'Pn', 'Wt', t('Śr'), 'Cz', 'Pt', 'So'];
         return days.map(d => names[d]).join(', ');
     };
 

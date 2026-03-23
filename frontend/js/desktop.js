@@ -1179,7 +1179,7 @@ function openExternalApp(app) {
                     referrerpolicy="no-referrer"
                     allow="fullscreen"
                     style="width:100%;height:100%;border:none;"
-                    onerror="document.getElementById('external-${app.id}').innerHTML='<div style=\'padding:40px;text-align:center;color:var(--text-muted)\'><i class=\'fas fa-external-link-alt\' style=\'font-size:48px;margin-bottom:16px;\'></i><br>Nie można załadować w ramce.<br><a href=${app.url} target=_blank style=\'color:var(--accent)\'>Otwórz w nowej karcie</a></div>'"
+                    onerror="document.getElementById('external-${app.id}').innerHTML='<div style=\'padding:40px;text-align:center;color:var(--text-muted)\'><i class=\'fas fa-external-link-alt\' style=\'font-size:48px;margin-bottom:16px;\'></i><br>${t('Nie można załadować w ramce.')}<br><a href=${app.url} target=_blank style=\'color:var(--accent)\'>${t('Otwórz w nowej karcie')}</a></div>'"
                 ></iframe>
             </div>
             <div style="position:absolute;bottom:0;left:0;right:0;padding:6px 16px;background:var(--bg-surface);border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;font-size:12px;">
@@ -1687,8 +1687,8 @@ function _createBarEl(ch) {
             <span class="fileop-title"><i class="fas fa-spinner fa-spin"></i><span class="fileop-label"></span></span>
             <div style="display:flex;align-items:center;gap:8px;">
                 <span class="fileop-pct"></span>
-                <button class="fileop-pause-btn fileop-action-btn fileop-action-warn" title="Wstrzymaj / Wznów" aria-label="Wstrzymaj lub wznów operację" style="display:none;"><i class="fas fa-pause"></i></button>
-                <button class="fileop-cancel-btn fileop-action-btn fileop-action-danger" title="Anuluj operację" aria-label="Anuluj operację" style="display:none;"><i class="fas fa-times"></i></button>
+                <button class="fileop-pause-btn fileop-action-btn fileop-action-warn" title="${t('Wstrzymaj / Wznów')}" aria-label="${t('Wstrzymaj lub wznów operację')}" style="display:none;"><i class="fas fa-pause"></i></button>
+                <button class="fileop-cancel-btn fileop-action-btn fileop-action-danger" title="${t('Anuluj operację')}" aria-label="${t('Anuluj operację')}" style="display:none;"><i class="fas fa-times"></i></button>
             </div>
         </div>
         <div class="fileop-track"><div class="fileop-fill"></div></div>

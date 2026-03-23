@@ -376,7 +376,7 @@ function _nlRender(body, launchOpts) {
             if (r.success) {
                 dot.className = 'nl-srv-dot online';
                 dot.title = `Online — ${r.disk_info || ''}`;
-                toast(`${r.name || 'Serwer'}: połączenie OK`, 'success');
+                toast(`${r.name || 'Serwer'}${t(': połączenie OK')}`, 'success');
             } else {
                 dot.className = 'nl-srv-dot offline';
                 dot.title = r.error || 'Offline';
@@ -992,7 +992,7 @@ function _nlRender(body, launchOpts) {
                 <div class="modal nl-modal-sm">
                     <div class="modal-header"><i class="fas fa-cloud-download-alt nl-icon-mr"></i>Pobierz snapshoty zdalnie</div>
                     <div class="modal-body">
-                        <label class="modal-label">Serwer źródłowy:</label>
+                        <label class="modal-label">${t('Serwer źródłowy:')}</label>
                         <select class="modal-input" id="nl-remote-srv">${serverOptions}</select>
                     </div>
                     <div class="modal-footer">
@@ -1049,7 +1049,7 @@ function _nlRender(body, launchOpts) {
                 });
             });
         } catch (e) {
-            area.innerHTML = `<div class="nl-status-msg nl-error"><i class="fas fa-exclamation-triangle"></i> Błąd: ${_nlEsc(e.message || e)}</div>`;
+            area.innerHTML = `<div class="nl-status-msg nl-error"><i class="fas fa-exclamation-triangle"></i> ${t('Błąd:')} ${_nlEsc(e.message || e)}</div>`;
         }
     }
 
@@ -1082,19 +1082,19 @@ function _nlRender(body, launchOpts) {
                     <i class="fas fa-folder-open nl-icon-mr"></i>Wybierz pliki/foldery
                 </div>
                 <div class="nl-picker-bar">
-                    <button class="nl-btn sm" id="nlp-up" title="W górę"><i class="fas fa-arrow-up"></i></button>
+                    <button class="nl-btn sm" id="nlp-up" title="${t('W górę')}"><i class="fas fa-arrow-up"></i></button>
                     <input id="nlp-path" class="nl-picker-input">
-                    <button class="nl-btn sm" id="nlp-go" title="Przejdź"><i class="fas fa-arrow-right"></i></button>
+                    <button class="nl-btn sm" id="nlp-go" title="${t('Przejdź')}"><i class="fas fa-arrow-right"></i></button>
                 </div>
                 <div id="nlp-list" class="nl-picker-list">
-                    <div class="nl-loading-sm"><i class="fas fa-spinner fa-spin"></i> Ładowanie…</div>
+                    <div class="nl-loading-sm"><i class="fas fa-spinner fa-spin"></i> ${t('Ładowanie…')}</div>
                 </div>
                 <div id="nlp-selected" class="nl-picker-selected">
                     Nic nie zaznaczono
                 </div>
                 <div class="modal-footer nl-shrink-0">
                     <button class="btn" id="nlp-cancel">Anuluj</button>
-                    <button class="btn" id="nlp-seldir" title="Dodaj bieżący folder"><i class="fas fa-folder-plus nl-icon-mr-xs"></i>Dodaj ten folder</button>
+                    <button class="btn" id="nlp-seldir" title="${t('Dodaj bieżący folder')}"><i class="fas fa-folder-plus nl-icon-mr-xs"></i>Dodaj ten folder</button>
                     <button class="btn btn-primary" id="nlp-add"><i class="fas fa-plus"></i> Dodaj zaznaczone (0)</button>
                 </div>
             </div>`;

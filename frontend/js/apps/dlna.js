@@ -27,7 +27,7 @@ function renderDLNAApp(body) {
                 <div class="dlna-status-actions" id="dlna-status-actions"></div>
             </div>
             <div class="dlna-status-stats" id="dlna-stats" style="display:none">
-                <div class="dlna-stat"><i class="fas fa-film"></i> <span id="dlna-file-count">0</span> plików</div>
+                <div class="dlna-stat"><i class="fas fa-film"></i> <span id="dlna-file-count">0</span> ${t('plików')}</div>
                 <div class="dlna-stat"><i class="fas fa-network-wired"></i> Port: <span id="dlna-port">8200</span></div>
                 <div class="dlna-stat"><i class="fas fa-signature"></i> <span id="dlna-name-display">—</span></div>
             </div>
@@ -61,9 +61,9 @@ function renderDLNAApp(body) {
             </div>
 
             <div class="dlna-form-row dlna-form-row-top">
-                <label>Katalogi mediów</label>
+                <label>${t('Katalogi mediów')}</label>
                 <div class="dlna-media-dirs" id="dlna-media-dirs">
-                    <p class="dlna-muted">Ładowanie dysków…</p>
+                    <p class="dlna-muted">${t('Ładowanie dysków…')}</p>
                 </div>
             </div>
 
@@ -78,10 +78,10 @@ function renderDLNAApp(body) {
 
             <div class="dlna-form-actions">
                 <button class="dlna-btn dlna-btn-primary" id="dlna-save-btn">
-                    <i class="fas fa-save"></i> Zapisz konfigurację
+                    <i class="fas fa-save"></i> ${t('Zapisz konfigurację')}
                 </button>
                 <button class="dlna-btn dlna-btn-secondary" id="dlna-rescan-btn">
-                    <i class="fas fa-sync-alt"></i> Pełne skanowanie
+                    <i class="fas fa-sync-alt"></i> ${t('Pełne skanowanie')}
                 </button>
             </div>
         </div>
@@ -135,7 +135,7 @@ function renderDLNAApp(body) {
             }
         } catch (e) {
             $('#dlna-status-dot').style.color = 'var(--text-muted)';
-            $('#dlna-status-text').textContent = 'Błąd połączenia';
+            $('#dlna-status-text').textContent = t('Błąd połączenia');
         }
     }
 
@@ -159,7 +159,7 @@ function renderDLNAApp(body) {
     function renderMediaDirs(selectedDirs) {
         const container = $('#dlna-media-dirs');
         if (!availableDrives.length) {
-            container.innerHTML = '<p class="dlna-muted">Brak zamontowanych dysków</p>';
+            container.innerHTML = '<p class="dlna-muted">' + t('Brak zamontowanych dysków') + '</p>';
             return;
         }
 
@@ -238,10 +238,10 @@ function renderDLNAApp(body) {
                 loadStatus();
                 loadConfig();
             } else {
-                toast(data.error || 'Instalacja nie powiodła się', 'error');
+                toast(data.error || t('Instalacja nie powiodła się'), 'error');
             }
         } catch (e) {
-            toast(`Błąd: ${e.message}`, 'error');
+            toast(`${t('Błąd:')} ${e.message}`, 'error');
         } finally {
             btn.disabled = false;
             btn.innerHTML = '<i class="fas fa-download"></i> Zainstaluj MiniDLNA';
@@ -254,10 +254,10 @@ function renderDLNAApp(body) {
             if (data.success) {
                 toast('DLNA uruchomiony', 'success');
             } else {
-                toast(data.error || 'Nie udało się uruchomić', 'error');
+                toast(data.error || t('Nie udało się uruchomić'), 'error');
             }
         } catch (e) {
-            toast(`Błąd: ${e.message}`, 'error');
+            toast(`${t('Błąd:')} ${e.message}`, 'error');
         }
         loadStatus();
     }
@@ -268,10 +268,10 @@ function renderDLNAApp(body) {
             if (data.success) {
                 toast('DLNA zatrzymany', 'success');
             } else {
-                toast(data.error || 'Nie udało się zatrzymać', 'error');
+                toast(data.error || t('Nie udało się zatrzymać'), 'error');
             }
         } catch (e) {
-            toast(`Błąd: ${e.message}`, 'error');
+            toast(`${t('Błąd:')} ${e.message}`, 'error');
         }
         loadStatus();
     }
@@ -294,10 +294,10 @@ function renderDLNAApp(body) {
                 toast('Konfiguracja zapisana', 'success');
                 loadStatus();
             } else {
-                toast(data.error || 'Nie udało się zapisać', 'error');
+                toast(data.error || t('Nie udało się zapisać'), 'error');
             }
         } catch (e) {
-            toast(`Błąd: ${e.message}`, 'error');
+            toast(`${t('Błąd:')} ${e.message}`, 'error');
         } finally {
             btn.disabled = false;
         }
@@ -313,13 +313,13 @@ function renderDLNAApp(body) {
                 toast('Skanowanie rozpoczęte', 'success');
                 setTimeout(loadStatus, 3000);
             } else {
-                toast(data.error || 'Skanowanie nie powiodło się', 'error');
+                toast(data.error || t('Skanowanie nie powiodło się'), 'error');
             }
         } catch (e) {
-            toast(`Błąd: ${e.message}`, 'error');
+            toast(`${t('Błąd:')} ${e.message}`, 'error');
         } finally {
             btn.disabled = false;
-            btn.innerHTML = '<i class="fas fa-sync-alt"></i> Pełne skanowanie';
+            btn.innerHTML = '<i class="fas fa-sync-alt"></i> ' + t('Pełne skanowanie');
         }
     }
 

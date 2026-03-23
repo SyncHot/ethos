@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════
-   EthOS — Udostępnianie (Multi-protocol file sharing)
+   ${t('EthOS — Udostępnianie (Multi-protocol file sharing)')}
    Samba · NFS · DLNA · WebDAV · SFTP · FTP
    Tabs only appear for protocols installed via App Store.
    ═══════════════════════════════════════════════════════════ */
@@ -240,7 +240,7 @@ async function renderSharingApp(body) {
             f.innerHTML = `<div class="shr-form-section">
                 <h4 class="shr-form-title">${t('Nowy eksport NFS')}</h4>
                 <div class="shr-form-row">
-                    <div class="shr-input-group"><input type="text" id="sh-nf-p" class="fm-input" placeholder="${t('Ścieżka np. /home/media')}" style="width:200px;border-radius:6px 0 0 6px" readonly><button class="fm-toolbar-btn shr-input-group-btn" id="sh-nf-browse" title="Przeglądaj"><i class="fas fa-folder-open"></i></button></div>
+                    <div class="shr-input-group"><input type="text" id="sh-nf-p" class="fm-input" placeholder="${t('Ścieżka np. /home/media')}" style="width:200px;border-radius:6px 0 0 6px" readonly><button class="fm-toolbar-btn shr-input-group-btn" id="sh-nf-browse" title="${t('Przeglądaj')}"><i class="fas fa-folder-open"></i></button></div>
                     <input type="text" id="sh-nf-n" class="fm-input" placeholder="${t('Sieć np. 192.168.1.0/24 lub *')}" value="*" style="width:180px">
                     <button class="fm-toolbar-btn btn-green" id="sh-nf-ok"><i class="fas fa-save"></i></button>
                     <button class="fm-toolbar-btn" id="sh-nf-x"><i class="fas fa-times"></i></button>

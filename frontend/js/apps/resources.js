@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════
    EthOS — Resource Monitor
-   CPU, RAM, GPU, Dyski, Sieć, Procesy, USB, Docker
+   ${t('CPU, RAM, GPU, Dyski, Sieć, Procesy, USB, Docker')}
    ═══════════════════════════════════════════════════════════ */
 
 AppRegistry['resource-monitor'] = function (appDef) {
@@ -139,8 +139,8 @@ function renderResourcesApp(body) {
                 <div class="res-big-val">${pct(ram.percent)}</div>
                 ${bar(ram.percent, '#8b5cf6')}
                 <div class="res-card-stats">
-                    <span>Użyte: ${fmt(ram.used)}</span>
-                    <span>Całk.: ${fmt(ram.total)}</span>
+                    <span>${t('Użyte:')} ${fmt(ram.used)}</span>
+                    <span>${t('Całk.:')} ${fmt(ram.total)}</span>
                 </div>
             </div>
             <div class="res-card">
@@ -205,7 +205,7 @@ function renderResourcesApp(body) {
             <span>${t('Rdzenie:')} ${cpu.cores || '—'} (${cpu.threads || '—'} ${t('wątków')})</span>
             <span>${t('Częstotliwość:')} ${cpu.freq_current ? (cpu.freq_current/1000).toFixed(2)+' GHz' : '—'}</span>
             <span>Temperatura: ${cpu.temperature != null ? cpu.temperature+'°C' : '—'}</span>
-            <span>Użycie: ${pct(cpu.total_percent)}</span>
+            <span>${t('Użycie:')} ${pct(cpu.total_percent)}</span>
         </div>
         <div class="res-card res-mt-md">
             <div class="res-card-hdr">${t('Użycie per rdzeń')}</div>
@@ -465,7 +465,7 @@ function renderResourcesApp(body) {
                         <span class="ddisk-pct" style="color:${color}">${pct(d.percent)}</span>
                     </div>
                     <div class="ddisk-sizes">
-                        <span><b>${fmt(d.used)}</b> zajęte</span>
+                        <span><b>${fmt(d.used)}</b> ${t('zajęte')}</span>
                         <span><b>${fmt(d.free)}</b> wolne</span>
                         <span>z <b>${fmt(d.total)}</b></span>
                     </div>
