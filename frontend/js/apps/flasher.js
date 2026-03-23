@@ -80,14 +80,14 @@ function renderFlasherApp(body) {
             <div class="fl-section-title"><i class="fas fa-compact-disc"></i> Obraz ISO / IMG</div>
             <div class="fl-select-wrap">
                 <select class="fl-select" id="fl-image-select">
-                    <option value="">— Szukanie obrazów...</option>
+                    <option value="">— ${t('Szukanie obrazów...')}</option>
                 </select>
-                <button class="fl-btn fl-btn-sm fl-btn-outline" id="fl-image-refresh" title="Odśwież"><i class="fas fa-sync-alt"></i></button>
+                <button class="fl-btn fl-btn-sm fl-btn-outline" id="fl-image-refresh" title="${t('Odśwież')}"><i class="fas fa-sync-alt"></i></button>
             </div>
-            <div class="fl-or">lub podaj ścieżkę ręcznie</div>
+            <div class="fl-or">${t('lub podaj ścieżkę ręcznie')}</div>
             <div class="fl-browse-row">
                 <input type="text" class="fl-path-input" id="fl-image-path" placeholder="/home/user/obraz.iso">
-                <button class="fl-btn fl-btn-sm fl-btn-outline" id="fl-image-check">Sprawdź</button>
+                <button class="fl-btn fl-btn-sm fl-btn-outline" id="fl-image-check">${t('Sprawdź')}</button>
             </div>
             <div id="fl-image-info" style="display:none"></div>
             <div id="fl-checksum" style="display:none"></div>
@@ -98,9 +98,9 @@ function renderFlasherApp(body) {
             <div class="fl-section-title"><i class="fas fa-usb"></i> Dysk docelowy USB</div>
             <div class="fl-select-wrap">
                 <select class="fl-select" id="fl-drive-select">
-                    <option value="">— Ładowanie dysków...</option>
+                    <option value="">— ${t('Ładowanie dysków...')}</option>
                 </select>
-                <button class="fl-btn fl-btn-sm fl-btn-outline" id="fl-drive-refresh" title="Odśwież"><i class="fas fa-sync-alt"></i></button>
+                <button class="fl-btn fl-btn-sm fl-btn-outline" id="fl-drive-refresh" title="${t('Odśwież')}"><i class="fas fa-sync-alt"></i></button>
                 <button class="fl-btn fl-btn-sm fl-btn-outline" id="fl-drive-format" title="Formatuj"><i class="fas fa-eraser"></i></button>
             </div>
             <div id="fl-drive-info" style="display:none"></div>
@@ -120,7 +120,7 @@ function renderFlasherApp(body) {
 
         <!-- Progress section (shown during flash) -->
         <div class="fl-section fl-progress-section" id="fl-progress">
-            <div class="fl-section-title"><i class="fas fa-spinner fa-spin"></i> Postęp flashowania</div>
+            <div class="fl-section-title"><i class="fas fa-spinner fa-spin"></i> ${t('Postęp flashowania')}</div>
             <div class="fl-progress-bar-outer">
                 <div class="fl-progress-bar-inner" id="fl-progress-bar"></div>
                 <div class="fl-progress-text" id="fl-progress-text">0%</div>
@@ -357,7 +357,7 @@ function renderFlasherApp(body) {
                 </div>
             </div>
             ${d.has_mounted ? `<div class="fl-drive-warn"><i class="fas fa-exclamation-triangle"></i> ${t('Partycje zamontowane — zostaną odmontowane przed flashowaniem')}</div>` : ''}
-            <div class="fl-drive-warn"><i class="fas fa-radiation"></i> UWAGA: Wszystkie dane na tym dysku zostaną usunięte!</div>`;
+            <div class="fl-drive-warn"><i class="fas fa-radiation"></i> ${t('UWAGA: Wszystkie dane na tym dysku zostaną usunięte!')}</div>`;
     }
 
     /* ─── Refresh buttons ─── */
@@ -369,11 +369,11 @@ function renderFlasherApp(body) {
         if (!state.selectedDisk) { toast('Wybierz dysk', 'warning'); return; }
         const fs = prompt(t('System plików (fat32, exfat, ext4, ntfs):'), 'exfat');
         if (!fs) return;
-        const label = prompt('Etykieta dysku:', 'USB') || 'USB';
-        if (!confirm(`Sformatować /dev/${state.selectedDisk} jako ${fs.toUpperCase()}?\nWszystkie dane zostaną usunięte!`)) return;
+        const label = prompt(t('Etykieta dysku:'), 'USB') || 'USB';
+        if (!confirm(t('Sformatować') + ` /dev/${state.selectedDisk} ` + t('jako') + ` ${fs.toUpperCase()}?\n` + t('Wszystkie dane zostaną usunięte!'))) return;
         try {
             const r = await api('/flasher/format', { method: 'POST', body: { disk: state.selectedDisk, fs_type: fs, label } });
-            toast(r.message || 'Sformatowano', 'success');
+            toast(r.message || t('Sformatowano'), 'success');
             loadDrives();
         } catch(e) { toast(t('Błąd: ') + e.message, 'error'); }
     };
@@ -383,7 +383,7 @@ function renderFlasherApp(body) {
         if (!confirm(t('Przerwać flashowanie? Dysk USB może być uszkodzony.'))) return;
         try {
             await api('/flasher/cancel', { method: 'POST' });
-            toast('Anulowano flashowanie', 'warning');
+            toast(t('Anulowano flashowanie'), 'warning');
         } catch(e) { toast(t('Błąd: ') + e.message, 'error'); }
     };
 
@@ -394,7 +394,7 @@ function renderFlasherApp(body) {
         const drive = state.drives.find(x => x.name === state.selectedDisk);
         const dLabel = drive ? (drive.model || drive.label || drive.name) : state.selectedDisk;
 
-        if (!confirm(`UWAGA!\n\nWszystkie dane na dysku /dev/${state.selectedDisk} (${dLabel}) zostaną bezpowrotnie usunięte.\n\nCzy na pewno chcesz kontynuować?`)) return;
+        if (!confirm(t('UWAGA!') + `\n\n` + t('Wszystkie dane na dysku') + ` /dev/${state.selectedDisk} (${dLabel}) ` + t('zostaną bezpowrotnie usunięte.') + `\n\n` + t('Czy na pewno chcesz kontynuować?'))) return;
 
         state.flashing = true;
         updateFlashBtn();
@@ -459,7 +459,7 @@ function renderFlasherApp(body) {
                     <div class="fl-result">
                         <div class="fl-result-icon" style="color:#10b981"><i class="fas fa-check-circle"></i></div>
                         <div class="fl-result-msg" style="color:#10b981">${msg}</div>
-                        <div class="fl-result-detail">Możesz teraz bezpiecznie wyjąć dysk USB.</div>
+                        <div class="fl-result-detail">${t('Możesz teraz bezpiecznie wyjąć dysk USB.')}</div>
                     </div>
                 </div>`;
             toast(t('Flashowanie zakończone!'), 'success');
@@ -468,7 +468,7 @@ function renderFlasherApp(body) {
                 <div class="fl-section" style="text-align:center;border:1px solid #ef4444">
                     <div class="fl-result">
                         <div class="fl-result-icon" style="color:#ef4444"><i class="fas fa-times-circle"></i></div>
-                        <div class="fl-result-msg" style="color:#ef4444">Błąd flashowania</div>
+                        <div class="fl-result-msg" style="color:#ef4444">${t('Błąd flashowania')}</div>
                         <div class="fl-result-detail">${msg}</div>
                     </div>
                 </div>`;

@@ -225,9 +225,9 @@ function _nlRender(body, launchOpts) {
             </div>
             <div class="nl-dash-grid">
                 <div class="nl-dash-card">
-                    <h3><i class="fas fa-server"></i> Połączone serwery</h3>
+                    <h3><i class="fas fa-server"></i> ${t('Połączone serwery')}</h3>
                     <div class="nl-stat">${serverCount}</div>
-                    <div class="nl-stat-label">skonfigurowanych serwerów SSH</div>
+                    <div class="nl-stat-label">${t('skonfigurowanych serwerów SSH')}</div>
                 </div>
                 <div class="nl-dash-card">
                     <h3><i class="fas fa-exchange-alt"></i> Transfer</h3>
@@ -237,12 +237,12 @@ function _nlRender(body, launchOpts) {
                 <div class="nl-dash-card">
                     <h3><i class="fas fa-inbox"></i> Odebrane snapshoty</h3>
                     <div class="nl-stat">${receivedCount}</div>
-                    <div class="nl-stat-label">oczekujących na ten NAS</div>
+                    <div class="nl-stat-label">${t('oczekujących na ten NAS')}</div>
                 </div>
             </div>
 
             <h3 class="nl-section-title">
-                <i class="fas fa-server nl-icon-accent"></i> Status serwerów
+                <i class="fas fa-server nl-icon-accent"></i> ${t('Status serwerów')}
             </h3>
             <div class="nl-server-list" id="nl-dash-servers">
                 ${servers.length === 0 ? `<div class="nl-empty"><i class="fas fa-plug"></i><p>${t('Brak skonfigurowanych serwerów')}</p><button class="nl-btn primary" id="nl-dash-add-server"><i class="fas fa-plus"></i> ${t('Dodaj serwer')}</button></div>` : ''}
@@ -353,13 +353,13 @@ function _nlRender(body, launchOpts) {
                 <div class="nl-srv-info">
                     <div class="nl-srv-name">${_nlEsc(s.name || s.host)}</div>
                     <div class="nl-srv-host">${_nlEsc(s.host)}:${s.port || 22} — ${_nlEsc(s.username || '')}${s.has_key ? ' <i class="fas fa-key nl-key-icon" title="Klucz SSH"></i>' : ''}${s.has_password ? ` <i class="fas fa-lock nl-lock-icon" title="${t('Hasło')}"></i>` : ''}</div>
-                    <div class="nl-sub-info">Ścieżka: ${_nlEsc(s.remote_path || '~/')}</div>
+                    <div class="nl-sub-info">${t('Ścieżka:')} ${_nlEsc(s.remote_path || '~/')}</div>
                 </div>
                 <div class="nl-srv-dot checking" data-host="${_nlEsc(s.host)}" data-port="${s.port || 22}" title="Sprawdzanie…"></div>
                 <div class="nl-srv-actions">
-                    <button class="nl-btn sm nl-srv-test" title="Test połączenia"><i class="fas fa-plug"></i></button>
+                    <button class="nl-btn sm nl-srv-test" title="${t('Test połączenia')}"><i class="fas fa-plug"></i></button>
                     <button class="nl-btn sm nl-srv-edit" title="Edytuj"><i class="fas fa-edit"></i></button>
-                    <button class="nl-btn sm danger nl-srv-delete" title="Usuń"><i class="fas fa-trash"></i></button>
+                    <button class="nl-btn sm danger nl-srv-delete" title="${t('Usuń')}"><i class="fas fa-trash"></i></button>
                 </div>
             </div>
         `;
@@ -391,7 +391,7 @@ function _nlRender(body, launchOpts) {
     async function _nlDeleteServer(id) {
         const s = servers.find(x => x.id === id);
         if (!s) return;
-        const ok = await confirmDialog(`Usunąć serwer "${s.name || s.host}"?`);
+        const ok = await confirmDialog(t('Usunąć serwer') + ' "' + (s.name || s.host) + '"?');
         if (!ok) return;
         try {
             await api(`/backup/ssh-servers/${id}`, { method: 'DELETE' });
@@ -411,15 +411,15 @@ function _nlRender(body, launchOpts) {
         const area = content.querySelector('#nl-server-form-area');
         area.innerHTML = `
             <div class="nl-panel-accent">
-                <h3 class="nl-form-title">${existing ? 'Edytuj serwer' : 'Nowy serwer SSH'}</h3>
+                <h3 class="nl-form-title">${existing ? t('Edytuj serwer') : t('Nowy serwer SSH')}</h3>
                 <div class="nl-form-grid">
-                    <div class="nl-form-row"><label>Nazwa</label><input id="nl-sf-name" value="${_nlEsc(existing?.name || '')}" placeholder="np. NAS Salon"></div>
-                    <div class="nl-form-row"><label>Host (IP)</label><input id="nl-sf-host" value="${_nlEsc(existing?.host || '')}" placeholder="192.168.50.xxx"></div>
+                    <div class="nl-form-row"><label>${t('Nazwa')}</label><input id="nl-sf-name" value="${_nlEsc(existing?.name || '')}" placeholder="np. NAS Salon"></div>
+                    <div class="nl-form-row"><label>${t('Host (IP)')}</label><input id="nl-sf-host" value="${_nlEsc(existing?.host || '')}" placeholder="192.168.50.xxx"></div>
                     <div class="nl-form-row"><label>Port</label><input id="nl-sf-port" type="number" value="${existing?.port || 22}"></div>
-                    <div class="nl-form-row"><label>Użytkownik</label><input id="nl-sf-user" value="${_nlEsc(existing?.username || '')}"></div>
-                    <div class="nl-form-row"><label>Hasło</label><input id="nl-sf-pass" type="password" value="" placeholder="${existing ? '(bez zmian)' : ''}"></div>
-                    <div class="nl-form-row"><label>Klucz SSH (ścieżka)</label><input id="nl-sf-key" value="${_nlEsc(existing?.key_path || '')}" placeholder="opcjonalnie"></div>
-                    <div class="nl-form-row nl-form-full"><label>Ścieżka zdalna</label><input id="nl-sf-path" value="${_nlEsc(existing?.remote_path || '~/backups')}" placeholder="~/backups"></div>
+                    <div class="nl-form-row"><label>${t('Użytkownik')}</label><input id="nl-sf-user" value="${_nlEsc(existing?.username || '')}"></div>
+                    <div class="nl-form-row"><label>${t('Hasło')}</label><input id="nl-sf-pass" type="password" value="" placeholder="${existing ? t('(bez zmian)') : ''}"></div>
+                    <div class="nl-form-row"><label>${t('Klucz SSH (ścieżka)')}</label><input id="nl-sf-key" value="${_nlEsc(existing?.key_path || '')}" placeholder="${t('opcjonalnie')}"></div>
+                    <div class="nl-form-row nl-form-full"><label>${t('Ścieżka zdalna')}</label><input id="nl-sf-path" value="${_nlEsc(existing?.remote_path || '~/backups')}" placeholder="~/backups"></div>
                 </div>
                 <div class="nl-form-actions">
                     <button class="nl-btn primary" id="nl-sf-save"><i class="fas fa-save"></i> Zapisz</button>
@@ -438,7 +438,7 @@ function _nlRender(body, launchOpts) {
             try {
                 const r = await api('/backup/ssh-servers', { method: 'POST', body: data });
                 if (r.error) { toast(r.error, 'error'); return; }
-                toast(existing ? 'Serwer zaktualizowany' : 'Serwer dodany', 'success');
+                toast(existing ? t('Serwer zaktualizowany') : t('Serwer dodany'), 'success');
                 area.innerHTML = '';
                 renderServers();
             } catch (e) { toast(t('Błąd: ') + (e.message || e), 'error'); }
@@ -451,7 +451,7 @@ function _nlRender(body, launchOpts) {
             try {
                 const r = await api('/backup/ssh-servers/test', { method: 'POST', body: data });
                 if (r.success) {
-                    res.innerHTML = `<span class="nl-success"><i class="fas fa-check-circle"></i> Połączono! ${r.disk_info || ''}</span>`;
+                    res.innerHTML = `<span class="nl-success"><i class="fas fa-check-circle"></i> ${t('Połączono!')} ${r.disk_info || ''}</span>`;
                 } else {
                     res.innerHTML = `<span class="nl-error"><i class="fas fa-times-circle"></i> ${_nlEsc(r.error || t('Błąd'))}</span>`;
                 }
@@ -478,19 +478,19 @@ function _nlRender(body, launchOpts) {
     async function _nlRunDiscover() {
         const area = content.querySelector('#nl-discover-area');
         area.innerHTML = `<div class="nl-panel">
-            <i class="fas fa-spinner fa-spin"></i> Szukam urządzeń EthOS w sieci…
+            <i class="fas fa-spinner fa-spin"></i> ${t('Szukam urządzeń EthOS w sieci…')}
         </div>`;
         try {
             const r = await api('/backup/discover-nas', { method: 'POST' });
             _discoverResults = r.devices || [];
             if (_discoverResults.length === 0) {
                 area.innerHTML = `<div class="nl-panel nl-text-muted">
-                    <i class="fas fa-info-circle"></i> Nie znaleziono innych urządzeń EthOS w sieci.
+                    <i class="fas fa-info-circle"></i> ${t('Nie znaleziono innych urządzeń EthOS w sieci.')}
                 </div>`;
                 return;
             }
             area.innerHTML = `<div class="nl-panel">
-                <h4 class="nl-discover-title"><i class="fas fa-broadcast-tower nl-icon-accent"></i> Znalezione urządzenia (${_discoverResults.length})</h4>
+                <h4 class="nl-discover-title"><i class="fas fa-broadcast-tower nl-icon-accent"></i> ${t('Znalezione urządzenia')} (${_discoverResults.length})</h4>
                 ${_discoverResults.map(d => `
                     <div class="nl-discover-row">
                         <i class="fas fa-server nl-icon-accent"></i>
@@ -498,7 +498,7 @@ function _nlRender(body, launchOpts) {
                             <div class="nl-discover-name">${_nlEsc(d.name || d.hostname || d.ip)}</div>
                             <div class="nl-muted-sm">${_nlEsc(d.ip)}:${d.port || 9000}</div>
                         </div>
-                        <button class="nl-btn sm primary nl-discover-add" data-ip="${_nlEsc(d.ip)}" data-name="${_nlEsc(d.name || d.hostname || '')}"><i class="fas fa-plus"></i> Dodaj</button>
+                        <button class="nl-btn sm primary nl-discover-add" data-ip="${_nlEsc(d.ip)}" data-name="${_nlEsc(d.name || d.hostname || '')}"><i class="fas fa-plus"></i> ${t('Dodaj')}</button>
                     </div>
                 `).join('')}
             </div>`;
@@ -516,7 +516,7 @@ function _nlRender(body, launchOpts) {
             });
         } catch (e) {
             area.innerHTML = `<div class="nl-panel nl-error">
-                <i class="fas fa-exclamation-triangle"></i> Błąd wykrywania: ${_nlEsc(e.message || e)}
+                <i class="fas fa-exclamation-triangle"></i> ${t('Błąd wykrywania:')} ${_nlEsc(e.message || e)}
             </div>`;
         }
     }
@@ -548,13 +548,13 @@ function _nlRender(body, launchOpts) {
             statusHtml = `
                 <div class="nl-transfer-card nl-transfer-active" id="nl-tf-status">
                     <div class="nl-tf-header"><i class="fas ${isPaused ? 'fa-pause-circle' : 'fa-spinner fa-spin'}" style="color:${isPaused ? '#eab308' : 'var(--accent)'}"></i>
-                        <div class="nl-tf-title" id="nl-tf-title">${isPaused ? 'Transfer wstrzymany' : 'Transfer w toku'} — ${Math.round(p.percent || 0)}%${resumedBadge}</div></div>
+                        <div class="nl-tf-title" id="nl-tf-title">${isPaused ? t('Transfer wstrzymany') : t('Transfer w toku')} — ${Math.round(p.percent || 0)}%${resumedBadge}</div></div>
                     ${srvLabel ? `<div class="nl-tf-srv-label"><i class="fas fa-arrow-right nl-tf-arrow"></i> <strong>${_nlEsc(srvLabel)}</strong>${filesLabel ? ' &mdash; ' + _nlEsc(filesLabel) : ''}</div>` : ''}
                     <div class="nl-tf-bar" id="nl-tf-bar-wrap"><div class="nl-tf-fill" id="nl-tf-fill" style="width:${p.percent||0}%;${isPaused ? 'background:#eab308;' : ''}"></div></div>
-                    <div class="nl-tf-detail" id="nl-tf-detail">${p.done||0}/${p.total||0} plików — ${Math.round(p.percent||0)}%</div>
+                    <div class="nl-tf-detail" id="nl-tf-detail">${p.done||0}/${p.total||0} ${t('plików')} — ${Math.round(p.percent||0)}%</div>
                     <div id="nl-tf-actions" class="nl-tf-actions-row">
-                        <button class="nl-btn sm" id="nl-tf-pause" title="${isPaused ? t('Wznów') : 'Wstrzymaj'}"><i class="fas ${isPaused ? 'fa-play' : 'fa-pause'}"></i> ${isPaused ? t('Wznów') : 'Wstrzymaj'}</button>
-                        <button class="nl-btn sm danger" id="nl-tf-cancel"><i class="fas fa-times"></i> Anuluj</button>
+                        <button class="nl-btn sm" id="nl-tf-pause" title="${isPaused ? t('Wznów') : t('Wstrzymaj')}"><i class="fas ${isPaused ? 'fa-play' : 'fa-pause'}"></i> ${isPaused ? t('Wznów') : t('Wstrzymaj')}</button>
+                        <button class="nl-btn sm danger" id="nl-tf-cancel"><i class="fas fa-times"></i> ${t('Anuluj')}</button>
                     </div>
                 </div>`;
         } else if (hasActive) {
@@ -594,7 +594,7 @@ function _nlRender(body, launchOpts) {
 
         content.innerHTML = `
             <div class="nl-toolbar">
-                <h2><i class="fas fa-exchange-alt"></i> Transfer plików</h2>
+                <h2><i class="fas fa-exchange-alt"></i> ${t('Transfer plików')}</h2>
             </div>
 
             ${statusHtml}
@@ -605,36 +605,36 @@ function _nlRender(body, launchOpts) {
                 <div class="nl-panel-form">
                     <div class="nl-form-grid">
                         <div class="nl-form-row nl-form-full">
-                            <label>Pliki / foldery źródłowe</label>
+                            <label>${t('Pliki / foldery źródłowe')}</label>
                             <div class="nl-row">
                                 <input id="nl-tf-paths" value="${initPaths.length ? _nlEsc(initPaths.join(', ')) : ''}" style="flex:1;" placeholder="${t('/ścieżka/do/pliku, /inna/ścieżka (oddziel przecinkiem)')}">
-                                <button class="nl-btn" id="nl-tf-browse" title="Przeglądaj"><i class="fas fa-folder-open"></i></button>
+                                <button class="nl-btn" id="nl-tf-browse" title="${t('Przeglądaj')}"><i class="fas fa-folder-open"></i></button>
                             </div>
-                            <div class="nl-hint">Podaj ścieżki do plików/folderów oddzielone przecinkiem, lub kliknij <i class="fas fa-folder-open"></i> aby wybrać z dysku.</div>
+                            <div class="nl-hint">${t('Podaj ścieżki do plików/folderów oddzielone przecinkiem, lub kliknij')} <i class="fas fa-folder-open"></i> ${t('aby wybrać z dysku.')}</div>
                         </div>
                         <div class="nl-form-row">
-                            <label>Serwer docelowy</label>
+                            <label>${t('Serwer docelowy')}</label>
                             <select id="nl-tf-server">
                                 ${servers.map(s => `<option value="${s.id}">${_nlEsc(s.name || s.host)} (${_nlEsc(s.host)})</option>`).join('')}
                             </select>
                         </div>
                         <div class="nl-form-row">
-                            <label>Ścieżka zdalna</label>
+                            <label>${t('Ścieżka zdalna')}</label>
                             <input id="nl-tf-dest" value="${_nlEsc(servers[0]?.remote_path || '~/')}" placeholder="~/received">
                         </div>
                     </div>
                     <div class="nl-form-actions">
                         <button class="nl-btn primary" id="nl-tf-start" ${hasActive ? 'disabled' : ''}>
-                            <i class="fas fa-paper-plane"></i> Rozpocznij transfer
+                            <i class="fas fa-paper-plane"></i> ${t('Rozpocznij transfer')}
                         </button>
-                        <span class="nl-muted-sm">rsync — automatyczne wznawianie po utracie połączenia</span>
+                        <span class="nl-muted-sm">${t('rsync — automatyczne wznawianie po utracie połączenia')}</span>
                     </div>
                     <div id="nl-tf-msg" class="nl-result-msg"></div>
                 </div>`}
             </div>
 
             <div class="nl-info-footer">
-                <i class="fas fa-info-circle"></i> Możesz też zaznaczać pliki w <strong>Menedżerze plików</strong> i wybrać <strong>Transferuj do NAS</strong> z menu kontekstowego.
+                <i class="fas fa-info-circle"></i> ${t('Możesz też zaznaczać pliki w')} <strong>${t('Menedżerze plików')}</strong> ${t('i wybrać')} <strong>${t('Transferuj do NAS')}</strong> ${t('z menu kontekstowego.')}
             </div>
         `;
 
@@ -880,7 +880,7 @@ function _nlRender(body, launchOpts) {
                             </div>
                             <span class="nl-snap-badge received">Otrzymany</span>
                             <button class="nl-btn sm primary nl-snap-adopt" data-path="${_nlEsc(s.path || s.dir || '')}"><i class="fas fa-download"></i> Adoptuj</button>
-                            <button class="nl-btn sm nl-snap-restore" data-path="${_nlEsc(s.path || s.dir || '')}"><i class="fas fa-undo"></i> Przywróć</button>
+                            <button class="nl-btn sm nl-snap-restore" data-path="${_nlEsc(s.path || s.dir || '')}"><i class="fas fa-undo"></i> ${t('Przywróć')}</button>
                         </div>
                     `).join('')}
                 </div>
@@ -899,7 +899,7 @@ function _nlRender(body, launchOpts) {
                             <div class="nl-snap-meta">${_nlFmtDate(s.date || s.created)} — ${_nlEsc(s.hostname || 'local')}</div>
                         </div>
                         <span class="nl-snap-badge local">Lokalny</span>
-                        ${servers.length > 0 ? `<button class="nl-btn sm nl-snap-push" data-id="${_nlEsc(s.id || '')}"><i class="fas fa-upload"></i> Wyślij do NAS</button>` : ''}
+                        ${servers.length > 0 ? `<button class="nl-btn sm nl-snap-push" data-id="${_nlEsc(s.id || '')}"><i class="fas fa-upload"></i> ${t('Wyślij do NAS')}</button>` : ''}
                     </div>
                 `).join('')}
             </div>
@@ -935,14 +935,14 @@ function _nlRender(body, launchOpts) {
             overlay.className = 'modal-overlay';
             overlay.innerHTML = `
                 <div class="modal nl-modal-sm">
-                    <div class="modal-header"><i class="fas fa-upload nl-icon-mr"></i>Wyślij snapshot</div>
+                    <div class="modal-header"><i class="fas fa-upload nl-icon-mr"></i>${t('Wyślij snapshot')}</div>
                     <div class="modal-body">
                         <label class="modal-label">Serwer docelowy:</label>
                         <select class="modal-input" id="nl-push-server">${serverOptions}</select>
                     </div>
                     <div class="modal-footer">
-                        <button class="btn" id="nl-push-cancel">Anuluj</button>
-                        <button class="btn btn-primary" id="nl-push-go"><i class="fas fa-paper-plane"></i> Wyślij</button>
+                        <button class="btn" id="nl-push-cancel">${t('Anuluj')}</button>
+                        <button class="btn btn-primary" id="nl-push-go"><i class="fas fa-paper-plane"></i> ${t('Wyślij')}</button>
                     </div>
                 </div>`;
             document.body.appendChild(overlay);

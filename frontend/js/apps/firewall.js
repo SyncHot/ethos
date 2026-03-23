@@ -38,7 +38,7 @@ AppRegistry['firewall'] = function (appDef) {
             Firewall (UFW)
         </h2>
         <div id="fw-status-text" style="margin-top:5px;font-size:0.9em;opacity:0.8">
-            Ładowanie statusu...
+            ${t('Ładowanie statusu...')}
         </div>
     `;
 
@@ -61,7 +61,7 @@ AppRegistry['firewall'] = function (appDef) {
 
     const tabRules = document.createElement('button');
     tabRules.className = 'tab-btn active';
-    tabRules.textContent = 'Reguły';
+    tabRules.textContent = t('Reguły');
     tabRules.onclick = () => switchTab('rules');
 
     const tabBanned = document.createElement('button');
@@ -101,7 +101,7 @@ AppRegistry['firewall'] = function (appDef) {
             <button class="app-btn app-btn-sm" onclick="app_firewall_addRule('139,445', 'tcp', 'Samba')"><i class="fas fa-network-wired"></i> Allow Samba</button>
             <button class="app-btn app-btn-sm" onclick="app_firewall_addRule('32400', 'tcp', 'Plex')"><i class="fas fa-play-circle"></i> Allow Plex</button>
             <button class="app-btn app-btn-sm" onclick="app_firewall_addRule('80,443', 'tcp', 'Web')"><i class="fas fa-globe"></i> Allow HTTP/HTTPS</button>
-            <button class="app-btn app-btn-sm app-btn-secondary" onclick="app_firewall_resetDefaults()"><i class="fas fa-undo"></i> Resetuj do domyślnych</button>
+            <button class="app-btn app-btn-sm app-btn-secondary" onclick="app_firewall_resetDefaults()"><i class="fas fa-undo"></i> ${t('Resetuj do domyślnych')}</button>
         </div>
     `;
     rulesView.appendChild(quickActions);
@@ -114,14 +114,14 @@ AppRegistry['firewall'] = function (appDef) {
     customRule.style.border = '1px solid var(--border)';
     customRule.style.borderRadius = '8px';
     customRule.innerHTML = `
-        <h3 style="margin-top:0;font-size:1rem;margin-bottom:10px">Dodaj własną regułę</h3>
+        <h3 style="margin-top:0;font-size:1rem;margin-bottom:10px">${t('Dodaj własną regułę')}</h3>
         <div style="display:flex;gap:10px;align-items:end;flex-wrap:wrap">
             <div style="flex:1;min-width:100px">
                 <label style="display:block;font-size:0.8rem;opacity:0.7">Port(y)</label>
                 <input type="text" id="fw-custom-port" class="app-input" placeholder="np. 8080 lub 8000:8100">
             </div>
             <div style="width:100px">
-                <label style="display:block;font-size:0.8rem;opacity:0.7">Protokół</label>
+                <label style="display:block;font-size:0.8rem;opacity:0.7">${t('Protokół')}</label>
                 <select id="fw-custom-proto" class="app-select">
                     <option value="tcp">TCP</option>
                     <option value="udp">UDP</option>
@@ -129,7 +129,7 @@ AppRegistry['firewall'] = function (appDef) {
                 </select>
             </div>
             <div style="flex:1;min-width:120px">
-                <label style="display:block;font-size:0.8rem;opacity:0.7">Źródło IP (opcjonalne)</label>
+                <label style="display:block;font-size:0.8rem;opacity:0.7">${t('Źródło IP (opcjonalne)')}</label>
                 <input type="text" id="fw-custom-ip" class="app-input" placeholder="np. 192.168.1.100 lub 'any'">
             </div>
             <button class="app-btn app-btn-primary" id="fw-add-custom-btn"><i class="fas fa-plus"></i> Dodaj</button>
@@ -140,21 +140,21 @@ AppRegistry['firewall'] = function (appDef) {
     // Rules List
     const rulesList = document.createElement('div');
     rulesList.innerHTML = `
-        <h3 style="margin-top:0;font-size:1rem;margin-bottom:10px">Aktywne reguły</h3>
+        <h3 style="margin-top:0;font-size:1rem;margin-bottom:10px">${t('Aktywne reguły')}</h3>
         <div id="fw-rules-table-container" style="background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;overflow:hidden">
             <table style="width:100%;border-collapse:collapse">
                 <thead style="background:var(--bg-base);border-bottom:1px solid var(--border)">
                     <tr>
                         <th style="padding:10px;text-align:left">ID</th>
-                        <th style="padding:10px;text-align:left">Port / Usługa</th>
+                        <th style="padding:10px;text-align:left">${t('Port / Usługa')}</th>
                         <th style="padding:10px;text-align:left">Akcja</th>
                         <th style="padding:10px;text-align:left">Kierunek</th>
-                        <th style="padding:10px;text-align:left">Źródło</th>
+                        <th style="padding:10px;text-align:left">${t('Źródło')}</th>
                         <th style="padding:10px;text-align:right">Opcje</th>
                     </tr>
                 </thead>
                 <tbody id="fw-rules-tbody">
-                    <tr><td colspan="6" style="padding:20px;text-align:center">Ładowanie...</td></tr>
+                    <tr><td colspan="6" style="padding:20px;text-align:center">${t('Ładowanie...')}</td></tr>
                 </tbody>
             </table>
         </div>
@@ -170,10 +170,10 @@ AppRegistry['firewall'] = function (appDef) {
         <div class="card" style="padding:15px;background:var(--bg-surface);border:1px solid var(--border);border-radius:8px">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
                 <h3 style="margin:0;font-size:1rem">Zablokowane adresy IP (Fail2Ban)</h3>
-                <button class="app-btn app-btn-sm" id="fw-refresh-banned"><i class="fas fa-sync-alt"></i> Odśwież</button>
+                <button class="app-btn app-btn-sm" id="fw-refresh-banned"><i class="fas fa-sync-alt"></i> ${t('Odśwież')}</button>
             </div>
             <div id="fw-banned-list">
-                Ładowanie...
+                ${t('Ładowanie...')}
             </div>
         </div>
     `;
@@ -287,7 +287,7 @@ AppRegistry['firewall'] = function (appDef) {
                 const enable = !toggle.checked; // If it was checked, we clicked to uncheck
 
                 // Confirm action
-                if (!confirm(`Czy na pewno chcesz ${enable ? 'włączyć' : 'wyłączyć'} firewall?`)) {
+                if (!confirm(`${t('Czy na pewno chcesz')} ${enable ? t('włączyć') : t('wyłączyć')} firewall?`)) {
                     toggle.checked = !enable; // Revert visual
                     return;
                 }
@@ -302,7 +302,7 @@ AppRegistry['firewall'] = function (appDef) {
                         toast(tRes.message, 'success');
                         loadRules();
                     } else {
-                        toast(tRes.error || 'Błąd zmiany statusu', 'error');
+                        toast(tRes.error || t('Błąd zmiany statusu'), 'error');
                         toggle.checked = !enable; // Revert
                     }
                 } catch (err) {
@@ -318,7 +318,7 @@ AppRegistry['firewall'] = function (appDef) {
                 // Revert immediately to wait for confirmation/api
                 this.checked = !enable;
 
-                if (!confirm(`Czy na pewno chcesz ${enable ? 'włączyć' : 'wyłączyć'} firewall?`)) return;
+                if (!confirm(`${t('Czy na pewno chcesz')} ${enable ? t('włączyć') : t('wyłączyć')} firewall?`)) return;
 
                 try {
                     const tRes = await api('/firewall/toggle', {
@@ -330,7 +330,7 @@ AppRegistry['firewall'] = function (appDef) {
                         this.checked = enable;
                         loadRules(); // Refresh status text
                     } else {
-                        toast(tRes.error || 'Błąd', 'error');
+                        toast(tRes.error || t('Błąd'), 'error');
                     }
                 } catch (err) {
                     toast(err.message, 'error');
@@ -341,7 +341,7 @@ AppRegistry['firewall'] = function (appDef) {
             // Render Rules
             tbody.innerHTML = '';
             if (!res.rules || res.rules.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6" style="padding:20px;text-align:center;opacity:0.6">Brak reguł lub firewall nieaktywny</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="6" style="padding:20px;text-align:center;opacity:0.6">' + t('Brak reguł lub firewall nieaktywny') + '</td></tr>';
             } else {
                 res.rules.forEach(rule => {
                     const tr = document.createElement('tr');
@@ -372,13 +372,13 @@ AppRegistry['firewall'] = function (appDef) {
 
         } catch (e) {
             console.error(e);
-            tbody.innerHTML = `<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--text-error)">Błąd: ${e.message}</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--text-error)">${t('Błąd:')} ${e.message}</td></tr>`;
         }
     }
 
     // Add Rule Helper
     window.app_firewall_addRule = async (port, proto, name) => {
-        if (!confirm(`Dodać regułę dla ${name || port}?`)) return;
+        if (!confirm(`${t('Dodać regułę dla')} ${name || port}?`)) return;
         try {
             const res = await api('/firewall/rules', {
                 method: 'POST',
@@ -397,7 +397,7 @@ AppRegistry['firewall'] = function (appDef) {
 
     // Reset Defaults
     window.app_firewall_resetDefaults = async () => {
-        if (!confirm('UWAGA: To usunie wszystkie obecne reguły i przywróci domyślne (SSH, Web, Samba, Plex). Kontynuować?')) return;
+        if (!confirm(t('UWAGA: To usunie wszystkie obecne reguły i przywróci domyślne (SSH, Web, Samba, Plex). Kontynuować?'))) return;
         try {
             const res = await api('/firewall/rules', {
                 method: 'POST',
@@ -416,7 +416,7 @@ AppRegistry['firewall'] = function (appDef) {
 
     // Delete Rule
     async function deleteRule(id) {
-        if (!confirm(`Czy na pewno usunąć regułę #${id}?`)) return;
+        if (!confirm(`${t('Czy na pewno usunąć regułę #')}${id}?`)) return;
         try {
             const res = await api('/firewall/rules', {
                 method: 'POST',
@@ -471,19 +471,19 @@ AppRegistry['firewall'] = function (appDef) {
     // Load Banned IPs
     async function loadBanned() {
         const list = document.getElementById('fw-banned-list');
-        list.innerHTML = 'Ładowanie...';
+        list.innerHTML = t('Ładowanie...');
 
         try {
             const res = await api('/firewall/banned');
             list.innerHTML = '';
 
             if (res.error) {
-                list.innerHTML = `<div style="color:var(--text-error)">Błąd: ${res.error}</div>`;
+                list.innerHTML = `<div style="color:var(--text-error)">${t('Błąd:')} ${res.error}</div>`;
                 return;
             }
 
             if (!res.jails || res.jails.length === 0) {
-                list.innerHTML = '<div style="opacity:0.6;padding:10px">Brak aktywnych więzień Fail2Ban.</div>';
+                list.innerHTML = '<div style="opacity:0.6;padding:10px">' + t('Brak aktywnych więzień Fail2Ban.') + '</div>';
                 return;
             }
 
@@ -541,7 +541,7 @@ AppRegistry['firewall'] = function (appDef) {
                 btn.onclick = async () => {
                     const jail = btn.dataset.jail;
                     const ip = btn.dataset.ip;
-                    if (!confirm(`Odblokować IP ${ip}?`)) return;
+                    if (!confirm(`${t('Odblokować IP')} ${ip}?`)) return;
 
                     try {
                         const uRes = await api('/firewall/unban', {
@@ -562,7 +562,7 @@ AppRegistry['firewall'] = function (appDef) {
 
         } catch (e) {
             console.error(e);
-            list.innerHTML = `<div style="color:var(--text-error)">Błąd: ${e.message}</div>`;
+            list.innerHTML = `<div style="color:var(--text-error)">${t('Błąd:')} ${e.message}</div>`;
         }
     }
 

@@ -36,8 +36,8 @@ AppRegistry['notifications'] = function (appDef) {
             fields: [
                 { key: 'host',      label: 'SMTP Host',  type: 'text' },
                 { key: 'port',      label: 'Port',       type: 'number' },
-                { key: 'username',  label: 'Użytkownik', type: 'text' },
-                { key: 'password',  label: 'Hasło',      type: 'password' },
+                { key: 'username',  label: t('Użytkownik'), type: 'text' },
+                { key: 'password',  label: t('Hasło'),      type: 'password' },
                 { key: 'from_addr', label: 'Od (e-mail)', type: 'text' },
                 { key: 'to_addr',   label: 'Do (e-mail)', type: 'text' },
                 { key: 'use_tls',   label: 'TLS',         type: 'checkbox' },
@@ -50,20 +50,20 @@ AppRegistry['notifications'] = function (appDef) {
     };
 
     const TRIGGERS = {
-        smart_warning:    { label: 'Ostrzeżenie S.M.A.R.T.',    icon: 'fa-hdd' },
-        backup_failed:    { label: 'Kopia zapasowa — błąd',      icon: 'fa-exclamation-triangle' },
+        smart_warning:    { label: t('Ostrzeżenie S.M.A.R.T.'),    icon: 'fa-hdd' },
+        backup_failed:    { label: t('Kopia zapasowa — błąd'),      icon: 'fa-exclamation-triangle' },
         backup_completed: { label: 'Kopia zapasowa — sukces',    icon: 'fa-check-circle' },
-        disk_full_90:     { label: 'Dysk zapełniony (>90%)',     icon: 'fa-database' },
+        disk_full_90:     { label: t('Dysk zapełniony (>90%)'),     icon: 'fa-database' },
         login_failed:     { label: 'Nieudane logowanie',         icon: 'fa-sign-in-alt' },
         container_crash:  { label: 'Awaria kontenera Docker',    icon: 'fa-cubes' },
-        update_available: { label: 'Dostępna aktualizacja',      icon: 'fa-download' },
+        update_available: { label: t('Dostępna aktualizacja'),      icon: 'fa-download' },
         raid_degraded:    { label: 'Degradacja macierzy RAID',   icon: 'fa-layer-group' },
     };
 
     /* ── Tabs ───────────────────────────────────────────────── */
 
     const tabs = [
-        { id: 'channels', label: 'Kanały',       icon: 'fa-satellite-dish' },
+        { id: 'channels', label: t('Kanały'),       icon: 'fa-satellite-dish' },
         { id: 'triggers', label: 'Wyzwalacze',   icon: 'fa-bolt' },
         { id: 'history',  label: 'Historia',      icon: 'fa-history' },
     ];
@@ -102,13 +102,13 @@ AppRegistry['notifications'] = function (appDef) {
     const renderChannels = (panel) => {
         panel.innerHTML = `
             <div class="notif-header">
-                <span class="notif-title"><i class="fas fa-satellite-dish notif-icon-accent"></i> Kanały powiadomień</span>
+                <span class="notif-title"><i class="fas fa-satellite-dish notif-icon-accent"></i> ${t('Kanały powiadomień')}</span>
                 <span class="notif-spacer"></span>
                 <button class="btn btn-sm btn-primary" id="notif-save-ch">
                     <i class="fas fa-save"></i> Zapisz
                 </button>
             </div>
-            <div class="notif-desc">Skonfiguruj kanały, na które będą wysyłane powiadomienia systemowe.</div>
+            <div class="notif-desc">${t('Skonfiguruj kanały, na które będą wysyłane powiadomienia systemowe.')}</div>
             <div class="notif-cards" id="notif-cards"></div>
         `;
 
@@ -178,7 +178,7 @@ AppRegistry['notifications'] = function (appDef) {
             btn.onclick = async () => {
                 const ch = btn.dataset.ch;
                 state.testing[ch] = true;
-                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Wysyłanie…';
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Wysyłanie…');
                 btn.disabled = true;
                 const resultEl = panel.querySelector(`#notif-result-${ch}`);
                 resultEl.textContent = '';
@@ -188,10 +188,10 @@ AppRegistry['notifications'] = function (appDef) {
                     const resp = await api('/notifications/test', {
                         method: 'POST', body: { channel: ch }
                     });
-                    resultEl.textContent = '✓ Wysłano';
+                    resultEl.textContent = t('✓ Wysłano');
                     resultEl.classList.add('notif-ok');
                 } catch (e) {
-                    resultEl.textContent = '✗ ' + (e.message || 'Błąd');
+                    resultEl.textContent = '✗ ' + (e.message || t('Błąd'));
                     resultEl.classList.add('notif-err');
                 } finally {
                     state.testing[ch] = false;
@@ -248,7 +248,7 @@ AppRegistry['notifications'] = function (appDef) {
                     <i class="fas fa-save"></i> Zapisz
                 </button>
             </div>
-            <div class="notif-desc">Wybierz, które zdarzenia mają generować powiadomienia.</div>
+            <div class="notif-desc">${t('Wybierz, które zdarzenia mają generować powiadomienia.')}</div>
             <div class="notif-trigger-list" id="notif-triggers"></div>
         `;
 
@@ -286,10 +286,10 @@ AppRegistry['notifications'] = function (appDef) {
     const renderHistory = (panel) => {
         panel.innerHTML = `
             <div class="notif-header">
-                <span class="notif-title"><i class="fas fa-history notif-icon-accent"></i> Historia powiadomień</span>
+                <span class="notif-title"><i class="fas fa-history notif-icon-accent"></i> ${t('Historia powiadomień')}</span>
                 <span class="notif-spacer"></span>
                 <button class="btn btn-sm btn-outline" id="notif-refresh-hist">
-                    <i class="fas fa-sync-alt"></i> Odśwież
+                    <i class="fas fa-sync-alt"></i> ${t('Odśwież')}
                 </button>
             </div>
             <div class="notif-history-wrap" id="notif-hist-body"></div>
@@ -303,17 +303,17 @@ AppRegistry['notifications'] = function (appDef) {
         const wrap = panel.querySelector('#notif-hist-body');
 
         if (!state.history.length) {
-            wrap.innerHTML = '<div class="notif-empty">Brak wysłanych powiadomień.</div>';
+            wrap.innerHTML = '<div class="notif-empty">' + t('Brak wysłanych powiadomień.') + '</div>';
             return;
         }
 
         let html = `<table class="notif-table">
             <thead><tr>
-                <th>Czas</th><th>Kanał</th><th>Tytuł</th><th>Status</th>
+                <th>${t('Czas')}</th><th>${t('Kanał')}</th><th>${t('Tytuł')}</th><th>${t('Status')}</th>
             </tr></thead><tbody>`;
         for (const h of state.history) {
             const cls = h.success ? 'notif-ok' : 'notif-err';
-            const status = h.success ? '✓ OK' : `✗ ${h.error || 'Błąd'}`;
+            const status = h.success ? '✓ OK' : `✗ ${h.error || t('Błąd')}`;
             html += `<tr>
                 <td class="notif-td-mono">${_esc(h.time)}</td>
                 <td>${_esc(h.channel)}</td>
@@ -333,7 +333,7 @@ AppRegistry['notifications'] = function (appDef) {
             state.channels = data.channels || {};
             state.triggers = data.triggers || {};
         } catch (e) {
-            body.innerHTML = `<div class="p-3">Błąd ładowania konfiguracji: ${e.message}</div>`;
+            body.innerHTML = `<div class="p-3">${t('Błąd ładowania konfiguracji:')} ${e.message}</div>`;
         }
     };
 
@@ -373,7 +373,7 @@ AppRegistry['notifications'] = function (appDef) {
     /* ── Init ───────────────────────────────────────────────── */
 
     const init = async () => {
-        body.innerHTML = '<div class="notif-loading"><i class="fas fa-spinner fa-spin"></i> Ładowanie…</div>';
+        body.innerHTML = '<div class="notif-loading"><i class="fas fa-spinner fa-spin"></i> ' + t('Ładowanie…') + '</div>';
         await Promise.all([loadConfig(), loadHistory()]);
         render();
     };

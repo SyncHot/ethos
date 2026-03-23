@@ -242,7 +242,7 @@ function _galRenderSources() {
         <span class="gal-source-label" title="${_esc(s.path)}">${_esc(s.label)}</span>
         <span class="gal-source-count">${s.media_count || 0}</span>
       </div>
-      <button class="gal-source-del" title="Usuń"><i class="fa-solid fa-xmark"></i></button>
+      <button class="gal-source-del" title="${t('Usuń')}"><i class="fa-solid fa-xmark"></i></button>
     </div>
   `).join('');
 
@@ -291,7 +291,7 @@ async function _galShowFolderPicker() {
           </div>
           <div class="gal-folder-modal-path">
             <i class="fa-solid fa-folder-open"></i> ${_esc(currentPath)}
-            ${data.media_count ? `<span class="gal-folder-media-count">${data.media_count} mediów</span>` : ''}
+            ${data.media_count ? `<span class="gal-folder-media-count">${data.media_count} ${t('mediów')}</span>` : ''}
           </div>
           <div class="gal-folder-modal-list">
             ${currentPath !== '/' ? '<div class="gal-folder-modal-item gal-folder-parent" data-path=".."><i class="fa-solid fa-arrow-up"></i> ..</div>' : ''}
@@ -540,7 +540,7 @@ async function _galLoadTimeline() {
         <div class="gal-timeline-header">
           <div class="gal-timeline-dot"></div>
           <h3>${MONTH_NAMES[g.month]} ${g.year}</h3>
-          <span class="gal-timeline-count">${g.count} elementów</span>
+          <span class="gal-timeline-count">${g.count} ${t('elementów')}</span>
         </div>
         <div class="gal-timeline-cover">
           <img loading="lazy" src="/api/files/preview?path=${encodeURIComponent(g.cover)}&w=300&h=200" alt="">
@@ -702,15 +702,15 @@ function _galRenderLightbox() {
       <div class="gal-lb-actions">
         <button class="gal-lb-btn gal-lb-info-btn" title="Informacje"><i class="fa-solid fa-circle-info"></i></button>
         <button class="gal-lb-btn gal-lb-fav-btn" title="Ulubione (F)"><i class="fa-regular fa-star"></i></button>
-        <button class="gal-lb-btn gal-lb-show-fm-btn" title="Pokaż w Menedżerze plików"><i class="fa-solid fa-folder-open"></i></button>
-        <button class="gal-lb-btn gal-lb-delete-btn" title="Usuń (Delete)"><i class="fa-solid fa-trash"></i></button>
-        <button class="gal-lb-btn gal-lb-zoom-in" title="Powiększ"><i class="fa-solid fa-magnifying-glass-plus"></i></button>
+        <button class="gal-lb-btn gal-lb-show-fm-btn" title="${t('Pokaż w Menedżerze plików')}"><i class="fa-solid fa-folder-open"></i></button>
+        <button class="gal-lb-btn gal-lb-delete-btn" title="${t('Usuń (Delete)')}"><i class="fa-solid fa-trash"></i></button>
+        <button class="gal-lb-btn gal-lb-zoom-in" title="${t('Powiększ')}"><i class="fa-solid fa-magnifying-glass-plus"></i></button>
         <button class="gal-lb-btn gal-lb-zoom-out" title="Pomniejsz"><i class="fa-solid fa-magnifying-glass-minus"></i></button>
-        <button class="gal-lb-btn gal-lb-rotate" title="Obróć 90°"><i class="fa-solid fa-rotate-right"></i></button>
+        <button class="gal-lb-btn gal-lb-rotate" title="${t('Obróć 90°')}"><i class="fa-solid fa-rotate-right"></i></button>
         <button class="gal-lb-btn gal-lb-download" title="Pobierz"><i class="fa-solid fa-download"></i></button>
-        <button class="gal-lb-btn gal-lb-share" title="Udostępnij"><i class="fa-solid fa-share-nodes"></i></button>
-        <button class="gal-lb-btn gal-lb-slideshow" title="Pokaz slajdów"><i class="fa-solid fa-play"></i></button>
-        <button class="gal-lb-btn gal-lb-fullscreen" title="Pełny ekran (F11)"><i class="fa-solid fa-expand"></i></button>
+        <button class="gal-lb-btn gal-lb-share" title="${t('Udostępnij')}"><i class="fa-solid fa-share-nodes"></i></button>
+        <button class="gal-lb-btn gal-lb-slideshow" title="${t('Pokaz slajdów')}"><i class="fa-solid fa-play"></i></button>
+        <button class="gal-lb-btn gal-lb-fullscreen" title="${t('Pełny ekran (F11)')}"><i class="fa-solid fa-expand"></i></button>
         <button class="gal-lb-btn gal-lb-close" title="Zamknij"><i class="fa-solid fa-xmark"></i></button>
       </div>
     </div>
@@ -825,7 +825,7 @@ function _galRenderLightbox() {
       const shareUrl = location.origin + r.url;
       await navigator.clipboard.writeText(shareUrl);
       if (shareOpts.shared_with?.length) {
-        toast(`Udostępniono dla: ${shareOpts.shared_with.join(', ')}. Link skopiowany!`, 'success');
+        toast(t('Udostępniono dla:') + ` ${shareOpts.shared_with.join(', ')}. ` + t('Link skopiowany!'), 'success');
       } else {
         toast('Link skopiowany do schowka!', 'success');
       }
@@ -933,8 +933,8 @@ async function _galToggleExif(item) {
       'Aparat': exif.Model || null,
       'Producent': exif.Make || null,
       'ISO': exif.ISOSpeedRatings || null,
-      'Przysłona': exif.FNumber ? `f/${exif.FNumber}` : null,
-      'Czas naśw.': exif.ExposureTime ? `${exif.ExposureTime}s` : null,
+      [t('Przysłona')]: exif.FNumber ? `f/${exif.FNumber}` : null,
+      [t('Czas naśw.')]: exif.ExposureTime ? `${exif.ExposureTime}s` : null,
       'Ogniskowa': exif.FocalLength ? `${exif.FocalLength}mm` : null,
       'Data': exif.DateTimeOriginal || exif.DateTime || null,
       'Software': exif.Software || null,
@@ -952,11 +952,11 @@ async function _galToggleExif(item) {
         ${rows.map(([k, v]) => `<tr><td>${k}</td><td>${_esc(String(v))}</td></tr>`).join('')}
       </table>
       ${exif.gps ? `<a class="gal-map-link" href="https://www.google.com/maps?q=${exif.gps.lat},${exif.gps.lon}" target="_blank" rel="noopener">
-        <i class="fa-solid fa-map-location-dot"></i> Pokaż na mapie
+        <i class="fa-solid fa-map-location-dot"></i> ${t('Pokaż na mapie')}
       </a>` : ''}
     `;
   } catch (err) {
-    content.innerHTML = `<p style="color:#ef4444">Nie udało się odczytać danych EXIF</p>`;
+    content.innerHTML = `<p style="color:#ef4444">${t('Nie udało się odczytać danych EXIF')}</p>`;
   }
 }
 
@@ -1012,7 +1012,7 @@ async function _galShowShareDialog(paths) {
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `
       <div class="modal">
-        <div class="modal-header"><i class="fas fa-share-nodes" style="margin-right:8px;color:var(--accent)"></i>Udostępnij (${paths.length} ${paths.length === 1 ? 'plik' : t('plików')})</div>
+        <div class="modal-header"><i class="fas fa-share-nodes" style="margin-right:8px;color:var(--accent)"></i>${t('Udostępnij')} (${paths.length} ${paths.length === 1 ? t('plik') : t('plików')})</div>
         <div class="modal-body">
           <div style="margin-bottom:10px;font-size:12px;color:var(--text-muted)">
             <i class="fas fa-link"></i> Link zostanie skopiowany do schowka
@@ -1020,7 +1020,7 @@ async function _galShowShareDialog(paths) {
           ${allUsers.length ? `
           <div>
             <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
-              <input type="checkbox" id="gal-share-user-toggle"> Udostępnij konkretnemu użytkownikowi
+              <input type="checkbox" id="gal-share-user-toggle"> ${t('Udostępnij konkretnemu użytkownikowi')}
             </label>
             <div id="gal-share-users" style="display:none;margin-top:6px;padding:8px;background:var(--bg-secondary);border-radius:8px;max-height:140px;overflow-y:auto;">
               ${allUsers.map(u => `
@@ -1034,7 +1034,7 @@ async function _galShowShareDialog(paths) {
         </div>
         <div class="modal-footer">
           <button class="btn" id="gal-share-cancel">Anuluj</button>
-          <button class="btn btn-primary" id="gal-share-ok"><i class="fas fa-share-nodes"></i> Udostępnij</button>
+          <button class="btn btn-primary" id="gal-share-ok"><i class="fas fa-share-nodes"></i> ${t('Udostępnij')}</button>
         </div>
       </div>
     `;
@@ -1072,9 +1072,9 @@ function _galUpdateBatchBar() {
     bar.innerHTML = `
       <span class="gal-batch-count"></span>
       <button class="gal-batch-fav" title="Dodaj do ulubionych"><i class="fa-solid fa-star"></i></button>
-      <button class="gal-batch-del" title="Usuń"><i class="fa-solid fa-trash"></i></button>
+      <button class="gal-batch-del" title="${t('Usuń')}"><i class="fa-solid fa-trash"></i></button>
       <button class="gal-batch-zip" title="Pobierz ZIP"><i class="fa-solid fa-file-zipper"></i></button>
-      <button class="gal-batch-share" title="Udostępnij"><i class="fa-solid fa-share-nodes"></i></button>
+      <button class="gal-batch-share" title="${t('Udostępnij')}"><i class="fa-solid fa-share-nodes"></i></button>
       <button class="gal-batch-cancel">Anuluj</button>
     `;
     bar.querySelector('.gal-batch-del').addEventListener('click', _galBatchDelete);
@@ -1112,7 +1112,7 @@ async function _galBatchDelete() {
 async function _galBatchZip() {
   const paths = [...GAL.selected];
   if (!paths.length) return;
-  toast(`Przygotowywanie ZIP (${paths.length} plików)...`, 'info');
+  toast(`${t('Przygotowywanie ZIP')} (${paths.length} ${t('plików')})...`, 'info');
   try {
     const resp = await fetch('/api/gallery/download-zip', {
       method: 'POST',
@@ -1151,7 +1151,7 @@ async function _galBatchShare() {
     const shareUrl = location.origin + r.url;
     await navigator.clipboard.writeText(shareUrl);
     if (shareOpts.shared_with?.length) {
-      toast(`Udostępniono dla: ${shareOpts.shared_with.join(', ')}. Link skopiowany!`, 'success');
+      toast(t('Udostępniono dla:') + ` ${shareOpts.shared_with.join(', ')}. ` + t('Link skopiowany!'), 'success');
     } else {
       toast(t('Link do udostępnionych plików skopiowany!'), 'success');
     }
@@ -1245,7 +1245,7 @@ async function _galLoadMap() {
       const bounds = L.latLngBounds(data.map(p => [p.lat, p.lon]));
       map.fitBounds(bounds, { padding: [30, 30] });
     }
-    toast(`${data.length} zdjęć z lokalizacją GPS`, 'info');
+    toast(`${data.length} ${t('zdjęć z lokalizacją GPS')}`, 'info');
   } catch(e) { toast(t('Błąd ładowania mapy: ') + e.message, 'error'); }
   _galShowLoader(false);
 }
@@ -1264,7 +1264,7 @@ async function _galShowStats() {
         </div>
         <div style="padding:20px">
           <div class="gal-stat-grid">
-            <div class="gal-stat-card"><div class="gal-stat-num">${s.total_images}</div><div class="gal-stat-label">Zdjęcia</div></div>
+            <div class="gal-stat-card"><div class="gal-stat-num">${s.total_images}</div><div class="gal-stat-label">${t('Zdjęcia')}</div></div>
             <div class="gal-stat-card"><div class="gal-stat-num">${s.total_videos}</div><div class="gal-stat-label">Filmy</div></div>
             <div class="gal-stat-card"><div class="gal-stat-num">${s.total_raw}</div><div class="gal-stat-label">RAW</div></div>
             <div class="gal-stat-card"><div class="gal-stat-num">${formatBytes(s.total_size)}</div><div class="gal-stat-label">Rozmiar</div></div>

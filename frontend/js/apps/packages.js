@@ -16,7 +16,7 @@ AppRegistry['packages'] = function (appDef) {
             </div>
             <nav class="pkg-nav">
                 <button class="pkg-nav-btn active" data-tab="overview">
-                    <i class="fas fa-tachometer-alt"></i><span>Przegląd</span>
+                    <i class="fas fa-tachometer-alt"></i><span>${t('Przegląd')}</span>
                 </button>
                 <button class="pkg-nav-btn" data-tab="updates">
                     <i class="fas fa-arrow-circle-up"></i><span>Aktualizacje</span>
@@ -26,7 +26,7 @@ AppRegistry['packages'] = function (appDef) {
                     <i class="fas fa-box"></i><span>Zainstalowane</span>
                 </button>
                 <button class="pkg-nav-btn" data-tab="browse">
-                    <i class="fas fa-search"></i><span>Przeglądaj</span>
+                    <i class="fas fa-search"></i><span>${t('Przeglądaj')}</span>
                 </button>
             </nav>
         </div>
@@ -34,7 +34,7 @@ AppRegistry['packages'] = function (appDef) {
             <!-- Overview -->
             <div class="pkg-tab active" id="pkg-tab-overview">
                 <div class="pkg-header">
-                    <h2>Przegląd systemu</h2>
+                    <h2>${t('Przegląd systemu')}</h2>
                 </div>
                 <div class="pkg-overview-grid" id="pkg-overview-grid">
                     <div class="pkg-stat-card">
@@ -61,7 +61,7 @@ AppRegistry['packages'] = function (appDef) {
                         </div>
                         <div class="pkg-stat-info">
                             <span class="pkg-stat-val" id="pkg-s-cache">—</span>
-                            <span class="pkg-stat-label">Pamięć cache</span>
+                            <span class="pkg-stat-label">${t('Pamięć cache')}</span>
                         </div>
                     </div>
                     <div class="pkg-stat-card">
@@ -77,7 +77,7 @@ AppRegistry['packages'] = function (appDef) {
                 <div class="pkg-actions-row">
                     <button class="pkg-action-btn" id="pkg-btn-update">
                         <i class="fas fa-sync-alt"></i>
-                        <div><strong>Aktualizuj listę</strong><small>apt-get update</small></div>
+                        <div><strong>${t('Aktualizuj listę')}</strong><small>apt-get update</small></div>
                     </button>
                     <button class="pkg-action-btn" id="pkg-btn-upgrade">
                         <i class="fas fa-arrow-circle-up"></i>
@@ -85,12 +85,12 @@ AppRegistry['packages'] = function (appDef) {
                     </button>
                     <button class="pkg-action-btn" id="pkg-btn-clean">
                         <i class="fas fa-broom"></i>
-                        <div><strong>Wyczyść</strong><small>autoremove + clean</small></div>
+                        <div><strong>${t('Wyczyść')}</strong><small>autoremove + clean</small></div>
                     </button>
                 </div>
                 <div class="pkg-dpkg-warn" id="pkg-dpkg-warn" style="display:none">
                     <i class="fas fa-exclamation-triangle"></i>
-                    <span>dpkg został przerwany. Pakiety mogą nie działać poprawnie.</span>
+                    <span>${t('dpkg został przerwany. Pakiety mogą nie działać poprawnie.')}</span>
                     <button class="pkg-action-btn small" id="pkg-btn-fix-dpkg">
                         <i class="fas fa-wrench"></i>
                         <div><strong>Napraw dpkg</strong><small>dpkg --configure -a</small></div>
@@ -109,9 +109,9 @@ AppRegistry['packages'] = function (appDef) {
             <!-- Updates -->
             <div class="pkg-tab" id="pkg-tab-updates">
                 <div class="pkg-header">
-                    <h2>Dostępne aktualizacje</h2>
+                    <h2>${t('Dostępne aktualizacje')}</h2>
                     <div class="pkg-header-actions">
-                        <button class="btn btn-sm" id="pkg-btn-refresh-upd"><i class="fas fa-sync-alt"></i> Odśwież</button>
+                        <button class="btn btn-sm" id="pkg-btn-refresh-upd"><i class="fas fa-sync-alt"></i> ${t('Odśwież')}</button>
                         <button class="btn btn-sm btn-primary" id="pkg-btn-upgrade-all"><i class="fas fa-arrow-up"></i> Aktualizuj wszystko</button>
                     </div>
                 </div>
@@ -136,7 +136,7 @@ AppRegistry['packages'] = function (appDef) {
             <!-- Browse / Search -->
             <div class="pkg-tab" id="pkg-tab-browse">
                 <div class="pkg-header">
-                    <h2>Przeglądaj pakiety</h2>
+                    <h2>${t('Przeglądaj pakiety')}</h2>
                     <div class="pkg-header-actions">
                         <div class="pkg-search-box large">
                             <i class="fas fa-search"></i>
@@ -253,7 +253,7 @@ AppRegistry['packages'] = function (appDef) {
 
         function _taskFinish(id, success, message) {
             if (!NAS.taskProgress) return;
-            NAS.taskProgress.finish(id, !!success, message || (success ? 'Zakończono' : 'Błąd'));
+            NAS.taskProgress.finish(id, !!success, message || (success ? t('Zakończono') : t('Błąd')));
         }
 
         // ── Load stats ──
@@ -344,19 +344,19 @@ AppRegistry['packages'] = function (appDef) {
                 if (exitCode === 0) {
                     titleEl.textContent = title + t(' — zakończono ✓');
                     titleEl.style.color = '#22c55e';
-                    _taskFinish(taskId, true, title + ' — zakończono');
+                    _taskFinish(taskId, true, title + ' — ' + t('zakończono'));
                 } else {
-                    titleEl.textContent = title + ` — błąd (kod ${exitCode})`;
+                    titleEl.textContent = title + ` — ${t('błąd')} (${t('kod')} ${exitCode})`;
                     titleEl.style.color = '#ef4444';
-                    _taskFinish(taskId, false, title + ` — błąd (${exitCode})`);
+                    _taskFinish(taskId, false, title + ` — ${t('błąd')} (${exitCode})`);
                 }
             } catch (e) {
-                output.textContent += `\nBłąd: ${e.message}\n`;
+                output.textContent += `\n${t('Błąd:')} ${e.message}\n`;
                 titleEl.textContent = title + t(' — błąd');
                 titleEl.style.color = '#ef4444';
                 const taskId = _pkgTaskId('error');
-                _taskUpsert(taskId, title, e.message || 'Błąd', 100, Date.now());
-                _taskFinish(taskId, false, title + ' — błąd');
+                _taskUpsert(taskId, title, e.message || t('Błąd'), 100, Date.now());
+                _taskFinish(taskId, false, title + ' — ' + t('błąd'));
             }
 
             // Refresh stats after action
@@ -431,19 +431,19 @@ AppRegistry['packages'] = function (appDef) {
                     titleEl.textContent = actionTitle + t(' — zakończono ✓');
                     titleEl.style.color = '#22c55e';
                     toast(actionTitle + t(' zakończono'), 'success');
-                    _taskFinish(taskId, true, actionTitle + ' — zakończono');
+                    _taskFinish(taskId, true, actionTitle + ' — ' + t('zakończono'));
                 } else {
-                    titleEl.textContent = actionTitle + ` — błąd (kod ${exitCode})`;
+                    titleEl.textContent = actionTitle + ` — ${t('błąd')} (${t('kod')} ${exitCode})`;
                     titleEl.style.color = '#ef4444';
-                    _taskFinish(taskId, false, actionTitle + ` — błąd (${exitCode})`);
+                    _taskFinish(taskId, false, actionTitle + ` — ${t('błąd')} (${exitCode})`);
                 }
             } catch (e) {
-                output.textContent += `\nBłąd: ${e.message}\n`;
+                output.textContent += `\n${t('Błąd:')} ${e.message}\n`;
                 titleEl.textContent = actionTitle + t(' — błąd');
                 titleEl.style.color = '#ef4444';
                 const taskId = _pkgTaskId('error');
-                _taskUpsert(taskId, actionTitle, e.message || 'Błąd', 100, Date.now());
-                _taskFinish(taskId, false, actionTitle + ' — błąd');
+                _taskUpsert(taskId, actionTitle, e.message || t('Błąd'), 100, Date.now());
+                _taskFinish(taskId, false, actionTitle + ' — ' + t('błąd'));
             }
 
             setTimeout(() => {
@@ -486,7 +486,7 @@ AppRegistry['packages'] = function (appDef) {
                     });
                 });
             } catch (e) {
-                list.innerHTML = `<div class="pkg-empty"><i class="fas fa-exclamation-circle"></i> Błąd: ${e.message}</div>`;
+                list.innerHTML = `<div class="pkg-empty"><i class="fas fa-exclamation-circle"></i> ${t('Błąd:')} ${e.message}</div>`;
             }
         }
 
@@ -498,9 +498,9 @@ AppRegistry['packages'] = function (appDef) {
             try {
                 allInstalled = await api('/packages/installed');
                 renderInstalled(allInstalled);
-                status.textContent = `${allInstalled.length} pakietów`;
+                status.textContent = `${allInstalled.length} ${t('pakietów')}`;
             } catch (e) {
-                list.innerHTML = `<div class="pkg-empty"><i class="fas fa-exclamation-circle"></i> Błąd: ${e.message}</div>`;
+                list.innerHTML = `<div class="pkg-empty"><i class="fas fa-exclamation-circle"></i> ${t('Błąd:')} ${e.message}</div>`;
             }
         }
 
@@ -521,16 +521,16 @@ AppRegistry['packages'] = function (appDef) {
                         <span class="pkg-item-meta">${esc(p.version)} · ${formatSize(p.size)}</span>
                         <span class="pkg-item-desc">${esc(p.description || '')}</span>
                     </div>
-                    <button class="pkg-item-btn remove" data-pkg="${esc(p.name)}" title="Usuń">
+                    <button class="pkg-item-btn remove" data-pkg="${esc(p.name)}" title="${t('Usuń')}">
                         <i class="fas fa-trash"></i>
                     </button>
                 </div>
-            `).join('') + (pkgs.length > 200 ? `<div class="pkg-list-more">Wyświetlono 200 z ${pkgs.length} — użyj filtra</div>` : '');
+            `).join('') + (pkgs.length > 200 ? `<div class="pkg-list-more">${t('Wyświetlono')} 200 ${t('z')} ${pkgs.length} — ${t('użyj filtra')}</div>` : '');
 
             list.querySelectorAll('.pkg-item-btn.remove').forEach(btn => {
                 btn.addEventListener('click', async () => {
                     const pkg = btn.dataset.pkg;
-                    const ok = await confirmDialog(t('Usunąć pakiet?'), `Czy na pewno chcesz usunąć „${pkg}"?`);
+                    const ok = await confirmDialog(t('Usunąć pakiet?'), `${t('Czy na pewno chcesz usunąć')} „${pkg}"?`);
                     if (ok) runPackageAction('/packages/remove', [pkg], `Usuwanie ${pkg}`);
                 });
             });
@@ -542,8 +542,8 @@ AppRegistry['packages'] = function (appDef) {
                 : allInstalled;
             renderInstalled(filtered);
             root.querySelector('#pkg-installed-status').textContent = q
-                ? `${filtered.length} z ${allInstalled.length} pakietów`
-                : `${allInstalled.length} pakietów`;
+                ? `${filtered.length} ${t('z')} ${allInstalled.length} ${t('pakietów')}`
+                : `${allInstalled.length} ${t('pakietów')}`;
         }
 
         // ── Browse / Search tab ──
@@ -558,7 +558,7 @@ AppRegistry['packages'] = function (appDef) {
             list.innerHTML = '<div class="pkg-loading"><i class="fas fa-spinner fa-spin"></i> Szukanie…</div>';
             try {
                 const data = await api(`/packages/search?q=${encodeURIComponent(q)}`);
-                status.textContent = `${data.length} wyników`;
+                status.textContent = `${data.length} ${t('wyników')}`;
                 if (!data.length) {
                     list.innerHTML = `<div class="pkg-empty"><i class="fas fa-box-open"></i> ${t('Brak wyników')}</div>`;
                     return;
@@ -573,7 +573,7 @@ AppRegistry['packages'] = function (appDef) {
                             <span class="pkg-item-desc">${esc(p.description || '')}</span>
                         </div>
                         ${p.installed
-                            ? `<button class="pkg-item-btn remove" data-pkg="${esc(p.name)}" title="Usuń"><i class="fas fa-trash"></i></button>`
+                            ? `<button class="pkg-item-btn remove" data-pkg="${esc(p.name)}" title="${t('Usuń')}"><i class="fas fa-trash"></i></button>`
                             : `<button class="pkg-item-btn install" data-pkg="${esc(p.name)}" title="Zainstaluj"><i class="fas fa-download"></i></button>`
                         }
                     </div>
@@ -586,12 +586,12 @@ AppRegistry['packages'] = function (appDef) {
                 });
                 list.querySelectorAll('.pkg-item-btn.remove').forEach(btn => {
                     btn.addEventListener('click', async () => {
-                        const ok = await confirmDialog(t('Usunąć pakiet?'), `Czy na pewno chcesz usunąć „${btn.dataset.pkg}"?`);
+                        const ok = await confirmDialog(t('Usunąć pakiet?'), `${t('Czy na pewno chcesz usunąć')} „${btn.dataset.pkg}"?`);
                         if (ok) runPackageAction('/packages/remove', [btn.dataset.pkg], `Usuwanie ${btn.dataset.pkg}`);
                     });
                 });
             } catch (e) {
-                list.innerHTML = `<div class="pkg-empty"><i class="fas fa-exclamation-circle"></i> Błąd: ${e.message}</div>`;
+                list.innerHTML = `<div class="pkg-empty"><i class="fas fa-exclamation-circle"></i> ${t('Błąd:')} ${e.message}</div>`;
             }
         }
 

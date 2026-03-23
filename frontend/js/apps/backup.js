@@ -428,7 +428,7 @@ function renderBackupApp(body) {
                     </div>
                     <div class="bak-mt12">
                         <label class="bak-label12-block">${t('Wpisz PRZYWRÓĆ aby potwierdzić:')}</label>
-                        <input type="text" id="snap-restore-confirm-input" class="fm-input bak-input-confirm" placeholder="PRZYWRÓĆ" autocomplete="off">
+                        <input type="text" id="snap-restore-confirm-input" class="fm-input bak-input-confirm" placeholder="${t('PRZYWRÓĆ')}" autocomplete="off">
                     </div>
                 </div>
                 <div class="bak-modal-footer">
@@ -562,7 +562,7 @@ function renderBackupApp(body) {
                     <button class="fm-toolbar-btn" id="bak-preview-close"><i class="fas fa-times"></i></button>
                 </div>
                 <div class="bak-preview-body bak-scroll-body" id="bak-preview-body">
-                    <p class="bak-text-muted">Ładowanie...</p>
+                    <p class="bak-text-muted">${t('Ładowanie...')}</p>
                 </div>
                 <div class="bak-modal-footer">
                     <button class="fm-toolbar-btn btn-green" id="bak-preview-restore"><i class="fas fa-undo"></i> Przywróć tę kopię</button>
@@ -640,11 +640,11 @@ function renderBackupApp(body) {
                         </div>
                         <div class="bak-encrypt-warning" id="bak-pm-encrypt-warning">
                             <i class="fas fa-exclamation-triangle"></i>
-                            <strong>Zapamiętaj hasło!</strong> Bez niego backup jest bezużyteczny — nie ma możliwości odzyskania danych.
+                            <strong>${t('Zapamiętaj hasło!')}</strong> ${t('Bez niego backup jest bezużyteczny — nie ma możliwości odzyskania danych.')}
                         </div>
                         <div class="bak-encrypt-info hidden" id="bak-pm-key-info">
                             <i class="fas fa-info-circle"></i>
-                            Klucz zostanie wygenerowany automatycznie i zapisany (zaplanowane backupy działają). Zapamiętaj klucz — zostanie pokazany raz po zapisaniu.
+                            ${t('Klucz zostanie wygenerowany automatycznie i zapisany (zaplanowane backupy działają). Zapamiętaj klucz — zostanie pokazany raz po zapisaniu.')}
                         </div>
                     </div>
                 </div>
@@ -666,15 +666,15 @@ function renderBackupApp(body) {
             <div class="bak-scroll-body">
                 <div class="bak-encrypt-warning bak-mb12">
                     <i class="fas fa-exclamation-triangle"></i>
-                    <strong>Zapamiętaj hasło!</strong> Bez niego backup jest bezużyteczny — nie ma możliwości odzyskania danych.
+                    <strong>${t('Zapamiętaj hasło!')}</strong> ${t('Bez niego backup jest bezużyteczny — nie ma możliwości odzyskania danych.')}
                 </div>
                 <div class="storage-form-row">
                     <label>Hasło:</label>
-                    <input type="password" id="bak-passphrase-input" class="fm-input" autocomplete="new-password" placeholder="Hasło szyfrowania...">
+                    <input type="password" id="bak-passphrase-input" class="fm-input" autocomplete="new-password" placeholder="${t('Hasło szyfrowania...')}">
                 </div>
                 <div class="storage-form-row" id="bak-passphrase-confirm-row">
                     <label>Potwierdź:</label>
-                    <input type="password" id="bak-passphrase-confirm" class="fm-input" autocomplete="new-password" placeholder="Powtórz hasło...">
+                    <input type="password" id="bak-passphrase-confirm" class="fm-input" autocomplete="new-password" placeholder="${t('Powtórz hasło...')}">
                 </div>
             </div>
             <div class="bak-modal-footer bak-gap8">
@@ -693,7 +693,7 @@ function renderBackupApp(body) {
             <div class="bak-scroll-body">
                 <div class="bak-encrypt-warning bak-mb12">
                     <i class="fas fa-exclamation-triangle"></i>
-                    <strong>Zapisz ten klucz w bezpiecznym miejscu!</strong> Bez niego nie będziesz mógł przywrócić zaszyfrowanych backupów. Klucz jest pokazywany tylko raz po wygenerowaniu.
+                    <strong>${t('Zapisz ten klucz w bezpiecznym miejscu!')}</strong> ${t('Bez niego nie będziesz mógł przywrócić zaszyfrowanych backupów. Klucz jest pokazywany tylko raz po wygenerowaniu.')}
                 </div>
                 <div class="storage-form-row">
                     <label>Klucz szyfrowania:</label>
@@ -704,7 +704,7 @@ function renderBackupApp(body) {
                 </div>
             </div>
             <div class="bak-modal-footer bak-gap8">
-                <button class="fm-toolbar-btn btn-green" id="bak-genkey-ok"><i class="fas fa-check"></i> Rozumiem, zapisałem klucz</button>
+                <button class="fm-toolbar-btn btn-green" id="bak-genkey-ok"><i class="fas fa-check"></i> ${t('Rozumiem, zapisałem klucz')}</button>
             </div>
         </div>
     </div>
@@ -917,7 +917,7 @@ function renderBackupApp(body) {
                 + '<div class="bak-profile-card-actions">'
                 + '<button class="fm-toolbar-btn btn-green btn-sm" data-run-profile="' + p.id + '"><i class="fas fa-play"></i> Uruchom</button>'
                 + '<button class="fm-toolbar-btn btn-sm" data-edit-profile="' + p.id + '"><i class="fas fa-edit"></i> Edytuj</button>'
-                + (enc && enc.enabled && enc.mode === 'key' ? '<button class="fm-toolbar-btn btn-sm" data-view-key="' + p.id + '" title="Pokaż klucz szyfrowania"><i class="fas fa-key"></i></button>' : '')
+                + (enc && enc.enabled && enc.mode === 'key' ? '<button class="fm-toolbar-btn btn-sm" data-view-key="' + p.id + '" title="' + t('Pokaż klucz szyfrowania') + '"><i class="fas fa-key"></i></button>' : '')
                 + '<button class="fm-toolbar-btn btn-red btn-sm" data-del-profile="' + p.id + '"><i class="fas fa-trash"></i></button>'
                 + '</div></div>';
         }).join('');
@@ -931,7 +931,7 @@ function renderBackupApp(body) {
                 var body = {};
                 if (enc && enc.enabled && enc.mode !== 'key') {
                     // Passphrase mode: ask user; key mode: backend resolves automatically
-                    var pw = await promptPassphrase('Hasło szyfrowania backupu', true);
+                    var pw = await promptPassphrase(t('Hasło szyfrowania backupu'), true);
                     if (!pw) return;
                     body.encrypt_passphrase = pw;
                 }
@@ -1254,7 +1254,7 @@ function renderBackupApp(body) {
     function promptPassphrase(titleText, needConfirm) {
         return new Promise(function(resolve) {
             _passphraseResolve = resolve;
-            QS('#bak-passphrase-title').innerHTML = '<i class="fas fa-lock"></i> ' + (titleText || 'Hasło szyfrowania');
+            QS('#bak-passphrase-title').innerHTML = '<i class="fas fa-lock"></i> ' + (titleText || t('Hasło szyfrowania'));
             QS('#bak-passphrase-input').value = '';
             QS('#bak-passphrase-confirm').value = '';
             QS('#bak-passphrase-confirm-row').classList.toggle('hidden', !needConfirm);
@@ -1782,7 +1782,7 @@ function renderBackupApp(body) {
             if (data.encrypted) {
                 html += '<div class="bak-encrypt-warning">'
                     + '<i class="fas fa-lock"></i> <strong>Backup jest zaszyfrowany (AES-256)</strong>'
-                    + '<br>Podgląd zawartości niedostępny bez hasła. Możesz przywrócić backup — zostaniesz poproszony o hasło.'
+                    + '<br>' + t('Podgląd zawartości niedostępny bez hasła. Możesz przywrócić backup — zostaniesz poproszony o hasło.')
                     + '</div>';
                 QS('#bak-preview-body').innerHTML = html;
                 return;
@@ -1859,7 +1859,7 @@ function renderBackupApp(body) {
         // Prompt for passphrase if backup is encrypted
         var decryptPassphrase = null;
         if (filename.endsWith('.gpg')) {
-            decryptPassphrase = await promptPassphrase('Hasło odszyfrowania backupu', false);
+            decryptPassphrase = await promptPassphrase(t('Hasło odszyfrowania backupu'), false);
             if (!decryptPassphrase) return;
         }
 
@@ -1892,7 +1892,7 @@ function renderBackupApp(body) {
             return '<span class="bak-badge">Lokalnie</span>';
         }
         function opBadge(h) {
-            if (h.operation === 'restore') return ' <span class="bak-badge bak-badge-green"><i class="fas fa-undo"></i> Przywrócenie</span>';
+            if (h.operation === 'restore') return ' <span class="bak-badge bak-badge-green"><i class="fas fa-undo"></i> ' + t('Przywrócenie') + '</span>';
             return '';
         }
 

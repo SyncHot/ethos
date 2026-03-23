@@ -69,7 +69,7 @@ function _survRenderInstall(body, status) {
       <i class="fas fa-video surv-install-icon"></i>
       <h2 class="surv-install-title">Surveillance Station</h2>
       <p class="surv-install-desc">
-        System monitoringu wymaga zainstalowania dodatkowych komponentów (ffmpeg, python-onvif).
+        ${t('System monitoringu wymaga zainstalowania dodatkowych komponentów (ffmpeg, python-onvif).')}
       </p>
       <div class="surv-deps-row">
         <span class="surv-dep ${status.deps?.ffmpeg ? 'ok' : 'missing'}">
@@ -134,7 +134,7 @@ function _survRenderApp(body) {
   body.innerHTML = `
     <div class="surv-topbar">
       <div class="surv-tabs">
-        <button class="surv-tab active" data-tab="live"><i class="fas fa-tv"></i> Podgląd na żywo</button>
+        <button class="surv-tab active" data-tab="live"><i class="fas fa-tv"></i> ${t('Podgląd na żywo')}</button>
         <button class="surv-tab" data-tab="cameras"><i class="fas fa-camera"></i> Kamery</button>
         <button class="surv-tab" data-tab="recordings"><i class="fas fa-film"></i> Nagrania</button>
         <button class="surv-tab" data-tab="settings"><i class="fas fa-cog"></i> Ustawienia</button>
@@ -200,7 +200,7 @@ async function _survRenderLive(el) {
     el.innerHTML = `
       <div class="surv-empty">
         <i class="fas fa-video-slash"></i>
-        <p>Brak kamer. Dodaj kamery w zakładce <strong>Kamery</strong>.</p>
+        <p>${t('Brak kamer. Dodaj kamery w zakładce')} <strong>${t('Kamery')}</strong>.</p>
       </div>`;
     return;
   }
@@ -215,11 +215,11 @@ async function _survRenderLive(el) {
             <span class="surv-live-name"><i class="fas fa-circle surv-live-dot"></i> ${_survEsc(c.name)}</span>
             <div class="surv-live-actions">
               <button class="surv-live-btn surv-live-snap" data-cam="${c.id}" title="Zrzut ekranu"><i class="fas fa-camera"></i></button>
-              <button class="surv-live-btn surv-live-fullscreen" data-cam="${c.id}" title="Pełny ekran"><i class="fas fa-expand"></i></button>
+              <button class="surv-live-btn surv-live-fullscreen" data-cam="${c.id}" title="${t('Pełny ekran')}"><i class="fas fa-expand"></i></button>
             </div>
           </div>
           <div class="surv-live-video" id="surv-video-${c.id}">
-            <div class="surv-live-loading"><i class="fas fa-spinner fa-spin"></i> Łączenie…</div>
+            <div class="surv-live-loading"><i class="fas fa-spinner fa-spin"></i> ${t('Łączenie…')}</div>
           </div>
         </div>
       `).join('')}
@@ -299,7 +299,7 @@ async function _survStartLiveStream(cam) {
       hls.attachMedia(video);
       hls.on(Hls.Events.ERROR, (e, data) => {
         if (data.fatal) {
-          container.innerHTML = `<div class="surv-live-error"><i class="fas fa-exclamation-triangle"></i> Błąd strumienia</div>`;
+          container.innerHTML = `<div class="surv-live-error"><i class="fas fa-exclamation-triangle"></i> ${t('Błąd strumienia')}</div>`;
         }
       });
       SURV.hlsPlayers[cam.id] = hls;
@@ -347,7 +347,7 @@ async function _survRenderCameras(el) {
 
   el.innerHTML = `
     <div class="surv-cameras-toolbar">
-      <button class="btn btn-primary" id="surv-add-cam"><i class="fas fa-plus"></i> Dodaj kamerę</button>
+      <button class="btn btn-primary" id="surv-add-cam"><i class="fas fa-plus"></i> ${t('Dodaj kamerę')}</button>
       <button class="btn" id="surv-discover"><i class="fas fa-search"></i> Wyszukaj kamery w sieci</button>
     </div>
     <div class="surv-cameras-list" id="surv-cameras-list">
@@ -376,9 +376,9 @@ async function _survRenderCameras(el) {
           </div>
           <div class="surv-cam-actions">
             ${c.last_error || !c.streaming ? '<button class="surv-cam-btn" data-action="diagnose" data-cam="' + c.id + '" title="Diagnostyka"><i class="fas fa-stethoscope"></i></button>' : ''}
-            ${c.retries >= 10 ? '<button class="surv-cam-btn" data-action="retry" data-cam="' + c.id + '" title="Ponów próby"><i class="fas fa-redo"></i></button>' : ''}
+            ${c.retries >= 10 ? '<button class="surv-cam-btn" data-action="retry" data-cam="' + c.id + '" title="' + t('Ponów próby') + '"><i class="fas fa-redo"></i></button>' : ''}
             <button class="surv-cam-btn" data-action="edit" data-cam="${c.id}" title="Edytuj"><i class="fas fa-edit"></i></button>
-            <button class="surv-cam-btn danger" data-action="delete" data-cam="${c.id}" title="Usuń"><i class="fas fa-trash"></i></button>
+            <button class="surv-cam-btn danger" data-action="delete" data-cam="${c.id}" title="${t('Usuń')}"><i class="fas fa-trash"></i></button>
           </div>
         </div>
       `).join('')}
@@ -400,7 +400,7 @@ async function _survRenderCameras(el) {
       if (btn.dataset.action === 'edit' && cam) {
         _survShowCameraDialog(cam);
       } else if (btn.dataset.action === 'delete') {
-        if (!confirm(`Usunąć kamerę "${cam?.name || camId}"?`)) return;
+        if (!confirm(`${t('Usunąć kamerę')} "${cam?.name || camId}"?`)) return;
         try {
           await api(`/surveillance/cameras/${camId}`, { method: 'DELETE' });
           toast(t('Kamera usunięta'), 'success');
@@ -434,7 +434,7 @@ async function _survShowCameraDialog(existing = null) {
           <label class="modal-label surv-label-mt">URL strumienia RTSP</label>
           <input class="modal-input" id="surv-cam-url" value="${_survEsc(existing?.url || '')}" placeholder="rtsp://192.168.1.100:554/stream">
 
-          <label class="modal-label surv-label-mt">URL podstrumienia (opcjonalny, do podglądu)</label>
+          <label class="modal-label surv-label-mt">${t('URL podstrumienia (opcjonalny, do podglądu)')}</label>
           <input class="modal-input" id="surv-cam-suburl" value="${_survEsc(existing?.substream_url || '')}" placeholder="rtsp://...">
 
           <div class="surv-section-divider">
@@ -468,7 +468,7 @@ async function _survShowCameraDialog(existing = null) {
             <label class="modal-label surv-label-mb-sm">Tryb nagrywania</label>
             <div class="surv-rec-mode-selector">
               <button type="button" class="surv-rec-mode-btn ${(existing?.recording_mode || 'continuous') === 'continuous' ? 'active' : ''}" data-mode="continuous">
-                <i class="fas fa-video"></i> Ciągłe
+                <i class="fas fa-video"></i> ${t('Ciągłe')}
               </button>
               <button type="button" class="surv-rec-mode-btn ${(existing?.recording_mode || 'continuous') === 'events' ? 'active' : ''}" data-mode="events">
                 <i class="fas fa-bolt"></i> Zdarzenia
@@ -605,7 +605,7 @@ async function _survDiscoverCameras(parentEl) {
           if (r.cameras?.length) {
             results.innerHTML = `
               <div class="surv-discovery-pad">
-                <h4 class="surv-discovery-heading"><i class="fas fa-search"></i> Znaleziono ${r.cameras.length} kamer(ę/y)</h4>
+                <h4 class="surv-discovery-heading"><i class="fas fa-search"></i> ${t('Znaleziono')} ${r.cameras.length} ${t('kamer(ę/y)')}</h4>
                 ${r.cameras.map(c => `
                   <div class="surv-discover-item">
                     <div>
@@ -704,7 +704,7 @@ async function _survRenderRecordings(el) {
 }
 
 function _survRenderRecordingsList(files) {
-  if (!files.length) return '<div class="surv-empty-msg">Brak nagrań dla wybranego dnia.</div>';
+  if (!files.length) return `<div class="surv-empty-msg">${t('Brak nagrań dla wybranego dnia.')}</div>`;
   return files.map(f => `
     <div class="surv-rec-item">
       <div class="surv-rec-item-info">
@@ -718,9 +718,9 @@ function _survRenderRecordingsList(files) {
         </div>
       </div>
       <div class="surv-rec-item-actions">
-        <button class="surv-cam-btn" data-action="play" data-path="${_survEsc(f.path)}" title="Odtwórz"><i class="fas fa-play"></i></button>
+        <button class="surv-cam-btn" data-action="play" data-path="${_survEsc(f.path)}" title="${t('Odtwórz')}"><i class="fas fa-play"></i></button>
         <button class="surv-cam-btn" data-action="download" data-path="${_survEsc(f.path)}" data-name="${_survEsc(f.filename)}" title="Pobierz"><i class="fas fa-download"></i></button>
-        <button class="surv-cam-btn danger" data-action="delete-rec" data-path="${_survEsc(f.path)}" title="Usuń"><i class="fas fa-trash"></i></button>
+        <button class="surv-cam-btn danger" data-action="delete-rec" data-path="${_survEsc(f.path)}" title="${t('Usuń')}"><i class="fas fa-trash"></i></button>
       </div>
     </div>
   `).join('');
@@ -781,11 +781,11 @@ function _survPlayRecording(path) {
       </div>
       <div class="surv-player-controls">
         <div class="surv-player-controls-left">
-          <button class="surv-player-btn" data-act="play" title="Odtwórz / Pauza"><i class="fas fa-play"></i></button>
+          <button class="surv-player-btn" data-act="play" title="${t('Odtwórz / Pauza')}"><i class="fas fa-play"></i></button>
           <button class="surv-player-btn" data-act="frame-back" title="Klatka wstecz"><i class="fas fa-step-backward"></i></button>
           <button class="surv-player-btn" data-act="skip-back" title="-10s"><i class="fas fa-undo"></i> <span class="surv-skip-label">10</span></button>
           <button class="surv-player-btn" data-act="skip-fwd" title="+10s"><i class="fas fa-redo"></i> <span class="surv-skip-label">10</span></button>
-          <button class="surv-player-btn" data-act="frame-fwd" title="Klatka naprzód"><i class="fas fa-step-forward"></i></button>
+          <button class="surv-player-btn" data-act="frame-fwd" title="${t('Klatka naprzód')}"><i class="fas fa-step-forward"></i></button>
           <div class="surv-player-time"><span class="surv-player-cur">0:00</span> / <span class="surv-player-dur">0:00</span></div>
         </div>
         <div class="surv-player-controls-right">
@@ -793,10 +793,10 @@ function _survPlayRecording(path) {
             <button class="surv-player-btn" data-act="mute" title="Wycisz"><i class="fas fa-volume-up"></i></button>
             <input type="range" class="surv-player-vol" min="0" max="1" step="0.05" value="1">
           </div>
-          <button class="surv-player-btn surv-player-speed-btn" data-act="speed" title="Prędkość">1x</button>
+          <button class="surv-player-btn surv-player-speed-btn" data-act="speed" title="${t('Prędkość')}">1x</button>
           <button class="surv-player-btn" data-act="pip" title="Obraz w obrazie"><i class="fas fa-external-link-square-alt"></i></button>
           <button class="surv-player-btn" data-act="download" title="Pobierz"><i class="fas fa-download"></i></button>
-          <button class="surv-player-btn" data-act="fullscreen" title="Pełny ekran"><i class="fas fa-expand"></i></button>
+          <button class="surv-player-btn" data-act="fullscreen" title="${t('Pełny ekran')}"><i class="fas fa-expand"></i></button>
         </div>
       </div>
     </div>
@@ -1030,16 +1030,16 @@ async function _survRenderSettings(el) {
         </div>
         <div class="surv-settings-row">
           <label>Tryb nagrywania</label>
-          <span class="surv-text-sm-muted"><i class="fas fa-info-circle"></i> Tryb (ciągłe / zdarzenia) ustawiany jest indywidualnie per kamera w edycji kamery.</span>
+          <span class="surv-text-sm-muted"><i class="fas fa-info-circle"></i> ${t('Tryb (ciągłe / zdarzenia) ustawiany jest indywidualnie per kamera w edycji kamery.')}</span>
         </div>
         <div class="surv-settings-row">
-          <label>Długość segmentu — ciągłe (minuty)</label>
+          <label>${t('Długość segmentu — ciągłe (minuty)')}</label>
           <input class="modal-input" type="number" id="surv-seg-min" value="${s.segment_minutes || 15}" min="1" max="120" style="width:100px;">
         </div>
         <div>
-          <p class="surv-event-info"><i class="fas fa-bolt surv-text-warning"></i> Domyślne parametry nagrywania zdarzeniowego (dla kamer w trybie "Zdarzenia"):</p>
+          <p class="surv-event-info"><i class="fas fa-bolt surv-text-warning"></i> ${t('Domyślne parametry nagrywania zdarzeniowego (dla kamer w trybie "Zdarzenia"):')}</p>
           <div class="surv-settings-row">
-            <label>Czułość detekcji ruchu</label>
+            <label>${t('Czułość detekcji ruchu')}</label>
             <div class="surv-flex-center">
               <input type="range" id="surv-evt-sensitivity" min="10" max="95" value="${s.motion_sensitivity || 50}" style="width:140px;">
               <span class="surv-sens-value" id="surv-evt-sensitivity-val">${s.motion_sensitivity || 50}%</span>
@@ -1054,16 +1054,16 @@ async function _survRenderSettings(el) {
             <input class="modal-input" type="number" id="surv-evt-pre" value="${s.event_pre_seconds || 5}" min="0" max="30" style="width:100px;">
           </div>
           <div class="surv-settings-row">
-            <label>Cooldown między zdarzeniami (sekundy)</label>
+            <label>${t('Cooldown między zdarzeniami (sekundy)')}</label>
             <input class="modal-input" type="number" id="surv-evt-cooldown" value="${s.event_cooldown || 10}" min="1" max="120" style="width:100px;">
           </div>
         </div>
         <div class="surv-settings-row">
-          <label>Retencja nagrań (dni)</label>
+          <label>${t('Retencja nagrań (dni)')}</label>
           <input class="modal-input" type="number" id="surv-ret-days" value="${s.retention_days || 30}" min="1" max="365" style="width:100px;">
         </div>
         <div class="surv-settings-row">
-          <label>Ścieżka nagrań</label>
+          <label>${t('Ścieżka nagrań')}</label>
           <input class="modal-input surv-input-flex" id="surv-rec-path" value="${_survEsc(s.recordings_path || '')}">
         </div>
       </div>
@@ -1071,17 +1071,17 @@ async function _survRenderSettings(el) {
       <div class="surv-settings-group surv-mt-lg">
         <h4><i class="fas fa-search-location surv-text-purple"></i> Automatyczne wyszukiwanie kamer</h4>
         <div class="surv-settings-row">
-          <label>Włącz automatyczne skanowanie sieci</label>
+          <label>${t('Włącz automatyczne skanowanie sieci')}</label>
           <label class="surv-toggle">
             <input type="checkbox" id="surv-auto-disc" ${s.auto_discovery ? 'checked' : ''}>
             <span class="surv-toggle-slider"></span>
           </label>
         </div>
         <div class="surv-settings-row">
-          <label>Interwał skanowania (sekundy)</label>
+          <label>${t('Interwał skanowania (sekundy)')}</label>
           <input class="modal-input" type="number" id="surv-disc-interval" value="${s.auto_discovery_interval || 300}" min="60" max="3600" style="width:100px;">
         </div>
-        <p class="surv-info-note"><i class="fas fa-info-circle"></i> System automatycznie skanuje sieć LAN (ONVIF + porty RTSP) i powiadomi o nowych kamerach.</p>
+        <p class="surv-info-note"><i class="fas fa-info-circle"></i> ${t('System automatycznie skanuje sieć LAN (ONVIF + porty RTSP) i powiadomi o nowych kamerach.')}</p>
       </div>
 
       <div class="surv-mt-xl">
@@ -1195,7 +1195,7 @@ async function _survDiagnoseCamera(camId, camName) {
       if (check.info) {
         html += '<div class="surv-diag-info">';
         html += check.info.codec ? ('Kodek: ' + check.info.codec) : '';
-        html += check.info.width ? (' | Rozdzielczość: ' + check.info.width + '×' + check.info.height) : '';
+        html += check.info.width ? (' | ' + t('Rozdzielczość:') + ' ' + check.info.width + '×' + check.info.height) : '';
         html += '</div>';
       }
       html += '</div>';
@@ -1210,7 +1210,7 @@ async function _survDiagnoseCamera(camId, camName) {
     content.innerHTML = html;
   } catch (e) {
     const content = overlay.querySelector('#surv-diag-content');
-    if (content) content.innerHTML = '<div class="surv-text-danger"><i class="fas fa-exclamation-triangle"></i> Błąd diagnostyki: ' + _survEsc(e.message || 'Nieznany błąd') + '</div>';
+    if (content) content.innerHTML = '<div class="surv-text-danger"><i class="fas fa-exclamation-triangle"></i> ' + t('Błąd diagnostyki:') + ' ' + _survEsc(e.message || t('Nieznany błąd')) + '</div>';
   }
 }
 

@@ -32,7 +32,7 @@ function renderResourcesApp(body) {
     <div class="res-app">
         <div class="res-sidebar">
             ${sections.map((s,i) => `<div class="res-nav ${i===0?'active':''}" data-section="${s}">${sectionLabels[s]}</div>`).join('')}
-            <div class="res-nav-footer" id="res-conn"><i class="fas fa-circle res-conn-dot"></i> Łączenie...</div>
+            <div class="res-nav-footer" id="res-conn"><i class="fas fa-circle res-conn-dot"></i> ${t('Łączenie...')}</div>
         </div>
         <div class="res-main">
             ${sections.map((s,i) => `<div class="res-section ${i===0?'active':''}" id="res-sec-${s}"></div>`).join('')}
@@ -153,7 +153,7 @@ function renderResourcesApp(body) {
                 </div>
             </div>
             <div class="res-card">
-                <div class="res-card-hdr"><i class="fas fa-network-wired"></i> Sieć</div>
+                <div class="res-card-hdr"><i class="fas fa-network-wired"></i> ${t('Sieć')}</div>
                 <div class="res-net-speeds">
                     <div><i class="fas fa-arrow-down res-net-dl-icon"></i> ${fmtSpeed(net.speed_download)}</div>
                     <div><i class="fas fa-arrow-up res-net-ul-icon"></i> ${fmtSpeed(net.speed_upload)}</div>
@@ -202,13 +202,13 @@ function renderResourcesApp(body) {
         el.innerHTML = `
         <h3><i class="fas fa-microchip"></i> Procesor: ${cpu.brand || '—'}</h3>
         <div class="res-info-bar">
-            <span>Rdzenie: ${cpu.cores || '—'} (${cpu.threads || '—'} wątków)</span>
-            <span>Częstotliwość: ${cpu.freq_current ? (cpu.freq_current/1000).toFixed(2)+' GHz' : '—'}</span>
+            <span>${t('Rdzenie:')} ${cpu.cores || '—'} (${cpu.threads || '—'} ${t('wątków')})</span>
+            <span>${t('Częstotliwość:')} ${cpu.freq_current ? (cpu.freq_current/1000).toFixed(2)+' GHz' : '—'}</span>
             <span>Temperatura: ${cpu.temperature != null ? cpu.temperature+'°C' : '—'}</span>
             <span>Użycie: ${pct(cpu.total_percent)}</span>
         </div>
         <div class="res-card res-mt-md">
-            <div class="res-card-hdr">Użycie per rdzeń</div>
+            <div class="res-card-hdr">${t('Użycie per rdzeń')}</div>
             <div class="res-core-grid">${perCore.map((v,i) => `
                 <div class="res-core-item">
                     <span>Core ${i}</span>
@@ -218,7 +218,7 @@ function renderResourcesApp(body) {
         </div>
         <div class="res-card res-mt-md">
             <div class="res-card-hdr">CPU Top procesy</div>
-            <table class="res-proc-table"><thead><tr><th>PID</th><th>Nazwa</th><th>CPU %</th><th>RAM</th><th>Status</th><th>Użytkownik</th></tr></thead>
+            <table class="res-proc-table"><thead><tr><th>PID</th><th>Nazwa</th><th>CPU %</th><th>RAM</th><th>Status</th><th>${t('Użytkownik')}</th></tr></thead>
             <tbody>${(data.processes||[]).sort((a,b)=>(b.cpu_percent||0)-(a.cpu_percent||0)).slice(0,10).map(p => `
                 <tr><td>${p.pid}</td><td>${p.name}</td><td>${pct(p.cpu_percent)}</td><td>${fmt(p.memory_rss)}</td><td>${p.status||''}</td><td>${p.username||''}</td></tr>
             `).join('')}</tbody></table>
@@ -228,11 +228,11 @@ function renderResourcesApp(body) {
     function renderRAM(el, data) {
         const ram = data.ram || {};
         el.innerHTML = `
-        <h3><i class="fas fa-memory"></i> Pamięć RAM</h3>
+        <h3><i class="fas fa-memory"></i> ${t('Pamięć RAM')}</h3>
         <div class="res-info-bar">
-            <span>Całkowita: ${fmt(ram.total)}</span>
-            <span>Użyta: ${fmt(ram.used)} (${pct(ram.percent)})</span>
-            <span>Dostępna: ${fmt(ram.available)}</span>
+            <span>${t('Całkowita:')} ${fmt(ram.total)}</span>
+            <span>${t('Użyta:')} ${fmt(ram.used)} (${pct(ram.percent)})</span>
+            <span>${t('Dostępna:')} ${fmt(ram.available)}</span>
             <span>Cache: ${fmt(ram.cached)}</span>
             <span>Swap: ${fmt(ram.swap_used)} / ${fmt(ram.swap_total)}</span>
         </div>
@@ -260,7 +260,7 @@ function renderResourcesApp(body) {
                 el.innerHTML = `<div class="res-empty">
                     <i class="fas fa-tv res-empty-icon"></i>
                     <p class="res-empty-title">Brak wykrytego GPU</p>
-                    <p class="res-empty-detect">Wykrywanie sprzętu…</p>
+                    <p class="res-empty-detect">${t('Wykrywanie sprzętu…')}</p>
                 </div>`;
                 fetch('/api/resources/gpu/detect', {headers:{'Authorization':'Bearer '+NAS.token}}).then(r => r.json()).then(hw => {
                     el._gpuDetected = hw;
@@ -279,7 +279,7 @@ function renderResourcesApp(body) {
             <div class="res-card-hdr"><i class="fas fa-tv"></i> ${g.name || 'GPU'}</div>
             <div class="res-grid-2">
                 <div>
-                    <span>Obciążenie:</span>
+                    <span>${t('Obciążenie:')}</span>
                     ${bar(g.load, '#f59e0b')}
                     <span class="res-big-val">${pct(g.load)}</span>
                 </div>
@@ -483,7 +483,7 @@ function renderResourcesApp(body) {
         const ext = disks.filter(d => diskCat(d) === 'ext');
         const usb = disks.filter(d => diskCat(d) === 'usb');
 
-        el.innerHTML = `<h3><i class="fas fa-hdd"></i> Dyski i pamięć masowa</h3>` +
+        el.innerHTML = `<h3><i class="fas fa-hdd"></i> ${t('Dyski i pamięć masowa')}</h3>` +
             renderGroup('Dyski systemowe', 'fa-server', sys) +
             renderGroup(t('Dyski zewnętrzne'), 'fa-hdd', ext) +
             renderGroup('Dyski USB', 'fa-usb', usb) +
@@ -497,12 +497,12 @@ function renderResourcesApp(body) {
             el.innerHTML = `<div class="res-empty">
                 <i class="fas fa-heartbeat res-empty-icon"></i>
                 <p class="res-empty-title">Brak danych S.M.A.R.T.</p>
-                <p class="res-empty-desc">Może być wymagana konfiguracja smartmontools lub brak obsługiwanych dysków.</p>
+                <p class="res-empty-desc">${t('Może być wymagana konfiguracja smartmontools lub brak obsługiwanych dysków.')}</p>
             </div>`;
             return;
         }
 
-        el.innerHTML = `<h3><i class="fas fa-heartbeat"></i> Zdrowie dysków (S.M.A.R.T.)</h3>` + smart.map(d => {
+        el.innerHTML = `<h3><i class="fas fa-heartbeat"></i> ${t('Zdrowie dysków (S.M.A.R.T.)')}</h3>` + smart.map(d => {
             const healthColor = d.health === 'PASS' ? '#10b981' : '#ef4444';
             const healthIcon = d.health === 'PASS' ? 'fa-check-circle' : 'fa-exclamation-triangle';
             const tempColor = (d.temperature > 50) ? '#ef4444' : (d.temperature > 45 ? '#eab308' : '#fff');
@@ -532,7 +532,7 @@ function renderResourcesApp(body) {
                         <span class="res-val">${d.power_on_hours} h</span>
                     </div>
                     <div class="res-kv-row">
-                        <span class="res-label">Żywotność (SSD):</span>
+                        <span class="res-label">${t('Żywotność (SSD):')}</span>
                         <span class="res-val">${d.remaining_life >= 0 ? pct(d.remaining_life) : '—'}</span>
                     </div>
                 </div>
@@ -561,17 +561,17 @@ function renderResourcesApp(body) {
         const net = data.network || {};
         const ifaces = net.interfaces || [];
         el.innerHTML = `
-        <h3><i class="fas fa-network-wired"></i> Sieć</h3>
+        <h3><i class="fas fa-network-wired"></i> ${t('Sieć')}</h3>
         <div class="res-grid-2">
             <div class="res-card">
                 <div class="res-card-hdr"><i class="fas fa-arrow-down res-net-dl-icon"></i> Download</div>
                 <div class="res-big-val">${fmtSpeed(net.speed_download)}</div>
-                <span class="res-text-muted">Łącznie: ${fmt(net.bytes_recv)}</span>
+                <span class="res-text-muted">${t('Łącznie:')} ${fmt(net.bytes_recv)}</span>
             </div>
             <div class="res-card">
                 <div class="res-card-hdr"><i class="fas fa-arrow-up res-net-ul-icon"></i> Upload</div>
                 <div class="res-big-val">${fmtSpeed(net.speed_upload)}</div>
-                <span class="res-text-muted">Łącznie: ${fmt(net.bytes_sent)}</span>
+                <span class="res-text-muted">${t('Łącznie:')} ${fmt(net.bytes_sent)}</span>
             </div>
         </div>
         ${ifaces.length ? `
@@ -601,7 +601,7 @@ function renderResourcesApp(body) {
         </div>
         <div class="res-card res-proc-card">
             <table class="res-proc-table"><thead><tr>
-                <th>PID</th><th>Nazwa</th><th>CPU %</th><th>RAM %</th><th>RAM</th><th>Status</th><th>Użytkownik</th><th>Akcja</th>
+                <th>PID</th><th>Nazwa</th><th>CPU %</th><th>RAM %</th><th>RAM</th><th>Status</th><th>${t('Użytkownik')}</th><th>Akcja</th>
             </tr></thead>
             <tbody>${filtered.slice(0, 100).map(p => `
                 <tr><td>${p.pid}</td><td title="${p.cmdline||''}">${p.name}</td><td>${pct(p.cpu_percent)}</td>
@@ -618,7 +618,7 @@ function renderResourcesApp(body) {
 
         el.querySelectorAll('button[data-kill]').forEach(btn => {
             btn.onclick = async () => {
-                if (!confirm(`Zakończyć proces ${btn.dataset.name} (PID: ${btn.dataset.kill})?`)) return;
+                if (!confirm(t('Zakończyć proces') + ` ${btn.dataset.name} (PID: ${btn.dataset.kill})?`)) return;
                 try {
                     await api(`/resources/kill/${btn.dataset.kill}`, {method:'POST'});
                     toast(t('Proces zakończony'), 'success');
@@ -636,7 +636,7 @@ function renderResourcesApp(body) {
             '01': 'fa-music', '06': 'fa-camera',
         };
 
-        el.innerHTML = `<h3><i class="fas fa-usb"></i> Urządzenia USB (${devices.length})</h3>` +
+        el.innerHTML = `<h3><i class="fas fa-usb"></i> ${t('Urządzenia USB')} (${devices.length})</h3>` +
             (devices.length ? devices.map(d => {
                 const icon = classIcons[d.device_class] || 'fa-usb';
                 const name = d.product || t('Nieznane urządzenie');

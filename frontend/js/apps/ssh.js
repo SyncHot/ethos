@@ -119,7 +119,7 @@ function _sshInit(body) {
             </div>
 
             <div class="ssh-form">
-                <div class="ssh-form-title"><i class="fas fa-plus-circle" style="color:#22c55e"></i> Wygeneruj nową parę kluczy</div>
+                <div class="ssh-form-title"><i class="fas fa-plus-circle" style="color:#22c55e"></i> ${t('Wygeneruj nową parę kluczy')}</div>
                 <div class="ssh-form-row">
                     <label>Nazwa klucza</label>
                     <input type="text" id="ssh-gen-name" placeholder="np. moj_nas" maxlength="64">
@@ -191,11 +191,11 @@ function _sshInit(body) {
                     <div class="ssh-card-meta" style="font-family:monospace;font-size:10px;max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(k.public_key)}">${esc(short)}</div>
                 </div>
                 <div class="ssh-card-actions">
-                    <button class="ssh-btn sm" data-view="${esc(k.name)}" title="Pokaż klucz publiczny"><i class="fas fa-eye"></i></button>
+                    <button class="ssh-btn sm" data-view="${esc(k.name)}" title="${t('Pokaż klucz publiczny')}"><i class="fas fa-eye"></i></button>
                     <button class="ssh-btn sm" data-copy="${esc(k.name)}" title="Kopiuj klucz publiczny"><i class="fas fa-copy"></i></button>
-                    <button class="ssh-btn sm success" data-deploy="${esc(k.name)}" title="Wdróż na serwer"><i class="fas fa-upload"></i> Wdróż</button>
-                    <button class="ssh-btn sm" data-test="${esc(k.name)}" title="Testuj połączenie" style="background:#e67e22;color:#fff;"><i class="fas fa-plug"></i></button>
-                    <button class="ssh-btn sm danger" data-del="${esc(k.name)}" title="Usuń klucz"><i class="fas fa-trash"></i></button>
+                    <button class="ssh-btn sm success" data-deploy="${esc(k.name)}" title="${t('Wdróż na serwer')}"><i class="fas fa-upload"></i> ${t('Wdróż')}</button>
+                    <button class="ssh-btn sm" data-test="${esc(k.name)}" title="${t('Testuj połączenie')}" style="background:#e67e22;color:#fff;"><i class="fas fa-plug"></i></button>
+                    <button class="ssh-btn sm danger" data-del="${esc(k.name)}" title="${t('Usuń klucz')}"><i class="fas fa-trash"></i></button>
                 </div>
             </div>`;
         }).join('');
@@ -221,7 +221,7 @@ function _sshInit(body) {
         overlay.innerHTML = `
             <div class="ssh-modal">
                 <div class="ssh-modal-header"><i class="fas fa-key" style="color:#6366f1"></i> Klucz publiczny — ${esc(name)}</div>
-                <p style="font-size:12px;color:var(--text-muted);margin:0 0 12px;">Skopiuj ten klucz i wklej do <code>~/.ssh/authorized_keys</code> na zdalnym serwerze, lub użyj "Wdróż".</p>
+                <p style="font-size:12px;color:var(--text-muted);margin:0 0 12px;">${t('Skopiuj ten klucz i wklej do')} <code>~/.ssh/authorized_keys</code> ${t('na zdalnym serwerze, lub użyj "Wdróż".')}</p>
                 <textarea readonly style="width:100%;height:120px;font-family:monospace;font-size:11px;background:var(--bg-input,#0f172a);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:10px;resize:vertical;">${esc(k.public_key)}</textarea>
                 <div class="ssh-modal-footer">
                     <button class="ssh-btn primary" id="ssh-view-copy"><i class="fas fa-copy"></i> Kopiuj</button>
@@ -234,7 +234,7 @@ function _sshInit(body) {
             const ta = overlay.querySelector('textarea');
             ta.select(); document.execCommand('copy');
             navigator.clipboard?.writeText(ta.value).catch(() => {});
-            toast('Klucz skopiowany', 'success');
+            toast(t('Klucz skopiowany'), 'success');
         };
         overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
     }
@@ -244,7 +244,7 @@ function _sshInit(body) {
             const r = await api(API + '/keys/' + encodeURIComponent(name) + '/public');
             if (r.public_key) {
                 await navigator.clipboard.writeText(r.public_key);
-                toast('Klucz publiczny skopiowany', 'success');
+                toast(t('Klucz publiczny skopiowany'), 'success');
             }
         } catch (e) { toast(t('Błąd: ') + (e.message || e), 'error'); }
     }
@@ -259,26 +259,26 @@ function _sshInit(body) {
         overlay.className = 'ssh-overlay';
         overlay.innerHTML = `
             <div class="ssh-modal">
-                <div class="ssh-modal-header"><i class="fas fa-upload" style="color:#22c55e"></i> Wdróż klucz SSH</div>
+                <div class="ssh-modal-header"><i class="fas fa-upload" style="color:#22c55e"></i> ${t('Wdróż klucz SSH')}</div>
                 <p style="font-size:12px;color:var(--text-muted);margin:0 0 14px;">
-                    Klucz publiczny <b>"${esc(keyName)}"</b> zostanie dodany do authorized_keys na serwerze docelowym.
+                    ${t('Klucz publiczny')} <b>"${esc(keyName)}"</b> ${t('zostanie dodany do authorized_keys na serwerze docelowym.')}
                 </p>
                 ${hasServers ? `
                 <div class="ssh-form-row">
                     <label>Wybierz serwer</label>
                     <select id="ssh-deploy-srv">
-                        <option value="">— ręcznie —</option>
+                        <option value="">— ${t('ręcznie')} —</option>
                         ${servers.map(s => `<option value="${esc(s.id)}">${esc(s.name || s.host)}</option>`).join('')}
                     </select>
                 </div>` : ''}
                 <div class="ssh-form-row"><label>Host</label><input type="text" id="ssh-deploy-host" placeholder="192.168.x.x"></div>
                 <div class="ssh-form-row"><label>Port</label><input type="number" id="ssh-deploy-port" value="22" min="1" max="65535"></div>
-                <div class="ssh-form-row"><label>Użytkownik</label><input type="text" id="ssh-deploy-user" placeholder="root"></div>
-                <div class="ssh-form-row"><label>Hasło (jednorazowo)</label><input type="password" id="ssh-deploy-pw"></div>
-                <div class="ssh-hint"><i class="fas fa-info-circle"></i> Hasło jest potrzebne tylko do wdrożenia klucza. Po tym logowanie będzie bezhasłowe.</div>
+                <div class="ssh-form-row"><label>${t('Użytkownik')}</label><input type="text" id="ssh-deploy-user" placeholder="root"></div>
+                <div class="ssh-form-row"><label>${t('Hasło (jednorazowo)')}</label><input type="password" id="ssh-deploy-pw"></div>
+                <div class="ssh-hint"><i class="fas fa-info-circle"></i> ${t('Hasło jest potrzebne tylko do wdrożenia klucza. Po tym logowanie będzie bezhasłowe.')}</div>
                 <div class="ssh-modal-footer">
                     <button class="ssh-btn" id="ssh-deploy-cancel">Anuluj</button>
-                    <button class="ssh-btn success" id="ssh-deploy-go"><i class="fas fa-upload"></i> Wdróż</button>
+                    <button class="ssh-btn success" id="ssh-deploy-go"><i class="fas fa-upload"></i> ${t('Wdróż')}</button>
                 </div>
             </div>`;
         document.body.appendChild(overlay);
@@ -339,7 +339,7 @@ function _sshInit(body) {
     }
 
     async function _deleteKey(name) {
-        if (!confirm(`Usunąć parę kluczy "${name}"?\nSerwery, na których wdrożono klucz publiczny, nadal będą go miały.`)) return;
+        if (!confirm(t('Usunąć parę kluczy') + ' "' + name + '"?\n' + t('Serwery, na których wdrożono klucz publiczny, nadal będą go miały.'))) return;
         try {
             await api(API + '/keys/' + encodeURIComponent(name), { method: 'DELETE' });
             toast(t('Klucz usunięty'), 'success');
@@ -369,7 +369,7 @@ function _sshInit(body) {
                 <h2><i class="fas fa-shield-alt" style="color:#06b6d4"></i> Zaufane hosty <span style="font-size:12px;font-weight:400;color:var(--text-muted)">(known_hosts)</span></h2>
             </div>
             <p style="font-size:12px;color:var(--text-muted);margin:-12px 0 18px;line-height:1.6;">
-                Lista hostów, do których ten NAS się łączył przez SSH. Usunięcie wpisu „odcina" zaufanie — przy następnym połączeniu zostaniesz poproszony o potwierdzenie tożsamości hosta.
+                ${t('Lista hostów, do których ten NAS się łączył przez SSH. Usunięcie wpisu „odcina" zaufanie — przy następnym połączeniu zostaniesz poproszony o potwierdzenie tożsamości hosta.')}
                 ${khPath ? `<br><i class="fas fa-user" style="font-size:10px;"></i> <b>${esc(khUser)}</b> — <span style="font-family:monospace;font-size:11px;">${esc(khPath)}</span>` : ''}
             </p>
             <div id="ssh-hosts-list">
@@ -391,8 +391,8 @@ function _sshInit(body) {
                             </div>
                         </div>
                         ${e.host && e.host !== '(zaszyfrowany)'
-                            ? `<button class="ssh-btn sm danger" data-rm-host="${esc(e.host)}" title="Usuń zaufanie"><i class="fas fa-unlink"></i> Odetnij</button>`
-                            : `<button class="ssh-btn sm danger" data-rm-line="${e.line}" title="Usuń wpis"><i class="fas fa-trash"></i></button>`
+                            ? `<button class="ssh-btn sm danger" data-rm-host="${esc(e.host)}" title="${t('Usuń zaufanie')}"><i class="fas fa-unlink"></i> ${t('Odetnij')}</button>`
+                            : `<button class="ssh-btn sm danger" data-rm-line="${e.line}" title="${t('Usuń wpis')}"><i class="fas fa-trash"></i></button>`
                         }
                     </div>
                 `).join('')}
@@ -404,7 +404,7 @@ function _sshInit(body) {
             if (!btn) return;
 
             if (btn.dataset.rmHost) {
-                if (!confirm(`Usunąć zaufanie do hosta "${btn.dataset.rmHost}"?`)) return;
+                if (!confirm(t('Usunąć zaufanie do hosta') + ' "' + btn.dataset.rmHost + '"?')) return;
                 btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
                 try {
                     const r = await api(API + '/known-hosts/remove', { method: 'POST', body: { host: btn.dataset.rmHost } });

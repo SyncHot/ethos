@@ -108,7 +108,7 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
                     <div class="mv-container">
                         <div class="mv-content"><img class="mv-media mv-img" src="${src}" alt="${file.name}" draggable="false"></div>
                         <div class="mv-overlay mv-nav-left" title="Poprzedni"><i class="fas fa-chevron-left"></i></div>
-                        <div class="mv-overlay mv-nav-right" title="Następny"><i class="fas fa-chevron-right"></i></div>
+                        <div class="mv-overlay mv-nav-right" title="${t('Następny')}"><i class="fas fa-chevron-right"></i></div>
                         <div class="mv-topbar">
                             ${groupBadge}<span class="mv-counter">${currentIdx + 1} / ${mediaFiles.length}</span>
                             <span class="mv-filename">${file.name}</span>
@@ -118,9 +118,9 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
                             </div>
                         </div>
                         <div class="mv-bottombar">
-                            <button class="mv-nav-btn" id="mv-prev" ${currentIdx <= 0 ? 'disabled' : ''}><i class="fas fa-arrow-left"></i> Poprzedni</button>
+                            <button class="mv-nav-btn" id="mv-prev" ${currentIdx <= 0 ? 'disabled' : ''}><i class="fas fa-arrow-left"></i> ${t('Poprzedni')}</button>
                             <span class="mv-info">${formatBytes(file.size)} · <span style="opacity:.7">${file.path}</span></span>
-                            <button class="mv-nav-btn" id="mv-next" ${currentIdx >= mediaFiles.length - 1 ? 'disabled' : ''}>Następny <i class="fas fa-arrow-right"></i></button>
+                            <button class="mv-nav-btn" id="mv-next" ${currentIdx >= mediaFiles.length - 1 ? 'disabled' : ''}>${t('Następny')} <i class="fas fa-arrow-right"></i></button>
                         </div>
                     </div>
                 `;
@@ -182,9 +182,9 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
                 container.innerHTML = dupFolders.map((f, i) => `
                     <div class="fm-dup-folder-tag">
                         <i class="fas fa-folder"></i> ${f}
-                        <button class="fm-dup-folder-remove" data-idx="${i}" title="Usuń"><i class="fas fa-times"></i></button>
+                        <button class="fm-dup-folder-remove" data-idx="${i}" title="${t('Usuń')}"><i class="fas fa-times"></i></button>
                     </div>
-                `).join('') || '<span class="fm-dup-hint">Dodaj przynajmniej jeden folder</span>';
+                `).join('') || '<span class="fm-dup-hint">' + t('Dodaj przynajmniej jeden folder') + '</span>';
                 container.querySelectorAll('.fm-dup-folder-remove').forEach(btn => {
                     btn.addEventListener('click', () => {
                         dupFolders.splice(parseInt(btn.dataset.idx), 1);
@@ -196,8 +196,8 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
             content.innerHTML = `
                 <div class="fm-dup-start">
                     <div class="fm-dup-start-icon"><i class="fas fa-clone"></i></div>
-                    <h3>Znajdź duplikaty zdjęć</h3>
-                    <p>Skanuj wybrane foldery w poszukiwaniu identycznych lub wizualnie podobnych zdjęć.</p>
+                    <h3>${t('Znajdź duplikaty zdjęć')}</h3>
+                    <p>${t('Skanuj wybrane foldery w poszukiwaniu identycznych lub wizualnie podobnych zdjęć.')}</p>
                     <div class="fm-dup-options">
                         <label class="fm-dup-label">Foldery do skanowania:</label>
                         <div class="fm-dup-folder-list" id="dup-folders"></div>
@@ -206,7 +206,7 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
                             <button class="fm-dup-btn" id="dup-add-path" title="Dodaj folder"><i class="fas fa-plus"></i> Dodaj</button>
                         </div>
                         <div class="fm-dup-quick-paths">
-                            <span class="fm-dup-hint">Szybki wybór:</span>
+                            <span class="fm-dup-hint">${t('Szybki wybór:')}</span>
                             <button class="fm-dup-quick-btn" data-qpath="/home">/home</button>
                             <button class="fm-dup-quick-btn" data-qpath="/media">/media</button>
                         </div>
@@ -216,12 +216,12 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
                             <option value="exact">Tylko identyczne (SHA256)</option>
                             <option value="similar">Tylko wizualnie podobne</option>
                         </select>
-                        <label class="fm-dup-label">Czułość podobieństwa:</label>
+                        <label class="fm-dup-label">${t('Czułość podobieństwa:')}</label>
                         <div class="fm-dup-range-row">
                             <input type="range" min="2" max="16" value="8" id="dup-threshold" class="fm-dup-range">
                             <span id="dup-threshold-val">8</span>
                         </div>
-                        <p class="fm-dup-hint">Niższa = ściślejsze dopasowanie, wyższa = więcej wyników</p>
+                        <p class="fm-dup-hint">${t('Niższa = ściślejsze dopasowanie, wyższa = więcej wyników')}</p>
                     </div>
                     <button class="fm-dup-scan-btn" id="dup-start-btn"><i class="fas fa-search"></i> Rozpocznij skanowanie</button>
                 </div>
@@ -280,7 +280,7 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
                                 <div class="fm-dup-progress-bar">
                                     <div class="fm-dup-progress-fill" id="dup-progress-fill" style="width:0%"></div>
                                 </div>
-                                <p class="fm-dup-scan-detail" id="dup-scan-detail">Proszę czekać…</p>
+                                <p class="fm-dup-scan-detail" id="dup-scan-detail">${t('Proszę czekać…')}</p>
                             </div>
                         </div>
                         <div class="fm-dup-live-actions">
@@ -323,7 +323,7 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
                     const fi = parseInt(cb.dataset.idx);
                     return liveGroups[gi]?.items[fi]?.path;
                 }).filter(Boolean);
-                const sure = await confirmDialog('Do kosza', `Przenieść ${paths.length} duplikatów do kosza?`);
+                const sure = await confirmDialog(t('Do kosza'), t('Przenieść') + ' ' + paths.length + ' ' + t('duplikatów do kosza?'));
                 if (!sure) return;
                 try {
                     await api('/files/delete', { method: 'DELETE', body: { paths } });
@@ -359,7 +359,7 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
                             ${group.type === 'exact' ? '<i class="fas fa-equals"></i> Identyczne' : '<i class="fas fa-eye"></i> Podobne'}
                         </span>
                         <span class="fm-dup-group-count">${group.items.length} plików · ${formatBytes(group.items.reduce((s,f) => s + f.size, 0))}</span>
-                        <button class="fm-dup-btn fm-dup-ignore-btn" data-group="${gi}" title="Ignoruj tę grupę"><i class="fas fa-eye-slash"></i> Ignoruj</button>
+                        <button class="fm-dup-btn fm-dup-ignore-btn" data-group="${gi}" title="${t('Ignoruj tę grupę')}"><i class="fas fa-eye-slash"></i> ${t('Ignoruj')}</button>
                     </div>
                     <div class="fm-dup-group-items">
                         ${group.items.map((file, fi) => {
@@ -418,7 +418,7 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
                 div.querySelector('.fm-dup-ignore-btn')?.addEventListener('click', async () => {
                     try {
                         await api('/files/duplicates/ignore', { method: 'POST', body: { groups: [group] } });
-                        toast('Grupa oznaczona jako ignorowana', 'success');
+                        toast(t('Grupa oznaczona jako ignorowana'), 'success');
                         div.remove();
                     } catch { toast(t('Błąd ignorowania'), 'error'); }
                 });
@@ -442,7 +442,7 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
                     });
                     const countEl = content.querySelector('#dup-found-count');
                     if (countEl) countEl.textContent = `${liveGroups.length} grup znalezionych`;
-                    statusbar.textContent = `Skanowanie… ${liveGroups.length} grup duplikatów znalezionych`;
+                    statusbar.textContent = t('Skanowanie…') + ' ' + liveGroups.length + ' ' + t('grup duplikatów znalezionych');
                 }).catch(() => {});
             }
 
@@ -464,7 +464,7 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
                 _appendGroupToDOM(group, liveGroups.length - 1);
                 const countEl = content.querySelector('#dup-found-count');
                 if (countEl) countEl.textContent = `${liveGroups.length} grup znalezionych`;
-                statusbar.textContent = `Skanowanie… ${liveGroups.length} grup duplikatów znalezionych`;
+                statusbar.textContent = t('Skanowanie…') + ' ' + liveGroups.length + ' ' + t('grup duplikatów znalezionych');
             };
 
             const _cleanup = () => {
@@ -492,7 +492,7 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
                     </div>
                 `;
                 header.querySelector('#dup-rescan2')?.addEventListener('click', () => _showConfig());
-                statusbar.textContent = `Duplikaty: ${data.groups} grup, ${data.duplicates} nadmiarowych plików (${formatBytes(data.size)})`;
+                statusbar.textContent = t('Duplikaty:') + ' ' + data.groups + ' ' + t('grup,') + ' ' + data.duplicates + ' ' + t('nadmiarowych plików') + ' (' + formatBytes(data.size) + ')';
             };
 
             const onCancelled = (data) => {
@@ -567,7 +567,7 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
                 content.innerHTML = `
                     <div class="fm-empty">
                         <i class="fas fa-check-circle" style="color:var(--accent);opacity:1"></i>
-                        <span>Nie znaleziono duplikatów!</span>
+                        <span>${t('Nie znaleziono duplikatów!')}</span>
                         <button class="fm-dup-scan-btn" id="dup-rescan" style="margin-top:12px"><i class="fas fa-redo"></i> Skanuj ponownie</button>
                     </div>`;
                 content.querySelector('#dup-rescan')?.addEventListener('click', () => _showConfig());
@@ -604,7 +604,7 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
                                     ${group.type === 'exact' ? '<i class="fas fa-equals"></i> Identyczne' : '<i class="fas fa-eye"></i> Podobne'}
                                 </span>
                                 <span class="fm-dup-group-count">${group.items.length} plików &middot; ${formatBytes(group.items.reduce((s,f) => s + f.size, 0))}</span>
-                                <button class="fm-dup-btn fm-dup-ignore-btn" data-group="${gi}" title="Ignoruj tę grupę"><i class="fas fa-eye-slash"></i> Ignoruj</button>
+                                <button class="fm-dup-btn fm-dup-ignore-btn" data-group="${gi}" title="${t('Ignoruj tę grupę')}"><i class="fas fa-eye-slash"></i> ${t('Ignoruj')}</button>
                             </div>
                             <div class="fm-dup-group-items">
                                 ${group.items.map((file, fi) => {
@@ -635,7 +635,7 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
                 </div>
             `;
 
-            statusbar.textContent = `Duplikaty: ${groups.length} grup, ${totalDups} nadmiarowych plików (${formatBytes(totalSize)})`;
+            statusbar.textContent = t('Duplikaty:') + ' ' + groups.length + ' ' + t('grup,') + ' ' + totalDups + ' ' + t('nadmiarowych plików') + ' (' + formatBytes(totalSize) + ')';
 
             // Wire thumbnail clicks — navigate across ALL groups
             // Build flat list of all items for cross-group preview
@@ -702,7 +702,7 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
                     const fi = parseInt(cb.dataset.idx);
                     return groups[gi].items[fi].path;
                 });
-                const sure = await confirmDialog('Do kosza', `Przenieść ${paths.length} duplikatów do kosza?`);
+                const sure = await confirmDialog(t('Do kosza'), t('Przenieść') + ' ' + paths.length + ' ' + t('duplikatów do kosza?'));
                 if (!sure) return;
                 try {
                     await api('/files/delete', { method: 'DELETE', body: { paths } });
@@ -725,7 +725,7 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
                     if (!group) return;
                     try {
                         await api('/files/duplicates/ignore', { method: 'POST', body: { groups: [group] } });
-                        toast('Grupa oznaczona jako ignorowana', 'success');
+                        toast(t('Grupa oznaczona jako ignorowana'), 'success');
                         btn.closest('.fm-dup-group')?.remove();
                     } catch { toast(t('Błąd ignorowania'), 'error'); }
                 });
@@ -738,8 +738,8 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
                 content.querySelectorAll('.fm-dup-group-select').forEach(cb => { cb.checked = allGroupsSelected; });
                 const btn = content.querySelector('#dup-select-all-groups');
                 if (btn) btn.innerHTML = allGroupsSelected
-                    ? '<i class="fas fa-times"></i> Odznacz wszystkie grupy'
-                    : '<i class="fas fa-check-double"></i> Zaznacz wszystkie grupy';
+                    ? '<i class="fas fa-times"></i> ' + t('Odznacz wszystkie grupy')
+                    : '<i class="fas fa-check-double"></i> ' + t('Zaznacz wszystkie grupy');
                 _updateGroupIgnoreBtn();
             });
 
@@ -748,11 +748,11 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
                 const checkedGroups = [...content.querySelectorAll('.fm-dup-group-select:checked')];
                 if (!checkedGroups.length) return;
                 const groupsToIgnore = checkedGroups.map(cb => groups[parseInt(cb.dataset.group)]).filter(Boolean);
-                const sure = await confirmDialog('Ignoruj grupy', `Oznaczyć ${groupsToIgnore.length} grup jako ignorowane?`);
+                const sure = await confirmDialog(t('Ignoruj grupy'), t('Oznaczyć') + ' ' + groupsToIgnore.length + ' ' + t('grup jako ignorowane?'));
                 if (!sure) return;
                 try {
                     await api('/files/duplicates/ignore', { method: 'POST', body: { groups: groupsToIgnore } });
-                    toast(`Zignorowano ${groupsToIgnore.length} grup`, 'success');
+                    toast(t('Zignorowano') + ' ' + groupsToIgnore.length + ' ' + t('grup'), 'success');
                     await _showResults();
                 } catch { toast(t('Błąd ignorowania'), 'error'); }
             });
@@ -805,8 +805,8 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
                 content.innerHTML = `
                     <div class="fm-empty">
                         <i class="fas fa-eye-slash" style="opacity:.5"></i>
-                        <span>Brak ignorowanych grup</span>
-                        <button class="fm-dup-btn" id="dup-back-results" style="margin-top:12px"><i class="fas fa-arrow-left"></i> Powrót do wyników</button>
+                        <span>${t('Brak ignorowanych grup')}</span>
+                        <button class="fm-dup-btn" id="dup-back-results" style="margin-top:12px"><i class="fas fa-arrow-left"></i> ${t('Powrót do wyników')}</button>
                     </div>`;
                 content.querySelector('#dup-back-results')?.addEventListener('click', () => _showResults());
                 statusbar.textContent = t('Brak ignorowanych duplikatów');
@@ -817,11 +817,11 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
                 <div class="fm-dup-results-header">
                     <div class="fm-dup-results-info">
                         <i class="fas fa-eye-slash"></i>
-                        <strong>${items.length}</strong> ignorowanych grup duplikatów
+                        <strong>${items.length}</strong> ${t('ignorowanych grup duplikatów')}
                     </div>
                     <div class="fm-dup-results-actions">
-                        <button class="fm-dup-btn" id="dup-back-results"><i class="fas fa-arrow-left"></i> Powrót do wyników</button>
-                        <button class="fm-dup-btn fm-dup-btn-danger" id="dup-unignore-all"><i class="fas fa-undo"></i> Przywróć wszystkie</button>
+                        <button class="fm-dup-btn" id="dup-back-results"><i class="fas fa-arrow-left"></i> ${t('Powrót do wyników')}</button>
+                        <button class="fm-dup-btn fm-dup-btn-danger" id="dup-unignore-all"><i class="fas fa-undo"></i> ${t('Przywróć wszystkie')}</button>
                     </div>
                 </div>
                 <div class="fm-dup-groups" id="dup-groups"></div>

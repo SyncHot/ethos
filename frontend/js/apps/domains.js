@@ -196,7 +196,7 @@ function _domInit(body) {
                             <button class="dm-btn info sm dm-ssl-btn" data-id="${d.id}" title="Certyfikat SSL"${d.ssl ? ' disabled' : ''}><i class="fas fa-lock"></i></button>
                             <button class="dm-btn sm dm-toggle-btn" data-id="${d.id}" style="background:${d.enabled ? '#d97706' : '#22c55e'};color:#fff;" title="${d.enabled ? t('Wyłącz') : t('Włącz')}"><i class="fas ${d.enabled ? 'fa-pause' : 'fa-play'}"></i></button>
                             <button class="dm-btn info sm dm-edit-btn" data-id="${d.id}" title="Edytuj"><i class="fas fa-pen"></i></button>
-                            <button class="dm-btn danger sm dm-del-btn" data-id="${d.id}" title="Usuń"><i class="fas fa-trash"></i></button>
+                            <button class="dm-btn danger sm dm-del-btn" data-id="${d.id}" title="${t('Usuń')}"><i class="fas fa-trash"></i></button>
                         </div>
                     </div>`;
                 }
@@ -307,7 +307,7 @@ function _domInit(body) {
         content.querySelectorAll('.dm-del-btn').forEach(btn => {
             btn.addEventListener('click', async () => {
                 const d = domains.find(x => x.id === btn.dataset.id);
-                if (!confirm(`Usunąć konfigurację domeny ${d?.domain || btn.dataset.id}?`)) return;
+                if (!confirm(t('Usunąć konfigurację domeny') + ' ' + (d?.domain || btn.dataset.id) + '?')) return;
                 btn.disabled = true;
                 try { const r = await api(`${API_D}/domains/${btn.dataset.id}`, { method: 'DELETE' }); if (r.error) throw new Error(r.error); toast(r.message, 'success'); }
                 catch (err) { toast(t('Błąd: ') + err.message, 'error'); }
@@ -324,10 +324,10 @@ function _domInit(body) {
                 try { const st = await api(API_D + '/ssl/status'); savedEmail = st?.config?.email || ''; } catch {}
                 let email = savedEmail;
                 if (!email) {
-                    email = prompt(`Podaj email do certyfikatu SSL dla ${d?.domain}:\n(wymagany przez Let's Encrypt)`, '');
+                    email = prompt(t('Podaj email do certyfikatu SSL dla') + ' ' + d?.domain + ':\n' + t('(wymagany przez Let\'s Encrypt)'), '');
                     if (!email) return;
                 }
-                if (!confirm(`Uzyskać certyfikat SSL dla ${d?.domain}?\nEmail: ${email}`)) return;
+                if (!confirm(t('Uzyskać certyfikat SSL dla') + ' ' + d?.domain + '?\nEmail: ' + email)) return;
                 btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
                 try { const r = await api(`${API_D}/domains/${btn.dataset.id}/ssl`, { method: 'POST', body: { email } }); if (r.error) throw new Error(r.error); toast(r.message, 'success'); }
                 catch (err) { toast(t('Błąd: ') + err.message, 'error'); }
@@ -428,7 +428,7 @@ function _domInit(body) {
         // Step 2: All certificates
         html += `<div class="dm-group"><div class="dm-group-title"><i class="fas fa-certificate"></i> 2. Certyfikaty</div>`;
         if (allCerts.length === 0) {
-            html += `<div class="dm-msg dm-msg-warn"><i class="fas fa-info-circle"></i> Brak certyfikatów. Uzyskaj pierwszy certyfikat poniżej lub zaznacz SSL przy dodawaniu domeny.</div>`;
+            html += `<div class="dm-msg dm-msg-warn"><i class="fas fa-info-circle"></i> ${t('Brak certyfikatów. Uzyskaj pierwszy certyfikat poniżej lub zaznacz SSL przy dodawaniu domeny.')}</div>`;
         } else {
             for (const c of allCerts) {
                 const daysLeft = c.days_left !== undefined ? c.days_left : '?';
@@ -463,9 +463,9 @@ function _domInit(body) {
             <div class="dom-section-sep">
                 <div class="dom-section-title"><i class="fas fa-plus-circle dom-icon-primary dom-mr-xs"></i>Uzyskaj nowy certyfikat</div>
                 <div class="dm-row"><label>Domena</label><input type="text" id="dm-ssl-domain" value="${esc(cfg.domain)}" placeholder="np. nas.mojadomena.pl"></div>
-                <div class="dm-hint">Domena musi wskazywać (DNS A/AAAA) na publiczne IP tego serwera</div>
+                <div class="dm-hint">${t('Domena musi wskazywać (DNS A/AAAA) na publiczne IP tego serwera')}</div>
                 <div class="dm-row"><label>Email</label><input type="email" id="dm-ssl-email" value="${esc(cfg.email)}" placeholder="admin@mojadomena.pl"></div>
-                <div class="dm-hint">Używany przez Let's Encrypt do powiadomień o wygasaniu</div>
+                <div class="dm-hint">${t("Używany przez Let's Encrypt do powiadomień o wygasaniu")}</div>
             </div>
             <div class="dm-actions">
                 <button class="dm-btn primary" id="dm-ssl-obtain" ${!installed?'disabled':''}><i class="fas fa-certificate"></i> Uzyskaj certyfikat</button>
@@ -484,13 +484,13 @@ function _domInit(body) {
         } else if (domainsSslActive) {
             html += `<div class="dm-msg dm-msg-ok dom-lh-relaxed">
                 <i class="fas fa-check-circle"></i> <strong>HTTPS aktywny przez Nginx proxy</strong><br>
-                <span class="dom-text-sm">Domeny z SSL skonfigurowane w zakładce "Domeny" obsługują HTTPS automatycznie. Natywny HTTPS na serwerze EthOS nie jest potrzebny.</span>
+                <span class="dom-text-sm">${t('Domeny z SSL skonfigurowane w zakładce "Domeny" obsługują HTTPS automatycznie. Natywny HTTPS na serwerze EthOS nie jest potrzebny.')}</span>
             </div>`;
         } else {
             const active = status.ssl_active;
             const httpsPort = status.https_port || cfg.https_port || 443;
             html += `
-                <div class="dm-hint dom-hint-flush-mb">Włącz natywny HTTPS bezpośrednio na serwerze EthOS (gdy nie używasz nginx proxy)</div>
+                <div class="dm-hint dom-hint-flush-mb">${t('Włącz natywny HTTPS bezpośrednio na serwerze EthOS (gdy nie używasz nginx proxy)')}</div>
                 <div class="dm-row"><label>Port HTTPS</label><input type="number" id="dm-ssl-port" value="${httpsPort}" min="1" max="65535"></div>
                 <div class="dm-row dom-row-gap">
                     <label>Przekierowanie HTTP→HTTPS</label>
@@ -528,17 +528,17 @@ function _domInit(body) {
                     <label class="dm-switch"><input type="checkbox" id="dm-ssl-autorenew" ${autoRenew ? 'checked' : ''}><span class="slider"></span></label>
                     <span class="dom-label-text">Automatyczne odnawianie certyfikatów</span>
                 </div>
-                <div class="dm-hint dom-mt-xs">Certbot odnowi certyfikaty automatycznie (codziennie o 3:00) bez przerwy w działaniu Nginx.</div>`;
+                <div class="dm-hint dom-mt-xs">${t('Certbot odnowi certyfikaty automatycznie (codziennie o 3:00) bez przerwy w działaniu Nginx.')}</div>`;
             if (renewal) {
                 html += `<div class="dm-msg dm-msg-ok dom-mt-sm"><i class="fas fa-check-circle"></i> Mechanizm odnowień aktywny (${esc(renewal)})</div>`;
             } else if (autoRenew) {
-                html += `<div class="dm-msg dm-msg-warn dom-mt-sm"><i class="fas fa-exclamation-triangle"></i> Timer nie wykryty — kliknij przełącznik aby go aktywować</div>`;
+                html += `<div class="dm-msg dm-msg-warn dom-mt-sm"><i class="fas fa-exclamation-triangle"></i> ${t('Timer nie wykryty — kliknij przełącznik aby go aktywować')}</div>`;
             }
             if (nearestExpiry !== null) {
                 const color = nearestExpiry < 7 ? '#ef4444' : nearestExpiry < 30 ? '#d97706' : '#22c55e';
                 html += `<div class="dom-expiry-box">
                     <i class="fas fa-calendar-alt dom-mr-xs" style="color:${color}"></i>
-                    Najbliższe wygaśnięcie: <strong style="color:${color}">${nearestExpiry} dni</strong> (${esc(nearestDomain)})
+                    ${t('Najbliższe wygaśnięcie:')} <strong style="color:${color}">${nearestExpiry} ${t('dni')}</strong> (${esc(nearestDomain)})
                 </div>`;
             }
         } else {
@@ -585,10 +585,10 @@ function _domInit(body) {
             const email = content.querySelector('#dm-ssl-email').value.trim();
             const httpsPort = parseInt(content.querySelector('#dm-ssl-port')?.value || '443');
             if (!domain) { toast(t('Podaj domenę'), 'error'); return; }
-            if (!email) { toast('Podaj email', 'error'); return; }
-            if (!confirm(`Certbot spróbuje uzyskać certyfikat dla:\n\n${domain}\n\nKontynuować?`)) return;
-            btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Uzyskiwanie…';
-            try { const r = await api(API_D + '/ssl/obtain', { method: 'POST', body: { domain, email, https_port: httpsPort } }); if (r.error) throw new Error(r.error); toast(r.message || 'Certyfikat uzyskany!', 'success'); }
+            if (!email) { toast(t('Podaj email'), 'error'); return; }
+            if (!confirm(t('Certbot spróbuje uzyskać certyfikat dla:') + '\n\n' + domain + '\n\n' + t('Kontynuować?'))) return;
+            btn.disabled = true; btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${t('Uzyskiwanie…')}`;
+            try { const r = await api(API_D + '/ssl/obtain', { method: 'POST', body: { domain, email, https_port: httpsPort } }); if (r.error) throw new Error(r.error); toast(r.message || t('Certyfikat uzyskany!'), 'success'); }
             catch (err) { toast(t('Błąd: ') + err.message, 'error'); }
             renderSsl();
         });
@@ -596,8 +596,8 @@ function _domInit(body) {
         content.querySelectorAll('.dm-renew-cert').forEach(btn => {
             btn.addEventListener('click', async () => {
                 const domain = btn.dataset.domain;
-                if (!confirm(`Odnowić certyfikat dla ${domain}?`)) return;
-                btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Odnawianie…';
+                if (!confirm(t('Odnowić certyfikat dla') + ' ' + domain + '?')) return;
+                btn.disabled = true; btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${t('Odnawianie…')}`;
                 try { const r = await api(API_D + '/ssl/renew', { method: 'POST', body: { domain } }); if (r.error) throw new Error(r.error); toast(r.message || 'Certyfikat odnowiony', 'success'); }
                 catch (err) { toast(t('Błąd: ') + err.message, 'error'); }
                 renderSsl();

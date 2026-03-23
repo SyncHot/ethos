@@ -20,7 +20,7 @@ function renderPrinterApp(body) {
         <!-- Tabs -->
         <div class="printer-tabs">
             <button class="printer-tab active" data-tab="print"><i class="fas fa-print"></i> Drukuj</button>
-            <button class="printer-tab" data-tab="manage"><i class="fas fa-cogs"></i> Zarządzaj drukarkami</button>
+            <button class="printer-tab" data-tab="manage"><i class="fas fa-cogs"></i> ${t('Zarządzaj drukarkami')}</button>
         </div>
 
         <!-- === PRINT TAB === -->
@@ -33,7 +33,7 @@ function renderPrinterApp(body) {
 
             <div class="printer-upload-area" id="pr-upload-area">
                 <i class="fas fa-cloud-upload-alt" style="font-size:40px;color:var(--accent);margin-bottom:12px"></i>
-                <p>Przeciągnij plik tutaj lub kliknij aby wybrać</p>
+                <p>${t('Przeciągnij plik tutaj lub kliknij aby wybrać')}</p>
                 <p style="font-size:0.8em;color:var(--text-muted)">PDF, DOC, DOCX, XLS, XLSX, ODS, ODT, JPG, PNG, TXT</p>
                 <input type="file" id="pr-file-input" style="display:none"
                     accept=".pdf,.doc,.docx,.xls,.xlsx,.ods,.odt,.jpg,.jpeg,.png,.gif,.bmp,.tiff,.txt,.rtf">
@@ -47,7 +47,7 @@ function renderPrinterApp(body) {
             <div class="printer-settings">
                 <div class="printer-form-row">
                     <label>Drukarka:</label>
-                    <select id="pr-printer" class="fm-input"><option value="">Ładowanie...</option></select>
+                    <select id="pr-printer" class="fm-input"><option value="">${t('Ładowanie...')}</option></select>
                 </div>
                 <div class="printer-form-row">
                     <label>Kopie:</label>
@@ -75,7 +75,7 @@ function renderPrinterApp(body) {
 
             <div class="printer-jobs" style="margin-top:16px">
                 <h3 style="margin-bottom:8px"><i class="fas fa-list"></i> Kolejka drukowania</h3>
-                <div id="pr-jobs">Ładowanie...</div>
+                <div id="pr-jobs">${t('Ładowanie...')}</div>
             </div>
         </div>
 
@@ -88,7 +88,7 @@ function renderPrinterApp(body) {
                     <h3><i class="fas fa-print"></i> Zainstalowane drukarki</h3>
                     <button class="fm-toolbar-btn btn-sm" id="pm-refresh-installed"><i class="fas fa-sync-alt"></i></button>
                 </div>
-                <div id="pm-installed-list" class="pm-list">Ładowanie...</div>
+                <div id="pm-installed-list" class="pm-list">${t('Ładowanie...')}</div>
             </div>
 
             <!-- Discover -->
@@ -98,14 +98,14 @@ function renderPrinterApp(body) {
                     <button class="fm-toolbar-btn btn-sm" id="pm-scan-btn"><i class="fas fa-radar"></i> Skanuj</button>
                 </div>
                 <div id="pm-discover-list" class="pm-list">
-                    <p class="pm-muted">Kliknij „Skanuj" aby wyszukać drukarki w sieci lokalnej.</p>
+                    <p class="pm-muted">${t('Kliknij „Skanuj" aby wyszukać drukarki w sieci lokalnej.')}</p>
                 </div>
             </div>
 
             <!-- Add manually -->
             <div class="pm-section">
                 <div class="pm-section-header">
-                    <h3><i class="fas fa-plus-circle"></i> Dodaj drukarkę ręcznie</h3>
+                    <h3><i class="fas fa-plus-circle"></i> ${t('Dodaj drukarkę ręcznie')}</h3>
                     <button class="fm-toolbar-btn btn-sm" id="pm-toggle-manual"><i class="fas fa-chevron-down"></i></button>
                 </div>
                 <div id="pm-manual-form" class="pm-manual hidden">
@@ -122,18 +122,18 @@ function renderPrinterApp(body) {
                         <select id="pm-add-ppd" class="fm-input" style="flex:1">
                             <option value="">Automatyczny (IPP Everywhere)</option>
                         </select>
-                        <button class="fm-toolbar-btn btn-sm" id="pm-load-drivers" title="Załaduj sterowniki"><i class="fas fa-download"></i></button>
+                        <button class="fm-toolbar-btn btn-sm" id="pm-load-drivers" title="${t('Załaduj sterowniki')}"><i class="fas fa-download"></i></button>
                     </div>
                     <div class="printer-form-row">
                         <label>Opis:</label>
                         <input id="pm-add-info" class="fm-input" placeholder="Opcjonalny opis" style="flex:1">
                     </div>
                     <div class="printer-form-row">
-                        <label class="storage-check"><input type="checkbox" id="pm-add-default"> Ustaw jako domyślną</label>
-                        <label class="storage-check"><input type="checkbox" id="pm-add-shared" checked> Udostępnij w sieci</label>
+                        <label class="storage-check"><input type="checkbox" id="pm-add-default"> ${t('Ustaw jako domyślną')}</label>
+                        <label class="storage-check"><input type="checkbox" id="pm-add-shared" checked> ${t('Udostępnij w sieci')}</label>
                     </div>
                     <button class="printer-btn" id="pm-add-btn" style="margin-top:8px">
-                        <i class="fas fa-plus"></i> Dodaj drukarkę
+                        <i class="fas fa-plus"></i> ${t('Dodaj drukarkę')}
                     </button>
                 </div>
             </div>
@@ -268,7 +268,7 @@ function renderPrinterApp(body) {
             loadJobs();
         } catch (e) {
             resultEl.className = 'printer-result error';
-            resultEl.innerHTML = `<i class="fas fa-exclamation-circle"></i> Błąd: ${e.message}`;
+            resultEl.innerHTML = `<i class="fas fa-exclamation-circle"></i> ${t('Błąd:')} ${e.message}`;
             resultEl.classList.remove('hidden');
         } finally {
             btn.disabled = false;
@@ -279,7 +279,7 @@ function renderPrinterApp(body) {
     window.cancelPrintJob = async (btn, jobId) => {
         try {
             await api(`/printer/cancel/${jobId}`, { method: 'POST' });
-            toast('Anulowano', 'success');
+            toast(t('Anulowano'), 'success');
             loadJobs();
         } catch (e) { toast(t('Błąd anulowania'), 'error'); }
     };
@@ -298,7 +298,7 @@ function renderPrinterApp(body) {
             const data = await api('/printer/printers');
             const printers = data.printers || [];
             if (!printers.length) {
-                el.innerHTML = '<p class="pm-muted">Brak zainstalowanych drukarek.</p>';
+                el.innerHTML = `<p class="pm-muted">${t('Brak zainstalowanych drukarek.')}</p>`;
                 return;
             }
             el.innerHTML = printers.map(p => {
@@ -321,13 +321,13 @@ function renderPrinterApp(body) {
                         </div>
                     </div>
                     <div class="pm-card-actions">
-                        <button class="fm-toolbar-btn btn-sm" title="Obudź" data-action="wake" data-name="${p.name}"><i class="fas fa-bolt"></i></button>
+                        <button class="fm-toolbar-btn btn-sm" title="${t('Obudź')}" data-action="wake" data-name="${p.name}"><i class="fas fa-bolt"></i></button>
                         ${p.status === 'disabled'
-                            ? `<button class="fm-toolbar-btn btn-sm" title="Włącz" data-action="enable" data-name="${p.name}"><i class="fas fa-toggle-on"></i></button>`
-                            : `<button class="fm-toolbar-btn btn-sm" title="Wyłącz" data-action="disable" data-name="${p.name}"><i class="fas fa-toggle-off"></i></button>`
+                            ? `<button class="fm-toolbar-btn btn-sm" title="${t('Włącz')}" data-action="enable" data-name="${p.name}"><i class="fas fa-toggle-on"></i></button>`
+                            : `<button class="fm-toolbar-btn btn-sm" title="${t('Wyłącz')}" data-action="disable" data-name="${p.name}"><i class="fas fa-toggle-off"></i></button>`
                         }
-                        ${!p.is_default ? `<button class="fm-toolbar-btn btn-sm" title="Ustaw domyślną" data-action="default" data-name="${p.name}"><i class="fas fa-star"></i></button>` : ''}
-                        <button class="fm-toolbar-btn btn-sm btn-red" title="Usuń" data-action="remove" data-name="${p.name}"><i class="fas fa-trash"></i></button>
+                        ${!p.is_default ? `<button class="fm-toolbar-btn btn-sm" title="${t('Ustaw domyślną')}" data-action="default" data-name="${p.name}"><i class="fas fa-star"></i></button>` : ''}
+                        <button class="fm-toolbar-btn btn-sm btn-red" title="${t('Usuń')}" data-action="remove" data-name="${p.name}"><i class="fas fa-trash"></i></button>
                     </div>
                 </div>`;
             }).join('');
@@ -337,17 +337,17 @@ function renderPrinterApp(body) {
                 btn.onclick = () => handlePrinterAction(btn.dataset.action, btn.dataset.name);
             });
         } catch (e) {
-            el.innerHTML = `<p class="pm-muted" style="color:#ff4d6a">Błąd: ${e.message}</p>`;
+            el.innerHTML = `<p class="pm-muted" style="color:#ff4d6a">${t('Błąd:')} ${e.message}</p>`;
         }
     }
 
     async function handlePrinterAction(action, name) {
         try {
             if (action === 'remove') {
-                if (!confirm(`Usunąć drukarkę "${name}"?`)) return;
+                if (!confirm(t('Usunąć drukarkę') + ' "' + name + '"?')) return;
             }
             await api(`/printer/${action}`, { method: 'POST', body: { name, printer: name } });
-            toast(action === 'remove' ? t('Usunięto') : action === 'wake' ? 'Wybudzono' : 'OK', 'success');
+            toast(action === 'remove' ? t('Usunięto') : action === 'wake' ? t('Wybudzono') : 'OK', 'success');
             loadInstalled();
             loadPrinters();
             checkStatus();
@@ -393,7 +393,7 @@ function renderPrinterApp(body) {
                 };
             });
         } catch (e) {
-            el.innerHTML = `<p class="pm-muted" style="color:#ff4d6a">Błąd: ${e.message}</p>`;
+            el.innerHTML = `<p class="pm-muted" style="color:#ff4d6a">${t('Błąd:')} ${e.message}</p>`;
         } finally {
             btn.disabled = false;
             btn.innerHTML = '<i class="fas fa-satellite-dish"></i> Skanuj';

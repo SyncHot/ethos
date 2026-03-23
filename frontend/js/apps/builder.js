@@ -143,7 +143,7 @@ function renderBuilderApp(body) {
                     <span class="bl-ver"><i class="fas fa-code-branch"></i> ${ver}</span>
                 </div>
                 <div class="bl-row">
-                    <label>Podbij wersję:</label>
+                    <label>${t('Podbij wersję:')}</label>
                     <select class="bl-select" id="bl-bump">
                         <option value="">Bez zmiany (${ver})</option>
                         <option value="patch" selected>Patch (${bumpVersion(ver,'patch')})</option>
@@ -152,7 +152,7 @@ function renderBuilderApp(body) {
                     </select>
                 </div>
                 <div class="bl-row">
-                    <label>Tytuł zmian:</label>
+                    <label>${t('Tytuł zmian:')}</label>
                     <input class="bl-input" id="bl-cl-title" placeholder="${t('np. Kreator USB, poprawki błędów')}">
                 </div>
                 <div class="bl-row" style="align-items:flex-start">
@@ -170,7 +170,7 @@ function renderBuilderApp(body) {
                 </div>
                 <div class="bl-progress-detail" id="bl-detail"></div>
                 <div class="bl-progress-timer" id="bl-timer"></div>
-                <div class="bl-toggle-log" id="bl-toggle-log">Pokaż logi ▼</div>
+                <div class="bl-toggle-log" id="bl-toggle-log">${t('Pokaż logi ▼')}</div>
             </div>
             <div class="bl-log" id="bl-log"></div>
             <div class="bl-result" id="bl-result"></div>`;
@@ -259,12 +259,12 @@ function renderBuilderApp(body) {
     ═══════════════════════════════════════════ */
     function renderImage() {
         blBody.innerHTML = `
-            <div class="bl-warn"><i class="fas fa-exclamation-triangle"></i> Budowanie obrazu wymaga ~15-30 minut i dostępu do internetu. Proces pobiera pakiety Debian.</div>
+            <div class="bl-warn"><i class="fas fa-exclamation-triangle"></i> ${t('Budowanie obrazu wymaga ~15-30 minut i dostępu do internetu. Proces pobiera pakiety Debian.')}</div>
             <div class="bl-section">
                 <div class="bl-section-title"><i class="fas fa-hdd"></i> Nowy obraz systemu (x86_64)</div>
 
                 <div style="color:var(--text-secondary);font-size:13px;margin:8px 0 12px;line-height:1.5;">
-                    <i class="fas fa-info-circle"></i> Użytkownik, hasło i hostname zostaną ustawione przez kreator przy pierwszym uruchomieniu obrazu.
+                    <i class="fas fa-info-circle"></i> ${t('Użytkownik, hasło i hostname zostaną ustawione przez kreator przy pierwszym uruchomieniu obrazu.')}
                 </div>
                 <div style="text-align:right;margin-top:6px">
                     <button class="bl-btn bl-btn-danger" id="bl-image-btn"><i class="fas fa-compact-disc"></i> Zbuduj obraz</button>
@@ -277,7 +277,7 @@ function renderBuilderApp(body) {
                 </div>
                 <div class="bl-progress-detail" id="bl-detail"></div>
                 <div class="bl-progress-timer" id="bl-timer"></div>
-                <div class="bl-toggle-log" id="bl-toggle-log">Pokaż logi ▼</div>
+                <div class="bl-toggle-log" id="bl-toggle-log">${t('Pokaż logi ▼')}</div>
             </div>
             <div class="bl-log" id="bl-log"></div>
             <div class="bl-result" id="bl-result"></div>`;
@@ -308,7 +308,7 @@ function renderBuilderApp(body) {
     async function startImage() {
         if (state.building) return;
 
-        if (!confirm('Budowanie obrazu x86_64 zajmie ~15-30 minut.\nKontynuować?')) return;
+        if (!confirm(t('Budowanie obrazu x86_64 zajmie ~15-30 minut.') + '\n' + t('Kontynuować?'))) return;
 
         state.building = true;
         setDisabled(true);
@@ -402,7 +402,7 @@ function renderBuilderApp(body) {
             <div class="bl-section-title" style="justify-content:space-between">
                 <span><i class="fas fa-box"></i> Pakiety release</span>
                 <span class="bl-sel-actions" data-group="rel" style="display:none">
-                    <button class="bl-btn bl-btn-sm bl-btn-danger bl-bulk-del" data-group="rel"><i class="fas fa-trash"></i> Usuń zaznaczone</button>
+                    <button class="bl-btn bl-btn-sm bl-btn-danger bl-bulk-del" data-group="rel"><i class="fas fa-trash"></i> ${t('Usuń zaznaczone')}</button>
                 </span>
             </div>`;
         if (rels.length === 0) {
@@ -419,7 +419,7 @@ function renderBuilderApp(body) {
                         <div class="bl-artifact-size">${humanSize(r.size)}</div>
                     </div>
                     <a href="/api/builder/download?path=${encodeURIComponent(r.path)}" title="Pobierz" style="color:var(--accent);margin-left:auto;padding:4px"><i class="fas fa-download"></i></a>
-                    <span class="bl-artifact-del" data-path="${r.path}" title="Usuń"><i class="fas fa-trash"></i></span>
+                    <span class="bl-artifact-del" data-path="${r.path}" title="${t('Usuń')}"><i class="fas fa-trash"></i></span>
                 </div>`;
             }
             html += '</div>';
@@ -431,7 +431,7 @@ function renderBuilderApp(body) {
             <div class="bl-section-title" style="justify-content:space-between">
                 <span><i class="fas fa-hdd"></i> Obrazy systemu</span>
                 <span class="bl-sel-actions" data-group="img" style="display:none">
-                    <button class="bl-btn bl-btn-sm bl-btn-danger bl-bulk-del" data-group="img"><i class="fas fa-trash"></i> Usuń zaznaczone</button>
+                    <button class="bl-btn bl-btn-sm bl-btn-danger bl-bulk-del" data-group="img"><i class="fas fa-trash"></i> ${t('Usuń zaznaczone')}</button>
                 </span>
             </div>`;
         if (imgs.length === 0) {
@@ -449,7 +449,7 @@ function renderBuilderApp(body) {
                         <div class="bl-artifact-size">${humanSize(i.size)}</div>
                     </div>
                     <a href="/api/builder/download?path=${encodeURIComponent(i.path)}" title="Pobierz" style="color:var(--accent);margin-left:auto;padding:4px"><i class="fas fa-download"></i></a>
-                    <span class="bl-artifact-del" data-path="${i.path}" title="Usuń"><i class="fas fa-trash"></i></span>
+                    <span class="bl-artifact-del" data-path="${i.path}" title="${t('Usuń')}"><i class="fas fa-trash"></i></span>
                 </div>`;
             }
             html += '</div>';
@@ -459,8 +459,8 @@ function renderBuilderApp(body) {
         // Build cache
         html += `<div class="bl-section">
             <div class="bl-section-title"><i class="fas fa-database"></i> Cache budowania</div>
-            <div id="bl-cache-info" style="font-size:12px;color:var(--text-muted)">Ładowanie…</div>
-            <div style="margin-top:8px"><button class="bl-btn bl-btn-sm bl-btn-outline" id="bl-cache-clear" style="color:#ef4444;border-color:#ef4444"><i class="fas fa-trash"></i> Wyczyść cache</button></div>
+            <div id="bl-cache-info" style="font-size:12px;color:var(--text-muted)">${t('Ładowanie…')}</div>
+            <div style="margin-top:8px"><button class="bl-btn bl-btn-sm bl-btn-outline" id="bl-cache-clear" style="color:#ef4444;border-color:#ef4444"><i class="fas fa-trash"></i> ${t('Wyczyść cache')}</button></div>
         </div>`;
 
         html += `<div style="text-align:center;margin-top:8px"><button class="bl-btn bl-btn-outline bl-btn-sm" id="bl-refresh-arts"><i class="fas fa-sync-alt"></i> ${t('Odśwież')}</button></div>`;
@@ -494,8 +494,8 @@ function renderBuilderApp(body) {
                 const g = btn.dataset.group;
                 const paths = [...blBody.querySelectorAll(`.bl-sel[data-group="${g}"]:checked`)].map(cb => cb.dataset.path);
                 if (!paths.length) return;
-                const label = g === 'rel' ? 'pakietów' : 'obrazów';
-                if (!confirm(`Usunąć ${paths.length} ${label}?`)) return;
+                const label = g === 'rel' ? t('pakietów') : t('obrazów');
+                if (!confirm(t('Usunąć') + ` ${paths.length} ${label}?`)) return;
                 try {
                     const res = await api('/builder/delete', { method: 'POST', body: { paths } });
                     if (res.deleted?.length) toast(`Usunięto ${res.deleted.length} plików`, 'success');
@@ -509,7 +509,7 @@ function renderBuilderApp(body) {
         blBody.querySelectorAll('.bl-artifact-del').forEach(btn => {
             btn.onclick = async () => {
                 const path = btn.dataset.path;
-                if (!confirm(`Usunąć ${path.split('/').pop()}?`)) return;
+                if (!confirm(t('Usunąć') + ` ${path.split('/').pop()}?`)) return;
                 try {
                     const res = await api('/builder/delete', { method: 'POST', body: { path } });
                     if (res.ok) { toast(t('Usunięto'), 'success'); loadInfo(); }
@@ -613,7 +613,7 @@ function renderBuilderApp(body) {
             toast(t('Budowanie zakończone!'), 'success');
         } else {
             el.innerHTML = `<div class="bl-result-icon" style="color:#ef4444"><i class="fas fa-times-circle"></i></div>
-                <div style="font-weight:600;color:#ef4444">Błąd</div>
+                <div style="font-weight:600;color:#ef4444">${t('Błąd')}</div>
                 <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${msg}</div>${dismissBtn}`;
             toast(t('Budowanie nie powiodło się'), 'error');
         }

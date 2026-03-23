@@ -42,7 +42,7 @@ function renderDocEditor(body, launchOpts) {
                     <button class="dte-btn" data-action="new" title="Nowy dokument">
                         <i class="fas fa-file-medical"></i>
                     </button>
-                    <button class="dte-btn" data-action="open" title="Otwórz plik">
+                    <button class="dte-btn" data-action="open" title="${t('Otwórz plik')}">
                         <i class="fas fa-folder-open"></i>
                     </button>
                     <button class="dte-btn" data-action="save" title="Zapisz (Ctrl+S)">
@@ -62,7 +62,7 @@ function renderDocEditor(body, launchOpts) {
                 <div class="dte-separator"></div>
                 <div class="doceditor-toolbar-group">
                     <button class="dte-btn" data-cmd="undo" title="Cofnij (Ctrl+Z)"><i class="fas fa-undo"></i></button>
-                    <button class="dte-btn" data-cmd="redo" title="Ponów (Ctrl+Y)"><i class="fas fa-redo"></i></button>
+                    <button class="dte-btn" data-cmd="redo" title="${t('Ponów (Ctrl+Y)')}"><i class="fas fa-redo"></i></button>
                 </div>
                 <div class="dte-separator"></div>
                 <div class="doceditor-toolbar-group">
@@ -90,21 +90,21 @@ function renderDocEditor(body, launchOpts) {
                 <div class="doceditor-toolbar-group">
                     <button class="dte-btn" data-cmd="bold" title="Pogrubienie (Ctrl+B)"><i class="fas fa-bold"></i></button>
                     <button class="dte-btn" data-cmd="italic" title="Kursywa (Ctrl+I)"><i class="fas fa-italic"></i></button>
-                    <button class="dte-btn" data-cmd="underline" title="Podkreślenie (Ctrl+U)"><i class="fas fa-underline"></i></button>
-                    <button class="dte-btn" data-cmd="strikeThrough" title="Przekreślenie"><i class="fas fa-strikethrough"></i></button>
+                    <button class="dte-btn" data-cmd="underline" title="${t('Podkreślenie (Ctrl+U)')}"><i class="fas fa-underline"></i></button>
+                    <button class="dte-btn" data-cmd="strikeThrough" title="${t('Przekreślenie')}"><i class="fas fa-strikethrough"></i></button>
                 </div>
                 <div class="dte-separator"></div>
                 <div class="doceditor-toolbar-group">
                     <input type="color" class="dte-color" id="dte-fg-color" value="#000000" title="Kolor tekstu">
-                    <input type="color" class="dte-color" id="dte-bg-color" value="#ffff00" title="Podświetlenie">
-                    <button class="dte-btn" data-action="highlight" title="Podświetl zaznaczenie">
+                    <input type="color" class="dte-color" id="dte-bg-color" value="#ffff00" title="${t('Podświetlenie')}">
+                    <button class="dte-btn" data-action="highlight" title="${t('Podświetl zaznaczenie')}">
                         <i class="fas fa-highlighter"></i>
                     </button>
                 </div>
                 <div class="dte-separator"></div>
                 <div class="doceditor-toolbar-group">
                     <button class="dte-btn" data-cmd="justifyLeft" title="Do lewej"><i class="fas fa-align-left"></i></button>
-                    <button class="dte-btn" data-cmd="justifyCenter" title="Wyśrodkuj"><i class="fas fa-align-center"></i></button>
+                    <button class="dte-btn" data-cmd="justifyCenter" title="${t('Wyśrodkuj')}"><i class="fas fa-align-center"></i></button>
                     <button class="dte-btn" data-cmd="justifyRight" title="Do prawej"><i class="fas fa-align-right"></i></button>
                     <button class="dte-btn" data-cmd="justifyFull" title="Wyjustuj"><i class="fas fa-align-justify"></i></button>
                 </div>
@@ -112,29 +112,29 @@ function renderDocEditor(body, launchOpts) {
                 <div class="doceditor-toolbar-group">
                     <button class="dte-btn" data-cmd="insertUnorderedList" title="Lista punktowana"><i class="fas fa-list-ul"></i></button>
                     <button class="dte-btn" data-cmd="insertOrderedList" title="Lista numerowana"><i class="fas fa-list-ol"></i></button>
-                    <button class="dte-btn" data-cmd="outdent" title="Zmniejsz wcięcie"><i class="fas fa-outdent"></i></button>
-                    <button class="dte-btn" data-cmd="indent" title="Zwiększ wcięcie"><i class="fas fa-indent"></i></button>
+                    <button class="dte-btn" data-cmd="outdent" title="${t('Zmniejsz wcięcie')}"><i class="fas fa-outdent"></i></button>
+                    <button class="dte-btn" data-cmd="indent" title="${t('Zwiększ wcięcie')}"><i class="fas fa-indent"></i></button>
                 </div>
                 <div class="dte-separator"></div>
                 <div class="doceditor-toolbar-group">
-                    <select class="dte-select dte-heading" title="Nagłówek">
+                    <select class="dte-select dte-heading" title="${t('Nagłówek')}">
                         <option value="">Normalny</option>
-                        <option value="H1">Nagłówek 1</option>
-                        <option value="H2">Nagłówek 2</option>
-                        <option value="H3">Nagłówek 3</option>
+                        <option value="H1">${t('Nagłówek 1')}</option>
+                        <option value="H2">${t('Nagłówek 2')}</option>
+                        <option value="H3">${t('Nagłówek 3')}</option>
                     </select>
                 </div>
                 <div class="dte-separator"></div>
                 <div class="doceditor-toolbar-group">
                     <button class="dte-btn" data-action="link" title="Wstaw link"><i class="fas fa-link"></i></button>
                     <button class="dte-btn" data-action="image" title="Wstaw obraz"><i class="fas fa-image"></i></button>
-                    <button class="dte-btn" data-action="table" title="Wstaw tabelę"><i class="fas fa-table"></i></button>
-                    <button class="dte-btn" data-action="hr" title="Wstaw linię poziomą"><i class="fas fa-minus"></i></button>
+                    <button class="dte-btn" data-action="table" title="${t('Wstaw tabelę')}"><i class="fas fa-table"></i></button>
+                    <button class="dte-btn" data-action="hr" title="${t('Wstaw linię poziomą')}"><i class="fas fa-minus"></i></button>
                     <button class="dte-btn" data-action="blockquote" title="Cytat"><i class="fas fa-quote-right"></i></button>
                 </div>
                 <div class="dte-separator"></div>
                 <div class="doceditor-toolbar-group">
-                    <button class="dte-btn" data-cmd="removeFormat" title="Wyczyść formatowanie"><i class="fas fa-eraser"></i></button>
+                    <button class="dte-btn" data-cmd="removeFormat" title="${t('Wyczyść formatowanie')}"><i class="fas fa-eraser"></i></button>
                 </div>
             </div>
             <div class="doceditor-page-wrap">
@@ -146,7 +146,7 @@ function renderDocEditor(body, launchOpts) {
                 <span class="dte-filename" id="dte-status-filename">${_escHtml(currentFilename)}</span>
                 <span class="dte-modified" id="dte-status-mod" style="display:none">● Zmodyfikowany</span>
                 <span class="dte-spacer"></span>
-                <span class="dte-wordcount" id="dte-status-words">0 słów</span>
+                <span class="dte-wordcount" id="dte-status-words">0 ${t('słów')}</span>
             </div>
         </div>
     `;
@@ -289,7 +289,7 @@ function renderDocEditor(body, launchOpts) {
         const text = editor.innerText || '';
         const words = text.trim().split(/\s+/).filter(w => w.length > 0).length;
         const chars = text.length;
-        statusWords.textContent = `${words} słów · ${chars} znaków`;
+        statusWords.textContent = `${words} ${t('słów')} · ${chars} ${t('znaków')}`;
     }
 
     // ─── Modification tracking ───
@@ -394,7 +394,7 @@ function renderDocEditor(body, launchOpts) {
                 </div>
                 <div class="modal-body" style="padding:0;">
                     <div style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;">
-                        <button class="dte-btn dte-saveas-up" title="W górę"><i class="fas fa-arrow-up"></i></button>
+                        <button class="dte-btn dte-saveas-up" title="${t('W górę')}"><i class="fas fa-arrow-up"></i></button>
                         <span class="dte-saveas-path" style="font-size:12px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1"></span>
                     </div>
                     <div class="dte-saveas-list" style="height:250px;overflow-y:auto;padding:4px 0;"></div>
@@ -531,12 +531,12 @@ function renderDocEditor(body, launchOpts) {
         overlay.innerHTML = `
             <div class="modal-box" style="width:500px;">
                 <div class="modal-header">
-                    <span>Otwórz dokument</span>
+                    <span>${t('Otwórz dokument')}</span>
                     <button class="modal-close"><i class="fas fa-times"></i></button>
                 </div>
                 <div class="modal-body" style="padding:0;">
                     <div style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;">
-                        <button class="dte-btn dte-browse-up" title="W górę"><i class="fas fa-arrow-up"></i></button>
+                        <button class="dte-btn dte-browse-up" title="${t('W górę')}"><i class="fas fa-arrow-up"></i></button>
                         <span class="dte-browse-path" style="font-size:12px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1"></span>
                     </div>
                     <div class="dte-browse-list" style="height:300px;overflow-y:auto;padding:4px 0;"></div>

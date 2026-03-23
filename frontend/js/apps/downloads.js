@@ -145,12 +145,12 @@ function renderDownloadManager(body, launchOpts) {
                     </div>
                     <div class="dlm-bulk-actions">
                         <button class="dlm-btn-sm" id="dlm-pause-all" title="Wstrzymaj wszystkie aktywne"><i class="fas fa-pause"></i> Wstrzymaj</button>
-                        <button class="dlm-btn-sm" id="dlm-resume-all" title="Wznów wszystkie wstrzymane"><i class="fas fa-play"></i> Wznów</button>
-                        <button class="dlm-btn-sm" id="dlm-clear" title="Wyczyść zakończone"><i class="fas fa-broom"></i> Wyczyść</button>
+                        <button class="dlm-btn-sm" id="dlm-resume-all" title="${t('Wznów wszystkie wstrzymane')}"><i class="fas fa-play"></i> ${t('Wznów')}</button>
+                        <button class="dlm-btn-sm" id="dlm-clear" title="${t('Wyczyść zakończone')}"><i class="fas fa-broom"></i> ${t('Wyczyść')}</button>
                     </div>
                 </div>
                 <div class="dlm-list" id="dlm-list">
-                    <div class="dlm-empty"><i class="fas fa-cloud-download-alt"></i><span>Brak pobierań</span></div>
+                    <div class="dlm-empty"><i class="fas fa-cloud-download-alt"></i><span>${t('Brak pobierań')}</span></div>
                 </div>
             </div>
             <div class="dlm-content" id="dlm-tab-history" style="display:none;">
@@ -159,12 +159,12 @@ function renderDownloadManager(body, launchOpts) {
                         <input type="text" id="dlm-hist-q" placeholder="Szukaj (nazwa, URL)..." class="dlm-input-sm">
                         <select id="dlm-hist-status" class="dlm-select-sm">
                             <option value="">Wszystkie statusy</option>
-                            <option value="completed">Ukończone</option>
-                            <option value="failed">Błędy</option>
+                            <option value="completed">${t('Ukończone')}</option>
+                            <option value="failed">${t('Błędy')}</option>
                             <option value="cancelled">Anulowane</option>
                         </select>
                         <select id="dlm-hist-source" class="dlm-select-sm">
-                            <option value="">Wszystkie źródła</option>
+                            <option value="">${t('Wszystkie źródła')}</option>
                             <option value="torrent">Torrent</option>
                             <option value="debrid">Debrid</option>
                             <option value="direct">Direct</option>
@@ -172,10 +172,10 @@ function renderDownloadManager(body, launchOpts) {
                     </div>
                     <div class="dlm-hist-row">
                         <select id="dlm-hist-date" class="dlm-select-sm">
-                            <option value="">Cała historia</option>
+                            <option value="">${t('Cała historia')}</option>
                             <option value="today">Dzisiaj</option>
-                            <option value="week">Ostatni tydzień</option>
-                            <option value="month">Ostatni miesiąc</option>
+                            <option value="week">${t('Ostatni tydzień')}</option>
+                            <option value="month">${t('Ostatni miesiąc')}</option>
                             <option value="range">Zakres dat...</option>
                         </select>
                         <span id="dlm-hist-range-wrap" style="display:none;align-items:center;gap:4px;">
@@ -183,7 +183,7 @@ function renderDownloadManager(body, launchOpts) {
                             <span style="color:var(--text-secondary);font-size:12px;">–</span>
                             <input type="date" id="dlm-hist-range-to" class="dlm-input-sm" style="width:130px;">
                         </span>
-                        <button id="dlm-hist-clear-btn" class="dlm-btn-sm dlm-btn-danger"><i class="fas fa-trash"></i> Wyczyść...</button>
+                        <button id="dlm-hist-clear-btn" class="dlm-btn-sm dlm-btn-danger"><i class="fas fa-trash"></i> ${t('Wyczyść...')}</button>
                         <div class="dlm-spacer"></div>
                         <div class="dlm-pagination-info" id="dlm-hist-page-info"></div>
                         <button id="dlm-hist-prev" class="dlm-btn-icon" disabled><i class="fas fa-chevron-left"></i></button>
@@ -191,7 +191,7 @@ function renderDownloadManager(body, launchOpts) {
                     </div>
                 </div>
                 <div class="dlm-list" id="dlm-history-list">
-                    <div class="dlm-empty"><i class="fas fa-history"></i><span>Ładowanie historii...</span></div>
+                    <div class="dlm-empty"><i class="fas fa-history"></i><span>${t('Ładowanie historii...')}</span></div>
                 </div>
             </div>
             <div class="dlm-content" id="dlm-tab-stats" style="display:none;">
@@ -201,11 +201,11 @@ function renderDownloadManager(body, launchOpts) {
                             <div class="dlm-stats-title"><i class="fas fa-chart-bar"></i> Statystyki</div>
                             <div class="dlm-stats-bar-row" id="dlm-stats-bar"></div>
                         </div>
-                        <div class="dlm-stats-chip" id="dlm-avg-speed">Śr.: —</div>
+                        <div class="dlm-stats-chip" id="dlm-avg-speed">${t('Śr.:')} —</div>
                     </div>
                     <div class="dlm-stats-grid">
                         <div class="dlm-stat-box">
-                            <div class="dlm-stat-label">Dziś</div>
+                            <div class="dlm-stat-label">${t('Dziś')}</div>
                             <div class="dlm-stat-value" id="dlm-bytes-today">—</div>
                         </div>
                         <div class="dlm-stat-box">
@@ -217,7 +217,7 @@ function renderDownloadManager(body, launchOpts) {
                             <div class="dlm-stat-value" id="dlm-bytes-month">—</div>
                         </div>
                         <div class="dlm-stat-box">
-                            <div class="dlm-stat-label">Łącznie</div>
+                            <div class="dlm-stat-label">${t('Łącznie')}</div>
                             <div class="dlm-stat-value" id="dlm-bytes-all">—</div>
                         </div>
                     </div>
@@ -228,20 +228,20 @@ function renderDownloadManager(body, launchOpts) {
                     </div>
                     <div class="dlm-speed-chart">
                         <div class="dlm-chart-header">
-                            <span class="dlm-chart-title"><i class="fas fa-wave-square"></i> Prędkość (10 min)</span>
+                            <span class="dlm-chart-title"><i class="fas fa-wave-square"></i> ${t('Prędkość (10 min)')}</span>
                             <span id="dlm-speed-current">Aktualnie: —</span>
                         </div>
                         <svg id="dlm-speed-chart" viewBox="0 0 180 48" preserveAspectRatio="none"></svg>
                         <div class="dlm-chart-footer">
-                            <span id="dlm-speed-avg-sample">Śr. (okno): —</span>
-                            <span id="dlm-speed-avg-total">Śr. pobierania: —</span>
+                            <span id="dlm-speed-avg-sample">${t('Śr. (okno):')} —</span>
+                            <span id="dlm-speed-avg-total">${t('Śr. pobierania:')} —</span>
                         </div>
                     </div>
                 </div>
             </div>
             <div class="dlm-content" id="dlm-tab-settings" style="display:none;">
                 <div class="dlm-settings">
-                    <h3 class="dlm-section-title"><i class="fas fa-folder"></i> Ogólne</h3>
+                    <h3 class="dlm-section-title"><i class="fas fa-folder"></i> ${t('Ogólne')}</h3>
                     <div class="dlm-setting-row">
                         <label><i class="fas fa-link dl-icon-label dl-icon-blue"></i> Folder pobierania HTTP:</label>
                         <div class="dlm-path-picker">
@@ -250,7 +250,7 @@ function renderDownloadManager(body, launchOpts) {
                         </div>
                     </div>
                     <div class="dlm-setting-row">
-                        <label><i class="fas fa-magnet dl-icon-label dl-icon-purple"></i> Folder pobierania torrentów:</label>
+                        <label><i class="fas fa-magnet dl-icon-label dl-icon-purple"></i> ${t('Folder pobierania torrentów:')}</label>
                         <div class="dlm-path-picker">
                             <input type="text" class="dlm-input" id="dlm-default-dir-torrent" value="/home" readonly>
                             <button class="dlm-btn-sm" id="dlm-pick-dir-torrent"><i class="fas fa-folder-open"></i></button>
@@ -258,11 +258,11 @@ function renderDownloadManager(body, launchOpts) {
                     </div>
 
                     <h3 class="dlm-section-title dl-section-gap"><i class="fas fa-eye"></i> Folder obserwowany (Watch folder)</h3>
-                    <p class="dlm-hint">Wrzuć pliki .torrent lub .txt z linkami (jeden URL na linię) do obserwowanego folderu — zostaną automatycznie dodane do kolejki pobierania.</p>
+                    <p class="dlm-hint">${t('Wrzuć pliki .torrent lub .txt z linkami (jeden URL na linię) do obserwowanego folderu — zostaną automatycznie dodane do kolejki pobierania.')}</p>
                     <div class="dlm-setting-row">
                         <label class="dl-row">
                             <input type="checkbox" id="dlm-watch-enabled">
-                            Włącz folder obserwowany
+                            ${t('Włącz folder obserwowany')}
                         </label>
                     </div>
                     <div class="dlm-setting-row">
@@ -277,12 +277,12 @@ function renderDownloadManager(body, launchOpts) {
                     <div class="dlm-setting-row">
                         <label class="dl-row">
                             <input type="checkbox" id="dlm-overwrite-existing">
-                            Nadpisuj istniejące pliki (zamiast tworzyć kopie _1, _2...)
+                            ${t('Nadpisuj istniejące pliki (zamiast tworzyć kopie _1, _2...)')}
                         </label>
                     </div>
 
                     <div class="dlm-setting-row">
-                        <label>Maks. jednoczesnych pobierań:</label>
+                        <label>${t('Maks. jednoczesnych pobierań:')}</label>
                         <select class="dlm-select" id="dlm-max-concurrent">
                             <option value="1">1</option>
                             <option value="2">2</option>
@@ -293,7 +293,7 @@ function renderDownloadManager(body, launchOpts) {
                     </div>
 
                     <div class="dlm-setting-row">
-                        <label><i class="fas fa-tachometer-alt dl-icon-label dl-icon-amber"></i> Limit prędkości pobierania:</label>
+                        <label><i class="fas fa-tachometer-alt dl-icon-label dl-icon-amber"></i> ${t('Limit prędkości pobierania:')}</label>
                         <select class="dlm-select" id="dlm-speed-limit">
                             <option value="0">Bez limitu</option>
                             <option value="256">256 KB/s</option>
@@ -313,19 +313,19 @@ function renderDownloadManager(body, launchOpts) {
                         <label>Auto-sortowanie:</label>
                         <div style="display:flex;align-items:center;gap:8px;">
                             <input type="checkbox" id="dlm-auto-categorize">
-                            <label for="dlm-auto-categorize" style="font-size:13px;cursor:pointer;">Włącz auto-przypisanie do folderów na podstawie rozszerzenia</label>
+                            <label for="dlm-auto-categorize" style="font-size:13px;cursor:pointer;">${t('Włącz auto-przypisanie do folderów na podstawie rozszerzenia')}</label>
                         </div>
                     </div>
                     <div id="dlm-categories-list" class="dlm-categories-list"></div>
-                    <button class="dlm-btn-sm" id="dlm-add-category" style="margin-top:8px;"><i class="fas fa-plus"></i> Dodaj nową kategorię</button>
+                    <button class="dlm-btn-sm" id="dlm-add-category" style="margin-top:8px;"><i class="fas fa-plus"></i> ${t('Dodaj nową kategorię')}</button>
 
                     <h3 class="dlm-section-title dl-section-gap"><i class="fas fa-gem"></i> Serwis Premium (Debrid)</h3>
-                    <p class="dlm-hint">Podłącz konto debrid, aby pobierać z hostingów premium (Rapidgator, Uploaded, 1fichier, Mega itp.)</p>
+                    <p class="dlm-hint">${t('Podłącz konto debrid, aby pobierać z hostingów premium (Rapidgator, Uploaded, 1fichier, Mega itp.)')}</p>
 
                     <div class="dlm-setting-row">
                         <label>Aktywny serwis:</label>
                         <select class="dlm-select" id="dlm-debrid-service">
-                            <option value="none">Brak (tylko bezpośrednie linki)</option>
+                            <option value="none">${t('Brak (tylko bezpośrednie linki)')}</option>
                             <option value="alldebrid">AllDebrid</option>
                             <option value="realdebrid">Real-Debrid</option>
                             <option value="premiumize">Premiumize.me</option>
@@ -492,7 +492,7 @@ function renderDownloadManager(body, launchOpts) {
                     <span class="dlm-cat-name">${_dlmEsc(cat.name)}</span>
                     <div class="dlm-cat-actions">
                         <button class="dlm-btn-icon dlm-cat-edit" title="Edytuj"><i class="fas fa-edit"></i></button>
-                        <button class="dlm-btn-icon dlm-cat-del" title="Usuń" ${cat.id === 'other' ? 'disabled' : ''}><i class="fas fa-trash-alt"></i></button>
+                        <button class="dlm-btn-icon dlm-cat-del" title="${t('Usuń')}" ${cat.id === 'other' ? 'disabled' : ''}><i class="fas fa-trash-alt"></i></button>
                     </div>
                 </div>
                 <div class="dlm-cat-path"><i class="fas fa-folder-open"></i> ${pathDisplay}</div>
@@ -504,7 +504,7 @@ function renderDownloadManager(body, launchOpts) {
                         <input type="text" class="dlm-input-sm dlm-cat-name-input" value="${_dlmEsc(cat.name)}" style="width:100%">
                     </div>
                     <div style="grid-column:1/-1">
-                        <label style="font-size:11px;color:var(--text-muted)">Folder docelowy (pusty = domyślny):</label>
+                        <label style="font-size:11px;color:var(--text-muted)">${t('Folder docelowy (pusty = domyślny):')}</label>
                         <div style="display:flex;gap:4px;">
                             <input type="text" class="dlm-input-sm dlm-cat-path-input" value="${_dlmEsc(cat.path || '')}" style="flex:1">
                             <button class="dlm-btn-sm dlm-pick-cat-path"><i class="fas fa-folder"></i></button>
@@ -651,7 +651,7 @@ function renderDownloadManager(body, launchOpts) {
         urlInput.style.height = Math.min(urlInput.scrollHeight, 160) + 'px';
         const raw = urlInput.value.trim();
         const n = raw ? raw.split(/[\n\s]+/).filter(u => u.match(/^https?:\/\/|^ftp:\/\/|^magnet:/i)).length : 0;
-        urlCount.textContent = n > 1 ? `${n} linków` : '';
+        urlCount.textContent = n > 1 ? `${n} ${t('linków')}` : '';
         urlCount.style.display = n > 1 ? '' : 'none';
     }
     urlInput.addEventListener('input', _autoResizeUrlInput);
@@ -702,11 +702,11 @@ function renderDownloadManager(body, launchOpts) {
                             prefix = prefix.slice(0, -1);
                         }
                     }
-                    autoPackageName = prefix.trim().replace(/\s+$/, '') || `Pakiet (${urls.length} plików)`;
+                    autoPackageName = prefix.trim().replace(/\s+$/, '') || `${t('Pakiet')} (${urls.length} ${t('plików')})`;
                 } else {
-                    autoPackageName = `Pakiet (${urls.length} plików)`;
+                    autoPackageName = `${t('Pakiet')} (${urls.length} ${t('plików')})`;
                 }
-            } catch { autoPackageName = `Pakiet (${urls.length} plików)`; }
+            } catch { autoPackageName = `${t('Pakiet')} (${urls.length} ${t('plików')})`; }
         }
 
         // Quick prompt for destination change
@@ -725,7 +725,7 @@ function renderDownloadManager(body, launchOpts) {
                     </div>
                     ${useDebrid ? `
                     <label class="dlm-checkbox-label dl-label dl-row">
-                        <input type="checkbox" id="dlm-add-debrid" checked> Użyj serwisu premium (${config.debrid_service})
+                        <input type="checkbox" id="dlm-add-debrid" checked> ${t('Użyj serwisu premium')} (${config.debrid_service})
                     </label>` : ''}
                     ${isMulti ? `
                     <div class="dl-section-divider">
@@ -735,14 +735,14 @@ function renderDownloadManager(body, launchOpts) {
                             <input type="text" class="dlm-input" id="dlm-add-pkg-name" value="${_dlmEsc(autoPackageName)}" placeholder="Nazwa pakietu...">
                         </div>
                         <label class="dlm-checkbox-label dl-checkbox-row">
-                            <input type="checkbox" id="dlm-add-auto-extract"> <i class="fas fa-file-archive dl-icon-violet"></i> Autoekstrakcja po zakończeniu (deep extract)
+                            <input type="checkbox" id="dlm-add-auto-extract"> <i class="fas fa-file-archive dl-icon-violet"></i> ${t('Autoekstrakcja po zakończeniu (deep extract)')}
                         </label>
                         <div id="dlm-add-extract-opts" class="dl-extract-opts" style="display:none;">
                             <label class="dlm-checkbox-label dl-checkbox-row">
-                                <input type="checkbox" id="dlm-add-delete-after"> <i class="fas fa-trash-alt dl-icon-danger"></i> Usuń archiwa po pomyślnej ekstrakcji
+                                <input type="checkbox" id="dlm-add-delete-after"> <i class="fas fa-trash-alt dl-icon-danger"></i> ${t('Usuń archiwa po pomyślnej ekstrakcji')}
                             </label>
                             <div class="dlm-setting-row dl-form-row-mb0">
-                                <label class="dl-label-xs"><i class="fas fa-key dl-icon-label dl-icon-amber"></i> Hasło archiwum (opcjonalne):</label>
+                                <label class="dl-label-xs"><i class="fas fa-key dl-icon-label dl-icon-amber"></i> ${t('Hasło archiwum (opcjonalne):')}</label>
                                 <input type="password" class="dlm-input" id="dlm-add-extract-pw" placeholder="${t('Hasło do rozpakowania...')}">
                             </div>
                         </div>
@@ -844,7 +844,7 @@ function renderDownloadManager(body, launchOpts) {
         const fileNames = files.map(f => _dlmEsc(f.name)).join(', ');
         const titleText = files.length === 1
             ? `Dodaj torrent: ${_dlmEsc(files[0].name)}`
-            : `Dodaj ${files.length} torrentów`;
+            : `${t('Dodaj')} ${files.length} ${t('torrentów')}`;
         const overlay = document.createElement('div');
         overlay.className = 'modal-overlay';
         overlay.innerHTML = `
@@ -893,7 +893,7 @@ function renderDownloadManager(body, launchOpts) {
                 if (checkRes.ok && checkRes.processed?.length) {
                     const names = checkRes.processed.map(n => '• ' + n).join('\n');
                     const confirmed = confirm(
-                        `Następujące torrenty były już wcześniej procesowane:\n\n${names}\n\nCzy na pewno chcesz je dodać ponownie?`
+                        `${t('Następujące torrenty były już wcześniej procesowane:')}\n\n${names}\n\n${t('Czy na pewno chcesz je dodać ponownie?')}`
                     );
                     if (!confirmed) {
                         // Remove already-processed from the upload list
@@ -925,7 +925,7 @@ function renderDownloadManager(body, launchOpts) {
                 }
             }
             if (ok) toast(`Dodano ${ok} torrent${ok > 1 ? t('ów') : ''}`, 'success');
-            if (fail) toast(`Błąd dodawania ${fail} torrent${fail > 1 ? t('ów') : 'a'}`, 'error');
+            if (fail) toast(`${t('Błąd dodawania')} ${fail} torrent${fail > 1 ? t('ów') : t('a')}`, 'error');
             loadDownloads();
         });
     });
@@ -936,7 +936,7 @@ function renderDownloadManager(body, launchOpts) {
         if (!count) { toast(t('Brak elementów do wyczyszczenia'), 'info'); return; }
         const res = await api('/downloads/clear', { method: 'POST' });
         if (res.ok) {
-            toast(`Usunięto ${res.removed} elementów`, 'info');
+            toast(`${t('Usunięto')} ${res.removed} ${t('elementów')}`, 'info');
             loadDownloads();
         }
     });
@@ -957,7 +957,7 @@ function renderDownloadManager(body, launchOpts) {
             const res = await api('/downloads/pause', { method: 'POST', body: { id: d.id } });
             if (res.ok) ok++;
         }
-        toast(`Wstrzymano ${ok} pobierań`, 'info');
+        toast(`${t('Wstrzymano')} ${ok} ${t('pobierań')}`, 'info');
         loadDownloads();
     });
 
@@ -969,7 +969,7 @@ function renderDownloadManager(body, launchOpts) {
             const res = await api('/downloads/resume', { method: 'POST', body: { id: d.id } });
             if (res.ok) ok++;
         }
-        toast(`Wznowiono ${ok} pobierań`, 'info');
+        toast(`${t('Wznowiono')} ${ok} ${t('pobierań')}`, 'info');
         loadDownloads();
     });
 
@@ -1043,7 +1043,7 @@ function renderDownloadManager(body, launchOpts) {
             const res = await api('/downloads/history?' + params.toString());
             
             if (!res.ok || !res.history?.length) {
-                list.innerHTML = '<div class="dlm-empty"><i class="fas fa-history"></i><span>Brak wyników</span></div>';
+                list.innerHTML = '<div class="dlm-empty"><i class="fas fa-history"></i><span>' + t('Brak wyników') + '</span></div>';
                 updatePagination(0);
                 return;
             }
@@ -1098,7 +1098,7 @@ function renderDownloadManager(body, launchOpts) {
                     const filename = btn.dataset.filename;
                     const dest = btn.dataset.dest;
                     
-                    if (!confirm(`Czy na pewno chcesz pobrać ponownie:\n${filename || url}?`)) return;
+                    if (!confirm(`${t('Czy na pewno chcesz pobrać ponownie:')}\n${filename || url}?`)) return;
                     
                     const r = await api('/downloads/history/retry', {
                         method: 'POST',
@@ -1115,7 +1115,7 @@ function renderDownloadManager(body, launchOpts) {
 
         } catch (e) {
             console.error(e);
-            list.innerHTML = '<div class="dlm-empty"><i class="fas fa-exclamation-triangle"></i><span>Błąd ładowania</span></div>';
+            list.innerHTML = '<div class="dlm-empty"><i class="fas fa-exclamation-triangle"></i><span>' + t('Błąd ładowania') + '</span></div>';
         }
     }
 
@@ -1223,7 +1223,7 @@ function renderDownloadManager(body, launchOpts) {
             sizeInfo = `${downloaded} / ${size || '?'} — wstrzymano`;
         } else if (dl.status === 'completed') {
             sizeInfo = size || downloaded;
-            if (dl.is_torrent && dl.torrent_files_total > 1) sizeInfo += ` (${dl.torrent_files_total} plików)`;
+            if (dl.is_torrent && dl.torrent_files_total > 1) sizeInfo += ` (${dl.torrent_files_total} ${t('plików')})`;
         }
 
         const nameDisplay = dl.is_torrent
@@ -1241,7 +1241,7 @@ function renderDownloadManager(body, launchOpts) {
                     <div class="dlm-item-meta">
                         ${catBadge}
                         <span class="dlm-item-status">${statusLabel}</span>
-                        ${dl.retry_count > 0 ? `<span class="dl-icon-amber" title="Próba ${dl.retry_count}"><i class="fas fa-sync-alt"></i> ${dl.retry_count}</span>` : ''}
+                        ${dl.retry_count > 0 ? `<span class="dl-icon-amber" title="${t('Próba')} ${dl.retry_count}"><i class="fas fa-sync-alt"></i> ${dl.retry_count}</span>` : ''}
                         ${sizeInfo ? `<span class="dlm-item-size">${sizeInfo}</span>` : ''}
                         ${dl.dest_path ? `<span class="dlm-item-path" title="${_dlmEsc(dl.dest_path)}">${_dlmEsc(dl.dest_path)}</span>` : ''}
                         ${dl.error ? `<span class="dlm-item-error" title="${_dlmEsc(dl.error)}">${_dlmEsc(dl.error)}</span>` : ''}
@@ -1255,28 +1255,28 @@ function renderDownloadManager(body, launchOpts) {
                 </div>
                 <div class="dlm-item-actions">
                     ${isMovable ? `
-                        <button class="dlm-btn-icon" data-action="top" title="Przenieś na górę"><i class="fas fa-angle-double-up"></i></button>
+                        <button class="dlm-btn-icon" data-action="top" title="${t('Przenieś na górę')}"><i class="fas fa-angle-double-up"></i></button>
                     ` : ''}
                     ${isPausable ? `
                         <button class="dlm-btn-icon" data-action="pause" title="Wstrzymaj"><i class="fas fa-pause"></i></button>
                     ` : ''}
                     ${dl.status === 'paused' ? `
-                        <button class="dlm-btn-icon" data-action="resume" title="Wznów"><i class="fas fa-play"></i></button>
+                        <button class="dlm-btn-icon" data-action="resume" title="${t('Wznów')}"><i class="fas fa-play"></i></button>
                     ` : ''}
                     ${isCancellable ? `
                         <button class="dlm-btn-icon" data-action="cancel" title="Anuluj"><i class="fas fa-stop"></i></button>
                     ` : ''}
                     ${dl.status === 'failed' || dl.status === 'cancelled' ? `
-                        <button class="dlm-btn-icon" data-action="retry" title="Ponów"><i class="fas fa-redo"></i></button>
+                        <button class="dlm-btn-icon" data-action="retry" title="${t('Ponów')}"><i class="fas fa-redo"></i></button>
                     ` : ''}
                     ${dl.status === 'completed' || dl.status === 'failed' || dl.status === 'cancelled' ? `
-                        <button class="dlm-btn-icon dlm-btn-danger" data-action="remove" title="Usuń z listy"><i class="fas fa-trash"></i></button>
+                        <button class="dlm-btn-icon dlm-btn-danger" data-action="remove" title="${t('Usuń z listy')}"><i class="fas fa-trash"></i></button>
                     ` : ''}
                     ${dl.status === 'completed' && dl.dest_dir ? `
-                        <button class="dlm-btn-icon dl-icon-blue" data-action="open-fm" title="Otwórz w menedżerze plików"><i class="fas fa-folder-open"></i></button>
+                        <button class="dlm-btn-icon dl-icon-blue" data-action="open-fm" title="${t('Otwórz w menedżerze plików')}"><i class="fas fa-folder-open"></i></button>
                     ` : ''}
                     <button class="dlm-btn-icon" data-action="copy-url" title="Kopiuj link"><i class="fas fa-copy"></i></button>
-                    ${dl.error ? `<button class="dlm-btn-icon dl-icon-danger" data-action="copy-error" title="Kopiuj błąd"><i class="fas fa-clipboard"></i></button>` : ''}
+                    ${dl.error ? `<button class="dlm-btn-icon dl-icon-danger" data-action="copy-error" title="${t('Kopiuj błąd')}"><i class="fas fa-clipboard"></i></button>` : ''}
                 </div>
             </div>
         `;
@@ -1316,7 +1316,7 @@ function renderDownloadManager(body, launchOpts) {
                         <div class="dlm-package-name">
                             <i class="fas fa-caret-down dlm-pkg-caret dl-caret"></i>
                             <strong>${_dlmEsc(pkg.name)}</strong>
-                            <span class="dl-pkg-meta">${totalCount} plików • ${_dlmFormatBytes(totalSize)}</span>
+                            <span class="dl-pkg-meta">${totalCount} ${t('plików')} • ${_dlmFormatBytes(totalSize)}</span>
                         </div>
                         <div class="dlm-package-status dl-pkg-status">
                             <span style="color:${statusColor};">${statusLabel}</span>
@@ -1339,9 +1339,9 @@ function renderDownloadManager(body, launchOpts) {
                             <span class="dl-icon-amber"><i class="fas fa-spinner fa-spin"></i></span>
                         ` : ''}
                         ${allDone ? `
-                            <button class="dlm-btn-icon dl-icon-blue" data-pkg-action="open-fm" data-pkg-id="${pkg.id}" title="Otwórz w menedżerze plików"><i class="fas fa-folder-open"></i></button>
+                            <button class="dlm-btn-icon dl-icon-blue" data-pkg-action="open-fm" data-pkg-id="${pkg.id}" title="${t('Otwórz w menedżerze plików')}"><i class="fas fa-folder-open"></i></button>
                         ` : ''}
-                        <button class="dlm-btn-icon dlm-btn-danger dl-btn-sm-text" data-pkg-action="remove-pkg" data-pkg-id="${pkg.id}" title="Usuń pakiet"><i class="fas fa-times"></i></button>
+                        <button class="dlm-btn-icon dlm-btn-danger dl-btn-sm-text" data-pkg-action="remove-pkg" data-pkg-id="${pkg.id}" title="${t('Usuń pakiet')}"><i class="fas fa-times"></i></button>
                     </div>
                 </div>
                 <div class="dlm-package-items" data-pkg-items="${pkg.id}" style="display:none">
@@ -1495,16 +1495,16 @@ function renderDownloadManager(body, launchOpts) {
             <div class="modal-box" style="width:460px;">
                 <div class="modal-header"><span><i class="fas fa-file-archive dl-icon-mr dl-icon-violet"></i>Deep Extract: ${_dlmEsc(pkg.name)}</span><button class="modal-close"><i class="fas fa-times"></i></button></div>
                 <div class="modal-body">
-                    <p class="dl-hint-text">Rekurencyjna ekstrakcja wszystkich archiwów w folderze pakietu. Archiwa w archiwach również zostaną rozpakowane.</p>
+                    <p class="dl-hint-text">${t('Rekurencyjna ekstrakcja wszystkich archiwów w folderze pakietu. Archiwa w archiwach również zostaną rozpakowane.')}</p>
                     <div class="dlm-setting-row dl-form-row-mb10">
                         <label class="dl-label"><i class="fas fa-folder dl-icon-label dl-icon-blue"></i> Folder:</label>
                         <span class="dl-path-text">${_dlmEsc(pkg.dest_dir)}</span>
                     </div>
                     <label class="dlm-checkbox-label dl-checkbox-row-lg">
-                        <input type="checkbox" id="dlm-ext-delete" ${pkg.delete_after_extract ? 'checked' : ''}> <i class="fas fa-trash-alt dl-icon-danger"></i> Usuń archiwa po pomyślnej ekstrakcji
+                        <input type="checkbox" id="dlm-ext-delete" ${pkg.delete_after_extract ? 'checked' : ''}> <i class="fas fa-trash-alt dl-icon-danger"></i> ${t('Usuń archiwa po pomyślnej ekstrakcji')}
                     </label>
                     <div class="dlm-setting-row dl-form-row-mb0">
-                        <label class="dl-label"><i class="fas fa-key dl-icon-label dl-icon-amber"></i> Hasło (opcjonalne):</label>
+                        <label class="dl-label"><i class="fas fa-key dl-icon-label dl-icon-amber"></i> ${t('Hasło (opcjonalne):')}</label>
                         <input type="password" class="dlm-input" id="dlm-ext-pw" value="" placeholder="${t('Hasło do archiwum...')}">
                     </div>
                     ${pkg.extract_error ? `<div class="dl-error-box"><i class="fas fa-exclamation-triangle"></i> ${_dlmEsc(pkg.extract_error)}</div>` : ''}
@@ -1713,7 +1713,7 @@ function renderDownloadManager(body, launchOpts) {
         const curEl = body.querySelector('#dlm-speed-current');
         if (curEl) curEl.textContent = `Aktualnie: ${current > 0 ? _dlmFormatSpeed(current) : '—'}`;
         const sampleEl = body.querySelector('#dlm-speed-avg-sample');
-        if (sampleEl) sampleEl.textContent = `Śr. (okno): ${sampleAvg > 0 ? _dlmFormatSpeed(sampleAvg) : '—'}`;
+        if (sampleEl) sampleEl.textContent = `${t('Śr. (okno):')} ${sampleAvg > 0 ? _dlmFormatSpeed(sampleAvg) : '—'}`;
         const overallEl = body.querySelector('#dlm-speed-avg-total');
         if (overallEl) overallEl.textContent = overallAvg > 0 ? _dlmFormatSpeed(overallAvg) : '—';
     }
@@ -1731,7 +1731,7 @@ function renderDownloadManager(body, launchOpts) {
         setText('#dlm-bytes-week', bytes.week ? _dlmFormatBytes(bytes.week) : '—');
         setText('#dlm-bytes-month', bytes.month ? _dlmFormatBytes(bytes.month) : '—');
         setText('#dlm-bytes-all', bytes.all_time ? _dlmFormatBytes(bytes.all_time) : '—');
-        setText('#dlm-avg-speed', `Śr.: ${avgSpeed ? _dlmFormatSpeed(avgSpeed) : '—'}`);
+        setText('#dlm-avg-speed', `${t('Śr.:')} ${avgSpeed ? _dlmFormatSpeed(avgSpeed) : '—'}`);
         const completedEl = body.querySelector('#dlm-count-completed');
         if (completedEl) completedEl.innerHTML = `<i class="fas fa-check"></i>${counts.completed || 0}`;
         const failedEl = body.querySelector('#dlm-count-failed');
@@ -2121,18 +2121,18 @@ function _dlmStatusIcon(status, isTorrent) {
 function _dlmStatusLabel(status, dl) {
     switch (status) {
         case 'pending': return dl?.is_torrent ? 'Torrent — oczekuje' : 'Oczekuje';
-        case 'resolving': return 'Rozwiązywanie linku...';
-        case 'torrent_uploading': return 'Wysyłanie do debrid...';
+        case 'resolving': return t('Rozwiązywanie linku...');
+        case 'torrent_uploading': return t('Wysyłanie do debrid...');
         case 'torrent_downloading':
             let label = 'Debrid pobiera torrent';
             if (dl?.torrent_status) label += ` (${dl.torrent_status})`;
             return label;
         case 'downloading': return dl?.is_torrent
-            ? `Pobieranie plików${dl.torrent_files_total ? ` (${(dl.torrent_files_done||0)+1}/${dl.torrent_files_total})` : ''}`
+            ? `${t('Pobieranie plików')}${dl.torrent_files_total ? ` (${(dl.torrent_files_done||0)+1}/${dl.torrent_files_total})` : ''}`
             : 'Pobieranie';
         case 'paused': return 'Wstrzymano';
-        case 'completed': return 'Zakończono';
-        case 'failed': return 'Błąd';
+        case 'completed': return t('Zakończono');
+        case 'failed': return t('Błąd');
         case 'cancelled': return 'Anulowano';
         default: return status;
     }

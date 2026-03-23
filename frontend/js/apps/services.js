@@ -23,16 +23,16 @@ function renderServicesApp(body) {
     body.innerHTML = `
     <div class="svc-app" style="display:flex;flex-direction:column;height:100%;overflow:hidden">
         <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border);flex-wrap:wrap;flex-shrink:0">
-            <span style="font-weight:600;font-size:14px"><i class="fas fa-cogs" style="margin-right:6px;color:#64748b"></i>Usługi systemowe</span>
+            <span style="font-weight:600;font-size:14px"><i class="fas fa-cogs" style="margin-right:6px;color:#64748b"></i>${t('Usługi systemowe')}</span>
             <div style="flex:1"></div>
             <div style="display:flex;gap:2px;background:var(--bg-secondary);border-radius:6px;padding:2px">
                 <button class="svc-filt" data-f="all" style="padding:4px 10px;font-size:12px;border:none;border-radius:4px;cursor:pointer;background:var(--bg-primary);font-weight:600">Wszystkie</button>
                 <button class="svc-filt" data-f="installed" style="padding:4px 10px;font-size:12px;border:none;border-radius:4px;cursor:pointer;background:none">Zainstalowane</button>
                 <button class="svc-filt" data-f="running" style="padding:4px 10px;font-size:12px;border:none;border-radius:4px;cursor:pointer;background:none">Aktywne</button>
-                <button class="svc-filt" data-f="available" style="padding:4px 10px;font-size:12px;border:none;border-radius:4px;cursor:pointer;background:none">Dostępne</button>
+                <button class="svc-filt" data-f="available" style="padding:4px 10px;font-size:12px;border:none;border-radius:4px;cursor:pointer;background:none">${t('Dostępne')}</button>
             </div>
-            <input type="text" id="svc-search" class="fm-input" placeholder="Szukaj…" style="width:160px;font-size:12px">
-            <button class="fm-toolbar-btn" id="svc-refresh" title="Odśwież"><i class="fas fa-sync-alt"></i></button>
+            <input type="text" id="svc-search" class="fm-input" placeholder="${t('Szukaj…')}" style="width:160px;font-size:12px">
+            <button class="fm-toolbar-btn" id="svc-refresh" title="${t('Odśwież')}"><i class="fas fa-sync-alt"></i></button>
         </div>
         <div id="svc-list" style="flex:1;overflow-y:auto;padding:4px 0"></div>
         <div id="svc-install-progress" style="display:none;border-top:1px solid var(--border);flex-shrink:0;background:var(--bg-secondary)">
@@ -83,7 +83,7 @@ function renderServicesApp(body) {
             allServices = data.services || [];
             renderList();
         } catch (e) {
-            list.innerHTML = `<div style="padding:20px;color:#ef4444">Błąd: ${e.message}</div>`;
+            list.innerHTML = `<div style="padding:20px;color:#ef4444">${t('Błąd:')} ${e.message}</div>`;
         }
     }
 
@@ -138,9 +138,9 @@ function renderServicesApp(body) {
                         actions += `<button class="fm-toolbar-btn btn-sm btn-green svc-act" data-svc="${s.id}" data-action="start" title="Uruchom"><i class="fas fa-play"></i></button>`;
                     }
                     if (s.enabled === 'enabled') {
-                        actions += `<button class="fm-toolbar-btn btn-sm svc-act" data-svc="${s.id}" data-action="disable" title="Wyłącz autostart"><i class="fas fa-toggle-on" style="color:#10b981"></i></button>`;
+                        actions += `<button class="fm-toolbar-btn btn-sm svc-act" data-svc="${s.id}" data-action="disable" title="${t('Wyłącz autostart')}"><i class="fas fa-toggle-on" style="color:#10b981"></i></button>`;
                     } else if (s.enabled === 'disabled') {
-                        actions += `<button class="fm-toolbar-btn btn-sm svc-act" data-svc="${s.id}" data-action="enable" title="Włącz autostart"><i class="fas fa-toggle-off"></i></button>`;
+                        actions += `<button class="fm-toolbar-btn btn-sm svc-act" data-svc="${s.id}" data-action="enable" title="${t('Włącz autostart')}"><i class="fas fa-toggle-off"></i></button>`;
                     }
                     actions += `<button class="fm-toolbar-btn btn-sm svc-log" data-svc="${s.id}" title="Logi"><i class="fas fa-rectangle-list"></i></button>`;
                     if (s.pkg) {
@@ -176,8 +176,8 @@ function renderServicesApp(body) {
                 const svc = btn.dataset.svc;
                 const action = btn.dataset.action;
 
-                if (action === 'stop' && !confirm(`Zatrzymać ${svc}?`)) return;
-                if (action === 'uninstall' && !confirm(`Odinstalować ${svc} (${btn.dataset.pkg})? To usunie pakiet z systemu.`)) return;
+                if (action === 'stop' && !confirm(t('Zatrzymać') + ' ' + svc + '?')) return;
+                if (action === 'uninstall' && !confirm(t('Odinstalować') + ' ' + svc + ' (' + btn.dataset.pkg + ')? ' + t('To usunie pakiet z systemu.'))) return;
 
                 btn.disabled = true;
                 const origIcon = btn.innerHTML;
@@ -255,7 +255,7 @@ function renderServicesApp(body) {
             <i class="fas fa-rectangle-list" style="color:#64748b"></i>
             <span style="font-size:13px;font-weight:500">${svc}</span>
             <div style="flex:1"></div>
-            <button class="fm-toolbar-btn btn-sm" id="svc-logs-more" title="Więcej"><i class="fas fa-plus"></i> 200 linii</button>
+            <button class="fm-toolbar-btn btn-sm" id="svc-logs-more" title="Więcej"><i class="fas fa-plus"></i> ${t('200 linii')}</button>
             <button class="fm-toolbar-btn btn-sm" id="svc-logs-close"><i class="fas fa-times"></i></button>
         </div>
         <pre id="svc-logs-content" style="padding:8px 14px;font-size:11px;font-family:monospace;margin:0;white-space:pre-wrap;word-break:break-all;max-height:150px;overflow-y:auto;color:var(--text-muted)"><i class="fas fa-spinner fa-spin"></i></pre>`;

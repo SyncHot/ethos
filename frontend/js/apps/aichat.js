@@ -199,19 +199,19 @@ function _aicMaybeHandleLaunch() {
             modelOverride = preferredModel.id;
         }
         var summary = [
-            'Jesteś lokalnym agentem kodowania EthOS (bez RAG).',
+            t('Jesteś lokalnym agentem kodowania EthOS (bez RAG).'),
             'Ticket: ' + (tk.id || ''),
-            'Tytuł: ' + (tk.title || ''),
+            t('Tytuł: ') + (tk.title || ''),
         ];
         if (tk.description) summary.push('Opis: ' + tk.description);
         if (tk.priority) summary.push('Priorytet: ' + tk.priority);
-        if (tk.complexity) summary.push('Złożoność: ' + tk.complexity);
+        if (tk.complexity) summary.push(t('Złożoność: ') + tk.complexity);
         if (tk.column) summary.push('Kolumna: ' + tk.column);
         if (tk.labels && tk.labels.length) summary.push('Etykiety: ' + tk.labels.join(', '));
         if (preferredModel) {
             summary.push('Preferowany model: ' + (preferredModel.label || preferredModel.name || preferredModel.id || 'lokalny'));
         }
-        summary.push('Używaj lokalnego modelu (np. Qwen 2.5 Coder 7B) i nie korzystaj z RAG.');
+        summary.push(t('Używaj lokalnego modelu (np. Qwen 2.5 Coder 7B) i nie korzystaj z RAG.'));
         _aicSendMessage(summary.join('\n'), {
             ragEnabled: !ragOff,
             forceNewConv: true,
@@ -373,7 +373,7 @@ function _aicRenderConvList(root) {
         return '<div class="aic-conv-item' + active + '" onclick="window._aicSelectConv(\'' + c.id + '\')">' +
             '<div class="aic-conv-title">' + _aicEsc(c.title) + '</div>' +
             '<div class="aic-conv-meta">' + (c.message_count || 0) + ' wiad.</div>' +
-            '<button class="aic-conv-del" onclick="event.stopPropagation();window._aicDeleteConv(\'' + c.id + '\')" title="Usuń"><i class="fas fa-trash"></i></button>' +
+            '<button class="aic-conv-del" onclick="event.stopPropagation();window._aicDeleteConv(\'' + c.id + '\')" title="' + t('Usuń') + '"><i class="fas fa-trash"></i></button>' +
         '</div>';
     }).join('');
 }
@@ -386,7 +386,7 @@ function _aicRenderMessages(root) {
     if (!msgs.length) {
         container.innerHTML =
             '<div class="aic-empty"><i class="fas fa-robot aic-empty-icon"></i>' +
-                '<div class="aic-empty-sub">Napisz wiadomość, aby rozpocząć rozmowę.</div></div>';
+                '<div class="aic-empty-sub">' + t('Napisz wiadomość, aby rozpocząć rozmowę.') + '</div></div>';
         return;
     }
     container.innerHTML = msgs.map(function (m) {
@@ -866,7 +866,7 @@ function _aicRenderFilePicker(root) {
         '<div class="aic-fp">' +
             '<div class="aic-fp-header">' +
                 '<button class="aic-btn-icon" onclick="window._aicCloseFilePicker()"><i class="fas fa-arrow-left"></i></button>' +
-                '<span class="aic-fp-title">Dołącz pliki</span>' +
+                '<span class="aic-fp-title">' + t('Dołącz pliki') + '</span>' +
                 '<span class="aic-fp-count">' + (selCount ? selCount + ' wybranych' : '') + '</span>' +
                 '<button class="aic-btn-primary aic-fp-confirm" onclick="window._aicConfirmFiles()"' +
                     (selCount ? '' : ' disabled') + `><i class="fas fa-check"></i> ${t('Dołącz')}</button>` +
@@ -1081,9 +1081,9 @@ function _aicRenderModels(root) {
 
     var pathHtml =
         '<div class="ml-path-row">' +
-            '<label><i class="fas fa-folder-open"></i> Ścieżka modeli:</label>' +
+            '<label><i class="fas fa-folder-open"></i> ' + t('Ścieżka modeli:') + '</label>' +
             '<input type="text" id="mlModelsPath" value="' + _aicEsc(_mlData.models_path || '') + '" class="ml-path-input">' +
-            '<button class="aic-btn-icon" onclick="window._mlSetPath()" title="Zmień"><i class="fas fa-check"></i></button>' +
+            '<button class="aic-btn-icon" onclick="window._mlSetPath()" title="' + t('Zmień') + '"><i class="fas fa-check"></i></button>' +
         '</div>';
 
     var depsWarnHtml = '';
@@ -1141,7 +1141,7 @@ function _aicRenderModels(root) {
             }
 
             var customBadge = m.custom
-                ? '<button class="ml-btn ml-btn-custom-rm" onclick="event.stopPropagation();window._mlRemoveCustom(\'' + m.id + '\')" title="Usuń z katalogu"><i class="fas fa-times"></i></button>'
+                ? '<button class="ml-btn ml-btn-custom-rm" onclick="event.stopPropagation();window._mlRemoveCustom(\'' + m.id + '\')" title="' + t('Usuń z katalogu') + '"><i class="fas fa-times"></i></button>'
                 : '';
 
             cardsHtml +=
@@ -1173,7 +1173,7 @@ function _aicRenderModels(root) {
             '<div class="ml-header">' +
                 '<button class="aic-btn-icon" onclick="window._aicCloseModels()"><i class="fas fa-arrow-left"></i></button>' +
                 '<span class="ml-title"><i class="fas fa-cube"></i> Biblioteka modeli</span>' +
-                '<button class="aic-btn-icon" onclick="window._mlRefresh()" title="Odśwież"><i class="fas fa-sync-alt"></i></button>' +
+                '<button class="aic-btn-icon" onclick="window._mlRefresh()" title="' + t('Odśwież') + '"><i class="fas fa-sync-alt"></i></button>' +
             '</div>' +
             hwHtml +
             progressHtml +
@@ -1474,7 +1474,7 @@ function _aicWizStepBench() {
                 var root2 = document.querySelector('.aic-root');
                 if (root2) _aicRenderWizard(root2);
             }).catch(function (err) {
-                _aic.wizardBench = { error: err.message || 'Błąd połączenia', running: false };
+                _aic.wizardBench = { error: err.message || t('Błąd połączenia'), running: false };
                 var root2 = document.querySelector('.aic-root');
                 if (root2) _aicRenderWizard(root2);
             });

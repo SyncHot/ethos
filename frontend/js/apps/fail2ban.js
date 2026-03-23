@@ -27,9 +27,9 @@ AppRegistry['fail2ban'] = function (appDef) {
     header.innerHTML = `
         <h2 style="margin:0 0 10px 0;display:flex;align-items:center;gap:10px">
             <i class="fas fa-shield-alt" style="color:#ef4444"></i>
-            Ochrona przed atakami (Fail2Ban)
+            ${t('Ochrona przed atakami (Fail2Ban)')}
         </h2>
-        <p style="margin:0;opacity:0.7">Monitorowanie i blokowanie podejrzanych adresów IP (SSH, Samba, Web)</p>
+        <p style="margin:0;opacity:0.7">${t('Monitorowanie i blokowanie podejrzanych adresów IP (SSH, Samba, Web)')}</p>
     `;
     body.appendChild(header);
 
@@ -39,10 +39,10 @@ AppRegistry['fail2ban'] = function (appDef) {
     whitelistSection.className = 'f2b-section';
     whitelistSection.innerHTML = `
         <h3 style="font-size:1.1em;border-bottom:1px solid var(--border);padding-bottom:5px;margin-bottom:10px">
-            Biała lista (IP ignorowane)
+            ${t('Biała lista (IP ignorowane)')}
         </h3>
         <div id="f2b-whitelist" style="font-family:monospace;background:var(--bg-surface);padding:10px;border-radius:6px;border:1px solid var(--border)">
-            Ładowanie...
+            ${t('Ładowanie...')}
         </div>
     `;
     body.appendChild(whitelistSection);
@@ -57,10 +57,10 @@ AppRegistry['fail2ban'] = function (appDef) {
     jailsSection.innerHTML = `
         <h3 style="font-size:1.1em;border-bottom:1px solid var(--border);padding-bottom:5px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
             <span>Aktywne bany</span>
-            <button id="f2b-refresh" class="app-btn app-btn-sm"><i class="fas fa-sync-alt"></i> Odśwież</button>
+            <button id="f2b-refresh" class="app-btn app-btn-sm"><i class="fas fa-sync-alt"></i> ${t('Odśwież')}</button>
         </h3>
         <div id="f2b-jails" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:15px">
-            Ładowanie...
+            ${t('Ładowanie...')}
         </div>
     `;
     body.appendChild(jailsSection);
@@ -74,7 +74,7 @@ AppRegistry['fail2ban'] = function (appDef) {
             if (wlRes.whitelist && wlRes.whitelist.length > 0) {
                 wlEl.textContent = wlRes.whitelist.join(', ');
             } else {
-                wlEl.textContent = 'Brak (lub domyślne localhost)';
+                wlEl.textContent = t('Brak (lub domyślne localhost)');
             }
 
             // Load status/jails
@@ -83,12 +83,12 @@ AppRegistry['fail2ban'] = function (appDef) {
             jailsEl.innerHTML = '';
 
             if (statusRes.error) {
-                jailsEl.innerHTML = `<div style="color:var(--text-error)">Błąd: ${statusRes.error}</div>`;
+                jailsEl.innerHTML = `<div style="color:var(--text-error)">${t('Błąd:')} ${statusRes.error}</div>`;
                 return;
             }
 
             if (!statusRes.jails || statusRes.jails.length === 0) {
-                jailsEl.innerHTML = '<div style="opacity:0.6;font-style:italic">Brak aktywnych więzień (jails).</div>';
+                jailsEl.innerHTML = '<div style="opacity:0.6;font-style:italic">' + t('Brak aktywnych więzień (jails).') + '</div>';
                 return;
             }
 
@@ -139,7 +139,7 @@ AppRegistry['fail2ban'] = function (appDef) {
                     jailCard.appendChild(table);
                 } else {
                     const empty = document.createElement('div');
-                    empty.textContent = 'Brak aktywnych banów.';
+                    empty.textContent = t('Brak aktywnych banów.');
                     empty.style.opacity = '0.5';
                     empty.style.fontSize = '0.9em';
                     jailCard.appendChild(empty);
@@ -153,7 +153,7 @@ AppRegistry['fail2ban'] = function (appDef) {
                 btn.onclick = async () => {
                     const jail = btn.dataset.jail;
                     const ip = btn.dataset.ip;
-                    if (!confirm(`Czy na pewno odblokować IP ${ip} w sekcji ${jail}?`)) return;
+                    if (!confirm(t('Czy na pewno odblokować IP') + ' ' + ip + ' ' + t('w sekcji') + ' ' + jail + '?')) return;
 
                     try {
                         const res = await api('/fail2ban/unban', { method: 'POST', body: { jail, ip } });
@@ -161,7 +161,7 @@ AppRegistry['fail2ban'] = function (appDef) {
                             toast(`Odblokowano ${ip}`, 'success');
                             loadData();
                         } else {
-                            toast(res.error || 'Błąd', 'error');
+                            toast(res.error || t('Błąd'), 'error');
                         }
                     } catch (e) {
                         toast(e.message, 'error');
@@ -171,7 +171,7 @@ AppRegistry['fail2ban'] = function (appDef) {
 
         } catch (e) {
             console.error(e);
-            body.querySelector('#f2b-jails').textContent = 'Błąd ładowania danych: ' + e.message;
+            body.querySelector('#f2b-jails').textContent = t('Błąd ładowania danych:') + ' ' + e.message;
         }
     }
 

@@ -20,16 +20,16 @@ function renderStorageApp(body) {
     body.innerHTML = `
     <div class="storage-app">
         <div class="storage-toolbar">
-            <button class="fm-toolbar-btn" id="st-refresh" title="Odśwież"><i class="fas fa-sync-alt"></i></button>
+            <button class="fm-toolbar-btn" id="st-refresh" title="${t('Odśwież')}"><i class="fas fa-sync-alt"></i></button>
             <div class="fm-toolbar-sep"></div>
-            <span class="storage-status" id="st-status">Ładowanie...</span>
+            <span class="storage-status" id="st-status">${t('Ładowanie...')}</span>
         </div>
 
         <!-- Drive card groups -->
         <div class="st-groups" id="st-groups">
             <div class="sto-center-lg">
                 <i class="fas fa-spinner fa-spin sto-spinner"></i>
-                <div class="sto-load-text">Ładowanie dysków...</div>
+                <div class="sto-load-text">${t('Ładowanie dysków...')}</div>
             </div>
         </div>
 
@@ -50,10 +50,10 @@ function renderStorageApp(body) {
                 <button class="fm-toolbar-btn btn-red" id="st-unmount-btn"><i class="fas fa-unlink"></i> Odmontuj</button>
                 <button class="fm-toolbar-btn" id="st-label-btn"><i class="fas fa-tag"></i> Etykieta</button>
                 <button class="fm-toolbar-btn btn-orange" id="st-format-btn"><i class="fas fa-eraser"></i> Formatuj</button>
-                <button class="fm-toolbar-btn btn-purple" id="st-eject-btn"><i class="fas fa-eject"></i> Wysuń USB</button>
+                <button class="fm-toolbar-btn btn-purple" id="st-eject-btn"><i class="fas fa-eject"></i> ${t('Wysuń USB')}</button>
                 <button class="fm-toolbar-btn" id="st-keepalive-btn"><i class="fas fa-heartbeat"></i> Utrzymuj</button>
                 <button class="fm-toolbar-btn" id="st-smart-btn"><i class="fas fa-heartbeat"></i> SMART</button>
-                <button class="fm-toolbar-btn btn-purple" id="st-merge-btn"><i class="fas fa-object-group"></i> Połącz</button>
+                <button class="fm-toolbar-btn btn-purple" id="st-merge-btn"><i class="fas fa-object-group"></i> ${t('Połącz')}</button>
                 <button class="fm-toolbar-btn btn-cyan" id="st-split-btn"><i class="fas fa-columns"></i> Podziel</button>
             </div>
         </div>
@@ -138,7 +138,7 @@ function renderStorageApp(body) {
                 ${(info.reallocated_sectors || 0) > 0 ? `<div class="sto-alert-danger"><i class="fas fa-exclamation-triangle sto-mr-xs"></i>${t('Dysk ma realokowane sektory — rozważ wymianę!')}</div>` : ''}
             `;
         } catch (e) {
-            smartBody.innerHTML = `<div class="sto-error-msg">Błąd: ${e.message}</div>`;
+            smartBody.innerHTML = `<div class="sto-error-msg">${t('Błąd:')} ${e.message}</div>`;
         }
     }
 
@@ -348,7 +348,7 @@ function renderStorageApp(body) {
         if (!state.selected) return;
         const drive = state.drives.find(d => d.name === state.selected);
         if (!drive?.mountpoint) { toast('Dysk nie jest zamontowany', 'warning'); return; }
-        if (!confirm(`Odmontować ${drive.mountpoint}?`)) return;
+        if (!confirm(`${t('Odmontować')} ${drive.mountpoint}?`)) return;
         try {
             await api('/storage/unmount', { method: 'POST', body: { path: drive.mountpoint } });
             toast('Odmontowano', 'success');
@@ -379,7 +379,7 @@ function renderStorageApp(body) {
         const drive = state.drives.find(d => d.name === state.selected);
         const parent = drive?.parent ? state.drives.find(d => d.name === drive.parent) : drive;
         const diskName = parent?.name || drive?.name;
-        if (!confirm(`Bezpiecznie wysunąć /dev/${diskName}?\nWszystkie partycje zostaną odmontowane.`)) return;
+        if (!confirm(`${t('Bezpiecznie wysunąć')} /dev/${diskName}?\n${t('Wszystkie partycje zostaną odmontowane.')}`)) return;
         try {
             await api('/storage/eject', { method: 'POST', body: { disk: diskName } });
             toast(t('Dysk bezpiecznie wysunięty'), 'success');
@@ -396,7 +396,7 @@ function renderStorageApp(body) {
         const isActive = !!state.keepalive[drive.name];
         const enable = !isActive;
         if (enable) {
-            if (!confirm(`Włączyć auto-remount dla ${drive.label || drive.name}?\nDysk będzie automatycznie montowany ponownie jeśli się odmontuje, a USB autosuspend zostanie wyłączony.`)) return;
+            if (!confirm(`${t('Włączyć auto-remount dla')} ${drive.label || drive.name}?\n${t('Dysk będzie automatycznie montowany ponownie jeśli się odmontuje, a USB autosuspend zostanie wyłączony.')}`)) return;
         }
         try {
             await api('/storage/keepalive', { method: 'POST', body: {
@@ -455,7 +455,7 @@ function renderStorageApp(body) {
             fmtSystemFs = data.system_fs || 'ext4';
             renderFmtForm(drive);
         } catch (e) {
-            fmtBody.innerHTML = `<div class="sto-error-msg"><i class="fas fa-exclamation-triangle sto-icon-lg"></i><div class="sto-mt-sm">Błąd: ${e.message}</div></div>`;
+            fmtBody.innerHTML = `<div class="sto-error-msg"><i class="fas fa-exclamation-triangle sto-icon-lg"></i><div class="sto-mt-sm">${t('Błąd:')} ${e.message}</div></div>`;
         }
     };
 
@@ -471,7 +471,7 @@ function renderStorageApp(body) {
                 </div>
             </div>
             <div class="st-fmt-field">
-                <label class="modal-label">System plików</label>
+                <label class="modal-label">${t('System plików')}</label>
                 <div class="st-fmt-fs-list" id="st-fmt-fs-list">
                     ${fmtOptions.map(fs => {
                         const disabled = !fs.available;
@@ -480,7 +480,7 @@ function renderStorageApp(body) {
                         <div class="st-fmt-fs-option ${disabled ? 'disabled' : ''} ${fs.value === defaultFs ? 'selected' : ''}" data-fs="${fs.value}" ${disabled ? `title="${t('Niedostępne')}"` : ''}>
                             <div class="st-fmt-fs-radio"><div class="st-fmt-fs-radio-dot"></div></div>
                             <div class="st-fmt-fs-info">
-                                <div class="st-fmt-fs-label">${fs.label}${fs.recommended ? ' <span class="st-fmt-badge-rec"><i class="fas fa-star"></i> Rekomendowany</span>' : ''}${disabled ? ` <span class="st-fmt-badge-na">${t('Niedostępny')}</span>` : ''}</div>
+                                <div class="st-fmt-fs-label">${fs.label}${fs.recommended ? ' <span class="st-fmt-badge-rec"><i class="fas fa-star"></i> ' + t('Rekomendowany') + '</span>' : ''}${disabled ? ` <span class="st-fmt-badge-na">${t('Niedostępny')}</span>` : ''}</div>
                                 <div class="st-fmt-fs-desc">${fs.desc}</div>
                                 <div class="st-fmt-fs-os">${osIcons}</div>
                             </div>
@@ -494,7 +494,7 @@ function renderStorageApp(body) {
             </div>
             <div class="st-fmt-system-info">
                 <i class="fas fa-info-circle sto-icon-accent"></i>
-                <span>System używa: <b>${fmtSystemFs}</b></span>
+                <span>${t('System używa:')} <b>${fmtSystemFs}</b></span>
             </div>`;
         fmtBody.querySelectorAll('.st-fmt-fs-option:not(.disabled)').forEach(opt => {
             opt.onclick = () => {
@@ -511,7 +511,7 @@ function renderStorageApp(body) {
         const fstype = selectedOpt.dataset.fs;
         const label  = fmtBody.querySelector('#st-fmt-label')?.value.trim() || '';
         const fsLabel = fmtOptions.find(o => o.value === fstype)?.label || fstype;
-        if (!confirm(`⚠️ UWAGA!\n\nCzy na pewno sformatować /dev/${state.selected} na ${fsLabel}?\n\nWSZYSTKIE DANE ZOSTANĄ UTRACONE!\nTa operacja jest NIEODWRACALNA!`)) return;
+        if (!confirm(`⚠️ ${t('UWAGA!')}\n\n${t('Czy na pewno sformatować')} /dev/${state.selected} ${t('na')} ${fsLabel}?\n\n${t('WSZYSTKIE DANE ZOSTANĄ UTRACONE!')}\n${t('Ta operacja jest NIEODWRACALNA!')}`)) return;
 
         fmtFooter.style.display = 'none';
         fmtBody.innerHTML = `
@@ -598,13 +598,13 @@ function renderStorageApp(body) {
                 <div class="st-fmt-drive-info sto-drive-info-merge">
                     <i class="fas fa-object-group sto-drive-icon-purple"></i>
                     <div>
-                        <div class="sto-bold">/dev/${parent.name} — Łączenie partycji</div>
+                        <div class="sto-bold">/dev/${parent.name} — ${t('Łączenie partycji')}</div>
                         <div class="sto-subtitle">${parent.size || '?'} ${parent.model ? '· ' + parent.model : ''}</div>
                         <div class="sto-merge-parts"><i class="fas fa-exclamation-triangle"></i> Partycje: ${childParts.map(d => `<b>${d.name}</b> (${d.size})`).join(', ')}</div>
                     </div>
                 </div>
                 <div class="st-fmt-field">
-                    <label class="modal-label">System plików</label>
+                    <label class="modal-label">${t('System plików')}</label>
                     <div class="st-fmt-fs-list" id="st-fmt-fs-list">
                         ${fmtOptions.map(fs => {
                             const disabled = !fs.available;
@@ -619,12 +619,12 @@ function renderStorageApp(body) {
                 </div>
                 <div class="st-fmt-system-info sto-sys-info-danger">
                     <i class="fas fa-exclamation-triangle sto-text-danger"></i>
-                    <span class="sto-text-danger"><b>UWAGA:</b> Wszystkie partycje i dane na /dev/${parent.name} zostaną usunięte.</span>
+                    <span class="sto-text-danger"><b>${t('UWAGA:')}</b> ${t('Wszystkie partycje i dane na')} /dev/${parent.name} ${t('zostaną usunięte.')}</span>
                 </div>`;
             fmtBody.querySelectorAll('.st-fmt-fs-option:not(.disabled)').forEach(opt => {
                 opt.onclick = () => { fmtBody.querySelectorAll('.st-fmt-fs-option').forEach(o => o.classList.remove('selected')); opt.classList.add('selected'); };
             });
-        } catch (e) { fmtBody.innerHTML = `<div class="sto-error-msg">Błąd: ${e.message}</div>`; return; }
+        } catch (e) { fmtBody.innerHTML = `<div class="sto-error-msg">${t('Błąd:')} ${e.message}</div>`; return; }
 
         fmtFooter.querySelector('#st-merge-confirm').onclick = async () => {
             const selectedOpt = fmtBody.querySelector('.st-fmt-fs-option.selected');
@@ -632,10 +632,10 @@ function renderStorageApp(body) {
             const fstype = selectedOpt.dataset.fs;
             const label = fmtBody.querySelector('#st-fmt-label')?.value.trim() || '';
             const fsLabel = fmtOptions.find(o => o.value === fstype)?.label || fstype;
-            if (!confirm(`⚠️ UWAGA!\n\nPołączyć partycje na /dev/${parent.name}?\n\nPartycje ${childParts.map(d => d.name).join(', ')} zostaną USUNIĘTE.\nWSZYSTKIE DANE ZOSTANĄ UTRACONE!`)) return;
+            if (!confirm(`⚠️ ${t('UWAGA!')}\n\n${t('Połączyć partycje na')} /dev/${parent.name}?\n\n${t('Partycje')} ${childParts.map(d => d.name).join(', ')} ${t('zostaną USUNIĘTE.')}\n${t('WSZYSTKIE DANE ZOSTANĄ UTRACONE!')}`)) return;
 
             fmtFooter.style.display = 'none';
-            fmtBody.innerHTML = `<div class="st-fmt-progress"><div class="st-fmt-progress-header"><i class="fas fa-cog fa-spin sto-progress-icon-purple"></i><div><div class="sto-bold">Łączenie /dev/${parent.name}</div><div class="sto-subtitle">${fsLabel}</div></div></div><div class="st-fmt-log" id="st-fmt-log"></div><div id="st-fmt-result" style="display:none"></div></div>`;
+            fmtBody.innerHTML = `<div class="st-fmt-progress"><div class="st-fmt-progress-header"><i class="fas fa-cog fa-spin sto-progress-icon-purple"></i><div><div class="sto-bold">${t('Łączenie')} /dev/${parent.name}</div><div class="sto-subtitle">${fsLabel}</div></div></div><div class="st-fmt-log" id="st-fmt-log"></div><div id="st-fmt-result" style="display:none"></div></div>`;
             const logEl = fmtBody.querySelector('#st-fmt-log');
             const resultEl = fmtBody.querySelector('#st-fmt-result');
             function addLog(msg, type = 'info') {
@@ -699,7 +699,7 @@ function renderStorageApp(body) {
             const data = await api('/storage/format/options');
             splitFsOptions = (data.options || []).filter(o => o.available);
             fmtSystemFs = data.system_fs || 'ext4';
-        } catch (e) { fmtBody.innerHTML = `<div class="sto-error-msg">Błąd: ${e.message}</div>`; return; }
+        } catch (e) { fmtBody.innerHTML = `<div class="sto-error-msg">${t('Błąd:')} ${e.message}</div>`; return; }
 
         const splitParts = [{ size_mb: 0, fstype: fmtSystemFs, label: '' }];
 
@@ -713,7 +713,7 @@ function renderStorageApp(body) {
                 <div class="st-fmt-drive-info sto-drive-info-split">
                     <i class="fas fa-columns sto-drive-icon-cyan"></i>
                     <div>
-                        <div class="sto-bold">/dev/${parentDisk.name} — Podział na partycje</div>
+                        <div class="sto-bold">/dev/${parentDisk.name} — ${t('Podział na partycje')}</div>
                         <div class="sto-subtitle">${parentDisk.size || '?'} (${diskSizeMB.toLocaleString()} MB) ${parentDisk.model ? '· ' + parentDisk.model : ''}</div>
                     </div>
                 </div>
@@ -739,18 +739,18 @@ function renderStorageApp(body) {
                                 <select class="modal-input st-split-fs" data-idx="${i}" style="width:140px">${fsSelectHtml(i, p.fstype)}</select>
                                 <label>Etykieta:</label>
                                 <input type="text" class="modal-input st-split-label" data-idx="${i}" value="${p.label}" placeholder="opcjonalnie" maxlength="16" style="width:120px">
-                                ${splitParts.length > 1 ? `<button class="fm-toolbar-btn btn-red btn-sm st-split-del" data-idx="${i}" title="Usuń"><i class="fas fa-times"></i></button>` : ''}
+                                ${splitParts.length > 1 ? `<button class="fm-toolbar-btn btn-red btn-sm st-split-del" data-idx="${i}" title="${t('Usuń')}"><i class="fas fa-times"></i></button>` : ''}
                             </div>
                         </div>
                     </div>`).join('')}
                 </div>
                 <div class="sto-split-footer">
-                    <button class="fm-toolbar-btn btn-green" id="st-split-add" ${splitParts.length >= 8 ? 'disabled' : ''}><i class="fas fa-plus"></i> Dodaj partycję</button>
+                    <button class="fm-toolbar-btn btn-green" id="st-split-add" ${splitParts.length >= 8 ? 'disabled' : ''}><i class="fas fa-plus"></i> ${t('Dodaj partycję')}</button>
                     <span class="sto-free-label">Wolne: <b>${freeMB.toLocaleString()}</b> MB</span>
                 </div>
                 <div class="st-fmt-system-info sto-sys-info-danger sto-mt-md">
                     <i class="fas fa-exclamation-triangle sto-text-danger"></i>
-                    <span class="sto-text-danger"><b>UWAGA:</b> Istniejące partycje i dane zostaną usunięte!</span>
+                    <span class="sto-text-danger"><b>${t('UWAGA:')}</b> ${t('Istniejące partycje i dane zostaną usunięte!')}</span>
                 </div>`;
 
             fmtBody.querySelectorAll('.st-split-size').forEach(inp => {
@@ -790,7 +790,7 @@ function renderStorageApp(body) {
             if (totalMB > diskSizeMB) { toast('Suma przekracza rozmiar dysku!', 'error'); return; }
 
             const descs = splitParts.map((p, i) => `  ${i+1}. ${p.size_mb ? p.size_mb + ' MB' : 'Reszta'} (${p.fstype})`).join('\n');
-            if (!confirm(`⚠️ UWAGA!\n\nPodzielić /dev/${parentDisk.name} na ${splitParts.length} partycji?\n\n${descs}\n\nWSZYSTKIE DANE ZOSTANĄ UTRACONE!`)) return;
+            if (!confirm(`⚠️ ${t('UWAGA!')}\n\n${t('Podzielić')} /dev/${parentDisk.name} ${t('na')} ${splitParts.length} ${t('partycji?')}\n\n${descs}\n\n${t('WSZYSTKIE DANE ZOSTANĄ UTRACONE!')}`)) return;
 
             fmtFooter.style.display = 'none';
             fmtBody.innerHTML = `<div class="st-fmt-progress"><div class="st-fmt-progress-header"><i class="fas fa-cog fa-spin sto-progress-icon-cyan"></i><div><div class="sto-bold">Partycjonowanie /dev/${parentDisk.name}</div><div class="sto-subtitle">${splitParts.length} partycji</div></div></div><div class="st-fmt-log" id="st-fmt-log"></div><div id="st-fmt-result" style="display:none"></div></div>`;

@@ -37,19 +37,19 @@ function renderCodeEditor(body, launchOpts) {
             <div class="ce-toolbar">
                 <div class="ce-toolbar-group">
                     <button class="ce-btn" data-action="new" title="Nowy plik"><i class="fas fa-file-medical"></i></button>
-                    <button class="ce-btn" data-action="open" title="Otwórz plik"><i class="fas fa-folder-open"></i></button>
+                    <button class="ce-btn" data-action="open" title="${t('Otwórz plik')}"><i class="fas fa-folder-open"></i></button>
                     <button class="ce-btn" data-action="save" title="Zapisz (Ctrl+S)"><i class="fas fa-save"></i></button>
                     <button class="ce-btn" data-action="save-as" title="Zapisz jako..."><i class="fas fa-file-export"></i></button>
                 </div>
                 <div class="ce-sep"></div>
                 <div class="ce-toolbar-group">
                     <button class="ce-btn" data-action="undo" title="Cofnij (Ctrl+Z)"><i class="fas fa-undo"></i></button>
-                    <button class="ce-btn" data-action="redo" title="Ponów (Ctrl+Y)"><i class="fas fa-redo"></i></button>
+                    <button class="ce-btn" data-action="redo" title="${t('Ponów (Ctrl+Y)')}"><i class="fas fa-redo"></i></button>
                 </div>
                 <div class="ce-sep"></div>
                 <div class="ce-toolbar-group">
-                    <button class="ce-btn" data-action="find" title="Znajdź (Ctrl+F)"><i class="fas fa-search"></i></button>
-                    <button class="ce-btn" data-action="replace" title="Zamień (Ctrl+H)"><i class="fas fa-exchange-alt"></i></button>
+                    <button class="ce-btn" data-action="find" title="${t('Znajdź (Ctrl+F)')}"><i class="fas fa-search"></i></button>
+                    <button class="ce-btn" data-action="replace" title="${t('Zamień (Ctrl+H)')}"><i class="fas fa-exchange-alt"></i></button>
                 </div>
                 <div class="ce-sep"></div>
                 <div class="ce-toolbar-group">
@@ -76,9 +76,9 @@ function renderCodeEditor(body, launchOpts) {
                 <input type="text" class="ce-find-input" id="ce-find-input" placeholder="${t('Znajdź...')}">
                 <input type="text" class="ce-find-input" id="ce-replace-input" placeholder="${t('Zamień na...')}" style="display:none;">
                 <button class="ce-btn-sm" id="ce-find-prev" title="Poprzedni"><i class="fas fa-chevron-up"></i></button>
-                <button class="ce-btn-sm" id="ce-find-next" title="Następny"><i class="fas fa-chevron-down"></i></button>
-                <button class="ce-btn-sm" id="ce-replace-one" title="Zamień" style="display:none;">Zamień</button>
-                <button class="ce-btn-sm" id="ce-replace-all" title="Zamień wszystko" style="display:none;">Wszystko</button>
+                <button class="ce-btn-sm" id="ce-find-next" title="${t('Następny')}"><i class="fas fa-chevron-down"></i></button>
+                <button class="ce-btn-sm" id="ce-replace-one" title="${t('Zamień')}" style="display:none;">${t('Zamień')}</button>
+                <button class="ce-btn-sm" id="ce-replace-all" title="${t('Zamień wszystko')}" style="display:none;">${t('Wszystko')}</button>
                 <span class="ce-find-count" id="ce-find-count"></span>
                 <button class="ce-btn-sm" id="ce-find-close" title="Zamknij"><i class="fas fa-times"></i></button>
             </div>
@@ -89,7 +89,7 @@ function renderCodeEditor(body, launchOpts) {
             </div>
             <div class="ce-statusbar">
                 <span id="ce-status-pos">Ln 1, Col 1</span>
-                <span id="ce-status-lang">Zwykły tekst</span>
+                <span id="ce-status-lang">${t('Zwykły tekst')}</span>
                 <span id="ce-status-encoding">UTF-8</span>
                 <span id="ce-status-modified"></span>
             </div>
@@ -526,7 +526,7 @@ function renderCodeEditor(body, launchOpts) {
                 </div>
                 <div class="modal-body" style="padding:0;">
                     <div style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;">
-                        <button class="ce-btn" id="ce-saveas-up" title="W górę"><i class="fas fa-arrow-up"></i></button>
+                        <button class="ce-btn" id="ce-saveas-up" title="${t('W górę')}"><i class="fas fa-arrow-up"></i></button>
                         <span id="ce-saveas-path" style="font-size:12px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1"></span>
                     </div>
                     <div id="ce-saveas-list" style="height:250px;overflow-y:auto;padding:4px 0;"></div>
@@ -636,12 +636,12 @@ function renderCodeEditor(body, launchOpts) {
         overlay.innerHTML = `
             <div class="modal-box" style="width:520px;">
                 <div class="modal-header">
-                    <span>Otwórz plik</span>
+                    <span>${t('Otwórz plik')}</span>
                     <button class="modal-close"><i class="fas fa-times"></i></button>
                 </div>
                 <div class="modal-body" style="padding:0;">
                     <div style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;">
-                        <button class="ce-btn" id="ce-open-up" title="W górę"><i class="fas fa-arrow-up"></i></button>
+                        <button class="ce-btn" id="ce-open-up" title="${t('W górę')}"><i class="fas fa-arrow-up"></i></button>
                         <span id="ce-open-path" style="font-size:12px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1"></span>
                     </div>
                     <div id="ce-open-list" style="height:300px;overflow-y:auto;padding:4px 0;"></div>
