@@ -96,3 +96,31 @@ def test_status_ethernet(mock_run):
     s = wifi_ops.status()
     assert s["ethernet"] is True
     assert s["has_network"] is True
+
+
+def test_save_wifi_config(tmp_path):
+    """save_wifi_config writes a valid NM connection file."""
+    ok = wifi_ops.save_wifi_config("MyNet", "secret123", str(tmp_path))
+    assert ok is True
+    nm_dir = tmp_path / "etc" / "NetworkManager" / "system-connections"
+    files = list(nm_dir.glob("*.nmconnection"))
+    assert len(files) == 1
+    content = files[0].read_text()
+    assert "ssid=MyNet" in content
+    assert "psk=secret123" in content
+    assert "key-mgmt=wpa-psk" in content
+    assert "autoconnect=true" in content
+    # File permissions: 0o600
+    assert oct(files[0].stat().st_mode & 0o777) == "0o600"
+
+
+def test_save_wifi_config_special_chars(tmp_path):
+    """WiFi SSID with special characters gets safe filename."""
+    wifi_ops.save_wifi_config("My/Net@Home!", "pass", str(tmp_path))
+    nm_dir = tmp_path / "etc" / "NetworkManager" / "system-connections"
+    files = list(nm_dir.glob("*.nmconnection"))
+    assert len(files) == 1
+    # SSID in file content should be exact
+    assert "ssid=My/Net@Home!" in files[0].read_text()
+    # Filename should be sanitized
+    assert "/" not in files[0].name

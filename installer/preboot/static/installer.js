@@ -1,9 +1,13 @@
 /**
  * EthOS Installer — Frontend step wizard.
+ *
+ * Step order:
+ *   0 Language → 1 Account → 2 Disks → 3 Summary → 4 Install
+ *   → 5 Network (post-install, hotspot stays active) → 6 Done/Reboot
  */
 
-const STEP_IDS = ['step-lang', 'step-account', 'step-disks', 'step-network', 'step-summary', 'step-install', 'step-done'];
-const STEP_LABELS = ['Wybierz język', 'Utwórz konto', 'Wybierz dyski', 'Konfiguracja sieci', 'Podsumowanie', 'Instalacja', 'Gotowe'];
+const STEP_IDS = ['step-lang', 'step-account', 'step-disks', 'step-summary', 'step-install', 'step-network', 'step-done'];
+const STEP_LABELS = ['Wybierz język', 'Utwórz konto', 'Wybierz dyski', 'Podsumowanie', 'Instalacja', 'Sieć', 'Gotowe'];
 
 const FLAGS = { pl: '🇵🇱', en: '🇬🇧', de: '🇩🇪', fr: '🇫🇷', es: '🇪🇸' };
 
@@ -21,9 +25,10 @@ const Installer = {
     bootDevice: null,
     disks: [],
     wifiSSID: null,
-    wifiConnected: false,
+    wifiSaved: false,
     networkOk: false,
     pollTimer: null,
+    installNewIP: null,
 
     async init() {
         this.buildStepDots();
@@ -43,9 +48,9 @@ const Installer = {
         this.updateNav();
         // Hooks per step
         if (n === 2) this.loadDisks();
-        if (n === 3) this.loadNetwork();
-        if (n === 4) this.buildSummary();
-        if (n === 5) this.startInstall();
+        if (n === 3) this.buildSummary();
+        if (n === 4) this.startInstall();
+        if (n === 5) this.loadNetwork();
     },
 
     next() {
@@ -57,7 +62,7 @@ const Installer = {
     },
 
     prev() {
-        if (this.step > 0 && this.step < 5) { // Can't go back during install
+        if (this.step > 0 && this.step < 4) { // Can't go back during/after install
             this.showStep(this.step - 1);
         }
     },
@@ -77,12 +82,12 @@ const Installer = {
         const back = document.getElementById('btn-back');
         const next = document.getElementById('btn-next');
         const nav = document.getElementById('nav-bar');
-        // Hide nav on install/done steps
-        nav.classList.toggle('hidden', this.step >= 5);
+        // Hide nav on install, network (custom buttons), done
+        nav.classList.toggle('hidden', this.step >= 4);
         back.classList.toggle('hidden', this.step === 0);
-        // On summary step, change button text
+        // On summary step (3), change button text to start install
         const nextLabel = next.querySelector('span');
-        if (this.step === 4) {
+        if (this.step === 3) {
             nextLabel.textContent = this.t('Rozpocznij instalację');
             next.classList.add('btn-install');
         } else {
@@ -118,7 +123,7 @@ const Installer = {
         });
     },
 
-    // ── Step 1: Language ──
+    // ── Step 0: Language ──
 
     buildLangGrid() {
         const grid = document.getElementById('lang-grid');
@@ -144,9 +149,9 @@ const Installer = {
         });
     },
 
-    // ── Step 2: Account ──
+    // ── Step 1: Account ──
 
-    // ── Step 3: Disks ──
+    // ── Step 2: Disks ──
 
     async loadDisks() {
         const loading = document.getElementById('disk-loading');
@@ -208,7 +213,94 @@ const Installer = {
         };
     },
 
-    // ── Step 4: Network ──
+    // ── Step 3: Summary ──
+
+    buildSummary() {
+        const table = document.getElementById('summary-table');
+        const osDiskObj = this.disks.find(d => d.name === this.osDisk);
+        const dataDiskObj = this.sameDisk ? osDiskObj : this.disks.find(d => d.name === this.dataDisk);
+
+        const rows = [
+            [this.t('Język'), (FLAGS[this.lang] || '') + ' ' + this.lang.toUpperCase()],
+            [this.t('Użytkownik'), this.username],
+            [this.t('Nazwa hosta'), this.hostname],
+            [this.t('Dysk systemu'), osDiskObj ? `${osDiskObj.model} (${osDiskObj.size_human})` : '—'],
+            [this.t('Dysk danych'), this.sameDisk ? this.t('Ten sam dysk') : (dataDiskObj ? `${dataDiskObj.model} (${dataDiskObj.size_human})` : '—')],
+        ];
+        table.innerHTML = rows.map(([l, v]) =>
+            `<div class="summary-row"><div class="summary-label">${l}</div><div class="summary-value">${this._esc(v)}</div></div>`
+        ).join('');
+
+        // Update confirm label
+        const i18n_confirm = {
+            pl: 'INSTALUJ', en: 'INSTALL', de: 'INSTALLIEREN', fr: 'INSTALLER', es: 'INSTALAR'
+        };
+        const token = i18n_confirm[this.lang] || 'INSTALUJ';
+        document.getElementById('confirm-label').textContent = `${this.t('Wpisz INSTALUJ aby potwierdzić')}: ${token}`;
+        document.getElementById('inp-confirm').placeholder = token;
+    },
+
+    // ── Step 4: Install ──
+
+    async startInstall() {
+        const body = {
+            os_disk: this.osDisk,
+            data_disk: this.sameDisk ? 'same' : this.dataDisk,
+            username: this.username,
+            password: this.password,
+            hostname: this.hostname,
+            lang: this.lang,
+            confirmation: document.getElementById('inp-confirm').value.trim(),
+        };
+
+        try {
+            const r = await fetch('/api/install/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            const data = await r.json();
+            if (!data.ok) {
+                alert(this.t('Błąd') + ': ' + (data.error || 'Unknown'));
+                this.showStep(3); // Back to summary
+                return;
+            }
+            this.pollProgress();
+        } catch (e) {
+            alert(this.t('Błąd') + ': ' + e.message);
+            this.showStep(3);
+        }
+    },
+
+    pollProgress() {
+        if (this.pollTimer) clearInterval(this.pollTimer);
+        this.pollTimer = setInterval(async () => {
+            try {
+                const r = await fetch('/api/install/progress');
+                const data = await r.json();
+                document.getElementById('progress-bar').style.width = data.percent + '%';
+                document.getElementById('progress-pct').textContent = data.percent + '%';
+                document.getElementById('progress-msg').textContent = this.t(data.message || '');
+
+                if (data.done) {
+                    clearInterval(this.pollTimer);
+                    this.pollTimer = null;
+                    this.installNewIP = data.new_ip || null;
+                    this.showStep(5); // → Network (post-install)
+                }
+                if (data.error) {
+                    clearInterval(this.pollTimer);
+                    this.pollTimer = null;
+                    document.getElementById('progress-msg').innerHTML =
+                        `<div class="msg-error">${this.t('Błąd')}: ${this._esc(data.error)}</div>`;
+                }
+            } catch (e) {
+                // Server might be rebooting
+            }
+        }, 2000);
+    },
+
+    // ── Step 5: Network (post-install) ──
 
     async loadNetwork() {
         const statusDiv = document.getElementById('net-status');
@@ -225,14 +317,21 @@ const Installer = {
             if (data.ethernet && data.ethernet_ip) {
                 document.getElementById('eth-ip').textContent = data.ethernet_ip;
                 ethDiv.classList.remove('hidden');
-                statusDiv.classList.add('hidden');
                 this.networkOk = true;
-            } else if (data.has_wifi) {
-                statusDiv.innerHTML = `<span>${this.t('Brak sieci — wybierz WiFi')}</span>`;
+                this.installNewIP = data.ethernet_ip;
+            }
+
+            if (data.has_wifi) {
                 wifiDiv.classList.remove('hidden');
                 this.scanWifi();
+            }
+
+            if (data.ethernet && data.ethernet_ip) {
+                statusDiv.classList.add('hidden');
+            } else if (data.has_wifi) {
+                statusDiv.innerHTML = `<span>${this.t('Wybierz sieć WiFi do użycia po restarcie')}</span>`;
             } else {
-                statusDiv.innerHTML = `<div class="msg-warn">${this.t('Brak sieci — wybierz WiFi')}</div>`;
+                statusDiv.innerHTML = `<div class="msg-warn">${this.t('Brak karty WiFi — podłącz kabel Ethernet')}</div>`;
             }
         } catch (e) {
             statusDiv.innerHTML = `<div class="msg-error">${this.t('Błąd')}: ${e.message}</div>`;
@@ -266,7 +365,7 @@ const Installer = {
                     item.classList.add('selected');
                     this.wifiSSID = item.dataset.ssid;
                     document.getElementById('wifi-pass-group').classList.remove('hidden');
-                    document.getElementById('btn-wifi-connect').classList.remove('hidden');
+                    document.getElementById('btn-wifi-save').classList.remove('hidden');
                     document.getElementById('inp-wifi-pass').focus();
                 };
             });
@@ -275,136 +374,46 @@ const Installer = {
         }
     },
 
-    async connectWifi() {
-        const btn = document.getElementById('btn-wifi-connect');
+    async saveWifi() {
+        const btn = document.getElementById('btn-wifi-save');
         const result = document.getElementById('wifi-result');
         const pass = document.getElementById('inp-wifi-pass').value;
         btn.disabled = true;
-        btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${this.t('Łączenie...')}`;
+        btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${this.t('Zapisywanie...')}`;
         result.classList.add('hidden');
 
         try {
-            const r = await fetch('/api/wifi/connect', {
+            const r = await fetch('/api/wifi/save', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ssid: this.wifiSSID, password: pass }),
+                body: JSON.stringify({ ssid: this.wifiSSID, password: pass, os_disk: this.osDisk }),
             });
             const data = await r.json();
             result.classList.remove('hidden');
             if (data.ok) {
-                result.innerHTML = `<div class="msg-ok"><i class="fas fa-check-circle"></i> ${this.t('Połączono z')} ${this._esc(this.wifiSSID)}${data.ip ? ' — ' + data.ip : ''}</div>`;
-                this.networkOk = true;
-                this.wifiConnected = true;
+                result.innerHTML = `<div class="msg-ok"><i class="fas fa-check-circle"></i> ${this.t('Konfiguracja WiFi zapisana')} — ${this._esc(this.wifiSSID)}</div>`;
+                this.wifiSaved = true;
             } else {
-                result.innerHTML = `<div class="msg-error"><i class="fas fa-times-circle"></i> ${this.t('Nie udało się połączyć')}: ${this._esc(data.message || data.error || '')}</div>`;
+                result.innerHTML = `<div class="msg-error"><i class="fas fa-times-circle"></i> ${this._esc(data.error || data.message || '')}</div>`;
             }
         } catch (e) {
             result.classList.remove('hidden');
             result.innerHTML = `<div class="msg-error">${this.t('Błąd')}: ${e.message}</div>`;
         }
         btn.disabled = false;
-        btn.innerHTML = `<span>${this.t('Połącz')}</span>`;
+        btn.innerHTML = `<i class="fas fa-save"></i> <span>${this.t('Zapisz WiFi')}</span>`;
     },
 
-    // ── Step 5: Summary ──
-
-    buildSummary() {
-        const table = document.getElementById('summary-table');
-        const osDiskObj = this.disks.find(d => d.name === this.osDisk);
-        const dataDiskObj = this.sameDisk ? osDiskObj : this.disks.find(d => d.name === this.dataDisk);
-        const network = this.networkOk
-            ? (this.wifiConnected ? `WiFi: ${this.wifiSSID}` : 'Ethernet')
-            : this.t('Brak sieci');
-
-        const rows = [
-            [this.t('Język'), (FLAGS[this.lang] || '') + ' ' + this.lang.toUpperCase()],
-            [this.t('Użytkownik'), this.username],
-            [this.t('Nazwa hosta'), this.hostname],
-            [this.t('Dysk systemu'), osDiskObj ? `${osDiskObj.model} (${osDiskObj.size_human})` : '—'],
-            [this.t('Dysk danych'), this.sameDisk ? this.t('Ten sam dysk') : (dataDiskObj ? `${dataDiskObj.model} (${dataDiskObj.size_human})` : '—')],
-            [this.t('Sieć'), network],
-        ];
-        table.innerHTML = rows.map(([l, v]) =>
-            `<div class="summary-row"><div class="summary-label">${l}</div><div class="summary-value">${this._esc(v)}</div></div>`
-        ).join('');
-
-        // Update confirm label
-        const i18n_confirm = {
-            pl: 'INSTALUJ', en: 'INSTALL', de: 'INSTALLIEREN', fr: 'INSTALLER', es: 'INSTALAR'
-        };
-        const token = i18n_confirm[this.lang] || 'INSTALUJ';
-        document.getElementById('confirm-label').textContent = `${this.t('Wpisz INSTALUJ aby potwierdzić')}: ${token}`;
-        document.getElementById('inp-confirm').placeholder = token;
-    },
-
-    // ── Step 6: Install ──
-
-    async startInstall() {
-        const body = {
-            os_disk: this.osDisk,
-            data_disk: this.sameDisk ? 'same' : this.dataDisk,
-            username: this.username,
-            password: this.password,
-            hostname: this.hostname,
-            lang: this.lang,
-            confirmation: document.getElementById('inp-confirm').value.trim(),
-        };
-
-        try {
-            const r = await fetch('/api/install/start', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-            });
-            const data = await r.json();
-            if (!data.ok) {
-                alert(this.t('Błąd') + ': ' + (data.error || 'Unknown'));
-                this.showStep(4); // Go back to summary
-                return;
-            }
-            this.pollProgress();
-        } catch (e) {
-            alert(this.t('Błąd') + ': ' + e.message);
-            this.showStep(4);
-        }
-    },
-
-    pollProgress() {
-        if (this.pollTimer) clearInterval(this.pollTimer);
-        this.pollTimer = setInterval(async () => {
-            try {
-                const r = await fetch('/api/install/progress');
-                const data = await r.json();
-                document.getElementById('progress-bar').style.width = data.percent + '%';
-                document.getElementById('progress-pct').textContent = data.percent + '%';
-                document.getElementById('progress-msg').textContent = this.t(data.message || '');
-
-                if (data.done) {
-                    clearInterval(this.pollTimer);
-                    this.pollTimer = null;
-                    this.installNewIP = data.new_ip || '—';
-                    this.showStep(6); // Done
-                    const port = 9000;
-                    document.getElementById('done-url').textContent = `http://${this.installNewIP}:${port}`;
-                }
-                if (data.error) {
-                    clearInterval(this.pollTimer);
-                    this.pollTimer = null;
-                    document.getElementById('progress-msg').innerHTML =
-                        `<div class="msg-error">${this.t('Błąd')}: ${this._esc(data.error)}</div>`;
-                }
-            } catch (e) {
-                // Server might be rebooting
-            }
-        }, 2000);
-    },
-
-    // ── Step 7: Done ──
+    // ── Step 6: Done / Reboot ──
 
     async reboot() {
-        const btn = document.getElementById('btn-reboot');
-        btn.disabled = true;
-        btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${this.t('System zostanie uruchomiony ponownie...')}`;
+        // Show the rebooting screen
+        this.showStep(6);
+        const ip = this.installNewIP || '—';
+        const port = 9000;
+        const url = ip !== '—' ? `http://${ip}:${port}` : this.t('Szukaj EthOS w sieci');
+        document.getElementById('done-url').textContent = url;
+
         try {
             await fetch('/api/install/reboot', { method: 'POST' });
         } catch (e) { /* expected — server shuts down */ }
@@ -415,8 +424,7 @@ const Installer = {
     validateStep(n) {
         if (n === 1) return this.validateAccount();
         if (n === 2) return this.validateDisks();
-        if (n === 3) return true; // Network is optional (ethernet may be there)
-        if (n === 4) return this.validateSummary();
+        if (n === 3) return this.validateSummary();
         return true;
     },
 

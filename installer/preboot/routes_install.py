@@ -21,6 +21,7 @@ _state = {
     "done": False,
     "error": None,
     "new_ip": None,
+    "os_disk": None,
 }
 _lock = threading.Lock()
 
@@ -67,6 +68,7 @@ def start_install():
     _set_state(
         running=True, phase="starting", percent=0,
         message="Starting installation...", done=False, error=None, new_ip=None,
+        os_disk=os_disk,
     )
 
     def worker():

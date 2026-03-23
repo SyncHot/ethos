@@ -104,3 +104,24 @@ def test_progress_initial(client):
 
 def test_reboot_before_done(client):
     assert client.post("/api/install/reboot").status_code == 400
+
+
+@patch("wifi_ops.save_wifi_config")
+@patch("disk_ops._run")
+def test_wifi_save_ok(mock_run, mock_save, client):
+    mock_run.return_value = ("", 0)
+    mock_save.return_value = True
+    r = client.post("/api/wifi/save", json={"ssid": "TestNet", "password": "pass", "os_disk": "sda"})
+    d = r.get_json()
+    assert d["ok"] is True
+    mock_save.assert_called_once()
+
+
+def test_wifi_save_no_ssid(client):
+    r = client.post("/api/wifi/save", json={"password": "p", "os_disk": "sda"})
+    assert r.status_code == 400
+
+
+def test_wifi_save_no_disk(client):
+    r = client.post("/api/wifi/save", json={"ssid": "Net", "password": "p"})
+    assert r.status_code == 400

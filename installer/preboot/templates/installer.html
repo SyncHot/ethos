@@ -79,34 +79,7 @@
             </div>
         </section>
 
-        <!-- Step 4: Network -->
-        <section class="step hidden" id="step-network">
-            <div class="step-icon"><i class="fas fa-wifi"></i></div>
-            <h2 data-i18n="Konfiguracja sieci">Konfiguracja sieci</h2>
-            <div id="net-status" class="msg-info"><i class="fas fa-spinner fa-spin"></i> <span data-i18n="Ładowanie...">Ładowanie...</span></div>
-
-            <div id="net-ethernet" class="hidden">
-                <div class="msg-ok"><i class="fas fa-check-circle"></i> <span data-i18n="Ethernet podłączony">Ethernet podłączony</span> — <span id="eth-ip"></span></div>
-            </div>
-
-            <div id="net-wifi-section" class="hidden">
-                <div class="wifi-toolbar">
-                    <span data-i18n="Skanowanie sieci WiFi...">Skanowanie sieci WiFi...</span>
-                    <button class="btn-sm" id="btn-wifi-refresh" onclick="Installer.scanWifi()"><i class="fas fa-sync"></i> <span data-i18n="Odśwież">Odśwież</span></button>
-                </div>
-                <div id="wifi-list" class="wifi-list"></div>
-                <div id="wifi-pass-group" class="form-group hidden">
-                    <label data-i18n="Hasło WiFi">Hasło WiFi</label>
-                    <input type="password" id="inp-wifi-pass" placeholder="••••">
-                </div>
-                <button class="btn btn-block hidden" id="btn-wifi-connect" onclick="Installer.connectWifi()">
-                    <span data-i18n="Łączenie...">Połącz</span>
-                </button>
-                <div id="wifi-result" class="hidden"></div>
-            </div>
-        </section>
-
-        <!-- Step 5: Summary -->
+        <!-- Step 4: Summary -->
         <section class="step hidden" id="step-summary">
             <div class="step-icon"><i class="fas fa-clipboard-check"></i></div>
             <h2 data-i18n="Podsumowanie">Podsumowanie</h2>
@@ -117,7 +90,7 @@
             </div>
         </section>
 
-        <!-- Step 6: Installation -->
+        <!-- Step 5: Installation -->
         <section class="step hidden" id="step-install">
             <div class="step-icon"><i class="fas fa-cog fa-spin"></i></div>
             <h2 data-i18n="Instaluję system...">Instaluję system...</h2>
@@ -128,15 +101,45 @@
             <div class="progress-msg" id="progress-msg"></div>
         </section>
 
-        <!-- Step 7: Done -->
-        <section class="step hidden" id="step-done">
+        <!-- Step 6: Network (post-install — hotspot stays active) -->
+        <section class="step hidden" id="step-network">
             <div class="step-icon done"><i class="fas fa-check-circle"></i></div>
-            <h2 data-i18n="Instalacja zakończona pomyślnie!">Instalacja zakończona pomyślnie!</h2>
-            <p data-i18n="Po restarcie połącz się z EthOS pod adresem:">Po restarcie połącz się z EthOS pod adresem:</p>
-            <div class="done-url" id="done-url"></div>
-            <button class="btn btn-lg" id="btn-reboot" onclick="Installer.reboot()">
+            <h2 data-i18n="System zainstalowany!">System zainstalowany!</h2>
+            <p data-i18n="Skonfiguruj sieć do użycia po restarcie">Skonfiguruj sieć do użycia po restarcie</p>
+
+            <div id="net-status" class="msg-info"><i class="fas fa-spinner fa-spin"></i> <span data-i18n="Ładowanie...">Ładowanie...</span></div>
+
+            <div id="net-ethernet" class="hidden">
+                <div class="msg-ok"><i class="fas fa-check-circle"></i> <span data-i18n="Ethernet podłączony">Ethernet podłączony</span> — <span id="eth-ip"></span></div>
+            </div>
+
+            <div id="net-wifi-section" class="hidden">
+                <div class="wifi-toolbar">
+                    <span data-i18n="Sieci WiFi">Sieci WiFi</span>
+                    <button class="btn-sm" id="btn-wifi-refresh" onclick="Installer.scanWifi()"><i class="fas fa-sync"></i> <span data-i18n="Odśwież">Odśwież</span></button>
+                </div>
+                <div id="wifi-list" class="wifi-list"></div>
+                <div id="wifi-pass-group" class="form-group hidden">
+                    <label data-i18n="Hasło WiFi">Hasło WiFi</label>
+                    <input type="password" id="inp-wifi-pass" placeholder="••••">
+                </div>
+                <button class="btn btn-block hidden" id="btn-wifi-save" onclick="Installer.saveWifi()">
+                    <i class="fas fa-save"></i> <span data-i18n="Zapisz WiFi">Zapisz WiFi</span>
+                </button>
+                <div id="wifi-result" class="hidden"></div>
+            </div>
+
+            <button class="btn btn-lg" id="btn-net-reboot" onclick="Installer.reboot()" style="margin-top: 24px">
                 <i class="fas fa-power-off"></i> <span data-i18n="Uruchom ponownie">Uruchom ponownie</span>
             </button>
+        </section>
+
+        <!-- Step 7: Rebooting -->
+        <section class="step hidden" id="step-done">
+            <div class="step-icon done"><i class="fas fa-power-off"></i></div>
+            <h2 data-i18n="System zostanie uruchomiony ponownie...">System zostanie uruchomiony ponownie...</h2>
+            <p data-i18n="Po restarcie połącz się z EthOS pod adresem:">Po restarcie połącz się z EthOS pod adresem:</p>
+            <div class="done-url" id="done-url"></div>
         </section>
 
         <!-- Navigation -->

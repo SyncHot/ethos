@@ -171,3 +171,48 @@ def save_wifi_priority(ssid):
         f"connection.autoconnect yes connection.autoconnect-priority 100 2>/dev/null"
     )
     log.info("WiFi priority set for: %s", ssid)
+
+
+def save_wifi_config(ssid, password, target_root="/mnt/ethos-target"):
+    """Write WiFi credentials as NM connection file to the installed system.
+
+    This does NOT connect live (hotspot stays active).  After reboot,
+    NetworkManager picks up the saved file and auto-connects.
+    """
+    import os
+    import uuid as _uuid
+
+    nm_dir = os.path.join(target_root, "etc/NetworkManager/system-connections")
+    os.makedirs(nm_dir, exist_ok=True)
+
+    conn_uuid = str(_uuid.uuid4())
+    config = (
+        "[connection]\n"
+        f"id={ssid}\n"
+        f"uuid={conn_uuid}\n"
+        "type=wifi\n"
+        "autoconnect=true\n"
+        "autoconnect-priority=100\n"
+        "\n"
+        "[wifi]\n"
+        "mode=infrastructure\n"
+        f"ssid={ssid}\n"
+        "\n"
+        "[wifi-security]\n"
+        "key-mgmt=wpa-psk\n"
+        f"psk={password}\n"
+        "\n"
+        "[ipv4]\n"
+        "method=auto\n"
+        "\n"
+        "[ipv6]\n"
+        "addr-gen-mode=default\n"
+        "method=auto\n"
+    )
+    safe_name = re.sub(r"[^\w\s-]", "_", ssid)
+    filepath = os.path.join(nm_dir, f"{safe_name}.nmconnection")
+    with open(filepath, "w") as f:
+        f.write(config)
+    os.chmod(filepath, 0o600)
+    log.info("WiFi config saved to: %s", filepath)
+    return True
