@@ -906,10 +906,10 @@ chmod 440 "$ROOT/etc/sudoers.d/010_ethos"
 chroot "$ROOT" groupadd -f nasosadmin
 chroot "$ROOT" groupadd -f nasos
 chroot "$ROOT" usermod -aG nasosadmin,nasos "$DEFAULT_USER"
-chroot "$ROOT" systemctl disable ssh
-chroot "$ROOT" systemctl enable smartd
-chroot "$ROOT" systemctl enable nut-server
-chroot "$ROOT" systemctl enable NetworkManager
+chroot "$ROOT" systemctl disable ssh || true
+chroot "$ROOT" systemctl enable smartmontools || true
+chroot "$ROOT" systemctl enable nut-server || true
+chroot "$ROOT" systemctl enable NetworkManager || true
 
 # ── SMART Monitoring Configuration ──
 echo "LOG:Konfiguracja SMART Monitoring..."
@@ -1017,7 +1017,7 @@ failregex = ^<HOST> - - \[.*\] ".*" (401|403) .*$
 ignoreregex =
 WEB
 
-chroot "$ROOT" systemctl enable fail2ban
+chroot "$ROOT" systemctl enable fail2ban || true
 
 # ── Force password change on first boot ──
 rm -f "$ROOT/opt/ethos/.password_changed"
