@@ -838,20 +838,20 @@ net.ipv4.ip_forward = 1
 IOTUNE
 
 cat > "$ROOT/etc/udev/rules.d/99-ethos-power.rules" <<'UDEV_PWR'
-ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="1", RUN+="/sbin/hdparm -S 242 /dev/%k"
+ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{{queue/rotational}}=="1", RUN+="/sbin/hdparm -S 242 /dev/%k"
 UDEV_PWR
 
 cat > "$ROOT/etc/udev/rules.d/99-ethos-readahead.rules" <<'UDEV'
-SUBSYSTEM=="block", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="1", RUN+="/sbin/blockdev --setra 4096 /dev/%k"
-SUBSYSTEM=="block", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="0", RUN+="/sbin/blockdev --setra 256 /dev/%k"
+SUBSYSTEM=="block", KERNEL=="sd[a-z]", ATTR{{queue/rotational}}=="1", RUN+="/sbin/blockdev --setra 4096 /dev/%k"
+SUBSYSTEM=="block", KERNEL=="sd[a-z]", ATTR{{queue/rotational}}=="0", RUN+="/sbin/blockdev --setra 256 /dev/%k"
 SUBSYSTEM=="block", KERNEL=="nvme*", RUN+="/sbin/blockdev --setra 256 /dev/%k"
 UDEV
 
 # I/O scheduler: BFQ for HDD (better for mixed workloads), none for NVMe
 cat > "$ROOT/etc/udev/rules.d/60-ethos-scheduler.rules" <<'UDEV_SCHED'
-ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="1", ATTR{queue/scheduler}="bfq"
-ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="0", ATTR{queue/scheduler}="none"
-ACTION=="add|change", KERNEL=="nvme*", ATTR{queue/scheduler}="none"
+ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{{queue/rotational}}=="1", ATTR{{queue/scheduler}}="bfq"
+ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{{queue/rotational}}=="0", ATTR{{queue/scheduler}}="none"
+ACTION=="add|change", KERNEL=="nvme*", ATTR{{queue/scheduler}}="none"
 UDEV_SCHED
 
 # Logrotate policy for EthOS logs
