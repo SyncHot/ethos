@@ -719,7 +719,7 @@ iproute2,iputils-ping,wireguard-tools,qrencode,\\
 bash,locales,console-setup,\\
 python3,python3-minimal,\\
 dosfstools,e2fsprogs,parted,util-linux,\\
-rsync,smartmontools,ethtool,hdparm,cpufrequtils,rtcwake,\\
+rsync,smartmontools,ethtool,hdparm,cpufrequtils,\\
 cryptsetup,\\
 usbutils,pciutils,lm-sensors,nut,\\
 avahi-daemon,libnss-mdns,\\
