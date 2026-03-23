@@ -887,7 +887,7 @@ def _log_auth_failure(username, ip):
 def login():
     client_ip = request.remote_addr or '0.0.0.0'
     if _rate_limiter.is_limited(f'login:{client_ip}'):
-        return jsonify({"error": "Zbyt wiele prób logowania. Spróbuj za 5 minut."}), 429
+        return jsonify({"error": "Too many login attempts. Try again in 5 minutes."}), 429
     now = time.time()
     with _login_lock:
         attempt = _login_attempts.get(client_ip)
@@ -927,7 +927,7 @@ def login():
             if not username:
                 _record_failed_login(client_ip)
                 _log_auth_failure('admin', client_ip)
-                elog('system', 'warning', 'Nieudane logowanie (złe hasło)')
+                elog('system', 'warning', 'Failed login (wrong password)')
                 audit_log('auth.login.failure', f'Failed login (no matching admin user) from {client_ip}', username='admin')
                 return jsonify({'error': t('auth.invalid_credentials')}), 401
 
@@ -938,19 +938,19 @@ def login():
         _record_failed_login(client_ip)
         _log_auth_failure(safe_user, client_ip)
         audit_log('auth.login.failure', f'Unknown user "{safe_user}" from {client_ip}', username=safe_user)
-        return jsonify({'error': 'Nieprawidłowy login lub hasło'}), 401
+        return jsonify({'error': 'Invalid username or password'}), 401
 
     shadow_fields = r.stdout.strip().split(':')
     stored_hash = shadow_fields[1] if len(shadow_fields) > 1 else ''
     if not stored_hash or stored_hash.startswith('!') or stored_hash == '*':
         audit_log('auth.login.failure', f'Locked account "{safe_user}" from {client_ip}', username=safe_user)
-        return jsonify({'error': 'Konto zablokowane'}), 401
+        return jsonify({'error': 'Account locked'}), 401
 
     if not _verify_shadow_hash(password, stored_hash):
         _record_failed_login(client_ip)
         _log_auth_failure(safe_user, client_ip)
         audit_log('auth.login.failure', f'Bad password for "{safe_user}" from {client_ip}', username=safe_user)
-        return jsonify({'error': 'Nieprawidłowy login lub hasło'}), 401
+        return jsonify({'error': 'Invalid username or password'}), 401
 
     # Clear login attempts on success
     _login_attempts.pop(client_ip, None)
@@ -1152,7 +1152,7 @@ def _setup_progress_update(stage, message, active=True):
         _SETUP_PROGRESS['elapsed'] = int(now - (_SETUP_PROGRESS.get('started_at') or now))
 
 
-def _setup_progress_start(message='Rozpoczynam konfigurację...'):
+def _setup_progress_start(message='Starting configuration...'):
     now = time.time()
     with _setup_lock:
         _SETUP_PROGRESS.update({
@@ -1469,17 +1469,17 @@ def setup_prepare_disk():
     passphrase = data.get('passphrase', '')
 
     if not device or not device.startswith('/dev/'):
-        return jsonify({'error': 'Nieprawidłowe urządzenie'}), 400
+        return jsonify({'error': 'Invalid device'}), 400
     if not os.path.exists(device):
-        return jsonify({'error': f'Urządzenie {device} nie istnieje'}), 400
+        return jsonify({'error': f'Device {device} does not exist'}), 400
 
     import subprocess as _sp
 
     # For encryption, require passphrase
     if encrypt and (not passphrase or len(passphrase) < 4):
-        return jsonify({'error': 'Hasło szyfrowania musi mieć min. 4 znaki'}), 400
+        return jsonify({'error': 'Encryption password must be at least 4 characters'}), 400
     if encrypt and shutil.which('cryptsetup') is None:
-        return jsonify({'error': 'Szyfrowanie LUKS wymaga pakietu cryptsetup. Zainstaluj go lub wyłącz szyfrowanie.'}), 400
+        return jsonify({'error': 'LUKS encryption requires the cryptsetup package. Install it or disable encryption.'}), 400
 
     mountpoint = '/mnt/data'
 
@@ -1562,19 +1562,19 @@ def setup_prepare_disk():
                              '--key-file', keyfile, part_dev],
                             capture_output=True, text=True, timeout=120)
                 if r.returncode != 0:
-                    return None, f'Błąd LUKS: {r.stderr.strip()}'
+                    return None, f'LUKS error: {r.stderr.strip()}'
 
                 r = _sp.run(['cryptsetup', 'luksAddKey', '--key-file', keyfile, part_dev],
                             input=passphrase.encode(),
                             capture_output=True, text=True, timeout=60)
                 if r.returncode != 0:
-                    return None, f'Błąd dodawania hasła: {r.stderr.strip()}'
+                    return None, f'Error adding password: {r.stderr.strip()}'
 
                 r = _sp.run(['cryptsetup', 'luksOpen', '--key-file', keyfile,
                              part_dev, 'ethos_data'],
                             capture_output=True, text=True, timeout=30)
                 if r.returncode != 0:
-                    return None, f'Błąd otwierania LUKS: {r.stderr.strip()}'
+                    return None, f'Error opening LUKS: {r.stderr.strip()}'
 
                 target_dev = '/dev/mapper/ethos_data'
                 is_luks = True
@@ -1612,15 +1612,15 @@ def setup_prepare_disk():
                 if 'is mounted; will not make a filesystem' in fmt_err.lower():
                     time.sleep(1)
                     continue
-                return None, f'Błąd formatowania: {fmt_err}'
+                return None, f'Formatting error: {fmt_err}'
             if fmt_err:
-                return None, f'Błąd formatowania: {fmt_err}'
+                return None, f'Formatting error: {fmt_err}'
 
             os.makedirs(mountpoint, mode=0o755, exist_ok=True)
             r = _sp.run(['mount', target_dev, mountpoint],
                         capture_output=True, text=True, timeout=15)
             if r.returncode != 0:
-                return None, f'Błąd montowania: {r.stderr.strip()}'
+                return None, f'Mount error: {r.stderr.strip()}'
 
             return {'success': True, 'mountpoint': mountpoint,
                     'device': part_dev, 'encrypted': is_luks}, None
@@ -1632,7 +1632,7 @@ def setup_prepare_disk():
         if mode == 'mount':
             part_dev = data.get('partition', device)
             if not os.path.exists(part_dev):
-                return jsonify({'error': f'Partycja {part_dev} nie istnieje'}), 400
+                return jsonify({'error': f'Partition {part_dev} does not exist'}), 400
             os.makedirs(mountpoint, mode=0o755, exist_ok=True)
             # Check if already mounted at mountpoint
             r = _sp.run(['findmnt', '-no', 'SOURCE', mountpoint],
@@ -1644,7 +1644,7 @@ def setup_prepare_disk():
             r = _sp.run(['mount', part_dev, mountpoint],
                         capture_output=True, text=True, timeout=15)
             if r.returncode != 0:
-                return jsonify({'error': f'Błąd montowania: {r.stderr.strip()}'}), 500
+                return jsonify({'error': f'Mount error: {r.stderr.strip()}'}), 500
             return jsonify({'success': True, 'mountpoint': mountpoint,
                             'device': part_dev, 'encrypted': False})
 
@@ -1655,7 +1655,7 @@ def setup_prepare_disk():
             r = _sp.run(['parted', '-ms', device, 'unit', 'B', 'print'],
                         capture_output=True, text=True, timeout=10)
             if r.returncode != 0:
-                return jsonify({'error': f'Błąd odczytu partycji: {r.stderr.strip()}'}), 500
+                return jsonify({'error': f'Partition read error: {r.stderr.strip()}'}), 500
 
             max_num = 0
             for line in r.stdout.splitlines():
@@ -1687,14 +1687,14 @@ def setup_prepare_disk():
                         pass
 
             if free_start is None or best_size < 500_000_000:
-                return jsonify({'error': 'Brak wystarczającej wolnej przestrzeni na dysku'}), 400
+                return jsonify({'error': 'Not enough free disk space'}), 400
 
             r = _sp.run(
                 ['parted', '-s', device, 'mkpart', 'primary', 'ext4',
                  f'{free_start}B', f'{free_end}B'],
                 capture_output=True, text=True, timeout=15)
             if r.returncode != 0 and not _parted_kernel_sync_issue(r.stderr):
-                return jsonify({'error': f'Błąd tworzenia partycji: {r.stderr.strip()}'}), 500
+                return jsonify({'error': f'Partition creation error: {r.stderr.strip()}'}), 500
             if r.returncode != 0:
                 # Parted sometimes writes metadata but returns non-zero when kernel
                 # hasn't re-read partition table yet. Try to resync and continue.
@@ -1720,7 +1720,7 @@ def setup_prepare_disk():
                     part_dev = found
 
             if not os.path.exists(part_dev):
-                return jsonify({'error': f'Partycja {part_dev} nie pojawiła się'}), 500
+                return jsonify({'error': f'Partition {part_dev} did not appear'}), 500
 
             result, err = _format_and_mount(part_dev)
             if err:
@@ -1734,7 +1734,7 @@ def setup_prepare_disk():
         root_source = r.stdout.strip()
         root_disk = re.sub(r'p?\d+$', '', root_source)
         if device == root_disk or device == root_source:
-            return jsonify({'error': 'Nie można formatować dysku systemowego!'}), 400
+            return jsonify({'error': 'Cannot format system disk!'}), 400
 
         # 1. Unmount any existing partitions on this disk
         r = _sp.run(['lsblk', '-nlo', 'NAME,MOUNTPOINT', device],
@@ -1760,7 +1760,7 @@ def setup_prepare_disk():
         r = _sp.run(['parted', '-s', device, 'mklabel', 'gpt'],
                     capture_output=True, text=True, timeout=15)
         if r.returncode != 0 and not _parted_kernel_sync_issue(r.stderr):
-            return jsonify({'error': f'Błąd tablicy partycji: {r.stderr.strip()}'}), 500
+            return jsonify({'error': f'Partition table error: {r.stderr.strip()}'}), 500
         if r.returncode != 0:
             _sp.run(['partprobe', device], capture_output=True, timeout=10)
             _sp.run(['udevadm', 'settle', '--timeout=8'], capture_output=True, timeout=12)
@@ -1768,7 +1768,7 @@ def setup_prepare_disk():
         r = _sp.run(['parted', '-s', device, 'mkpart', 'primary', '1MiB', '100%'],
                     capture_output=True, text=True, timeout=15)
         if r.returncode != 0 and not _parted_kernel_sync_issue(r.stderr):
-            return jsonify({'error': f'Błąd tworzenia partycji: {r.stderr.strip()}'}), 500
+            return jsonify({'error': f'Partition creation error: {r.stderr.strip()}'}), 500
         if r.returncode != 0:
             _sp.run(['partprobe', device], capture_output=True, timeout=10)
             _sp.run(['udevadm', 'settle', '--timeout=8'], capture_output=True, timeout=12)
@@ -1781,7 +1781,7 @@ def setup_prepare_disk():
             _sp.run(['partprobe', device], capture_output=True, timeout=10)
             part_dev = _wait_for_partition([f"{device}1", f"{device}p1"], wait_sec=10)
         if not part_dev:
-            return jsonify({'error': 'Partycja nie pojawila się po utworzeniu'}), 500
+            return jsonify({'error': 'Partition did not appear after creation'}), 500
 
         result, err = _format_and_mount(part_dev)
         if err:
@@ -1810,15 +1810,15 @@ def setup_complete():
     locale = data.get('locale', '').strip()         # e.g. "en_US.UTF-8"
 
     if not username or len(username) < 2:
-        return jsonify({'error': 'Nazwa użytkownika jest wymagana (min. 2 znaki)'}), 400
+        return jsonify({'error': 'Username is required (min. 2 characters)'}), 400
     if not password or len(password) < 4:
-        return jsonify({'error': 'Hasło jest wymagane (min. 4 znaki)'}), 400
+        return jsonify({'error': 'Password is required (min. 4 characters)'}), 400
     if password == 'ethos':
-        return jsonify({'error': 'Hasło nie może być domyślne ("ethos")'}), 400
+        return jsonify({'error': 'Password cannot be the default ("ethos")'}), 400
 
     import shlex
     errors = []
-    _setup_progress_start('Rozpoczynam konfigurację systemu...')
+    _setup_progress_start('Starting system configuration...')
 
     # 0. Set timezone & locale if provided
     if timezone and re.match(r'^[A-Za-z_]+/[A-Za-z_/]+$', timezone):
@@ -1833,16 +1833,16 @@ def setup_complete():
                        timeout=30)
 
     # 1. Set hostname on host
-    _setup_progress_update('hostname', 'Ustawiam hostname systemu...')
+    _setup_progress_update('hostname', 'Setting system hostname...')
     _host_run_base(f"hostnamectl set-hostname {shlex.quote(hostname)}", timeout=10)
 
     # 2. Setup data disk — create directory structure and symlinks
     if data_disk and data_disk != '/' and os.path.isdir(data_disk):
-        _setup_progress_update('data_disk', 'Konfiguruję dysk danych i dowiązania...')
+        _setup_progress_update('data_disk', 'Configuring data disk and symlinks...')
         _setup_data_disk(data_disk, errors)
 
     # 3. Create or update system user
-    _setup_progress_update('user', 'Tworzę/aktualizuję konto administratora...')
+    _setup_progress_update('user', 'Creating/updating administrator account...')
     safe_user = shlex.quote(username)
     safe_pass = shlex.quote(username + ':' + password)
     groups = 'sudo,nasos,nasosadmin'
@@ -1862,7 +1862,7 @@ def setup_complete():
             f"echo {safe_pass} | chpasswd",
             timeout=15)
         if r.returncode != 0:
-            errors.append(f'Błąd tworzenia użytkownika: {r.stderr.strip()}')
+            errors.append(f'Error creating user: {r.stderr.strip()}')
     else:
         # User exists — update password and groups
         _host_run_base(
@@ -1878,15 +1878,15 @@ def setup_complete():
         timeout=10)
 
     # 3b. Create default folder structure based on wizard language + ~/.ethos
-    _setup_progress_update('home', 'Tworzę strukturę katalogów użytkownika...')
+    _setup_progress_update('home', 'Creating user directory structure...')
     _ensure_user_home_structure(username, lang=language)
 
     # 3c. Keep only setup-selected admin account
-    _setup_progress_update('admin_cleanup', 'Wyłączam pozostałe konta administracyjne...')
+    _setup_progress_update('admin_cleanup', 'Disabling other administrative accounts...')
     _restrict_admin_users(username, errors)
 
     # 4. Update NAS_NAME in memory
-    _setup_progress_update('settings', 'Zapisuję ustawienia systemu...')
+    _setup_progress_update('settings', 'Saving system settings...')
     NAS_NAME = nas_name
 
     # 4b. Persist language setting
@@ -1897,7 +1897,7 @@ def setup_complete():
     _update_compose_env(password, nas_name, data_disk)
 
     # 6. Mark setup as done
-    _setup_progress_update('finalize', 'Finalizuję konfigurację...')
+    _setup_progress_update('finalize', 'Finalizing configuration...')
     setup_info = {
         'timestamp': time.time(),
         'hostname': hostname,
@@ -1929,9 +1929,9 @@ def setup_complete():
         pass  # non-critical
 
     if errors:
-        _setup_progress_end('done', 'Konfiguracja zakończona z ostrzeżeniami.')
+        _setup_progress_end('done', 'Configuration completed with warnings.')
         return jsonify({'success': True, 'warnings': errors})
-    _setup_progress_end('done', 'Konfiguracja zakończona pomyślnie.')
+    _setup_progress_end('done', 'Configuration completed successfully.')
     return jsonify({'success': True})
 
 
@@ -1997,7 +1997,7 @@ def _setup_data_disk(mountpoint, errors):
                 with open('/etc/fstab', 'w') as f:
                     f.write('\n'.join(cleaned).rstrip() + '\n')
     except Exception as e:
-        errors.append(f'Nie udało się dodać dysku do fstab: {e}')
+        errors.append(f'Failed to add disk to fstab: {e}')
 
     try:
         os.makedirs(ethos_on_disk, mode=0o755, exist_ok=True)
@@ -2017,7 +2017,7 @@ def _setup_data_disk(mountpoint, errors):
                         try:
                             shutil.move(src, dst)
                         except Exception as e:
-                            errors.append(f'Błąd przenoszenia {item}: {e}')
+                            errors.append(f'Error moving {item}: {e}')
                 # Remove the now-empty directory
                 try:
                     shutil.rmtree(local_dir)
@@ -2031,14 +2031,14 @@ def _setup_data_disk(mountpoint, errors):
                         shutil.rmtree(local_dir)
                     os.symlink(disk_dir, local_dir)
                 except Exception as e:
-                    errors.append(f'Błąd tworzenia dowiązania {d}: {e}')
+                    errors.append(f'Error creating symlink {d}: {e}')
 
         # Also create shared user folders on disk
         shared_dir = os.path.join(ethos_on_disk, 'shared')
         os.makedirs(shared_dir, mode=0o777, exist_ok=True)
 
     except Exception as e:
-        errors.append(f'Błąd konfiguracji dysku danych: {e}')
+        errors.append(f'Error configuring data disk: {e}')
 
 
 def _restrict_admin_users(primary_user, errors):
@@ -2051,7 +2051,7 @@ def _restrict_admin_users(primary_user, errors):
         r = _host_run_base("getent group sudo nasosadmin 2>/dev/null | cut -d: -f4 | tr ',' '\n' | sort -u", timeout=10)
         admin_users = [u.strip() for u in (r.stdout or '').split('\n') if u.strip()]
     except Exception as e:
-        errors.append(f'Nie udało się odczytać listy adminów: {e}')
+        errors.append(f'Failed to read admin list: {e}')
         return
 
     for user in admin_users:
@@ -2108,22 +2108,22 @@ def power_action():
 
     allowed = ('shutdown', 'reboot', 'restart-app')
     if action not in allowed:
-        return jsonify({'error': f'Nieznana akcja: {action}'}), 400
+        return jsonify({'error': f'Unknown action: {action}'}), 400
 
     if action == 'restart-app':
-        elog('system', 'warning', 'Power Manager: restart aplikacji')
+        elog('system', 'warning', 'Power Manager: restarting application')
         gevent.spawn_later(1, _restart_self)
-        return jsonify({'ok': True, 'message': 'Restart aplikacji za chwilę...'})
+        return jsonify({'ok': True, 'message': 'Application restarting shortly...'})
 
     if action == 'shutdown':
-        elog('system', 'warning', 'Power Manager: wyłączanie systemu')
+        elog('system', 'warning', 'Power Manager: shutting down system')
         gevent.spawn_later(2, _host_power, 'poweroff')
-        return jsonify({'ok': True, 'message': 'System zostanie wyłączony...'})
+        return jsonify({'ok': True, 'message': 'System will shut down...'})
 
     if action == 'reboot':
-        elog('system', 'warning', 'Power Manager: restart systemu')
+        elog('system', 'warning', 'Power Manager: rebooting system')
         gevent.spawn_later(2, _host_power, 'reboot')
-        return jsonify({'ok': True, 'message': 'System zostanie uruchomiony ponownie...'})
+        return jsonify({'ok': True, 'message': 'System will reboot shortly...'})
 
 
 def _host_power(cmd):
@@ -2304,48 +2304,48 @@ def services_action():
     import re as _re
     import shlex
     if not _re.match(r'^[a-zA-Z0-9_\-\.]+$', name):
-        return jsonify({'error': 'Nieprawidłowa nazwa usługi'}), 400
+        return jsonify({'error': 'Invalid service name'}), 400
 
     # Protect critical services
     _PROTECTED = {'ethos', 'ssh', 'sshd', 'NetworkManager', 'systemd-journald', 'systemd-logind', 'dbus'}
     if name in _PROTECTED and action in ('stop', 'disable', 'uninstall'):
-        return jsonify({'error': f'Usługa {name} jest chroniona — nie można jej {action}'}), 403
+        return jsonify({'error': f'Service {name} is protected — cannot {action}'}), 403
 
     if action in ('start', 'stop', 'restart'):
         r = _host_run_base(f"systemctl {action} {shlex.quote(name)}", timeout=30)
         if r.returncode != 0:
-            return jsonify({'error': f'{action} nie powiodło się: {r.stderr.strip()[-200:]}'}), 500
+            return jsonify({'error': f'{action} failed: {r.stderr.strip()[-200:]}'}), 500
         return jsonify({'ok': True, 'message': f'{name}: {action} OK'})
 
     elif action == 'enable':
         r = _host_run_base(f"systemctl enable {shlex.quote(name)}", timeout=15)
         if r.returncode != 0:
             return jsonify({'error': r.stderr.strip()[-200:]}), 500
-        return jsonify({'ok': True, 'message': f'{name} włączona przy starcie'})
+        return jsonify({'ok': True, 'message': f'{name} enabled at startup'})
 
     elif action == 'disable':
         r = _host_run_base(f"systemctl disable {shlex.quote(name)}", timeout=15)
         if r.returncode != 0:
             return jsonify({'error': r.stderr.strip()[-200:]}), 500
-        return jsonify({'ok': True, 'message': f'{name} wyłączona przy starcie'})
+        return jsonify({'ok': True, 'message': f'{name} disabled at startup'})
 
     elif action == 'uninstall':
         meta = _KNOWN_SERVICES.get(name, {})
         pkg = meta.get('pkg') or data.get('pkg', '').strip()
         if not pkg:
-            return jsonify({'error': 'Nie znaleziono pakietu do odinstalowania'}), 400
+            return jsonify({'error': 'Package not found for uninstall'}), 400
         # Stop first
         _host_run_base(f"systemctl stop {shlex.quote(name)} 2>/dev/null", timeout=15)
         r = _host_run_base(f"apt-get remove -y {shlex.quote(pkg)}", timeout=120)
         if r.returncode != 0:
-            return jsonify({'error': f'Odinstalowanie nie powiodło się: {r.stderr.strip()[-200:]}'}), 500
-        return jsonify({'ok': True, 'message': f'{pkg} odinstalowany'})
+            return jsonify({'error': f'Uninstall failed: {r.stderr.strip()[-200:]}'}), 500
+        return jsonify({'ok': True, 'message': f'{pkg} uninstalled'})
 
     elif action == 'install':
         meta = _KNOWN_SERVICES.get(name, {})
         pkg = meta.get('pkg') or data.get('pkg', '').strip()
         if not pkg:
-            return jsonify({'error': 'Nie znaleziono pakietu do zainstalowania'}), 400
+            return jsonify({'error': 'Package not found for install'}), 400
 
         # Run install asynchronously with progress via SocketIO
         import gevent as _gev
@@ -2378,7 +2378,7 @@ def services_action():
                     socketio.emit('service_install_progress', {
                         'service': svc_name, 'pkg': svc_pkg,
                         'phase': 'done', 'progress': 100,
-                        'message': 'Docker zainstalowany',
+                        'message': 'Docker installed',
                     })
                     return
 
@@ -2386,21 +2386,21 @@ def services_action():
                 socketio.emit('service_install_progress', {
                     'service': svc_name, 'pkg': svc_pkg,
                     'phase': 'update', 'progress': 5,
-                    'message': 'Naprawa menedżera pakietów…',
+                    'message': 'Repairing package manager…',
                 })
                 _host_run_base("dpkg --configure -a 2>/dev/null", timeout=60)
 
                 socketio.emit('service_install_progress', {
                     'service': svc_name, 'pkg': svc_pkg,
                     'phase': 'update', 'progress': 10,
-                    'message': 'Aktualizacja listy pakietów…',
+                    'message': 'Updating package list…',
                 })
                 r_upd = _host_run_base("apt-get update -qq", timeout=120)
                 if r_upd.returncode != 0:
                     socketio.emit('service_install_progress', {
                         'service': svc_name, 'pkg': svc_pkg,
                         'phase': 'update', 'progress': 15,
-                        'message': 'Aktualizacja listy pakietów (ostrzeżenie)…',
+                        'message': 'Updating package list (warning)…',
                         'detail': r_upd.stderr.strip()[-300:],
                     })
 
@@ -2408,7 +2408,7 @@ def services_action():
                 socketio.emit('service_install_progress', {
                     'service': svc_name, 'pkg': svc_pkg,
                     'phase': 'install', 'progress': 20,
-                    'message': f'Instalowanie {svc_pkg}…',
+                    'message': f'Installing {svc_pkg}…',
                 })
 
                 stream = _host_run_stream_base(
@@ -2451,7 +2451,7 @@ def services_action():
                     socketio.emit('service_install_progress', {
                         'service': svc_name, 'pkg': svc_pkg,
                         'phase': 'error', 'progress': 0,
-                        'message': f'Instalacja nie powiodła się (kod {exit_code})',
+                        'message': f'Installation failed (code {exit_code})',
                         'detail': err_out[-500:],
                     })
                     return
@@ -2460,7 +2460,7 @@ def services_action():
                 socketio.emit('service_install_progress', {
                     'service': svc_name, 'pkg': svc_pkg,
                     'phase': 'enable', 'progress': 95,
-                    'message': f'Uruchamianie {svc_name}…',
+                    'message': f'Starting {svc_name}…',
                 })
                 _host_run_base(f"systemctl enable {shlex.quote(svc_name)} 2>/dev/null", timeout=10)
                 _host_run_base(f"systemctl start {shlex.quote(svc_name)} 2>/dev/null", timeout=10)
@@ -2468,21 +2468,21 @@ def services_action():
                 socketio.emit('service_install_progress', {
                     'service': svc_name, 'pkg': svc_pkg,
                     'phase': 'done', 'progress': 100,
-                    'message': f'{svc_pkg} zainstalowany i uruchomiony',
+                    'message': f'{svc_pkg} installed and started',
                 })
 
             except Exception as ex:
                 socketio.emit('service_install_progress', {
                     'service': svc_name, 'pkg': svc_pkg,
                     'phase': 'error', 'progress': 0,
-                    'message': f'Błąd: {ex}',
+                    'message': f'Error: {ex}',
                 })
 
         _gev.spawn(_install_bg)
-        return jsonify({'ok': True, 'message': f'Instalacja {pkg} rozpoczęta', 'async': True})
+        return jsonify({'ok': True, 'message': f'Installation of {pkg} started', 'async': True})
 
     else:
-        return jsonify({'error': f'Nieznana akcja: {action}'}), 400
+        return jsonify({'error': f'Unknown action: {action}'}), 400
 
 
 # ── GPU Driver Installer ──────────────────────────────────────────────
@@ -2497,26 +2497,26 @@ def gpu_driver_install():
 
     hw = detect_gpu_hardware()
     if not hw['cards']:
-        return jsonify({'error': 'Nie wykryto karty graficznej'}), 400
+        return jsonify({'error': 'No GPU card detected'}), 400
     if card_index >= len(hw['cards']):
-        return jsonify({'error': 'Nieprawidłowy indeks karty'}), 400
+        return jsonify({'error': 'Invalid card index'}), 400
 
     card = hw['cards'][card_index]
     if card.get('packages_installed') and not card.get('driver_installed'):
         socketio.emit('gpu_driver_progress', {
             'phase': 'done', 'progress': 100,
-            'message': 'Sterowniki już zainstalowane. Wymagany restart systemu.',
+            'message': 'Drivers already installed. System restart required.',
             'vendor': card.get('vendor', 'unknown'),
             'reboot_required': True,
         })
         return jsonify({
             'ok': True,
-            'message': 'Sterowniki już zainstalowane — wymagany restart',
+            'message': 'Drivers already installed — restart required',
             'reboot_required': True,
         })
 
     if not card.get('install_cmd'):
-        return jsonify({'error': f"Brak instrukcji instalacji dla {card.get('vendor', '?')}"}), 400
+        return jsonify({'error': f"No install instructions for {card.get('vendor', '?')}"}), 400
 
     import gevent as _gev
 
@@ -2526,14 +2526,14 @@ def gpu_driver_install():
         try:
             socketio.emit('gpu_driver_progress', {
                 'phase': 'start', 'progress': 0,
-                'message': f"Przygotowywanie instalacji sterowników {vendor.upper()}…",
+                'message': f"Preparing {vendor.upper()} driver installation…",
                 'vendor': vendor,
             })
 
             # Heal dpkg first
             socketio.emit('gpu_driver_progress', {
                 'phase': 'update', 'progress': 5,
-                'message': 'Naprawa menedżera pakietów…',
+                'message': 'Repairing package manager…',
                 'vendor': vendor,
             })
             _host_run_base("dpkg --configure -a 2>/dev/null", timeout=60)
@@ -2541,7 +2541,7 @@ def gpu_driver_install():
             # Stream the install command
             socketio.emit('gpu_driver_progress', {
                 'phase': 'install', 'progress': 10,
-                'message': f"Instalowanie sterowników {vendor.upper()}…",
+                'message': f"Installing {vendor.upper()} drivers…",
                 'vendor': vendor,
             })
 
@@ -2582,7 +2582,7 @@ def gpu_driver_install():
                 err_out = '\n'.join(lines_buf[-10:])
                 socketio.emit('gpu_driver_progress', {
                     'phase': 'error', 'progress': 0,
-                    'message': f'Instalacja nie powiodła się (kod {exit_code})',
+                    'message': f'Installation failed (code {exit_code})',
                     'detail': err_out[-500:],
                     'vendor': vendor,
                 })
@@ -2590,7 +2590,7 @@ def gpu_driver_install():
 
             socketio.emit('gpu_driver_progress', {
                 'phase': 'done', 'progress': 100,
-                'message': 'Sterowniki zainstalowane! Wymagany restart systemu.',
+                'message': 'Drivers installed! System restart required.',
                 'vendor': vendor,
                 'reboot_required': True,
             })
@@ -2598,12 +2598,12 @@ def gpu_driver_install():
         except Exception as ex:
             socketio.emit('gpu_driver_progress', {
                 'phase': 'error', 'progress': 0,
-                'message': f'Błąd: {ex}',
+                'message': f'Error: {ex}',
                 'vendor': vendor,
             })
 
     _gev.spawn(_gpu_install_bg)
-    return jsonify({'ok': True, 'message': 'Instalacja sterowników rozpoczęta', 'async': True})
+    return jsonify({'ok': True, 'message': 'Driver installation started', 'async': True})
 
 
 @app.route('/api/services/logs')
@@ -2942,7 +2942,7 @@ def _resume_interrupted_copy():
         _fm['paused'] = False
 
     cur_user = {'username': username} if username else None
-    elog('files', 'info', f'Wznawiam kopiowanie po restarcie: {len(valid)} elementów → {dest_dir}')
+    elog('files', 'info', f'Resuming copy after restart: {len(valid)} items → {dest_dir}')
     socketio.start_background_task(_bg_copy, valid, dest_dir, total, on_conflict, cur_user)
 
 
@@ -3011,7 +3011,7 @@ def _resume_interrupted_move():
         _fm['paused'] = False
 
     cur_user = {'username': username} if username else None
-    elog('files', 'info', f'Wznawiam przenoszenie po restarcie: {len(valid)} elementów → {dest_dir}')
+    elog('files', 'info', f'Resuming move after restart: {len(valid)} items → {dest_dir}')
     socketio.start_background_task(_bg_move, valid, dest_dir, total, on_conflict, dest_user_path, cur_user)
 
 
@@ -3088,7 +3088,7 @@ def _resume_interrupted_compress():
         _fileop_state['cancel'] = False
         _fileop_state['paused'] = False
 
-    elog('files', 'info', f'Wznawiam kompresję po restarcie: {os.path.basename(archive_path)} ({total} plików)')
+    elog('files', 'info', f'Resuming compression after restart: {os.path.basename(archive_path)} ({total} files)')
     socketio.start_background_task(_bg_compress, valid, archive_path, fmt, total, cur_user)
 
 def _resume_interrupted_zip():
@@ -3097,7 +3097,7 @@ def _resume_interrupted_zip():
     if not task or not isinstance(task, dict):
         return
     resolved = task.get('resolved', [])
-    zip_name = task.get('zip_name', 'pobrane.zip')
+    zip_name = task.get('zip_name', 'download.zip')
     download_id = task.get('download_id')
     total = task.get('total', 0)
     started = task.get('started', 0)
@@ -3135,7 +3135,7 @@ def _resume_interrupted_zip():
         _fileop_state['cancel'] = False
         _fileop_state['paused'] = False
 
-    elog('files', 'info', f'Wznawiam przygotowanie ZIP po restarcie: {zip_name} ({total} plików)')
+    elog('files', 'info', f'Resuming ZIP preparation after restart: {zip_name} ({total} files)')
     socketio.start_background_task(_bg_download_zip, valid, tmp_path, zip_name, download_id, total)
 
 def _cleanup_stale_ethos_tmp(data_root=None):
@@ -3330,27 +3330,27 @@ def _fileop_finish(operation, success, message, ch=None):
     event = 'fileop_complete' if success else 'fileop_error'
     _fileop_emit(event, result)
     # Log to event log
-    op_labels = {'copy': 'Kopiowanie', 'move': 'Przenoszenie',
-                 'compress': 'Kompresja', 'extract': 'Rozpakowywanie',
-                 'download': 'Pobieranie ZIP', 'transfer': 'Transfer do NAS'}
+    op_labels = {'copy': 'Copying', 'move': 'Moving',
+                 'compress': 'Compressing', 'extract': 'Extracting',
+                 'download': 'ZIP Download', 'transfer': 'NAS Transfer'}
     label = op_labels.get(operation, operation)
     lvl = 'info' if success else 'error'
     elog('files', lvl, f'{label}: {message}')
 
 def get_fileop_notifications():
     notifs = []
-    op_labels = {'copy': 'Kopiowanie', 'move': 'Przenoszenie',
-                 'compress': 'Kompresja', 'extract': 'Rozpakowywanie',
-                 'download': 'Pobieranie ZIP', 'transfer': 'Transfer do NAS'}
+    op_labels = {'copy': 'Copying', 'move': 'Moving',
+                 'compress': 'Compressing', 'extract': 'Extracting',
+                 'download': 'ZIP Download', 'transfer': 'NAS Transfer'}
     results = []
     with _fileop_lock:
         for _ch_key, slot in _fileop_channels.items():
             if slot['active'] and slot['progress']:
                 p = slot['progress']
-                label = op_labels.get(p.get('operation', ''), 'Operacja')
+                label = op_labels.get(p.get('operation', ''), 'Operation')
                 notifs.append({
                     'type': 'progress',
-                    'title': f'{label} plików',
+                    'title': f'{label} files',
                     'message': f'{p["done"]}/{p["total"]} — {p["percent"]}%',
                     'time': time.time(),
                     'action': {'app': 'file-manager', 'tab': ''}
@@ -3360,16 +3360,16 @@ def get_fileop_notifications():
                 results.append(r)
     for r in results:
         if r.get('time') and (time.time() - r['time']) < 300:
-            label = op_labels.get(r.get('operation', ''), 'Operacja')
+            label = op_labels.get(r.get('operation', ''), 'Operation')
             if r['status'] == 'completed':
                 notifs.append({
-                    'type': 'success', 'title': f'{label} zakończone',
+                    'type': 'success', 'title': f'{label} completed',
                     'message': r['message'], 'time': r['time'],
                     'action': {'app': 'file-manager', 'tab': ''}
                 })
             else:
                 notifs.append({
-                    'type': 'error', 'title': f'{label} — błąd',
+                    'type': 'error', 'title': f'{label} — error',
                     'message': r['message'], 'time': r['time'],
                     'action': {'app': 'file-manager', 'tab': ''}
                 })
@@ -3403,7 +3403,7 @@ def fileop_status():
     pending = []
     for did, info in list(_pending_downloads.items()):
         if os.path.isfile(info.get('path', '')):
-            pending.append({'download_id': did, 'name': info.get('name', 'pobrane.zip')})
+            pending.append({'download_id': did, 'name': info.get('name', 'download.zip')})
     st['pending_downloads'] = pending
     return jsonify(st)
 
@@ -3422,13 +3422,13 @@ def cancel_fileop():
                     ch = ch_key
                     break
     if not ch:
-        return jsonify({'error': 'Brak aktywnej operacji'}), 400
+        return jsonify({'error': 'No active operation'}), 400
     slot = _fileop_channels.get(ch)
     if not slot:
-        return jsonify({'error': 'Nieznany kanał'}), 400
+        return jsonify({'error': 'Unknown channel'}), 400
     with _fileop_lock:
         if not slot['active']:
-            return jsonify({'error': 'Brak aktywnej operacji na tym kanale'}), 400
+            return jsonify({'error': 'No active operation on this channel'}), 400
         slot['cancel'] = True
         slot['paused'] = False
         proc = slot.get('_proc')
@@ -3442,7 +3442,7 @@ def cancel_fileop():
             proc.terminate()
         except Exception:
             pass
-    return jsonify({'cancelled': True, 'channel': ch, 'message': 'Anulowanie w toku…'})
+    return jsonify({'cancelled': True, 'channel': ch, 'message': 'Cancellation in progress…'})
 
 
 @app.route('/api/files/pause-operation', methods=['POST'])
@@ -3459,16 +3459,16 @@ def pause_fileop():
                     ch = ch_key
                     break
     if not ch:
-        return jsonify({'error': 'Brak aktywnej operacji'}), 400
+        return jsonify({'error': 'No active operation'}), 400
     slot = _fileop_channels.get(ch)
     if not slot:
-        return jsonify({'error': 'Nieznany kanał'}), 400
+        return jsonify({'error': 'Unknown channel'}), 400
     with _fileop_lock:
         if not slot['active']:
-            return jsonify({'error': 'Brak aktywnej operacji na tym kanale'}), 400
+            return jsonify({'error': 'No active operation on this channel'}), 400
         operation = slot.get('operation')
         if operation not in ('transfer', 'download', 'compress', 'copy', 'move'):
-            return jsonify({'error': 'Pauza nie jest obsługiwana dla tej operacji'}), 400
+            return jsonify({'error': 'Pause is not supported for this operation'}), 400
         currently_paused = slot.get('paused', False)
         new_paused = not currently_paused
         slot['paused'] = new_paused
@@ -3700,7 +3700,7 @@ def _require_folder_access(user_path):
         return None
     if _is_folder_unlocked(user_path):
         return None
-    return jsonify({'error': 'Folder chroniony hasłem', 'locked': True, 'protected_path': protected_path}), 403
+    return jsonify({'error': 'Folder protected by password', 'locked': True, 'protected_path': protected_path}), 403
 
 
 def _migrate_folder_passwords(old_user_path, new_user_path):
@@ -3752,20 +3752,20 @@ def folder_password_set():
     path = data.get('path', '').rstrip('/') or '/'
     password = data.get('password', '')
     if not password or len(password) < FOLDER_PASSWORD_MIN_LENGTH:
-        return jsonify({'error': f'Hasło musi mieć minimum {FOLDER_PASSWORD_MIN_LENGTH} znaków'}), 400
+        return jsonify({'error': f'Password must be at least {FOLDER_PASSWORD_MIN_LENGTH} characters'}), 400
     # Complexity check: at least one letter and one number
     if not any(c.isalpha() for c in password) or not any(c.isdigit() for c in password):
-        return jsonify({'error': 'Hasło musi zawierać litery i cyfry'}), 400
+        return jsonify({'error': 'Password must contain letters and numbers'}), 400
     real = safe_path(path)
     if not real or not os.path.isdir(real):
-        return jsonify({'error': 'Folder nie istnieje'}), 404
+        return jsonify({'error': 'Folder does not exist'}), 404
     cur = get_current_user()
     username = cur['username'] if cur else 'unknown'
     passwords = _load_folder_passwords()
     is_update = path in passwords
     passwords[path] = _hash_folder_password(password)
     _save_folder_passwords(passwords)
-    action = 'Zmieniono hasło folderu' if is_update else 'Ustawiono hasło folderu'
+    action = 'Changed folder password' if is_update else 'Set folder password'
     elog('security', 'info', f'{action}: {path}', {'user': username, 'path': path})
     return jsonify({'ok': True})
 
@@ -3779,7 +3779,7 @@ def folder_password_remove():
     password = data.get('password', '')
     passwords = _load_folder_passwords()
     if path not in passwords:
-        return jsonify({'error': 'Folder nie jest chroniony'}), 404
+        return jsonify({'error': 'Folder is not protected'}), 404
     cur = get_current_user()
     username = cur['username'] if cur else 'unknown'
     # Verify current password (unless admin override)
@@ -3789,10 +3789,10 @@ def folder_password_remove():
     if not _verify_folder_password(password, passwords[path]):
         # Allow admin to force remove without correct password
         if is_admin and force:
-            elog('security', 'warning', f'Wymuszone usunięcie hasła folderu przez admina: {path}',
+            elog('security', 'warning', f'Forced removal of folder password by admin: {path}',
                  {'user': username, 'path': path})
         else:
-            elog('security', 'warning', f'Nieudana próba usunięcia hasła folderu: {path}',
+            elog('security', 'warning', f'Failed attempt to remove folder password: {path}',
                  {'user': username, 'path': path})
             return jsonify({'error': t('auth.invalid_password')}), 403
     del passwords[path]
@@ -3801,7 +3801,7 @@ def folder_password_remove():
     with _uf_lock:
         for s in _unlocked_folders.values():
             s.discard(path)
-    elog('security', 'info', f'Usunięto hasło folderu: {path}', {'user': username, 'path': path})
+    elog('security', 'info', f'Removed folder password: {path}', {'user': username, 'path': path})
     return jsonify({'ok': True})
 
 
@@ -3814,7 +3814,7 @@ def folder_unlock():
     password = data.get('password', '')
     passwords = _load_folder_passwords()
     if path not in passwords:
-        return jsonify({'error': 'Folder nie jest chroniony'}), 404
+        return jsonify({'error': 'Folder is not protected'}), 404
 
     token = get_token()
     cur = get_current_user()
@@ -3829,9 +3829,9 @@ def folder_unlock():
             if now < attempt.get('locked_until', 0):
                 remaining = int(attempt['locked_until'] - now)
                 elog('security', 'warning',
-                     f'Folder zablokowany przed atakiem brute-force: {path}',
+                     f'Folder locked against brute-force attack: {path}',
                      {'user': username, 'path': path, 'remaining_s': remaining})
-                return jsonify({'error': f'Zbyt wiele prób. Odczekaj {remaining}s'}), 429
+                return jsonify({'error': f'Too many attempts. Wait {remaining}s'}), 429
             if now - attempt.get('first', now) > _FU_ATTEMPT_WINDOW:
                 _folder_unlock_attempts.pop(fu_key, None)
 
@@ -3882,10 +3882,10 @@ def files_get_permissions():
     """
     path = request.args.get('path', '')
     if not path:
-        return jsonify({'error': 'Brak ścieżki'}), 400
+        return jsonify({'error': 'Path is required'}), 400
     real = safe_path(path)
     if not real or not os.path.exists(real):
-        return jsonify({'error': 'Plik nie istnieje'}), 404
+        return jsonify({'error': 'File does not exist'}), 404
     try:
         st = os.stat(real)
         owner, group = _get_owner_group(st)
@@ -3913,12 +3913,12 @@ def files_chmod():
     """
     cur = get_current_user()
     if not cur or cur.get('role') != 'admin':
-        return jsonify({'error': 'Wymagane uprawnienia administratora'}), 403
+        return jsonify({'error': 'Administrator privileges required'}), 403
     data = request.get_json(force=True)
     path = data.get('path', '')
     mode_str = data.get('mode', '')
     if not path or not mode_str:
-        return jsonify({'error': 'Brak ścieżki lub trybu'}), 400
+        return jsonify({'error': 'Path and mode are required'}), 400
 
     blocked = _require_folder_access(path)
     if blocked is not None:
@@ -3926,17 +3926,17 @@ def files_chmod():
 
     # Validate mode: must be 3-4 octal digits
     if not re.match(r'^[0-7]{3,4}$', mode_str):
-        return jsonify({'error': 'Nieprawidłowy tryb uprawnień (np. 755, 644)'}), 400
+        return jsonify({'error': 'Invalid permissions mode (e.g. 755, 644)'}), 400
     real = safe_path(path)
     if not real or not os.path.exists(real):
-        return jsonify({'error': 'Plik nie istnieje'}), 404
+        return jsonify({'error': 'File does not exist'}), 404
     try:
         new_mode = int(mode_str, 8)
         os.chmod(real, new_mode)
         st = os.stat(real)
         owner, group = _get_owner_group(st)
         username = cur['username']
-        elog('security', 'info', f'Zmieniono uprawnienia: {path} → {mode_str}',
+        elog('security', 'info', f'Changed permissions: {path} → {mode_str}',
              {'user': username, 'path': path, 'mode': mode_str})
         return jsonify({
             'ok': True,
@@ -3975,15 +3975,15 @@ def files_chown():
     """
     cur = get_current_user()
     if not cur or cur.get('role') != 'admin':
-        return jsonify({'error': 'Wymagane uprawnienia administratora'}), 403
+        return jsonify({'error': 'Administrator privileges required'}), 403
     data = request.get_json(force=True)
     path = data.get('path', '')
     owner = data.get('owner', '')
     group = data.get('group', '')
     if not path:
-        return jsonify({'error': 'Brak ścieżki'}), 400
+        return jsonify({'error': 'Path is required'}), 400
     if not owner and not group:
-        return jsonify({'error': 'Brak właściciela lub grupy'}), 400
+        return jsonify({'error': 'Owner or group is required'}), 400
 
     blocked = _require_folder_access(path)
     if blocked is not None:
@@ -3991,7 +3991,7 @@ def files_chown():
 
     real = safe_path(path)
     if not real or not os.path.exists(real):
-        return jsonify({'error': 'Plik nie istnieje'}), 404
+        return jsonify({'error': 'File does not exist'}), 404
 
     try:
         uid = -1
@@ -4000,18 +4000,18 @@ def files_chown():
             try:
                 uid = pwd.getpwnam(owner).pw_uid
             except KeyError:
-                return jsonify({'error': f'Użytkownik {owner} nie istnieje'}), 400
+                return jsonify({'error': f'User {owner} does not exist'}), 400
         if group:
             try:
                 gid = _grp.getgrnam(group).gr_gid
             except KeyError:
-                return jsonify({'error': f'Grupa {group} nie istnieje'}), 400
+                return jsonify({'error': f'Group {group} does not exist'}), 400
 
         os.chown(real, uid, gid)
         st = os.stat(real)
         new_owner, new_group = _get_owner_group(st)
         username = cur['username']
-        elog('security', 'info', f'Zmieniono właściciela: {path} → {new_owner}:{new_group}',
+        elog('security', 'info', f'Changed owner: {path} → {new_owner}:{new_group}',
              {'user': username, 'path': path, 'owner': new_owner, 'group': new_group})
         return jsonify({
             'ok': True,
@@ -4037,10 +4037,10 @@ def files_favorites_add():
     path = data.get('path', '').rstrip('/')
     label = data.get('label', '') or os.path.basename(path) or path
     if not path:
-        return jsonify({'error': 'Brak ścieżki'}), 400
+        return jsonify({'error': 'Path is required'}), 400
     favs = _load_favorites()
     if any(f['path'] == path for f in favs):
-        return jsonify({'error': 'Już w ulubionych'}), 409
+        return jsonify({'error': 'Already in favorites'}), 409
     favs.append({'path': path, 'label': label})
     _save_favorites(favs)
     return jsonify({'ok': True, 'favorites': favs})
@@ -4052,7 +4052,7 @@ def files_favorites_remove():
     data = request.get_json(force=True)
     path = data.get('path', '').rstrip('/')
     if not path:
-        return jsonify({'error': 'Brak ścieżki'}), 400
+        return jsonify({'error': 'Path is required'}), 400
     favs = _load_favorites()
     favs = [f for f in favs if f['path'] != path]
     _save_favorites(favs)
@@ -4122,10 +4122,10 @@ def photo_favorites_add():
     data = request.get_json(force=True)
     path = data.get('path', '')
     if not path:
-        return jsonify({'error': 'Brak ścieżki'}), 400
+        return jsonify({'error': 'Path is required'}), 400
     real = safe_path(path)
     if not real or not os.path.isfile(real):
-        return jsonify({'error': 'Plik nie istnieje'}), 404
+        return jsonify({'error': 'File does not exist'}), 404
     favs = _load_gallery_favs()
     if not any(f['path'] == path for f in favs):
         favs.insert(0, {'path': path, 'added': time.time()})
@@ -4140,7 +4140,7 @@ def photo_favorites_remove():
     data = request.get_json(force=True)
     path = data.get('path', '')
     if not path:
-        return jsonify({'error': 'Brak ścieżki'}), 400
+        return jsonify({'error': 'Path is required'}), 400
     favs = _load_gallery_favs()
     favs = [f for f in favs if f['path'] != path]
     _save_gallery_favs(favs)
@@ -4232,10 +4232,10 @@ def files_list():
             try:
                 _fs_call(try_wake_path, wake_path, timeout=10)
             except TimeoutError:
-                return jsonify({'error': 'Dysk nie odpowiada — spróbuj ponownie za chwilę'}), 504
+                return jsonify({'error': 'Disk not responding — try again shortly'}), 504
 
     if not real_path or not os.path.isdir(real_path):
-        return jsonify({'error': 'Nieprawidłowa ścieżka'}), 400
+        return jsonify({'error': 'Invalid path'}), 400
 
     # Check if attempting to list inside a protected folder
     blocked = _require_folder_access(path)
@@ -4338,7 +4338,7 @@ def files_list():
     except PermissionError:
         return jsonify({'error': t('auth.no_permission')}), 403
     except TimeoutError:
-        return jsonify({'error': 'Dysk nie odpowiada — spróbuj ponownie za chwilę'}), 504
+        return jsonify({'error': 'Disk not responding — try again shortly'}), 504
 
     if _cache_key:
         _listdir_cache_set(_cache_key, items, mtime=_dir_mtime)
@@ -4438,7 +4438,7 @@ def files_dir_sizes():
     data = request.json or {}
     paths = data.get('paths', [])
     if not paths or not isinstance(paths, list):
-        return jsonify({'error': 'Podaj listę ścieżek'}), 400
+        return jsonify({'error': 'Provide a list of paths'}), 400
 
     deadline = time.monotonic() + 10  # 10s total timeout
 
@@ -4530,7 +4530,7 @@ def files_dir_sizes_start():
     data = request.json or {}
     paths = data.get('paths', [])
     if not paths or not isinstance(paths, list):
-        return jsonify({'error': 'Podaj listę ścieżek'}), 400
+        return jsonify({'error': 'Provide a list of paths'}), 400
 
     jobs = {}
     cached = {}
@@ -4598,7 +4598,7 @@ def files_download():
     path = request.args.get('path', '')
     real_path = safe_path(path)
     if not real_path or not os.path.isfile(real_path):
-        return jsonify({'error': 'Plik nie znaleziony'}), 404
+        return jsonify({'error': 'File not found'}), 404
     # Block download from protected folders
     blocked = _require_folder_access(path)
     if blocked is not None:
@@ -4611,7 +4611,7 @@ def files_download():
     if 'Range' not in request.headers:
         cur = get_current_user()
         username = cur['username'] if cur else 'unknown'
-        elog('files', 'info', f'Pobieranie pliku: {path}', {'user': username, 'path': path, 'size': os.path.getsize(real_path)})
+        elog('files', 'info', f'File download: {path}', {'user': username, 'path': path, 'size': os.path.getsize(real_path)})
 
     return resp
 
@@ -4623,7 +4623,7 @@ def files_download_zip():
     data = request.json or {}
     sources = data.get('sources', [])
     if not sources:
-        return jsonify({'error': 'Brak plików do pobrania'}), 400
+        return jsonify({'error': 'No files to download'}), 400
 
     resolved = []
     for s in sources:
@@ -4631,7 +4631,7 @@ def files_download_zip():
         if rp and os.path.exists(rp):
             resolved.append(rp)
     if not resolved:
-        return jsonify({'error': 'Żadna ze ścieżek nie istnieje'}), 400
+        return jsonify({'error': 'None of the paths exist'}), 400
 
     total = _count_items(resolved)
 
@@ -4639,14 +4639,14 @@ def files_download_zip():
     if len(resolved) == 1:
         zip_name = os.path.splitext(os.path.basename(resolved[0]))[0] + '.zip'
     else:
-        zip_name = 'pobrane.zip'
+        zip_name = 'download.zip'
 
     download_id = secrets.token_hex(16)
     tmp_path = os.path.join('/tmp', f'nasos_dl_{download_id}.zip')
 
     with _fileop_lock:
         if _fileop_state['active']:
-            return jsonify({'error': 'Inna operacja plików jest w toku'}), 400
+            return jsonify({'error': 'Another file operation is in progress'}), 400
         _fileop_state['active'] = True
         _fileop_state['operation'] = 'download'
         _fileop_state['progress'] = None
@@ -4655,9 +4655,9 @@ def files_download_zip():
 
     socketio.start_background_task(_bg_download_zip, resolved, tmp_path, zip_name, download_id, total)
     _save_zip_task(resolved, tmp_path, zip_name, download_id, total)
-    elog('files', 'info', f'Rozpoczęto przygotowanie ZIP: {zip_name} ({total} plików)')
+    elog('files', 'info', f'Started ZIP preparation: {zip_name} ({total} files)')
     return jsonify({'async': True, 'download_id': download_id,
-                    'message': f'Przygotowywanie {zip_name} ({total} plików)…'})
+                    'message': f'Preparing {zip_name} ({total} files)…'})
 
 
 # Pending download temp files: id -> {path, name, time}
@@ -4763,7 +4763,7 @@ def _bg_download_zip(resolved, tmp_path, zip_name, download_id, total):
                 try: os.remove(tmp_path)
                 except: pass
             _clear_zip_task()
-            _fileop_finish('download', False, 'Anulowano')
+            _fileop_finish('download', False, 'Cancelled')
             return
 
         size_mb = round(os.path.getsize(tmp_path) / (1024*1024), 1)
@@ -4788,7 +4788,7 @@ def files_download_zip_status(download_id):
     """Check if a prepared ZIP is ready for download."""
     info = _pending_downloads.get(download_id)
     if info and os.path.isfile(info['path']):
-        return jsonify({'ready': True, 'name': info.get('name', 'pobrane.zip')})
+        return jsonify({'ready': True, 'name': info.get('name', 'download.zip')})
     return jsonify({'ready': False})
 
 
@@ -4798,7 +4798,7 @@ def files_download_zip_file(download_id):
     """Serve a prepared ZIP and clean up."""
     info = _pending_downloads.pop(download_id, None)
     if not info or not os.path.isfile(info['path']):
-        return jsonify({'error': 'Plik nie znaleziony lub wygasł'}), 404
+        return jsonify({'error': 'File not found or expired'}), 404
 
     resp = send_file(info['path'], as_attachment=True,
                      download_name=info['name'], mimetype='application/zip',
@@ -4892,7 +4892,7 @@ def files_pregenerate_thumbs():
     h = min(int(data.get('h', 120)), 400)
     real_path = safe_path(path)
     if not real_path or not os.path.isdir(real_path):
-        return jsonify({'error': 'Nieprawidłowa ścieżka'}), 400
+        return jsonify({'error': 'Invalid path'}), 400
 
     def _generate_one(fpath):
         try:
@@ -4938,7 +4938,7 @@ def files_preload_cache():
     path = data.get('path', '')
     real_path = safe_path(path)
     if not real_path or not os.path.isdir(real_path):
-        return jsonify({'error': 'Nieprawidłowa ścieżka'}), 400
+        return jsonify({'error': 'Invalid path'}), 400
 
     def _preload_one(rpath):
         """Scan *rpath* and store result in the listing cache (semaphore-gated)."""
@@ -4998,7 +4998,7 @@ def files_preview():
     path = request.args.get('path', '')
     real_path = safe_path(path)
     if not real_path or not os.path.isfile(real_path):
-        return jsonify({'error': 'Plik nie znaleziony'}), 404
+        return jsonify({'error': 'File not found'}), 404
 
     # Block preview from protected folders
     blocked = _require_folder_access(path)
@@ -5044,7 +5044,7 @@ def files_upload():
     path = request.form.get('path', '/')
     real_path = safe_path(path)
     if not real_path or not os.path.isdir(real_path):
-        return jsonify({'error': 'Nieprawidłowa ścieżka'}), 400
+        return jsonify({'error': 'Invalid path'}), 400
 
     files = request.files.getlist('files')
     rel_paths = request.form.getlist('rel_paths')  # optional: relative paths for folder uploads
@@ -5065,7 +5065,7 @@ def files_upload():
                 try:
                     os.makedirs(subdir, exist_ok=True)
                 except PermissionError:
-                    errors.append({'name': f.filename, 'error': 'Brak uprawnień do zapisu'})
+                    errors.append({'name': f.filename, 'error': 'No write permission'})
                     continue
                 # chown intermediate dirs
                 cur = real_path
@@ -5084,26 +5084,26 @@ def files_upload():
         except PermissionError:
             try: os.remove(tmp_filepath)
             except OSError: pass
-            errors.append({'name': f.filename, 'error': 'Brak uprawnień do zapisu'})
+            errors.append({'name': f.filename, 'error': 'No write permission'})
             continue
         except OSError as e:
             try: os.remove(tmp_filepath)
             except OSError: pass
             if e.errno == errno.ENOSPC:
-                errors.append({'name': f.filename, 'error': 'Brak miejsca na dysku'})
+                errors.append({'name': f.filename, 'error': 'No disk space available'})
             else:
-                errors.append({'name': f.filename, 'error': f'Błąd zapisu: {e.strerror}'})
+                errors.append({'name': f.filename, 'error': f'Write error: {e.strerror}'})
             continue
         _chown_to_user(filepath)
         uploaded.append(os.path.relpath(filepath, real_path))
     if uploaded:
-        elog('files', 'info', f'Przesłano {len(uploaded)} plik(ów) do {path}', {'files': uploaded[:20]})
+        elog('files', 'info', f'Uploaded {len(uploaded)} file(s) to {path}', {'files': uploaded[:20]})
         _listdir_cache_invalidate(path)
         _dirsize_cache_invalidate(real_path)
     if errors and not uploaded:
         # All files failed — return error status
         first_err = errors[0]['error']
-        status = 403 if first_err == 'Brak uprawnień do zapisu' else 507 if 'miejsca' in first_err else 500
+        status = 403 if first_err == 'No write permission' else 507 if 'disk space' in first_err else 500
         return jsonify({'error': first_err, 'errors': errors}), status
     return jsonify({'uploaded': uploaded, 'errors': errors})
 
@@ -5195,7 +5195,7 @@ def _restore_upload_sessions():
     except Exception:
         pass
     if restored:
-        elog('files', 'info', f'Przywrócono {restored} sesji przesyłania po restarcie')
+        elog('files', 'info', f'Restored {restored} upload sessions after restart')
 
 
 @app.route('/api/files/upload-chunk-init', methods=['POST'])
@@ -5216,20 +5216,20 @@ def files_upload_chunk_init():
 
     real_path = safe_path(dest_path)
     if not real_path:
-        return jsonify({'error': 'Nieprawidłowa ścieżka'}), 400
+        return jsonify({'error': 'Invalid path'}), 400
     if not os.path.isdir(real_path):
         if create_dir:
             try:
                 os.makedirs(real_path, exist_ok=True)
                 _chown_to_user(real_path)
             except Exception as e:
-                return jsonify({'error': f'Nie można utworzyć folderu: {e}'}), 400
+                return jsonify({'error': f'Cannot create folder: {e}'}), 400
         else:
-            return jsonify({'error': 'Nieprawidłowa ścieżka'}), 400
+            return jsonify({'error': 'Invalid path'}), 400
     if not filename:
-        return jsonify({'error': 'Brak nazwy pliku'}), 400
+        return jsonify({'error': 'Filename is required'}), 400
     if total_size <= 0:
-        return jsonify({'error': 'Nieprawidłowy rozmiar pliku'}), 400
+        return jsonify({'error': 'Invalid file size'}), 400
 
     safe_name = _sanitize_filename(filename)
     session_id = secrets.token_hex(16)
@@ -5274,15 +5274,15 @@ def files_upload_chunk():
     expected_checksum = request.form.get('checksum', '')  # optional SHA-256 of this chunk
 
     if chunk_index is None or not chunk_file:
-        return jsonify({'error': 'Brak danych'}), 400
+        return jsonify({'error': 'Missing data'}), 400
 
     with _upload_sessions_lock:
         session = _upload_sessions.get(session_id)
     if not session:
-        return jsonify({'error': 'Nieznana sesja przesyłania', 'expired': True}), 404
+        return jsonify({'error': 'Unknown upload session', 'expired': True}), 404
 
     if chunk_index < 0 or chunk_index >= session['num_chunks']:
-        return jsonify({'error': 'Nieprawidłowy indeks fragmentu'}), 400
+        return jsonify({'error': 'Invalid chunk index'}), 400
 
     chunk_path = os.path.join(session['tmpdir'], f'chunk_{chunk_index:06d}')
     tmp_chunk = chunk_path + '.tmp'
@@ -5299,12 +5299,12 @@ def files_upload_chunk():
             if actual != expected_checksum.lower():
                 try: os.remove(tmp_chunk)
                 except OSError: pass
-                return jsonify({'error': f'Błąd integralności fragmentu {chunk_index}: niezgodność sumy kontrolnej'}), 400
+                return jsonify({'error': f'Chunk {chunk_index} integrity error: checksum mismatch'}), 400
         os.replace(tmp_chunk, chunk_path)
     except Exception as e:
         try: os.remove(tmp_chunk)
         except OSError: pass
-        return jsonify({'error': f'Błąd zapisu fragmentu: {e}'}), 500
+        return jsonify({'error': f'Chunk write error: {e}'}), 500
 
     with _upload_sessions_lock:
         if chunk_index not in session['uploaded_chunks']:
@@ -5345,13 +5345,13 @@ def files_upload_complete():
     with _upload_sessions_lock:
         session = _upload_sessions.get(session_id)
     if not session:
-        return jsonify({'error': 'Nieznana sesja przesyłania', 'expired': True}), 404
+        return jsonify({'error': 'Unknown upload session', 'expired': True}), 404
 
     num_chunks = session['num_chunks']
     uploaded = set(session['uploaded_chunks'])
     missing = [i for i in range(num_chunks) if i not in uploaded]
     if missing:
-        return jsonify({'error': f'Brakuje fragmentów: {missing[:10]}', 'missing_chunks': missing}), 400
+        return jsonify({'error': f'Missing chunks: {missing[:10]}', 'missing_chunks': missing}), 400
 
     real_path = session['real_path']
     filename = session['filename']
@@ -5359,7 +5359,7 @@ def files_upload_complete():
     username = session.get('username')
 
     if not os.path.isdir(real_path):
-        return jsonify({'error': 'Folder docelowy nie istnieje'}), 400
+        return jsonify({'error': 'Destination folder does not exist'}), 400
 
     dest_file = os.path.join(real_path, filename)
     tmp_dest = dest_file + '.ethos_upload_tmp'
@@ -5386,7 +5386,7 @@ def files_upload_complete():
     except Exception as e:
         try: os.remove(tmp_dest)
         except OSError: pass
-        return jsonify({'error': f'Błąd składania pliku: {e}'}), 500
+        return jsonify({'error': f'File assembly error: {e}'}), 500
     finally:
         # Clean up temp chunks regardless of outcome
         try: shutil.rmtree(tmpdir, ignore_errors=True)
@@ -5395,7 +5395,7 @@ def files_upload_complete():
             _upload_sessions.pop(session_id, None)
 
     dest_path = session['dest_path']
-    elog('files', 'info', f'Przesłano (chunked) {filename} do {dest_path}')
+    elog('files', 'info', f'Uploaded (chunked) {filename} to {dest_path}')
     _listdir_cache_invalidate(dest_path)
     _dirsize_cache_invalidate(real_path)
     result = {'ok': True, 'filename': filename}
@@ -5431,7 +5431,7 @@ def files_mkdir():
     data = request.json or {}
     real_path = safe_path(data.get('path', ''))
     if not real_path:
-        return jsonify({'error': 'Nieprawidłowa ścieżka'}), 400
+        return jsonify({'error': 'Invalid path'}), 400
 
     blocked = _require_folder_access(data.get('path', ''))
     if blocked is not None:
@@ -5442,7 +5442,7 @@ def files_mkdir():
         _chown_to_user(real_path)
         _dirsize_cache_invalidate(os.path.dirname(real_path))
         _listdir_cache_invalidate(data.get('path', ''))
-        elog('files', 'info', f'Utworzono folder: {data.get("path", "")}')
+        elog('files', 'info', f'Created folder: {data.get("path", "")}')
         return jsonify({'ok': True})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -5637,7 +5637,7 @@ def sync_folders():
     path = request.args.get('path', '/')
     real_path = safe_path(path)
     if not real_path or not os.path.isdir(real_path):
-        return jsonify({'error': 'Nieprawidłowa ścieżka'}), 400
+        return jsonify({'error': 'Invalid path'}), 400
 
     items, err = _list_dir(real_path, dirs_only=True)
     if err:
@@ -5731,7 +5731,7 @@ def _trash_cleanup():
             remaining.append(item)
     if removed > 0:
         _save_trash_meta(remaining)
-        elog('files', 'info', f'Kosz: automatycznie usunięto {removed} elementów starszych niż {TRASH_RETENTION_DAYS} dni')
+        elog('files', 'info', f'Trash: automatically removed {removed} items older than {TRASH_RETENTION_DAYS} days')
 
 
 def _start_trash_scheduler():
@@ -5769,15 +5769,15 @@ def files_delete():
         # Security check
         blocked = _require_folder_access(p)
         if blocked is not None:
-            errors.append(f'Brak dostępu: {p} (folder chroniony)')
+            errors.append(f'Access denied: {p} (protected folder)')
             continue
 
         real_path = safe_path(p)
         if not real_path:
-            errors.append(f'Nieprawidłowa ścieżka: {p}')
+            errors.append(f'Invalid path: {p}')
             continue
         if not os.path.exists(real_path):
-            errors.append(f'Nie istnieje: {p}')
+            errors.append(f'Does not exist: {p}')
             continue
         try:
             _purge_thumb_cache(real_path)
@@ -5824,10 +5824,10 @@ def files_delete():
         _save_trash_meta(meta)
 
     if deleted:
-        label = 'Trwale usunięto' if permanent else 'Przeniesiono do kosza'
-        elog('files', 'info', f'{label} {len(deleted)} elementów', {'paths': deleted})
+        label = 'Permanently deleted' if permanent else 'Moved to trash'
+        elog('files', 'info', f'{label} {len(deleted)} items', {'paths': deleted})
     if errors:
-        elog('files', 'error', f'Błędy usuwania: {len(errors)}', {'errors': errors})
+        elog('files', 'error', f'Deletion errors: {len(errors)}', {'errors': errors})
     return jsonify({'deleted': deleted, 'errors': errors})
 
 
@@ -5865,18 +5865,18 @@ def files_trash_restore():
     for tid in trash_ids:
         item = next((m for m in meta if m['trash_id'] == tid), None)
         if not item:
-            errors.append(f'Nie znaleziono w koszu: {tid}')
+            errors.append(f'Not found in trash: {tid}')
             continue
 
         trash_path = _resolve_trash_path(item)
         if not os.path.exists(trash_path):
             meta = [m for m in meta if m['trash_id'] != tid]
-            errors.append(f'Plik zniknął z kosza: {item["name"]}')
+            errors.append(f'File disappeared from trash: {item["name"]}')
             continue
 
         original = safe_path(item['original_path'])
         if not original:
-            errors.append(f'Nieprawidłowa ścieżka oryginalna: {item["original_path"]}')
+            errors.append(f'Invalid original path: {item["original_path"]}')
             continue
 
         try:
@@ -5903,7 +5903,7 @@ def files_trash_restore():
 
     _save_trash_meta(meta)
     if restored:
-        elog('files', 'info', f'Przywrócono z kosza {len(restored)} elementów', {'names': restored})
+        elog('files', 'info', f'Restored {len(restored)} items from trash', {'names': restored})
     return jsonify({'restored': restored, 'errors': errors})
 
 
@@ -5924,7 +5924,7 @@ def files_trash_empty():
         except Exception:
             pass
     _save_trash_meta([])
-    elog('files', 'info', f'Kosz opróżniony: usunięto {removed} elementów')
+    elog('files', 'info', f'Trash emptied: {removed} items removed')
     return jsonify({'removed': removed})
 
 
@@ -5957,7 +5957,7 @@ def files_trash_delete_permanent():
 
     _save_trash_meta(meta)
     if removed:
-        elog('files', 'info', f'Trwale usunięto z kosza: {len(removed)} elementów')
+        elog('files', 'info', f'Permanently deleted from trash: {len(removed)} items')
     return jsonify({'removed': removed})
 
 
@@ -5972,7 +5972,7 @@ def files_trash_preview():
     h = request.args.get('h', type=int)
 
     if not trash_id:
-        return jsonify({'error': 'Brak id'}), 400
+        return jsonify({'error': 'ID is required'}), 400
 
     # Look up the item in meta to find its trash_dir
     meta = _load_trash_meta()
@@ -5985,10 +5985,10 @@ def files_trash_preview():
     # Security: ensure stays inside the item's trash dir
     trash_path = os.path.realpath(trash_path)
     if not trash_path.startswith(os.path.realpath(item_trash_dir)):
-        return jsonify({'error': 'Nieprawidłowa ścieżka'}), 403
+        return jsonify({'error': 'Invalid path'}), 403
 
     if not os.path.isfile(trash_path):
-        return jsonify({'error': 'Nie znaleziono'}), 404
+        return jsonify({'error': 'Not found'}), 404
 
     if w and h:
         try:
@@ -6088,7 +6088,7 @@ def _scan_duplicates(scan_paths, mode, threshold):
     """Background task: find duplicate images — emits groups incrementally."""
     global _dup_scan
     try:
-        _dup_scan['phase'] = 'Wyszukiwanie zdjęć…'
+        _dup_scan['phase'] = 'Searching for images…'
         _dup_scan['scanned'] = 0
         socketio.emit('dup_progress', {'phase': _dup_scan['phase'], 'scanned': 0, 'total': 0})
 
@@ -6102,10 +6102,10 @@ def _scan_duplicates(scan_paths, mode, threshold):
         _file_count = 0
         for scan_path in scan_paths:
             if _dup_scan.get('cancel'):
-                raise InterruptedError('Anulowano')
+                raise InterruptedError('Cancelled')
             for dirpath, _dirs, filenames in os.walk(scan_path):
                 if _dup_scan.get('cancel'):
-                    raise InterruptedError('Anulowano')
+                    raise InterruptedError('Cancelled')
                 # Skip hidden dirs and trash
                 if '/.trash' in dirpath or '/.' in dirpath.split(scan_path)[-1]:
                     continue
@@ -6135,12 +6135,12 @@ def _scan_duplicates(scan_paths, mode, threshold):
 
         total = len(image_files)
         _dup_scan['total'] = total
-        _dup_scan['phase'] = f'Znaleziono {total} zdjęć, analizowanie…'
+        _dup_scan['phase'] = f'Found {total} images, analyzing…'
         socketio.emit('dup_progress', {'phase': _dup_scan['phase'], 'scanned': 0, 'total': total})
 
         if total == 0:
             _dup_scan['running'] = False
-            _dup_scan['phase'] = 'Zakończono'
+            _dup_scan['phase'] = 'Completed'
             socketio.emit('dup_complete', {'groups': 0, 'duplicates': 0, 'size': 0})
             return
 
@@ -6148,9 +6148,9 @@ def _scan_duplicates(scan_paths, mode, threshold):
 
         if mode in ('exact', 'both'):
             if _dup_scan.get('cancel'):
-                raise InterruptedError('Anulowano')
+                raise InterruptedError('Cancelled')
             # ── Phase: exact duplicates by SHA256 ──
-            _dup_scan['phase'] = 'Porównywanie sum kontrolnych (SHA256)…'
+            _dup_scan['phase'] = 'Comparing checksums (SHA256)…'
             socketio.emit('dup_progress', {'phase': _dup_scan['phase'], 'scanned': 0, 'total': total})
 
             # Pre-filter: group by size
@@ -6165,7 +6165,7 @@ def _scan_duplicates(scan_paths, mode, threshold):
             to_hash = [f for grp in size_groups.values() for f in grp]
             for f in to_hash:
                 if _dup_scan.get('cancel'):
-                    raise InterruptedError('Anulowano')
+                    raise InterruptedError('Cancelled')
                 try:
                     cache_key = f['real_path']
                     cached = hash_cache.get(cache_key)
@@ -6222,7 +6222,7 @@ def _scan_duplicates(scan_paths, mode, threshold):
 
         if mode in ('similar', 'both'):
             if _dup_scan.get('cancel'):
-                raise InterruptedError('Anulowano')
+                raise InterruptedError('Cancelled')
             # ── Phase: visually similar by dhash ──
             _dup_scan['phase'] = 'Analiza wizualna (perceptual hash)…'
             socketio.emit('dup_progress', {'phase': _dup_scan['phase'], 'scanned': 0, 'total': total})
@@ -6231,7 +6231,7 @@ def _scan_duplicates(scan_paths, mode, threshold):
             scanned = 0
             for f in image_files:
                 if _dup_scan.get('cancel'):
-                    raise InterruptedError('Anulowano')
+                    raise InterruptedError('Cancelled')
                 try:
                     cache_key = f['real_path']
                     cached = hash_cache.get(cache_key)
@@ -6261,7 +6261,7 @@ def _scan_duplicates(scan_paths, mode, threshold):
 
             # ── Phase: clustering ──
             # Use bucket approach to avoid full O(n²): bucket by coarse hash chunks
-            _dup_scan['phase'] = 'Grupowanie podobnych zdjęć…'
+            _dup_scan['phase'] = 'Grouping similar images…'
             n = len(phash_list)
             socketio.emit('dup_progress', {'phase': _dup_scan['phase'], 'scanned': 0, 'total': n})
 
@@ -6293,7 +6293,7 @@ def _scan_duplicates(scan_paths, mode, threshold):
             comparisons_done = 0
             for band_idx in range(num_bands):
                 if _dup_scan.get('cancel'):
-                    raise InterruptedError('Anulowano')
+                    raise InterruptedError('Cancelled')
                 for candidates in buckets[band_idx].values():
                     if len(candidates) < 2:
                         continue
@@ -6311,18 +6311,18 @@ def _scan_duplicates(scan_paths, mode, threshold):
                                 gevent.sleep(0)  # yield frequently during comparisons
                             if comparisons_done % 500 == 0:
                                 socketio.emit('dup_progress', {
-                                    'phase': f'Porównywanie: {comparisons_done} par',
+                                    'phase': f'Comparing: {comparisons_done} pairs',
                                     'scanned': comparisons_done, 'total': comparisons_done
                                 })
 
             # For high thresholds, also do a limited brute-force on remaining
             if threshold >= 10 and n <= 5000:
-                _dup_scan['phase'] = 'Dodatkowe porównania…'
+                _dup_scan['phase'] = 'Additional comparisons…'
                 socketio.emit('dup_progress', {'phase': _dup_scan['phase'], 'scanned': 0, 'total': n})
                 _bf_ops = 0
                 for i in range(n):
                     if _dup_scan.get('cancel'):
-                        raise InterruptedError('Anulowano')
+                        raise InterruptedError('Cancelled')
                     for j in range(i + 1, n):
                         pair = (i, j)
                         if pair in compared:
@@ -6368,7 +6368,7 @@ def _scan_duplicates(scan_paths, mode, threshold):
         _dup_scan['results'].sort(key=lambda g: sum(f['size'] for f in g['items']), reverse=True)
 
         _dup_scan['running'] = False
-        _dup_scan['phase'] = 'Zakończono'
+        _dup_scan['phase'] = 'Completed'
         groups = _dup_scan['results']
         total_dups = sum(len(g['items']) - 1 for g in groups)
         dup_size = sum(sum(f['size'] for f in g['items'][1:]) for g in groups)
@@ -6378,9 +6378,9 @@ def _scan_duplicates(scan_paths, mode, threshold):
             'size': dup_size,
         })
         elog('files', 'info',
-             f'Skanowanie duplikatów zakończone: {len(groups)} grup, '
-             f'{total_dups} duplikatów ({dup_size} bajtów), '
-             f'{cache_hits} trafień w cache')
+             f'Duplicate scan completed: {len(groups)} groups, '
+             f'{total_dups} duplicates ({dup_size} bytes), '
+             f'{cache_hits} cache hits')
         # Save hash cache for future scans
         hash_cache = _prune_hash_cache(hash_cache)
         _save_hash_cache(hash_cache)
@@ -6388,19 +6388,19 @@ def _scan_duplicates(scan_paths, mode, threshold):
     except InterruptedError:
         _dup_scan['running'] = False
         _dup_scan['cancel'] = False
-        _dup_scan['phase'] = 'Anulowano'
+        _dup_scan['phase'] = 'Cancelled'
         socketio.emit('dup_cancelled', {
             'groups': _dup_scan['found_groups']
         })
-        elog('files', 'info', f'Skanowanie duplikatów anulowane ({_dup_scan["found_groups"]} grup znalezionych)')
+        elog('files', 'info', f'Duplicate scan cancelled ({_dup_scan["found_groups"]} groups found)')
         hash_cache = _prune_hash_cache(hash_cache)
         _save_hash_cache(hash_cache)
     except Exception as e:
         _dup_scan['running'] = False
         _dup_scan['error'] = str(e)
-        _dup_scan['phase'] = 'Błąd'
+        _dup_scan['phase'] = 'Error'
         socketio.emit('dup_error', {'error': str(e)})
-        elog('files', 'error', f'Błąd skanowania duplikatów: {str(e)}')
+        elog('files', 'error', f'Duplicate scan error: {str(e)}')
         hash_cache = _prune_hash_cache(hash_cache)
         _save_hash_cache(hash_cache)
 
@@ -6409,42 +6409,42 @@ def get_dupscan_notifications():
     """Return notification items for the duplicate scan."""
     notifs = []
     if _dup_scan['running']:
-        phase = _dup_scan.get('phase', 'Skanowanie…')
+        phase = _dup_scan.get('phase', 'Scanning…')
         found = _dup_scan.get('found_groups', 0)
         scanned = _dup_scan.get('scanned', 0)
         total = _dup_scan.get('total', 0)
         pct = (round(scanned / total * 100) if total > 0 else 0)
         notifs.append({
             'type': 'progress',
-            'title': 'Szukanie duplikatów',
+            'title': 'Finding duplicates',
             'message': f'{phase} — {found} grup, {pct}%',
             'time': time.time(),
             'action': {'app': 'duplicates'}
         })
-    elif _dup_scan.get('phase') == 'Zakończono' and _dup_scan.get('results'):
+    elif _dup_scan.get('phase') == 'Completed' and _dup_scan.get('results'):
         groups = _dup_scan['results']
         total_dups = sum(len(g['items']) - 1 for g in groups)
         notifs.append({
             'type': 'success',
-            'title': 'Duplikaty znalezione',
-            'message': f'{len(groups)} grup, {total_dups} nadmiarowych plików',
+            'title': 'Duplicates found',
+            'message': f'{len(groups)} groups, {total_dups} redundant files',
             'time': time.time(),
             'action': {'app': 'duplicates'}
         })
-    elif _dup_scan.get('phase') == 'Anulowano' and _dup_scan.get('results'):
+    elif _dup_scan.get('phase') == 'Cancelled' and _dup_scan.get('results'):
         found = len(_dup_scan['results'])
         if found > 0:
             notifs.append({
                 'type': 'warning',
-                'title': 'Skanowanie anulowane',
-                'message': f'{found} grup znalezionych przed anulowaniem',
+                'title': 'Scan cancelled',
+                'message': f'{found} groups found before cancellation',
                 'time': time.time(),
                 'action': {'app': 'duplicates'}
             })
     elif _dup_scan.get('error'):
         notifs.append({
             'type': 'error',
-            'title': 'Błąd skanowania duplikatów',
+            'title': 'Duplicate scan error',
             'message': str(_dup_scan['error']),
             'time': time.time(),
             'action': {'app': 'duplicates'}
@@ -6457,7 +6457,7 @@ def get_dupscan_notifications():
 def files_duplicates_scan():
     """Start a duplicate photo scan."""
     if _dup_scan['running']:
-        return jsonify({'error': 'Skanowanie już trwa'}), 409
+        return jsonify({'error': 'Scan already in progress'}), 409
 
     data = request.json or {}
     # Support both single path and multiple paths
@@ -6475,12 +6475,12 @@ def files_duplicates_scan():
         if rp and os.path.isdir(rp):
             scan_paths.append(rp)
     if not scan_paths:
-        return jsonify({'error': 'Brak prawidłowych ścieżek'}), 400
+        return jsonify({'error': 'No valid paths'}), 400
 
     _dup_scan['running'] = True
     _dup_scan['cancel'] = False
     _dup_scan['scan_id'] = secrets.token_hex(4)
-    _dup_scan['phase'] = 'Start…'
+    _dup_scan['phase'] = 'Starting…'
     _dup_scan['scanned'] = 0
     _dup_scan['total'] = 0
     _dup_scan['found_groups'] = 0
@@ -6496,9 +6496,9 @@ def files_duplicates_scan():
 def files_duplicates_cancel():
     """Cancel a running scan."""
     if not _dup_scan['running']:
-        return jsonify({'error': 'Brak aktywnego skanowania'}), 400
+        return jsonify({'error': 'No active scan'}), 400
     _dup_scan['cancel'] = True
-    return jsonify({'ok': True, 'message': 'Anulowanie skanowania…'})
+    return jsonify({'ok': True, 'message': 'Cancelling scan…'})
 
 
 @app.route('/api/files/duplicates/status')
@@ -6539,7 +6539,7 @@ def files_duplicates_ignore():
     data = request.json or {}
     groups = data.get('groups', [])  # list of group objects with items
     if not groups:
-        return jsonify({'error': 'Brak grup'}), 400
+        return jsonify({'error': 'No groups provided'}), 400
     ignored = _load_dup_ignored()
     added = 0
     for g in groups:
@@ -6563,7 +6563,7 @@ def files_duplicates_unignore():
     data = request.json or {}
     keys = data.get('keys', [])  # list of group keys
     if not keys:
-        return jsonify({'error': 'Brak kluczy'}), 400
+        return jsonify({'error': 'No keys provided'}), 400
     ignored = _load_dup_ignored()
     removed = 0
     for k in keys:
@@ -6645,7 +6645,7 @@ def files_rename():
     old = safe_path(data.get('path', ''))
     new_name = data.get('new_name', '')
     if not old or not new_name or '/' in new_name:
-        return jsonify({'error': 'Nieprawidłowe parametry'}), 400
+        return jsonify({'error': 'Invalid parameters'}), 400
 
     blocked = _require_folder_access(data.get('path', ''))
     if blocked is not None:
@@ -6665,10 +6665,10 @@ def files_rename():
         _dirsize_cache_invalidate(os.path.dirname(old))
         _listdir_cache_invalidate(data.get('path', ''))
 
-        elog('files', 'info', f'Zmieniono nazwę: {os.path.basename(old)} → {new_name}')
+        elog('files', 'info', f'Renamed: {os.path.basename(old)} → {new_name}')
         return jsonify({'ok': True})
     except Exception as e:
-        elog('files', 'error', f'Błąd zmiany nazwy: {str(e)}')
+        elog('files', 'error', f'Rename error: {str(e)}')
         return jsonify({'error': str(e)}), 500
 
 
@@ -6720,7 +6720,7 @@ def files_move():
     src = safe_path(data.get('src', ''))
     dest = safe_path(data.get('dest', ''))
     if not src or not dest:
-        return jsonify({'error': 'Nieprawidłowe parametry'}), 400
+        return jsonify({'error': 'Invalid parameters'}), 400
 
     blocked = _require_folder_access(data.get('src', ''))
     if blocked is not None:
@@ -6744,10 +6744,10 @@ def files_move():
         _listdir_cache_invalidate(data.get('src', ''))
         _listdir_cache_invalidate(data.get('dest', ''))
 
-        elog('files', 'info', f'Przeniesiono: {os.path.basename(src)} → {data.get("dest", "")}')
+        elog('files', 'info', f'Moved: {os.path.basename(src)} → {data.get("dest", "")}')
         return jsonify({'ok': True})
     except Exception as e:
-        elog('files', 'error', f'Błąd przenoszenia: {str(e)}')
+        elog('files', 'error', f'Move error: {str(e)}')
         return jsonify({'error': str(e)}), 500
 
 
@@ -6808,9 +6808,9 @@ def files_copy():
     dest_dir = safe_path(data.get('dest', ''))
     on_conflict = data.get('on_conflict', 'rename')  # overwrite | skip | rename
     if not sources or not dest_dir:
-        return jsonify({'error': 'Nieprawidłowe parametry'}), 400
+        return jsonify({'error': 'Invalid parameters'}), 400
     if not os.path.isdir(dest_dir):
-        return jsonify({'error': 'Cel nie jest folderem'}), 400
+        return jsonify({'error': 'Destination is not a folder'}), 400
 
     # Security check: check destination and all sources
     blocked = _require_folder_access(data.get('dest', ''))
@@ -6836,7 +6836,7 @@ def files_copy():
         _fm = _fileop_channels['fm']
         with _fileop_lock:
             if _fm['active']:
-                return jsonify({'error': 'Inna operacja plików jest w toku'}), 400
+                return jsonify({'error': 'Another file operation is in progress'}), 400
             _fm['active'] = True
             _fm['operation'] = 'copy'
             _fm['progress'] = None
@@ -6845,7 +6845,7 @@ def files_copy():
         cur_user = get_current_user()
         _save_copy_task(resolved, dest_dir, total, on_conflict, (cur_user or {}).get('username'))
         socketio.start_background_task(_bg_copy, resolved, dest_dir, total, on_conflict, cur_user)
-        return jsonify({'async': True, 'message': f'Kopiowanie {len(resolved)} elementów ({total} plików) w tle'})
+        return jsonify({'async': True, 'message': f'Copying {len(resolved)} items ({total} files) in background'})
 
     # Small operation — synchronous (atomic write per file)
     copied = []
@@ -6854,7 +6854,7 @@ def files_copy():
     for src_path in sources:
         real_src = safe_path(src_path)
         if not real_src or not os.path.exists(real_src):
-            errors.append(f'Nie znaleziono: {src_path}')
+            errors.append(f'Not found: {src_path}')
             continue
         base_name = os.path.basename(real_src)
         target = _resolve_target(real_src, dest_dir, on_conflict)
@@ -6887,7 +6887,7 @@ def files_copy():
     if copied:
         cur = get_current_user()
         username = cur['username'] if cur else 'unknown'
-        elog('files', 'info', f'Skopiowano {len(copied)} plików do {data.get("dest", "")}', {'user': username, 'files': copied})
+        elog('files', 'info', f'Copied {len(copied)} files to {data.get("dest", "")}', {'user': username, 'files': copied})
 
     return jsonify({'copied': copied, 'skipped': skipped, 'errors': errors})
 
@@ -6920,14 +6920,14 @@ def _bg_copy(resolved_sources, dest_dir, total, on_conflict='rename', cur_user=N
                 cancelled = True
                 break
             if not real_src or not os.path.exists(real_src):
-                errors.append(f'Nie znaleziono: {real_src}')
+                errors.append(f'Not found: {real_src}')
                 continue
             base_name = os.path.basename(real_src)
             target = _resolve_target(real_src, dest_dir, on_conflict)
             if target is None:
                 skipped.append(base_name)
                 done_ref[0] += _count_items([real_src])
-                _fileop_progress('copy', f'{base_name} (pominięto)', done_ref[0], total, 'fm')
+                _fileop_progress('copy', f'{base_name} (skipped)', done_ref[0], total, 'fm')
                 gevent.sleep(0)
                 continue
             try:
@@ -6946,15 +6946,15 @@ def _bg_copy(resolved_sources, dest_dir, total, on_conflict='rename', cur_user=N
                 try: os.remove(pf)
                 except OSError: pass
             _clear_copy_task()
-            _fileop_finish('copy', False, 'Anulowano', 'fm')
+            _fileop_finish('copy', False, 'Cancelled', 'fm')
             return
 
         _clear_copy_task()
-        msg = f'Skopiowano {len(copied)} elementów'
+        msg = f'Copied {len(copied)} items'
         if skipped:
-            msg += f', pominięto {len(skipped)}'
+            msg += f', skipped {len(skipped)}'
         if errors:
-            msg += f' ({len(errors)} błędów)'
+            msg += f' ({len(errors)} errors)'
         _fileop_finish('copy', len(copied) > 0 or len(skipped) > 0, msg, 'fm')
     except Exception as e:
         # Clean up partial files on unexpected error
@@ -6972,9 +6972,9 @@ def files_move_multi():
     sources = data.get('sources', [])
     dest_dir = safe_path(data.get('dest', ''))
     if not sources or not dest_dir:
-        return jsonify({'error': 'Nieprawidłowe parametry'}), 400
+        return jsonify({'error': 'Invalid parameters'}), 400
     if not os.path.isdir(dest_dir):
-        return jsonify({'error': 'Cel nie jest folderem'}), 400
+        return jsonify({'error': 'Destination is not a folder'}), 400
 
     # Security check: check destination and all sources
     blocked = _require_folder_access(data.get('dest', ''))
@@ -7001,7 +7001,7 @@ def files_move_multi():
         _fm = _fileop_channels['fm']
         with _fileop_lock:
             if _fm['active']:
-                return jsonify({'error': 'Inna operacja plików jest w toku'}), 400
+                return jsonify({'error': 'Another file operation is in progress'}), 400
             _fm['active'] = True
             _fm['operation'] = 'move'
             _fm['progress'] = None
@@ -7010,7 +7010,7 @@ def files_move_multi():
         cur_user = get_current_user()
         _save_move_task(resolved, dest_dir, total, on_conflict, data.get('dest', ''), (cur_user or {}).get('username'))
         socketio.start_background_task(_bg_move, resolved, dest_dir, total, on_conflict, data.get('dest', ''), cur_user)
-        return jsonify({'async': True, 'message': f'Przenoszenie {len(resolved)} elementów w tle'})
+        return jsonify({'async': True, 'message': f'Moving {len(resolved)} items in background'})
 
     # Small — synchronous
     moved = []
@@ -7019,7 +7019,7 @@ def files_move_multi():
     for src_path in sources:
         real_src = safe_path(src_path)
         if not real_src or not os.path.exists(real_src):
-            errors.append(f'Nie znaleziono: {src_path}')
+            errors.append(f'Not found: {src_path}')
             continue
         base_name = os.path.basename(real_src)
         target = _resolve_target(real_src, dest_dir, on_conflict)
@@ -7045,7 +7045,7 @@ def files_move_multi():
     if moved:
         cur = get_current_user()
         username = cur['username'] if cur else 'unknown'
-        elog('files', 'info', f'Przeniesiono {len(moved)} plików do {data.get("dest", "")}', {'user': username, 'files': moved})
+        elog('files', 'info', f'Moved {len(moved)} files to {data.get("dest", "")}', {'user': username, 'files': moved})
 
     return jsonify({'moved': moved, 'skipped': skipped, 'errors': errors})
 
@@ -7089,7 +7089,7 @@ def _bg_move(resolved_sources, dest_dir, total, on_conflict='rename', dest_user_
                 cancelled = True
                 break
             if not real_src or not os.path.exists(real_src):
-                errors.append(f'Nie znaleziono: {real_src}')
+                errors.append(f'Not found: {real_src}')
                 continue
             base_name = os.path.basename(real_src)
             item_count = _count_items([real_src])
@@ -7097,7 +7097,7 @@ def _bg_move(resolved_sources, dest_dir, total, on_conflict='rename', dest_user_
             if target is None:
                 skipped.append(base_name)
                 done += item_count
-                _fileop_progress('move', f'{base_name} (pominięto)', done, total, 'fm')
+                _fileop_progress('move', f'{base_name} (skipped)', done, total, 'fm')
                 gevent.sleep(0)
                 continue
             try:
@@ -7115,15 +7115,15 @@ def _bg_move(resolved_sources, dest_dir, total, on_conflict='rename', dest_user_
 
         if cancelled:
             _clear_move_task()
-            _fileop_finish('move', False, 'Anulowano', 'fm')
+            _fileop_finish('move', False, 'Cancelled', 'fm')
             return
 
         _clear_move_task()
-        msg = f'Przeniesiono {len(moved)} elementów'
+        msg = f'Moved {len(moved)} items'
         if skipped:
-            msg += f', pominięto {len(skipped)}'
+            msg += f', skipped {len(skipped)}'
         if errors:
-            msg += f' ({len(errors)} błędów)'
+            msg += f' ({len(errors)} errors)'
         _fileop_finish('move', len(moved) > 0 or len(skipped) > 0, msg, 'fm')
     except Exception as e:
         _clear_move_task()
@@ -7141,19 +7141,19 @@ def files_compress():
     fmt = data.get('format', 'zip')  # 'zip' or 'tar.gz'
     archive_name = data.get('name', '')
     if not sources:
-        return jsonify({'error': 'Brak plików do kompresji'}), 400
+        return jsonify({'error': 'No files to compress'}), 400
 
     # Determine output dir = same dir as first source
     first_src = safe_path(sources[0])
     if not first_src:
-        return jsonify({'error': 'Nieprawidłowa ścieżka'}), 400
+        return jsonify({'error': 'Invalid path'}), 400
     out_dir = os.path.dirname(first_src)
 
     if not archive_name:
         if len(sources) == 1:
             archive_name = os.path.splitext(os.path.basename(first_src))[0]
         else:
-            archive_name = 'archiwum'
+            archive_name = 'archive'
 
     ext = '.zip' if fmt == 'zip' else '.tar.gz'
     archive_path = os.path.join(out_dir, archive_name + ext)
@@ -7169,13 +7169,13 @@ def files_compress():
         if rs and os.path.exists(rs):
             resolved.append(rs)
     if not resolved:
-        return jsonify({'error': 'Żadna ze ścieżek nie istnieje'}), 400
+        return jsonify({'error': 'None of the paths exist'}), 400
 
     total = _count_items(resolved)
 
     with _fileop_lock:
         if _fileop_state['active']:
-            return jsonify({'error': 'Inna operacja plików jest w toku'}), 400
+            return jsonify({'error': 'Another file operation is in progress'}), 400
         _fileop_state['active'] = True
         _fileop_state['operation'] = 'compress'
         _fileop_state['progress'] = None
@@ -7186,7 +7186,7 @@ def files_compress():
     _bg_username = cur_user['username'] if cur_user else None
     _save_compress_task(resolved, archive_path, fmt, total, _bg_username)
     socketio.start_background_task(_bg_compress, resolved, archive_path, fmt, total, cur_user)
-    return jsonify({'async': True, 'message': f'Kompresja {len(resolved)} elementów do {os.path.basename(archive_path)}'})
+    return jsonify({'async': True, 'message': f'Compressing {len(resolved)} items to {os.path.basename(archive_path)}'})
 
 
 def _bg_compress(resolved, archive_path, fmt, total, cur_user=None):
@@ -7270,7 +7270,7 @@ def _bg_compress(resolved, archive_path, fmt, total, cur_user=None):
                     try: os.remove(p)
                     except: pass
             _clear_compress_task()
-            _fileop_finish('compress', False, 'Anulowano')
+            _fileop_finish('compress', False, 'Cancelled')
             return
 
         # Atomically move temp archive to final path
@@ -7295,7 +7295,7 @@ def files_extract():
     data = request.json or {}
     archive = safe_path(data.get('path', ''))
     if not archive or not os.path.isfile(archive):
-        return jsonify({'error': 'Plik archiwum nie istnieje'}), 400
+        return jsonify({'error': 'Archive file does not exist'}), 400
 
     basename = os.path.basename(archive)
     # Determine extract dir
@@ -7310,7 +7310,7 @@ def files_extract():
     elif basename.endswith('.zip'):
         folder_name = basename.rsplit('.zip', 1)[0]
     else:
-        return jsonify({'error': 'Nieobsługiwany format archiwum'}), 400
+        return jsonify({'error': 'Unsupported archive format'}), 400
 
     extract_to = os.path.join(os.path.dirname(archive), folder_name)
     counter = 1
@@ -7336,7 +7336,7 @@ def files_extract():
     with _fileop_lock:
         _fm = _fileop_channels['fm']
         if _fm['active']:
-            return jsonify({'error': 'Inna operacja plików jest w toku'}), 400
+            return jsonify({'error': 'Another file operation is in progress'}), 400
         _fm['active'] = True
         _fm['operation'] = 'extract'
         _fm['progress'] = None
@@ -7344,7 +7344,7 @@ def files_extract():
         _fm['paused'] = False
 
     socketio.start_background_task(_bg_extract, archive, extract_to, total, get_current_user())
-    return jsonify({'async': True, 'message': f'Rozpakowywanie {basename} do {folder_name}/'})
+    return jsonify({'async': True, 'message': f'Extracting {basename} to {folder_name}/'})
 
 
 def _bg_extract(archive, extract_to, total, cur_user=None):
@@ -7365,7 +7365,7 @@ def _bg_extract(archive, extract_to, total, cur_user=None):
                     if _check_cancel():
                         try: shutil.rmtree(extract_to, ignore_errors=True)
                         except Exception: pass
-                        _fileop_finish('extract', False, 'Anulowano')
+                        _fileop_finish('extract', False, 'Cancelled')
                         return
                     zf.extract(member, extract_to)
                     done += 1
@@ -7378,7 +7378,7 @@ def _bg_extract(archive, extract_to, total, cur_user=None):
                     if _check_cancel():
                         try: shutil.rmtree(extract_to, ignore_errors=True)
                         except Exception: pass
-                        _fileop_finish('extract', False, 'Anulowano')
+                        _fileop_finish('extract', False, 'Cancelled')
                         return
                     tf.extract(member, extract_to, filter='data')
                     done += 1
@@ -7388,7 +7388,7 @@ def _bg_extract(archive, extract_to, total, cur_user=None):
                         gevent.sleep(0)
 
         _chown_recursive(extract_to, _bg_username)
-        _fileop_finish('extract', True, f'Rozpakowano do {os.path.basename(extract_to)}/ ({done} plików)')
+        _fileop_finish('extract', True, f'Extracted to {os.path.basename(extract_to)}/ ({done} files)')
     except Exception as e:
         _fileop_finish('extract', False, str(e))
 
@@ -7427,16 +7427,16 @@ def files_transfer_remote():
     remote_dest = data.get('remote_path', '')
 
     if not server_id:
-        return jsonify({'error': 'Nie wybrano serwera'}), 400
+        return jsonify({'error': 'No server selected'}), 400
     if not paths:
-        return jsonify({'error': 'Brak plików do transferu'}), 400
+        return jsonify({'error': 'No files to transfer'}), 400
 
     # Get SSH config
     from blueprints.backup import load_ssh_configs
     configs = load_ssh_configs()
     server = next((c for c in configs if c.get('id') == server_id), None)
     if not server:
-        return jsonify({'error': 'Serwer nie znaleziony'}), 404
+        return jsonify({'error': 'Server not found'}), 404
 
     # Quick connectivity check before starting background transfer
     import socket as _socket
@@ -7446,7 +7446,7 @@ def files_transfer_remote():
         s = _socket.create_connection((host, port), timeout=5)
         s.close()
     except Exception:
-        return jsonify({'error': f'Serwer {server.get("name",host)} ({host}:{port}) jest nieosiągalny. Sprawdź czy jest włączony i podłączony do sieci.'}), 502
+        return jsonify({'error': f'Server {server.get("name",host)} ({host}:{port}) is unreachable. Check that it is powered on and connected to the network.'}), 502
 
     # Resolve local paths
     resolved = []
@@ -7455,7 +7455,7 @@ def files_transfer_remote():
         if rp and os.path.exists(rp):
             resolved.append(rp)
     if not resolved:
-        return jsonify({'error': 'Żadna ze ścieżek nie istnieje'}), 400
+        return jsonify({'error': 'None of the paths exist'}), 400
 
     # Compute total bytes
     total_bytes = 0
@@ -7479,7 +7479,7 @@ def files_transfer_remote():
 
     with _fileop_lock:
         if _fileop_state['active']:
-            return jsonify({'error': 'Inna operacja plików jest w toku'}), 400
+            return jsonify({'error': 'Another file operation is in progress'}), 400
         _fileop_state['active'] = True
         _fileop_state['operation'] = 'transfer'
         _fileop_state['progress'] = None
@@ -7507,7 +7507,7 @@ def files_transfer_remote():
     return jsonify({
         'async': True,
         'cancellable': True,
-        'message': f'Transfer {len(resolved)} elementów ({size_str}) do {server["name"]}'
+        'message': f'Transferring {len(resolved)} items ({size_str}) to {server["name"]}'
     })
 
 
@@ -7700,14 +7700,14 @@ def _bg_transfer_remote(resolved, server, remote_dest, total_bytes, total_files,
         for idx, local_path in enumerate(resolved):
             if _fileop_cancelled():
                 _clear_transfer_task()
-                _fileop_finish('transfer', False, 'Transfer anulowany przez użytkownika')
+                _fileop_finish('transfer', False, 'Transfer cancelled by user')
                 return
 
             # Wait while paused (between items)
             while _fileop_is_paused():
                 if _fileop_cancelled():
                     _clear_transfer_task()
-                    _fileop_finish('transfer', False, 'Transfer anulowany przez użytkownika')
+                    _fileop_finish('transfer', False, 'Transfer cancelled by user')
                     return
                 gevent.sleep(0.5)
 
@@ -7734,7 +7734,7 @@ def _bg_transfer_remote(resolved, server, remote_dest, total_bytes, total_files,
 
             if rc == -999:  # cancelled
                 _clear_transfer_task()
-                _fileop_finish('transfer', False, 'Transfer anulowany przez użytkownika')
+                _fileop_finish('transfer', False, 'Transfer cancelled by user')
                 return
 
             if rc not in (0, 24):
@@ -7745,17 +7745,17 @@ def _bg_transfer_remote(resolved, server, remote_dest, total_bytes, total_files,
                     retry_ok = False
                     for attempt in range(1, max_retries + 1):
                         delay = min(5 * attempt, 15)  # 5s, 10s, 15s
-                        _fileop_progress('transfer', f'Ponawiam ({attempt}/{max_retries}): {name}…', files_done[0], total_files)
+                        _fileop_progress('transfer', f'Retrying ({attempt}/{max_retries}): {name}…', files_done[0], total_files)
                         print(f'  [transfer] rsync {name} failed (rc={rc}), retry {attempt}/{max_retries} in {delay}s')
                         gevent.sleep(delay)
                         if _fileop_cancelled():
                             _clear_transfer_task()
-                            _fileop_finish('transfer', False, 'Transfer anulowany przez użytkownika')
+                            _fileop_finish('transfer', False, 'Transfer cancelled by user')
                             return
                         rc2, stderr2 = _run_rsync(rsync_cmd, env, idx, local_path, name)
                         if rc2 == -999:
                             _clear_transfer_task()
-                            _fileop_finish('transfer', False, 'Transfer anulowany przez użytkownika')
+                            _fileop_finish('transfer', False, 'Transfer cancelled by user')
                             return
                         if rc2 in (0, 24):
                             retry_ok = True
@@ -7776,7 +7776,7 @@ def _bg_transfer_remote(resolved, server, remote_dest, total_bytes, total_files,
         _clear_transfer_task()
         size_str = _fmt_bytes(total_bytes)
         _fileop_finish('transfer', True,
-                       f'Przesłano {files_done[0]} plików ({size_str}) do {server["name"]}')
+                       f'Transferred {files_done[0]} files ({size_str}) to {server["name"]}')
     except Exception as e:
         import traceback
         print(f'  [transfer] EXCEPTION: {e}')
@@ -7797,7 +7797,7 @@ def _bg_transfer_remote(resolved, server, remote_dest, total_bytes, total_files,
         for kw in ('No route to host', 'Connection refused', 'timed out', 'Connection reset',
                    'Network is unreachable', 'Name or service not known'):
             if kw.lower() in err_msg.lower():
-                err_msg = f'Nie można połączyć się z {server["name"]} ({server["host"]}). Sprawdź czy serwer jest włączony i podłączony do sieci.'
+                err_msg = f'Cannot connect to {server["name"]} ({server["host"]}). Check that the server is powered on and connected to the network.'
                 break
         _fileop_finish('transfer', False, err_msg)
 
@@ -7897,8 +7897,8 @@ def _resume_interrupted_transfer():
         }
 
     dest = remote_dest or server.get('remote_path', '~/')
-    print(f'  [transfer-resume] Wznawianie transferu {len(valid)} elementów do {server.get("name", server.get("host", ""))}…')
-    elog('files', 'info', f'Wznawianie przerwanego transferu do {server.get("name", server.get("host", ""))} ({len(valid)} elementów)')
+    print(f'  [transfer-resume] Resuming transfer of {len(valid)} items to {server.get("name", server.get("host", ""))}…')
+    elog('files', 'info', f'Resuming interrupted transfer to {server.get("name", server.get("host", ""))} ({len(valid)} items)')
     socketio.start_background_task(_bg_transfer_remote, valid, server, dest, total_bytes, total_files, requesting_user)
 
 
@@ -7910,21 +7910,21 @@ def get_apps():
     apps = [
         {
             'id': 'dashboard',
-            'name': 'Pulpit',
+            'name': 'Dashboard',
             'icon': 'fa-tachometer-alt',
             'color': '#3b82f6',
             'type': 'builtin',
             'category': 'System',
-            'description': 'Przegląd systemu'
+            'description': 'System overview'
         },
         {
             'id': 'file-manager',
-            'name': 'Menedżer plików',
+            'name': 'File Manager',
             'icon': 'fa-folder-open',
             'color': '#f59e0b',
             'type': 'builtin',
             'category': 'System',
-            'description': 'Przeglądaj i zarządzaj plikami'
+            'description': 'Browse and manage files'
         },
         {
             'id': 'docker-manager',
@@ -7933,7 +7933,7 @@ def get_apps():
             'color': '#2496ed',
             'type': 'builtin',
             'category': 'System',
-            'description': 'Zarządzanie kontenerami',
+            'description': 'Container management',
             'package': 'docker-manager'
         },
         {
@@ -7943,18 +7943,18 @@ def get_apps():
             'color': '#8b5cf6',
             'type': 'builtin',
             'category': 'System',
-            'description': 'Wirtualne maszyny (QEMU/KVM)',
+            'description': 'Virtual machines (QEMU/KVM)',
             'admin_only': True,
             'package': 'vm-manager'
         },
         {
             'id': 'storage-manager',
-            'name': 'Menedżer dysków',
+            'name': 'Disk Manager',
             'icon': 'fa-hdd',
             'color': '#10b981',
             'type': 'builtin',
-            'category': 'Przechowywanie',
-            'description': 'Montowanie, formatowanie i partycje'
+            'category': 'Storage',
+            'description': 'Mounting, formatting and partitions'
         },
         {
             'id': 'raid',
@@ -7962,68 +7962,68 @@ def get_apps():
             'icon': 'fa-layer-group',
             'color': '#0ea5e9',
             'type': 'builtin',
-            'category': 'Przechowywanie',
-            'description': 'Macierze RAID i woluminy LVM',
+            'category': 'Storage',
+            'description': 'RAID arrays and LVM volumes',
             'admin_only': True,
             'package': 'raid-lvm'
         },
         {
             'id': 'sharing',
-            'name': 'Udostępnianie',
+            'name': 'Sharing',
             'icon': 'fa-share-alt',
             'color': '#6366f1',
             'type': 'builtin',
-            'category': 'Przechowywanie',
-            'description': 'Udostępnianie plików — Samba, NFS, DLNA, WebDAV, SFTP, FTP i linki publiczne.',
+            'category': 'Storage',
+            'description': 'File sharing — Samba, NFS, DLNA, WebDAV, SFTP, FTP and public links.',
             'package': 'sharing'
         },
         {
             'id': 'backup',
-            'name': 'Kopia zapasowa',
+            'name': 'Backup',
             'icon': 'fa-shield-alt',
             'color': '#06b6d4',
             'type': 'builtin',
-            'category': 'Przechowywanie',
-            'description': 'Tworzenie i przywracanie kopii'
+            'category': 'Storage',
+            'description': 'Create and restore backups'
         },
         {
             'id': 'cloud-backup',
-            'name': 'Backup w chmurze',
+            'name': 'Cloud Backup',
             'icon': 'fa-cloud-upload-alt',
             'color': '#0ea5e9',
             'type': 'builtin',
-            'category': 'Przechowywanie',
-            'description': 'Kopia zapasowa w chmurze (S3, B2, Google Drive, WebDAV, SFTP)',
+            'category': 'Storage',
+            'description': 'Cloud backup (S3, B2, Google Drive, WebDAV, SFTP)',
             'admin_only': True,
             'package': 'cloud-backup'
         },
         {
             'id': 'rollback',
-            'name': 'Przywracanie',
+            'name': 'Rollback',
             'icon': 'fa-history',
             'color': '#f97316',
             'type': 'builtin',
             'category': 'System',
-            'description': 'Snapshoty systemu i przywracanie poprzednich wersji',
+            'description': 'System snapshots and version rollback',
             'admin_only': True
         },
         {
             'id': 'resource-monitor',
-            'name': 'Monitor zasobów',
+            'name': 'Resource Monitor',
             'icon': 'fa-chart-area',
             'color': '#8b5cf6',
             'type': 'builtin',
             'category': 'System',
-            'description': 'Szczegółowe monitorowanie'
+            'description': 'Detailed monitoring'
         },
         {
             'id': 'printer',
-            'name': 'Serwer druku',
+            'name': 'Print Server',
             'icon': 'fa-print',
             'color': '#ef4444',
             'type': 'builtin',
-            'category': 'Narzędzia',
-            'description': 'Drukowanie dokumentów',
+            'category': 'Tools',
+            'description': 'Document printing',
             'package': 'printer'
         },
         {
@@ -8033,62 +8033,62 @@ def get_apps():
             'color': '#22c55e',
             'type': 'builtin',
             'category': 'System',
-            'description': 'Linia poleceń (SSH-like)'
+            'description': 'Command line (SSH-like)'
         },
         {
             'id': 'packages',
-            'name': 'Menedżer pakietów',
+            'name': 'Package Manager',
             'icon': 'fa-store',
             'color': '#a855f7',
             'type': 'builtin',
             'category': 'System',
-            'description': 'Instalacja i aktualizacja oprogramowania'
+            'description': 'Install and update software'
         },
         {
             'id': 'users',
-            'name': 'Użytkownicy',
+            'name': 'Users',
             'icon': 'fa-users-cog',
             'color': '#ec4899',
             'type': 'builtin',
             'category': 'System',
-            'description': 'Zarządzanie użytkownikami i grupami',
+            'description': 'User and group management',
             'admin_only': True
         },
         {
             'id': 'network',
-            'name': 'Sieć',
+            'name': 'Network',
             'icon': 'fa-network-wired',
             'color': '#0ea5e9',
             'type': 'builtin',
             'category': 'System',
-            'description': 'Zarządzanie interfejsami sieciowymi i WiFi'
+            'description': 'Network interface and WiFi management'
         },
         {
             'id': 'event-log',
-            'name': 'Dziennik zdarzeń',
+            'name': 'Event Log',
             'icon': 'fa-scroll',
             'color': '#64748b',
             'type': 'builtin',
             'category': 'System',
-            'description': 'Logi i historia operacji'
+            'description': 'Logs and operation history'
         },
         {
             'id': 'notifications',
-            'name': 'Powiadomienia',
+            'name': 'Notifications',
             'icon': 'fa-bell',
             'color': '#f59e0b',
             'type': 'builtin',
             'category': 'System',
-            'description': 'Kanały powiadomień systemowych'
+            'description': 'System notification channels'
         },
         {
             'id': 'fail2ban',
-            'name': 'Ochrona przed atakami',
+            'name': 'Intrusion Protection',
             'icon': 'fa-shield-alt',
             'color': '#ef4444',
             'type': 'builtin',
             'category': 'System',
-            'description': 'Fail2Ban — aktywne bany, biała lista, ochrona SSH/Samba/Web',
+            'description': 'Fail2Ban — active bans, whitelist, SSH/Samba/Web protection',
             'admin_only': True
         },
         {
@@ -8098,87 +8098,87 @@ def get_apps():
             'color': '#e05d44',
             'type': 'builtin',
             'category': 'System',
-            'description': 'Zarządzanie zaporą sieciową i regułami',
+            'description': 'Firewall and rules management',
             'admin_only': True
         },
         {
             'id': 'cron',
-            'name': 'Harmonogram',
+            'name': 'Scheduler',
             'icon': 'fa-clock',
             'color': '#6366f1',
             'type': 'builtin',
             'category': 'System',
-            'description': 'Zarządzanie zadaniami cron (harmonogram)',
+            'description': 'Cron job management (scheduler)',
             'admin_only': True
         },
         {
             'id': 'app-store',
-            'name': 'Sklep z aplikacjami',
+            'name': 'App Store',
             'icon': 'fa-th',
             'color': '#f97316',
             'type': 'builtin',
             'category': 'System',
-            'description': 'Pakiety EthOS i kontenery Docker',
+            'description': 'EthOS packages and Docker containers',
             'admin_only': True
         },
         {
             'id': 'gallery',
-            'name': 'Galeria',
+            'name': 'Gallery',
             'icon': 'fa-images',
             'color': '#ec4899',
             'type': 'builtin',
-            'category': 'Narzędzia',
-            'description': 'Galeria zdjęć i filmów z wybranych folderów',
+            'category': 'Tools',
+            'description': 'Photo and video gallery from selected folders',
             'package': 'gallery'
         },
         {
             'id': 'duplicates',
-            'name': 'Duplikaty zdjęć',
+            'name': 'Photo Duplicates',
             'icon': 'fa-clone',
             'color': '#a78bfa',
             'type': 'builtin',
-            'category': 'Narzędzia',
-            'description': 'Znajdź identyczne i podobne zdjęcia',
+            'category': 'Tools',
+            'description': 'Find identical and similar photos',
             'package': 'duplicates'
         },
         {
             'id': 'doc-editor',
-            'name': 'Edytor dokumentów',
+            'name': 'Document Editor',
             'icon': 'fa-file-word',
             'color': '#2563eb',
             'type': 'builtin',
-            'category': 'Narzędzia',
-            'description': 'Twórz i edytuj dokumenty Word, eksportuj do PDF',
+            'category': 'Tools',
+            'description': 'Create and edit Word documents, export to PDF',
             'package': 'doc-editor'
         },
         {
             'id': 'code-editor',
-            'name': 'Edytor kodu',
+            'name': 'Code Editor',
             'icon': 'fa-code',
             'color': '#22d3ee',
             'type': 'builtin',
-            'category': 'Narzędzia',
-            'description': 'Prosty edytor kodu z numerami linii i formatowaniem',
+            'category': 'Tools',
+            'description': 'Simple code editor with line numbers and formatting',
             'package': 'code-editor'
         },
         {
             'id': 'download-manager',
-            'name': 'Menedżer pobierania',
+            'name': 'Download Manager',
             'icon': 'fa-cloud-download-alt',
             'color': '#10b981',
             'type': 'builtin',
-            'category': 'Narzędzia',
-            'description': 'Pobieraj pliki z usługami premium (AllDebrid, Real-Debrid, Premiumize)',
+            'category': 'Tools',
+            'description': 'Download files with premium services (AllDebrid, Real-Debrid, Premiumize)',
             'package': 'download-manager'
         },
         {
             'id': 'usb-flasher',
-            'name': 'Kreator USB',
+            'name': 'USB Flasher',
             'icon': 'fa-usb',
             'color': '#a855f7',
             'type': 'builtin',
-            'category': 'Narzędzia',
-            'description': 'Flashuj obrazy ISO/IMG na dyski USB',
+            'category': 'Tools',
+            'description': 'Flash ISO/IMG images to USB drives',
             'admin_only': True,
             'package': 'usb-flasher'
         },
@@ -8189,28 +8189,28 @@ def get_apps():
             'color': '#f97316',
             'type': 'builtin',
             'category': 'System',
-            'description': 'Buduj release i obrazy systemu EthOS',
+            'description': 'Build EthOS releases and system images',
             'admin_only': True,
             'package': 'builder'
         },
         {
             'id': 'updates',
-            'name': 'Aktualizacje',
+            'name': 'Updates',
             'icon': 'fa-cloud-download-alt',
             'color': '#8b5cf6',
             'type': 'builtin',
             'category': 'System',
-            'description': 'Sprawdź i zainstaluj aktualizacje systemu',
+            'description': 'Check and install system updates',
             'admin_only': True
         },
         {
             'id': 'power',
-            'name': 'Zarządzanie energią',
+            'name': 'Power Management',
             'icon': 'fa-power-off',
             'color': '#22c55e',
             'type': 'builtin',
             'category': 'System',
-            'description': 'Harmonogram, WOL, oszczędzanie energii',
+            'description': 'Schedule, WOL, power saving',
             'admin_only': True
         },
         {
@@ -8220,38 +8220,38 @@ def get_apps():
             'color': '#f59e0b',
             'type': 'builtin',
             'category': 'System',
-            'description': 'Status i zarządzanie zasilaczem awaryjnym UPS',
+            'description': 'UPS status and management',
             'admin_only': True
         },
         {
             'id': 'services',
-            'name': 'Usługi',
+            'name': 'Services',
             'icon': 'fa-cogs',
             'color': '#64748b',
             'type': 'builtin',
             'category': 'System',
-            'description': 'Zarządzanie usługami systemowymi',
+            'description': 'System service management',
             'admin_only': True
         },
         {
             'id': 'disk-repair',
-            'name': 'Naprawa dysków',
+            'name': 'Disk Repair',
             'icon': 'fa-wrench',
             'color': '#ef4444',
             'type': 'builtin',
-            'category': 'Przechowywanie',
-            'description': 'Diagnostyka SMART, sprawdzanie i naprawa systemów plików',
+            'category': 'Storage',
+            'description': 'SMART diagnostics, file system check and repair',
             'admin_only': True,
             'package': 'disk-repair'
         },
         {
             'id': 'remote-log',
-            'name': 'Zdalne logi',
+            'name': 'Remote Logs',
             'icon': 'fa-satellite-dish',
             'color': '#0891b2',
             'type': 'builtin',
             'category': 'System',
-            'description': 'Wysyłanie logów diagnostycznych na serwer centralny',
+            'description': 'Send diagnostic logs to central server',
             'admin_only': True,
             'package': 'remote-log'
         },
@@ -8261,8 +8261,8 @@ def get_apps():
             'icon': 'fa-video',
             'color': '#dc2626',
             'type': 'builtin',
-            'category': 'Narzędzia',
-            'description': 'Monitoring kamer IP z wykrywaniem i nagrywaniem',
+            'category': 'Tools',
+            'description': 'IP camera monitoring with detection and recording',
             'admin_only': True,
             'package': 'surveillance'
         },
@@ -8272,40 +8272,40 @@ def get_apps():
             'icon': 'fa-robot',
             'color': '#8b5cf6',
             'type': 'builtin',
-            'category': 'Narzędzia',
-            'description': 'Asystent AI — czat z GPT, Claude i innymi modelami',
+            'category': 'Tools',
+            'description': 'AI assistant — chat with GPT, Claude and other models',
             'admin_only': True,
             'package': 'ai-chat'
         },
         {
             'id': 'system-settings',
-            'name': 'Ustawienia',
+            'name': 'Settings',
             'icon': 'fa-sliders-h',
             'color': '#64748b',
             'type': 'builtin',
             'category': 'System',
-            'description': 'Nazwa NAS, port serwera, hostname, strefa czasowa, zmiana hasła',
+            'description': 'NAS name, server port, hostname, timezone, password change',
             'admin_only': True
         },
         {
             'id': 'domains-manager',
-            'name': 'Domeny i SSL',
+            'name': 'Domains & SSL',
             'icon': 'fa-globe',
             'color': '#059669',
             'type': 'builtin',
-            'category': 'Sieć',
-            'description': 'Zarządzanie domenami, certyfikatami SSL, reverse proxy i Dynamic DNS',
+            'category': 'Network',
+            'description': 'Domain, SSL certificate, reverse proxy and Dynamic DNS management',
             'admin_only': True,
             'package': 'ddns'
         },
         {
             'id': 'websites',
-            'name': 'Strony WWW',
+            'name': 'Websites',
             'icon': 'fa-globe-americas',
             'color': '#14b8a6',
             'type': 'builtin',
-            'category': 'Narzędzia',
-            'description': 'Twórz i zarządzaj stronami internetowymi z prostym CMS',
+            'category': 'Tools',
+            'description': 'Create and manage websites with a simple CMS',
             'package': 'websites'
         },
         {
@@ -8314,26 +8314,26 @@ def get_apps():
             'icon': 'fa-network-wired',
             'color': '#06b6d4',
             'type': 'builtin',
-            'category': 'Sieć',
-            'description': 'Łączność i synchronizacja między urządzeniami NAS'
+            'category': 'Network',
+            'description': 'Connectivity and sync between NAS devices'
         },
         {
             'id': 'ssh-manager',
-            'name': 'Menedżer SSH',
+            'name': 'SSH Manager',
             'icon': 'fa-key',
             'color': '#6366f1',
             'type': 'builtin',
-            'category': 'Sieć',
-            'description': 'Zarządzanie kluczami SSH i zaufanymi hostami'
+            'category': 'Network',
+            'description': 'SSH key and trusted host management'
         },
         {
             'id': 'sticky-notes',
-            'name': 'Karteczki',
+            'name': 'Sticky Notes',
             'icon': 'fa-sticky-note',
             'color': '#eab308',
             'type': 'builtin',
-            'category': 'Narzędzia',
-            'description': 'Szybkie notatki — jak karteczki przyklejane na pulpicie'
+            'category': 'Tools',
+            'description': 'Quick notes — like sticky notes on a desktop'
         },
         {
             'id': 'tickets',
@@ -8341,17 +8341,17 @@ def get_apps():
             'icon': 'fa-columns',
             'color': '#8b5cf6',
             'type': 'builtin',
-            'category': 'Narzędzia',
-            'description': 'Zarządzanie projektami — tablica Kanban w stylu Jira/Trello'
+            'category': 'Tools',
+            'description': 'Project management — Jira/Trello-style Kanban board'
         },
         {
             'id': 'family-hub',
-            'name': 'Centrum Rodzinne',
+            'name': 'Family Hub',
             'icon': 'fa-house-user',
             'color': '#f472b6',
             'type': 'builtin',
-            'category': 'Narzędzia',
-            'description': 'Tablica ogłoszeń, listy zakupów, zadania i kalendarz rodzinny'
+            'category': 'Tools',
+            'description': 'Bulletin board, shopping lists, tasks and family calendar'
         },
         {
             'id': 'wireguard',
@@ -8359,8 +8359,8 @@ def get_apps():
             'icon': 'fa-shield-halved',
             'color': '#7c3aed',
             'type': 'builtin',
-            'category': 'Sieć',
-            'description': 'Serwer VPN WireGuard — zarządzaj peerami, generuj QR kody',
+            'category': 'Network',
+            'description': 'WireGuard VPN server — manage peers, generate QR codes',
             'admin_only': True
         }
     ]
@@ -8942,8 +8942,8 @@ def get_notifications():
             if usage.percent > 90:
                 notifications.append({
                     'type': 'warning',
-                    'title': 'Mało miejsca na dysku',
-                    'message': f'{part.mountpoint} — {usage.percent}% zajęte',
+                    'title': 'Low disk space',
+                    'message': f'{part.mountpoint} — {usage.percent}% used',
                     'time': time.time()
                 })
         except (PermissionError, OSError):
@@ -8953,8 +8953,8 @@ def get_notifications():
     if mem.percent > 90:
         notifications.append({
             'type': 'warning',
-            'title': 'Wysokie zużycie RAM',
-            'message': f'{mem.percent}% zajęte',
+            'title': 'High RAM usage',
+            'message': f'{mem.percent}% used',
             'time': time.time()
         })
 
@@ -8962,7 +8962,7 @@ def get_notifications():
     if cpu > 90:
         notifications.append({
             'type': 'warning',
-            'title': 'Wysokie obciążenie CPU',
+            'title': 'High CPU load',
             'message': f'{cpu}%',
             'time': time.time()
         })
@@ -8977,8 +8977,8 @@ def get_notifications():
         if upgradable > 0:
             notifications.append({
                 'type': 'info',
-                'title': 'Dostępne aktualizacje',
-                'message': f'{upgradable} pakietów do aktualizacji',
+                'title': 'Updates available',
+                'message': f'{upgradable} packages to update',
                 'time': time.time(),
                 'action': {'app': 'packages', 'tab': 'updates'}
             })
@@ -9027,16 +9027,16 @@ def clear_notifications():
         try:
             usage = psutil.disk_usage(part.mountpoint)
             if usage.percent > 90:
-                all_notifs.append({'title': 'Mało miejsca na dysku',
-                                   'message': f'{part.mountpoint} — {usage.percent}% zajęte'})
+                all_notifs.append({'title': 'Low disk space',
+                                   'message': f'{part.mountpoint} — {usage.percent}% used'})
         except Exception:
             pass
     mem = psutil.virtual_memory()
     if mem.percent > 90:
-        all_notifs.append({'title': 'Wysokie zużycie RAM', 'message': f'{mem.percent}% zajęte'})
+        all_notifs.append({'title': 'High RAM usage', 'message': f'{mem.percent}% used'})
     cpu = psutil.cpu_percent(interval=0.1)
     if cpu > 90:
-        all_notifs.append({'title': 'Wysokie obciążenie CPU', 'message': f'{cpu}%'})
+        all_notifs.append({'title': 'High CPU load', 'message': f'{cpu}%'})
     try:
         r = _host_run_base(
             "apt list --upgradable 2>/dev/null | grep -c upgradable || echo 0",
@@ -9044,8 +9044,8 @@ def clear_notifications():
         )
         upgradable = int(r.stdout.strip()) if r.returncode == 0 else 0
         if upgradable > 0:
-            all_notifs.append({'title': 'Dostępne aktualizacje',
-                               'message': f'{upgradable} pakietów do aktualizacji'})
+            all_notifs.append({'title': 'Updates available',
+                               'message': f'{upgradable} packages to update'})
     except Exception:
         pass
     try:
@@ -9183,7 +9183,7 @@ def _pty_reader(sid, master_fd):
     except Exception:
         pass
     finally:
-        socketio.emit('terminal_output', {'data': '\r\n\x1b[31m[Sesja zakończona]\x1b[0m\r\n'}, to=sid)
+        socketio.emit('terminal_output', {'data': '\r\n\x1b[31m[Session ended]\x1b[0m\r\n'}, to=sid)
         _cleanup_terminal(sid)
 
 
@@ -9217,7 +9217,7 @@ def handle_terminal_open(data):
     """Open a new PTY session on the host as the requested user."""
     user = _ws_get_current_user()
     if not user:
-        emit('terminal_output', {'data': '\r\n\x1b[31m[Brak autoryzacji — zaloguj się ponownie]\x1b[0m\r\n'})
+        emit('terminal_output', {'data': '\r\n\x1b[31m[Unauthorized — please log in again]\x1b[0m\r\n'})
         return
 
     sid = request.sid
