@@ -421,14 +421,14 @@ rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR/$PKG"/{{backend/blueprints,frontend/css,frontend/js/apps}}
 mkdir -p "$RELEASES"
 
-echo "STEP:25:Kopiowanie backend..."
+echo "STEP:25:Copying backend..."
 cp "$NASOS/backend/"*.py "$BUILD_DIR/$PKG/backend/"
 cp "$NASOS/backend/version.json" "$BUILD_DIR/$PKG/backend/"
 cp "$NASOS/backend/requirements.txt" "$BUILD_DIR/$PKG/backend/"
 cp "$NASOS/backend/blueprints/"*.py "$BUILD_DIR/$PKG/backend/blueprints/"
 touch "$BUILD_DIR/$PKG/backend/blueprints/__init__.py"
 
-echo "STEP:40:Kopiowanie frontend..."
+echo "STEP:40:Copying frontend..."
 cp "$NASOS/frontend/index.html" "$BUILD_DIR/$PKG/frontend/"
 cp "$NASOS/frontend/share.html" "$BUILD_DIR/$PKG/frontend/" 2>/dev/null || true
 cp "$NASOS/frontend/css/"*.css "$BUILD_DIR/$PKG/frontend/css/"
@@ -441,7 +441,7 @@ echo "STEP:60:Cleaning cache..."
 find "$BUILD_DIR" -type d -name "__pycache__" -exec rm -rf {{}} + 2>/dev/null || true
 find "$BUILD_DIR" -name "*.pyc" -delete 2>/dev/null || true
 
-echo "STEP:70:Tworzenie archiwum tar.gz..."
+echo "STEP:70:Creating tar.gz archive..."
 cd "$BUILD_DIR"
 tar -czf "$RELEASES/$PKG.tar.gz" "$PKG/"
 
@@ -678,7 +678,7 @@ cleanup() {{
 trap cleanup EXIT
 
 # ── Step 1: Create disk image ──
-echo "STEP:8:Tworzenie obrazu dysku (${{IMG_SIZE_GB}}GB)..."
+echo "STEP:8:Creating disk image (${{IMG_SIZE_GB}}GB)..."
 mkdir -p "$WORK_DIR"/{{root,efi}}
 rm -f "$OUTPUT_IMG" "$FINAL_IMG"
 truncate -s "${{IMG_SIZE_GB}}G" "$OUTPUT_IMG"
@@ -813,7 +813,7 @@ FSTAB
 echo "$DEFAULT_HOSTNAME" > "$ROOT/etc/hostname"
 
 # ── Swap file (4 GB) ──
-echo "LOG:Tworzenie swap file..."
+echo "LOG:Creating swap file..."
 fallocate -l 4G "$ROOT/swapfile"
 chmod 600 "$ROOT/swapfile"
 mkswap "$ROOT/swapfile" >/dev/null
@@ -1553,7 +1553,7 @@ LOOP_DEV=""
 
 # Move image from tmpfs to persistent storage
 if [ "$USE_TMPFS" -eq 1 ] && [ -f "$OUTPUT_IMG" ]; then
-    echo "LOG:Kopiowanie obrazu z RAM na dysk ($FINAL_IMG)..."
+    echo "LOG:Copying image from RAM to disk ($FINAL_IMG)..."
     cp "$OUTPUT_IMG" "$FINAL_IMG"
     rm -f "$OUTPUT_IMG"
     OUTPUT_IMG="$FINAL_IMG"
