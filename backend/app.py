@@ -3141,22 +3141,20 @@ def _resume_interrupted_zip():
 def _cleanup_stale_ethos_tmp(data_root=None):
     """Remove leftover .ethos_tmp partial files from previous crash/abort.
 
-    Scans user home directories and mounted volumes for .ethos_tmp files older
-    than 1 hour and removes them.  Also clears stale upload chunk directories.
+    Scans user home directories for .ethos_tmp files older than 1 hour and
+    removes them.  Also clears stale upload chunk directories.
 
-    Each scan root is offloaded to a real OS thread via fs_call_with_timeout
-    so that a hung mount cannot block the gevent event loop.
-
-    Note: data_root parameter is kept for backward compatibility but ignored;
-    scanning from DATA_ROOT='/' would walk the entire filesystem unnecessarily.
+    Only scans /home and data-disk home — external mounts (/media, /mnt)
+    are skipped because walking large FUSE-mounted drives (e.g. NTFS)
+    blocks the gevent event loop and .ethos_tmp files only exist on
+    paths managed by EthOS file operations.
     """
     cutoff = time.time() - 3600  # 1 hour
 
-    # Determine scan roots: user home directories and mounted volumes
+    # Determine scan roots: user home directories only
     scan_roots = []
     try:
         scan_roots.append('/home')
-        # Also scan data-disk home if configured
         try:
             dd = _get_data_disk()
             if dd:
@@ -3165,10 +3163,6 @@ def _cleanup_stale_ethos_tmp(data_root=None):
                     scan_roots.append(home_on_dd)
         except Exception:
             pass
-        # Mounted volumes where user files might exist
-        for mnt in ('/media', '/mnt'):
-            if os.path.isdir(mnt):
-                scan_roots.append(mnt)
     except Exception:
         pass
 
