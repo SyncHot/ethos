@@ -564,7 +564,7 @@ def project_action(project_name):
     projects = _find_compose_projects()
     project = next((p for p in projects if p['name'] == project_name), None)
     if not project:
-        return jsonify({'error': ff'Project {project_name} not found'}), 404
+        return jsonify({'error': f'Project {project_name} not found'}), 404
 
     # Use the real host path for docker compose (runs via nsenter on host)
     host_path = os.path.join(_compose_root(), project_name)
@@ -614,7 +614,7 @@ def delete_project(project_name):
     projects = _find_compose_projects()
     project = next((p for p in projects if p['name'] == project_name), None)
     if not project:
-        return jsonify({'error': ff'Project {project_name} not found'}), 404
+        return jsonify({'error': f'Project {project_name} not found'}), 404
 
     project_path = os.path.join(_compose_root(), project_name)
 
@@ -658,7 +658,7 @@ def project_logs(project_name):
     projects = _find_compose_projects()
     project = next((p for p in projects if p['name'] == project_name), None)
     if not project:
-        return jsonify({'error': ff'Project {project_name} not found'}), 404
+        return jsonify({'error': f'Project {project_name} not found'}), 404
 
     host_path = os.path.join(_compose_root(), project_name)
     cmd = f'docker compose logs --tail {lines} --timestamps'
@@ -688,7 +688,7 @@ def project_compose(project_name):
     projects = _find_compose_projects()
     project = next((p for p in projects if p['name'] == project_name), None)
     if not project:
-        return jsonify({'error': ff'Project {project_name} not found'}), 404
+        return jsonify({'error': f'Project {project_name} not found'}), 404
 
     try:
         with open(project['compose_file'], 'r') as f:
@@ -704,7 +704,7 @@ def project_compose_save(project_name):
     projects = _find_compose_projects()
     project = next((p for p in projects if p['name'] == project_name), None)
     if not project:
-        return jsonify({'error': ff'Project {project_name} not found'}), 404
+        return jsonify({'error': f'Project {project_name} not found'}), 404
 
     data = request.get_json(force=True)
     content = data.get('content', '')
