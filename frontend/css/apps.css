@@ -3462,7 +3462,7 @@ select.tk-input {
     /* Improve breadcrumb scrolling */
     .fm-breadcrumb {
         overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
+        -webkit-mask-image: linear-gradient(to right, black 90%, transparent 100%);
         mask-image: linear-gradient(to right, black 90%, transparent 100%);
     }
 

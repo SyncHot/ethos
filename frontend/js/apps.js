@@ -145,12 +145,12 @@ function renderFM(body, state) {
                 <div class="fm-toolbar-sep"></div>
                 <div class="fm-breadcrumb" id="fm-breadcrumb" aria-label="Ścieżka nawigacji" role="navigation"></div>
                 <div class="fm-toolbar-sep"></div>
-                <button class="fm-toolbar-btn" id="fm-newfolder" title="Nowy folder (Ctrl+N)" aria-label="Nowy folder"><i class="fas fa-folder-plus"></i></button>
+                <button class="fm-toolbar-btn" id="fm-newfolder" title="${t('New Folder')} (Ctrl+N)" aria-label="${t('New Folder')}"><i class="fas fa-folder-plus"></i></button>
                 <button class="fm-toolbar-btn" id="fm-upload" title="Prześlij pliki (Ctrl+U)" aria-label="Prześlij pliki"><i class="fas fa-upload"></i></button>
                 <button class="fm-toolbar-btn" id="fm-upload-folder" title="Prześlij folder" aria-label="Prześlij folder"><i class="fas fa-folder"></i><i class="fas fa-arrow-up fm-folder-upload-arrow"></i></button>
                 <button class="fm-toolbar-btn" id="fm-download" title="Pobierz zaznaczone" aria-label="Pobierz zaznaczone"><i class="fas fa-download"></i></button>
                 <button class="fm-toolbar-btn" id="fm-download-here" title="${t('Pobierz tutaj')}" aria-label="${t('Pobierz do bieżącego folderu')}"><i class="fas fa-folder-open"></i></button>
-                <button class="fm-toolbar-btn" id="fm-delete" title="Do kosza (Delete)" aria-label="Przenieś do kosza"><i class="fas fa-trash"></i></button>
+                <button class="fm-toolbar-btn" id="fm-delete" title="${t('Move to Trash')} (Delete)" aria-label="${t('Move to Trash')}"><i class="fas fa-trash"></i></button>
                 <button class="fm-toolbar-btn fm-select-mode-btn" id="fm-select-mode-btn" title="Tryb zaznaczania" aria-label="Tryb zaznaczania" aria-pressed="false"><i class="fas fa-check-square"></i></button>
                 <div class="fm-toolbar-sep"></div>
                 <div class="fm-view-switcher" id="fm-view-switcher" role="group" aria-label="Tryb widoku">
@@ -189,7 +189,7 @@ function renderFM(body, state) {
             <div class="fm-clipboard-bar hidden" id="fm-clipboard-bar">
                 <i class="fas fa-clipboard"></i>
                 <span id="fm-clipboard-text"></span>
-                <button class="fm-toolbar-btn fm-btn-accent" id="fm-clipboard-paste"><i class="fas fa-paste"></i> Wklej tutaj</button>
+                <button class="fm-toolbar-btn fm-btn-accent" id="fm-clipboard-paste"><i class="fas fa-paste"></i> ${t('Paste Here')}</button>
                 <button class="fm-toolbar-btn" id="fm-clipboard-cancel"><i class="fas fa-times"></i></button>
             </div>
             <div class="fm-content">
@@ -209,13 +209,13 @@ function renderFM(body, state) {
                             <span data-sort="permissions" role="columnheader">Prawa</span>
                         </span>
                         <div class="fm-header-selection hidden" id="fm-header-selection">
-                            <span class="fm-sel-count" id="fm-sel-count">0 zaznaczonych</span>
-                            <button class="fm-sel-clear" id="fm-sel-clear" title="Odznacz"><i class="fas fa-times"></i> Odznacz</button>
+                            <span class="fm-sel-count" id="fm-sel-count">0 ${t('selected')}</span>
+                            <button class="fm-sel-clear" id="fm-sel-clear" title="${t('Deselect')}"><i class="fas fa-times"></i> ${t('Deselect')}</button>
                             <div class="fm-sel-actions">
-                                <button class="fm-toolbar-btn" id="fm-sel-copy" title="Kopiuj"><i class="fas fa-copy"></i> Kopiuj</button>
-                                <button class="fm-toolbar-btn" id="fm-sel-cut" title="Wytnij"><i class="fas fa-cut"></i> Wytnij</button>
+                                <button class="fm-toolbar-btn" id="fm-sel-copy" title="${t('Copy')}"><i class="fas fa-copy"></i> ${t('Copy')}</button>
+                                <button class="fm-toolbar-btn" id="fm-sel-cut" title="${t('Cut')}"><i class="fas fa-cut"></i> ${t('Cut')}</button>
                                 <button class="fm-toolbar-btn" id="fm-sel-download" title="Pobierz"><i class="fas fa-download"></i></button>
-                                <button class="fm-toolbar-btn fm-btn-danger" id="fm-sel-delete" title="Do kosza"><i class="fas fa-trash"></i> <span>Do kosza</span></button>
+                                <button class="fm-toolbar-btn fm-btn-danger" id="fm-sel-delete" title="${t('Move to Trash')}"><i class="fas fa-trash"></i> <span>${t('Move to Trash')}</span></button>
                             </div>
                         </div>
                     </div>
@@ -243,7 +243,7 @@ function renderFM(body, state) {
                         <div id="fm-ana-content" class="fm-ana-content">
                             <div class="app-empty">
                                 <i class="fas fa-chart-pie app-empty-icon"></i>
-                                Kliknij <b>Skanuj</b> aby przeanalizować bieżący katalog
+                                ${t('Click')} <b>${t('Scan')}</b> ${t('to analyze current directory')}
                             </div>
                         </div>
                     </div>
@@ -368,13 +368,13 @@ function renderFM(body, state) {
             ${favHtml}
             <div class="fm-sidebar-section">
                 <button class="fm-tree-item fm-photo-favs-btn${state.path === '/__photo_favorites__' ? ' active' : ''}" data-path="/__photo_favorites__">
-                    <i class="fas fa-heart app-icon-heart"></i> Ulubione zdjęcia
+                    <i class="fas fa-heart app-icon-heart"></i> ${t('Favorite Photos')}
                 </button>
             </div>
             <div class="fm-sidebar-divider"></div>
             <div class="fm-sidebar-section">
                 <button class="fm-tree-item fm-shared-with-me-btn${state.path === '/__shared_with_me__' ? ' active' : ''}" data-path="/__shared_with_me__">
-                    <i class="fas fa-share-alt app-icon-share"></i> Udostępnione mi
+                    <i class="fas fa-share-alt app-icon-share"></i> ${t('Shared with Me')}
                 </button>
                 <button class="fm-tree-item" onclick="openApp('naslink')">
                     <i class="fas fa-network-wired app-icon-violet"></i> Transfer NAS
@@ -427,18 +427,18 @@ function renderFM(body, state) {
     function renderBreadcrumb() {
         const bc = body.querySelector('#fm-breadcrumb');
         if (state.path === '/__photo_favorites__') {
-            bc.innerHTML = `<button class="fm-breadcrumb-item" data-path="/__photo_favorites__"><i class="fas fa-heart app-icon-heart"></i> Ulubione zdjęcia</button>`;
-            bc.querySelector('.fm-breadcrumb-item').addEventListener('click', () => navigateTo('/__photo_favorites__'));
+            bc.innerHTML = `<button class="fm-breadcrumb-item" data-path="/__photo_favorites__"><i class="fas fa-heart app-icon-heart"></i> ${t('Favorite Photos')}</button>`;
+            bc.querySelector('.fm-breadcrumb-item')?.addEventListener('click', () => navigateTo('/__photo_favorites__'));
             return;
         }
         if (state.path === '/__trash__') {
-            bc.innerHTML = `<button class="fm-breadcrumb-item" data-path="/__trash__"><i class="fas fa-trash-alt app-icon-danger"></i> Kosz</button>`;
-            bc.querySelector('.fm-breadcrumb-item').addEventListener('click', () => navigateTo('/__trash__'));
+            bc.innerHTML = `<button class="fm-breadcrumb-item" data-path="/__trash__"><i class="fas fa-trash-alt app-icon-danger"></i> ${t('Trash')}</button>`;
+            bc.querySelector('.fm-breadcrumb-item')?.addEventListener('click', () => navigateTo('/__trash__'));
             return;
         }
         if (state.path === '/__shared_with_me__') {
-            bc.innerHTML = `<button class="fm-breadcrumb-item" data-path="/__shared_with_me__"><i class="fas fa-share-alt app-icon-share"></i> Udostępnione mi</button>`;
-            bc.querySelector('.fm-breadcrumb-item').addEventListener('click', () => navigateTo('/__shared_with_me__'));
+            bc.innerHTML = `<button class="fm-breadcrumb-item" data-path="/__shared_with_me__"><i class="fas fa-share-alt app-icon-share"></i> ${t('Shared with Me')}</button>`;
+            bc.querySelector('.fm-breadcrumb-item')?.addEventListener('click', () => navigateTo('/__shared_with_me__'));
             return;
         }
 
@@ -789,7 +789,7 @@ function renderFM(body, state) {
             selPanel.classList.remove('hidden');
             colPanel.classList.add('hidden');
             header.classList.add('fm-header-selecting');
-            body.querySelector('#fm-sel-count').textContent = count + ' zaznaczonych';
+            body.querySelector('#fm-sel-count').textContent = count + ' ' + t('selected');
         } else {
             selPanel.classList.add('hidden');
             colPanel.classList.remove('hidden');
@@ -818,8 +818,8 @@ function renderFM(body, state) {
         const bar = body.querySelector('#fm-clipboard-bar');
         if (state.clipboard) {
             bar.classList.remove('hidden');
-            const modeText = state.clipboard.mode === 'copy' ? 'Skopiowano' : t('Wycięto');
-            body.querySelector('#fm-clipboard-text').textContent = modeText + ': ' + state.clipboard.paths.length + t(' element(ów)');
+            const modeText = state.clipboard.mode === 'copy' ? t('Copied') : t('Cut');
+            body.querySelector('#fm-clipboard-text').textContent = modeText + ': ' + state.clipboard.paths.length + ' ' + t('item(s)');
         } else {
             bar.classList.add('hidden');
         }
@@ -947,14 +947,14 @@ function renderFM(body, state) {
             `;
 
             // Nav click handlers
-            bodyEl.querySelector('.mv-nav-left').addEventListener('click', goPrev);
-            bodyEl.querySelector('.mv-nav-right').addEventListener('click', goNext);
-            bodyEl.querySelector('#mv-prev').addEventListener('click', goPrev);
-            bodyEl.querySelector('#mv-next').addEventListener('click', goNext);
-            bodyEl.querySelector('#mv-favorite').addEventListener('click', toggleFavCurrent);
-            bodyEl.querySelector('#mv-delete').addEventListener('click', deleteCurrent);
-            bodyEl.querySelector('#mv-download').addEventListener('click', downloadCurrent);
-            bodyEl.querySelector('#mv-close').addEventListener('click', () => closeWindow(winId));
+            bodyEl.querySelector('.mv-nav-left')?.addEventListener('click', goPrev);
+            bodyEl.querySelector('.mv-nav-right')?.addEventListener('click', goNext);
+            bodyEl.querySelector('#mv-prev')?.addEventListener('click', goPrev);
+            bodyEl.querySelector('#mv-next')?.addEventListener('click', goNext);
+            bodyEl.querySelector('#mv-favorite')?.addEventListener('click', toggleFavCurrent);
+            bodyEl.querySelector('#mv-delete')?.addEventListener('click', deleteCurrent);
+            bodyEl.querySelector('#mv-download')?.addEventListener('click', downloadCurrent);
+            bodyEl.querySelector('#mv-close')?.addEventListener('click', () => closeWindow(winId));
 
             // Touch swipe support (mobile) — skip when touching video controls
             const container = bodyEl.querySelector('.mv-container');
@@ -1591,8 +1591,8 @@ function renderFM(body, state) {
         const retentionDays = data.retention_days || 30;
 
         if (!items.length) {
-            list.innerHTML = `<div class="fm-empty"><i class="fas fa-trash-alt"></i><span>Kosz jest pusty</span></div>`;
-            body.querySelector('#fm-statusbar').textContent = 'Kosz jest pusty';
+            list.innerHTML = `<div class="fm-empty"><i class="fas fa-trash-alt"></i><span>${t('Trash is empty')}</span></div>`;
+            body.querySelector('#fm-statusbar').textContent = t('Trash is empty');
             return;
         }
 
@@ -1662,7 +1662,7 @@ function renderFM(body, state) {
 
         // Empty trash
         list.querySelector('.fm-trash-empty-btn')?.addEventListener('click', async () => {
-            const sure = await confirmDialog(t('Opróżnij kosz'), `Trwale usunąć ${items.length} elementów? Tej operacji nie można cofnąć.`);
+            const sure = await confirmDialog(t('Opróżnij kosz'), `${t('Permanently delete')} ${items.length} ${t('items? This cannot be undone.')}`);
             if (!sure) return;
             try {
                 const r = await api('/files/trash/empty', { method: 'POST' });
@@ -1689,7 +1689,7 @@ function renderFM(body, state) {
             btn.addEventListener('click', async () => {
                 const tid = btn.dataset.trashId;
                 const item = items.find(i => i.trash_id === tid);
-                const sure = await confirmDialog(t('Usuń trwale'), `Trwale usunąć "${item?.name || ''}"? Nie można cofnąć.`);
+                const sure = await confirmDialog(t('Usuń trwale'), `${t('Permanently delete')} "${item?.name || ''}"? ${t('This cannot be undone.')}`);
                 if (!sure) return;
                 try {
                     await api('/files/trash/delete', { method: 'DELETE', body: { trash_ids: [tid] } });
@@ -1757,7 +1757,7 @@ function renderFM(body, state) {
             </div>
         `;
 
-        body.querySelector('#fm-statusbar').textContent = `${shares.length} udostępnień`;
+        body.querySelector('#fm-statusbar').textContent = `${shares.length} ${t('shares')}`;
 
         // Open shared item in new tab via share page
         list.querySelectorAll('.fm-shared-open').forEach(btn => {
@@ -1906,7 +1906,7 @@ function renderFM(body, state) {
     // ─── Actions ───
 
     async function createNewFolder() {
-        const name = await promptDialog('Nowy folder', 'Nazwa folderu:', 'Nowy folder');
+        const name = await promptDialog(t('New Folder'), t('Folder name:'), t('New Folder'));
         if (!name) return;
         try {
             await api('/files/mkdir', { method: 'POST', body: { path: joinCurrentPath(name) } });
@@ -2373,13 +2373,13 @@ function renderFM(body, state) {
     async function deleteSelected() {
         if (!state.selected.size) { toast(t('Zaznacz elementy do usunięcia'), 'warning'); return; }
         const count = state.selected.size;
-        const sure = await confirmDialog(t('Przenieś do kosza'), `Przenieść ${count} element(ów) do kosza?`);
+        const sure = await confirmDialog(t('Przenieś do kosza'), `${t('Move')} ${count} ${t('item(s) to trash?')}`);
         if (!sure) return;
 
         const paths = [...state.selected].map(name => itemFullPath(name));
         try {
             await api('/files/delete', { method: 'DELETE', body: { paths } });
-            toast(`Przeniesiono ${count} element(ów) do kosza`, 'success');
+            toast(t('Moved') + ' ' + count + ' ' + t('item(s) to trash'), 'success');
             navigateTo(state.path);
         } catch {
             toast(t('Błąd przenoszenia do kosza'), 'error');
@@ -2392,7 +2392,7 @@ function renderFM(body, state) {
         // Try inline rename first
         if (_startInlineRename(name)) return;
         // Fallback to dialog
-        const newName = await promptDialog(t('Zmień nazwę'), 'Nowa nazwa:', name);
+        const newName = await promptDialog(t('Zmień nazwę'), t('New name:'), name);
         if (!newName || newName === name) return;
         await _doRename(name, newName);
     }
@@ -2486,14 +2486,14 @@ function renderFM(body, state) {
     function clipboardCopy() {
         if (!state.selected.size) { toast('Zaznacz elementy', 'warning'); return; }
         state.clipboard = { mode: 'copy', paths: getSelectedPaths(), basePath: state.path };
-        toast(`Skopiowano ${state.clipboard.paths.length} element(ów) do schowka`, 'info');
+        toast(t('Copied') + ' ' + state.clipboard.paths.length + ' ' + t('item(s)') + ' ' + t('to clipboard'), 'info');
         updateClipboardBar();
     }
 
     function clipboardCut() {
         if (!state.selected.size) { toast('Zaznacz elementy', 'warning'); return; }
         state.clipboard = { mode: 'cut', paths: getSelectedPaths(), basePath: state.path };
-        toast(`Wycięto ${state.clipboard.paths.length} element(ów)`, 'info');
+        toast(t('Cut') + ' ' + state.clipboard.paths.length + ' ' + t('item(s)'), 'info');
         updateClipboardBar();
     }
 
@@ -2524,7 +2524,7 @@ function renderFM(body, state) {
                 }
                 const count = (r.copied || []).length;
                 const skipCount = (r.skipped || []).length;
-                let msg = `Skopiowano ${count} element(ów)`;
+                let msg = t('Copied') + ' ' + count + ' ' + t('item(s)');
                 if (skipCount) msg += `, pominięto ${skipCount}`;
                 toast(msg, 'success');
                 if (r.errors && r.errors.length) toast(r.errors.join('; '), 'warning');
@@ -2539,7 +2539,7 @@ function renderFM(body, state) {
                 }
                 const count = (r.moved || []).length;
                 const skipCount = (r.skipped || []).length;
-                let msg = `Przeniesiono ${count} element(ów)`;
+                let msg = t('Moved') + ' ' + count + ' ' + t('item(s)');
                 if (skipCount) msg += `, pominięto ${skipCount}`;
                 toast(msg, 'success');
                 if (r.errors && r.errors.length) toast(r.errors.join('; '), 'warning');
@@ -2624,7 +2624,7 @@ function renderFM(body, state) {
                     <div class="modal-header"><i class="fas fa-file-archive app-hdr-icon"></i>Kompresuj do ${ext}</div>
                     <div class="modal-body">
                         <div class="app-note">
-                            ${sel.length} element${sel.length > 1 ? t('ów') : ''} zaznaczonych
+                            ${sel.length} element${sel.length > 1 ? t('ów') : ''} ${t('selected')}
                         </div>
                         <label class="modal-label">Nazwa archiwum:</label>
                         <div class="app-input-group">
@@ -3150,7 +3150,7 @@ function renderFM(body, state) {
                         ${isUserShare ? `<div class="app-note app-note--accent"><i class="fas fa-users"></i> Dla: ${result.shared_with.join(', ')}</div>` : ''}
                         <div class="app-row">
                             <input class="modal-input" id="share-link-url" value="${shareUrl}" readonly class="app-mono-input">
-                            <button class="btn btn-primary" id="share-link-copy" class="app-nowrap"><i class="fas fa-copy"></i> Kopiuj</button>
+                            <button class="btn btn-primary" id="share-link-copy" class="app-nowrap"><i class="fas fa-copy"></i> ${t('Copy')}</button>
                         </div>
                         ${parseInt(result.hours) > 0 ? `<div class="app-hint"><i class="fas fa-clock"></i> Wygasa za ${result.hours === '1' ? t('1 godzinę') : result.hours + ' godz.'}</div>` : '<div class="app-hint"><i class="fas fa-infinity"></i> Link nie wygasa</div>'}
                         ${isUserShare ? `<div class="app-hint app-mt-xs"><i class="fas fa-lock"></i> ${t('Dostępny tylko dla wybranych użytkowników')}</div>` : ''}
@@ -4102,12 +4102,12 @@ function renderFM(body, state) {
                         <div class="fm-shortcut-row"><kbd>Ctrl+A</kbd> <span>Zaznacz wszystko</span></div>
                         <div class="fm-shortcut-row"><kbd>Shift+↑↓</kbd> <span>Zaznacz zakres</span></div>
                         <div class="fm-shortcut-row"><kbd>Shift+Home/End</kbd> <span>Zaznacz do końca</span></div>
-                        <div class="fm-shortcut-row"><kbd>Escape</kbd> <span>Odznacz wszystko</span></div>
+                        <div class="fm-shortcut-row"><kbd>Escape</kbd> <span>${t('Deselect All')}</span></div>
                         <div class="fm-shortcuts-section" style="margin-top:10px">Operacje</div>
-                        <div class="fm-shortcut-row"><kbd>Ctrl+C</kbd> <span>Kopiuj</span></div>
-                        <div class="fm-shortcut-row"><kbd>Ctrl+X</kbd> <span>Wytnij</span></div>
+                        <div class="fm-shortcut-row"><kbd>Ctrl+C</kbd> <span>${t('Copy')}</span></div>
+                        <div class="fm-shortcut-row"><kbd>Ctrl+X</kbd> <span>${t('Cut')}</span></div>
                         <div class="fm-shortcut-row"><kbd>Ctrl+V</kbd> <span>Wklej</span></div>
-                        <div class="fm-shortcut-row"><kbd>Delete</kbd> <span>Do kosza</span></div>
+                        <div class="fm-shortcut-row"><kbd>Delete</kbd> <span>${t('Move to Trash')}</span></div>
                         <div class="fm-shortcut-row"><kbd>F2</kbd> <span>Zmień nazwę</span></div>
                         <div class="fm-shortcut-row"><kbd>Ctrl+N</kbd> <span>Nowy folder</span></div>
                         <div class="fm-shortcut-row"><kbd>Ctrl+U</kbd> <span>Prześlij pliki</span></div>
