@@ -1254,6 +1254,17 @@ mkdir -p "$ETHOS_DIR/installer/images"
 cp "$NASOS/installer/"*.sh         "$ETHOS_DIR/installer/"     2>/dev/null || true
 cp "$NASOS/installer/images/"*.sh     "$ETHOS_DIR/installer/images/" 2>/dev/null || true
 
+# ── Flask-based preboot installer ──
+echo "LOG:Copying Flask preboot installer..."
+if [[ -d "$NASOS/installer/preboot" ]]; then
+    cp -r "$NASOS/installer/preboot" "$ETHOS_DIR/installer/preboot"
+    find "$ETHOS_DIR/installer/preboot" -type d -name "__pycache__" -exec rm -rf {{}} + 2>/dev/null || true
+    echo "LOG:Flask preboot installer copied — $(du -sh "$ETHOS_DIR/installer/preboot" | awk '{{print $1}}')"
+else
+    echo "LOG:ERROR — Flask preboot installer not found at $NASOS/installer/preboot"
+    exit 1
+fi
+
 # ── Clean cache from copied code ──
 find "$ETHOS_DIR" -type d -name "__pycache__" -exec rm -rf {{}} + 2>/dev/null || true
 find "$ETHOS_DIR" -name "*.pyc" -delete 2>/dev/null || true
@@ -1329,9 +1340,17 @@ if [[ ! -f "$ROOT/usr/local/bin/ethos-ap" ]]; then
 fi
 echo "LOG:ethos-ap.sh OK"
 
-# ── Firstboot script (copy from source — supports both modes) ──
-echo "LOG:Copying firstboot.sh..."
-cp "$NASOS/installer/images/firstboot.sh" "$ROOT/opt/ethos-firstboot.sh"
+# ── Firstboot script (copy from source — simplified v2) ──
+echo "LOG:Copying firstboot-v2.sh..."
+if [[ -f "$NASOS/installer/images/firstboot-v2.sh" ]]; then
+    cp "$NASOS/installer/images/firstboot-v2.sh" "$ROOT/opt/ethos-firstboot.sh"
+elif [[ -f "$NASOS/installer/images/firstboot.sh" ]]; then
+    echo "LOG:WARNING — firstboot-v2.sh not found, falling back to firstboot.sh"
+    cp "$NASOS/installer/images/firstboot.sh" "$ROOT/opt/ethos-firstboot.sh"
+else
+    echo "LOG:ERROR — no firstboot script found!"
+    exit 1
+fi
 chmod +x "$ROOT/opt/ethos-firstboot.sh"
 if [[ ! -f "$ROOT/opt/ethos-firstboot.sh" ]]; then
     echo "LOG:ERROR — firstboot.sh not copied!"
@@ -1385,41 +1404,33 @@ WantedBy=multi-user.target
 APSVC
 ln -sf /etc/systemd/system/ethos-ap.service "$ROOT/etc/systemd/system/multi-user.target.wants/ethos-ap.service"
 
-# Pre-boot setup server (headless WiFi config)
-mkdir -p "$ROOT/opt/ethos-installer"
-echo "LOG:Copying preboot-server.py from $NASOS/installer/images/ to $ROOT/opt/ethos-installer/"
-if [[ -f "$NASOS/installer/images/preboot-server.py" ]]; then
-    cp "$NASOS/installer/images/preboot-server.py" "$ROOT/opt/ethos-installer/preboot-server.py"
-    chmod +x "$ROOT/opt/ethos-installer/preboot-server.py"
-    echo "LOG:preboot-server.py copied OK"
-else
-    echo "LOG:ERROR — source file preboot-server.py not found in $NASOS/installer/images/"
-    echo "LOG:Contents of $NASOS/installer/images/:"
-    ls -la "$NASOS/installer/images/" 2>&1 || true
-fi
-# Verify file landed in chroot
-if [[ ! -f "$ROOT/opt/ethos-installer/preboot-server.py" ]]; then
-    echo "LOG:CRITICAL ERROR — preboot-server.py does not exist in image!"
+# Pre-boot setup server (Flask-based installer with i18n + offline fonts)
+echo "LOG:Verifying Flask preboot installer in image..."
+if [[ ! -f "$ROOT/opt/ethos/installer/preboot/app.py" ]]; then
+    echo "LOG:CRITICAL ERROR — Flask preboot app.py does not exist in image!"
     exit 1
 fi
+echo "LOG:Flask preboot installer OK"
 
 cat > "$ROOT/etc/systemd/system/ethos-preboot.service" <<'PREBOOT'
 [Unit]
-Description=EthOS Pre-Boot Setup Server
+Description=EthOS Installer (pre-boot setup)
 After=network.target NetworkManager.service
 Wants=NetworkManager.service
 Before=ethos-firstboot.service
 Conflicts=ethos.service
-ConditionPathExists=/opt/ethos-installer/preboot-server.py
+ConditionPathExists=/opt/ethos/installer/preboot/app.py
 ConditionPathExists=!/opt/ethos/.installed
 StartLimitIntervalSec=60
 StartLimitBurst=5
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 /opt/ethos-installer/preboot-server.py
+WorkingDirectory=/opt/ethos/installer/preboot
+ExecStart=/opt/ethos/venv/bin/python /opt/ethos/installer/preboot/app.py
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=5
+Environment=PYTHONUNBUFFERED=1
 [Install]
 WantedBy=multi-user.target
 PREBOOT
