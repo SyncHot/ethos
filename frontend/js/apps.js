@@ -137,52 +137,52 @@ function renderFM(body, state) {
     body.innerHTML = `
         <div class="fm">
             <div class="fm-toolbar">
-                <button class="fm-toolbar-btn fm-sidebar-toggle" id="fm-sidebar-toggle" title="Nawigacja" aria-label="Pokaż/ukryj panel nawigacji" aria-expanded="false"><i class="fas fa-bars"></i></button>
-                <button class="fm-toolbar-btn" id="fm-back" title="Wstecz" aria-label="Wstecz"><i class="fas fa-arrow-left"></i></button>
-                <button class="fm-toolbar-btn" id="fm-forward" title="Dalej" aria-label="Dalej"><i class="fas fa-arrow-right"></i></button>
-                <button class="fm-toolbar-btn" id="fm-up" title="Folder nadrzędny" aria-label="Folder nadrzędny"><i class="fas fa-arrow-up"></i></button>
-                <button class="fm-toolbar-btn" id="fm-refresh" title="Odśwież" aria-label="Odśwież"><i class="fas fa-sync-alt"></i></button>
+                <button class="fm-toolbar-btn fm-sidebar-toggle" id="fm-sidebar-toggle" title="${t('Nawigacja')}" aria-label="${t('Pokaż/ukryj panel nawigacji')}" aria-expanded="false"><i class="fas fa-bars"></i></button>
+                <button class="fm-toolbar-btn" id="fm-back" title="${t('Wstecz')}" aria-label="${t('Wstecz')}"><i class="fas fa-arrow-left"></i></button>
+                <button class="fm-toolbar-btn" id="fm-forward" title="${t('Dalej')}" aria-label="${t('Dalej')}"><i class="fas fa-arrow-right"></i></button>
+                <button class="fm-toolbar-btn" id="fm-up" title="${t('Folder nadrzędny')}" aria-label="${t('Folder nadrzędny')}"><i class="fas fa-arrow-up"></i></button>
+                <button class="fm-toolbar-btn" id="fm-refresh" title="${t('Odśwież')}" aria-label="${t('Odśwież')}"><i class="fas fa-sync-alt"></i></button>
                 <div class="fm-toolbar-sep"></div>
-                <div class="fm-breadcrumb" id="fm-breadcrumb" aria-label="Ścieżka nawigacji" role="navigation"></div>
+                <div class="fm-breadcrumb" id="fm-breadcrumb" aria-label="${t('Ścieżka nawigacji')}" role="navigation"></div>
                 <div class="fm-toolbar-sep"></div>
                 <button class="fm-toolbar-btn" id="fm-newfolder" title="${t('New Folder')} (Ctrl+N)" aria-label="${t('New Folder')}"><i class="fas fa-folder-plus"></i></button>
-                <button class="fm-toolbar-btn" id="fm-upload" title="Prześlij pliki (Ctrl+U)" aria-label="Prześlij pliki"><i class="fas fa-upload"></i></button>
-                <button class="fm-toolbar-btn" id="fm-upload-folder" title="Prześlij folder" aria-label="Prześlij folder"><i class="fas fa-folder"></i><i class="fas fa-arrow-up fm-folder-upload-arrow"></i></button>
-                <button class="fm-toolbar-btn" id="fm-download" title="Pobierz zaznaczone" aria-label="Pobierz zaznaczone"><i class="fas fa-download"></i></button>
+                <button class="fm-toolbar-btn" id="fm-upload" title="${t('Prześlij pliki')} (Ctrl+U)" aria-label="${t('Prześlij pliki')}"><i class="fas fa-upload"></i></button>
+                <button class="fm-toolbar-btn" id="fm-upload-folder" title="${t('Prześlij folder')}" aria-label="${t('Prześlij folder')}"><i class="fas fa-folder"></i><i class="fas fa-arrow-up fm-folder-upload-arrow"></i></button>
+                <button class="fm-toolbar-btn" id="fm-download" title="${t('Pobierz zaznaczone')}" aria-label="${t('Pobierz zaznaczone')}"><i class="fas fa-download"></i></button>
                 <button class="fm-toolbar-btn" id="fm-download-here" title="${t('Pobierz tutaj')}" aria-label="${t('Pobierz do bieżącego folderu')}"><i class="fas fa-folder-open"></i></button>
                 <button class="fm-toolbar-btn" id="fm-delete" title="${t('Move to Trash')} (Delete)" aria-label="${t('Move to Trash')}"><i class="fas fa-trash"></i></button>
-                <button class="fm-toolbar-btn fm-select-mode-btn" id="fm-select-mode-btn" title="Tryb zaznaczania" aria-label="Tryb zaznaczania" aria-pressed="false"><i class="fas fa-check-square"></i></button>
+                <button class="fm-toolbar-btn fm-select-mode-btn" id="fm-select-mode-btn" title="${t('Tryb zaznaczania')}" aria-label="${t('Tryb zaznaczania')}" aria-pressed="false"><i class="fas fa-check-square"></i></button>
                 <div class="fm-toolbar-sep"></div>
-                <div class="fm-view-switcher" id="fm-view-switcher" role="group" aria-label="Tryb widoku">
-                    <button class="fm-view-btn" data-view="list" title="Widok listy" aria-label="Widok listy"><i class="fas fa-list"></i></button>
-                    <button class="fm-view-btn" data-view="grid" title="Widok ikon" aria-label="Widok ikon"><i class="fas fa-th"></i></button>
-                    <button class="fm-view-btn" data-view="thumb" title="Miniatury" aria-label="Widok miniatur"><i class="fas fa-th-large"></i></button>
+                <div class="fm-view-switcher" id="fm-view-switcher" role="group" aria-label="${t('Tryb widoku')}">
+                    <button class="fm-view-btn" data-view="list" title="${t('Widok listy')}" aria-label="${t('Widok listy')}"><i class="fas fa-list"></i></button>
+                    <button class="fm-view-btn" data-view="grid" title="${t('Widok ikon')}" aria-label="${t('Widok ikon')}"><i class="fas fa-th"></i></button>
+                    <button class="fm-view-btn" data-view="thumb" title="${t('Miniatury')}" aria-label="${t('Widok miniatur')}"><i class="fas fa-th-large"></i></button>
                 </div>
                 <div class="fm-sort-dropdown" id="fm-sort-dropdown">
-                    <button class="fm-toolbar-btn" id="fm-sort-btn" title="Sortuj" aria-expanded="false" aria-haspopup="listbox" aria-controls="fm-sort-menu">
+                    <button class="fm-toolbar-btn" id="fm-sort-btn" title="${t('Sortuj')}" aria-expanded="false" aria-haspopup="listbox" aria-controls="fm-sort-menu">
                         <i class="fas fa-sort-amount-down-alt"></i>
-                        <span id="fm-sort-label">Nazwa</span>
+                        <span id="fm-sort-label">${t('Nazwa')}</span>
                         <i class="fas fa-chevron-down app-chevron-tiny"></i>
                     </button>
                     <div class="fm-sort-menu hidden" id="fm-sort-menu">
-                        <div class="fm-sort-option" data-sort="name"><i class="fas fa-font"></i> Nazwa</div>
-                        <div class="fm-sort-option" data-sort="size"><i class="fas fa-weight-hanging"></i> Rozmiar</div>
-                        <div class="fm-sort-option" data-sort="modified"><i class="fas fa-clock"></i> Data modyfikacji</div>
-                        <div class="fm-sort-option" data-sort="permissions"><i class="fas fa-lock"></i> Prawa</div>
+                        <div class="fm-sort-option" data-sort="name"><i class="fas fa-font"></i> ${t('Nazwa')}</div>
+                        <div class="fm-sort-option" data-sort="size"><i class="fas fa-weight-hanging"></i> ${t('Rozmiar')}</div>
+                        <div class="fm-sort-option" data-sort="modified"><i class="fas fa-clock"></i> ${t('Data modyfikacji')}</div>
+                        <div class="fm-sort-option" data-sort="permissions"><i class="fas fa-lock"></i> ${t('Prawa')}</div>
                         <div class="fm-sort-divider"></div>
-                        <div class="fm-sort-option" data-dir="asc"><i class="fas fa-sort-amount-up-alt"></i> Rosnąco</div>
-                        <div class="fm-sort-option" data-dir="desc"><i class="fas fa-sort-amount-down-alt"></i> Malejąco</div>
+                        <div class="fm-sort-option" data-dir="asc"><i class="fas fa-sort-amount-up-alt"></i> ${t('Rosnąco')}</div>
+                        <div class="fm-sort-option" data-dir="desc"><i class="fas fa-sort-amount-down-alt"></i> ${t('Malejąco')}</div>
                     </div>
                 </div>
                 <div class="fm-toolbar-sep"></div>
-                <button class="fm-toolbar-btn" id="fm-analyze" title="Analiza dysku" aria-label="Analiza dysku"><i class="fas fa-chart-pie"></i></button>
-                <button class="fm-toolbar-btn" id="fm-logs" title="Logi zdarzeń" aria-label="Logi zdarzeń"><i class="fas fa-history"></i></button>
-                <button class="fm-toolbar-btn fm-shortcuts-btn" id="fm-shortcuts-btn" title="Skróty klawiszowe (F1)" aria-label="Skróty klawiszowe"><i class="fas fa-keyboard"></i></button>
+                <button class="fm-toolbar-btn" id="fm-analyze" title="${t('Analiza dysku')}" aria-label="${t('Analiza dysku')}"><i class="fas fa-chart-pie"></i></button>
+                <button class="fm-toolbar-btn" id="fm-logs" title="${t('Logi zdarzeń')}" aria-label="${t('Logi zdarzeń')}"><i class="fas fa-history"></i></button>
+                <button class="fm-toolbar-btn fm-shortcuts-btn" id="fm-shortcuts-btn" title="${t('Skróty klawiszowe')} (F1)" aria-label="${t('Skróty klawiszowe')}"><i class="fas fa-keyboard"></i></button>
                 <div class="fm-toolbar-sep"></div>
                 <div class="fm-search-box" id="fm-search-box" role="search">
                     <i class="fas fa-search fm-search-icon" aria-hidden="true"></i>
-                    <input type="text" id="fm-search-input" placeholder="Szukaj..." autocomplete="off" aria-label="Szukaj plików">
-                    <button class="fm-search-clear hidden" id="fm-search-clear" title="Wyczyść" aria-label="Wyczyść wyszukiwanie"><i class="fas fa-times"></i></button>
+                    <input type="text" id="fm-search-input" placeholder="${t('Szukaj...')}" autocomplete="off" aria-label="${t('Szukaj plików')}">
+                    <button class="fm-search-clear hidden" id="fm-search-clear" title="${t('Wyczyść')}" aria-label="${t('Wyczyść wyszukiwanie')}"><i class="fas fa-times"></i></button>
                 </div>
             </div>
             <!-- Clipboard indicator -->
@@ -197,16 +197,16 @@ function renderFM(body, state) {
                 <div class="fm-main fm-main-flex">
                     <div class="fm-list-header" id="fm-list-header">
                         <span class="fm-col-checkbox">
-                            <label class="fm-checkbox-label" id="fm-header-select-all" title="Zaznacz wszystko">
-                                <input type="checkbox" id="fm-header-cb" aria-label="Zaznacz wszystkie pliki">
+                            <label class="fm-checkbox-label" id="fm-header-select-all" title="${t('Zaznacz wszystko')}">
+                                <input type="checkbox" id="fm-header-cb" aria-label="${t('Zaznacz wszystkie pliki')}">
                                 <span class="fm-cb-custom"></span>
                             </label>
                         </span>
                         <span class="fm-header-columns" id="fm-header-columns">
-                            <span data-sort="name" aria-sort="ascending" role="columnheader" tabindex="0">Nazwa <i class="fas fa-sort"></i></span>
-                            <span data-sort="size" aria-sort="none" role="columnheader" tabindex="0">Rozmiar <i class="fas fa-sort"></i></span>
-                            <span data-sort="modified" aria-sort="none" role="columnheader" tabindex="0">Data modyfikacji <i class="fas fa-sort"></i></span>
-                            <span data-sort="permissions" role="columnheader">Prawa</span>
+                            <span data-sort="name" aria-sort="ascending" role="columnheader" tabindex="0">${t('Nazwa')} <i class="fas fa-sort"></i></span>
+                            <span data-sort="size" aria-sort="none" role="columnheader" tabindex="0">${t('Rozmiar')} <i class="fas fa-sort"></i></span>
+                            <span data-sort="modified" aria-sort="none" role="columnheader" tabindex="0">${t('Data modyfikacji')} <i class="fas fa-sort"></i></span>
+                            <span data-sort="permissions" role="columnheader">${t('Prawa')}</span>
                         </span>
                         <div class="fm-header-selection hidden" id="fm-header-selection">
                             <span class="fm-sel-count" id="fm-sel-count">0 ${t('selected')}</span>
@@ -214,31 +214,31 @@ function renderFM(body, state) {
                             <div class="fm-sel-actions">
                                 <button class="fm-toolbar-btn" id="fm-sel-copy" title="${t('Copy')}"><i class="fas fa-copy"></i> ${t('Copy')}</button>
                                 <button class="fm-toolbar-btn" id="fm-sel-cut" title="${t('Cut')}"><i class="fas fa-cut"></i> ${t('Cut')}</button>
-                                <button class="fm-toolbar-btn" id="fm-sel-download" title="Pobierz"><i class="fas fa-download"></i></button>
+                                <button class="fm-toolbar-btn" id="fm-sel-download" title="${t('Pobierz')}"><i class="fas fa-download"></i></button>
                                 <button class="fm-toolbar-btn fm-btn-danger" id="fm-sel-delete" title="${t('Move to Trash')}"><i class="fas fa-trash"></i> <span>${t('Move to Trash')}</span></button>
                             </div>
                         </div>
                     </div>
                     <div class="fm-file-list" id="fm-file-list"></div>
                     <div class="fm-pagination hidden" id="fm-pagination">
-                        <button class="fm-page-btn" id="fm-page-prev" title="Poprzednia strona"><i class="fas fa-chevron-left"></i></button>
+                        <button class="fm-page-btn" id="fm-page-prev" title="${t('Poprzednia strona')}"><i class="fas fa-chevron-left"></i></button>
                         <span class="fm-page-info" id="fm-page-info"></span>
-                        <button class="fm-page-btn" id="fm-page-next" title="Następna strona"><i class="fas fa-chevron-right"></i></button>
+                        <button class="fm-page-btn" id="fm-page-next" title="${t('Następna strona')}"><i class="fas fa-chevron-right"></i></button>
                     </div>
                     <div class="fm-statusbar" id="fm-statusbar" aria-live="polite" aria-atomic="true"></div>
                     <!-- Disk analytics panel (hidden) -->
                     <div class="fm-ana-panel fm-ana-overlay hidden" id="fm-ana-panel">
                         <div class="fm-ana-header">
-                            <button class="fm-toolbar-btn" id="fm-ana-back-btn" title="Zamknij analizę"><i class="fas fa-arrow-left"></i></button>
-                            <span class="app-title-sm"><i class="fas fa-chart-pie app-btn-icon app-icon-accent"></i>Analiza dysku</span>
+                            <button class="fm-toolbar-btn" id="fm-ana-back-btn" title="${t('Zamknij analizę')}"><i class="fas fa-arrow-left"></i></button>
+                            <span class="app-title-sm"><i class="fas fa-chart-pie app-btn-icon app-icon-accent"></i>${t('Analiza dysku')}</span>
                             <div class="app-flex-1"></div>
-                            <button class="fm-toolbar-btn btn-green" id="fm-ana-scan" class="fm-toolbar-btn-compact"><i class="fas fa-search"></i> Skanuj</button>
+                            <button class="fm-toolbar-btn btn-green" id="fm-ana-scan" class="fm-toolbar-btn-compact"><i class="fas fa-search"></i> ${t('Skanuj')}</button>
                         </div>
                         <div id="fm-ana-breadcrumbs" class="fm-ana-breadcrumbs"></div>
                         <div id="fm-ana-summary" class="fm-ana-summary hidden"></div>
                         <div id="fm-ana-tabs" class="fm-ana-tabs hidden">
-                            <button class="fm-ana-sub-tab active" data-anatab="dirs"><i class="fas fa-folder"></i> Katalogi</button>
-                            <button class="fm-ana-sub-tab" data-anatab="files"><i class="fas fa-file"></i> Największe pliki</button>
+                            <button class="fm-ana-sub-tab active" data-anatab="dirs"><i class="fas fa-folder"></i> ${t('Katalogi')}</button>
+                            <button class="fm-ana-sub-tab" data-anatab="files"><i class="fas fa-file"></i> ${t('Największe pliki')}</button>
                         </div>
                         <div id="fm-ana-content" class="fm-ana-content">
                             <div class="app-empty">
@@ -349,13 +349,13 @@ function renderFM(body, state) {
 
         const favHtml = state.favorites.length > 0 ? `
             <div class="fm-sidebar-section">
-                <div class="fm-sidebar-label"><i class="fas fa-star"></i> Ulubione</div>
+                <div class="fm-sidebar-label"><i class="fas fa-star"></i> ${t('Ulubione')}</div>
                 ${state.favorites.map(f => `
                     <div class="fm-fav-row${state.path === f.path ? ' active' : ''}">
                         <button class="fm-tree-item fm-fav-item${state.path === f.path ? ' active' : ''}" data-path="${f.path}" title="${f.path}">
                             <i class="fas fa-folder app-icon-accent"></i> ${f.label}
                         </button>
-                        <button class="fm-fav-remove" data-fav-path="${f.path}" title="Usuń z ulubionych">
+                        <button class="fm-fav-remove" data-fav-path="${f.path}" title="${t('Usuń z ulubionych')}">
                             <i class="fas fa-times"></i>
                         </button>
                     </div>
@@ -391,11 +391,11 @@ function renderFM(body, state) {
             `).join('')}
             <div class="fm-sidebar-divider"></div>
             <button class="fm-tree-item fm-trash-btn${state.path === '/__trash__' ? ' active' : ''}" data-path="/__trash__">
-                <i class="fas fa-trash-alt app-icon-danger"></i> Kosz
+                <i class="fas fa-trash-alt app-icon-danger"></i> ${t('Kosz')}
             </button>
             ${isAdmin ? `<div class="fm-sidebar-divider"></div>
             <button class="fm-tree-item fm-dup-btn" id="fm-open-dup-app">
-                <i class="fas fa-clone app-icon-purple"></i> Duplikaty zdjęć
+                <i class="fas fa-clone app-icon-purple"></i> ${t('Duplikaty zdjęć')}
             </button>` : ''}
         `;
         sidebar.querySelectorAll('.fm-tree-item[data-path]').forEach(btn => {
@@ -590,13 +590,13 @@ function renderFM(body, state) {
                 const selected = state.selected.has(item.name);
                 const focused = idx === state.focusedIndex;
                 const share = getShareForItem(item);
-                const sharedBadge = share ? ` <span class="fm-shared-badge" title="Udostępniony jako: ${share.name}"><i class="fas fa-share-alt"></i></span>` : '';
-                const galBadge = item.is_dir && state.gallerySources.some(s => s.path === itemFullPath(item)) ? ' <span class="fm-shared-badge app-icon-gallery" title="Folder multimedialny"><i class="fas fa-images"></i></span>' : '';
+                const sharedBadge = share ? ` <span class="fm-shared-badge" title="${t('Udostępniony jako:')} ${share.name}"><i class="fas fa-share-alt"></i></span>` : '';
+                const galBadge = item.is_dir && state.gallerySources.some(s => s.path === itemFullPath(item)) ? ` <span class="fm-shared-badge app-icon-gallery" title="${t('Folder multimedialny')}"><i class="fas fa-images"></i></span>` : '';
                 const lockBadge = item.protected ? ` <span class="fm-shared-badge" title="${item.locked ? t('Folder chroniony hasłem (zablokowany)') : t('Folder chroniony hasłem (odblokowany)')}" style="color:${item.locked ? 'var(--danger)' : 'var(--success, #22c55e)'}"><i class="fas ${item.locked ? 'fa-lock' : 'fa-lock-open'}"></i></span>` : '';
                 return `
                     <div class="fm-file-item${selected ? ' selected' : ''}${focused ? ' fm-focused' : ''}" id="fm-item-${idx}" role="option" aria-selected="${selected}" data-name="${item.name}" data-isdir="${item.is_dir}" data-idx="${idx}"${item.path ? ` data-path="${item.path}"` : ''}>
                         <div class="fm-col-checkbox">
-                            <label class="fm-checkbox-label" data-cb-name="${item.name}" aria-label="Zaznacz ${item.name}">
+                            <label class="fm-checkbox-label" data-cb-name="${item.name}" aria-label="${t('Zaznacz')} ${item.name}">
                                 <input type="checkbox" ${selected ? 'checked' : ''}>
                                 <span class="fm-cb-custom"></span>
                             </label>
@@ -622,15 +622,15 @@ function renderFM(body, state) {
                 const selected = state.selected.has(item.name);
                 const focused = idx === state.focusedIndex;
                 const share = getShareForItem(item);
-                const sharedBadge = share ? ` <span class="fm-shared-badge" title="Udostępniony jako: ${share.name}"><i class="fas fa-share-alt"></i></span>` : '';
-                const galBadge = item.is_dir && state.gallerySources.some(s => s.path === itemFullPath(item)) ? ' <span class="fm-shared-badge app-icon-gallery" title="Folder multimedialny"><i class="fas fa-images"></i></span>' : '';
-                const lockBadge = item.protected ? ` <span class="fm-shared-badge" title="${item.locked ? 'Zablokowany' : 'Odblokowany'}" style="color:${item.locked ? 'var(--danger)' : 'var(--success, #22c55e)'}"><i class="fas ${item.locked ? 'fa-lock' : 'fa-lock-open'}"></i></span>` : '';
+                const sharedBadge = share ? ` <span class="fm-shared-badge" title="${t('Udostępniony jako:')} ${share.name}"><i class="fas fa-share-alt"></i></span>` : '';
+                const galBadge = item.is_dir && state.gallerySources.some(s => s.path === itemFullPath(item)) ? ` <span class="fm-shared-badge app-icon-gallery" title="${t('Folder multimedialny')}"><i class="fas fa-images"></i></span>` : '';
+                const lockBadge = item.protected ? ` <span class="fm-shared-badge" title="${item.locked ? t('Zablokowany') : t('Odblokowany')}" style="color:${item.locked ? 'var(--danger)' : 'var(--success, #22c55e)'}"><i class="fas ${item.locked ? 'fa-lock' : 'fa-lock-open'}"></i></span>` : '';
                 return `
                     <div class="fm-grid-item${selected ? ' selected' : ''}${focused ? ' fm-focused' : ''}" id="fm-item-${idx}" role="option" aria-selected="${selected}" data-name="${item.name}" data-isdir="${item.is_dir}" data-idx="${idx}"${item.path ? ` data-path="${item.path}"` : ''}>
                         <div class="fm-grid-icon"><i class="fas ${icon}${item.locked ? ' app-text-danger' : ''}" aria-hidden="true"></i></div>
                         <div class="fm-grid-label">${item.name}${lockBadge}${sharedBadge}${galBadge}</div>
                         <div class="fm-grid-checkbox">
-                            <label class="fm-checkbox-label" data-cb-name="${item.name}" aria-label="Zaznacz ${item.name}">
+                            <label class="fm-checkbox-label" data-cb-name="${item.name}" aria-label="${t('Zaznacz')} ${item.name}">
                                 <input type="checkbox" ${selected ? 'checked' : ''}>
                                 <span class="fm-cb-custom"></span>
                             </label>
@@ -646,9 +646,9 @@ function renderFM(body, state) {
                 const selected = state.selected.has(item.name);
                 const focused = idx === state.focusedIndex;
                 const share = getShareForItem(item);
-                const sharedBadge = share ? ` <span class="fm-shared-badge" title="Udostępniony jako: ${share.name}"><i class="fas fa-share-alt"></i></span>` : '';
-                const galBadge = item.is_dir && state.gallerySources.some(s => s.path === itemFullPath(item)) ? ' <span class="fm-shared-badge app-icon-gallery" title="Folder multimedialny"><i class="fas fa-images"></i></span>' : '';
-                const lockBadge = item.protected ? ` <span class="fm-shared-badge" title="${item.locked ? 'Zablokowany' : 'Odblokowany'}" style="color:${item.locked ? 'var(--danger)' : 'var(--success, #22c55e)'}"><i class="fas ${item.locked ? 'fa-lock' : 'fa-lock-open'}"></i></span>` : '';
+                const sharedBadge = share ? ` <span class="fm-shared-badge" title="${t('Udostępniony jako:')} ${share.name}"><i class="fas fa-share-alt"></i></span>` : '';
+                const galBadge = item.is_dir && state.gallerySources.some(s => s.path === itemFullPath(item)) ? ` <span class="fm-shared-badge app-icon-gallery" title="${t('Folder multimedialny')}"><i class="fas fa-images"></i></span>` : '';
+                const lockBadge = item.protected ? ` <span class="fm-shared-badge" title="${item.locked ? t('Zablokowany') : t('Odblokowany')}" style="color:${item.locked ? 'var(--danger)' : 'var(--success, #22c55e)'}"><i class="fas ${item.locked ? 'fa-lock' : 'fa-lock-open'}"></i></span>` : '';
                 let thumbHtml = '';
                 if (isImage && !item.is_dir) {
                     // Lazy-loaded image: src will be set by IntersectionObserver
@@ -663,7 +663,7 @@ function renderFM(body, state) {
                         <div class="fm-thumb-preview">${thumbHtml}</div>
                         <div class="fm-thumb-label">${item.name}${lockBadge}${sharedBadge}${galBadge}</div>
                         <div class="fm-thumb-checkbox">
-                            <label class="fm-checkbox-label" data-cb-name="${item.name}" aria-label="Zaznacz ${item.name}">
+                            <label class="fm-checkbox-label" data-cb-name="${item.name}" aria-label="${t('Zaznacz')} ${item.name}">
                                 <input type="checkbox" ${selected ? 'checked' : ''}>
                                 <span class="fm-cb-custom"></span>
                             </label>
@@ -683,11 +683,11 @@ function renderFM(body, state) {
         let selectedSizeInfo = '';
         if (selectedCount) {
             const selSize = _src.filter(i => state.selected.has(i.name) && !i.is_dir).reduce((s, i) => s + i.size, 0);
-            selectedSizeInfo = ` | Zaznaczono: ${selectedCount} (${formatBytes(selSize)})`;
+            selectedSizeInfo = ` | ${t('Zaznaczono:')} ${selectedCount} (${formatBytes(selSize)})`;
         }
-        const searchLabel = state.searchResults !== null ? `Wyniki (${_src.length}) — ` : '';
+        const searchLabel = state.searchResults !== null ? `${t('Wyniki')} (${_src.length}) — ` : '';
         body.querySelector('#fm-statusbar').textContent =
-            searchLabel + `${_src.length} elementów (${dirs} folderów, ${files} plików) — ${formatBytes(totalSize)}` + selectedSizeInfo;
+            searchLabel + `${_src.length} ${t('elementów')} (${dirs} ${t('folderów')}, ${files} ${t('plików')}) — ${formatBytes(totalSize)}` + selectedSizeInfo;
 
         // Update selection bar visibility
         updateSelectionBar();
@@ -766,10 +766,10 @@ function renderFM(body, state) {
         let selectedSizeInfo = '';
         if (state.selected.size) {
             const selSize = state.items.filter(i => state.selected.has(i.name) && !i.is_dir).reduce((s, i) => s + i.size, 0);
-            selectedSizeInfo = ` | Zaznaczono: ${state.selected.size} (${formatBytes(selSize)})`;
+            selectedSizeInfo = ` | ${t('Zaznaczono:')} ${state.selected.size} (${formatBytes(selSize)})`;
         }
         body.querySelector('#fm-statusbar').textContent =
-            `${state.items.length} elementów (${dirs} folderów, ${files} plików) — ${formatBytes(totalSize)}` + selectedSizeInfo;
+            `${state.items.length} ${t('elementów')} (${dirs} ${t('folderów')}, ${files} ${t('plików')}) — ${formatBytes(totalSize)}` + selectedSizeInfo;
 
         updateSelectionBar();
 
@@ -926,22 +926,22 @@ function renderFM(body, state) {
             bodyEl.innerHTML = `
                 <div class="mv-container">
                     <div class="mv-content">${mediaHtml}</div>
-                    <div class="mv-overlay mv-nav-left" title="Poprzedni"><i class="fas fa-chevron-left"></i></div>
-                    <div class="mv-overlay mv-nav-right" title="Następny"><i class="fas fa-chevron-right"></i></div>
+                    <div class="mv-overlay mv-nav-left" title="${t('Poprzedni')}"><i class="fas fa-chevron-left"></i></div>
+                    <div class="mv-overlay mv-nav-right" title="${t('Następny')}"><i class="fas fa-chevron-right"></i></div>
                     <div class="mv-topbar">
                         <span class="mv-counter">${currentIdx + 1} / ${mediaFiles.length}</span>
                         <span class="mv-filename">${file.name}</span>
                         <div class="mv-actions">
-                            <button class="mv-btn mv-fav-btn${isPhotoFavorite(filePath) ? ' active' : ''}" id="mv-favorite" title="Ulubione (F)"><i class="fas fa-heart"></i></button>
-                            <button class="mv-btn" id="mv-delete" title="Usuń (Delete)"><i class="fas fa-trash"></i></button>
-                            <button class="mv-btn" id="mv-download" title="Pobierz"><i class="fas fa-download"></i></button>
-                            <button class="mv-btn" id="mv-close" title="Zamknij (Esc)"><i class="fas fa-times"></i></button>
+                            <button class="mv-btn mv-fav-btn${isPhotoFavorite(filePath) ? ' active' : ''}" id="mv-favorite" title="${t('Ulubione')} (F)"><i class="fas fa-heart"></i></button>
+                            <button class="mv-btn" id="mv-delete" title="${t('Usuń')} (Delete)"><i class="fas fa-trash"></i></button>
+                            <button class="mv-btn" id="mv-download" title="${t('Pobierz')}"><i class="fas fa-download"></i></button>
+                            <button class="mv-btn" id="mv-close" title="${t('Zamknij')} (Esc)"><i class="fas fa-times"></i></button>
                         </div>
                     </div>
                     <div class="mv-bottombar">
-                        <button class="mv-nav-btn" id="mv-prev" ${currentIdx <= 0 ? 'disabled' : ''}><i class="fas fa-arrow-left"></i> Poprzedni</button>
+                        <button class="mv-nav-btn" id="mv-prev" ${currentIdx <= 0 ? 'disabled' : ''}><i class="fas fa-arrow-left"></i> ${t('Poprzedni')}</button>
                         <span class="mv-info">${file.is_dir ? '' : formatBytes(file.size)}</span>
-                        <button class="mv-nav-btn" id="mv-next" ${currentIdx >= mediaFiles.length - 1 ? 'disabled' : ''}>Następny <i class="fas fa-arrow-right"></i></button>
+                        <button class="mv-nav-btn" id="mv-next" ${currentIdx >= mediaFiles.length - 1 ? 'disabled' : ''}>${t('Następny')} <i class="fas fa-arrow-right"></i></button>
                     </div>
                 </div>
             `;
@@ -1602,14 +1602,14 @@ function renderFM(body, state) {
             <div class="fm-trash-header">
                 <div class="fm-trash-info">
                     <i class="fas fa-info-circle"></i>
-                    Elementy w koszu są automatycznie usuwane po ${retentionDays} dniach.
+                    ${t('Elementy w koszu są automatycznie usuwane po')} ${retentionDays} ${t('dniach.')}
                 </div>
                 <div class="fm-trash-actions">
-                    <button class="fm-trash-btn fm-trash-restore-all" title="Przywróć wszystko">
-                        <i class="fas fa-undo"></i> Przywróć wszystko
+                    <button class="fm-trash-btn fm-trash-restore-all" title="${t('Przywróć wszystko')}">
+                        <i class="fas fa-undo"></i> ${t('Przywróć wszystko')}
                     </button>
-                    <button class="fm-trash-btn fm-trash-empty-btn" title="Opróżnij kosz">
-                        <i class="fas fa-trash"></i> Opróżnij kosz
+                    <button class="fm-trash-btn fm-trash-empty-btn" title="${t('Opróżnij kosz')}">
+                        <i class="fas fa-trash"></i> ${t('Opróżnij kosz')}
                     </button>
                 </div>
             </div>
@@ -1628,14 +1628,14 @@ function renderFM(body, state) {
                                     <span class="fm-trash-item-path" title="${item.original_path}"><i class="fas fa-folder-open"></i> ${item.original_path}</span>
                                     <span><i class="fas fa-calendar"></i> ${item.deleted_date}</span>
                                     <span>${formatBytes(item.size || 0)}</span>
-                                    <span class="fm-trash-days ${daysClass}"><i class="fas fa-clock"></i> ${item.days_left} dni</span>
+                                    <span class="fm-trash-days ${daysClass}"><i class="fas fa-clock"></i> ${item.days_left} ${t('dni')}</span>
                                 </div>
                             </div>
                             <div class="fm-trash-item-actions">
-                                <button class="fm-trash-btn fm-trash-restore-one" data-trash-id="${item.trash_id}" title="Przywróć">
+                                <button class="fm-trash-btn fm-trash-restore-one" data-trash-id="${item.trash_id}" title="${t('Przywróć')}">
                                     <i class="fas fa-undo"></i>
                                 </button>
-                                <button class="fm-trash-btn fm-trash-delete-one" data-trash-id="${item.trash_id}" title="Usuń trwale">
+                                <button class="fm-trash-btn fm-trash-delete-one" data-trash-id="${item.trash_id}" title="${t('Usuń trwale')}">
                                     <i class="fas fa-times"></i>
                                 </button>
                             </div>
@@ -1646,7 +1646,7 @@ function renderFM(body, state) {
         `;
 
         body.querySelector('#fm-statusbar').textContent =
-            `Kosz: ${items.length} elementów — ${formatBytes(totalSize)}`;
+            `${t('Kosz:')} ${items.length} ${t('elementów')} — ${formatBytes(totalSize)}`;
 
         // Restore all
         list.querySelector('.fm-trash-restore-all')?.addEventListener('click', async () => {
@@ -7616,7 +7616,7 @@ function renderAppStore(body) {
                     if (data.stage === 'done') {
                         app.installed = true;
                         S.installing = null;
-                        toast('Zainstalowano ' + (app.title || appId), 'success');
+                        toast(t('Zainstalowano') + ' ' + (app.title || appId), 'success');
                         cleanup();
                         setTimeout(() => { overlay.remove(); renderGrid(); }, 1200);
                     }
@@ -7624,7 +7624,7 @@ function renderAppStore(body) {
                         app.installed = true;
                         S.installing = null;
                         if (progressFill) progressFill.style.background = '#fbbf24';
-                        toast(data.message || (app.title || appId) + ' zainstalowana z ostrzeżeniami', 'warning');
+                        toast(data.message || (app.title || appId) + ' ' + t('zainstalowana z ostrzeżeniami'), 'warning');
                         cleanup();
                         setTimeout(() => { overlay.remove(); renderGrid(); }, 2500);
                     }
@@ -7658,18 +7658,18 @@ function renderAppStore(body) {
         const uninstallBtn = modal.querySelector('.as-uninstall-btn');
         if (uninstallBtn) {
             uninstallBtn.addEventListener('click', async () => {
-                if (!confirm(`Odinstalować ${app.title || appId}? Kontener zostanie zatrzymany i usunięty.`)) return;
+                if (!confirm(t('Odinstalować') + ` ${app.title || appId}? ` + t('Kontener zostanie zatrzymany i usunięty.'))) return;
                 uninstallBtn.disabled = true;
-                uninstallBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Usuwanie…';
+                uninstallBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Usuwanie…');
                 try {
                     await api('/appstore/uninstall', { method: 'POST', body: { app_id: appId } });
                     app.installed = false;
                     overlay.remove();
                     renderGrid();
-                    toast('Odinstalowano ' + (app.title || appId), 'success');
+                    toast(t('Odinstalowano') + ' ' + (app.title || appId), 'success');
                 } catch (e) {
                     toast(t('Błąd odinstalowania: ') + e.message, 'error');
-                    uninstallBtn.innerHTML = '<i class="fas fa-trash"></i> Odinstaluj';
+                    uninstallBtn.innerHTML = '<i class="fas fa-trash"></i> ' + t('Odinstaluj');
                     uninstallBtn.disabled = false;
                 }
             });
@@ -8069,18 +8069,18 @@ function renderAppStore(body) {
                         <div class="as-modal-header app-justify-center">
                             <div class="app-text-center">
                                 <i class="fas fa-exclamation-triangle app-confirm-icon"></i>
-                                <h2 class="as-modal-title app-confirm-title">Odinstalować ${pkg?.name || pkgId}?</h2>
+                                <h2 class="as-modal-title app-confirm-title">${t('Odinstalować')} ${pkg?.name || pkgId}?</h2>
                             </div>
                         </div>
                         <div class="as-modal-body app-text-center app-p-md">
-                            <p class="app-desc">Zatrzyma wszystkie procesy pakietu.</p>
+                            <p class="app-desc">${t('Zatrzyma wszystkie procesy pakietu.')}</p>
                             <label class="app-check-label app-check-label--center">
-                                <input type="checkbox" id="gp-wipe-data"> Usuń również dane (nagrania, konfigurację)
+                                <input type="checkbox" id="gp-wipe-data"> ${t('Usuń również dane (nagrania, konfigurację)')}
                             </label>
                         </div>
                         <div class="as-modal-footer app-justify-center app-gap-md">
-                            <button class="as-btn" id="gp-cancel-uninstall">Anuluj</button>
-                            <button class="as-btn as-btn-danger" id="gp-confirm-uninstall"><i class="fas fa-trash"></i> Odinstaluj</button>
+                            <button class="as-btn" id="gp-cancel-uninstall">${t('Anuluj')}</button>
+                            <button class="as-btn as-btn-danger" id="gp-confirm-uninstall"><i class="fas fa-trash"></i> ${t('Odinstaluj')}</button>
                         </div>
                     </div>
                 `;
