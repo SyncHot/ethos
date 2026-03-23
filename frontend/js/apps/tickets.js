@@ -1907,18 +1907,37 @@ async function renderTickets(body, launchOpts) {
             const title = overlay.querySelector('#tk-df-title').value.trim();
             if (!title && !desc) { toast(t('Wpisz tytuł lub opis ticketu'), 'warning'); return; }
             btn.disabled = true;
-            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Generuję...');
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Generuję (może zająć 3-5 min)...');
             try {
-                const resp = await api('/tickets/tickets/' + ticket.id + '/generate-tests', {
+                const start = await api('/tickets/tickets/' + ticket.id + '/generate-tests', {
                     method: 'POST',
-                    body: JSON.stringify({ title, description: desc }),
+                    body: { title, description: desc },
                 });
-                if (resp && resp.tests && resp.tests.length) {
-                    resp.tests.forEach(s => _mtAddStep(s.action || '', s.expected || '', s.screenshot !== false));
-                    toast(t('Wygenerowano') + ' ' + resp.tests.length + ' ' + t('kroków'), 'success');
-                } else {
-                    toast(t('Nie udało się wygenerować testów'), 'warning');
-                }
+                if (!start || !start.task_id) { toast(t('Nie udało się wystartować generowania'), 'warning'); throw new Error('no task_id'); }
+                const taskId = start.task_id;
+                let elapsed = 0;
+                const poll = async () => {
+                    while (elapsed < 600) {
+                        await new Promise(r => setTimeout(r, 5000));
+                        elapsed += 5;
+                        const min = Math.floor(elapsed / 60);
+                        const sec = elapsed % 60;
+                        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Generuję') + ` (${min}:${String(sec).padStart(2,'0')})...`;
+                        const res = await api('/tickets/gen-tests-poll/' + taskId);
+                        if (res.status === 'done') {
+                            if (res.tests && res.tests.length) {
+                                res.tests.forEach(s => _mtAddStep(s.action || '', s.expected || '', s.screenshot !== false));
+                                toast(t('Wygenerowano') + ' ' + res.tests.length + ' ' + t('kroków'), 'success');
+                            } else {
+                                toast(t('AI nie zwróciło testów') + (res.error ? ': ' + res.error : ''), 'warning');
+                            }
+                            return;
+                        }
+                        if (res.status === 'error') { toast(t('Błąd AI: ') + (res.error || ''), 'error'); return; }
+                    }
+                    toast(t('Przekroczono czas oczekiwania (10 min)'), 'warning');
+                };
+                await poll();
             } catch (e) {
                 toast(t('Błąd generowania testów: ') + (e.message || e), 'error');
             }

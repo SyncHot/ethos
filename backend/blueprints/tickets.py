@@ -473,9 +473,13 @@ def remove_label(ticket_id, label):
 # Manual Tests — AI Generation
 # ---------------------------------------------------------------------------
 
+# Background AI test generation tasks
+import threading
+_gen_tasks = {}  # task_id -> {status, tests, error}
+
 @tickets_bp.route('/tickets/<ticket_id>/generate-tests', methods=['POST'])
 def generate_tests(ticket_id):
-    """Generate manual test steps from ticket title + description using Ollama."""
+    """Start async generation of manual test steps via Ollama (llama3.2:3b)."""
     ticket = get_ticket(ticket_id)
     if not ticket:
         return jsonify({'error': 'Ticket not found'}), 404
@@ -487,46 +491,64 @@ def generate_tests(ticket_id):
     title = body.get('title', ticket.get('title', ''))
     description = body.get('description', ticket.get('description', ''))
 
-    prompt = (
-        "Jesteś testerem QA dla systemu EthOS (web UI, SPA, desktop-like z oknami apek).\n"
-        "Na podstawie ticketu wygeneruj kroki testów manualnych.\n\n"
-        f"Tytuł: {title}\nOpis: {description}\n\n"
-        "Każdy krok to JSON z polami: action (co zrobić), expected (oczekiwany wynik), screenshot (bool).\n"
-        "Akcje po polsku. Dostępne komendy:\n"
-        "- 'Otwórz apkę X' — otwiera okno aplikacji\n"
-        "- 'Kliknij X' — klika element\n"
-        "- 'Wpisz \"tekst\" w pole X' — wypełnia pole\n"
-        "- 'Czekaj N sekund' — czeka\n"
-        "- 'Sprawdź: X jest widoczny' — weryfikacja DOM\n"
-        "- 'Przewiń w dół' — scroll\n"
-        "- 'Screenshot: opis' — zrób screenshot\n\n"
-        "Odpowiedz WYŁĄCZNIE jako JSON array, bez markdown, np:\n"
-        '[{"action":"Otwórz apkę Dashboard","expected":"Dashboard widoczny z widgetami","screenshot":true}]'
-    )
+    import uuid
+    task_id = uuid.uuid4().hex[:12]
+    _gen_tasks[task_id] = {'status': 'running', 'tests': [], 'error': None}
 
-    try:
-        import requests as req
-        resp = req.post('http://127.0.0.1:11434/api/generate', json={
-            'model': 'llama3.2-vision:11b',
-            'prompt': prompt,
-            'stream': False,
-            'options': {'temperature': 0.3, 'num_predict': 1024},
-        }, timeout=600)
-        resp.raise_for_status()
-        raw = resp.json().get('response', '').strip()
+    def _generate():
+        prompt = (
+            "Jesteś testerem QA dla systemu EthOS (web UI, SPA, desktop-like z oknami apek).\n"
+            "Na podstawie ticketu wygeneruj kroki testów manualnych.\n\n"
+            f"Tytuł: {title}\nOpis: {description}\n\n"
+            "Każdy krok to JSON z polami: action (co zrobić), expected (oczekiwany wynik), screenshot (bool).\n"
+            "Akcje po polsku. Dostępne komendy:\n"
+            "- 'Otwórz apkę X' — otwiera okno aplikacji\n"
+            "- 'Kliknij X' — klika element\n"
+            "- 'Wpisz \"tekst\" w pole X' — wypełnia pole\n"
+            "- 'Czekaj N sekund' — czeka\n"
+            "- 'Sprawdź: X jest widoczny' — weryfikacja DOM\n"
+            "- 'Przewiń w dół' — scroll\n"
+            "- 'Screenshot: opis' — zrób screenshot\n\n"
+            "Odpowiedz WYŁĄCZNIE jako JSON array, bez markdown, np:\n"
+            '[{"action":"Otwórz apkę Dashboard","expected":"Dashboard widoczny z widgetami","screenshot":true}]'
+        )
+        try:
+            import requests as req
+            resp = req.post('http://127.0.0.1:11434/api/generate', json={
+                'model': 'llama3.2:3b',
+                'prompt': prompt,
+                'stream': False,
+                'options': {'temperature': 0.3, 'num_predict': 1024},
+            }, timeout=600)
+            resp.raise_for_status()
+            raw = resp.json().get('response', '').strip()
+            start = raw.find('[')
+            end = raw.rfind(']')
+            if start >= 0 and end > start:
+                tests = json.loads(raw[start:end + 1])
+                for i, t_step in enumerate(tests):
+                    t_step['step'] = i + 1
+                    t_step.setdefault('screenshot', True)
+                _gen_tasks[task_id] = {'status': 'done', 'tests': tests, 'error': None}
+            else:
+                _gen_tasks[task_id] = {'status': 'done', 'tests': [], 'error': 'AI nie zwróciło JSON'}
+        except Exception as e:
+            _gen_tasks[task_id] = {'status': 'error', 'tests': [], 'error': str(e)}
 
-        # Extract JSON array from response
-        start = raw.find('[')
-        end = raw.rfind(']')
-        if start >= 0 and end > start:
-            tests = json.loads(raw[start:end + 1])
-            for i, t_step in enumerate(tests):
-                t_step['step'] = i + 1
-                t_step.setdefault('screenshot', True)
-            return jsonify({'ok': True, 'tests': tests})
-        return jsonify({'ok': False, 'tests': [], 'error': 'No JSON array in response'}), 200
-    except Exception as e:
-        return jsonify({'ok': False, 'tests': [], 'error': str(e)}), 200
+    threading.Thread(target=_generate, daemon=True).start()
+    return jsonify({'ok': True, 'task_id': task_id}), 202
+
+
+@tickets_bp.route('/gen-tests-poll/<task_id>', methods=['GET'])
+def poll_generate_tests(task_id):
+    """Poll status of async test generation task."""
+    task = _gen_tasks.get(task_id)
+    if not task:
+        return jsonify({'error': 'Task not found'}), 404
+    resp = jsonify(task)
+    if task['status'] in ('done', 'error'):
+        _gen_tasks.pop(task_id, None)
+    return resp
 
 # ---------------------------------------------------------------------------
 # Attachments
