@@ -205,9 +205,9 @@ function _domInit(body) {
 
             // Add domain form
             html += `<div class="dm-group">
-                <div class="dm-group-title"><i class="fas fa-plus-circle"></i> Dodaj domenę / subdomenę</div>
+                <div class="dm-group-title"><i class="fas fa-plus-circle"></i> ${t('Dodaj domenę / subdomenę')}</div>
                 <div class="dm-row"><label>Domena</label><input type="text" id="dm-add-domain" placeholder="np. app.mojadomena.pl"></div>
-                <div class="dm-hint">Pełna domena lub subdomena (np. nas.example.com)</div>
+                <div class="dm-hint">${t('Pełna domena lub subdomena (np. nas.example.com)')}</div>
                 <div class="dm-row">
                     <label>Cel (target)</label>
                     <div class="dom-target-wrap">
@@ -215,7 +215,7 @@ function _domInit(body) {
                         <button class="dm-btn sm dom-nowrap" id="dm-scan-svc"><i class="fas fa-search"></i> Skanuj</button>
                     </div>
                 </div>
-                <div class="dm-hint">Adres wewnętrzny usługi — np. 127.0.0.1:8080</div>
+                <div class="dm-hint">${t('Adres wewnętrzny usługi — np. 127.0.0.1:8080')}</div>
                 <div id="dm-services-list" class="dom-mb-md" style="display:none"></div>
                 <div class="dm-row"><label>Opis</label><input type="text" id="dm-add-desc" placeholder="np. Jellyfin, Grafana…" maxlength="100"></div>
                 <div class="dm-row dom-cb-row">
@@ -227,9 +227,9 @@ function _domInit(body) {
                     <div class="dm-row"><label>Email (SSL)</label><input type="email" id="dm-add-email" placeholder="admin@mojadomena.pl"></div>
                     <div class="dm-hint">Let's Encrypt wymaga emaila. Certyfikat zostanie uzyskany automatycznie.</div>
                 </div>
-                <div class="dm-hint dom-hint-flush">WebSocket — dla usług real-time. SSL — certyfikat zostanie uzyskany automatycznie.</div>
+                <div class="dm-hint dom-hint-flush">${t('WebSocket — dla usług real-time. SSL — certyfikat zostanie uzyskany automatycznie.')}</div>
                 <div class="dm-actions">
-                    <button class="dm-btn primary" id="dm-add-btn"><i class="fas fa-plus"></i> Dodaj domenę</button>
+                    <button class="dm-btn primary" id="dm-add-btn"><i class="fas fa-plus"></i> ${t('Dodaj domenę')}</button>
                 </div>
             </div>`;
         }
@@ -362,7 +362,7 @@ function _domInit(body) {
                 <div class="dm-actions">
                     <button class="dm-btn primary" id="dme-save"><i class="fas fa-save"></i> Zapisz</button>
                     <button class="dm-btn" id="dme-cancel"><i class="fas fa-times"></i> Anuluj</button>
-                    <button class="dm-btn purple" id="dme-preview"><i class="fas fa-eye"></i> Podgląd nginx</button>
+                    <button class="dm-btn purple" id="dme-preview"><i class="fas fa-eye"></i> ${t('Podgląd nginx')}</button>
                 </div>
                 <pre id="dme-preview-out" class="dom-pre-output" style="display:none"></pre>
             </div>
@@ -447,13 +447,13 @@ function _domInit(body) {
                             ${domBadge}
                         </div>
                         <div class="dom-btn-group">
-                            <button class="dm-btn primary sm dm-renew-cert" data-domain="${esc(c.domain)}"><i class="fas fa-sync-alt"></i> Odnów</button>
+                            <button class="dm-btn primary sm dm-renew-cert" data-domain="${esc(c.domain)}"><i class="fas fa-sync-alt"></i> ${t('Odnów')}</button>
                         </div>
                     </div>
                     <div class="dm-info-grid dom-m-0">
-                        <div class="dm-info-card"><div class="dm-info-label">Pozostało dni</div><div class="dm-info-value" style="color:${daysColor}">${daysLeft}</div></div>
-                        <div class="dm-info-card"><div class="dm-info-label">Ważny od</div><div class="dm-info-value dom-text-xs">${esc(c.not_before || '-')}</div></div>
-                        <div class="dm-info-card"><div class="dm-info-label">Ważny do</div><div class="dm-info-value dom-text-xs">${esc(c.not_after || '-')}</div></div>
+                        <div class="dm-info-card"><div class="dm-info-label">${t('Pozostało dni')}</div><div class="dm-info-value" style="color:${daysColor}">${daysLeft}</div></div>
+                        <div class="dm-info-card"><div class="dm-info-label">${t('Ważny od')}</div><div class="dm-info-value dom-text-xs">${esc(c.not_before || '-')}</div></div>
+                        <div class="dm-info-card"><div class="dm-info-label">${t('Ważny do')}</div><div class="dm-info-value dom-text-xs">${esc(c.not_after || '-')}</div></div>
                     </div>
                 </div>`;
             }
@@ -469,7 +469,7 @@ function _domInit(body) {
             </div>
             <div class="dm-actions">
                 <button class="dm-btn primary" id="dm-ssl-obtain" ${!installed?'disabled':''}><i class="fas fa-certificate"></i> Uzyskaj certyfikat</button>
-                <button class="dm-btn warn" id="dm-ssl-test" ${!installed?'disabled':''}><i class="fas fa-vial"></i> Testuj połączenie</button>
+                <button class="dm-btn warn" id="dm-ssl-test" ${!installed?'disabled':''}><i class="fas fa-vial"></i> ${t('Testuj połączenie')}</button>
             </div>
             <div id="dm-ssl-test-result" class="dom-mt-sm"></div>
         </div>`;
@@ -499,9 +499,9 @@ function _domInit(body) {
                 <div class="dm-actions">`;
             if (active) {
                 html += `<div class="dm-msg dm-msg-ok dom-mr-md"><i class="fas fa-check-circle"></i> HTTPS aktywny</div>
-                    <button class="dm-btn danger" id="dm-ssl-disable"><i class="fas fa-times"></i> Wyłącz HTTPS</button>`;
+                    <button class="dm-btn danger" id="dm-ssl-disable"><i class="fas fa-times"></i> ${t('Wyłącz HTTPS')}</button>`;
             } else {
-                html += `<button class="dm-btn primary" id="dm-ssl-enable"><i class="fas fa-shield-alt"></i> Włącz HTTPS</button>`;
+                html += `<button class="dm-btn primary" id="dm-ssl-enable"><i class="fas fa-shield-alt"></i> ${t('Włącz HTTPS')}</button>`;
             }
             html += `</div>`;
         }
@@ -526,11 +526,11 @@ function _domInit(body) {
             html += `
                 <div class="dm-row dom-row-gap">
                     <label class="dm-switch"><input type="checkbox" id="dm-ssl-autorenew" ${autoRenew ? 'checked' : ''}><span class="slider"></span></label>
-                    <span class="dom-label-text">Automatyczne odnawianie certyfikatów</span>
+                    <span class="dom-label-text">${t('Automatyczne odnawianie certyfikatów')}</span>
                 </div>
                 <div class="dm-hint dom-mt-xs">${t('Certbot odnowi certyfikaty automatycznie (codziennie o 3:00) bez przerwy w działaniu Nginx.')}</div>`;
             if (renewal) {
-                html += `<div class="dm-msg dm-msg-ok dom-mt-sm"><i class="fas fa-check-circle"></i> Mechanizm odnowień aktywny (${esc(renewal)})</div>`;
+                html += `<div class="dm-msg dm-msg-ok dom-mt-sm"><i class="fas fa-check-circle"></i> ${t('Mechanizm odnowień aktywny')} (${esc(renewal)})</div>`;
             } else if (autoRenew) {
                 html += `<div class="dm-msg dm-msg-warn dom-mt-sm"><i class="fas fa-exclamation-triangle"></i> ${t('Timer nie wykryty — kliknij przełącznik aby go aktywować')}</div>`;
             }
@@ -564,7 +564,7 @@ function _domInit(body) {
             try {
                 const r = await api(API_D + '/ssl/test', { method: 'POST', body: { domain } });
                 let msgs = [];
-                if (r.port_80) msgs.push('<div class="dm-msg dm-msg-ok"><i class="fas fa-check-circle"></i> Port 80 OK' + (r.port_80_nginx ? ' (nginx obsługuje port 80)' : '') + '</div>');
+                if (r.port_80) msgs.push('<div class="dm-msg dm-msg-ok"><i class="fas fa-check-circle"></i> Port 80 OK' + (r.port_80_nginx ? ' (' + t('nginx obsługuje port 80') + ')' : '') + '</div>');
                 else if (r.port_80_in_use) msgs.push(`<div class="dm-msg dm-msg-err"><i class="fas fa-times-circle"></i> ${t('Port 80 jest zajęty przez inną usługę')}</div>`);
                 else msgs.push('<div class="dm-msg dm-msg-ok"><i class="fas fa-check-circle"></i> Port 80 wolny — OK</div>');
                 if (domain) {
@@ -608,7 +608,7 @@ function _domInit(body) {
             const btn = e.currentTarget;
             const httpsPort = parseInt(content.querySelector('#dm-ssl-port')?.value || '443');
             const redirect = content.querySelector('#dm-ssl-redirect')?.checked !== false;
-            if (!confirm(`Włączyć HTTPS na porcie ${httpsPort}?`)) return;
+            if (!confirm(t('Włączyć HTTPS na porcie') + ' ' + httpsPort + '?')) return;
             btn.disabled = true; btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${t('Włączanie…')}`;
             try {
                 const r = await api(API_D + '/ssl/enable', { method: 'POST', body: { enabled: true, https_port: httpsPort, redirect_http: redirect } });
@@ -698,7 +698,7 @@ function _domInit(body) {
             <div class="dm-actions dom-mt-0">
                 <button class="dm-btn primary" id="dd-save"><i class="fas fa-save"></i> Zapisz</button>
                 <button class="dm-btn info" id="dd-update-now"><i class="fas fa-sync-alt"></i> Aktualizuj teraz</button>
-                <button class="dm-btn" id="dd-check-ip"><i class="fas fa-search"></i> Sprawdź IP</button>
+                <button class="dm-btn" id="dd-check-ip"><i class="fas fa-search"></i> ${t('Sprawdź IP')}</button>
                 <button class="dm-btn" id="dd-history-btn"><i class="fas fa-history"></i> Historia</button>
             </div>
         </div>`;
@@ -730,7 +730,7 @@ function _domInit(body) {
                     <div class="dm-prov-actions">
                         <button class="dm-btn primary sm dd-save-prov" data-idx="${idx}"><i class="fas fa-save"></i> Zapisz</button>
                         <button class="dm-btn sm dd-toggle-active" data-idx="${idx}"><i class="fas ${p.active === false ? 'fa-play' : 'fa-pause'}"></i> ${p.active === false ? t('Włącz') : t('Wyłącz')}</button>
-                        <button class="dm-btn danger sm dd-remove-prov" data-idx="${idx}"><i class="fas fa-trash"></i> Usuń</button>
+                        <button class="dm-btn danger sm dd-remove-prov" data-idx="${idx}"><i class="fas fa-trash"></i> ${t('Usuń')}</button>
                     </div>
                 </div>`;
             });
@@ -786,7 +786,7 @@ function _domInit(body) {
                 try {
                     const history = await api(API_DDNS + '/history');
                     if (!history.length) list.innerHTML = '<div class="dm-empty"><i class="fas fa-inbox"></i><p>Brak historii</p></div>';
-                    else list.innerHTML = `<table><tr><th>Data</th><th>Provider</th><th>IP</th><th>Status</th><th>Wiadomość</th></tr>
+                    else list.innerHTML = `<table><tr><th>${t('Data')}</th><th>Provider</th><th>IP</th><th>Status</th><th>${t('Wiadomość')}</th></tr>
                         ${history.slice(0,50).map(h => `<tr><td>${new Date(h.time).toLocaleString('pl')}</td><td>${esc(h.provider_name)}</td><td><code>${esc(h.ip)}</code></td>
                         <td style="color:${h.status==='ok'?'#22c55e':'#ef4444'}"><i class="fas ${h.status==='ok'?'fa-check':'fa-times'}"></i> ${h.status}</td>
                         <td class="dom-truncate" title="${esc(h.message)}">${esc(h.message)}</td></tr>`).join('')}</table>`;
@@ -805,7 +805,7 @@ function _domInit(body) {
                 ddnsConfig.providers = ddnsConfig.providers || [];
                 ddnsConfig.providers.push(newP);
                 _renderDdnsData();
-                toast(`Dodano ${tmpl.name} — uzupełnij dane i zapisz`, 'info');
+                toast(t('Dodano') + ' ' + tmpl.name + ' — ' + t('uzupełnij dane i zapisz'), 'info');
             });
         });
 
@@ -836,7 +836,7 @@ function _domInit(body) {
             btn.addEventListener('click', () => {
                 const idx = parseInt(btn.dataset.idx);
                 const p = ddnsConfig.providers[idx];
-                if (!confirm(`Usunąć provider ${p?.name || ''}?`)) return;
+                if (!confirm(t('Usunąć provider') + ' ' + (p?.name || '') + '?')) return;
                 ddnsConfig.providers.splice(idx, 1);
                 _ddnsSaveConfig();
             });
@@ -917,16 +917,16 @@ function _domInit(body) {
 
             // Action buttons
             html += `<div class="dm-group">
-                <div class="dm-group-title"><i class="fas fa-tools"></i> Zarządzanie</div>
+                <div class="dm-group-title"><i class="fas fa-tools"></i> ${t('Zarządzanie')}</div>
                 <div class="dm-actions">
-                    <button class="dm-btn primary dm-ng-action" data-action="reload"><i class="fas fa-sync-alt"></i> Przeładuj konfigurację</button>
+                    <button class="dm-btn primary dm-ng-action" data-action="reload"><i class="fas fa-sync-alt"></i> ${t('Przeładuj konfigurację')}</button>
                     <button class="dm-btn info dm-ng-action" data-action="restart"><i class="fas fa-redo"></i> Restart</button>
                     ${status.active
                         ? '<button class="dm-btn danger dm-ng-action" data-action="stop"><i class="fas fa-stop"></i> Zatrzymaj</button>'
                         : '<button class="dm-btn primary dm-ng-action" data-action="start"><i class="fas fa-play"></i> Uruchom</button>'
                     }
                 </div>
-                <div class="dm-hint dom-mt-sm">Przeładowanie stosuje nową konfigurację bez przerwy w działaniu. Restart zatrzymuje i uruchamia ponownie cały serwer.</div>
+                <div class="dm-hint dom-mt-sm">${t('Przeładowanie stosuje nową konfigurację bez przerwy w działaniu. Restart zatrzymuje i uruchamia ponownie cały serwer.')}</div>
             </div>`;
 
             // Config test

@@ -358,7 +358,7 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
                         <span class="fm-dup-group-badge ${group.type === 'exact' ? 'fm-dup-exact' : 'fm-dup-similar'}">
                             ${group.type === 'exact' ? '<i class="fas fa-equals"></i> Identyczne' : '<i class="fas fa-eye"></i> Podobne'}
                         </span>
-                        <span class="fm-dup-group-count">${group.items.length} plików · ${formatBytes(group.items.reduce((s,f) => s + f.size, 0))}</span>
+                        <span class="fm-dup-group-count">${group.items.length} ${t('plików')} · ${formatBytes(group.items.reduce((s,f) => s + f.size, 0))}</span>
                         <button class="fm-dup-btn fm-dup-ignore-btn" data-group="${gi}" title="${t('Ignoruj tę grupę')}"><i class="fas fa-eye-slash"></i> ${t('Ignoruj')}</button>
                     </div>
                     <div class="fm-dup-group-items">
@@ -519,7 +519,7 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
                 header.innerHTML = `
                     <div class="fm-dup-results-info">
                         <i class="fas fa-exclamation-triangle" style="color:#ef4444"></i>
-                        Błąd: ${data.error || t('Nieznany błąd')}
+                        ${t('Błąd:')} ${data.error || t('Nieznany błąd')}
                     </div>
                     <div class="fm-dup-live-actions">
                         <button class="fm-dup-btn" id="dup-rescan2"><i class="fas fa-redo"></i> Skanuj ponownie</button>
@@ -582,17 +582,17 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
                 <div class="fm-dup-results-header">
                     <div class="fm-dup-results-info">
                         <i class="fas fa-clone"></i>
-                        <strong>${groups.length}</strong> ${t('grup duplikatów &middot;')} <strong>${totalDups}</strong> ${t('nadmiarowych plików &middot;')} <strong>${formatBytes(totalSize)}</strong> do odzyskania
+                        <strong>${groups.length}</strong> ${t('grup duplikatów &middot;')} <strong>${totalDups}</strong> ${t('nadmiarowych plików &middot;')} <strong>${formatBytes(totalSize)}</strong> ${t('do odzyskania')}
                     </div>
                     <div class="fm-dup-results-actions">
-                        <button class="fm-dup-btn" id="dup-autoselect"><i class="fas fa-magic"></i> Auto-zaznacz duplikaty</button>
-                        <button class="fm-dup-btn fm-dup-btn-danger" id="dup-trash-selected"><i class="fas fa-trash"></i> Do kosza zaznaczone</button>
+                        <button class="fm-dup-btn" id="dup-autoselect"><i class="fas fa-magic"></i> ${t('Auto-zaznacz duplikaty')}</button>
+                        <button class="fm-dup-btn fm-dup-btn-danger" id="dup-trash-selected"><i class="fas fa-trash"></i> ${t('Do kosza zaznaczone')}</button>
                         <span class="fm-dup-actions-sep"></span>
-                        <button class="fm-dup-btn" id="dup-select-all-groups"><i class="fas fa-check-double"></i> Zaznacz wszystkie grupy</button>
-                        <button class="fm-dup-btn" id="dup-ignore-selected" style="display:none"><i class="fas fa-eye-slash"></i> Ignoruj zaznaczone (<span id="dup-ignore-count">0</span>)</button>
+                        <button class="fm-dup-btn" id="dup-select-all-groups"><i class="fas fa-check-double"></i> ${t('Zaznacz wszystkie grupy')}</button>
+                        <button class="fm-dup-btn" id="dup-ignore-selected" style="display:none"><i class="fas fa-eye-slash"></i> ${t('Ignoruj zaznaczone')} (<span id="dup-ignore-count">0</span>)</button>
                         <span class="fm-dup-actions-sep"></span>
-                        <button class="fm-dup-btn" id="dup-show-ignored"><i class="fas fa-eye-slash"></i> Ignorowane</button>
-                        <button class="fm-dup-btn" id="dup-rescan2"><i class="fas fa-redo"></i> Skanuj ponownie</button>
+                        <button class="fm-dup-btn" id="dup-show-ignored"><i class="fas fa-eye-slash"></i> ${t('Ignorowane')}</button>
+                        <button class="fm-dup-btn" id="dup-rescan2"><i class="fas fa-redo"></i> ${t('Skanuj ponownie')}</button>
                     </div>
                 </div>
                 <div class="fm-dup-groups" id="dup-groups">
@@ -603,7 +603,7 @@ AppRegistry['duplicates'] = function (appDef, launchOpts) {
                                 <span class="fm-dup-group-badge ${group.type === 'exact' ? 'fm-dup-exact' : 'fm-dup-similar'}">
                                     ${group.type === 'exact' ? '<i class="fas fa-equals"></i> Identyczne' : '<i class="fas fa-eye"></i> Podobne'}
                                 </span>
-                                <span class="fm-dup-group-count">${group.items.length} plików &middot; ${formatBytes(group.items.reduce((s,f) => s + f.size, 0))}</span>
+                                <span class="fm-dup-group-count">${group.items.length} ${t('plików')} &middot; ${formatBytes(group.items.reduce((s,f) => s + f.size, 0))}</span>
                                 <button class="fm-dup-btn fm-dup-ignore-btn" data-group="${gi}" title="${t('Ignoruj tę grupę')}"><i class="fas fa-eye-slash"></i> ${t('Ignoruj')}</button>
                             </div>
                             <div class="fm-dup-group-items">

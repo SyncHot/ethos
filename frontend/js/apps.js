@@ -5635,7 +5635,7 @@ function renderDockerManager(body) {
                             return `<div class="dkr-project-ct">
                                 <span class="dkr-dot ${c.state}"></span>
                                 <span class="dkr-ct-name">${esc(c.name)}</span>
-                                ${ports.length ? `<span class="dkr-ct-ports">${ports.map(p => p.host ? `<a class="dkr-port-badge dkr-port-link" href="http://${location.hostname}:${p.host}" target="_blank" rel="noopener" title="Otwórz :${p.host}">${esc(p.label)}</a>` : `<span class="dkr-port-badge">${esc(p.label)}</span>`).join('')}</span>` : ''}
+                                ${ports.length ? `<span class="dkr-ct-ports">${ports.map(p => p.host ? `<a class="dkr-port-badge dkr-port-link" href="http://${location.hostname}:${p.host}" target="_blank" rel="noopener" title="${t('Otwórz')} :${p.host}">${esc(p.label)}</a>` : `<span class="dkr-port-badge">${esc(p.label)}</span>`).join('')}</span>` : ''}
                                 <span class="dkr-muted">${esc(c.image)}</span>
                                 <span class="dkr-status-text">${esc(c.status)}</span>
                             </div>`;
@@ -6923,8 +6923,8 @@ function renderEventLog(body) {
                 <i class="fas ${cat.icon}" style="color:${cat.color}"></i> ${count}
             </span>`;
         }).join('') + `
-            ${(s.by_level.error || 0) > 0 ? `<span class="elog-stat-chip elog-stat-errors"><i class="fas fa-times-circle app-icon-danger"></i> ${s.by_level.error} błędów</span>` : ''}
-            ${(s.by_level.warning || 0) > 0 ? `<span class="elog-stat-chip elog-stat-warnings"><i class="fas fa-exclamation-triangle app-text-warn"></i> ${s.by_level.warning} ostrzeżeń</span>` : ''}
+            ${(s.by_level.error || 0) > 0 ? `<span class="elog-stat-chip elog-stat-errors"><i class="fas fa-times-circle app-icon-danger"></i> ${s.by_level.error} ${t('błędów')}</span>` : ''}
+            ${(s.by_level.warning || 0) > 0 ? `<span class="elog-stat-chip elog-stat-warnings"><i class="fas fa-exclamation-triangle app-text-warn"></i> ${s.by_level.warning} ${t('ostrzeżeń')}</span>` : ''}
         `;
 
         // Click stat chip to filter by category

@@ -777,7 +777,7 @@ async function renderTickets(body, launchOpts) {
             const res = await api(`/tickets/projects/${targetProject.id}/bug-hunt`, { method: 'POST' });
             
             if (res.ok) {
-                toast(t(`Utworzono ${res.count} ticketów dla aplikacji: ${res.app}`), 'success');
+                toast(t('Utworzono') + ' ' + res.count + ' ' + t('ticketów dla aplikacji:') + ' ' + res.app, 'success');
                 // Refresh if we are viewing that project
                 if (currentProject && currentProject.id === targetProject.id) {
                     await loadTickets(currentProject.id);
