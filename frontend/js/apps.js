@@ -66,6 +66,8 @@ AppRegistry['file-manager'] = function (appDef, launchOpts) {
         _dirSizePollInterval: 1500, // current poll interval (ms), grows with backoff
         // Lazy thumbnail IntersectionObserver
         _thumbObserver: null,
+        // Navigation lock to prevent concurrent navigateTo calls
+        _navigating: false,
     };
 
     createWindow('file-manager', {
@@ -537,6 +539,11 @@ function renderFM(body, state) {
         list.setAttribute('tabindex', '0');
         list.setAttribute('aria-multiselectable', 'true');
         list.setAttribute('aria-label', t('Pliki i foldery'));
+        // Ensure file list is visible (may have been hidden by trash/shared views)
+        list.style.display = '';
+        // Restore list header visibility after special views (trash/shared hide it)
+        const listHeader = body.querySelector('#fm-list-header');
+        if (listHeader) listHeader.style.display = state.viewMode === 'list' ? '' : 'none';
         // Restore select mode class after re-render
         list.classList.toggle('fm-select-mode', !!state.selectMode);
         const allItems = state.searchResults !== null ? state.searchResults : state.items;
@@ -699,10 +706,10 @@ function renderFM(body, state) {
             headerCb.indeterminate = state.selected.size > 0 && state.selected.size < state.items.length;
         }
 
-        // Show/hide list header depending on view mode
-        const listHeader = body.querySelector('#fm-list-header');
-        if (listHeader) {
-            listHeader.style.display = state.viewMode === 'list' ? '' : 'none';
+        // Show/hide list header depending on view mode (re-check after render)
+        {
+            const lh = body.querySelector('#fm-list-header');
+            if (lh) lh.style.display = state.viewMode === 'list' ? '' : 'none';
         }
         // Show sort dropdown only for grid/thumb, hide for list
         const sortDropdown = body.querySelector('#fm-sort-dropdown');
@@ -1782,6 +1789,13 @@ function renderFM(body, state) {
     // (Duplicate Photo Finder is now a standalone app — see apps/duplicates.js)
 
     async function navigateTo(path) {
+        // Prevent concurrent navigations — wait for previous to finish
+        if (state._navigating) return;
+        state._navigating = true;
+        try { await _navigateToInner(path); } finally { state._navigating = false; }
+    }
+
+    async function _navigateToInner(path) {
         // Exit select mode on navigation
         if (state.selectMode) {
             state.selectMode = false;
@@ -1893,6 +1907,7 @@ function renderFM(body, state) {
             // Pre-generate thumbnails in background if already in thumb view
             if (state.viewMode === 'thumb') _fmPregenerateThumbs(state.path);
         } catch (err) {
+            console.error('[FM] navigateTo error:', err);
             toast(t('Nie można otworzyć folderu'), 'error');
         }
     }
