@@ -24,8 +24,7 @@ vm_bp = Blueprint('vm_mgr', __name__, url_prefix='/api/vm')
 
 # ─── Paths ───────────────────────────────────────────────────
 
-_ETHOS_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-_DEFAULT_VM_DIR = os.path.join(_ETHOS_ROOT, 'data', 'vms')
+_DEFAULT_VM_DIR = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'vms')
 
 
 def _vm_root():
@@ -375,213 +374,6 @@ def _next_ws_port():
 
 _NOVNC_DIR = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'novnc')
 _WEBSOCKIFY_BIN = os.path.join(os.path.dirname(__file__), '..', '..', 'venv', 'bin', 'websockify')
-
-
-def _setup_overlay(disk_file, boot_image):
-    """Ensure disk_file is a qcow2 overlay backed by boot_image.
-    If disk already has the correct backing file, do nothing.
-    If disk is empty/new or has a different backing, recreate it.
-    After creation, patch systemd to skip installer and boot EthOS directly."""
-    # Check if already an overlay with correct backing
-    try:
-        info = subprocess.check_output(
-            ['qemu-img', 'info', '--output=json', disk_file],
-            stderr=subprocess.DEVNULL, timeout=10
-        )
-        data = json.loads(info)
-        backing = data.get('backing-filename', '')
-        if backing and os.path.realpath(backing) == os.path.realpath(boot_image):
-            return  # Already set up correctly
-        # Check if disk has significant user data (>50MB actual usage)
-        actual_size = data.get('actual-size', 0)
-        if actual_size > 50 * 1024 * 1024:
-            log.info("Disk %s has %.1fMB data, skipping overlay recreation",
-                     disk_file, actual_size / 1024 / 1024)
-            return
-    except Exception:
-        pass
-    # Create qcow2 overlay backed by the boot image
-    boot_abs = os.path.realpath(boot_image)
-    try:
-        if os.path.exists(disk_file):
-            os.remove(disk_file)
-        subprocess.check_call(
-            ['qemu-img', 'create', '-f', 'qcow2',
-             '-b', boot_abs, '-F', 'raw', disk_file],
-            timeout=30
-        )
-        log.info("Created overlay %s backed by %s", disk_file, boot_abs)
-    except Exception as e:
-        log.error("Failed to create overlay: %s", e)
-        raise RuntimeError(f'Nie udało się utworzyć overlay: {e}')
-    # Patch the overlay: disable installer services, enable EthOS
-    _patch_overlay_systemd(disk_file)
-
-
-def _patch_overlay_systemd(disk_file):
-    """Mount qcow2 overlay via NBD, disable installer services, enable ethos,
-    create setup markers, and sync Python packages from the host venv."""
-    nbd_dev = None
-    mount_point = None
-    try:
-        subprocess.run(['modprobe', 'nbd', 'max_part=8'],
-                       capture_output=True, timeout=5)
-        # Find free NBD device (size=0 in sysfs means unused)
-        for i in range(16):
-            dev = f'/dev/nbd{i}'
-            sz_path = f'/sys/block/nbd{i}/size'
-            if os.path.exists(dev) and os.path.exists(sz_path):
-                try:
-                    with open(sz_path) as f:
-                        if int(f.read().strip()) == 0:
-                            nbd_dev = dev
-                            break
-                except (ValueError, OSError):
-                    continue
-        if not nbd_dev:
-            log.warning("No free NBD device for overlay patching")
-            return
-
-        subprocess.check_call(['qemu-nbd', '--connect', nbd_dev, disk_file],
-                              timeout=10)
-        time.sleep(1)
-
-        # Find root partition (EthOS GPT: ESP=p1, BIOS=p2, root=p3)
-        root_part = None
-        for suffix in ['p3', 'p2', 'p1', '3', '2', '1']:
-            candidate = nbd_dev + suffix
-            if os.path.exists(candidate):
-                r = subprocess.run(['blkid', '-o', 'value', '-s', 'TYPE',
-                                    candidate], capture_output=True, timeout=5)
-                if r.returncode == 0 and b'ext4' in r.stdout:
-                    root_part = candidate
-                    break
-        if not root_part:
-            log.warning("Could not find ext4 root partition in overlay")
-            return
-
-        mount_point = f'/tmp/_ethos_vm_patch_{os.getpid()}'
-        os.makedirs(mount_point, exist_ok=True)
-        subprocess.check_call(['mount', root_part, mount_point], timeout=10)
-
-        # --- 1. Mask installer services ---
-        sysd = os.path.join(mount_point, 'etc/systemd/system')
-        multi = os.path.join(sysd, 'multi-user.target.wants')
-        os.makedirs(multi, exist_ok=True)
-
-        for svc in ['ethos-firstboot.service', 'ethos-preboot.service',
-                     'ethos-ap.service']:
-            # Remove from multi-user wants
-            link = os.path.join(multi, svc)
-            if os.path.islink(link) or os.path.exists(link):
-                os.remove(link)
-            # Mask: remove any existing unit then symlink to /dev/null
-            mask_path = os.path.join(sysd, svc)
-            if os.path.islink(mask_path) or os.path.exists(mask_path):
-                os.remove(mask_path)
-            os.symlink('/dev/null', mask_path)
-            log.info("Masked %s in overlay", svc)
-
-        # --- 2. Patch ethos.service (port 9000, Type=simple) ---
-        ethos_unit = None
-        for unit_dir in ['etc/systemd/system', 'lib/systemd/system']:
-            p = os.path.join(mount_point, unit_dir, 'ethos.service')
-            if os.path.exists(p):
-                ethos_unit = p
-                break
-        if ethos_unit:
-            with open(ethos_unit) as f:
-                content = f.read()
-            patched = False
-            if 'Type=notify' in content:
-                content = content.replace('Type=notify', 'Type=simple')
-                patched = True
-            # Ensure gunicorn binds to port 9000 (matches -b or --bind)
-            import re as _re
-            content, n = _re.subn(
-                r'(-b|--bind)\s+0\.0\.0\.0:\d+',
-                r'\g<1> 0.0.0.0:9000', content)
-            if n:
-                patched = True
-            if patched:
-                with open(ethos_unit, 'w') as f:
-                    f.write(content)
-                log.info("Patched ethos.service: Type=simple, port 9000")
-
-        # Enable ethos.service
-        ethos_link = os.path.join(multi, 'ethos.service')
-        if not os.path.islink(ethos_link) and not os.path.exists(ethos_link):
-            for unit_dir in ['etc/systemd/system', 'lib/systemd/system']:
-                unit = os.path.join(mount_point, unit_dir, 'ethos.service')
-                if os.path.exists(unit):
-                    os.symlink(f'/{unit_dir}/ethos.service', ethos_link)
-                    log.info("Enabled ethos.service in overlay")
-                    break
-
-        # --- 3. Create setup/installer markers (skip wizard on boot) ---
-        data_dir = os.path.join(mount_point, 'opt/ethos/data')
-        os.makedirs(data_dir, exist_ok=True)
-        marker_setup = os.path.join(data_dir, 'setup_done')
-        if not os.path.exists(marker_setup):
-            with open(marker_setup, 'w') as f:
-                f.write('')
-        marker_installer = os.path.join(data_dir, 'installer_result.json')
-        if not os.path.exists(marker_installer):
-            with open(marker_installer, 'w') as f:
-                json.dump({'status': 'done', 'target': '/dev/vda',
-                           'strategy': 'internal'}, f)
-        marker_pwd = os.path.join(mount_point, 'opt/ethos/.password_changed')
-        if not os.path.exists(marker_pwd):
-            with open(marker_pwd, 'w') as f:
-                f.write('')
-        log.info("Created setup/installer markers in overlay")
-
-        # --- 4. Sync Python packages from host venv ---
-        host_sp = os.path.join(_ETHOS_ROOT, 'venv/lib')
-        vm_sp = os.path.join(mount_point, 'opt/ethos/venv/lib')
-        if os.path.isdir(host_sp) and os.path.isdir(vm_sp):
-            try:
-                subprocess.check_call(
-                    ['rsync', '-a', '--ignore-existing',
-                     host_sp + '/', vm_sp + '/'],
-                    timeout=120)
-                log.info("Synced host venv packages to overlay")
-            except Exception as e:
-                log.warning("venv sync failed (non-fatal): %s", e)
-
-        # --- 5. Sync backend code and frontend ---
-        for subdir in ['backend', 'frontend', 'frontend_dist']:
-            host_dir = os.path.join(_ETHOS_ROOT, subdir)
-            vm_dir = os.path.join(mount_point, 'opt/ethos', subdir)
-            if os.path.isdir(host_dir) and os.path.isdir(vm_dir):
-                try:
-                    subprocess.check_call(
-                        ['rsync', '-a', host_dir + '/', vm_dir + '/'],
-                        timeout=120)
-                except Exception as e:
-                    log.warning("Sync %s failed (non-fatal): %s", subdir, e)
-
-        # Sync ethos.env
-        host_env = os.path.join(_ETHOS_ROOT, 'ethos.env')
-        vm_env = os.path.join(mount_point, 'opt/ethos/ethos.env')
-        if os.path.isfile(host_env):
-            import shutil
-            shutil.copy2(host_env, vm_env)
-
-        log.info("Overlay patched successfully")
-    except Exception as e:
-        log.error("Overlay patching failed: %s", e)
-    finally:
-        if mount_point:
-            subprocess.run(['umount', mount_point],
-                           capture_output=True, timeout=10)
-            try:
-                os.rmdir(mount_point)
-            except OSError:
-                pass
-        if nbd_dev:
-            subprocess.run(['qemu-nbd', '--disconnect', nbd_dev],
-                           capture_output=True, timeout=10)
 
 
 def _start_websockify(vnc_port, ws_port):
@@ -1093,31 +885,28 @@ def start_vm(vm_id):
         # Boot image (ISO/IMG) — must be resolved before disk so we can
         # set boot priority when a disk image is used as installer media.
         has_disk_boot_image = False
-        use_overlay = False
         if boot_image and os.path.exists(boot_image):
             ext = os.path.splitext(boot_image)[1].lower()
             if ext in ('.iso',):
                 pass  # handled below after disk
-            elif ext in ('.img', '.raw'):
-                # For raw disk images (e.g. from builder): use qcow2 overlay
-                # backed by the image. VM boots directly as a working system
-                # with persistent changes saved in the overlay.
-                disk_file = vm.get('disk_file', '')
-                if disk_file:
-                    _setup_overlay(disk_file, boot_image)
-                    use_overlay = True
             else:
                 has_disk_boot_image = True
-                fmt_map = {'.qcow2': 'qcow2', '.vdi': 'vdi', '.vmdk': 'vmdk'}
+                fmt_map = {
+                    '.img': 'raw', '.raw': 'raw',
+                    '.qcow2': 'qcow2', '.vdi': 'vdi', '.vmdk': 'vmdk',
+                }
                 img_fmt = fmt_map.get(ext, 'raw')
+                # Boot image as primary drive (bootindex=0) — acts like a USB installer
+                # snapshot=on: temp CoW overlay so guest can write without modifying the original
                 cmd += ['-drive', f'file={boot_image},format={img_fmt},if=none,id=bootimg,snapshot=on']
                 cmd += ['-device', 'virtio-blk-pci,drive=bootimg,bootindex=0']
 
-        # Disk — the VM's own virtual hard drive
+        # Disk — the VM's own virtual hard drive (install target)
         disk_file = vm.get('disk_file', '')
         if disk_file and os.path.exists(disk_file):
             disk_format = vm.get('disk_format', 'qcow2')
             if has_disk_boot_image:
+                # Lower boot priority so the boot image is tried first
                 cmd += ['-drive', f'file={disk_file},format={disk_format},if=none,id=maindisk']
                 cmd += ['-device', 'virtio-blk-pci,drive=maindisk,bootindex=1']
             else:
