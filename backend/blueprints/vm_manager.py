@@ -96,13 +96,27 @@ def _validate_port_forwards(forwards):
 
 
 def _build_net_opts(vm):
-    """Build QEMU -netdev options string from VM network config."""
+    """Build QEMU -netdev options string from VM network config.
+    Returns (netdev_args_list, tap_device_or_None).
+    """
     net = vm.get('network') or _default_network(vm.get('os_type', 'linux'))
     net_type = net.get('net_type', 'user')
 
     if net_type == 'none':
-        return None
+        return None, None
 
+    if net_type == 'bridge':
+        bridge = net.get('bridge', 'br0')
+        tap = _create_tap(bridge)
+        if not tap:
+            # Fallback to user mode if bridge setup fails
+            log.warning("Bridge setup failed, falling back to user mode")
+            net_type = 'user'
+        else:
+            return ['-netdev', f'tap,id=net0,ifname={tap},script=no,downscript=no',
+                    '-device', 'virtio-net-pci,netdev=net0'], tap
+
+    # User-mode NAT
     opts = 'user,id=net0'
     for rule in net.get('port_forwards', []):
         proto = rule.get('proto', 'tcp')
@@ -110,7 +124,151 @@ def _build_net_opts(vm):
         guest = rule.get('guest', 0)
         if guest:
             opts += f',hostfwd={proto}::{host}-:{guest}'
-    return opts
+    return ['-netdev', opts, '-device', 'virtio-net-pci,netdev=net0'], None
+
+
+# ─── Bridge Networking ────────────────────────────────────────
+
+_BRIDGE_NAME = 'br0'
+
+log = __import__('logging').getLogger('vm-manager')
+
+
+def _get_primary_iface():
+    """Detect the primary ethernet interface (carries default route)."""
+    try:
+        r = subprocess.run(
+            "ip -4 route show default | awk '{print $5}' | head -1",
+            shell=True, capture_output=True, text=True, timeout=5
+        )
+        iface = r.stdout.strip()
+        if iface and not iface.startswith(('br', 'docker', 'veth', 'virbr')):
+            return iface
+        # If default route is already on a bridge, check for slave interfaces
+        if iface and iface.startswith('br'):
+            return iface  # bridge itself is fine
+    except Exception:
+        pass
+    return None
+
+
+def _bridge_exists(br='br0'):
+    """Check if a bridge interface exists."""
+    try:
+        r = subprocess.run(
+            f'ip link show {br} type bridge',
+            shell=True, capture_output=True, text=True, timeout=5
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+def _bridge_status():
+    """Return bridge status info for the API."""
+    br = _BRIDGE_NAME
+    exists = _bridge_exists(br)
+    primary = _get_primary_iface()
+    br_ip = None
+    if exists:
+        try:
+            r = subprocess.run(
+                f"ip -4 -o addr show {br} scope global | awk '{{print $4}}' | cut -d/ -f1 | head -1",
+                shell=True, capture_output=True, text=True, timeout=5
+            )
+            br_ip = r.stdout.strip() or None
+        except Exception:
+            pass
+    return {
+        'bridge': br,
+        'exists': exists,
+        'bridge_ip': br_ip,
+        'primary_iface': primary,
+        'ready': exists and br_ip is not None,
+    }
+
+
+def _setup_bridge():
+    """Create br0 bridge and slave the primary ethernet interface to it via nmcli."""
+    br = _BRIDGE_NAME
+    if _bridge_exists(br):
+        st = _bridge_status()
+        if st['ready']:
+            return True, 'Bridge already configured'
+
+    primary = _get_primary_iface()
+    if not primary:
+        return False, 'No primary ethernet interface found'
+    if primary.startswith('br'):
+        return True, f'Already using bridge {primary}'
+
+    try:
+        cmds = [
+            f'nmcli connection add type bridge con-name {br} ifname {br} stp no',
+            f'nmcli connection add type bridge-slave con-name {br}-port ifname {primary} master {br}',
+            f'nmcli connection up {br}',
+        ]
+        for cmd in cmds:
+            r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+            if r.returncode != 0:
+                err = r.stderr.strip()
+                if 'already exists' not in err:
+                    return False, f'{cmd}: {err}'
+        # Wait for bridge to get IP via DHCP
+        for _ in range(10):
+            time.sleep(1)
+            st = _bridge_status()
+            if st['ready']:
+                return True, f'Bridge {br} active with IP {st["bridge_ip"]}'
+        return False, 'Bridge created but did not get an IP (DHCP timeout)'
+    except Exception as e:
+        return False, str(e)
+
+
+def _create_tap(bridge='br0'):
+    """Create a TAP device and attach to bridge. Returns tap name or None."""
+    if not _bridge_exists(bridge):
+        ok, msg = _setup_bridge()
+        if not ok:
+            log.error("Cannot setup bridge: %s", msg)
+            return None
+
+    # Find next available tap name
+    for i in range(100):
+        tap = f'vmtap{i}'
+        r = subprocess.run(
+            f'ip link show {tap}', shell=True, capture_output=True, text=True, timeout=5
+        )
+        if r.returncode != 0:
+            break
+    else:
+        return None
+
+    try:
+        cmds = [
+            f'ip tuntap add dev {tap} mode tap',
+            f'ip link set {tap} master {bridge}',
+            f'ip link set {tap} up',
+        ]
+        for cmd in cmds:
+            r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
+            if r.returncode != 0:
+                log.error("TAP setup failed: %s → %s", cmd, r.stderr.strip())
+                subprocess.run(f'ip link del {tap} 2>/dev/null', shell=True, timeout=5)
+                return None
+        return tap
+    except Exception as e:
+        log.error("TAP creation error: %s", e)
+        return None
+
+
+def _destroy_tap(tap):
+    """Remove a TAP device."""
+    if tap:
+        try:
+            subprocess.run(f'ip link del {tap}', shell=True, capture_output=True, timeout=5)
+        except Exception:
+            pass
 
 
 # ─── Helpers ─────────────────────────────────────────────────
@@ -446,10 +604,13 @@ def update_vm(vm_id):
     if 'network' in data:
         net = data['network']
         net_type = net.get('net_type', 'user') if isinstance(net, dict) else 'user'
-        if net_type not in ('user', 'none'):
+        if net_type not in ('user', 'none', 'bridge'):
             net_type = 'user'
         pf = _validate_port_forwards(net.get('port_forwards', []) if isinstance(net, dict) else [])
-        vm['network'] = {'net_type': net_type, 'port_forwards': pf}
+        net_cfg = {'net_type': net_type, 'port_forwards': pf}
+        if net_type == 'bridge':
+            net_cfg['bridge'] = net.get('bridge', _BRIDGE_NAME) if isinstance(net, dict) else _BRIDGE_NAME
+        vm['network'] = net_cfg
 
     _save_vms(vms)
     return jsonify({'ok': True})
@@ -469,12 +630,34 @@ def update_vm_network(vm_id):
 
     data = request.get_json(force=True) if request.data else {}
     net_type = data.get('net_type', 'user')
-    if net_type not in ('user', 'none'):
-        return jsonify({'error': 'net_type must be "user" or "none"'}), 400
+    if net_type not in ('user', 'none', 'bridge'):
+        return jsonify({'error': 'net_type must be "user", "bridge", or "none"'}), 400
     pf = _validate_port_forwards(data.get('port_forwards', []))
-    vms[vm_id]['network'] = {'net_type': net_type, 'port_forwards': pf}
+    net_cfg = {'net_type': net_type, 'port_forwards': pf}
+    if net_type == 'bridge':
+        net_cfg['bridge'] = data.get('bridge', _BRIDGE_NAME)
+    vms[vm_id]['network'] = net_cfg
     _save_vms(vms)
     return jsonify({'ok': True})
+
+
+@vm_bp.route('/bridge', methods=['GET'])
+@admin_required
+@_require_qemu
+def bridge_info():
+    """Return bridge networking status."""
+    return jsonify(_bridge_status())
+
+
+@vm_bp.route('/bridge/setup', methods=['POST'])
+@admin_required
+@_require_qemu
+def bridge_setup():
+    """Set up bridge networking (creates br0 from primary ethernet)."""
+    ok, msg = _setup_bridge()
+    if ok:
+        return jsonify({'ok': True, 'message': msg, **_bridge_status()})
+    return jsonify({'error': msg}), 500
 
 
 @vm_bp.route('/machines/<vm_id>', methods=['DELETE'])
@@ -530,6 +713,7 @@ def start_vm(vm_id):
     is_rpi = _is_rpi_image(boot_image, vm.get('name', ''))
 
     # ── Raspberry Pi VM (raspi3b machine) ─────────────────────
+    tap_dev = None  # Track TAP device for cleanup on stop
     if is_rpi:
         if not _arm_qemu_available():
             return jsonify({'error': 'qemu-system-aarch64 is not installed. Install: apt install qemu-system-arm'}), 503
@@ -641,9 +825,9 @@ def start_vm(vm_id):
             cmd += ['-drive', f'file={boot_image},format={fmt},if=virtio']
 
         # Network — configurable per-VM
-        net_opts = _build_net_opts(vm)
-        if net_opts:
-            cmd += ['-netdev', net_opts, '-device', 'virtio-net-pci,netdev=net0']
+        net_args, tap_dev = _build_net_opts(vm)
+        if net_args:
+            cmd += net_args
 
         # VNC and display
         cmd += ['-vnc', f':{vnc_display}']
@@ -708,9 +892,9 @@ def start_vm(vm_id):
                 cmd += ['-boot', 'd']
 
         # Network — configurable per-VM
-        net_opts = _build_net_opts(vm)
-        if net_opts:
-            cmd += ['-netdev', net_opts, '-device', 'virtio-net-pci,netdev=net0']
+        net_args, tap_dev = _build_net_opts(vm)
+        if net_args:
+            cmd += net_args
 
         # VNC display (for remote access through browser)
         cmd += ['-vnc', f':{vnc_display}']
@@ -749,6 +933,7 @@ def start_vm(vm_id):
         time.sleep(1)
         if proc.poll() is not None:
             stderr = proc.stderr.read().decode('utf-8', errors='replace')
+            _destroy_tap(tap_dev)
             return jsonify({'error': f'QEMU failed to start: {stderr[:500]}'}), 500
 
         _running_vms[vm_id] = {
@@ -759,6 +944,7 @@ def start_vm(vm_id):
             'vnc_display': vnc_display,
             'ws_proc': None,
             'ws_port': None,
+            'tap_dev': tap_dev,
         }
 
         # Start websockify for browser-based console (noVNC)
@@ -811,6 +997,7 @@ def stop_vm(vm_id):
         pass
 
     _stop_websockify(info)
+    _destroy_tap(info.get('tap_dev'))
     _running_vms.pop(vm_id, None)
     return jsonify({'status': 'ok'})
 
@@ -831,6 +1018,7 @@ def restart_vm(vm_id):
             except subprocess.TimeoutExpired:
                 proc.kill()
             _stop_websockify(info)
+            _destroy_tap(info.get('tap_dev'))
         _running_vms.pop(vm_id, None)
         time.sleep(1)
 

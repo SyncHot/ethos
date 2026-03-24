@@ -6491,6 +6491,25 @@ function renderVMManager(body) {
         const net = vm.network || { net_type: 'user', port_forwards: [] };
         const pf = net.port_forwards || [];
         const isUser = net.net_type === 'user';
+        const isBridge = net.net_type === 'bridge';
+        const isNone = net.net_type === 'none';
+
+        let netInfoHtml = '';
+        if (isUser) {
+            netInfoHtml = `
+                <div class="vm-info-row"><span>Typ:</span><span>User-mode NAT (QEMU SLIRP)</span></div>
+                <div class="vm-info-row"><span>IP gościa:</span><span class="vm-mono">10.0.2.15</span></div>
+                <div class="vm-info-row"><span>Gateway:</span><span class="vm-mono">10.0.2.2</span></div>
+                <div class="vm-info-row"><span>DNS:</span><span class="vm-mono">10.0.2.3</span></div>`;
+        } else if (isBridge) {
+            netInfoHtml = `
+                <div class="vm-info-row"><span>Typ:</span><span>Bridge (TAP) — VM dostaje własne IP z sieci LAN</span></div>
+                <div class="vm-info-row"><span>Bridge:</span><span class="vm-mono">${esc(net.bridge || 'br0')}</span></div>
+                <div class="vm-info-row"><span>IP gościa:</span><span>DHCP z routera (widoczne po starcie)</span></div>
+                <div id="vm-bridge-status"></div>`;
+        } else {
+            netInfoHtml = `<div class="vm-empty" style="margin:8px 0">${t('Sieć wyłączona — VM nie ma dostępu do sieci.')}</div>`;
+        }
 
         dc.innerHTML = `
             <div class="vm-info-grid">
@@ -6498,14 +6517,11 @@ function renderVMManager(body) {
                     <h4><i class="fas fa-network-wired"></i> Tryb sieci
                         ${!running ? `<select id="vm-net-type" class="vm-input" style="width:auto;display:inline-block;margin-left:12px;font-size:12px">
                             <option value="user" ${isUser ? 'selected' : ''}>NAT (User-mode)</option>
-                            <option value="none" ${net.net_type === 'none' ? 'selected' : ''}>Wyłączona</option>
-                        </select>` : `<span class="vm-arch-badge ${isUser ? 'x86' : 'arm'}" style="margin-left:8px">${isUser ? 'NAT' : 'Wyłączona'}</span>`}
+                            <option value="bridge" ${isBridge ? 'selected' : ''}>Bridge (własne IP w LAN)</option>
+                            <option value="none" ${isNone ? 'selected' : ''}>Wyłączona</option>
+                        </select>` : `<span class="vm-arch-badge ${isBridge ? 'arm' : isUser ? 'x86' : ''}" style="margin-left:8px">${isBridge ? 'Bridge' : isUser ? 'NAT' : 'Wyłączona'}</span>`}
                     </h4>
-                    ${isUser ? `<div class="vm-info-row"><span>Typ:</span><span>User-mode NAT (QEMU SLIRP)</span></div>
-                    <div class="vm-info-row"><span>IP gościa:</span><span class="vm-mono">10.0.2.15</span></div>
-                    <div class="vm-info-row"><span>Gateway:</span><span class="vm-mono">10.0.2.2</span></div>
-                    <div class="vm-info-row"><span>DNS:</span><span class="vm-mono">10.0.2.3</span></div>`
-                    : `<div class="vm-empty" style="margin:8px 0">${t('Sieć wyłączona — VM nie ma dostępu do sieci.')}</div>`}
+                    ${netInfoHtml}
                 </div>
             </div>
             ${isUser ? `
@@ -6536,12 +6552,47 @@ function renderVMManager(body) {
                 </tr>`).join('')}</tbody>
             </table>` : `<div class="vm-empty">${t('Brak reguł port forwarding. Dodaj regułę, aby przekierować port z hosta do VM.')}</div>`}
             ` : ''}
+            ${isBridge ? `
+            <div class="vm-empty" style="margin-top:16px">
+                <i class="fas fa-info-circle"></i> W trybie bridge port forwarding nie jest potrzebny — VM jest dostępna bezpośrednio pod własnym IP w sieci LAN.
+            </div>` : ''}
         `;
+
+        // Load bridge status if bridge mode
+        if (isBridge) {
+            (async () => {
+                try {
+                    const bs = await api('/vm/bridge');
+                    const el = dc.querySelector('#vm-bridge-status');
+                    if (el) {
+                        if (bs.ready) {
+                            el.innerHTML = `
+                                <div class="vm-info-row"><span>Bridge IP:</span><span class="vm-mono">${esc(bs.bridge_ip)}</span></div>
+                                <div class="vm-info-row"><span>Status:</span><span class="app-text-ok"><i class="fas fa-check-circle"></i> Gotowy</span></div>`;
+                        } else {
+                            el.innerHTML = `
+                                <div class="vm-info-row"><span>Status:</span><span class="app-text-warn"><i class="fas fa-exclamation-triangle"></i> Bridge nie skonfigurowany</span></div>
+                                ${!running ? `<button class="vm-btn vm-btn-primary vm-btn-sm" id="vm-bridge-setup" style="margin-top:8px">
+                                    <i class="fas fa-cog"></i> Skonfiguruj bridge
+                                </button>` : ''}`;
+                            dc.querySelector('#vm-bridge-setup')?.addEventListener('click', async () => {
+                                try {
+                                    const r = await api('/vm/bridge/setup', { method: 'POST' });
+                                    toast(r.message || 'Bridge skonfigurowany', 'success');
+                                    renderNetworkPanel(dc);
+                                } catch (err) { toast(err.message || t('Błąd konfiguracji bridge'), 'error'); }
+                            });
+                        }
+                    }
+                } catch {}
+            })();
+        }
 
         // Net type change
         dc.querySelector('#vm-net-type')?.addEventListener('change', async (e) => {
             const newType = e.target.value;
             const newNet = { ...net, net_type: newType };
+            if (newType === 'bridge') newNet.bridge = 'br0';
             try {
                 await api(`/vm/machines/${vm.id}/network`, { method: 'PUT', body: newNet });
                 toast('Tryb sieci zmieniony', 'success');
