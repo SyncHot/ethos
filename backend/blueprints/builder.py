@@ -906,7 +906,7 @@ chmod 440 "$ROOT/etc/sudoers.d/010_ethos"
 chroot "$ROOT" groupadd -f ethos-admin
 chroot "$ROOT" groupadd -f ethos-user
 chroot "$ROOT" usermod -aG ethos-admin,ethos-user "$DEFAULT_USER"
-chroot "$ROOT" systemctl disable ssh || true
+chroot "$ROOT" systemctl enable ssh || true
 chroot "$ROOT" systemctl enable smartmontools || true
 chroot "$ROOT" systemctl enable nut-server || true
 chroot "$ROOT" systemctl enable NetworkManager || true

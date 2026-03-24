@@ -108,6 +108,7 @@ if ! ls /etc/ssh/ssh_host_* 1> /dev/null 2>&1; then
     systemctl restart ssh
     echo "[✓] Klucze SSH wygenerowane"
 fi
+systemctl enable ssh 2>/dev/null || true
 
 # ─── Detect mode ───
 # Pre-packaged: config in /opt/ethos/install.conf, backend already present

@@ -102,6 +102,7 @@ systemctl disable ethos-firstboot.service 2>/dev/null || true
 echo "[7/8] Regenerating SSH keys..."
 rm -f /etc/ssh/ssh_host_* 2>/dev/null || true
 ssh-keygen -A 2>/dev/null || true
+systemctl enable ssh 2>/dev/null || true
 
 echo "[8/8] Marking installation complete..."
 # Create setup_done if wizard is disabled (user configured during install)
