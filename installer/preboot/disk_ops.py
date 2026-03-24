@@ -494,7 +494,11 @@ WantedBy=multi-user.target
                 "username": username,
                 "nas_name": nas_name,
             }, f)
-        log.info("Created setup_done (wizard=%s)", setup_wizard)
+        # Password was set during install — skip force-change gate
+        pw_marker = os.path.join(ethos_root, ".password_changed")
+        with open(pw_marker, "w") as f:
+            f.write("installer\n")
+        log.info("Created setup_done + .password_changed (wizard=%s)", setup_wizard)
 
 
 def _install_grub(dev, mount_dir):

@@ -110,6 +110,7 @@ echo "[8/8] Marking installation complete..."
 if [[ "$ETHOS_SETUP_WIZARD" != "yes" ]]; then
     mkdir -p "$ETHOS_DIR/data"
     echo "{\"timestamp\":$(date +%s),\"hostname\":\"${ETHOS_HOSTNAME}\",\"username\":\"${ETHOS_USER}\",\"nas_name\":\"${ETHOS_NAS_NAME}\"}" > "$ETHOS_DIR/data/setup_done"
+    echo "installer" > "$ETHOS_DIR/.password_changed"
     echo "  Setup wizard skipped (pre-configured)."
 fi
 echo "installed $(date -Iseconds)" > "$INSTALLED_MARKER"

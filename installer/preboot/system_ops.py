@@ -120,7 +120,8 @@ def mark_installed(root_dir="/"):
 
 
 def write_setup_done(username, hostname, root_dir="/"):
-    """Create setup_done so the web UI skips the setup wizard.
+    """Create setup_done and .password_changed so the web UI skips the
+    setup wizard and password-change gate.
 
     Called after the installer has already collected credentials and
     configured the system — no wizard step needed on first boot.
@@ -128,7 +129,9 @@ def write_setup_done(username, hostname, root_dir="/"):
     import json
     import time
 
-    data_dir = os.path.join(root_dir, "opt/ethos/data")
+    ethos_root = os.path.join(root_dir, "opt/ethos")
+
+    data_dir = os.path.join(ethos_root, "data")
     os.makedirs(data_dir, exist_ok=True)
     path = os.path.join(data_dir, "setup_done")
     with open(path, "w") as f:
@@ -139,6 +142,12 @@ def write_setup_done(username, hostname, root_dir="/"):
             "nas_name": "EthOS",
         }, f)
     log.info("Created setup_done: %s", path)
+
+    # User already chose a password during install — skip the force-change gate
+    pw_marker = os.path.join(ethos_root, ".password_changed")
+    with open(pw_marker, "w") as f:
+        f.write("installer\n")
+    log.info("Created .password_changed: %s", pw_marker)
 
 
 def configure_services(root_dir="/"):
