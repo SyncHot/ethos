@@ -228,6 +228,10 @@ def install(os_disk, data_disk, progress_cb=None):
         _p("cloning", 35, "Copying system files (this may take a while)...")
         _clone_root(mount_dir, _p)
 
+        # Phase 3b: Fix cloned system for installed-mode operation
+        _p("configuring", 73, "Configuring installed system...")
+        _fixup_installed_system(mount_dir)
+
         # Phase 4: GRUB
         _p("bootloader", 75, "Installing GRUB bootloader...")
         _install_grub(os_dev, mount_dir)
@@ -360,7 +364,79 @@ def _clone_root(mount_dir, progress_cb):
         os.makedirs(f"{mount_dir}/{d}", exist_ok=True)
 
 
-def _install_grub(dev, mount_dir):
+def _fixup_installed_system(mount_dir):
+    """Adjust the cloned system for installed-mode operation.
+
+    The source (installer) image carries artifacts that must be removed
+    or patched before the target can boot as a normal EthOS instance:
+    - .installer-mode flag (would start the preboot installer instead)
+    - ethos.service may have wrong port or Type from the builder
+    - ethos-preboot.service should be disabled
+    """
+    ethos_root = os.path.join(mount_dir, "opt/ethos")
+
+    # Remove installer-mode flag so the system boots into normal EthOS
+    installer_flag = os.path.join(ethos_root, ".installer-mode")
+    if os.path.exists(installer_flag):
+        os.remove(installer_flag)
+        log.info("Removed .installer-mode flag")
+
+    # Read target port from ethos.env (default 9000)
+    port = "9000"
+    env_file = os.path.join(ethos_root, "ethos.env")
+    if os.path.exists(env_file):
+        with open(env_file) as f:
+            for line in f:
+                if line.startswith("PORT="):
+                    port = line.strip().split("=", 1)[1]
+
+    # Write a correct ethos.service for the installed system
+    svc_path = os.path.join(mount_dir, "etc/systemd/system/ethos.service")
+    svc_content = f"""[Unit]
+Description=EthOS NAS
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/ethos
+EnvironmentFile=/opt/ethos/ethos.env
+ExecStartPre=/bin/mkdir -p /opt/ethos/data /opt/ethos/logs /opt/ethos/backups /opt/ethos/uploads
+Environment=PYTHONPATH=/opt/ethos/backend
+ExecStart=/opt/ethos/venv/bin/gunicorn -k gevent -w 4 -b 0.0.0.0:{port} --error-logfile /opt/ethos/logs/gunicorn-error.log --capture-output app:app
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
+"""
+    with open(svc_path, "w") as f:
+        f.write(svc_content)
+    log.info("Wrote ethos.service (port=%s, Type=simple)", port)
+
+    # Disable the preboot installer service on the target
+    preboot_link = os.path.join(
+        mount_dir, "etc/systemd/system/multi-user.target.wants/ethos-preboot.service"
+    )
+    if os.path.exists(preboot_link):
+        os.remove(preboot_link)
+        log.info("Disabled ethos-preboot.service")
+
+    # Enable the main ethos service
+    wants_dir = os.path.join(mount_dir, "etc/systemd/system/multi-user.target.wants")
+    os.makedirs(wants_dir, exist_ok=True)
+    ethos_link = os.path.join(wants_dir, "ethos.service")
+    if not os.path.exists(ethos_link):
+        try:
+            os.symlink("/etc/systemd/system/ethos.service", ethos_link)
+            log.info("Enabled ethos.service")
+        except OSError:
+            pass
+
+
+
     """Install GRUB bootloader."""
     import platform
     arch = platform.machine()
