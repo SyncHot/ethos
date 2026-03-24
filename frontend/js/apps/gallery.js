@@ -1116,7 +1116,7 @@ async function _galBatchZip() {
   try {
     const resp = await fetch('/api/gallery/download-zip', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (localStorage.getItem('token') || '') },
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (NAS.token || ''), 'X-CSRFToken': NAS.csrfToken },
       body: JSON.stringify({ paths })
     });
     if (!resp.ok) throw new Error(t('Błąd pobierania'));

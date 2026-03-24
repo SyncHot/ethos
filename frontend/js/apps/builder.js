@@ -226,6 +226,7 @@ function renderBuilderApp(body) {
         try {
             const headers = {};
             if (NAS.token) headers['Authorization'] = `Bearer ${NAS.token}`;
+            if (NAS.csrfToken) headers['X-CSRFToken'] = NAS.csrfToken;
             headers['Content-Type'] = 'application/json';
 
             const resp = await fetch('/api/builder/release', {

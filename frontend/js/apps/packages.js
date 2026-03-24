@@ -308,6 +308,7 @@ AppRegistry['packages'] = function (appDef) {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${token}`,
+                        'X-CSRFToken': NAS.csrfToken,
                         'Content-Type': 'application/json'
                     }
                 });
@@ -394,6 +395,7 @@ AppRegistry['packages'] = function (appDef) {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${token}`,
+                        'X-CSRFToken': NAS.csrfToken,
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({ packages: packages })

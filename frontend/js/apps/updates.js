@@ -417,7 +417,11 @@ function renderUpdatesApp(body) {
         fd.append('file', file);
 
         try {
-            const res = await fetch('/api/update/upload', { method: 'POST', body: fd });
+            const res = await fetch('/api/update/upload', {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${NAS.token}`, 'X-CSRFToken': NAS.csrfToken },
+                body: fd
+            });
             const data = await res.json();
             if (!res.ok) {
                 toast(data.error || t('Błąd'), 'error');

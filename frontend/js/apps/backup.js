@@ -1230,8 +1230,8 @@ function renderBackupApp(body) {
             formData.append('file', file);
             var resp = await fetch('/api/backup/profiles/import', {
                 method: 'POST',
-                body: formData,
-                credentials: 'same-origin'
+                headers: { 'Authorization': 'Bearer ' + NAS.token, 'X-CSRFToken': NAS.csrfToken },
+                body: formData
             });
             var result = await resp.json();
             if (result.success) {
@@ -2511,8 +2511,8 @@ function renderBackupApp(body) {
             fd.append('file', file);
             var resp = await fetch('/api/backup/snapshots/import', {
                 method: 'POST',
-                body: fd,
-                credentials: 'same-origin'
+                headers: { 'Authorization': 'Bearer ' + NAS.token, 'X-CSRFToken': NAS.csrfToken },
+                body: fd
             });
             var r = await resp.json();
             if (r.ok) {

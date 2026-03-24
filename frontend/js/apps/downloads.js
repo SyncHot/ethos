@@ -915,6 +915,7 @@ function renderDownloadManager(body, launchOpts) {
                 try {
                     const resp = await fetch('/api/downloads/add-torrent', {
                         method: 'POST',
+                        headers: { 'Authorization': `Bearer ${NAS.token}`, 'X-CSRFToken': NAS.csrfToken },
                         body: fd,
                     });
                     const res = await resp.json();

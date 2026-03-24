@@ -534,6 +534,7 @@ function renderStorageApp(body) {
         try {
             const headers = {};
             if (NAS.token) headers['Authorization'] = `Bearer ${NAS.token}`;
+            if (NAS.csrfToken) headers['X-CSRFToken'] = NAS.csrfToken;
             headers['Content-Type'] = 'application/json';
             const resp = await fetch('/api/storage/format', { method: 'POST', headers, body: JSON.stringify({ drive: state.selected, fstype, label }) });
             if (!resp.ok) { const err = await resp.json().catch(() => ({})); addLog(err.error || t('Błąd formatowania'), 'error'); showFmtDone(false); return; }
@@ -645,7 +646,7 @@ function renderStorageApp(body) {
                 logEl.scrollTop = logEl.scrollHeight;
             }
             try {
-                const headers = {}; if (NAS.token) headers['Authorization'] = `Bearer ${NAS.token}`; headers['Content-Type'] = 'application/json';
+                const headers = {}; if (NAS.token) headers['Authorization'] = `Bearer ${NAS.token}`; if (NAS.csrfToken) headers['X-CSRFToken'] = NAS.csrfToken; headers['Content-Type'] = 'application/json';
                 const resp = await fetch('/api/storage/merge', { method: 'POST', headers, body: JSON.stringify({ disk: parent.name, fstype, label }) });
                 if (!resp.ok) { const err = await resp.json().catch(() => ({})); addLog(err.error || t('Błąd'), 'error'); showDone(false); return; }
                 const reader = resp.body.getReader(); const decoder = new TextDecoder(); let buf = '';
@@ -803,7 +804,7 @@ function renderStorageApp(body) {
                 logEl.scrollTop = logEl.scrollHeight;
             }
             try {
-                const headers = {}; if (NAS.token) headers['Authorization'] = `Bearer ${NAS.token}`; headers['Content-Type'] = 'application/json';
+                const headers = {}; if (NAS.token) headers['Authorization'] = `Bearer ${NAS.token}`; if (NAS.csrfToken) headers['X-CSRFToken'] = NAS.csrfToken; headers['Content-Type'] = 'application/json';
                 const resp = await fetch('/api/storage/partition', { method: 'POST', headers, body: JSON.stringify({ disk: parentDisk.name, partitions: splitParts }) });
                 if (!resp.ok) { const err = await resp.json().catch(() => ({})); addLog(err.error || t('Błąd'), 'error'); showDone(false); return; }
                 const reader = resp.body.getReader(); const decoder = new TextDecoder(); let buf = '';

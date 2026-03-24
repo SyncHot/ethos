@@ -254,6 +254,7 @@ function renderPrinterApp(body) {
 
             const headers = {};
             if (NAS.token) headers['Authorization'] = `Bearer ${NAS.token}`;
+            if (NAS.csrfToken) headers['X-CSRFToken'] = NAS.csrfToken;
             const resp = await fetch('/api/printer/print', { method: 'POST', headers, body: formData });
             const data = await resp.json();
 

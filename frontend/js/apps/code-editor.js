@@ -497,7 +497,7 @@ function renderCodeEditor(body, launchOpts) {
         try {
             const resp = await fetch('/api/files/upload', {
                 method: 'POST',
-                headers: { 'Authorization': `Bearer ${NAS.token}` },
+                headers: { 'Authorization': `Bearer ${NAS.token}`, 'X-CSRFToken': NAS.csrfToken },
                 body: formData
             });
             const data = await resp.json();
@@ -572,7 +572,7 @@ function renderCodeEditor(body, launchOpts) {
             try {
                 const resp = await fetch('/api/files/upload', {
                     method: 'POST',
-                    headers: { 'Authorization': `Bearer ${NAS.token}` },
+                    headers: { 'Authorization': `Bearer ${NAS.token}`, 'X-CSRFToken': NAS.csrfToken },
                     body: formData
                 });
                 const data = await resp.json();

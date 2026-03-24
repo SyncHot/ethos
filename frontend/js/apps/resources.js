@@ -262,7 +262,7 @@ function renderResourcesApp(body) {
                     <p class="res-empty-title">Brak wykrytego GPU</p>
                     <p class="res-empty-detect">${t('Wykrywanie sprzętu…')}</p>
                 </div>`;
-                fetch('/api/resources/gpu/detect', {headers:{'Authorization':'Bearer '+NAS.token}}).then(r => r.json()).then(hw => {
+                fetch('/api/resources/gpu/detect', {headers:{'Authorization':'Bearer '+NAS.token,'X-CSRFToken':NAS.csrfToken}}).then(r => r.json()).then(hw => {
                     el._gpuDetected = hw;
                     _renderGpuNoDriver(el, hw);
                 }).catch(() => {
@@ -339,7 +339,7 @@ function renderResourcesApp(body) {
                     <span class="res-gpu-status-warn-text">Sterowniki zainstalowane, wymagany restart systemu</span>
                 </div>
                 <div class="res-reboot-area">
-                    <button onclick="fetch('/api/power/action',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+NAS.token},body:JSON.stringify({action:'reboot'})}).then(()=>{this.disabled=true;this.innerHTML='<i class=\\'fas fa-spinner fa-spin\\'></i> Restartowanie…'})"
+                    <button onclick="fetch('/api/power/action',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+NAS.token,'X-CSRFToken':NAS.csrfToken},body:JSON.stringify({action:'reboot'})}).then(()=>{this.disabled=true;this.innerHTML='<i class=\\'fas fa-spinner fa-spin\\'></i> Restartowanie…'})"
                         class="res-reboot-btn">
                         <i class="fas fa-redo"></i> Uruchom ponownie
                     </button>
@@ -392,7 +392,7 @@ function renderResourcesApp(body) {
                     if (ev.reboot_required) {
                         const rebootArea = document.createElement('div');
                         rebootArea.style.cssText = 'margin-top:10px';
-                        rebootArea.innerHTML = `<button onclick="fetch('/api/power/action',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+NAS.token},body:JSON.stringify({action:'reboot'})}).then(()=>{this.disabled=true;this.innerHTML='<i class=\\'fas fa-spinner fa-spin\\'></i> Restartowanie…'})"
+                        rebootArea.innerHTML = `<button onclick="fetch('/api/power/action',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+NAS.token,'X-CSRFToken':NAS.csrfToken},body:JSON.stringify({action:'reboot'})}).then(()=>{this.disabled=true;this.innerHTML='<i class=\\'fas fa-spinner fa-spin\\'></i> Restartowanie…'})"
                             class="res-reboot-btn">
                             <i class="fas fa-redo"></i> Uruchom ponownie
                         </button>`;
@@ -409,7 +409,7 @@ function renderResourcesApp(body) {
             // Trigger install
             fetch('/api/resources/gpu/install', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + NAS.token},
+                headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + NAS.token, 'X-CSRFToken': NAS.csrfToken},
                 body: JSON.stringify({card_index: cardIndex})
             }).then(r => r.json()).then(res => {
                 if (res.error) {
