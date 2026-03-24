@@ -590,26 +590,41 @@ def start_vm(vm_id):
         # RAM
         cmd += ['-m', str(vm.get('ram', 1024))]
 
-        # Disk
+        # Boot image (ISO/IMG) — must be resolved before disk so we can
+        # set boot priority when a disk image is used as installer media.
+        has_disk_boot_image = False
+        if boot_image and os.path.exists(boot_image):
+            ext = os.path.splitext(boot_image)[1].lower()
+            if ext in ('.iso',):
+                pass  # handled below after disk
+            else:
+                has_disk_boot_image = True
+                fmt_map = {
+                    '.img': 'raw', '.raw': 'raw',
+                    '.qcow2': 'qcow2', '.vdi': 'vdi', '.vmdk': 'vmdk',
+                }
+                img_fmt = fmt_map.get(ext, 'raw')
+                # Boot image as primary drive (bootindex=0) — acts like a USB installer
+                cmd += ['-drive', f'file={boot_image},format={img_fmt},if=none,id=bootimg,readonly=on']
+                cmd += ['-device', 'virtio-blk-pci,drive=bootimg,bootindex=0']
+
+        # Disk — the VM's own virtual hard drive (install target)
         disk_file = vm.get('disk_file', '')
         if disk_file and os.path.exists(disk_file):
             disk_format = vm.get('disk_format', 'qcow2')
-            cmd += ['-drive', f'file={disk_file},format={disk_format},if=virtio']
+            if has_disk_boot_image:
+                # Lower boot priority so the boot image is tried first
+                cmd += ['-drive', f'file={disk_file},format={disk_format},if=none,id=maindisk']
+                cmd += ['-device', 'virtio-blk-pci,drive=maindisk,bootindex=1']
+            else:
+                cmd += ['-drive', f'file={disk_file},format={disk_format},if=virtio']
 
-        # Boot image (ISO/IMG)
+        # ISO boot image (CD-ROM)
         if boot_image and os.path.exists(boot_image):
             ext = os.path.splitext(boot_image)[1].lower()
             if ext in ('.iso',):
                 cmd += ['-cdrom', boot_image]
-                cmd += ['-boot', 'd']  # Boot from CD
-            elif ext in ('.img', '.raw'):
-                cmd += ['-drive', f'file={boot_image},format=raw,if=virtio,readonly=on']
-            elif ext in ('.qcow2',):
-                cmd += ['-drive', f'file={boot_image},format=qcow2,if=virtio,readonly=on']
-            elif ext in ('.vdi',):
-                cmd += ['-drive', f'file={boot_image},format=vdi,if=virtio,readonly=on']
-            elif ext in ('.vmdk',):
-                cmd += ['-drive', f'file={boot_image},format=vmdk,if=virtio,readonly=on']
+                cmd += ['-boot', 'd']
 
         # Network — user-mode NAT with port forwarding
         net_opts = 'user,id=net0'
