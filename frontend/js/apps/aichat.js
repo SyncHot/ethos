@@ -127,8 +127,8 @@ function _aicUpdateWizardDlBar(ds) {
 function _aicFetch(url, opts) {
     opts = opts || {};
     opts.headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
-    var token = (document.cookie.match(/(?:^|; )nas_token=([^;]*)/) || [])[1] || '';
-    if (token) opts.headers['Authorization'] = 'Bearer ' + token;
+    if (NAS.token) opts.headers['Authorization'] = 'Bearer ' + NAS.token;
+    if (NAS.csrfToken) opts.headers['X-CSRFToken'] = NAS.csrfToken;
     return fetch(url, opts);
 }
 
