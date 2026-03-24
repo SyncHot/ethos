@@ -930,13 +930,27 @@ def start_vm(vm_id):
         # VNC display (for remote access through browser)
         cmd += ['-vnc', f':{vnc_display}']
 
-        # UEFI if available (for Windows and modern Linux)
+        # UEFI firmware — auto-detect GPT/EFI disks, also honor explicit os_type
         ovmf_paths = [
             '/usr/share/OVMF/OVMF_CODE.fd',
             '/usr/share/ovmf/OVMF.fd',
             '/usr/share/qemu/OVMF.fd',
         ]
-        if vm.get('os_type') in ('windows', 'uefi'):
+        need_uefi = vm.get('os_type') in ('windows', 'uefi')
+        if not need_uefi:
+            # Auto-detect: check if any disk has GPT (EFI) partition table
+            for check_disk in [boot_image, disk_file]:
+                if check_disk and os.path.exists(check_disk):
+                    try:
+                        r = subprocess.run(
+                            ['fdisk', '-l', check_disk],
+                            capture_output=True, timeout=5)
+                        if b'Disklabel type: gpt' in r.stdout:
+                            need_uefi = True
+                            break
+                    except Exception:
+                        pass
+        if need_uefi:
             for ovmf in ovmf_paths:
                 if os.path.exists(ovmf):
                     cmd += ['-bios', ovmf]

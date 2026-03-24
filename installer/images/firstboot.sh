@@ -344,7 +344,7 @@ Type=simple
 WorkingDirectory=${INSTALL_DIR}
 EnvironmentFile=${INSTALL_DIR}/ethos.env
 Environment=PYTHONPATH=${INSTALL_DIR}/backend
-ExecStart=${INSTALL_DIR}/venv/bin/gunicorn -k gevent -w 4 -b 0.0.0.0:80 app:app
+ExecStart=${INSTALL_DIR}/venv/bin/gunicorn -k gevent -w 4 -b 0.0.0.0:9000 app:app
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGTERM
