@@ -6180,9 +6180,17 @@ function renderVMManager(body) {
             const archBadge = vm.arch === 'raspi' ? '<span class="vm-arch-badge arm"><i class="fab fa-raspberry-pi"></i> RPi</span>'
                 : vm.arch === 'aarch64' ? '<span class="vm-arch-badge arm">ARM64</span>'
                 : '<span class="vm-arch-badge x86">x86_64</span>';
+            const net = vm.network || { net_type: 'user', port_forwards: [] };
+            let quickLinks = '';
+            if (running && net.net_type === 'user' && net.port_forwards?.length) {
+                quickLinks = net.port_forwards.map(pf => {
+                    const lbl = pf.label ? esc(pf.label) : `${pf.guest}`;
+                    return `<a href="http://${location.hostname}:${pf.host}" target="_blank" class="vm-link-chip" style="padding:3px 8px;font-size:11px" title="${pf.proto} :${pf.host}→:${pf.guest}" onclick="event.stopPropagation()"><i class="fas fa-external-link-alt"></i> ${lbl} :${pf.host}</a>`;
+                }).join(' ');
+            }
             return `<tr class="vm-row" data-id="${esc(vm.id)}">
                 <td><i class="fab ${osIcon} app-os-icon"></i></td>
-                <td><strong class="vm-name-link" data-id="${esc(vm.id)}">${esc(vm.name)}</strong></td>
+                <td><strong class="vm-name-link" data-id="${esc(vm.id)}">${esc(vm.name)}</strong>${quickLinks ? `<div class="vm-links-row" style="margin-top:4px">${quickLinks}</div>` : ''}</td>
                 <td>${esc(vm.os_type)} ${archBadge}</td>
                 <td>${vm.cpu} vCPU</td>
                 <td>${vm.ram} MB</td>
@@ -6458,9 +6466,38 @@ function renderVMManager(body) {
         const vm = S.selectedVM;
         const running = vm.status === 'running';
         const osLabels = { linux: 'Linux', windows: 'Windows', other: 'Inny' };
+        const host = location.hostname;
+        const net = vm.network || { net_type: 'user', port_forwards: [] };
+
+        // Build connection links for running VMs
+        let linksHtml = '';
+        if (running) {
+            const links = [];
+            if (net.net_type === 'user' && net.port_forwards?.length) {
+                for (const pf of net.port_forwards) {
+                    const url = `http://${host}:${pf.host}`;
+                    const label = pf.label ? esc(pf.label) : `${pf.proto}/${pf.guest}`;
+                    links.push(`<a href="${esc(url)}" target="_blank" class="vm-link-chip" title="${esc(pf.proto)} host:${pf.host} → guest:${pf.guest}"><i class="fas fa-external-link-alt"></i> ${label} <span class="vm-link-port">:${pf.host}</span></a>`);
+                }
+            }
+            if (vm.ws_port) {
+                const vncUrl = `http://${host}:${vm.ws_port}/vnc_lite.html?host=${host}&port=${vm.ws_port}&autoconnect=true&resize=scale&reconnect=true`;
+                links.push(`<a href="${esc(vncUrl)}" target="_blank" class="vm-link-chip vm-link-vnc" title="Otwórz konsolę VNC w przeglądarce"><i class="fas fa-tv"></i> Konsola VNC <span class="vm-link-port">:${vm.ws_port}</span></a>`);
+            } else if (vm.vnc_port) {
+                links.push(`<span class="vm-link-chip vm-link-vnc" title="Połącz klientem VNC na ${host}:${vm.vnc_port}"><i class="fas fa-tv"></i> VNC <span class="vm-link-port">:${vm.vnc_port}</span></span>`);
+            }
+            if (links.length) {
+                linksHtml = `
+                <div class="vm-info-card" style="grid-column:1/-1">
+                    <h4><i class="fas fa-link"></i> Połączenia</h4>
+                    <div class="vm-links-row">${links.join(' ')}</div>
+                </div>`;
+            }
+        }
 
         dc.innerHTML = `
             <div class="vm-info-grid">
+                ${linksHtml}
                 <div class="vm-info-card">
                     <h4><i class="fas fa-info-circle"></i> Informacje</h4>
                     <div class="vm-info-row"><span>Nazwa:</span><span>${esc(vm.name)}</span></div>
@@ -6472,7 +6509,6 @@ function renderVMManager(body) {
                     <div class="vm-info-row"><span>Opis:</span><span>${esc(vm.description) || '—'}</span></div>
                     <div class="vm-info-row"><span>Utworzona:</span><span>${esc(vm.created)}</span></div>
                     <div class="vm-info-row"><span>Status:</span><span>${running ? `<span class="vm-dot vm-dot-running"></span> ${t('Działa')}` : '<span class="vm-dot vm-dot-stopped"></span> Zatrzymana'}</span></div>
-                    ${running && vm.vnc_port ? `<div class="vm-info-row"><span>VNC port:</span><span>${vm.vnc_port}</span></div>` : ''}
                     ${running && vm.pid ? `<div class="vm-info-row"><span>PID:</span><span>${vm.pid}</span></div>` : ''}
                 </div>
                 <div class="vm-info-card">

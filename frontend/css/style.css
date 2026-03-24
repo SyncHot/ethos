@@ -3261,6 +3261,19 @@ a.dkr-port-link:hover {
 .vm-info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 @media (max-width: 800px) { .vm-info-grid { grid-template-columns: 1fr; } }
 
+.vm-links-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.vm-link-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 7px 14px; border-radius: var(--r-md);
+    background: rgba(139,92,246,.1); border: 1px solid rgba(139,92,246,.3);
+    color: #8b5cf6; font-size: 13px; font-weight: 500;
+    text-decoration: none; cursor: pointer; transition: all var(--transition-fast);
+}
+.vm-link-chip:hover { background: rgba(139,92,246,.2); border-color: #8b5cf6; }
+.vm-link-chip .vm-link-port { color: var(--text-muted); font-size: 11px; font-weight: 400; }
+.vm-link-vnc { background: rgba(16,185,129,.1); border-color: rgba(16,185,129,.3); color: #10b981; }
+.vm-link-vnc:hover { background: rgba(16,185,129,.2); border-color: #10b981; }
+
 .vm-info-card {
     background: var(--bg-secondary); border: 1px solid var(--border);
     border-radius: var(--r-md); padding: 16px;
