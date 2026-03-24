@@ -119,6 +119,28 @@ def mark_installed(root_dir="/"):
     log.info("Created marker: %s", marker)
 
 
+def write_setup_done(username, hostname, root_dir="/"):
+    """Create setup_done so the web UI skips the setup wizard.
+
+    Called after the installer has already collected credentials and
+    configured the system — no wizard step needed on first boot.
+    """
+    import json
+    import time
+
+    data_dir = os.path.join(root_dir, "opt/ethos/data")
+    os.makedirs(data_dir, exist_ok=True)
+    path = os.path.join(data_dir, "setup_done")
+    with open(path, "w") as f:
+        json.dump({
+            "timestamp": int(time.time()),
+            "hostname": hostname,
+            "username": username,
+            "nas_name": "EthOS",
+        }, f)
+    log.info("Created setup_done: %s", path)
+
+
 def configure_services(root_dir="/"):
     """Enable ethos.service and disable preboot on target."""
     if root_dir == "/":

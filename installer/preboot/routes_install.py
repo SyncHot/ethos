@@ -100,6 +100,9 @@ def start_install():
             _set_state(phase="config", percent=90, message="Writing configuration...")
             system_ops.write_install_conf(username, hostname, root_dir=mount_dir)
 
+            # Step 5b: Mark setup complete (user already configured during install)
+            system_ops.write_setup_done(username, hostname, root_dir=mount_dir)
+
             # Step 6: Configure services
             _set_state(phase="services", percent=92, message="Configuring services...")
             system_ops.configure_services(root_dir=mount_dir)
