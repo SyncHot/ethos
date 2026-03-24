@@ -6229,7 +6229,11 @@ function renderVMManager(body) {
     async function vmAction(id, action) {
         try {
             const r = await api(`/vm/machines/${id}/${action}`, { method: 'POST' });
-            toast(r.message || `${action} OK`, 'success');
+            if (r && r.error) {
+                toast(r.error, 'error');
+            } else {
+                toast(r.message || `${action} OK`, 'success');
+            }
         } catch (e) {
             toast(e.message || `${t('Błąd:')} ${action}`, 'error');
         }

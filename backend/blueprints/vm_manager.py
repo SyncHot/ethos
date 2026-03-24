@@ -116,13 +116,22 @@ def _build_net_opts(vm):
             return ['-netdev', f'tap,id=net0,ifname={tap},script=no,downscript=no',
                     '-device', 'virtio-net-pci,netdev=net0'], tap
 
-    # User-mode NAT
+    # User-mode NAT — check port availability first
     opts = 'user,id=net0'
     for rule in net.get('port_forwards', []):
         proto = rule.get('proto', 'tcp')
         host = rule.get('host', 0)
         guest = rule.get('guest', 0)
-        if guest:
+        if guest and host:
+            import socket
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                s.bind(('', int(host)))
+                s.close()
+            except OSError:
+                raise RuntimeError(
+                    f'Port {host} jest zajęty (inny proces go używa). '
+                    f'Zmień port hosta w ustawieniach sieci VM lub zwolnij port.')
             opts += f',hostfwd={proto}::{host}-:{guest}'
     return ['-netdev', opts, '-device', 'virtio-net-pci,netdev=net0'], None
 
@@ -825,7 +834,10 @@ def start_vm(vm_id):
             cmd += ['-drive', f'file={boot_image},format={fmt},if=virtio']
 
         # Network — configurable per-VM
-        net_args, tap_dev = _build_net_opts(vm)
+        try:
+            net_args, tap_dev = _build_net_opts(vm)
+        except RuntimeError as e:
+            return jsonify({'error': str(e)}), 409
         if net_args:
             cmd += net_args
 
@@ -892,7 +904,10 @@ def start_vm(vm_id):
                 cmd += ['-boot', 'd']
 
         # Network — configurable per-VM
-        net_args, tap_dev = _build_net_opts(vm)
+        try:
+            net_args, tap_dev = _build_net_opts(vm)
+        except RuntimeError as e:
+            return jsonify({'error': str(e)}), 409
         if net_args:
             cmd += net_args
 
