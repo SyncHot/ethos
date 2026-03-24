@@ -67,6 +67,52 @@ def _save_vms(vms):
         json.dump(vms, f, indent=2)
 
 
+def _default_network(os_type='linux'):
+    """Return sensible default network config based on OS type."""
+    pf = []
+    if os_type == 'linux':
+        pf.append({'proto': 'tcp', 'host': 0, 'guest': 22, 'label': 'SSH'})
+    elif os_type == 'windows':
+        pf.append({'proto': 'tcp', 'host': 0, 'guest': 3389, 'label': 'RDP'})
+    return {'net_type': 'user', 'port_forwards': pf}
+
+
+def _validate_port_forwards(forwards):
+    """Validate and sanitize a list of port forward rules."""
+    clean = []
+    for rule in (forwards or []):
+        proto = str(rule.get('proto', 'tcp')).lower()
+        if proto not in ('tcp', 'udp'):
+            proto = 'tcp'
+        host = int(rule.get('host', 0))
+        guest = int(rule.get('guest', 0))
+        if guest < 1 or guest > 65535:
+            continue
+        if host < 0 or host > 65535:
+            host = 0
+        label = str(rule.get('label', ''))[:32]
+        clean.append({'proto': proto, 'host': host, 'guest': guest, 'label': label})
+    return clean
+
+
+def _build_net_opts(vm):
+    """Build QEMU -netdev options string from VM network config."""
+    net = vm.get('network') or _default_network(vm.get('os_type', 'linux'))
+    net_type = net.get('net_type', 'user')
+
+    if net_type == 'none':
+        return None
+
+    opts = 'user,id=net0'
+    for rule in net.get('port_forwards', []):
+        proto = rule.get('proto', 'tcp')
+        host = rule.get('host', 0)
+        guest = rule.get('guest', 0)
+        if guest:
+            opts += f',hostfwd={proto}::{host}-:{guest}'
+    return opts
+
+
 # ─── Helpers ─────────────────────────────────────────────────
 
 def _allowed_image_roots():
@@ -280,6 +326,7 @@ def list_vms():
             'created': vm.get('created', ''),
             'description': vm.get('description', ''),
             'disk_file': vm.get('disk_file', ''),
+            'network': vm.get('network') or _default_network(vm.get('os_type', 'linux')),
             'arch': 'raspi' if _is_rpi_image(vm.get('boot_image', ''), vm.get('name', ''))
                     else 'aarch64' if _is_arm_image(vm.get('boot_image', ''), vm.get('name', ''))
                     else 'x86_64',
@@ -304,6 +351,11 @@ def create_vm():
     boot_image = data.get('boot_image', '')  # ISO/IMG file to boot from
     description = data.get('description', '')
     disk_format = data.get('disk_format', 'qcow2')  # qcow2, raw
+
+    # Network configuration
+    network = data.get('network')
+    if network is None:
+        network = _default_network(os_type)
 
     # Validate
     if cpu < 1 or cpu > 32:
@@ -350,6 +402,7 @@ def create_vm():
         'os_type': os_type,
         'boot_image': boot_image,
         'description': description,
+        'network': network,
         'created': time.strftime('%Y-%m-%d %H:%M:%S'),
     }
     _save_vms(vms)
@@ -390,7 +443,36 @@ def update_vm(vm_id):
         vm['boot_image'] = new_boot
     if 'description' in data:
         vm['description'] = data['description']
+    if 'network' in data:
+        net = data['network']
+        net_type = net.get('net_type', 'user') if isinstance(net, dict) else 'user'
+        if net_type not in ('user', 'none'):
+            net_type = 'user'
+        pf = _validate_port_forwards(net.get('port_forwards', []) if isinstance(net, dict) else [])
+        vm['network'] = {'net_type': net_type, 'port_forwards': pf}
 
+    _save_vms(vms)
+    return jsonify({'ok': True})
+
+
+@vm_bp.route('/machines/<vm_id>/network', methods=['PUT'])
+@admin_required
+@_require_qemu
+def update_vm_network(vm_id):
+    """Update VM network configuration (only when stopped)."""
+    if _check_vm_process(vm_id):
+        return jsonify({'error': 'Stop VM before changing network configuration'}), 409
+
+    vms = _load_vms()
+    if vm_id not in vms:
+        return jsonify({'error': 'VM not found'}), 404
+
+    data = request.get_json(force=True) if request.data else {}
+    net_type = data.get('net_type', 'user')
+    if net_type not in ('user', 'none'):
+        return jsonify({'error': 'net_type must be "user" or "none"'}), 400
+    pf = _validate_port_forwards(data.get('port_forwards', []))
+    vms[vm_id]['network'] = {'net_type': net_type, 'port_forwards': pf}
     _save_vms(vms)
     return jsonify({'ok': True})
 
@@ -558,11 +640,10 @@ def start_vm(vm_id):
             fmt = 'raw' if ext in ('.img', '.raw') else 'qcow2'
             cmd += ['-drive', f'file={boot_image},format={fmt},if=virtio']
 
-        # Network
-        net_opts = 'user,id=net0'
-        if vm.get('os_type') == 'linux':
-            net_opts += ',hostfwd=tcp::0-:22'
-        cmd += ['-netdev', net_opts, '-device', 'virtio-net-pci,netdev=net0']
+        # Network — configurable per-VM
+        net_opts = _build_net_opts(vm)
+        if net_opts:
+            cmd += ['-netdev', net_opts, '-device', 'virtio-net-pci,netdev=net0']
 
         # VNC and display
         cmd += ['-vnc', f':{vnc_display}']
@@ -626,15 +707,10 @@ def start_vm(vm_id):
                 cmd += ['-cdrom', boot_image]
                 cmd += ['-boot', 'd']
 
-        # Network — user-mode NAT with port forwarding
-        net_opts = 'user,id=net0'
-        # Forward SSH for Linux VMs
-        if vm.get('os_type') == 'linux':
-            net_opts += ',hostfwd=tcp::0-:22'
-        # Forward RDP for Windows VMs
-        if vm.get('os_type') == 'windows':
-            net_opts += ',hostfwd=tcp::0-:3389'
-        cmd += ['-netdev', net_opts, '-device', 'virtio-net-pci,netdev=net0']
+        # Network — configurable per-VM
+        net_opts = _build_net_opts(vm)
+        if net_opts:
+            cmd += ['-netdev', net_opts, '-device', 'virtio-net-pci,netdev=net0']
 
         # VNC display (for remote access through browser)
         cmd += ['-vnc', f':{vnc_display}']

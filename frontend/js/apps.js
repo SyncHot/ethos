@@ -6368,6 +6368,7 @@ function renderVMManager(body) {
             <div class="vm-detail-tabs">
                 ${running && vm.ws_port ? `<div class="vm-dtab ${S.detailTab === 'console' ? 'active' : ''}" data-t="console"><i class="fas fa-tv"></i> Konsola</div>` : ''}
                 <div class="vm-dtab ${S.detailTab === 'info' ? 'active' : ''}" data-t="info">Konfiguracja</div>
+                <div class="vm-dtab ${S.detailTab === 'network' ? 'active' : ''}" data-t="network"><i class="fas fa-network-wired"></i> Sieć</div>
                 <div class="vm-dtab ${S.detailTab === 'snapshots' ? 'active' : ''}" data-t="snapshots">Snapshoty</div>
                 <div class="vm-dtab ${S.detailTab === 'disk' ? 'active' : ''}" data-t="disk">Dysk</div>
             </div>
@@ -6414,6 +6415,7 @@ function renderVMManager(body) {
         switch (S.detailTab) {
             case 'console': renderConsolePanel(dc); break;
             case 'info': renderInfoPanel(dc); break;
+            case 'network': renderNetworkPanel(dc); break;
             case 'snapshots': renderSnapshotsPanel(dc); break;
             case 'disk': renderDiskPanel(dc); break;
         }
@@ -6480,6 +6482,158 @@ function renderVMManager(body) {
         `;
 
         main.querySelector('#vm-edit-config')?.addEventListener('click', () => showEditModal(vm));
+    }
+
+    // Network panel
+    function renderNetworkPanel(dc) {
+        const vm = S.selectedVM;
+        const running = vm.status === 'running';
+        const net = vm.network || { net_type: 'user', port_forwards: [] };
+        const pf = net.port_forwards || [];
+        const isUser = net.net_type === 'user';
+
+        dc.innerHTML = `
+            <div class="vm-info-grid">
+                <div class="vm-info-card" style="grid-column:1/-1">
+                    <h4><i class="fas fa-network-wired"></i> Tryb sieci
+                        ${!running ? `<select id="vm-net-type" class="vm-input" style="width:auto;display:inline-block;margin-left:12px;font-size:12px">
+                            <option value="user" ${isUser ? 'selected' : ''}>NAT (User-mode)</option>
+                            <option value="none" ${net.net_type === 'none' ? 'selected' : ''}>Wyłączona</option>
+                        </select>` : `<span class="vm-arch-badge ${isUser ? 'x86' : 'arm'}" style="margin-left:8px">${isUser ? 'NAT' : 'Wyłączona'}</span>`}
+                    </h4>
+                    ${isUser ? `<div class="vm-info-row"><span>Typ:</span><span>User-mode NAT (QEMU SLIRP)</span></div>
+                    <div class="vm-info-row"><span>IP gościa:</span><span class="vm-mono">10.0.2.15</span></div>
+                    <div class="vm-info-row"><span>Gateway:</span><span class="vm-mono">10.0.2.2</span></div>
+                    <div class="vm-info-row"><span>DNS:</span><span class="vm-mono">10.0.2.3</span></div>`
+                    : `<div class="vm-empty" style="margin:8px 0">${t('Sieć wyłączona — VM nie ma dostępu do sieci.')}</div>`}
+                </div>
+            </div>
+            ${isUser ? `
+            <div class="vm-toolbar app-toolbar-flat" style="margin-top:16px">
+                <span class="vm-toolbar-title">
+                    <i class="fas fa-exchange-alt"></i> Port forwarding
+                    <span class="vm-badge">${pf.length}</span>
+                </span>
+                ${!running ? `<button class="vm-btn vm-btn-primary vm-btn-sm" id="vm-pf-add">
+                    <i class="fas fa-plus"></i> Dodaj regułę
+                </button>` : ''}
+            </div>
+            ${pf.length ? `
+            <table class="vm-table">
+                <thead><tr>
+                    <th>Etykieta</th>
+                    <th>Protokół</th>
+                    <th>Port hosta</th>
+                    <th>Port gościa</th>
+                    ${!running ? '<th class="app-col-actions-sm">Akcje</th>' : ''}
+                </tr></thead>
+                <tbody>${pf.map((r, i) => `<tr>
+                    <td>${esc(r.label) || '—'}</td>
+                    <td><span class="vm-arch-badge x86">${esc(r.proto).toUpperCase()}</span></td>
+                    <td class="vm-mono">${r.host === 0 ? '<em>auto</em>' : r.host}</td>
+                    <td class="vm-mono">${r.guest}</td>
+                    ${!running ? `<td><button class="vm-btn vm-btn-sm vm-btn-danger" data-pf-del="${i}" title="${t('Usuń')}"><i class="fas fa-trash"></i></button></td>` : ''}
+                </tr>`).join('')}</tbody>
+            </table>` : `<div class="vm-empty">${t('Brak reguł port forwarding. Dodaj regułę, aby przekierować port z hosta do VM.')}</div>`}
+            ` : ''}
+        `;
+
+        // Net type change
+        dc.querySelector('#vm-net-type')?.addEventListener('change', async (e) => {
+            const newType = e.target.value;
+            const newNet = { ...net, net_type: newType };
+            try {
+                await api(`/vm/machines/${vm.id}/network`, { method: 'PUT', body: newNet });
+                toast('Tryb sieci zmieniony', 'success');
+                await refreshSelectedVM();
+            } catch (err) { toast(err.message || t('Błąd'), 'error'); }
+        });
+
+        // Delete port forward rule
+        dc.querySelectorAll('[data-pf-del]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const idx = parseInt(btn.dataset.pfDel);
+                const newPf = pf.filter((_, i) => i !== idx);
+                try {
+                    await api(`/vm/machines/${vm.id}/network`, { method: 'PUT', body: { ...net, port_forwards: newPf } });
+                    toast('Reguła usunięta', 'success');
+                    await refreshSelectedVM();
+                } catch (err) { toast(err.message || t('Błąd'), 'error'); }
+            });
+        });
+
+        // Add port forward rule
+        dc.querySelector('#vm-pf-add')?.addEventListener('click', () => {
+            showAddPortForwardModal(vm, net);
+        });
+    }
+
+    function showAddPortForwardModal(vm, net) {
+        const overlay = document.createElement('div');
+        overlay.className = 'vm-modal-overlay';
+        overlay.innerHTML = `
+            <div class="vm-modal" style="max-width:420px">
+                <div class="vm-modal-header">
+                    <span><i class="fas fa-exchange-alt"></i> Nowa reguła port forwarding</span>
+                    <button class="vm-modal-close">&times;</button>
+                </div>
+                <div class="vm-modal-body">
+                    <div class="vm-form-group">
+                        <label>Etykieta (opcjonalnie)</label>
+                        <input type="text" id="vm-pf-label" class="vm-input" placeholder="np. SSH, HTTP, Webserver">
+                    </div>
+                    <div class="vm-form-row">
+                        <div class="vm-form-group">
+                            <label>Protokół</label>
+                            <select id="vm-pf-proto" class="vm-input">
+                                <option value="tcp">TCP</option>
+                                <option value="udp">UDP</option>
+                            </select>
+                        </div>
+                        <div class="vm-form-group">
+                            <label>Port gościa (VM)</label>
+                            <input type="number" id="vm-pf-guest" class="vm-input" min="1" max="65535" placeholder="np. 22, 80, 443">
+                        </div>
+                    </div>
+                    <div class="vm-form-group">
+                        <label>Port hosta (0 = automatyczny)</label>
+                        <input type="number" id="vm-pf-host" class="vm-input" min="0" max="65535" value="0">
+                        <small style="color:var(--text-muted);font-size:11px">0 = system wybierze wolny port automatycznie</small>
+                    </div>
+                </div>
+                <div class="vm-modal-footer">
+                    <button class="vm-btn" id="vm-pf-cancel">Anuluj</button>
+                    <button class="vm-btn vm-btn-primary" id="vm-pf-ok">Dodaj</button>
+                </div>
+            </div>
+        `;
+        body.appendChild(overlay);
+
+        const close = () => overlay.remove();
+        overlay.querySelector('.vm-modal-close').addEventListener('click', close);
+        overlay.querySelector('#vm-pf-cancel').addEventListener('click', close);
+        overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
+        overlay.querySelector('#vm-pf-ok').addEventListener('click', async () => {
+            const guest = parseInt(overlay.querySelector('#vm-pf-guest').value);
+            if (!guest || guest < 1 || guest > 65535) {
+                toast('Podaj prawidłowy port gościa (1-65535)', 'warning');
+                return;
+            }
+            const rule = {
+                proto: overlay.querySelector('#vm-pf-proto').value,
+                host: parseInt(overlay.querySelector('#vm-pf-host').value) || 0,
+                guest,
+                label: overlay.querySelector('#vm-pf-label').value.trim(),
+            };
+            const newPf = [...(net.port_forwards || []), rule];
+            try {
+                await api(`/vm/machines/${vm.id}/network`, { method: 'PUT', body: { ...net, port_forwards: newPf } });
+                toast('Reguła dodana', 'success');
+                close();
+                await refreshSelectedVM();
+            } catch (err) { toast(err.message || t('Błąd'), 'error'); }
+        });
     }
 
     // Edit VM modal
