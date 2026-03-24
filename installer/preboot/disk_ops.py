@@ -370,8 +370,10 @@ def _fixup_installed_system(mount_dir):
     The source (installer) image carries artifacts that must be removed
     or patched before the target can boot as a normal EthOS instance:
     - .installer-mode flag (would start the preboot installer instead)
+    - .installed flag (must be absent so firstboot.sh can run)
     - ethos.service may have wrong port or Type from the builder
     - ethos-preboot.service should be disabled
+    - ethos-firstboot.service should be enabled
     """
     ethos_root = os.path.join(mount_dir, "opt/ethos")
 
@@ -380,6 +382,13 @@ def _fixup_installed_system(mount_dir):
     if os.path.exists(installer_flag):
         os.remove(installer_flag)
         log.info("Removed .installer-mode flag")
+
+    # Remove .installed so firstboot.sh can run on first boot.
+    # firstboot handles: user creation, hostname, setup_done, etc.
+    installed_flag = os.path.join(ethos_root, ".installed")
+    if os.path.exists(installed_flag):
+        os.remove(installed_flag)
+        log.info("Removed .installed flag (firstboot will recreate it)")
 
     # Read target port from ethos.env (default 9000)
     port = "9000"
@@ -394,7 +403,7 @@ def _fixup_installed_system(mount_dir):
     svc_path = os.path.join(mount_dir, "etc/systemd/system/ethos.service")
     svc_content = f"""[Unit]
 Description=EthOS NAS
-After=network.target
+After=network.target ethos-firstboot.service
 Wants=network.target
 
 [Service]
@@ -416,17 +425,27 @@ WantedBy=multi-user.target
         f.write(svc_content)
     log.info("Wrote ethos.service (port=%s, Type=simple)", port)
 
+    wants_dir = os.path.join(mount_dir, "etc/systemd/system/multi-user.target.wants")
+    os.makedirs(wants_dir, exist_ok=True)
+
     # Disable the preboot installer service on the target
-    preboot_link = os.path.join(
-        mount_dir, "etc/systemd/system/multi-user.target.wants/ethos-preboot.service"
-    )
+    preboot_link = os.path.join(wants_dir, "ethos-preboot.service")
     if os.path.exists(preboot_link):
         os.remove(preboot_link)
         log.info("Disabled ethos-preboot.service")
 
+    # Enable ethos-firstboot.service so it runs on first boot
+    fb_link = os.path.join(wants_dir, "ethos-firstboot.service")
+    if not os.path.exists(fb_link):
+        try:
+            os.symlink(
+                "/etc/systemd/system/ethos-firstboot.service", fb_link
+            )
+            log.info("Enabled ethos-firstboot.service")
+        except OSError:
+            pass
+
     # Enable the main ethos service
-    wants_dir = os.path.join(mount_dir, "etc/systemd/system/multi-user.target.wants")
-    os.makedirs(wants_dir, exist_ok=True)
     ethos_link = os.path.join(wants_dir, "ethos.service")
     if not os.path.exists(ethos_link):
         try:
@@ -435,8 +454,50 @@ WantedBy=multi-user.target
         except OSError:
             pass
 
+    # Copy updated firstboot-v2 wrapper to target
+    src_fb = os.path.join(ethos_root, "installer/images/firstboot-v2.sh")
+    dst_fb = os.path.join(mount_dir, "opt/ethos-firstboot.sh")
+    if os.path.exists(src_fb):
+        import shutil
+        shutil.copy2(src_fb, dst_fb)
+        os.chmod(dst_fb, 0o755)
+        log.info("Deployed updated firstboot-v2.sh")
+
+    # Create setup_done if wizard is disabled (belt-and-suspenders with firstboot)
+    conf_path = os.path.join(ethos_root, "install.conf")
+    setup_wizard = "yes"
+    hostname = "ethos"
+    username = "nasadmin"
+    nas_name = "EthOS"
+    if os.path.exists(conf_path):
+        with open(conf_path) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("ETHOS_SETUP_WIZARD="):
+                    setup_wizard = line.split("=", 1)[1].strip().strip('"')
+                elif line.startswith("ETHOS_HOSTNAME="):
+                    hostname = line.split("=", 1)[1].strip().strip('"')
+                elif line.startswith("ETHOS_USER="):
+                    username = line.split("=", 1)[1].strip().strip('"')
+                elif line.startswith("ETHOS_NAS_NAME="):
+                    nas_name = line.split("=", 1)[1].strip().strip('"')
+
+    if setup_wizard != "yes":
+        import json, time
+        data_dir = os.path.join(ethos_root, "data")
+        os.makedirs(data_dir, exist_ok=True)
+        setup_done = os.path.join(data_dir, "setup_done")
+        with open(setup_done, "w") as f:
+            json.dump({
+                "timestamp": int(time.time()),
+                "hostname": hostname,
+                "username": username,
+                "nas_name": nas_name,
+            }, f)
+        log.info("Created setup_done (wizard=%s)", setup_wizard)
 
 
+def _install_grub(dev, mount_dir):
     """Install GRUB bootloader."""
     import platform
     arch = platform.machine()

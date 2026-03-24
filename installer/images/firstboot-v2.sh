@@ -28,6 +28,9 @@ fi
 
 ETHOS_USER="${ETHOS_USER:-nasadmin}"
 ETHOS_HOSTNAME="${ETHOS_HOSTNAME:-ethos}"
+ETHOS_NAS_NAME="${ETHOS_NAS_NAME:-EthOS}"
+ETHOS_PORT="${ETHOS_PORT:-9000}"
+ETHOS_SETUP_WIZARD="${ETHOS_SETUP_WIZARD:-yes}"
 
 echo "[1/8] Detecting platform..."
 ARCH=$(uname -m)
@@ -69,6 +72,29 @@ echo "[5/8] Setting hostname: $ETHOS_HOSTNAME..."
 hostnamectl set-hostname "$ETHOS_HOSTNAME" 2>/dev/null || true
 
 echo "[6/8] Deploying systemd services..."
+# Write correct ethos.service with the configured port
+cat > /etc/systemd/system/ethos.service << SVCEOF
+[Unit]
+Description=EthOS NAS
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/ethos
+EnvironmentFile=/opt/ethos/ethos.env
+ExecStartPre=/bin/mkdir -p /opt/ethos/data /opt/ethos/logs /opt/ethos/backups /opt/ethos/uploads
+Environment=PYTHONPATH=/opt/ethos/backend
+ExecStart=/opt/ethos/venv/bin/gunicorn -k gevent -w 4 -b 0.0.0.0:${ETHOS_PORT} --error-logfile /opt/ethos/logs/gunicorn-error.log --capture-output app:app
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+systemctl daemon-reload 2>/dev/null || true
 # Enable main EthOS service
 systemctl enable ethos.service 2>/dev/null || true
 # Disable installer services
@@ -80,6 +106,12 @@ rm -f /etc/ssh/ssh_host_* 2>/dev/null || true
 ssh-keygen -A 2>/dev/null || true
 
 echo "[8/8] Marking installation complete..."
+# Create setup_done if wizard is disabled (user configured during install)
+if [[ "$ETHOS_SETUP_WIZARD" != "yes" ]]; then
+    mkdir -p "$ETHOS_DIR/data"
+    echo "{\"timestamp\":$(date +%s),\"hostname\":\"${ETHOS_HOSTNAME}\",\"username\":\"${ETHOS_USER}\",\"nas_name\":\"${ETHOS_NAS_NAME}\"}" > "$ETHOS_DIR/data/setup_done"
+    echo "  Setup wizard skipped (pre-configured)."
+fi
 echo "installed $(date -Iseconds)" > "$INSTALLED_MARKER"
 
 echo ""
