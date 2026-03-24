@@ -13,7 +13,7 @@ import sys
 import time
 import threading
 from functools import wraps
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, send_from_directory, abort
 from blueprints.admin_required import admin_required
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -693,6 +693,18 @@ def delete_vm(vm_id):
     del vms[vm_id]
     _save_vms(vms)
     return jsonify({'status': 'ok'})
+
+
+# ─── noVNC static proxy (same-origin for iframe) ─────────
+
+@vm_bp.route('/novnc/<path:filename>')
+def novnc_static(filename):
+    """Serve noVNC files through Flask so the console iframe stays same-origin.
+    No auth required — these are static open-source UI files, not data."""
+    novnc_dir = os.path.abspath(_NOVNC_DIR)
+    if not os.path.isdir(novnc_dir):
+        abort(404)
+    return send_from_directory(novnc_dir, filename)
 
 
 # ═══════════════════════════════════════════════════════════

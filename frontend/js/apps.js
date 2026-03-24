@@ -6440,15 +6440,16 @@ function renderVMManager(body) {
             dc.innerHTML = `<div class="vm-empty">${t('Konsola dostępna tylko dla działających maszyn z aktywnym WebSocket.')}</div>`;
             return;
         }
-        // Always use the same IP/host the user has in the browser address bar
         const wsHost = location.hostname;
-        // Use http:// always — websockify doesn't do TLS
-        const novncUrl = `http://${wsHost}:${vm.ws_port}/vnc_lite.html?host=${wsHost}&port=${vm.ws_port}&autoconnect=true&resize=scale&reconnect=true&path=websockify`;
+        // Serve noVNC through Flask (same-origin) so iframe isn't blocked by CSP.
+        // WebSocket connects directly to websockify port.
+        const novncUrl = `/api/vm/novnc/vnc_lite.html?host=${wsHost}&port=${vm.ws_port}&autoconnect=true&resize=scale&reconnect=true&path=websockify`;
+        const directUrl = `http://${wsHost}:${vm.ws_port}/vnc_lite.html?host=${wsHost}&port=${vm.ws_port}&autoconnect=true&resize=scale&reconnect=true`;
         dc.innerHTML = `
             <div class="vm-console-wrap">
                 <div class="vm-console-toolbar">
                     <span><i class="fas fa-tv"></i> Konsola — ${esc(vm.name)}</span>
-                    <a href="http://${wsHost}:${vm.ws_port}/vnc_lite.html?host=${wsHost}&port=${vm.ws_port}&autoconnect=true&resize=scale&reconnect=true" target="_blank" class="vm-btn vm-btn-sm" title="Otwórz w nowej karcie"><i class="fas fa-external-link-alt"></i></a>
+                    <a href="${directUrl}" target="_blank" class="vm-btn vm-btn-sm" title="Otwórz w nowej karcie"><i class="fas fa-external-link-alt"></i></a>
                     <button class="vm-btn vm-btn-sm" id="vm-console-fullscreen" title="${t('Pełny ekran')}"><i class="fas fa-expand"></i></button>
                 </div>
                 <iframe id="vm-console-frame" class="vm-console-iframe" src="${novncUrl}" allowfullscreen></iframe>

@@ -793,6 +793,9 @@ def _blueprint_auth_guard():
         # Public gallery share links (no auth)
         if path.startswith('/api/gallery/shared/'):
             return
+        # noVNC static files (open-source UI, no sensitive data)
+        if path.startswith('/api/vm/novnc/'):
+            return
         # Internal system events (localhost only, e.g. from ticket watcher)
         if path == '/api/eventlog' and request.method == 'POST' and request.remote_addr in ('127.0.0.1', '::1'):
             return
