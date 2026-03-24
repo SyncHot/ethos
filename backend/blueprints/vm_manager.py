@@ -882,7 +882,8 @@ def start_vm(vm_id):
                 }
                 img_fmt = fmt_map.get(ext, 'raw')
                 # Boot image as primary drive (bootindex=0) — acts like a USB installer
-                cmd += ['-drive', f'file={boot_image},format={img_fmt},if=none,id=bootimg,readonly=on']
+                # snapshot=on: temp CoW overlay so guest can write without modifying the original
+                cmd += ['-drive', f'file={boot_image},format={img_fmt},if=none,id=bootimg,snapshot=on']
                 cmd += ['-device', 'virtio-blk-pci,drive=bootimg,bootindex=0']
 
         # Disk — the VM's own virtual hard drive (install target)
