@@ -37,19 +37,43 @@ VERSION_FILE = _app_path('backend/version.json')
 UPDATE_DIR = '/tmp/ethos-update'
 PUBLISH_DIR = _data_path('updates')
 RELEASES_DIR = _app_path('installer/releases')
+_STATUS_FILE = _data_path('update_status.json')
 
 _socketio = None
 _update_lock = threading.Lock()
-_update_status = {
+
+_STATUS_DEFAULTS = {
     'checking': False,
     'downloading': False,
     'applying': False,
     'last_check': None,
-    'available': None,    # latest.json content or None
+    'available': None,
     'error': None,
     'progress': 0,
-    'message': '',        # current step description
+    'message': '',
 }
+
+
+def _read_status():
+    """Read shared update status from disk."""
+    try:
+        with open(_STATUS_FILE) as f:
+            s = json.load(f)
+        # Merge with defaults for any missing keys
+        merged = dict(_STATUS_DEFAULTS)
+        merged.update(s)
+        return merged
+    except Exception:
+        return dict(_STATUS_DEFAULTS)
+
+
+def _write_status(status):
+    """Write shared update status to disk atomically."""
+    os.makedirs(os.path.dirname(_STATUS_FILE), exist_ok=True)
+    tmp = _STATUS_FILE + '.tmp'
+    with open(tmp, 'w') as f:
+        json.dump(status, f, ensure_ascii=False)
+    os.replace(tmp, _STATUS_FILE)
 
 
 def init_update(socketio):
@@ -260,9 +284,11 @@ def check_for_update():
     if not raw_url:
         return jsonify({'error': 'Update server not configured'}), 400
 
-    _update_status['checking'] = True
-    _update_status['error'] = None
-    _emit('update_status', _update_status)
+    _st = _read_status()
+    _st['checking'] = True
+    _st['error'] = None
+    _write_status(_st)
+    _emit('update_status', _st)
 
     try:
         resolved_url, source_type = _resolve_update_url(raw_url)
@@ -282,7 +308,9 @@ def check_for_update():
 
         config['last_check'] = datetime.now().isoformat()
         _save_config(config)
-        _update_status['last_check'] = config['last_check']
+        _st = _read_status()
+        _st['last_check'] = config['last_check']
+        _write_status(_st)
 
         is_newer = _version_tuple(remote) > _version_tuple(current)
 
@@ -299,9 +327,11 @@ def check_for_update():
             # Store resolved URL for download phase
             manifest['_resolved_url'] = resolved_url
             manifest['_source_type'] = source_type
-            _update_status['available'] = manifest
-            _update_status['checking'] = False
-            _emit('update_status', _update_status)
+            _st = _read_status()
+            _st['available'] = manifest
+            _st['checking'] = False
+            _write_status(_st)
+            _emit('update_status', _st)
             return jsonify({
                 'update_available': True,
                 'current_version': current,
@@ -309,9 +339,11 @@ def check_for_update():
                 'manifest': manifest,
             })
         else:
-            _update_status['available'] = None
-            _update_status['checking'] = False
-            _emit('update_status', _update_status)
+            _st = _read_status()
+            _st['available'] = None
+            _st['checking'] = False
+            _write_status(_st)
+            _emit('update_status', _st)
             return jsonify({
                 'update_available': False,
                 'current_version': current,
@@ -320,9 +352,11 @@ def check_for_update():
             })
 
     except Exception as e:
-        _update_status['checking'] = False
-        _update_status['error'] = str(e)
-        _emit('update_status', _update_status)
+        _st = _read_status()
+        _st['checking'] = False
+        _st['error'] = str(e)
+        _write_status(_st)
+        _emit('update_status', _st)
         return jsonify({'error': f'Check error: {e}'}), 500
 
 
@@ -333,7 +367,7 @@ def apply_update():
         return jsonify({'error': 'Update already in progress'}), 409
 
     try:
-        manifest = _update_status.get('available')
+        manifest = _read_status().get('available')
         if not manifest:
             _update_lock.release()
             return jsonify({'error': 'No update available — check first'}), 400
@@ -377,7 +411,7 @@ def upload_update():
 @update_bp.route('/status', methods=['GET'])
 def update_status():
     """Return current update status."""
-    result = dict(_update_status)
+    result = _read_status()
     result['current_version'] = _get_current_version()
     return jsonify(result)
 
@@ -498,11 +532,13 @@ def public_serve_package(filename):
 def _do_apply_update(manifest):
     """Download and apply update in background."""
     try:
-        _update_status['downloading'] = True
-        _update_status['progress'] = 0
-        _update_status['error'] = None
-        _update_status['message'] = 'Preparing download…'
-        _emit('update_status', _update_status)
+        _st = _read_status()
+        _st['downloading'] = True
+        _st['progress'] = 0
+        _st['error'] = None
+        _st['message'] = 'Preparing download…'
+        _write_status(_st)
+        _emit('update_status', _st)
 
         filename = manifest['filename']
         expected_sha = manifest.get('sha256', '')
@@ -520,9 +556,11 @@ def _do_apply_update(manifest):
 
         # Download with progress
         import urllib.request
-        _update_status['message'] = f'Downloading {filename}…'
+        _st = _read_status()
+        _st['message'] = f'Downloading {filename}…'
+        _write_status(_st)
         _emit('update_log', {'message': f'Downloading {filename}...'})
-        _emit('update_status', _update_status)
+        _emit('update_status', _st)
 
         req = urllib.request.Request(download_url, headers={'User-Agent': 'EthOS-Updater'})
         with urllib.request.urlopen(req, timeout=300) as resp:
@@ -531,6 +569,7 @@ def _do_apply_update(manifest):
             hasher = hashlib.sha256()
 
             with open(pkg_path, 'wb') as out:
+                last_pct = -1
                 while True:
                     chunk = resp.read(65536)
                     if not chunk:
@@ -540,33 +579,43 @@ def _do_apply_update(manifest):
                     downloaded += len(chunk)
                     if total > 0:
                         pct = int(downloaded * 50 / total)
-                        _update_status['progress'] = pct  # 0-50% for download
-                        dl_mb = downloaded / 1048576
-                        tot_mb = total / 1048576
-                        _update_status['message'] = f'Downloading… {dl_mb:.1f} / {tot_mb:.1f} MB'
-                        _emit('update_status', _update_status)
+                        if pct != last_pct:
+                            last_pct = pct
+                            dl_mb = downloaded / 1048576
+                            tot_mb = total / 1048576
+                            _st = _read_status()
+                            _st['progress'] = pct
+                            _st['message'] = f'Downloading… {dl_mb:.1f} / {tot_mb:.1f} MB'
+                            _write_status(_st)
+                            _emit('update_status', _st)
 
         _emit('update_log', {'message': f'Downloaded {downloaded} bytes'})
 
         # Verify checksum
         if expected_sha:
-            _update_status['message'] = 'Verifying checksum…'
-            _emit('update_status', _update_status)
+            _st = _read_status()
+            _st['message'] = 'Verifying checksum…'
+            _write_status(_st)
+            _emit('update_status', _st)
             actual_sha = hasher.hexdigest()
             if actual_sha != expected_sha:
                 raise ValueError(f'Checksum error: expected {expected_sha[:16]}..., got {actual_sha[:16]}...')
             _emit('update_log', {'message': 'Checksum OK'})
 
-        _update_status['downloading'] = False
+        _st = _read_status()
+        _st['downloading'] = False
+        _write_status(_st)
         _do_apply_from_file(pkg_path)
 
     except Exception as e:
-        _update_status['downloading'] = False
-        _update_status['applying'] = False
-        _update_status['error'] = str(e)
-        _update_status['progress'] = 0
-        _update_status['message'] = ''
-        _emit('update_status', _update_status)
+        _st = _read_status()
+        _st['downloading'] = False
+        _st['applying'] = False
+        _st['error'] = str(e)
+        _st['progress'] = 0
+        _st['message'] = ''
+        _write_status(_st)
+        _emit('update_status', _st)
         _emit('update_log', {'message': f'ERROR: {e}', 'error': True})
         _update_lock.release()
 
@@ -574,10 +623,12 @@ def _do_apply_update(manifest):
 def _do_apply_from_file(pkg_path):
     """Apply update from a local .tar.gz file."""
     try:
-        _update_status['applying'] = True
-        _update_status['progress'] = 55
-        _update_status['message'] = 'Extracting package…'
-        _emit('update_status', _update_status)
+        _st = _read_status()
+        _st['applying'] = True
+        _st['progress'] = 55
+        _st['message'] = 'Extracting package…'
+        _write_status(_st)
+        _emit('update_status', _st)
         _emit('update_log', {'message': 'Extracting...'})
 
         extract_dir = os.path.join(UPDATE_DIR, 'extracted')
@@ -594,9 +645,11 @@ def _do_apply_from_file(pkg_path):
             raise ValueError('Empty package — no directory inside')
         pkg_dir = os.path.join(extract_dir, subdirs[0])
 
-        _update_status['progress'] = 60
-        _update_status['message'] = 'Verifying package…'
-        _emit('update_status', _update_status)
+        _st = _read_status()
+        _st['progress'] = 60
+        _st['message'] = 'Verifying package…'
+        _write_status(_st)
+        _emit('update_status', _st)
 
         # Verify package has required structure
         for required in ['backend/app.py', 'backend/version.json', 'frontend/index.html']:
@@ -611,9 +664,11 @@ def _do_apply_from_file(pkg_path):
         _emit('update_log', {'message': f'New version: {new_ver}'})
 
         # Backup current files
-        _update_status['progress'] = 70
-        _update_status['message'] = 'Creating backup…'
-        _emit('update_status', _update_status)
+        _st = _read_status()
+        _st['progress'] = 70
+        _st['message'] = 'Creating backup…'
+        _write_status(_st)
+        _emit('update_status', _st)
         _emit('update_log', {'message': 'Creating backup...'})
 
         backup_dir = os.path.join(UPDATE_DIR, 'backup-' + datetime.now().strftime('%Y%m%d%H%M%S'))
@@ -627,9 +682,11 @@ def _do_apply_from_file(pkg_path):
         _emit('update_log', {'message': f'Backup at {backup_dir}'})
 
         # Apply update — replace backend, frontend
-        _update_status['progress'] = 80
-        _update_status['message'] = 'Updating files…'
-        _emit('update_status', _update_status)
+        _st = _read_status()
+        _st['progress'] = 80
+        _st['message'] = 'Updating files…'
+        _write_status(_st)
+        _emit('update_status', _st)
         _emit('update_log', {'message': 'Updating files...'})
 
         for d in ['backend', 'frontend']:
@@ -640,9 +697,11 @@ def _do_apply_from_file(pkg_path):
                     shutil.rmtree(dst)
                 shutil.copytree(src, dst)
 
-        _update_status['progress'] = 85
-        _update_status['message'] = 'Files updated'
-        _emit('update_status', _update_status)
+        _st = _read_status()
+        _st['progress'] = 85
+        _st['message'] = 'Files updated'
+        _write_status(_st)
+        _emit('update_status', _st)
         _emit('update_log', {'message': 'Files updated'})
 
         # Update Python dependencies if requirements.txt changed
@@ -655,9 +714,11 @@ def _do_apply_from_file(pkg_path):
                 with open(new_reqs) as f1, open(old_reqs) as f2:
                     reqs_changed = f1.read().strip() != f2.read().strip()
             if reqs_changed:
-                _update_status['progress'] = 88
-                _update_status['message'] = 'Installing Python dependencies…'
-                _emit('update_status', _update_status)
+                _st = _read_status()
+                _st['progress'] = 88
+                _st['message'] = 'Installing Python dependencies…'
+                _write_status(_st)
+                _emit('update_status', _st)
                 _emit('update_log', {'message': 'Updating Python dependencies...'})
                 pip_result = subprocess.run(
                     [venv_pip, 'install', '--no-cache-dir', '-r', new_reqs],
@@ -669,9 +730,11 @@ def _do_apply_from_file(pkg_path):
                     _emit('update_log', {'message': f'pip install warning: {pip_result.stderr[-200:]}'})
 
         # Restart service
-        _update_status['progress'] = 95
-        _update_status['message'] = 'Restarting service…'
-        _emit('update_status', _update_status)
+        _st = _read_status()
+        _st['progress'] = 95
+        _st['message'] = 'Restarting service…'
+        _write_status(_st)
+        _emit('update_status', _st)
         _emit('update_log', {'message': 'Restarting EthOS service...'})
         result = subprocess.run(
             ['systemctl', 'restart', 'ethos.service'],
@@ -692,11 +755,13 @@ def _do_apply_from_file(pkg_path):
             subprocess.run(['systemctl', 'restart', 'ethos.service'], timeout=60)
             raise RuntimeError(f'Restart failed: {result.stderr[-200:]}')
 
-        _update_status['progress'] = 100
-        _update_status['applying'] = False
-        _update_status['available'] = None
-        _update_status['message'] = 'Done!'
-        _emit('update_status', _update_status)
+        _st = _read_status()
+        _st['progress'] = 100
+        _st['applying'] = False
+        _st['available'] = None
+        _st['message'] = 'Done!'
+        _write_status(_st)
+        _emit('update_status', _st)
         _emit('update_log', {'message': f'Update to {new_ver} complete! System restarting...'})
         _emit('update_complete', {'version': new_ver})
 
@@ -704,11 +769,13 @@ def _do_apply_from_file(pkg_path):
         shutil.rmtree(UPDATE_DIR, ignore_errors=True)
 
     except Exception as e:
-        _update_status['applying'] = False
-        _update_status['error'] = str(e)
-        _update_status['progress'] = 0
-        _update_status['message'] = ''
-        _emit('update_status', _update_status)
+        _st = _read_status()
+        _st['applying'] = False
+        _st['error'] = str(e)
+        _st['progress'] = 0
+        _st['message'] = ''
+        _write_status(_st)
+        _emit('update_status', _st)
         _emit('update_log', {'message': f'ERROR: {e}', 'error': True})
     finally:
         try:
@@ -761,12 +828,16 @@ def update_auto_check_loop():
 
                     config['last_check'] = datetime.now().isoformat()
                     _save_config(config)
-                    _update_status['last_check'] = config['last_check']
+                    _st = _read_status()
+                    _st['last_check'] = config['last_check']
+                    _write_status(_st)
 
                     if _version_tuple(remote) > _version_tuple(current):
                         manifest['_resolved_url'] = resolved_url
                         manifest['_source_type'] = source_type
-                        _update_status['available'] = manifest
+                        _st = _read_status()
+                        _st['available'] = manifest
+                        _write_status(_st)
                         _emit('update_available', {
                             'current': current,
                             'remote': remote,
