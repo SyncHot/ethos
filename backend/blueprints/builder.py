@@ -903,9 +903,9 @@ chroot "$ROOT" useradd -m -s /bin/bash -G sudo -p "$PASS_HASH" "$DEFAULT_USER"
 ALLOWED_CMDS="/opt/ethos/tools/ethos-system-helper.sh, /opt/ethos/tools/ethos-power-*, /usr/bin/systemctl restart ethos, /usr/sbin/smartctl, /usr/bin/docker"
 echo "${{DEFAULT_USER}} ALL=(ALL) NOPASSWD: ${{ALLOWED_CMDS}}" > "$ROOT/etc/sudoers.d/010_ethos"
 chmod 440 "$ROOT/etc/sudoers.d/010_ethos"
-chroot "$ROOT" groupadd -f nasosadmin
-chroot "$ROOT" groupadd -f nasos
-chroot "$ROOT" usermod -aG nasosadmin,nasos "$DEFAULT_USER"
+chroot "$ROOT" groupadd -f ethos-admin
+chroot "$ROOT" groupadd -f ethos-user
+chroot "$ROOT" usermod -aG ethos-admin,ethos-user "$DEFAULT_USER"
 chroot "$ROOT" systemctl disable ssh || true
 chroot "$ROOT" systemctl enable smartmontools || true
 chroot "$ROOT" systemctl enable nut-server || true

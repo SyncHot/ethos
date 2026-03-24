@@ -490,14 +490,14 @@ ETHOS_VERSION = _load_version()
 # ─── Per-user data migration ────────────────────────────────
 def _migrate_global_to_per_user():
     """One-time migration: copy global data files to per-user files for the first admin.
-    Detects admin user from sudo/nasosadmin group on the host system."""
+    Detects admin user from sudo/ethos-admin group on the host system."""
     marker = _data_path('.per_user_migrated')
     if os.path.isfile(marker):
         return
     # Find the admin user
     try:
         import subprocess as _sp
-        r = _sp.run('getent group sudo nasosadmin 2>/dev/null | cut -d: -f4 | tr "," "\\n" | sort -u',
+        r = _sp.run('getent group sudo ethos-admin 2>/dev/null | cut -d: -f4 | tr "," "\\n" | sort -u',
                      shell=True, capture_output=True, text=True, timeout=5)
         admins = [u.strip() for u in (r.stdout or '').splitlines() if u.strip()]
         admin_user = admins[0] if admins else None
@@ -828,7 +828,7 @@ def _user_allowed_apps(username, role):
     import shlex as _shlex
     gr = _host_run_base(f"id -Gn {_shlex.quote(username)}", timeout=5)
     user_groups = gr.stdout.strip().split() if gr.returncode == 0 else []
-    if 'sudo' in user_groups or 'root' in user_groups or 'nasosadmin' in user_groups:
+    if 'sudo' in user_groups or 'root' in user_groups or 'ethos-admin' in user_groups:
         return None  # all access
 
     # Check for custom privilege overrides (from privileges.json)
@@ -843,8 +843,8 @@ def _user_allowed_apps(username, role):
         custom_allowed.add('dashboard')
         return custom_allowed
 
-    # Determine role from groups: nasos-family → family, else user
-    if 'nasos-family' in user_groups:
+    # Determine role from groups: ethos-family → family, else user
+    if 'ethos-family' in user_groups:
         base = set(_ROLE_APPS.get('family', set()))
     else:
         base = set(_ROLE_APPS.get('user', set()))
@@ -1009,10 +1009,10 @@ def login():
     import shlex
 
     # Authenticate against /etc/shadow
-    # If no username, find admin users (sudo/nasosadmin groups) and try their passwords
+    # If no username, find admin users (sudo/ethos-admin groups) and try their passwords
     if not username:
-            # Get all users in sudo or nasosadmin groups
-            r = _host_run_base("getent group sudo nasosadmin 2>/dev/null | cut -d: -f4 | tr ',' '\\n' | sort -u", timeout=10)
+            # Get all users in sudo or ethos-admin groups
+            r = _host_run_base("getent group sudo ethos-admin 2>/dev/null | cut -d: -f4 | tr ',' '\\n' | sort -u", timeout=10)
             admin_users = [u.strip() for u in (r.stdout or '').split('\n') if u.strip()]
             if not admin_users:
                 admin_users = ['root']
@@ -1076,7 +1076,7 @@ def login():
     # Password OK — determine role
     gr = _host_run_base(f"id -Gn {shlex.quote(safe_user)}", timeout=5)
     groups = gr.stdout.strip().split() if gr.returncode == 0 else []
-    role = 'admin' if ('sudo' in groups or 'root' in groups or safe_user == 'root' or 'nasosadmin' in groups) else 'user'
+    role = 'admin' if ('sudo' in groups or 'root' in groups or safe_user == 'root' or 'ethos-admin' in groups) else 'user'
     token = generate_token(safe_user, role)
     home_path = _get_user_home(safe_user)
     # Ensure default folders exist in the user's home
@@ -1949,7 +1949,7 @@ def setup_complete():
     _setup_progress_update('user', 'Creating/updating administrator account...')
     safe_user = shlex.quote(username)
     safe_pass = shlex.quote(username + ':' + password)
-    groups = 'sudo,nasos,nasosadmin'
+    groups = 'sudo,ethos-user,ethos-admin'
 
     # Determine user home directory — on data disk if available
     home_base = os.path.join(data_disk, 'home') if (data_disk and data_disk != '/') else '/home'
@@ -1960,8 +1960,9 @@ def setup_complete():
     if r.returncode != 0:
         # Create user with home on data disk
         r = _host_run_base(
-            f"getent group nasos >/dev/null 2>&1 || groupadd nasos; "
-            f"getent group nasosadmin >/dev/null 2>&1 || groupadd nasosadmin; "
+            f"getent group ethos-user >/dev/null 2>&1 || groupadd ethos-user; "
+            f"getent group ethos-admin >/dev/null 2>&1 || groupadd ethos-admin; "
+            f"getent group ethos-family >/dev/null 2>&1 || groupadd ethos-family; "
             f"useradd -m -d {shlex.quote(home_dir)} -s /bin/bash -G {groups} {safe_user} && "
             f"echo {safe_pass} | chpasswd",
             timeout=15)
@@ -2146,13 +2147,13 @@ def _setup_data_disk(mountpoint, errors):
 
 
 def _restrict_admin_users(primary_user, errors):
-    """Keep only setup-selected user in sudo/nasosadmin admin groups.
+    """Keep only setup-selected user in sudo/ethos-admin admin groups.
 
     Legacy default account `nasadmin` is also locked when another user is selected.
     """
     import shlex
     try:
-        r = _host_run_base("getent group sudo nasosadmin 2>/dev/null | cut -d: -f4 | tr ',' '\n' | sort -u", timeout=10)
+        r = _host_run_base("getent group sudo ethos-admin 2>/dev/null | cut -d: -f4 | tr ',' '\n' | sort -u", timeout=10)
         admin_users = [u.strip() for u in (r.stdout or '').split('\n') if u.strip()]
     except Exception as e:
         errors.append(f'Failed to read admin list: {e}')
@@ -2164,7 +2165,7 @@ def _restrict_admin_users(primary_user, errors):
         su = shlex.quote(user)
         # Remove elevated groups but keep non-admin groups.
         _host_run_base(f'gpasswd -d {su} sudo 2>/dev/null || true', timeout=10)
-        _host_run_base(f'gpasswd -d {su} nasosadmin 2>/dev/null || true', timeout=10)
+        _host_run_base(f'gpasswd -d {su} ethos-admin 2>/dev/null || true', timeout=10)
 
         # Kill default-password path if legacy user remains on system.
         if user == 'nasadmin':

@@ -59,14 +59,11 @@ else
     echo "  Venv exists."
 fi
 
-echo "[4/8] Creating user $ETHOS_USER..."
-if ! id "$ETHOS_USER" &>/dev/null; then
-    useradd -m -s /bin/bash -G sudo "$ETHOS_USER" 2>/dev/null || true
-    echo "${ETHOS_USER}:ethos" | chpasswd
-    echo "  User created."
-else
-    echo "  User already exists."
-fi
+echo "[4/8] Creating EthOS groups..."
+getent group ethos-admin &>/dev/null || groupadd ethos-admin
+getent group ethos-user  &>/dev/null || groupadd ethos-user
+getent group ethos-family &>/dev/null || groupadd ethos-family
+echo "  Groups ready."
 
 echo "[5/8] Setting hostname: $ETHOS_HOSTNAME..."
 hostnamectl set-hostname "$ETHOS_HOSTNAME" 2>/dev/null || true

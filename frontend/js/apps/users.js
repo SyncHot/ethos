@@ -108,16 +108,17 @@ AppRegistry['users'] = function (appDef) {
             users.forEach(u => {
                 const card = document.createElement('div');
                 card.className = 'usr-card';
-                const isAdmin = u.groups && (u.groups.includes('sudo') || u.groups.includes('root')) || u.username === 'root';
+                const isAdmin = u.role === 'admin';
+                const isFamily = u.role === 'family';
                 const isNasos = u.nasos_user;
                 card.innerHTML = `
                     <div class="usr-card-avatar ${isAdmin ? 'admin' : ''}">
-                        <i class="fas ${u.username === 'root' ? 'fa-crown' : isAdmin ? 'fa-user-shield' : 'fa-user'}"></i>
+                        <i class="fas ${u.username === 'root' ? 'fa-crown' : isAdmin ? 'fa-user-shield' : isFamily ? 'fa-house-user' : 'fa-user'}"></i>
                     </div>
                     <div class="usr-card-info">
                         <div class="usr-card-name">
                             ${u.username}
-                            ${isAdmin ? '<span class="usr-badge admin">Admin</span>' : `<span class="usr-badge user">${t('Użytkownik')}</span>`}
+                            ${isAdmin ? '<span class="usr-badge admin">Admin</span>' : isFamily ? `<span class="usr-badge family">${t('Rodzina')}</span>` : `<span class="usr-badge user">${t('Użytkownik')}</span>`}
                             ${isNasos ? '<span class="usr-badge nasos"><i class="fas fa-server"></i> EthOS</span>' : ''}
                         </div>
                         <div class="usr-card-detail">

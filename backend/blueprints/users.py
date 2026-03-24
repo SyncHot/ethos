@@ -76,30 +76,53 @@ def _safe_name(name):
     return re.sub(r'[^a-zA-Z0-9_.\-]', '', name)
 
 
-NASOS_GROUP = 'nasos'
-NASOS_FAMILY_GROUP = 'nasos-family'
+NASOS_GROUP = 'ethos-user'
+NASOS_FAMILY_GROUP = 'ethos-family'
+ETHOS_ADMIN_GROUP = 'ethos-admin'
+
+# Groups managed by EthOS — always shown in UI
+_ETHOS_GROUPS = {ETHOS_ADMIN_GROUP, NASOS_GROUP, NASOS_FAMILY_GROUP}
+
+# System groups hidden from UI (handled internally)
+_HIDDEN_GROUPS = {
+    'sudo', 'root', 'adm', 'www-data', 'samba', 'docker',
+    'plugdev', 'netdev', 'audio', 'video', 'dialout', 'cdrom',
+    'floppy', 'tape', 'input', 'kvm', 'render', 'sgx',
+    'lp', 'tty', 'disk', 'kmem', 'staff', 'games', 'users',
+    'nogroup', 'systemd-journal', 'systemd-network', 'systemd-resolve',
+    'systemd-timesync', 'messagebus', 'syslog', 'crontab',
+    'ssh', 'ssl-cert', 'utmp', 'shadow', 'man', 'mail',
+    'daemon', 'bin', 'sys', 'operator', 'backup', 'sasl',
+    'gnats', 'irc', 'list', 'src', 'proxy', 'lxd',
+    'bluetooth', 'colord', 'scanner', 'avahi', 'ollama',
+    # Legacy EthOS groups (pre-rename)
+    'nasosadmin', 'nasos', 'nasos-family',
+}
 
 # Valid EthOS roles for user creation
 _VALID_ROLES = {'admin', 'user', 'family'}
 
 
 def ensure_nasos_group():
-    """Create the 'nasos' and 'nasos-family' groups on the host if they don't exist."""
-    r = host_run(f"getent group {NASOS_GROUP}")
-    if r.returncode != 0:
-        host_run(f"sudo {_HELPER} group-add {NASOS_GROUP}")
-    r2 = host_run(f"getent group {NASOS_FAMILY_GROUP}")
-    if r2.returncode != 0:
-        host_run(f"sudo {_HELPER} group-add {NASOS_FAMILY_GROUP}")
+    """Create the 'ethos-admin', 'ethos-user' and 'ethos-family' groups on the host if they don't exist."""
+    for grp in (ETHOS_ADMIN_GROUP, NASOS_GROUP, NASOS_FAMILY_GROUP):
+        r = host_run(f"getent group {grp}")
+        if r.returncode != 0:
+            host_run(f"sudo {_HELPER} group-add {grp}")
 
 
 def _detect_user_role(groups):
     """Detect EthOS role from system groups: admin, user, or family."""
-    if 'sudo' in groups or 'root' in groups or 'nasosadmin' in groups:
+    if 'sudo' in groups or 'root' in groups or ETHOS_ADMIN_GROUP in groups:
         return 'admin'
     if NASOS_FAMILY_GROUP in groups:
         return 'family'
     return 'user'
+
+
+def _visible_groups(groups):
+    """Filter group list to only EthOS-managed and user-created groups."""
+    return [g for g in groups if g not in _HIDDEN_GROUPS]
 
 
 def _load_privileges():
@@ -155,7 +178,7 @@ def list_users():
                     'gid': int(parts[2]),
                     'home': parts[3],
                     'shell': parts[4],
-                    'groups': groups,
+                    'groups': [g for g in _visible_groups(groups) if g != username],
                     'nasos_user': NASOS_GROUP in groups,
                     'role': _detect_user_role(groups),
                 })
@@ -228,7 +251,7 @@ def create_user():
     # Assign role-based groups
     if role == 'admin':
         host_run(f"sudo {_HELPER} user-mod {_sq(username)} group-append sudo")
-        host_run(f"sudo {_HELPER} user-mod {_sq(username)} group-append nasosadmin")
+        host_run(f"sudo {_HELPER} user-mod {_sq(username)} group-append ethos-admin")
     elif role == 'family':
         host_run(f"sudo {_HELPER} user-mod {_sq(username)} group-append {_sq(NASOS_FAMILY_GROUP)}")
 
@@ -316,10 +339,12 @@ def update_user():
 
 @users_bp.route('/groups')
 def list_groups():
-    """List system groups (gid >= 1000 + some system groups)."""
+    """List EthOS groups and user-created groups."""
     try:
-        # Get all groups
+        # Get all groups and all usernames (to filter out primary user groups)
         r = host_run("getent group | sort -t: -k3 -n")
+        r_users = host_run("getent passwd | awk -F: '{print $1}'")
+        user_names = set(r_users.stdout.strip().split('\n')) if r_users.returncode == 0 else set()
         groups = []
         privileges = _load_privileges()
 
@@ -331,8 +356,11 @@ def list_groups():
                 gname = parts[0]
                 gid = int(parts[2])
                 members = [m for m in parts[3].split(',') if m]
-                # Show groups with gid >= 1000, or recognized system groups, or groups that have privileges
-                if gid >= 1000 or gname in privileges or gname in ('sudo', 'docker', 'adm', 'www-data', 'samba', NASOS_GROUP):
+                # Skip hidden system groups and per-user primary groups (username == groupname)
+                if gname in _HIDDEN_GROUPS or gname in user_names:
+                    continue
+                # Show EthOS-managed groups and user-created groups (gid >= 1000)
+                if gname in _ETHOS_GROUPS or gid >= 1000:
                     groups.append({
                         'name': gname,
                         'gid': gid,
@@ -468,13 +496,13 @@ def set_user_role():
 
     # Remove from all role groups first
     host_run(f"sudo gpasswd -d {_sq(username)} sudo 2>/dev/null")
-    host_run(f"sudo gpasswd -d {_sq(username)} nasosadmin 2>/dev/null")
+    host_run(f"sudo gpasswd -d {_sq(username)} ethos-admin 2>/dev/null")
     host_run(f"sudo gpasswd -d {_sq(username)} {_sq(NASOS_FAMILY_GROUP)} 2>/dev/null")
 
     # Add to appropriate groups
     if new_role == 'admin':
         host_run(f"sudo {_HELPER} user-mod {_sq(username)} group-append sudo")
-        host_run(f"sudo {_HELPER} user-mod {_sq(username)} group-append nasosadmin")
+        host_run(f"sudo {_HELPER} user-mod {_sq(username)} group-append ethos-admin")
         # Grant passwordless sudo
         sudoers_file = f"/etc/sudoers.d/010_{username}"
         host_run(f"echo {_sq(username + ' ALL=(ALL) NOPASSWD:ALL')} | sudo tee {_sq(sudoers_file)} > /dev/null && sudo chmod 440 {_sq(sudoers_file)}")

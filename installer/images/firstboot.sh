@@ -269,10 +269,11 @@ fi
 
 # ─── Configure user groups ───
 echo "[i] Konfiguruję grupy..."
-getent group nasosadmin &>/dev/null || groupadd nasosadmin
-getent group nasos &>/dev/null || groupadd nasos
+getent group ethos-admin &>/dev/null || groupadd ethos-admin
+getent group ethos-user &>/dev/null || groupadd ethos-user
+getent group ethos-family &>/dev/null || groupadd ethos-family
 
-EXTRA_GROUPS="nasosadmin,nasos,sudo"
+EXTRA_GROUPS="ethos-admin,ethos-user,sudo"
 
 if id "$ETHOS_USER" &>/dev/null; then
     usermod -aG "$EXTRA_GROUPS" "$ETHOS_USER"
