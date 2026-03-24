@@ -900,7 +900,7 @@ APT
 echo "LOG:Creating user $DEFAULT_USER..."
 PASS_HASH=$(openssl passwd -6 "$USER_PASS")
 chroot "$ROOT" useradd -m -s /bin/bash -G sudo -p "$PASS_HASH" "$DEFAULT_USER"
-ALLOWED_CMDS="/opt/ethos/tools/ethos-system-helper.sh, /opt/ethos/tools/ethos-power-*, /usr/bin/systemctl restart ethos, /usr/sbin/smartctl, /usr/bin/docker, /opt/ethos/venv/bin/gunicorn"
+ALLOWED_CMDS="/opt/ethos/tools/ethos-system-helper.sh, /opt/ethos/tools/ethos-power-*, /usr/bin/systemctl restart ethos, /usr/sbin/smartctl, /usr/bin/docker"
 echo "${{DEFAULT_USER}} ALL=(ALL) NOPASSWD: ${{ALLOWED_CMDS}}" > "$ROOT/etc/sudoers.d/010_ethos"
 chmod 440 "$ROOT/etc/sudoers.d/010_ethos"
 chroot "$ROOT" groupadd -f nasosadmin
@@ -1457,7 +1457,7 @@ WorkingDirectory=/opt/ethos
 EnvironmentFile=/opt/ethos/ethos.env
 ExecStartPre=/bin/mkdir -p /opt/ethos/data /opt/ethos/logs /opt/ethos/backups /opt/ethos/uploads
 Environment=PYTHONPATH=/opt/ethos/backend
-ExecStart=/opt/ethos/venv/bin/gunicorn -k gevent -w 4 -b 0.0.0.0:80 app:app
+ExecStart=/opt/ethos/venv/bin/python /opt/ethos/backend/app.py
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGTERM

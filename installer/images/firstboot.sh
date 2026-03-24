@@ -340,11 +340,13 @@ After=network.target
 Wants=network.target
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=all
 WorkingDirectory=${INSTALL_DIR}
 EnvironmentFile=${INSTALL_DIR}/ethos.env
 Environment=PYTHONPATH=${INSTALL_DIR}/backend
-ExecStart=${INSTALL_DIR}/venv/bin/gunicorn -k gevent -w 4 -b 0.0.0.0:9000 app:app
+ExecStartPre=/bin/mkdir -p ${INSTALL_DIR}/data ${INSTALL_DIR}/logs ${INSTALL_DIR}/backups ${INSTALL_DIR}/uploads
+ExecStart=${INSTALL_DIR}/venv/bin/python ${INSTALL_DIR}/backend/app.py
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGTERM

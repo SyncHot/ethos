@@ -415,12 +415,13 @@ After=network.target ethos-firstboot.service
 Wants=network.target
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=all
 WorkingDirectory=/opt/ethos
 EnvironmentFile=/opt/ethos/ethos.env
 ExecStartPre=/bin/mkdir -p /opt/ethos/data /opt/ethos/logs /opt/ethos/backups /opt/ethos/uploads
 Environment=PYTHONPATH=/opt/ethos/backend
-ExecStart=/opt/ethos/venv/bin/gunicorn -k gevent -w 4 -b 0.0.0.0:{port} --error-logfile /opt/ethos/logs/gunicorn-error.log --capture-output app:app
+ExecStart=/opt/ethos/venv/bin/python /opt/ethos/backend/app.py
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGTERM
