@@ -259,10 +259,30 @@ def install(os_disk, data_disk, progress_cb=None):
         return False, str(e)
 
 
+def _release_disk(dev):
+    """Unmount all partitions, disable swap, and release kernel holds on a disk."""
+    import glob as _glob
+    # Find all partitions for this device (e.g. /dev/sdb1, /dev/sdb2, ...)
+    base = os.path.basename(dev)
+    parts = sorted(_glob.glob(f"{dev}[0-9]*") + _glob.glob(f"{dev}p[0-9]*"))
+    for part in parts:
+        _run(f"umount -f {part} 2>/dev/null", timeout=15)
+        _run(f"swapoff {part} 2>/dev/null", timeout=10)
+    # Also unmount the whole device in case it's mounted directly
+    _run(f"umount -f {dev} 2>/dev/null", timeout=15)
+    _run(f"swapoff {dev} 2>/dev/null", timeout=10)
+    # Remove any device-mapper mappings (LUKS, LVM) that reference this disk
+    _run(f"dmsetup remove_all 2>/dev/null", timeout=15)
+    # Tell kernel to drop partition info
+    _run(f"blockdev --rereadpt {dev} 2>/dev/null", timeout=10)
+    _run("partprobe 2>/dev/null && sleep 1", timeout=10)
+
+
 def _wipe_disk(dev):
+    _release_disk(dev)
     _run(f"wipefs -a {dev} 2>/dev/null", timeout=30)
     _run(f"dd if=/dev/zero of={dev} bs=1M count=10 2>/dev/null", timeout=30)
-    _run("partprobe 2>/dev/null && sleep 1", timeout=10)
+    _run("partprobe 2>/dev/null && sleep 2", timeout=10)
 
 
 def _create_gpt(dev, include_data_part):
