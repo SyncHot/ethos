@@ -6517,12 +6517,26 @@ function renderVMManager(body) {
                     <div class="vm-info-row"><span>CPU:</span><span id="vm-cfg-cpu">${vm.cpu} rdzeni</span></div>
                     <div class="vm-info-row"><span>RAM:</span><span id="vm-cfg-ram">${vm.ram} MB</span></div>
                     <div class="vm-info-row"><span>Dysk:</span><span>${esc(vm.disk_size)}</span></div>
-                    <div class="vm-info-row"><span>Obraz:</span><span>${vm.boot_image ? esc(vm.boot_image.split('/').pop()) : '— brak —'}</span></div>
+                    <div class="vm-info-row"><span>Obraz boot:</span><span class="vm-boot-image-cell">${vm.boot_image
+                        ? `<i class="fas fa-usb" style="color:#f59e0b;margin-right:4px"></i>${esc(vm.boot_image.split('/').pop())}${!running ? ' <button class="vm-btn vm-btn-xs vm-btn-danger" id="vm-eject-boot" title="Odłącz obraz (jak wyjęcie pendrive)"><i class="fas fa-eject"></i> Odłącz</button>' : ''}`
+                        : `<span style="opacity:.5">— brak —</span>${!running ? ' <button class="vm-btn vm-btn-xs" id="vm-attach-boot" title="Podłącz obraz rozruchowy"><i class="fas fa-plug"></i> Podłącz</button>' : ''}`
+                    }</span></div>
                 </div>
             </div>
         `;
 
         main.querySelector('#vm-edit-config')?.addEventListener('click', () => showEditModal(vm));
+
+        main.querySelector('#vm-eject-boot')?.addEventListener('click', async () => {
+            if (!confirm(t('Odłączyć obraz boot? VM będzie bootować z dysku.'))) return;
+            try {
+                await api(`/vm/machines/${vm.id}`, { method: 'PUT', body: { boot_image: '' } });
+                toast(t('Obraz odłączony — VM będzie bootować z dysku'), 'success');
+                await refreshSelectedVM();
+            } catch (e) { toast(e.message || t('Błąd'), 'error'); }
+        });
+
+        main.querySelector('#vm-attach-boot')?.addEventListener('click', () => showEditModal(vm));
     }
 
     // Network panel
