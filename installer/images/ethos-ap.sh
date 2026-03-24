@@ -100,23 +100,23 @@ start_ap() {
         if [[ -n "$wifi_iface" ]]; then
             break
         fi
-        info "Szukam interfejsu WiFi... (próba $try/10)"
+        info "Searching for WiFi interface... (attempt $try/10)"
         sleep 3
     done
     if [[ -z "$wifi_iface" ]]; then
-        err "Brak interfejsu WiFi (sprawdź czy firmware jest zainstalowany)"
+        err "No WiFi interface found (check if firmware is installed)"
         nmcli device status 2>/dev/null || true
         return 1
     fi
 
-    info "Znaleziono WiFi: $wifi_iface"
+    info "Found WiFi: $wifi_iface"
 
     if is_ap_active; then
-        info "Hotspot już aktywny (SSID: $AP_SSID)"
+        info "Hotspot already active (SSID: $AP_SSID)"
         return 0
     fi
 
-    info "Uruchamiam otwarty hotspot WiFi: $AP_SSID (bez hasła)"
+    info "Starting open WiFi hotspot: $AP_SSID (no password)"
 
     # Unblock WiFi if blocked by rfkill
     rfkill unblock wifi 2>/dev/null || true
@@ -127,7 +127,7 @@ start_ap() {
 
     if has_dnsmasq; then
         # ── Full mode: NM shared (dnsmasq provides DHCP + DNS) ──
-        info "dnsmasq dostępny — tryb shared"
+        info "dnsmasq available — shared mode"
         nmcli connection add \
             type wifi \
             con-name "$AP_CON_NAME" \
@@ -140,12 +140,12 @@ start_ap() {
             ipv4.method shared \
             ipv4.addresses "${AP_IP}/24" \
             ipv6.method disabled 2>&1 || {
-            err "Nie udało się utworzyć połączenia AP (shared)"
+            err "Failed to create AP connection (shared)"
             return 1
         }
     else
         # ── Fallback: NM manual IP + Python mini-DHCP ──
-        info "dnsmasq niedostępny — tryb manual + mini-dhcp.py"
+        info "dnsmasq not available — manual mode + mini-dhcp.py"
         nmcli connection add \
             type wifi \
             con-name "$AP_CON_NAME" \
@@ -158,13 +158,13 @@ start_ap() {
             ipv4.method manual \
             ipv4.addresses "${AP_IP}/24" \
             ipv6.method disabled 2>&1 || {
-            err "Nie udało się utworzyć połączenia AP (manual)"
+            err "Failed to create AP connection (manual)"
             return 1
         }
     fi
 
     nmcli connection up "$AP_CON_NAME" 2>&1 || {
-        err "Nie udało się aktywować hotspota"
+        err "Failed to activate hotspot"
         nmcli connection delete "$AP_CON_NAME" 2>/dev/null || true
         return 1
     }
@@ -179,22 +179,22 @@ start_ap() {
         python3 "$MINI_DHCP" "$wifi_iface" &
         disown
         sleep 1
-        log "Mini-DHCP aktywny (Python fallback)"
+        log "Mini-DHCP active (Python fallback)"
     elif ! has_dnsmasq; then
-        err "Brak dnsmasq i mini-dhcp.py — klienci muszą ustawić IP ręcznie!"
+        err "No dnsmasq and no mini-dhcp.py — clients must set IP manually!"
     fi
 
     if is_ap_active; then
         log "Hotspot aktywny: SSID=$AP_SSID, IP=$AP_IP"
         log "Panel EthOS: http://${AP_IP}:9000"
     else
-        err "Nie udało się uruchomić hotspota"
+        err "Failed to start hotspot"
         exit 1
     fi
 }
 
 stop_ap() {
-    info "Wyłączam hotspot..."
+    info "Stopping hotspot..."
 
     nmcli connection down "$AP_CON_NAME" 2>/dev/null || true
     nmcli connection delete "$AP_CON_NAME" 2>/dev/null || true
@@ -219,7 +219,7 @@ stop_ap() {
         nmcli device connect "$wifi_iface" 2>/dev/null || true
     fi
 
-    log "Hotspot wyłączony"
+    log "Hotspot stopped"
 }
 
 status_ap() {
@@ -241,10 +241,10 @@ status_ap() {
 
 auto_ap() {
     # Wait a bit for normal networking to come up
-    info "Czekam 30s na sieć..."
+    info "Waiting 30s for network..."
     for i in $(seq 1 15); do
         if has_network; then
-            info "Sieć dostępna — hotspot niepotrzebny"
+            info "Network available — hotspot not needed"
             return 0
         fi
         sleep 2
@@ -258,26 +258,26 @@ auto_ap() {
     saved_wifi=$(nmcli -t -f TYPE,NAME connection show 2>/dev/null \
         | grep '^802-11-wireless:' | grep -v "$AP_CON_NAME" | head -1) || true
     if [[ -n "$saved_wifi" ]]; then
-        info "Znaleziono zapisane WiFi — czekam dodatkowe 90s..."
+        info "Found saved WiFi — waiting additional 90s..."
         for i in $(seq 1 45); do
             if has_network; then
-                info "Sieć dostępna — hotspot niepotrzebny"
+                info "Network available — hotspot not needed"
                 return 0
             fi
             sleep 2
         done
     fi
 
-    info "Brak sieci po timeout — uruchamiam hotspot"
+    info "No network after timeout — starting hotspot"
     # Retry AP start up to 3 times (driver/firmware may need warmup)
     for attempt in 1 2 3; do
         if start_ap; then
             return 0
         fi
-        err "Próba $attempt/3 nie powiodła się"
+        err "Attempt $attempt/3 failed"
         sleep 5
     done
-    err "Nie udało się uruchomić hotspota po 3 próbach"
+    err "Failed to start hotspot after 3 attempts"
     return 1
 }
 
@@ -288,12 +288,12 @@ case "${1:-}" in
     status) status_ap ;;
     auto)   auto_ap ;;
     *)
-        echo "Użycie: $(basename "$0") {start|stop|status|auto}"
+        echo "Usage: $(basename "$0") {start|stop|status|auto}"
         echo ""
-        echo "  start   — uruchom otwarty hotspot WiFi (SSID: $AP_SSID)"
-        echo "  stop    — wyłącz hotspot, połącz z normalną siecią"
-        echo "  status  — sprawdź stan hotspota"
-        echo "  auto    — uruchom hotspot tylko jeśli brak sieci"
+        echo "  start   — start open WiFi hotspot (SSID: $AP_SSID)"
+        echo "  stop    — stop hotspot, reconnect to normal network"
+        echo "  status  — check hotspot status"
+        echo "  auto    — start hotspot only if no network available"
         exit 1
         ;;
 esac
