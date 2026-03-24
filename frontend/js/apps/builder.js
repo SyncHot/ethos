@@ -419,7 +419,7 @@ function renderBuilderApp(body) {
                         <div class="bl-artifact-name">${r.name}</div>
                         <div class="bl-artifact-size">${humanSize(r.size)}</div>
                     </div>
-                    <a href="/api/builder/download?path=${encodeURIComponent(r.path)}" title="Pobierz" style="color:var(--accent);margin-left:auto;padding:4px"><i class="fas fa-download"></i></a>
+                    <a href="/api/builder/download?path=${encodeURIComponent(r.path)}&token=${encodeURIComponent(NAS.token)}" title="Pobierz" style="color:var(--accent);margin-left:auto;padding:4px"><i class="fas fa-download"></i></a>
                     <span class="bl-artifact-del" data-path="${r.path}" title="${t('Usuń')}"><i class="fas fa-trash"></i></span>
                 </div>`;
             }
@@ -449,7 +449,7 @@ function renderBuilderApp(body) {
                         <div class="bl-artifact-name">${i.name}</div>
                         <div class="bl-artifact-size">${humanSize(i.size)}</div>
                     </div>
-                    <a href="/api/builder/download?path=${encodeURIComponent(i.path)}" title="Pobierz" style="color:var(--accent);margin-left:auto;padding:4px"><i class="fas fa-download"></i></a>
+                    <a href="/api/builder/download?path=${encodeURIComponent(i.path)}&token=${encodeURIComponent(NAS.token)}" title="Pobierz" style="color:var(--accent);margin-left:auto;padding:4px"><i class="fas fa-download"></i></a>
                     <span class="bl-artifact-del" data-path="${i.path}" title="${t('Usuń')}"><i class="fas fa-trash"></i></span>
                 </div>`;
             }
@@ -605,8 +605,8 @@ function renderBuilderApp(body) {
             let links = '';
             if (res && res.img) {
                 links += `<div class="bl-download-links">`;
-                if (res.img) links += `<a href="/api/builder/download?path=${encodeURIComponent(res.img)}"><i class="fas fa-download"></i> Pobierz .img</a>`;
-                if (res.iso) links += `<a href="/api/builder/download?path=${encodeURIComponent(res.iso)}"><i class="fas fa-download"></i> Pobierz .iso</a>`;
+                if (res.img) links += `<a href="/api/builder/download?path=${encodeURIComponent(res.img)}&token=${encodeURIComponent(NAS.token)}"><i class="fas fa-download"></i> Pobierz .img</a>`;
+                if (res.iso) links += `<a href="/api/builder/download?path=${encodeURIComponent(res.iso)}&token=${encodeURIComponent(NAS.token)}"><i class="fas fa-download"></i> Pobierz .iso</a>`;
                 links += `</div>`;
             }
             el.innerHTML = `<div class="bl-result-icon" style="color:#10b981"><i class="fas fa-check-circle"></i></div>

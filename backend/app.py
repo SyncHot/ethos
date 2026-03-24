@@ -1099,12 +1099,14 @@ def login():
     })
 
     # 5. Add SameSite=Strict to cookie policy
+    # Set Secure flag when behind HTTPS reverse proxy
+    _secure = request.headers.get('X-Forwarded-Proto') == 'https' or request.is_secure
     resp.set_cookie('nas_token', token, max_age=7 * 24 * 3600,
-                    httponly=True, samesite='Strict', secure=False) # secure=False for local dev/http
+                    httponly=True, samesite='Strict', secure=_secure)
 
     # Set CSRF cookie (JS readable, Strict)
     resp.set_cookie('csrf_token', csrf_token, max_age=7 * 24 * 3600,
-                    httponly=False, samesite='Strict', secure=False)
+                    httponly=False, samesite='Strict', secure=_secure)
 
     return resp
 
@@ -1131,8 +1133,9 @@ def verify():
         })
 
         # Refresh cookie if missing or just to be safe
+        _secure = request.headers.get('X-Forwarded-Proto') == 'https' or request.is_secure
         resp.set_cookie('csrf_token', csrf_token, max_age=7 * 24 * 3600,
-                        httponly=False, samesite='Strict', secure=False)
+                        httponly=False, samesite='Strict', secure=_secure)
         return resp
 
     return jsonify({'valid': False}), 401
