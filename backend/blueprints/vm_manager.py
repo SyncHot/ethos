@@ -910,7 +910,9 @@ def start_vm(vm_id):
                 cmd += ['-drive', f'file={disk_file},format={disk_format},if=none,id=maindisk']
                 cmd += ['-device', 'virtio-blk-pci,drive=maindisk,bootindex=1']
             else:
-                cmd += ['-drive', f'file={disk_file},format={disk_format},if=virtio']
+                # Sole disk — explicit bootindex so UEFI/BIOS picks it up
+                cmd += ['-drive', f'file={disk_file},format={disk_format},if=none,id=maindisk']
+                cmd += ['-device', 'virtio-blk-pci,drive=maindisk,bootindex=0']
 
         # ISO boot image (CD-ROM)
         if boot_image and os.path.exists(boot_image):

@@ -23,3 +23,5 @@ Flask-Compress
 Flask-Caching
 Brotli
 pywebpush
+pyotp
+qrcode

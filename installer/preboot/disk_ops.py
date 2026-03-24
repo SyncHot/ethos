@@ -392,8 +392,108 @@ def _install_grub(dev, mount_dir):
         for fs in ("dev/pts", "sys", "proc", "dev"):
             _run(f"umount {mount_dir}/{fs} 2>/dev/null")
 
+        # Build a standalone BOOTX64.EFI that finds the root by UUID.
+        # This ensures correct booting regardless of partition numbering,
+        # which may differ from the source image layout.
+        _write_esp_grub(dev, mount_dir)
+
     else:
         log.info("Non-x86 arch (%s): skipping GRUB (assuming U-Boot/other)", arch)
+
+
+def _write_esp_grub(dev, mount_dir):
+    """Create a standalone BOOTX64.EFI + ESP grub.cfg for the target disk.
+
+    The source image may have BOOTX64.EFI with a hardcoded partition prefix
+    (e.g. (,gpt3)) that doesn't match the target layout (root on gpt2).
+    We rebuild it with grub-mkstandalone so GRUB uses search --fs-uuid
+    to find the root partition dynamically.
+    """
+    import glob as _glob
+    import tempfile
+
+    root_part = f"{dev}2"
+    root_uuid, _, rc = _run(f"blkid -s UUID -o value {root_part}")
+    if rc != 0 or not root_uuid:
+        log.warning("Cannot determine root UUID for %s, skipping ESP GRUB rebuild", root_part)
+        return
+
+    # Find kernel + initrd on the target
+    boot_dir = os.path.join(mount_dir, "boot")
+    kernels = sorted(_glob.glob(os.path.join(boot_dir, "vmlinuz-*")))
+    initrds = sorted(_glob.glob(os.path.join(boot_dir, "initrd.img-*")))
+    if not kernels or not initrds:
+        log.warning("No kernel/initrd found in %s, skipping ESP GRUB rebuild", boot_dir)
+        return
+
+    kern_name = os.path.basename(kernels[-1])
+    initrd_name = os.path.basename(initrds[-1])
+    kver = kern_name.replace("vmlinuz-", "")
+
+    # Read the EthOS version from the target
+    version = "EthOS"
+    ver_file = os.path.join(mount_dir, "opt/ethos/backend/version.json")
+    if os.path.exists(ver_file):
+        try:
+            with open(ver_file) as f:
+                vdata = json.load(f)
+            version = f"EthOS v{vdata.get('version', '?')}"
+        except Exception:
+            pass
+
+    # 1) Write ESP grub.cfg with boot menu entries
+    esp_grub_dir = os.path.join(mount_dir, "boot/efi/EFI/BOOT")
+    os.makedirs(esp_grub_dir, exist_ok=True)
+    esp_grub_cfg = os.path.join(esp_grub_dir, "grub.cfg")
+    with open(esp_grub_cfg, "w") as f:
+        f.write(f"""set timeout=3
+set default=0
+insmod part_gpt
+insmod ext2
+insmod gzio
+menuentry "{version}" {{
+    search --no-floppy --fs-uuid --set=root {root_uuid}
+    linux /boot/{kern_name} root=UUID={root_uuid} ro quiet console=tty0 console=ttyS0,115200 net.ifnames=0 biosdevname=0 fsck.repair=preen
+    initrd /boot/{initrd_name}
+}}
+menuentry "{version} (recovery)" {{
+    search --no-floppy --fs-uuid --set=root {root_uuid}
+    linux /boot/{kern_name} root=UUID={root_uuid} ro single nomodeset fsck.repair=preen
+    initrd /boot/{initrd_name}
+}}
+""")
+    log.info("Wrote ESP grub.cfg: kernel=%s uuid=%s", kver, root_uuid)
+
+    # 2) Build standalone BOOTX64.EFI with embedded early config
+    grub_mod_dir = "/usr/lib/grub/x86_64-efi"
+    if not os.path.isdir(grub_mod_dir):
+        # Try inside chroot
+        grub_mod_dir = os.path.join(mount_dir, "usr/lib/grub/x86_64-efi")
+    if not os.path.isdir(grub_mod_dir):
+        log.warning("GRUB x86_64-efi modules not found, skipping standalone EFI rebuild")
+        return
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.cfg', delete=False) as tmp:
+        tmp.write(f"search --no-floppy --fs-uuid --set=root {root_uuid}\n")
+        tmp.write("set prefix=($root)/boot/grub\n")
+        tmp.write("configfile $prefix/grub.cfg\n")
+        early_cfg = tmp.name
+
+    efi_out = os.path.join(esp_grub_dir, "BOOTX64.EFI")
+    _, err, rc = _run(
+        f"grub-mkstandalone --format=x86_64-efi "
+        f"--output={efi_out} --locales='' --fonts='' "
+        f"--modules='part_gpt ext2 fat search search_fs_uuid normal "
+        f"linux boot configfile gzio' "
+        f"'boot/grub/grub.cfg={early_cfg}'",
+        timeout=60,
+    )
+    os.unlink(early_cfg)
+
+    if rc != 0:
+        log.warning("grub-mkstandalone failed: %s", err)
+    else:
+        log.info("Built standalone BOOTX64.EFI for UUID %s", root_uuid)
 
 
 def _generate_fstab(dev, mount_dir, same_disk):
