@@ -568,19 +568,119 @@ def _no_cache_api(response):
 
 # ─────────────────────────── Auth ───────────────────────────
 
-tokens = {}  # token -> { 'expires': datetime, 'username': str, 'role': str }
-_tokens_lock = __import__('threading').Lock()
 TOKEN_EXPIRY = timedelta(days=7)
+_tokens_lock = __import__('threading').Lock()
+
+
+class _TokenStore:
+    """SQLite-backed token store shared across gunicorn workers.
+
+    Exposes dict-like .get(), .pop(), .items(), [] set/get so existing
+    code works without changes.
+    """
+
+    def __init__(self):
+        import sqlite3 as _sql
+        self._db_path = os.path.join(
+            os.path.dirname(__file__), '..', 'data', 'tokens.db'
+        )
+        os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
+        conn = _sql.connect(self._db_path, timeout=5)
+        conn.execute('PRAGMA journal_mode=WAL')
+        conn.execute(
+            'CREATE TABLE IF NOT EXISTS tokens '
+            '(token TEXT PRIMARY KEY, username TEXT, role TEXT, expires REAL)'
+        )
+        conn.commit()
+        conn.close()
+
+    def _conn(self):
+        import sqlite3 as _sql
+        return _sql.connect(self._db_path, timeout=5)
+
+    def __setitem__(self, token, info):
+        expires = info['expires']
+        ts = expires.timestamp() if isinstance(expires, datetime) else float(expires)
+        conn = self._conn()
+        try:
+            conn.execute(
+                'INSERT OR REPLACE INTO tokens (token,username,role,expires) '
+                'VALUES (?,?,?,?)',
+                (token, info['username'], info['role'], ts),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get(self, token, default=None):
+        if not token:
+            return default
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                'SELECT username,role,expires FROM tokens WHERE token=?',
+                (token,),
+            ).fetchone()
+        finally:
+            conn.close()
+        if row:
+            return {
+                'username': row[0],
+                'role': row[1],
+                'expires': datetime.fromtimestamp(row[2]),
+            }
+        return default
+
+    def pop(self, token, *args):
+        result = self.get(token)
+        if result is not None:
+            conn = self._conn()
+            try:
+                conn.execute('DELETE FROM tokens WHERE token=?', (token,))
+                conn.commit()
+            finally:
+                conn.close()
+            return result
+        return args[0] if args else None
+
+    def items(self):
+        conn = self._conn()
+        try:
+            rows = conn.execute(
+                'SELECT token,username,role,expires FROM tokens'
+            ).fetchall()
+        finally:
+            conn.close()
+        return [
+            (r[0], {'username': r[1], 'role': r[2], 'expires': datetime.fromtimestamp(r[3])})
+            for r in rows
+        ]
+
+    def __contains__(self, token):
+        return self.get(token) is not None
+
+    def prune_expired(self):
+        conn = self._conn()
+        try:
+            conn.execute(
+                'DELETE FROM tokens WHERE expires < ?',
+                (datetime.now().timestamp(),),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+tokens = _TokenStore()
 
 
 def generate_token(username='admin', role='admin'):
     token = secrets.token_hex(32)
-    with _tokens_lock:
-        tokens[token] = {
-            'expires': datetime.now() + TOKEN_EXPIRY,
-            'username': username,
-            'role': role,
-        }
+    tokens[token] = {
+        'expires': datetime.now() + TOKEN_EXPIRY,
+        'username': username,
+        'role': role,
+    }
     return token
 
 
@@ -598,8 +698,7 @@ def get_token():
 def get_current_user():
     """Return { username, role } for the current token, or None."""
     token = get_token()
-    with _tokens_lock:
-        info = tokens.get(token)
+    info = tokens.get(token)
     if info and info['expires'] > datetime.now():
         return {'username': info['username'], 'role': info['role']}
     return None
@@ -618,11 +717,10 @@ def require_auth(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         token = get_token()
-        with _tokens_lock:
-            info = tokens.get(token)
-            if not info or info['expires'] < datetime.now():
-                tokens.pop(token, None)
-                return jsonify({'error': 'Unauthorized'}), 401
+        info = tokens.get(token)
+        if not info or info['expires'] < datetime.now():
+            tokens.pop(token, None)
+            return jsonify({'error': 'Unauthorized'}), 401
         return f(*args, **kwargs)
     return decorated
 
@@ -9404,16 +9502,12 @@ if __name__ == '__main__':
             _gv.sleep(3600)  # every hour
             now = datetime.now()
             # Expired tokens
-            with _tokens_lock:
-                expired = [t for t, info in tokens.items() if info['expires'] < now]
-                for t in expired:
-                    tokens.pop(t, None)
+            tokens.prune_expired()
             # Stale unlocked_folders entries for expired tokens
-            with _tokens_lock:
-                with _uf_lock:
-                    stale_uf = [t for t in _unlocked_folders if t not in tokens]
-                    for t in stale_uf:
-                        _unlocked_folders.pop(t, None)
+            with _uf_lock:
+                stale_uf = [t for t in _unlocked_folders if t not in tokens]
+                for t in stale_uf:
+                    _unlocked_folders.pop(t, None)
             # Stale login attempts (older than 2x window)
             cutoff = time.time() - _ATTEMPT_WINDOW * 2
             with _login_lock:
