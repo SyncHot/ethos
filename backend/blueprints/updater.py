@@ -704,6 +704,16 @@ def _do_apply_from_file(pkg_path):
         _emit('update_status', _st)
         _emit('update_log', {'message': 'Files updated'})
 
+        # Sync frontend_dist (Flask serves from frontend_dist/)
+        frontend_src = os.path.join(INSTALL_DIR, 'frontend')
+        frontend_dst = os.path.join(INSTALL_DIR, 'frontend_dist')
+        if os.path.isdir(frontend_src):
+            subprocess.run(
+                ['rsync', '-a', '--delete', frontend_src + '/', frontend_dst + '/'],
+                capture_output=True, timeout=60
+            )
+            _emit('update_log', {'message': 'frontend_dist synced'})
+
         # Update Python dependencies if requirements.txt changed
         new_reqs = os.path.join(INSTALL_DIR, 'backend', 'requirements.txt')
         old_reqs = os.path.join(backup_dir, 'backend', 'requirements.txt')
@@ -728,6 +738,41 @@ def _do_apply_from_file(pkg_path):
                     _emit('update_log', {'message': 'Dependencies updated'})
                 else:
                     _emit('update_log', {'message': f'pip install warning: {pip_result.stderr[-200:]}'})
+
+        # Fix service file if still using gunicorn (pre-1.0.30 installs)
+        svc_path = '/etc/systemd/system/ethos.service'
+        try:
+            with open(svc_path) as f:
+                svc_content = f.read()
+            if 'gunicorn' in svc_content:
+                _emit('update_log', {'message': 'Migrating service from gunicorn to python app.py...'})
+                new_svc = """[Unit]
+Description=EthOS NAS
+After=network.target
+Wants=network.target
+
+[Service]
+Type=notify
+NotifyAccess=all
+WorkingDirectory=/opt/ethos
+EnvironmentFile=/opt/ethos/ethos.env
+ExecStartPre=/bin/mkdir -p /opt/ethos/data /opt/ethos/logs /opt/ethos/backups /opt/ethos/uploads
+Environment=PYTHONPATH=/opt/ethos/backend
+ExecStart=/opt/ethos/venv/bin/python /opt/ethos/backend/app.py
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
+"""
+                with open(svc_path, 'w') as f:
+                    f.write(new_svc)
+                subprocess.run(['systemctl', 'daemon-reload'], capture_output=True, timeout=15)
+                _emit('update_log', {'message': 'Service migrated to python app.py'})
+        except Exception as e:
+            _emit('update_log', {'message': f'Service migration note: {e}'})
 
         # Restart service
         _st = _read_status()

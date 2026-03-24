@@ -418,7 +418,7 @@ PKG="{pkg_name}"
 RELEASES="{releases_dir}"
 
 rm -rf "$BUILD_DIR"
-mkdir -p "$BUILD_DIR/$PKG"/{{backend/blueprints,frontend/css,frontend/js/apps}}
+mkdir -p "$BUILD_DIR/$PKG"/{{backend/blueprints,backend/middleware,backend/i18n,frontend/css,frontend/js/apps}}
 mkdir -p "$RELEASES"
 
 echo "STEP:25:Copying backend..."
@@ -427,6 +427,8 @@ cp "$NASOS/backend/version.json" "$BUILD_DIR/$PKG/backend/"
 cp "$NASOS/backend/requirements.txt" "$BUILD_DIR/$PKG/backend/"
 cp "$NASOS/backend/blueprints/"*.py "$BUILD_DIR/$PKG/backend/blueprints/"
 touch "$BUILD_DIR/$PKG/backend/blueprints/__init__.py"
+cp "$NASOS/backend/middleware/"*.py "$BUILD_DIR/$PKG/backend/middleware/" 2>/dev/null || true
+cp -r "$NASOS/backend/i18n/"* "$BUILD_DIR/$PKG/backend/i18n/" 2>/dev/null || true
 
 echo "STEP:40:Copying frontend..."
 cp "$NASOS/frontend/index.html" "$BUILD_DIR/$PKG/frontend/"
