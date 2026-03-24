@@ -125,6 +125,7 @@ def _build_net_opts(vm):
         if guest and host:
             import socket
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 s.bind(('', int(host)))
                 s.close()
@@ -384,12 +385,14 @@ def _start_websockify(vnc_port, ws_port):
     try:
         proc = subprocess.Popen(
             [ws_bin, '--web', novnc_dir, str(ws_port), f'localhost:{vnc_port}'],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             start_new_session=True,
         )
-        time.sleep(0.3)
+        time.sleep(1.0)
         if proc.poll() is not None:
+            out = proc.stderr.read().decode('utf-8', errors='replace')[:300]
+            log.error("websockify exited early: %s", out)
             return None
         return proc
     except Exception:
