@@ -3,6 +3,7 @@ import subprocess
 import re
 import os
 from blueprints.admin_required import admin_required
+from utils import require_tools, check_tool
 
 fail2ban_bp = Blueprint('fail2ban', __name__, url_prefix='/api/fail2ban')
 
@@ -19,6 +20,9 @@ def run_command(cmd):
 @fail2ban_bp.route('/status', methods=['GET'])
 @admin_required
 def get_status():
+    err = require_tools('fail2ban-client')
+    if err:
+        return err
     # Get list of jails
     out, err = run_command(['fail2ban-client', 'status'])
     if err:
@@ -64,6 +68,9 @@ def get_status():
 @fail2ban_bp.route('/unban', methods=['POST'])
 @admin_required
 def unban_ip():
+    err = require_tools('fail2ban-client')
+    if err:
+        return err
     data = request.json or {}
     jail = data.get('jail')
     ip = data.get('ip')
@@ -80,6 +87,9 @@ def unban_ip():
 @fail2ban_bp.route('/whitelist', methods=['GET'])
 @admin_required
 def get_whitelist():
+    err = require_tools('fail2ban-client')
+    if err:
+        return err
     # Get global ignoreip from sshd jail (which inherits default)
     out, err = run_command(['fail2ban-client', 'get', 'sshd', 'ignoreip'])
 

@@ -3,6 +3,7 @@ from flask import Blueprint, jsonify, request
 import subprocess
 import re
 from blueprints.admin_required import admin_required
+from utils import require_tools, check_tool
 
 firewall_bp = Blueprint('firewall', __name__, url_prefix='/api/firewall')
 
@@ -21,6 +22,9 @@ def run_ufw(args):
 @admin_required
 def get_status():
     """Return UFW status (active/inactive) and list of numbered rules."""
+    err = require_tools('ufw')
+    if err:
+        return err
     out, err, code = run_ufw(['status', 'numbered'])
 
     # Check if UFW is installed or other error
@@ -82,6 +86,9 @@ def get_status():
 @admin_required
 def toggle_firewall():
     """Enable or disable UFW. Body: {"enable": true|false}."""
+    err = require_tools('ufw')
+    if err:
+        return err
     data = request.json or {}
     enable = data.get('enable', False)
 
@@ -98,6 +105,9 @@ def toggle_firewall():
 @admin_required
 def manage_rules():
     """Add, delete, or reset UFW rules. Body: {"action": "add"|"delete"|"reset_defaults", ...}."""
+    err = require_tools('ufw')
+    if err:
+        return err
     data = request.json or {}
     action = data.get('action') # add, delete
 
@@ -192,6 +202,9 @@ def manage_rules():
 @admin_required
 def get_banned_ips():
     """Return banned IPs from Fail2Ban jails."""
+    err = require_tools('fail2ban-client')
+    if err:
+        return err
     try:
         result = subprocess.run(
             ['sudo', '-n', 'fail2ban-client', 'status'],
@@ -227,6 +240,9 @@ def get_banned_ips():
 @admin_required
 def unban_ip():
     """Unban an IP from a Fail2Ban jail. Body: {"jail": "sshd", "ip": "1.2.3.4"}."""
+    err = require_tools('fail2ban-client')
+    if err:
+        return err
     data = request.json or {}
     jail = data.get('jail')
     ip = data.get('ip')

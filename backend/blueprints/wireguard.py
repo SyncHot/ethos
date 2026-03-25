@@ -7,6 +7,7 @@ import tempfile
 import time
 from flask import Blueprint, jsonify, request, send_file, Response
 from blueprints.admin_required import admin_required
+from utils import require_tools, check_tool
 
 # Host helpers
 from host import host_run as _host_run, data_path as _data_path
@@ -278,6 +279,9 @@ def status():
 @wireguard_bp.route('/toggle', methods=['POST'])
 @admin_required
 def toggle():
+    err = require_tools('wg', 'ufw')
+    if err:
+        return err
     data = request.json or {}
     enable = data.get('enable', False)
     
@@ -310,6 +314,9 @@ def toggle():
 @wireguard_bp.route('/peer', methods=['POST'])
 @admin_required
 def add_peer():
+    err = require_tools('wg', 'qrencode')
+    if err:
+        return err
     data = request.json or {}
     name = data.get('name', 'Device')
     
@@ -400,6 +407,9 @@ PersistentKeepalive = 25
 @wireguard_bp.route('/peer/<public_key>', methods=['DELETE'])
 @admin_required
 def delete_peer(public_key):
+    err = require_tools('wg')
+    if err:
+        return err
     # Normalize key (url encoded?)
     import urllib.parse
     public_key = urllib.parse.unquote(public_key)

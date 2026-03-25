@@ -13,6 +13,8 @@ from flask import Blueprint, jsonify
 
 import psutil
 
+from utils import require_tools, check_tool
+
 dashboard_bp = Blueprint('dashboard', __name__, url_prefix='/api/dashboard')
 
 INSTALL_CONF = '/opt/ethos/install.conf'
@@ -96,6 +98,8 @@ def _get_temperatures():
 
 def _get_docker_info():
     """Get running/total docker container counts."""
+    if not check_tool('docker'):
+        return None
     try:
         out = _run("docker ps -a --format '{{.Status}}'", timeout=4)
         if not out:

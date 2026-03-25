@@ -23,7 +23,7 @@ from host import app_path, data_path, user_data_path, NATIVE_MODE, ensure_dep, g
     get_photo_folders, get_all_photo_folder_variants
 from utils import load_json as _load_json, save_json as _save_json, \
     safe_path as _safe_path_util, get_username as _get_username, DATA_ROOT, \
-    ALLOWED_ROOTS, register_pkg_routes
+    ALLOWED_ROOTS, register_pkg_routes, require_tools, check_tool
 from blueprints.admin_required import admin_required
 
 gallery_bp = Blueprint('gallery', __name__, url_prefix='/api/gallery')
@@ -533,6 +533,9 @@ def gallery_exif():
 @gallery_bp.route('/video-thumb')
 def gallery_video_thumb():
     """Return a thumbnail for a video file."""
+    err = require_tools('ffmpeg', 'ffprobe')
+    if err:
+        return err
     path = request.args.get('path', '')
     real = _safe_path(path)
     if not real or not os.path.isfile(real):
@@ -555,6 +558,9 @@ def gallery_video_thumb():
 @gallery_bp.route('/video-info')
 def gallery_video_info():
     """Return video metadata (duration, etc.)."""
+    err = require_tools('ffmpeg', 'ffprobe')
+    if err:
+        return err
     path = request.args.get('path', '')
     real = _safe_path(path)
     if not real or not os.path.isfile(real):
@@ -1225,5 +1231,7 @@ def gallery_uninstall():
 def gallery_pkg_status():
     return jsonify({
         'installed': True,
-        'configured': os.path.isfile(_GALLERY_CONFIG_GLOBAL)
+        'configured': os.path.isfile(_GALLERY_CONFIG_GLOBAL),
+        'ffmpeg': check_tool('ffmpeg'),
+        'ffprobe': check_tool('ffprobe'),
     })

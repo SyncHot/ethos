@@ -25,7 +25,8 @@ from host import host_run as _host_run_base, NATIVE_MODE, data_path, check_dep, 
 from utils import load_json as _load_json, save_json as _save_json, run_host, \
     get_ethos_user, \
     find_compose_project_names as _find_compose_project_names, \
-    docker_available as _docker_available_util
+    docker_available as _docker_available_util, \
+    require_tools, check_tool
 
 # Optional: sandbox policy for compose resource limits
 try:
@@ -1551,8 +1552,11 @@ def validate_install():
     deny = _require_admin()
     if deny:
         return deny
+    err = require_tools('docker')
+    if err:
+        return err
     if not _docker_available():
-        return jsonify({'error': 'Docker is not installed.'}), 503
+        return jsonify({'error': 'Docker daemon is not running. Start Docker in Docker Manager.'}), 503
 
     data = request.json or {}
     app_id = data.get('app_id', '').strip()
@@ -1744,8 +1748,11 @@ def install_app():
     deny = _require_admin(require_sudo=True)
     if deny:
         return deny
+    err = require_tools('docker')
+    if err:
+        return err
     if not _docker_available():
-        return jsonify({'error': 'Docker is not installed. Install Docker in Docker Manager.'}), 503
+        return jsonify({'error': 'Docker daemon is not running. Start Docker in Docker Manager.'}), 503
     data = request.json or {}
     app_id = data.get('app_id', '').strip()
     if not app_id:
@@ -1805,8 +1812,11 @@ def reinstall_app():
     deny = _require_admin(require_sudo=True)
     if deny:
         return deny
+    err = require_tools('docker')
+    if err:
+        return err
     if not _docker_available():
-        return jsonify({'error': 'Docker is not installed.'}), 503
+        return jsonify({'error': 'Docker daemon is not running. Start Docker in Docker Manager.'}), 503
     data = request.json or {}
     app_id = data.get('app_id', '').strip()
     if not app_id:
@@ -1909,8 +1919,11 @@ def uninstall_app():
     deny = _require_admin(require_sudo=True)
     if deny:
         return deny
+    err = require_tools('docker')
+    if err:
+        return err
     if not _docker_available():
-        return jsonify({'error': 'Docker is not installed.'}), 503
+        return jsonify({'error': 'Docker daemon is not running. Start Docker in Docker Manager.'}), 503
     data = request.json or {}
     app_id = data.get('app_id', '').strip()
     if not app_id:

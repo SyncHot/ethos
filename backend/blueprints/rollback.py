@@ -18,7 +18,7 @@ from flask import Blueprint, jsonify, request
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from host import host_run, app_path, data_path, q
-from utils import load_json as _load_json, save_json as _save_json
+from utils import load_json as _load_json, save_json as _save_json, require_tools, check_tool
 
 from blueprints.admin_required import admin_required
 
@@ -188,6 +188,9 @@ def list_snapshots():
 @rollback_bp.route('/snapshots', methods=['POST'])
 @admin_required
 def create_snapshot():
+    err = require_tools('tar')
+    if err:
+        return err
     global _current_op
 
     with _operation_lock:
@@ -275,6 +278,9 @@ def create_snapshot():
 @rollback_bp.route('/snapshots/<snap_id>/restore', methods=['POST'])
 @admin_required
 def restore_snapshot(snap_id):
+    err = require_tools('tar')
+    if err:
+        return err
     global _current_op
 
     if not _validate_snapshot_id(snap_id):

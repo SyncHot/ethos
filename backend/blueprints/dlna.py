@@ -12,6 +12,7 @@ from flask import Blueprint, request, jsonify
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from host import host_run
+from utils import require_tools, check_tool
 from blueprints.admin_required import admin_required
 
 dlna_bp = Blueprint('dlna', __name__, url_prefix='/api/dlna')
@@ -270,6 +271,9 @@ def update_config():
 @admin_required
 def start_service():
     """Start minidlna service."""
+    err = require_tools('minidlnad')
+    if err:
+        return err
     if not _is_installed():
         return jsonify({'error': 'minidlna is not installed'}), 400
     r = host_run("sudo systemctl start minidlna", timeout=15)
@@ -294,6 +298,9 @@ def stop_service():
 @admin_required
 def rescan_library():
     """Force a full rescan of media library."""
+    err = require_tools('minidlnad')
+    if err:
+        return err
     if not _is_installed():
         return jsonify({'error': 'minidlna is not installed'}), 400
     # Stop, clear DB, restart with fresh scan

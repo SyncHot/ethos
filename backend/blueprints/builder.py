@@ -19,7 +19,8 @@ from flask import Blueprint, jsonify, request, Response, stream_with_context
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from host import host_run as _host_run_base, host_run_stream as _host_run_stream_base, \
     app_path, data_path, log_path, q as _q
-from utils import load_json as _load_json, save_json as _save_json, fmt_bytes, register_pkg_routes
+from utils import load_json as _load_json, save_json as _save_json, fmt_bytes, register_pkg_routes, \
+    require_tools, check_tool
 
 builder_bp = Blueprint('builder', __name__, url_prefix='/api/builder')
 
@@ -525,6 +526,9 @@ rm -rf "$BUILD_DIR"
 @builder_bp.route('/image', methods=['POST'])
 def build_image():
     """Build a bootable system image in background thread."""
+    err = require_tools('debootstrap')
+    if err:
+        return err
     if _build_state['status'] == 'building':
         return jsonify({'error': 'Build already in progress. Wait for completion or cancel.'}), 409
     nasos = _get_host_nasos_dir()

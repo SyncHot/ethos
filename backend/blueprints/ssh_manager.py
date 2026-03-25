@@ -13,6 +13,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from host import data_path as _data_path
 from ssh_utils import get_ssh_client as _get_ssh_client, ssh_exec as _ssh_exec, HAS_SSH
+from utils import require_tools, check_tool
 
 log = logging.getLogger('ssh_manager')
 
@@ -100,6 +101,9 @@ def api_list_keys():
 
 @ssh_bp.route('/keys/generate', methods=['POST'])
 def api_generate_key():
+    err = require_tools('ssh-keygen')
+    if err:
+        return err
     data = request.json or {}
     key_name = data.get('name', '').strip()
     key_type = data.get('type', 'ed25519')
@@ -178,6 +182,9 @@ def api_get_public(key_name):
 
 @ssh_bp.route('/keys/<key_name>/deploy', methods=['POST'])
 def api_deploy_key(key_name):
+    err = require_tools('ssh-keygen')
+    if err:
+        return err
     if not HAS_SSH:
         return jsonify({'error': 'paramiko not installed'}), 500
 
@@ -350,6 +357,9 @@ def _parse_known_hosts(username=None):
 
 @ssh_bp.route('/known-hosts', methods=['GET'])
 def api_list_known_hosts():
+    err = require_tools('ssh-keygen')
+    if err:
+        return err
     try:
         username = getattr(g, 'username', None)
         entries, path = _parse_known_hosts(username)
@@ -364,6 +374,9 @@ def api_list_known_hosts():
 
 @ssh_bp.route('/known-hosts/lookup', methods=['POST'])
 def api_lookup_host():
+    err = require_tools('ssh-keygen')
+    if err:
+        return err
     data = request.json or {}
     host = data.get('host', '')
     if not host:
@@ -385,6 +398,9 @@ def api_lookup_host():
 
 @ssh_bp.route('/known-hosts/remove', methods=['POST'])
 def api_remove_host():
+    err = require_tools('ssh-keygen')
+    if err:
+        return err
     data = request.json or {}
     host = data.get('host', '')
     if not host:

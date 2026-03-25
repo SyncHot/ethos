@@ -3,11 +3,16 @@ EthOS — Cron Manager (Scheduled Tasks)
 Manage crontab entries for the root user.
 """
 
+import os
+import sys
 from flask import Blueprint, jsonify, request
 from blueprints.admin_required import admin_required
 import subprocess
 import re
 import shlex
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from utils import require_tools, check_tool
 
 cron_bp = Blueprint('cron', __name__, url_prefix='/api/cron')
 
@@ -178,6 +183,9 @@ def _delete_job(lines, job_index):
 @admin_required
 def list_jobs():
     """Return all cron jobs for root."""
+    err = require_tools('crontab')
+    if err:
+        return err
     lines = _read_crontab()
     jobs = _parse_jobs(lines)
     return jsonify({'jobs': jobs})
@@ -187,6 +195,9 @@ def list_jobs():
 @admin_required
 def create_job():
     """Add a new cron job."""
+    err = require_tools('crontab')
+    if err:
+        return err
     data = request.json or {}
     minute = data.get('minute', '*')
     hour = data.get('hour', '*')
@@ -224,6 +235,9 @@ def create_job():
 @admin_required
 def update_job(index):
     """Update an existing cron job identified by its line index."""
+    err = require_tools('crontab')
+    if err:
+        return err
     data = request.json or {}
     minute = data.get('minute', '*')
     hour = data.get('hour', '*')
@@ -263,6 +277,9 @@ def update_job(index):
 @admin_required
 def delete_job(index):
     """Delete a cron job by its line index."""
+    err = require_tools('crontab')
+    if err:
+        return err
     lines = _read_crontab()
     if index < 0 or index >= len(lines):
         return jsonify({'error': 'Invalid job index'}), 404
@@ -278,6 +295,9 @@ def delete_job(index):
 @admin_required
 def toggle_job(index):
     """Enable or disable a cron job by commenting/uncommenting."""
+    err = require_tools('crontab')
+    if err:
+        return err
     lines = _read_crontab()
     if index < 0 or index >= len(lines):
         return jsonify({'error': 'Invalid job index'}), 404

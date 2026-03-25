@@ -16,7 +16,7 @@ from flask import Blueprint, jsonify, request, Response, stream_with_context
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from host import host_run as _host_run_base, host_run_stream as _host_run_stream_base, data_path, q as _q_imported, apt_install as _apt_install, claim_dep, release_dep
-from utils import fmt_bytes
+from utils import fmt_bytes, require_tools, check_tool
 from blueprints.admin_required import admin_required
 
 storage_bp = Blueprint('storage', __name__, url_prefix='/api/storage')
@@ -882,6 +882,9 @@ def eject_drive():
 @storage_bp.route('/smart')
 def smart_info():
     """Get SMART info for a specific disk."""
+    err = require_tools('smartctl')
+    if err:
+        return err
     disk_name = request.args.get('disk', '').strip()
     if not disk_name or not _validate_disk_name(disk_name):
         return jsonify({"error": "Invalid disk name"}), 400
@@ -1216,6 +1219,9 @@ open('/etc/samba/smb.conf', 'w').write(conf.strip() + NL)
 @storage_bp.route('/samba/password', methods=['POST'])
 def samba_password():
     """Set Samba password for a user (creates the user if needed)."""
+    err = require_tools('smbpasswd')
+    if err:
+        return err
     data = request.json or {}
     username = data.get("username")
     password = data.get("password")

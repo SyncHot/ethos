@@ -10,6 +10,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import stat as stat_lib
 import subprocess
 import threading as _threading
@@ -530,3 +531,41 @@ def get_ethos_config():
 def get_ethos_user():
     """Get the primary EthOS username from env or install.conf."""
     return os.environ.get('ETHOS_USER') or get_ethos_config().get('ETHOS_USER', 'nasadmin')
+
+
+# ── Dependency checking ─────────────────────────────────────
+
+def check_tool(name: str) -> bool:
+    """Return True if a CLI tool is on PATH."""
+    return shutil.which(name) is not None
+
+
+def require_tools(*names: str):
+    """Check that all named CLI tools exist.
+
+    Returns None if all are present, otherwise a Flask JSON response (503)
+    listing missing tools and install commands.
+    """
+    missing = [n for n in names if not shutil.which(n)]
+    if not missing:
+        return None
+    apt_map = {
+        'ffmpeg': 'ffmpeg', 'ffprobe': 'ffmpeg',
+        'smartctl': 'smartmontools',
+        'wg': 'wireguard-tools', 'qrencode': 'qrencode',
+        'ufw': 'ufw', 'fail2ban-client': 'fail2ban',
+        'docker': 'docker.io', 'qemu-system-x86_64': 'qemu-system-x86',
+        'qemu-system-aarch64': 'qemu-system-arm', 'qemu-img': 'qemu-utils',
+        'debootstrap': 'debootstrap', 'cups': 'cups',
+        'nmcli': 'network-manager', 'mdadm': 'mdadm',
+        'smbpasswd': 'samba', 'upsc': 'nut-client',
+        'avahi-browse': 'avahi-utils', 'virsh': 'libvirt-daemon-system',
+    }
+    pkgs = sorted({apt_map.get(m, m) for m in missing})
+    cmd = f"sudo apt install -y {' '.join(pkgs)}"
+    return jsonify({
+        'error': 'missing_dependency',
+        'message': f"Wymagane narzędzia nie są zainstalowane: {', '.join(missing)}",
+        'missing': missing,
+        'install_cmd': cmd,
+    }), 503

@@ -28,7 +28,8 @@ import gevent.threadpool
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from host import data_path, user_data_path, NATIVE_MODE
-from utils import safe_path as _safe_path_util, get_username as _utils_get_username, sio_emit, DATA_ROOT, register_pkg_routes
+from utils import safe_path as _safe_path_util, get_username as _utils_get_username, sio_emit, DATA_ROOT, register_pkg_routes, \
+    require_tools, check_tool
 
 # Native OS thread pool for blocking file I/O on slow disks (HDD).
 # gevent monkey-patches threading.Thread → greenlets, so f.write() in a
@@ -2694,6 +2695,9 @@ def clear_downloads():
 @downloads_bp.route('/api/downloads/extract', methods=['POST'])
 def extract_package():
     """Trigger deep extraction for a package or single download."""
+    err = require_tools('7z')
+    if err:
+        return err
     data = request.get_json(force=True)
     package_id = data.get('package_id', '')
     password = data.get('password', '')

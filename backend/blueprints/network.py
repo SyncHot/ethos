@@ -14,6 +14,7 @@ from flask import Blueprint, jsonify, request
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from host import host_run as _host_run
+from utils import require_tools, check_tool
 
 network_bp = Blueprint('network', __name__, url_prefix='/api/network')
 
@@ -215,6 +216,9 @@ def _nmcli_split(line):
 @network_bp.route('/wifi/scan', methods=['GET', 'POST'])
 def wifi_scan():
     """Trigger WiFi rescan and return results."""
+    err = require_tools('nmcli')
+    if err:
+        return err
     try:
         # Find WiFi interface
         wifi_iface = _find_wifi_iface()
@@ -288,6 +292,9 @@ def wifi_scan():
 @network_bp.route('/wifi/saved')
 def wifi_saved():
     """List saved WiFi connections."""
+    err = require_tools('nmcli')
+    if err:
+        return err
     try:
         r = _host("nmcli -t -f NAME,TYPE connection show 2>/dev/null")
         connections = []
@@ -310,6 +317,9 @@ def wifi_saved():
 @network_bp.route('/wifi/connect', methods=['POST'])
 def wifi_connect():
     """Connect to a WiFi network."""
+    err = require_tools('nmcli')
+    if err:
+        return err
     data = request.json or {}
     ssid = data.get('ssid', '').strip()
     password = data.get('password', '').strip()
@@ -390,6 +400,9 @@ def wifi_connect():
 @network_bp.route('/wifi/disconnect', methods=['POST'])
 def wifi_disconnect():
     """Disconnect WiFi."""
+    err = require_tools('nmcli')
+    if err:
+        return err
     wifi_iface = _find_wifi_iface()
     if not wifi_iface:
         return jsonify({'error': 'No WiFi interface'}), 404
@@ -403,6 +416,9 @@ def wifi_disconnect():
 @network_bp.route('/wifi/forget', methods=['POST'])
 def wifi_forget():
     """Delete a saved WiFi connection."""
+    err = require_tools('nmcli')
+    if err:
+        return err
     data = request.json or {}
     name = data.get('name', '').strip()
     if not name:
@@ -423,6 +439,9 @@ def wifi_forget():
 @network_bp.route('/wifi/status')
 def wifi_status():
     """Get current WiFi connection details."""
+    err = require_tools('nmcli')
+    if err:
+        return err
     wifi_iface = _find_wifi_iface()
     if not wifi_iface:
         return jsonify({'error': 'No WiFi interface'}), 404
@@ -483,6 +502,9 @@ def _ap_script():
 @network_bp.route('/ap/status')
 def ap_status():
     """Check if the WiFi hotspot is active."""
+    err = require_tools('nmcli')
+    if err:
+        return err
     try:
         script = _ap_script()
         r = _host(f"bash {script} status 2>/dev/null")
@@ -507,6 +529,9 @@ def ap_status():
 @network_bp.route('/ap/start', methods=['POST'])
 def ap_start():
     """Start the WiFi hotspot."""
+    err = require_tools('nmcli')
+    if err:
+        return err
     try:
         script = _ap_script()
         r = _host(f"sudo {_HELPER} ap-control start 2>&1", timeout=30)
@@ -521,6 +546,9 @@ def ap_start():
 @network_bp.route('/ap/stop', methods=['POST'])
 def ap_stop():
     """Stop the WiFi hotspot and reconnect to normal WiFi."""
+    err = require_tools('nmcli')
+    if err:
+        return err
     try:
         script = _ap_script()
         r = _host(f"sudo {_HELPER} ap-control stop 2>&1", timeout=30)

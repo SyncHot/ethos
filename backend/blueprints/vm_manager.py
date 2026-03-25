@@ -18,7 +18,7 @@ from blueprints.admin_required import admin_required
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from host import host_run, check_dep, ensure_dep, get_data_disk as _get_data_disk, app_path as _app_path
-from utils import register_pkg_routes
+from utils import register_pkg_routes, require_tools, check_tool
 
 vm_bp = Blueprint('vm_mgr', __name__, url_prefix='/api/vm')
 
@@ -509,6 +509,9 @@ def list_vms():
 @_require_qemu
 def create_vm():
     """Create a new virtual machine."""
+    err = require_tools('qemu-img')
+    if err:
+        return err
     data = request.get_json(force=True) if request.data else {}
     name = data.get('name', '').strip()
     if not name:
@@ -735,6 +738,14 @@ def start_vm(vm_id):
 
     is_arm = _is_arm_image(boot_image, vm.get('name', ''))
     is_rpi = _is_rpi_image(boot_image, vm.get('name', ''))
+
+    # Validate that the required QEMU system binary is available
+    if is_arm or is_rpi:
+        err = require_tools('qemu-system-aarch64')
+    else:
+        err = require_tools('qemu-system-x86_64')
+    if err:
+        return err
 
     # ── Raspberry Pi VM (raspi3b machine) ─────────────────────
     tap_dev = None  # Track TAP device for cleanup on stop
@@ -1210,6 +1221,9 @@ def delete_image(filename):
 @_require_qemu
 def disk_info(vm_id):
     """Get info about a VM's disk file."""
+    err = require_tools('qemu-img')
+    if err:
+        return err
     vms = _load_vms()
     vm = vms.get(vm_id)
     if not vm:
@@ -1241,6 +1255,9 @@ def disk_info(vm_id):
 @_require_qemu
 def resize_disk(vm_id):
     """Resize a VM's disk (expand only, VM must be stopped)."""
+    err = require_tools('qemu-img')
+    if err:
+        return err
     if _check_vm_process(vm_id):
         return jsonify({'error': 'Stop VM before resizing disk'}), 409
 
@@ -1279,6 +1296,9 @@ def resize_disk(vm_id):
 @_require_qemu
 def list_snapshots(vm_id):
     """List disk snapshots for a QCOW2 VM."""
+    err = require_tools('qemu-img')
+    if err:
+        return err
     vms = _load_vms()
     vm = vms.get(vm_id)
     if not vm:
@@ -1317,6 +1337,9 @@ def list_snapshots(vm_id):
 @_require_qemu
 def create_snapshot(vm_id):
     """Create a disk snapshot (VM must be stopped, disk must be QCOW2)."""
+    err = require_tools('qemu-img')
+    if err:
+        return err
     if _check_vm_process(vm_id):
         return jsonify({'error': 'Stop VM before creating snapshot'}), 409
 
@@ -1346,6 +1369,9 @@ def create_snapshot(vm_id):
 @_require_qemu
 def restore_snapshot(vm_id, tag):
     """Restore a disk snapshot (VM must be stopped)."""
+    err = require_tools('qemu-img')
+    if err:
+        return err
     if _check_vm_process(vm_id):
         return jsonify({'error': 'Stop VM before restoring snapshot'}), 409
 
@@ -1370,6 +1396,9 @@ def restore_snapshot(vm_id, tag):
 @_require_qemu
 def delete_snapshot(vm_id, tag):
     """Delete a disk snapshot."""
+    err = require_tools('qemu-img')
+    if err:
+        return err
     vms = _load_vms()
     vm = vms.get(vm_id)
     if not vm:
@@ -1395,6 +1424,9 @@ def delete_snapshot(vm_id, tag):
 @_require_qemu
 def convert_image():
     """Convert a disk image between formats (raw, qcow2, vdi, vmdk)."""
+    err = require_tools('qemu-img')
+    if err:
+        return err
     data = request.get_json(force=True) if request.data else {}
     source = data.get('source', '')
     target_format = data.get('format', 'qcow2')

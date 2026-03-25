@@ -8,6 +8,7 @@ import urllib.request
 import urllib.parse
 from flask import Blueprint, jsonify, request
 from blueprints.eventlog import log
+from utils import require_tools, check_tool
 
 ups_bp = Blueprint('ups', __name__)
 
@@ -158,6 +159,9 @@ def init_ups():
 
 @ups_bp.route('/api/ups/status')
 def api_status():
+    err = require_tools('upsc')
+    if err:
+        return err
     return jsonify(_ups_status)
 
 @ups_bp.route('/api/ups/settings', methods=['GET'])
@@ -178,6 +182,9 @@ def api_save_settings():
 
 @ups_bp.route('/api/ups/scan', methods=['POST'])
 def api_scan():
+    err = require_tools('upsc')
+    if err:
+        return err
     try:
         # Try nut-scanner
         r = subprocess.run(['nut-scanner', '-U', '-q'], capture_output=True, text=True, timeout=10)
@@ -189,6 +196,9 @@ def api_scan():
 
 @ups_bp.route('/api/ups/apply', methods=['POST'])
 def api_apply_config():
+    err = require_tools('upsc')
+    if err:
+        return err
     data = request.json or {}
     driver_config = data.get('config')
     

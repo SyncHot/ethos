@@ -18,7 +18,7 @@ from flask import Blueprint, jsonify, request
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from host import host_run, data_path, q, ensure_dep
-from utils import is_pid_alive, load_json as _load_json, save_json as _save_json, register_pkg_routes
+from utils import is_pid_alive, load_json as _load_json, save_json as _save_json, register_pkg_routes, require_tools, check_tool
 
 diskrepair_bp = Blueprint('diskrepair', __name__, url_prefix='/api/diskrepair')
 
@@ -194,6 +194,9 @@ def _try_smartctl(disk_name, timeout=15):
 
 @diskrepair_bp.route('/disks')
 def list_disks():
+    err = require_tools('smartctl')
+    if err:
+        return err
     r = host_run(
         "sudo /opt/ethos/tools/ethos-system-helper.sh lsblk -J -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL,SERIAL,TRAN,ROTA,RO,STATE,HCTL 2>/dev/null"
     )
@@ -274,6 +277,9 @@ def list_disks():
 
 @diskrepair_bp.route('/smart/<disk>')
 def smart_detail(disk):
+    err = require_tools('smartctl')
+    if err:
+        return err
     if not _validate_name(disk):
         return jsonify({'error': 'Invalid disk name'}), 400
     if not _dev_exists(disk):
@@ -572,6 +578,9 @@ def _badblocks_worker(disk, cmd, mode):
 
 @diskrepair_bp.route('/smart-test', methods=['POST'])
 def start_smart_test():
+    err = require_tools('smartctl')
+    if err:
+        return err
     data = request.json or {}
     disk = data.get('disk', '').strip()
     test_type = data.get('type', 'short').strip()

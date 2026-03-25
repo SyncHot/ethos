@@ -23,7 +23,7 @@ from flask import Blueprint, request, jsonify
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from host import data_path, log_path, ETHOS_ROOT
-from utils import load_json as _load_json, save_json as _save_json, register_pkg_routes
+from utils import load_json as _load_json, save_json as _save_json, register_pkg_routes, require_tools, check_tool
 from blueprints.remote_log_db import (
     init_db, save_log, get_devices, get_device_logs, get_log_content, 
     get_latest_log, delete_device_logs as db_delete_device_logs, 
@@ -391,6 +391,9 @@ def remote_log_config_update():
 @remote_log_bp.route('/api/remote-log/send', methods=['POST'])
 def remote_log_send_now():
     """POST manually trigger a log report."""
+    err = require_tools('nmcli')
+    if err:
+        return err
     ok, msg = send_report('manual')
     return jsonify({'ok': ok, 'message': msg})
 
@@ -398,6 +401,9 @@ def remote_log_send_now():
 @remote_log_bp.route('/api/remote-log/preview')
 def remote_log_preview():
     """GET preview what would be sent (without actually sending)."""
+    err = require_tools('nmcli')
+    if err:
+        return err
     _load_config()
     report = _build_report('preview')
     return jsonify(report)

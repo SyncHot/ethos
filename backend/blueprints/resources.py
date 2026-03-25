@@ -8,6 +8,8 @@ import os
 import time
 from flask import Blueprint, jsonify, request
 
+from utils import require_tools, check_tool
+
 from blueprints.monitor import (
     get_cpu_info, get_ram_info, get_gpu_info, get_disk_info,
     get_network_info, get_processes, kill_process, get_usb_devices,
@@ -111,11 +113,17 @@ def api_smart():
 
 @resources_bp.route('/docker')
 def api_docker():
+    err = require_tools('docker')
+    if err:
+        return err
     return jsonify(_cached('docker', get_docker_containers))
 
 
 @resources_bp.route('/docker/action', methods=['POST'])
 def api_docker_action():
+    err = require_tools('docker')
+    if err:
+        return err
     data = request.get_json()
     container_id = data.get('container_id')
     action = data.get('action', 'stop')
@@ -143,7 +151,7 @@ def api_history(table):
 
 @resources_bp.route('/all')
 def api_all():
-    return jsonify({
+    data = {
         'system': _cached('system', get_system_info),
         'cpu': _cached('cpu', get_cpu_info),
         'ram': _cached('ram', get_ram_info),
@@ -153,8 +161,9 @@ def api_all():
         'network': _cached('network', get_network_info),
         'processes': _cached('processes', get_processes, 'cpu', 30),
         'usb': _cached('usb', get_usb_devices),
-        'docker': _cached('docker', get_docker_containers)
-    })
+        'docker': _cached('docker', get_docker_containers) if check_tool('docker') else []
+    }
+    return jsonify(data)
 
 
 # ---- Background collector (called from main app) ----
