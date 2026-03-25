@@ -774,40 +774,22 @@ WantedBy=multi-user.target
         except Exception as e:
             _emit('update_log', {'message': f'Service migration note: {e}'})
 
-        # Restart service
-        _st = _read_status()
-        _st['progress'] = 95
-        _st['message'] = 'Restarting service…'
-        _write_status(_st)
-        _emit('update_status', _st)
-        _emit('update_log', {'message': 'Restarting EthOS service...'})
-        result = subprocess.run(
-            ['systemctl', 'restart', 'ethos.service'],
-            capture_output=True, text=True, timeout=60
-        )
-
-        if result.returncode != 0:
-            _emit('update_log', {'message': f'Restart stderr: {result.stderr[-500:]}'})
-            # Try to rollback
-            _emit('update_log', {'message': 'ERROR — attempting restore...', 'error': True})
-            for d in ['backend', 'frontend']:
-                bak = os.path.join(backup_dir, d)
-                dst = os.path.join(INSTALL_DIR, d)
-                if os.path.exists(bak):
-                    if os.path.exists(dst):
-                        shutil.rmtree(dst)
-                    shutil.copytree(bak, dst)
-            subprocess.run(['systemctl', 'restart', 'ethos.service'], timeout=60)
-            raise RuntimeError(f'Restart failed: {result.stderr[-200:]}')
-
+        # Mark update as complete BEFORE restarting (restart kills this process)
         _st = _read_status()
         _st['progress'] = 100
         _st['applying'] = False
         _st['available'] = None
-        _st['message'] = 'Done!'
+        _st['message'] = f'Updated to {new_ver}!'
         _write_status(_st)
         _emit('update_status', _st)
-        _emit('update_log', {'message': f'Update to {new_ver} complete! System restarting...'})
+        _emit('update_log', {'message': f'Update to {new_ver} complete! Restarting...'})
+
+        # Schedule restart after a short delay so the status write and emit complete
+        subprocess.Popen(
+            ['bash', '-c', 'sleep 2 && systemctl restart ethos.service'],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True
+        )
         _emit('update_complete', {'version': new_ver})
 
         # Cleanup
