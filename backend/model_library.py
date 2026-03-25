@@ -1234,6 +1234,11 @@ class ModelLibrary:
         """Get free disk space at models_path (or given path) in GB."""
         try:
             target = path or self.models_path
+            # Walk up to an existing parent if target doesn't exist yet
+            while target and not os.path.exists(target):
+                target = os.path.dirname(target)
+            if not target:
+                target = '/'
             usage = shutil.disk_usage(target)
             return {
                 'total_gb': round(usage.total / 1073741824, 1),
