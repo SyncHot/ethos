@@ -419,7 +419,7 @@ PKG="{pkg_name}"
 RELEASES="{releases_dir}"
 
 rm -rf "$BUILD_DIR"
-mkdir -p "$BUILD_DIR/$PKG"/{{backend/blueprints,backend/middleware,backend/i18n,frontend/css,frontend/js/apps}}
+mkdir -p "$BUILD_DIR/$PKG"/{{backend/blueprints,backend/middleware,backend/i18n,frontend/css,frontend/js/apps,frontend/vendor,frontend/mobile}}
 mkdir -p "$RELEASES"
 
 echo "STEP:25:Copying backend..."
@@ -434,9 +434,13 @@ cp -r "$NASOS/backend/i18n/"* "$BUILD_DIR/$PKG/backend/i18n/" 2>/dev/null || tru
 echo "STEP:40:Copying frontend..."
 cp "$NASOS/frontend/index.html" "$BUILD_DIR/$PKG/frontend/"
 cp "$NASOS/frontend/share.html" "$BUILD_DIR/$PKG/frontend/" 2>/dev/null || true
+cp "$NASOS/frontend/manifest.json" "$BUILD_DIR/$PKG/frontend/" 2>/dev/null || true
 cp "$NASOS/frontend/css/"*.css "$BUILD_DIR/$PKG/frontend/css/"
 cp "$NASOS/frontend/js/"*.js "$BUILD_DIR/$PKG/frontend/js/"
 cp "$NASOS/frontend/js/apps/"*.js "$BUILD_DIR/$PKG/frontend/js/apps/"
+cp -r "$NASOS/frontend/vendor/"* "$BUILD_DIR/$PKG/frontend/vendor/" 2>/dev/null || true
+cp -r "$NASOS/frontend/mobile/"* "$BUILD_DIR/$PKG/frontend/mobile/" 2>/dev/null || true
+cp -r "$NASOS/frontend/img" "$BUILD_DIR/$PKG/frontend/" 2>/dev/null || true
 
 echo "STEP:50:Copying files..."
 
