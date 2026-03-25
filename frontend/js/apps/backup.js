@@ -389,6 +389,7 @@ function renderBackupApp(body) {
                     <div class="bak-heading13-tight">${t('Co uwzględnić:')}</div>
                     <label class="bak-check-label"><input type="checkbox" id="snap-inc-ethos" checked> <i class="fas fa-server"></i> ${t('Ustawienia EthOS (konta, konfiguracja, baza danych)')}</label>
                     <label class="bak-check-label"><input type="checkbox" id="snap-inc-system" checked> <i class="fas fa-cog"></i> ${t('Ustawienia systemu (sieć, certyfikaty SSL, hostname)')}</label>
+                    <label class="bak-check-label"><input type="checkbox" id="snap-inc-userdirs" checked> <i class="fas fa-users"></i> ${t('Katalogi użytkowników (/home)')}</label>
                     <label class="bak-check-label"><input type="checkbox" id="snap-inc-docker" checked> <i class="fab fa-docker"></i> ${t('Aplikacje Docker (projekty i konfiguracja)')}</label>
                     <label class="bak-check-label"><input type="checkbox" id="snap-inc-volumes" checked> <i class="fas fa-database"></i> ${t('Dane aplikacji Docker (może być duże!)')}</label>
                     <label class="bak-check-label"><input type="checkbox" id="snap-inc-vms"> <i class="fas fa-desktop"></i> ${t('Maszyny wirtualne (dyski VM — może być bardzo duże!)')}</label>
@@ -2337,6 +2338,7 @@ function renderBackupApp(body) {
             label: QS('#snap-label').value.trim(),
             include_ethos: QS('#snap-inc-ethos').checked,
             include_system: QS('#snap-inc-system').checked,
+            include_userdirs: QS('#snap-inc-userdirs').checked,
             include_docker: QS('#snap-inc-docker').checked,
             include_volumes: QS('#snap-inc-volumes').checked,
             include_vms: QS('#snap-inc-vms').checked,

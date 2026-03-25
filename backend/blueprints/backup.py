@@ -2183,6 +2183,7 @@ def create_snapshot():
     include_volumes = data.get('include_volumes', True)
     include_ethos = data.get('include_ethos', True)
     include_system = data.get('include_system', True)
+    include_userdirs = data.get('include_userdirs', True)
     include_vms = data.get('include_vms', False)
     include_models = data.get('include_models', False)
     dest_type = data.get('dest_type', 'local')  # 'local' or 'usb'
@@ -2198,7 +2199,7 @@ def create_snapshot():
         _socketio.start_background_task(
             _create_snapshot_worker,
             label, include_docker, include_volumes, include_ethos, include_system,
-            dest_type, dest_path, include_vms, include_models
+            dest_type, dest_path, include_vms, include_models, include_userdirs
         )
     else:
         logger.error("SocketIO not initialized — cannot start snapshot worker")
@@ -3004,7 +3005,7 @@ def discover_nas():
 
 def _create_snapshot_worker(label, include_docker, include_volumes,
                              include_ethos, include_system, dest_type, dest_path,
-                             include_vms=False, include_models=False):
+                             include_vms=False, include_models=False, include_userdirs=True):
     """Background task: creates a full system snapshot."""
     try:
         ts = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -3022,6 +3023,7 @@ def _create_snapshot_worker(label, include_docker, include_volumes,
                 'docker': include_docker,
                 'volumes': include_volumes,
                 'system': include_system,
+                'userdirs': include_userdirs,
                 'vms': include_vms,
                 'models': include_models,
             },
@@ -3030,7 +3032,7 @@ def _create_snapshot_worker(label, include_docker, include_volumes,
             'docker_containers': 0,
         }
 
-        steps_total = sum([include_ethos, include_system, include_docker, include_volumes])
+        steps_total = sum([include_ethos, include_system, include_userdirs, include_docker, include_volumes])
         step_i = 0
 
         # ── 1. EthOS config & data ──
@@ -3151,6 +3153,51 @@ def _create_snapshot_worker(label, include_docker, include_volumes,
                 pass
 
             _snap_update(log='System config — done')
+
+        # ── 2b. User home directories ──
+        if include_userdirs:
+            step_i += 1
+            pct = int(step_i / steps_total * 90)
+            _snap_update(percent=pct, message='Backing up user directories...', log='Archiving /home...')
+
+            users_dir = os.path.join(snap_dir, 'userdirs')
+            os.makedirs(users_dir, exist_ok=True)
+
+            try:
+                home_entries = [d for d in os.listdir('/home')
+                                if os.path.isdir(os.path.join('/home', d))
+                                and not d.startswith('.')]
+            except OSError:
+                home_entries = []
+
+            saved_users = []
+            for uname in home_entries:
+                user_home = os.path.join('/home', uname)
+                _snap_update(log=f'  User: {uname}')
+                tar_path = os.path.join(users_dir, f'{uname}.tar.gz')
+                # Exclude caches and large temp dirs
+                tar_cmd = [
+                    'tar', '-czf', tar_path, '-C', '/home',
+                    '--exclude', f'{uname}/.cache',
+                    '--exclude', f'{uname}/.local/share/Trash',
+                    '--exclude', f'{uname}/.npm',
+                    '--exclude', f'{uname}/.venv',
+                    '--exclude', f'{uname}/venv',
+                    uname,
+                ]
+                try:
+                    r = subprocess.run(tar_cmd, capture_output=True, timeout=3600)
+                    if r.returncode == 0 or os.path.isfile(tar_path):
+                        sz = os.path.getsize(tar_path) if os.path.isfile(tar_path) else 0
+                        saved_users.append(uname)
+                        _snap_update(log=f'  {uname}: {sz / 1048576:.1f} MB')
+                except subprocess.TimeoutExpired:
+                    _snap_update(log=f'  {uname}: TIMEOUT (skipped)')
+                except Exception as e:
+                    _snap_update(log=f'  {uname}: error — {e}')
+
+            meta['user_dirs'] = saved_users
+            _snap_update(log=f'User directories: {len(saved_users)} users archived')
 
         # ── 3. Docker compose projects ──
         if include_docker:
@@ -3499,6 +3546,29 @@ def _restore_snapshot_worker(snap_dir, restore_docker, restore_volumes,
                 _snap_update(log='System config — restored')
             else:
                 _snap_update(log='No system configuration in snapshot')
+
+        # ── 2b. User home directories ──
+        users_bak = os.path.join(snap_dir, 'userdirs')
+        if os.path.isdir(users_bak):
+            step_i += 1
+            pct = int(step_i / steps_total * 85) if steps_total else 50
+            _snap_update(percent=pct, message='Restoring user directories...', log='Restoring /home...')
+
+            for tarfile_name in sorted(os.listdir(users_bak)):
+                if not tarfile_name.endswith('.tar.gz'):
+                    continue
+                uname = tarfile_name.replace('.tar.gz', '')
+                _snap_update(log=f'  Restoring user: {uname}')
+                try:
+                    subprocess.run(
+                        ['tar', '-xzf', os.path.join(users_bak, tarfile_name), '-C', '/home'],
+                        capture_output=True, timeout=3600
+                    )
+                    _snap_update(log=f'  {uname} — restored')
+                except Exception as e:
+                    _snap_update(log=f'  {uname} — error: {e}')
+
+            _snap_update(log='User directories — restored')
 
         # ── 3. Docker compose projects ──
         if restore_docker:
