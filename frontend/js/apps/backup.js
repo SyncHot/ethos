@@ -391,6 +391,8 @@ function renderBackupApp(body) {
                     <label class="bak-check-label"><input type="checkbox" id="snap-inc-system" checked> <i class="fas fa-cog"></i> ${t('Ustawienia systemu (sieć, certyfikaty SSL, hostname)')}</label>
                     <label class="bak-check-label"><input type="checkbox" id="snap-inc-docker" checked> <i class="fab fa-docker"></i> ${t('Aplikacje Docker (projekty i konfiguracja)')}</label>
                     <label class="bak-check-label"><input type="checkbox" id="snap-inc-volumes" checked> <i class="fas fa-database"></i> ${t('Dane aplikacji Docker (może być duże!)')}</label>
+                    <label class="bak-check-label"><input type="checkbox" id="snap-inc-vms"> <i class="fas fa-desktop"></i> ${t('Maszyny wirtualne (dyski VM — może być bardzo duże!)')}</label>
+                    <label class="bak-check-label"><input type="checkbox" id="snap-inc-models"> <i class="fas fa-brain"></i> ${t('Modele AI (pliki GGUF — może być bardzo duże!)')}</label>
                     <div class="bak-section-divider">
                         <label class="bak-heading13">${t('Dodatkowy cel (opcjonalnie):')}</label>
                         <select id="snap-dest-type" class="fm-input bak-mt4">
@@ -2337,6 +2339,8 @@ function renderBackupApp(body) {
             include_system: QS('#snap-inc-system').checked,
             include_docker: QS('#snap-inc-docker').checked,
             include_volumes: QS('#snap-inc-volumes').checked,
+            include_vms: QS('#snap-inc-vms').checked,
+            include_models: QS('#snap-inc-models').checked,
             dest_type: QS('#snap-dest-type').value,
             dest_path: QS('#snap-dest-type').value === 'usb' ? QS('#snap-dest-usb').value : '',
         };

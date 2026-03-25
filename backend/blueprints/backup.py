@@ -2183,6 +2183,8 @@ def create_snapshot():
     include_volumes = data.get('include_volumes', True)
     include_ethos = data.get('include_ethos', True)
     include_system = data.get('include_system', True)
+    include_vms = data.get('include_vms', False)
+    include_models = data.get('include_models', False)
     dest_type = data.get('dest_type', 'local')  # 'local' or 'usb'
     dest_path = data.get('dest_path', '')
 
@@ -2196,7 +2198,7 @@ def create_snapshot():
         _socketio.start_background_task(
             _create_snapshot_worker,
             label, include_docker, include_volumes, include_ethos, include_system,
-            dest_type, dest_path
+            dest_type, dest_path, include_vms, include_models
         )
     else:
         logger.error("SocketIO not initialized — cannot start snapshot worker")
@@ -3001,7 +3003,8 @@ def discover_nas():
 # ── Snapshot creation worker ──
 
 def _create_snapshot_worker(label, include_docker, include_volumes,
-                             include_ethos, include_system, dest_type, dest_path):
+                             include_ethos, include_system, dest_type, dest_path,
+                             include_vms=False, include_models=False):
     """Background task: creates a full system snapshot."""
     try:
         ts = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -3019,6 +3022,8 @@ def _create_snapshot_worker(label, include_docker, include_volumes,
                 'docker': include_docker,
                 'volumes': include_volumes,
                 'system': include_system,
+                'vms': include_vms,
+                'models': include_models,
             },
             'docker_projects': [],
             'docker_volumes': [],
@@ -3044,17 +3049,22 @@ def _create_snapshot_worker(label, include_docker, include_volumes,
                 shutil.copy2(env_file, os.path.join(ethos_dir, 'ethos.env'))
 
             # data/ (settings, configs, profiles DB, etc.)
-            # Exclude large data dirs (VMs, AI models) — those are user-managed
+            # Optionally exclude large dirs based on user choices
             data_src = os.path.join(ethos_root, 'data')
             if os.path.isdir(data_src):
-                exclude_dirs = ['vms', 'models', 'novnc', 'updates']
+                exclude_dirs = ['novnc', 'updates']
+                if not include_vms:
+                    exclude_dirs.append('vms')
+                if not include_models:
+                    exclude_dirs.append('models')
                 tar_cmd = ['tar', '-czf', os.path.join(ethos_dir, 'data.tar.gz'),
                            '-C', ethos_root]
                 for ed in exclude_dirs:
                     tar_cmd.extend(['--exclude', f'data/{ed}'])
                 tar_cmd.append('data')
-                subprocess.run(tar_cmd, capture_output=True, timeout=600)
-                _snap_update(log=f'EthOS data/ ({_dir_size_str(data_src)}) — excluding vms, models')
+                subprocess.run(tar_cmd, capture_output=True, timeout=3600)
+                excluded_note = ', '.join(exclude_dirs) if exclude_dirs else 'none'
+                _snap_update(log=f'EthOS data/ — excluding: {excluded_note}')
 
             # install.conf
             for extra in ['install.conf']:
