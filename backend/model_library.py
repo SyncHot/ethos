@@ -960,6 +960,8 @@ MODEL_CATALOG = [
         'license': 'Llama 3.2 Community',
         'languages': ['en', 'pl', 'de', 'fr', 'es'],
         'use_cases': ['chat', 'vision', 'reasoning', 'multilingual'],
+        'unsupported': True,
+        'unsupported_reason': 'Vision models (mllama architecture) are not yet supported. Use a text-only model instead.',
     },
     {
         'id': 'llama32-11b-vision-q8',
@@ -978,6 +980,8 @@ MODEL_CATALOG = [
         'license': 'Llama 3.2 Community',
         'languages': ['en', 'pl', 'de', 'fr', 'es'],
         'use_cases': ['chat', 'vision', 'reasoning', 'multilingual'],
+        'unsupported': True,
+        'unsupported_reason': 'Vision models (mllama architecture) are not yet supported. Use a text-only model instead.',
     },
     # ── Llama 3.3 ──────────────────────────────────────────────────
     {
@@ -1280,6 +1284,23 @@ class ModelLibrary:
         result = []
         for m in self.get_all_models():
             entry = dict(m)
+
+            # Block unsupported architectures (e.g. mllama vision)
+            if m.get('unsupported'):
+                entry['status'] = 'unsupported'
+                entry['status_label'] = m.get('unsupported_reason',
+                                              'Not supported')
+                dl = downloaded.get(m['id'])
+                entry['downloaded'] = dl is not None
+                if dl:
+                    entry['local_path'] = dl.get('path', '')
+                    entry['downloaded_at'] = dl.get('downloaded_at', '')
+                else:
+                    entry['local_path'] = ''
+                entry['active'] = m['id'] == active_id
+                result.append(entry)
+                continue
+
             req_ram = m.get('ram_required_gb', 99)
             req_vram = m.get('vram_required_gb', 99)
 
@@ -1332,7 +1353,7 @@ class ModelLibrary:
             entry['active'] = m['id'] == active_id
             result.append(entry)
 
-        order = {'recommended': 0, 'possible': 1, 'too_heavy': 2}
+        order = {'recommended': 0, 'possible': 1, 'too_heavy': 2, 'unsupported': 3}
         result.sort(key=lambda x: (order.get(x['status'], 9), not x['downloaded'], x.get('size_gb', 0)))
 
         return result
@@ -1572,6 +1593,11 @@ class ModelLibrary:
                 return (False, 'Model is not downloaded')
             if not os.path.isfile(dl.get('path', '')):
                 return (False, 'Model file does not exist on disk')
+            model_meta = self.get_model(model_id) or {}
+            if model_meta.get('unsupported'):
+                reason = model_meta.get('unsupported_reason',
+                                        'This model architecture is not supported')
+                return (False, reason)
         # Unload previous model if switching
         if model_id != self._config.get('active_model_id'):
             self.unload_model()
@@ -1639,6 +1665,13 @@ class ModelLibrary:
             # Already loaded
             if self._loaded_model is not None and self._loaded_model_id == model_id:
                 return (self._loaded_model, None)
+
+            # Block unsupported architectures (e.g. vision/mllama)
+            model_meta = self.get_model(model_id) or {}
+            if model_meta.get('unsupported'):
+                reason = model_meta.get('unsupported_reason',
+                                        'This model architecture is not supported')
+                return (None, reason)
 
             # Unload previous
             self._unload_locked()

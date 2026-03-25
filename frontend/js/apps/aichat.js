@@ -1109,8 +1109,8 @@ function _aicRenderModels(root) {
     } else {
         cardsHtml = '<div class="ml-grid">';
         models.forEach(function (m) {
-        var statusCls = m.status === 'recommended' ? 'ml-st-rec' : m.status === 'possible' ? 'ml-st-pos' : 'ml-st-heavy';
-        var statusIcon = m.status === 'recommended' ? 'fa-check-circle' : m.status === 'possible' ? 'fa-exclamation-circle' : 'fa-times-circle';
+        var statusCls = m.status === 'recommended' ? 'ml-st-rec' : m.status === 'possible' ? 'ml-st-pos' : m.status === 'unsupported' ? 'ml-st-heavy' : 'ml-st-heavy';
+        var statusIcon = m.status === 'recommended' ? 'fa-check-circle' : m.status === 'possible' ? 'fa-exclamation-circle' : m.status === 'unsupported' ? 'fa-ban' : 'fa-times-circle';
         var statusTone = m.status === 'recommended' ? 'good' : m.status === 'possible' ? 'medium' : 'bad';
         var familyClass = 'ml-family-' + _aicFamilyKey(m.family);
 
@@ -1123,7 +1123,12 @@ function _aicRenderModels(root) {
             }
 
             var actionBtn = '';
-            if (m.downloaded) {
+            if (m.unsupported) {
+                actionBtn = '<button class="ml-btn ml-btn-dl" disabled title="' + _aicEsc(m.unsupported_reason || '') + '"><i class="fas fa-ban"></i> ' + t('Nieobsługiwany') + '</button>';
+                if (m.downloaded) {
+                    actionBtn += '<button class="ml-btn ml-btn-del" onclick="window._mlDeleteModel(\'' + m.id + '\')"><i class="fas fa-trash"></i></button>';
+                }
+            } else if (m.downloaded) {
                 if (m.active) {
                     actionBtn =
                         '<button class="ml-btn ml-btn-active" disabled><i class="fas fa-check"></i> Aktywny</button>' +
