@@ -1171,6 +1171,12 @@ chroot "$ROOT" apt-get install -y -qq \
 
 # All other packages (storage tools, sensors, printer, archives, etc.)
 # are installed lazily by EthOS (ensure_dep) when user enables features.
+# Builder tools are pre-installed so image creation works out of the box.
+echo "LOG:Installing builder tools..."
+chroot "$ROOT" apt-get install -y -qq \
+    debootstrap squashfs-tools xorriso isolinux \
+    parted dosfstools e2fsprogs mtools \
+    2>&1 | tail -5 || echo "LOG:Some builder tools skipped"
 
 echo "STEP:73:Installing kernel and firmware from backports..."
 
