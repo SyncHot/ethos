@@ -3044,14 +3044,17 @@ def _create_snapshot_worker(label, include_docker, include_volumes,
                 shutil.copy2(env_file, os.path.join(ethos_dir, 'ethos.env'))
 
             # data/ (settings, configs, profiles DB, etc.)
+            # Exclude large data dirs (VMs, AI models) — those are user-managed
             data_src = os.path.join(ethos_root, 'data')
             if os.path.isdir(data_src):
-                subprocess.run(
-                    ['tar', '-czf', os.path.join(ethos_dir, 'data.tar.gz'),
-                     '-C', ethos_root, 'data'],
-                    capture_output=True, timeout=120
-                )
-                _snap_update(log=f'EthOS data/ ({_dir_size_str(data_src)})')
+                exclude_dirs = ['vms', 'models', 'novnc', 'updates']
+                tar_cmd = ['tar', '-czf', os.path.join(ethos_dir, 'data.tar.gz'),
+                           '-C', ethos_root]
+                for ed in exclude_dirs:
+                    tar_cmd.extend(['--exclude', f'data/{ed}'])
+                tar_cmd.append('data')
+                subprocess.run(tar_cmd, capture_output=True, timeout=600)
+                _snap_update(log=f'EthOS data/ ({_dir_size_str(data_src)}) — excluding vms, models')
 
             # install.conf
             for extra in ['install.conf']:
@@ -3382,7 +3385,7 @@ def _restore_snapshot_worker(snap_dir, restore_docker, restore_volumes,
                         _snap_update(log='  Current data/ copied to data.pre-restore/')
                     subprocess.run(
                         ['tar', '-xzf', data_tar, '-C', ethos_root],
-                        capture_output=True, timeout=120
+                        capture_output=True, timeout=600
                     )
                     _snap_update(log='  data/ restored')
 
