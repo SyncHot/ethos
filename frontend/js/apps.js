@@ -8449,6 +8449,10 @@ function renderAppStore(body) {
                             <label class="app-check-label app-check-label--center">
                                 <input type="checkbox" id="gp-wipe-data"> ${t('Usuń również dane (nagrania, konfigurację)')}
                             </label>
+                            ${pkgId === 'ai-chat' ? `
+                            <label class="app-check-label app-check-label--center" style="margin-top:8px;color:var(--text-secondary)">
+                                <input type="checkbox" id="gp-wipe-models"> ${t('Usuń pobrane modele AI')} <span style="opacity:.6;font-size:11px">(${t('może zajmować wiele GB')})</span>
+                            </label>` : ''}
                         </div>
                         <div class="as-modal-footer app-justify-center app-gap-md">
                             <button class="as-btn" id="gp-cancel-uninstall">${t('Anuluj')}</button>
@@ -8461,11 +8465,12 @@ function renderAppStore(body) {
                 confirmOverlay.querySelector('#gp-cancel-uninstall').addEventListener('click', () => confirmOverlay.remove());
                 confirmOverlay.querySelector('#gp-confirm-uninstall').addEventListener('click', async () => {
                     const wipe = confirmOverlay.querySelector('#gp-wipe-data').checked;
+                    const wipeModels = pkgId === 'ai-chat' && (confirmOverlay.querySelector('#gp-wipe-models')?.checked ?? false);
                     confirmOverlay.remove();
                     btn.disabled = true;
                     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Odinstalowywanie…';
                     try {
-                        await api('/ethos-packages/' + pkgId + '/uninstall', { method: 'POST', body: { wipe_data: wipe } });
+                        await api('/ethos-packages/' + pkgId + '/uninstall', { method: 'POST', body: { wipe_data: wipe, wipe_models: wipeModels } });
                         toast(t('Pakiet odinstalowany'), 'success');
                         api('/apps').then(apps => { NAS.apps = apps; updateDesktopApps && updateDesktopApps(); }).catch(() => {});
                         setTimeout(() => loadPackages(), 500);

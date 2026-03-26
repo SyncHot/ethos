@@ -9141,13 +9141,13 @@ def list_ethos_packages():
                 pass
 
     # Auto-install simple packages for existing users (migration)
-    # On first run or when new simple packages are added, mark them all as installed
+    # Mark as installed unless the user explicitly uninstalled them (installed_at is non-empty)
     _simple_pkg_ids = [p['id'] for p in _ETHOS_PACKAGES if p.get('simple')]
-    _any_simple_in_state = any(pid in state for pid in _simple_pkg_ids)
     for pid in _simple_pkg_ids:
-        if pid not in state:
-            # If this is an existing user (any packages already in state), auto-install
-            # If brand new user (empty state), also auto-install (Option B will change this)
+        current = state.get(pid, {})
+        # Never in state, or in state with installed=False and no installed_at
+        # (stale entry from before this system existed — not an intentional uninstall)
+        if pid not in state or (not current.get('installed') and not current.get('installed_at')):
             state[pid] = {'installed': True, 'installed_at': 'migration'}
             changed = True
 
@@ -9244,7 +9244,9 @@ def uninstall_ethos_package(pkg_id):
     if not pkg:
         return jsonify({'error': 'Package not found'}), 404
 
-    wipe = (request.json or {}).get('wipe_data', False)
+    body = request.json or {}
+    wipe = body.get('wipe_data', False)
+    wipe_models = body.get('wipe_models', False)
 
     # Call the package's own uninstall endpoint (generic dispatch)
     uninstall_ep = pkg.get('uninstall_endpoint', '')
@@ -9255,7 +9257,7 @@ def uninstall_ethos_package(pkg_id):
                 auth_hdr = request.headers.get('Authorization')
                 if auth_hdr:
                     headers['Authorization'] = auth_hdr
-                tc.post(uninstall_ep, json={'wipe_data': wipe}, headers=headers)
+                tc.post(uninstall_ep, json={'wipe_data': wipe, 'wipe_models': wipe_models}, headers=headers)
         except Exception as _e:
             log.warning('[packages] uninstall endpoint %s failed: %s', uninstall_ep, _e)
 

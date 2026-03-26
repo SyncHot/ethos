@@ -1611,8 +1611,8 @@ def save_calibration():
 #  Routes: install / uninstall / status
 # ══════════════════════════════════════════════════════════════════
 
-def _aichat_on_uninstall(wipe):
-    """Clean up AI Chat: unload model, optionally remove configs and models."""
+def _aichat_on_uninstall(wipe, wipe_models=False):
+    """Clean up AI Chat: unload model, optionally remove configs and/or models."""
     # Unload any loaded model from RAM
     try:
         lib = _get_ml()
@@ -1628,6 +1628,8 @@ def _aichat_on_uninstall(wipe):
                     os.remove(f)
                 except Exception:
                     pass
+
+    if wipe or wipe_models:
         # Remove downloaded models
         try:
             lib = _get_ml()
@@ -1774,8 +1776,10 @@ def aichat_install():
 @admin_required
 def aichat_uninstall():
     """Uninstall AI Chat: unload model, optionally wipe data."""
-    wipe = (request.json or {}).get('wipe_data', False)
-    _aichat_on_uninstall(wipe)
+    body = request.json or {}
+    wipe = body.get('wipe_data', False)
+    wipe_models = body.get('wipe_models', False)
+    _aichat_on_uninstall(wipe, wipe_models=wipe_models)
     return jsonify({'ok': True})
 
 

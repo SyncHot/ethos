@@ -112,6 +112,15 @@ def wait_for_content(page: Page, app_id: str, timeout: int = 8_000) -> None:
 
 # ─── Login ────────────────────────────────────────────────────────────────────
 
+@pytest.fixture(scope="session")
+def nas_apps(pw_page):
+    """Return the list of apps available on the NAS."""
+    import json, re
+    pw_page.evaluate("() => window.__test_apps__ = window.NAS?.apps || []")
+    apps = pw_page.evaluate("() => window.__test_apps__")
+    return apps or []
+
+
 def test_login(pw_page):
     """Desktop is visible after login."""
     assert pw_page.is_visible("#desktop")
@@ -580,7 +589,9 @@ def test_remote_log_opens(pw_page):
 
 # ─── Surveillance ────────────────────────────────────────────────────────────
 
-def test_surveillance_opens(pw_page):
+def test_surveillance_opens(pw_page, nas_apps):
+    if not any(a["id"] == "surveillance" for a in nas_apps):
+        pytest.skip("surveillance not installed")
     open_app(pw_page, "surveillance")
     pw_page.wait_for_selector("#win-body-surveillance .surv-install-center, #win-body-surveillance .surv-topbar", timeout=15_000)
     close_app(pw_page, "surveillance")
