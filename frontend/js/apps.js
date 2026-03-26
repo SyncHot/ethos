@@ -6511,6 +6511,16 @@ function renderVMManager(body) {
                 progBar.style.width = '100%';
                 progPct.textContent = '100%';
                 progLabel.textContent = t('Gotowe');
+
+                if (xhr.status === 413) {
+                    errEl.textContent = t('Plik zbyt duży – sprawdź limit nginx (client_max_body_size)');
+                    errEl.style.display = 'block';
+                    progWrap.style.display = 'none';
+                    okBtn.disabled = false;
+                    overlay.querySelector('#vi-cancel').disabled = false;
+                    return;
+                }
+
                 try {
                     const resp = JSON.parse(xhr.responseText);
                     if (xhr.status >= 400 || resp.error) {
@@ -6525,8 +6535,10 @@ function renderVMManager(body) {
                     close();
                     await loadMachines(); fillMachinesTable();
                 } catch (e) {
-                    errEl.textContent = t('Nieoczekiwany błąd parsowania odpowiedzi');
+                    const msg = xhr.status ? `HTTP ${xhr.status}` : t('Nieoczekiwany błąd');
+                    errEl.textContent = t('Błąd serwera:') + ' ' + msg;
                     errEl.style.display = 'block';
+                    progWrap.style.display = 'none';
                     okBtn.disabled = false;
                     overlay.querySelector('#vi-cancel').disabled = false;
                 }
