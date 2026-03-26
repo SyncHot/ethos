@@ -457,7 +457,7 @@ def wireguard_install():
         _emit('start', 0, 'Installing wireguard-tools…')
         try:
             r = subprocess.run(
-                ['apt-get', 'install', '-y', 'wireguard', 'wireguard-tools'],
+                ['apt-get', 'install', '-y', 'wireguard', 'wireguard-tools', 'qrencode'],
                 capture_output=True, text=True, timeout=300
             )
             if r.returncode != 0:

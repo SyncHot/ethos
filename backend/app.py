@@ -9056,7 +9056,7 @@ _ETHOS_PACKAGES = [
         'color': '#7c3aed',
         'description': 'WireGuard VPN server — manage peers, generate QR codes.',
         'app_id': 'wireguard',
-        'deps_label': 'wireguard, wireguard-tools',
+        'deps_label': 'wireguard, wireguard-tools, qrencode',
         'install_endpoint': '/api/wireguard/install',
         'uninstall_endpoint': '/api/wireguard/uninstall',
         'status_endpoint': '/api/wireguard/pkg-status',
