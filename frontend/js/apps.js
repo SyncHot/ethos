@@ -8208,6 +8208,8 @@ function renderAppStore(body) {
     const loadPackages = async () => {
         try {
             S.packages = await api('/ethos-packages');
+            S.pkgCategory = S.pkgCategory || 'all';
+            S.pkgSearch = S.pkgSearch || '';
             render();
         } catch (e) {
             body.innerHTML = `<div class="as-error">${t('Błąd ładowania pakietów:')} ${e.message}</div>`;
@@ -8215,35 +8217,72 @@ function renderAppStore(body) {
     };
 
     const renderPackagesTab = () => {
+        const pkgs = S.packages;
+        const allCats = ['all', ...Array.from(new Set(pkgs.map(p => p.category).filter(Boolean))).sort()];
+        const installed = pkgs.filter(p => p.installed).length;
+
+        const filtered = pkgs.filter(p => {
+            const catMatch = S.pkgCategory === 'all' || p.category === S.pkgCategory;
+            const q = (S.pkgSearch || '').toLowerCase();
+            const searchMatch = !q || (p.name || '').toLowerCase().includes(q) ||
+                (p.description || '').toLowerCase().includes(q) ||
+                (p.id || '').toLowerCase().includes(q);
+            return catMatch && searchMatch;
+        });
+
         const content = document.createElement('div');
         content.className = 'gp-content';
+
+        const catLabels = {
+            all: t('Wszystkie'), System: t('System'), Storage: t('Pamięć'),
+            Tools: t('Narzędzia'), Network: t('Sieć'), Security: t('Bezpieczeństwo'),
+            Media: t('Media'), Dev: t('Deweloperskie'),
+        };
+
         content.innerHTML = `
             <div class="gp-header">
                 <div class="gp-header-icon"><i class="fas fa-cube"></i></div>
-                <div>
-                    <h3 class="gp-title">Pakiety EthOS</h3>
-                    <p class="gp-subtitle">${t('Zarządzaj wbudowanymi rozszerzeniami systemu. Zainstaluj lub odinstaluj pakiety według potrzeb.')}</p>
+                <div class="gp-header-text">
+                    <h3 class="gp-title">${t('Katalog aplikacji EthOS')}</h3>
+                    <p class="gp-subtitle">${t('Zainstalowane:')} <strong>${installed}</strong> / ${pkgs.length} &nbsp;·&nbsp; ${t('Włącz lub wyłącz aplikacje')}</p>
+                </div>
+                <div class="gp-header-search">
+                    <i class="fas fa-search"></i>
+                    <input type="text" class="gp-search-input" placeholder="${t('Szukaj…')}" value="${S.pkgSearch || ''}">
                 </div>
             </div>
+            <div class="gp-cat-bar">
+                ${allCats.map(c => {
+                    const count = c === 'all' ? pkgs.length : pkgs.filter(p => p.category === c).length;
+                    return `<button class="gp-cat-btn ${S.pkgCategory === c ? 'active' : ''}" data-cat="${c}">
+                        ${catLabels[c] || c}
+                        <span class="gp-cat-count">${count}</span>
+                    </button>`;
+                }).join('')}
+            </div>
             <div class="gp-grid" id="gp-grid">
-                ${!S.packages.length ? `<div class="gp-empty"><i class="fas fa-box-open"></i><p>${t('Brak dostępnych pakietów')}</p></div>` : ''}
-                ${S.packages.map(pkg => `
+                ${!filtered.length ? `<div class="gp-empty"><i class="fas fa-box-open"></i><p>${t('Brak wyników')}</p></div>` : ''}
+                ${filtered.map(pkg => `
                     <div class="gp-card ${pkg.installed ? 'gp-installed' : ''}" data-pkg="${pkg.id}">
                         <div class="gp-card-icon" style="background:${pkg.color || '#6366f1'}">
                             <i class="fas ${pkg.icon || 'fa-puzzle-piece'}"></i>
                         </div>
                         <div class="gp-card-body">
-                            <div class="gp-card-name">${pkg.name}</div>
+                            <div class="gp-card-name">${pkg.name}
+                                ${pkg.simple ? '' : '<span class="gp-badge-deps" title="Wymaga dependencji systemowych"><i class="fas fa-microchip"></i></span>'}
+                            </div>
                             <div class="gp-card-desc">${pkg.description}</div>
-                            <div class="gp-card-deps"><i class="fas fa-microchip"></i> ${pkg.deps_label || ''}</div>
+                            ${pkg.deps_label && pkg.deps_label !== 'no requirements'
+                                ? `<div class="gp-card-deps"><i class="fas fa-box"></i> ${pkg.deps_label}</div>`
+                                : ''}
                         </div>
                         <div class="gp-card-actions">
                             ${pkg.installed
-                                ? `<span class="gp-status gp-status-on"><i class="fas fa-check-circle"></i> ${t('Zainstalowany')}</span>
-                                   <button class="gp-btn gp-btn-open" data-pkg="${pkg.id}" data-app="${pkg.app_id}"><i class="fas fa-external-link-alt"></i> ${t('Otwórz')}</button>
-                                   <button class="gp-btn gp-btn-remove" data-pkg="${pkg.id}"><i class="fas fa-trash"></i> ${t('Odinstaluj')}</button>`
-                                : `<span class="gp-status gp-status-off"><i class="fas fa-times-circle"></i> ${t('Nie zainstalowany')}</span>
-                                   <button class="gp-btn gp-btn-install" data-pkg="${pkg.id}"><i class="fas fa-download"></i> ${t('Zainstaluj')}</button>`
+                                ? `<span class="gp-status gp-status-on"><i class="fas fa-check-circle"></i> ${t('Włączony')}</span>
+                                   <button class="gp-btn gp-btn-open" data-pkg="${pkg.id}" data-app="${pkg.app_id}"><i class="fas fa-arrow-up-right-from-square"></i> ${t('Otwórz')}</button>
+                                   <button class="gp-btn gp-btn-remove" data-pkg="${pkg.id}" data-simple="${pkg.simple ? '1' : ''}"><i class="fas fa-power-off"></i> ${t('Wyłącz')}</button>`
+                                : `<span class="gp-status gp-status-off"><i class="fas fa-circle"></i> ${t('Wyłączony')}</span>
+                                   <button class="gp-btn gp-btn-install" data-pkg="${pkg.id}" data-simple="${pkg.simple ? '1' : ''}"><i class="fas fa-power-off"></i> ${t('Włącz')}</button>`
                             }
                         </div>
                     </div>
@@ -8252,148 +8291,149 @@ function renderAppStore(body) {
         `;
         body.appendChild(content);
 
-        // Install buttons
+        // Category filter
+        content.querySelectorAll('.gp-cat-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                S.pkgCategory = btn.dataset.cat;
+                const gpContent = body.querySelector('.gp-content');
+                if (gpContent) gpContent.remove();
+                renderPackagesTab();
+            });
+        });
+
+        // Search
+        const searchInput = content.querySelector('.gp-search-input');
+        if (searchInput) {
+            searchInput.addEventListener('input', e => {
+                S.pkgSearch = e.target.value;
+                const gpContent = body.querySelector('.gp-content');
+                if (gpContent) gpContent.remove();
+                renderPackagesTab();
+            });
+        }
+
+        // Install (enable) buttons
         content.querySelectorAll('.gp-btn-install').forEach(btn => {
             btn.addEventListener('click', async (e) => {
                 e.stopPropagation();
                 const pkgId = btn.dataset.pkg;
+                const isSimple = btn.dataset.simple === '1';
                 const pkg = S.packages.find(p => p.id === pkgId);
                 if (!pkg) return;
+
+                if (isSimple) {
+                    // Simple package — just toggle state
+                    btn.disabled = true;
+                    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+                    try {
+                        await api('/apps/set-installed', { method: 'POST', body: { id: pkgId, installed: true } });
+                        toast(`${pkg.name} ${t('włączony')}`, 'success');
+                        api('/apps').then(apps => { NAS.apps = apps; updateDesktopApps && updateDesktopApps(); }).catch(() => {});
+                        setTimeout(() => loadPackages(), 400);
+                    } catch (err) {
+                        toast(t('Błąd: ') + err.message, 'error');
+                        btn.disabled = false;
+                        btn.innerHTML = `<i class="fas fa-power-off"></i> ${t('Włącz')}`;
+                    }
+                    return;
+                }
 
                 btn.disabled = true;
                 btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Instalowanie…';
 
                 try {
-                    // 1. Mark as installed in state — returns install_endpoint
                     const reg = await api('/ethos-packages/' + pkgId + '/install', { method: 'POST' });
                     const installEp = reg.install_endpoint;
 
                     if (!installEp) {
-                        // No install endpoint (frontend-only package) — done immediately
-                        toast('Pakiet zainstalowany!', 'success');
-                        api('/apps').then(apps => { NAS.apps = apps; }).catch(() => {});
+                        toast(t('Pakiet zainstalowany!'), 'success');
+                        api('/apps').then(apps => { NAS.apps = apps; updateDesktopApps && updateDesktopApps(); }).catch(() => {});
                         setTimeout(() => loadPackages(), 500);
                         return;
                     }
 
-                    // 2. Call the package's own install endpoint
-                    // install_endpoint includes /api prefix, strip it since api() adds it
                     const ep = installEp.startsWith('/api') ? installEp.slice(4) : installEp;
                     const r = await api(ep, { method: 'POST' });
 
-                    // 3. If response has task_id → async install with socket progress
                     if (r.task_id && NAS.socket) {
                         const defaultEvtName = pkgId.replace(/-/g, '_') + '_install';
-                        const inferredEvtName = (() => {
-                            try {
-                                const clean = String(installEp || '').split('?')[0];
-                                const parts = clean.split('/').filter(Boolean);
-                                const apiIdx = parts.lastIndexOf('api');
-                                const stem = (apiIdx >= 0 ? parts[apiIdx + 1] : parts[0]) || '';
-                                return stem ? (stem.replace(/-/g, '_') + '_install') : defaultEvtName;
-                            } catch {
-                                return defaultEvtName;
-                            }
-                        })();
-                        const evtName = r.progress_event || pkg.progress_event || inferredEvtName || defaultEvtName;
+                        const evtName = r.progress_event || defaultEvtName;
                         const taskId = `pkg:${pkgId}:${r.task_id}`;
 
                         if (NAS.taskProgress) {
-                            NAS.taskProgress.upsert({
-                                id: taskId,
-                                source: 'Pakiety EthOS',
-                                title: `Instalacja: ${pkg.name || pkgId}`,
-                                percent: 1,
-                                message: t('Rozpoczynanie…'),
-                                status: 'running',
-                                action: { app: 'app-store', tab: 'packages' },
-                            });
+                            NAS.taskProgress.upsert({ id: taskId, source: 'Pakiety EthOS', title: `Instalacja: ${pkg.name || pkgId}`, percent: 1, message: t('Rozpoczynanie…'), status: 'running', action: { app: 'app-store', tab: 'packages' } });
                         }
 
                         const progressEl = document.createElement('div');
                         progressEl.className = 'gp-progress';
-                        progressEl.innerHTML = `
-                            <div class="gp-progress-bar"><div class="gp-progress-fill"></div></div>
-                            <div class="gp-progress-msg">${t('Instalowanie zależności…')}</div>
-                        `;
+                        progressEl.innerHTML = `<div class="gp-progress-bar"><div class="gp-progress-fill"></div></div><div class="gp-progress-msg">${t('Instalowanie zależności…')}</div>`;
                         btn.parentElement.appendChild(progressEl);
 
                         const handler = (data) => {
-                            if (r.task_id && data && data.task_id && data.task_id !== r.task_id) return;
+                            if (r.task_id && data?.task_id && data.task_id !== r.task_id) return;
                             const fill = progressEl.querySelector('.gp-progress-fill');
                             const msg = progressEl.querySelector('.gp-progress-msg');
                             const percent = Math.max(0, Math.min(100, Number(data?.percent || 0)));
                             const message = data?.message || '';
                             if (fill) fill.style.width = percent + '%';
                             if (msg) msg.textContent = message;
-
-                            if (NAS.taskProgress) {
-                                NAS.taskProgress.upsert({
-                                    id: taskId,
-                                    source: 'Pakiety EthOS',
-                                    title: `Instalacja: ${pkg.name || pkgId}`,
-                                    percent,
-                                    message,
-                                    status: 'running',
-                                    action: { app: 'app-store', tab: 'packages' },
-                                });
-                            }
-
+                            if (NAS.taskProgress) NAS.taskProgress.upsert({ id: taskId, source: 'Pakiety EthOS', title: `Instalacja: ${pkg.name || pkgId}`, percent, message, status: 'running', action: { app: 'app-store', tab: 'packages' } });
                             if (data.stage === 'done') {
                                 NAS.socket.off(evtName, handler);
-                                toast('Pakiet zainstalowany!', 'success');
-                                if (NAS.taskProgress) {
-                                    NAS.taskProgress.finish(taskId, true, message || t('Pakiet zainstalowany'));
-                                }
-                                api('/apps').then(apps => { NAS.apps = apps; }).catch(() => {});
+                                toast(t('Pakiet zainstalowany!'), 'success');
+                                if (NAS.taskProgress) NAS.taskProgress.finish(taskId, true, message || t('Pakiet zainstalowany'));
+                                api('/apps').then(apps => { NAS.apps = apps; updateDesktopApps && updateDesktopApps(); }).catch(() => {});
                                 setTimeout(() => loadPackages(), 1000);
                             }
                             if (data.stage === 'error') {
                                 NAS.socket.off(evtName, handler);
                                 toast(t('Błąd instalacji: ') + data.message, 'error');
-                                if (NAS.taskProgress) {
-                                    NAS.taskProgress.finish(taskId, false, message || t('Błąd instalacji'));
-                                }
+                                if (NAS.taskProgress) NAS.taskProgress.finish(taskId, false, message || t('Błąd instalacji'));
                                 btn.disabled = false;
-                                btn.innerHTML = `<i class="fas fa-download"></i> ${t('Spróbuj ponownie')}`;
+                                btn.innerHTML = `<i class="fas fa-power-off"></i> ${t('Włącz')}`;
                                 progressEl.remove();
                             }
                         };
                         NAS.socket.on(evtName, handler);
                     } else {
-                        // Synchronous install — done immediately
-                        toast('Pakiet zainstalowany!', 'success');
-                        if (NAS.taskProgress) {
-                            NAS.taskProgress.upsert({
-                                id: `pkg:${pkgId}:sync`,
-                                source: 'Pakiety EthOS',
-                                title: `Instalacja: ${pkg.name || pkgId}`,
-                                percent: 100,
-                                message: t('Pakiet zainstalowany'),
-                                status: 'running',
-                                action: { app: 'app-store', tab: 'packages' },
-                            });
-                            NAS.taskProgress.finish(`pkg:${pkgId}:sync`, true, t('Pakiet zainstalowany'));
-                        }
-                        api('/apps').then(apps => { NAS.apps = apps; }).catch(() => {});
+                        toast(t('Pakiet zainstalowany!'), 'success');
+                        api('/apps').then(apps => { NAS.apps = apps; updateDesktopApps && updateDesktopApps(); }).catch(() => {});
                         setTimeout(() => loadPackages(), 500);
                     }
                 } catch (e) {
                     toast(t('Błąd: ') + e.message, 'error');
                     btn.disabled = false;
-                    btn.innerHTML = '<i class="fas fa-download"></i> Zainstaluj';
+                    btn.innerHTML = `<i class="fas fa-power-off"></i> ${t('Włącz')}`;
                 }
             });
         });
 
-        // Uninstall buttons
+        // Uninstall (disable) buttons
         content.querySelectorAll('.gp-btn-remove').forEach(btn => {
             btn.addEventListener('click', async (e) => {
                 e.stopPropagation();
                 const pkgId = btn.dataset.pkg;
+                const isSimple = btn.dataset.simple === '1';
                 const pkg = S.packages.find(p => p.id === pkgId);
 
-                // Confirm dialog
+                if (isSimple) {
+                    // Simple package — just toggle off without confirm dialog
+                    btn.disabled = true;
+                    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+                    try {
+                        await api('/apps/set-installed', { method: 'POST', body: { id: pkgId, installed: false } });
+                        toast(`${pkg?.name || pkgId} ${t('wyłączony')}`, 'info');
+                        api('/apps').then(apps => { NAS.apps = apps; updateDesktopApps && updateDesktopApps(); }).catch(() => {});
+                        setTimeout(() => loadPackages(), 400);
+                    } catch (err) {
+                        toast(t('Błąd: ') + err.message, 'error');
+                        btn.disabled = false;
+                        btn.innerHTML = `<i class="fas fa-power-off"></i> ${t('Wyłącz')}`;
+                    }
+                    return;
+                }
+
+                // Complex package — confirm dialog
                 const confirmOverlay = document.createElement('div');
                 confirmOverlay.className = 'as-modal-overlay';
                 confirmOverlay.innerHTML = `
@@ -8426,14 +8466,13 @@ function renderAppStore(body) {
                     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Odinstalowywanie…';
                     try {
                         await api('/ethos-packages/' + pkgId + '/uninstall', { method: 'POST', body: { wipe_data: wipe } });
-                        toast('Pakiet odinstalowany', 'success');
-                        // Refresh NAS.apps so the app disappears from menu
-                        api('/apps').then(apps => { NAS.apps = apps; }).catch(() => {});
+                        toast(t('Pakiet odinstalowany'), 'success');
+                        api('/apps').then(apps => { NAS.apps = apps; updateDesktopApps && updateDesktopApps(); }).catch(() => {});
                         setTimeout(() => loadPackages(), 500);
                     } catch (e) {
                         toast(t('Błąd: ') + e.message, 'error');
                         btn.disabled = false;
-                        btn.innerHTML = '<i class="fas fa-trash"></i> Odinstaluj';
+                        btn.innerHTML = `<i class="fas fa-power-off"></i> ${t('Wyłącz')}`;
                     }
                 });
             });

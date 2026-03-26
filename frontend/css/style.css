@@ -5031,6 +5031,89 @@ a.dkr-port-link:hover {
     margin-top: 4px;
 }
 
+
+/* ─── App Store EthOS catalog — category bar & search ─── */
+.gp-header {
+    flex-wrap: wrap;
+}
+.gp-header-text {
+    flex: 1;
+    min-width: 0;
+}
+.gp-header-search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    padding: 6px 12px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+.gp-search-input {
+    border: none;
+    background: transparent;
+    outline: none;
+    color: var(--text-primary);
+    font-size: 13px;
+    width: 160px;
+}
+.gp-cat-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 16px;
+}
+.gp-cat-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+.gp-cat-btn:hover {
+    border-color: var(--accent);
+    color: var(--text-primary);
+}
+.gp-cat-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+.gp-cat-count {
+    background: rgba(255,255,255,.18);
+    border-radius: 10px;
+    padding: 1px 6px;
+    font-size: 10px;
+    font-weight: 700;
+}
+.gp-cat-btn:not(.active) .gp-cat-count {
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+}
+.gp-badge-deps {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 5px;
+    font-size: 10px;
+    color: var(--text-muted);
+    opacity: .6;
+}
+.gp-content {
+    padding: 20px 24px;
+    overflow-y: auto;
+    height: 100%;
+    box-sizing: border-box;
+}
+
 /* ─── Desktop Context Menu ─── */
 .desktop-ctx-menu {
     position: fixed;

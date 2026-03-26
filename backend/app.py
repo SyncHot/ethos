@@ -8078,7 +8078,8 @@ def get_apps():
             'color': '#10b981',
             'type': 'builtin',
             'category': 'Storage',
-            'description': 'Mounting, formatting and partitions'
+            'description': 'Mounting, formatting and partitions',
+            'package': 'storage-manager',
         },
         {
             'id': 'raid',
@@ -8108,7 +8109,8 @@ def get_apps():
             'color': '#06b6d4',
             'type': 'builtin',
             'category': 'Storage',
-            'description': 'Create and restore backups'
+            'description': 'Create and restore backups',
+            'package': 'backup',
         },
         {
             'id': 'cloud-backup',
@@ -8129,7 +8131,8 @@ def get_apps():
             'type': 'builtin',
             'category': 'System',
             'description': 'System snapshots and version rollback',
-            'admin_only': True
+            'admin_only': True,
+            'package': 'rollback',
         },
         {
             'id': 'resource-monitor',
@@ -8138,7 +8141,8 @@ def get_apps():
             'color': '#8b5cf6',
             'type': 'builtin',
             'category': 'System',
-            'description': 'Detailed monitoring'
+            'description': 'Detailed monitoring',
+            'package': 'resource-monitor',
         },
         {
             'id': 'printer',
@@ -8157,7 +8161,8 @@ def get_apps():
             'color': '#22c55e',
             'type': 'builtin',
             'category': 'System',
-            'description': 'Command line (SSH-like)'
+            'description': 'Command line (SSH-like)',
+            'package': 'terminal',
         },
         {
             'id': 'packages',
@@ -8185,7 +8190,8 @@ def get_apps():
             'color': '#0ea5e9',
             'type': 'builtin',
             'category': 'System',
-            'description': 'Network interface and WiFi management'
+            'description': 'Network interface and WiFi management',
+            'package': 'network',
         },
         {
             'id': 'event-log',
@@ -8203,7 +8209,8 @@ def get_apps():
             'color': '#f59e0b',
             'type': 'builtin',
             'category': 'System',
-            'description': 'System notification channels'
+            'description': 'System notification channels',
+            'package': 'notifications',
         },
         {
             'id': 'fail2ban',
@@ -8213,7 +8220,8 @@ def get_apps():
             'type': 'builtin',
             'category': 'System',
             'description': 'Fail2Ban — active bans, whitelist, SSH/Samba/Web protection',
-            'admin_only': True
+            'admin_only': True,
+            'package': 'fail2ban',
         },
         {
             'id': 'firewall',
@@ -8223,7 +8231,8 @@ def get_apps():
             'type': 'builtin',
             'category': 'System',
             'description': 'Firewall and rules management',
-            'admin_only': True
+            'admin_only': True,
+            'package': 'firewall',
         },
         {
             'id': 'cron',
@@ -8233,7 +8242,8 @@ def get_apps():
             'type': 'builtin',
             'category': 'System',
             'description': 'Cron job management (scheduler)',
-            'admin_only': True
+            'admin_only': True,
+            'package': 'cron',
         },
         {
             'id': 'app-store',
@@ -8325,7 +8335,8 @@ def get_apps():
             'type': 'builtin',
             'category': 'System',
             'description': 'Check and install system updates',
-            'admin_only': True
+            'admin_only': True,
+            'package': 'updates',
         },
         {
             'id': 'power',
@@ -8335,7 +8346,8 @@ def get_apps():
             'type': 'builtin',
             'category': 'System',
             'description': 'Schedule, WOL, power saving',
-            'admin_only': True
+            'admin_only': True,
+            'package': 'power',
         },
         {
             'id': 'ups',
@@ -8345,7 +8357,8 @@ def get_apps():
             'type': 'builtin',
             'category': 'System',
             'description': 'UPS status and management',
-            'admin_only': True
+            'admin_only': True,
+            'package': 'ups',
         },
         {
             'id': 'services',
@@ -8355,7 +8368,8 @@ def get_apps():
             'type': 'builtin',
             'category': 'System',
             'description': 'System service management',
-            'admin_only': True
+            'admin_only': True,
+            'package': 'services',
         },
         {
             'id': 'disk-repair',
@@ -8439,7 +8453,8 @@ def get_apps():
             'color': '#06b6d4',
             'type': 'builtin',
             'category': 'Network',
-            'description': 'Connectivity and sync between NAS devices'
+            'description': 'Connectivity and sync between NAS devices',
+            'package': 'naslink',
         },
         {
             'id': 'ssh-manager',
@@ -8448,7 +8463,8 @@ def get_apps():
             'color': '#6366f1',
             'type': 'builtin',
             'category': 'Network',
-            'description': 'SSH key and trusted host management'
+            'description': 'SSH key and trusted host management',
+            'package': 'ssh-manager',
         },
         {
             'id': 'sticky-notes',
@@ -8457,7 +8473,8 @@ def get_apps():
             'color': '#eab308',
             'type': 'builtin',
             'category': 'Tools',
-            'description': 'Quick notes — like sticky notes on a desktop'
+            'description': 'Quick notes — like sticky notes on a desktop',
+            'package': 'sticky-notes',
         },
         {
             'id': 'tickets',
@@ -8466,7 +8483,8 @@ def get_apps():
             'color': '#8b5cf6',
             'type': 'builtin',
             'category': 'Tools',
-            'description': 'Project management — Jira/Trello-style Kanban board'
+            'description': 'Project management — Jira/Trello-style Kanban board',
+            'package': 'tickets',
         },
         {
             'id': 'family-hub',
@@ -8475,7 +8493,8 @@ def get_apps():
             'color': '#f472b6',
             'type': 'builtin',
             'category': 'Tools',
-            'description': 'Bulletin board, shopping lists, tasks and family calendar'
+            'description': 'Bulletin board, shopping lists, tasks and family calendar',
+            'package': 'family-hub',
         },
         {
             'id': 'wireguard',
@@ -8485,7 +8504,8 @@ def get_apps():
             'type': 'builtin',
             'category': 'Network',
             'description': 'WireGuard VPN server — manage peers, generate QR codes',
-            'admin_only': True
+            'admin_only': True,
+            'package': 'wireguard',
         }
     ]
 
@@ -8818,6 +8838,228 @@ _ETHOS_PACKAGES = [
         'uninstall_endpoint': '/api/raid/uninstall',
         'status_endpoint': '/api/raid/pkg-status',
     },
+    # ─── Simple apps (no system deps — just toggle visibility) ───
+    {
+        'id': 'storage-manager',
+        'name': 'Disk Manager',
+        'icon': 'fa-hdd',
+        'color': '#10b981',
+        'description': 'Disk mounting, formatting and partition management.',
+        'app_id': 'storage-manager',
+        'deps_label': 'no requirements',
+        'simple': True,
+        'category': 'Storage',
+    },
+    {
+        'id': 'backup',
+        'name': 'Backup',
+        'icon': 'fa-shield-alt',
+        'color': '#06b6d4',
+        'description': 'Create and restore local backups.',
+        'app_id': 'backup',
+        'deps_label': 'no requirements',
+        'simple': True,
+        'category': 'Storage',
+    },
+    {
+        'id': 'rollback',
+        'name': 'Rollback',
+        'icon': 'fa-history',
+        'color': '#f97316',
+        'description': 'System snapshots and version rollback.',
+        'app_id': 'rollback',
+        'deps_label': 'no requirements',
+        'simple': True,
+        'category': 'System',
+    },
+    {
+        'id': 'resource-monitor',
+        'name': 'Resource Monitor',
+        'icon': 'fa-chart-area',
+        'color': '#8b5cf6',
+        'description': 'CPU, memory, disk and network usage over time.',
+        'app_id': 'resource-monitor',
+        'deps_label': 'no requirements',
+        'simple': True,
+        'category': 'System',
+    },
+    {
+        'id': 'terminal',
+        'name': 'Terminal',
+        'icon': 'fa-terminal',
+        'color': '#22c55e',
+        'description': 'Command line (SSH-like) access from the browser.',
+        'app_id': 'terminal',
+        'deps_label': 'no requirements',
+        'simple': True,
+        'category': 'System',
+    },
+    {
+        'id': 'network',
+        'name': 'Network',
+        'icon': 'fa-network-wired',
+        'color': '#0ea5e9',
+        'description': 'Network interface and WiFi management.',
+        'app_id': 'network',
+        'deps_label': 'no requirements',
+        'simple': True,
+        'category': 'Network',
+    },
+    {
+        'id': 'notifications',
+        'name': 'Notifications',
+        'icon': 'fa-bell',
+        'color': '#f59e0b',
+        'description': 'System notification channels (email, Telegram, Pushbullet).',
+        'app_id': 'notifications',
+        'deps_label': 'no requirements',
+        'simple': True,
+        'category': 'System',
+    },
+    {
+        'id': 'fail2ban',
+        'name': 'Intrusion Protection',
+        'icon': 'fa-shield-alt',
+        'color': '#ef4444',
+        'description': 'Fail2Ban — active bans, whitelist, SSH/Samba/Web protection.',
+        'app_id': 'fail2ban',
+        'deps_label': 'no requirements',
+        'simple': True,
+        'category': 'Security',
+    },
+    {
+        'id': 'firewall',
+        'name': 'Firewall (UFW)',
+        'icon': 'fa-fire',
+        'color': '#e05d44',
+        'description': 'Firewall and port rules management.',
+        'app_id': 'firewall',
+        'deps_label': 'no requirements',
+        'simple': True,
+        'category': 'Security',
+    },
+    {
+        'id': 'cron',
+        'name': 'Scheduler',
+        'icon': 'fa-clock',
+        'color': '#6366f1',
+        'description': 'Task scheduler with cron job management.',
+        'app_id': 'cron',
+        'deps_label': 'no requirements',
+        'simple': True,
+        'category': 'System',
+    },
+    {
+        'id': 'updates',
+        'name': 'Updates',
+        'icon': 'fa-cloud-download-alt',
+        'color': '#8b5cf6',
+        'description': 'Check and install EthOS system updates.',
+        'app_id': 'updates',
+        'deps_label': 'no requirements',
+        'simple': True,
+        'category': 'System',
+    },
+    {
+        'id': 'power',
+        'name': 'Power Management',
+        'icon': 'fa-power-off',
+        'color': '#22c55e',
+        'description': 'Power schedule, Wake-on-LAN, HDD spindown and CPU governor.',
+        'app_id': 'power',
+        'deps_label': 'no requirements',
+        'simple': True,
+        'category': 'System',
+    },
+    {
+        'id': 'ups',
+        'name': 'UPS',
+        'icon': 'fa-battery-full',
+        'color': '#f59e0b',
+        'description': 'UPS battery status and safe shutdown management.',
+        'app_id': 'ups',
+        'deps_label': 'no requirements',
+        'simple': True,
+        'category': 'System',
+    },
+    {
+        'id': 'services',
+        'name': 'Services',
+        'icon': 'fa-cogs',
+        'color': '#64748b',
+        'description': 'System service management.',
+        'app_id': 'services',
+        'deps_label': 'no requirements',
+        'simple': True,
+        'category': 'System',
+    },
+    {
+        'id': 'naslink',
+        'name': 'NASLink',
+        'icon': 'fa-network-wired',
+        'color': '#06b6d4',
+        'description': 'Connectivity and sync between NAS devices.',
+        'app_id': 'naslink',
+        'deps_label': 'no requirements',
+        'simple': True,
+        'category': 'Network',
+    },
+    {
+        'id': 'ssh-manager',
+        'name': 'SSH Manager',
+        'icon': 'fa-key',
+        'color': '#6366f1',
+        'description': 'SSH key and trusted host management.',
+        'app_id': 'ssh-manager',
+        'deps_label': 'no requirements',
+        'simple': True,
+        'category': 'Network',
+    },
+    {
+        'id': 'sticky-notes',
+        'name': 'Sticky Notes',
+        'icon': 'fa-sticky-note',
+        'color': '#eab308',
+        'description': 'Quick notes — like sticky notes on a desktop.',
+        'app_id': 'sticky-notes',
+        'deps_label': 'no requirements',
+        'simple': True,
+        'category': 'Tools',
+    },
+    {
+        'id': 'tickets',
+        'name': 'Tickets',
+        'icon': 'fa-columns',
+        'color': '#8b5cf6',
+        'description': 'Project management — Kanban board.',
+        'app_id': 'tickets',
+        'deps_label': 'no requirements',
+        'simple': True,
+        'category': 'Tools',
+    },
+    {
+        'id': 'family-hub',
+        'name': 'Family Hub',
+        'icon': 'fa-house-user',
+        'color': '#f472b6',
+        'description': 'Bulletin board, shopping lists, tasks and family calendar.',
+        'app_id': 'family-hub',
+        'deps_label': 'no requirements',
+        'simple': True,
+        'category': 'Tools',
+    },
+    {
+        'id': 'wireguard',
+        'name': 'VPN (WireGuard)',
+        'icon': 'fa-shield-halved',
+        'color': '#7c3aed',
+        'description': 'WireGuard VPN server — manage peers, generate QR codes.',
+        'app_id': 'wireguard',
+        'deps_label': 'no requirements',
+        'simple': True,
+        'category': 'Network',
+    },
+
 ]
 
 def _load_packages_state():
@@ -8897,6 +9139,18 @@ def list_ethos_packages():
                     changed = True
             except Exception:
                 pass
+
+    # Auto-install simple packages for existing users (migration)
+    # On first run or when new simple packages are added, mark them all as installed
+    _simple_pkg_ids = [p['id'] for p in _ETHOS_PACKAGES if p.get('simple')]
+    _any_simple_in_state = any(pid in state for pid in _simple_pkg_ids)
+    for pid in _simple_pkg_ids:
+        if pid not in state:
+            # If this is an existing user (any packages already in state), auto-install
+            # If brand new user (empty state), also auto-install (Option B will change this)
+            state[pid] = {'installed': True, 'installed_at': 'migration'}
+            changed = True
+
     # Migrate legacy 'sharing' state → sharing-samba (one-time upgrade)
     if 'sharing' in state and 'sharing-samba' not in state:
         state['sharing-samba'] = state['sharing']
@@ -8916,6 +9170,11 @@ def list_ethos_packages():
             'description': pkg['description'],
             'app_id': pkg['app_id'],
             'deps_label': pkg.get('deps_label', ''),
+            'simple': pkg.get('simple', False),
+            'category': pkg.get('category', ''),
+            'install_endpoint': pkg.get('install_endpoint'),
+            'uninstall_endpoint': pkg.get('uninstall_endpoint'),
+            'status_endpoint': pkg.get('status_endpoint'),
             'installed': pkg_state.get('installed', False),
             'installed_at': pkg_state.get('installed_at', ''),
         }
@@ -8924,6 +9183,8 @@ def list_ethos_packages():
 
 @app.route('/api/ethos-packages/<pkg_id>/install', methods=['POST'])
 @require_auth
+
+
 def install_ethos_package(pkg_id):
     """Mark package as installed. The actual install is triggered by the frontend
     calling the package's own install endpoint (e.g., /api/surveillance/install)."""
@@ -8942,6 +9203,35 @@ def install_ethos_package(pkg_id):
     _save_packages_state(state)
 
     return jsonify({'ok': True, 'install_endpoint': pkg['install_endpoint']})
+
+
+@app.route('/api/apps/set-installed', methods=['POST'])
+@require_auth
+def apps_set_installed():
+    """Enable or disable a simple (no-deps) package."""
+    if getattr(g, 'role', None) != 'admin':
+        return jsonify({'error': 'Admin only'}), 403
+    data = request.get_json() or {}
+    pkg_id = data.get('id', '').strip()
+    installed = bool(data.get('installed', True))
+
+    pkg = next((p for p in _ETHOS_PACKAGES if p['id'] == pkg_id), None)
+    if not pkg:
+        return jsonify({'error': f'Package {pkg_id!r} not found'}), 404
+    if not pkg.get('simple'):
+        return jsonify({'error': f'Package {pkg_id!r} is not a simple package'}), 400
+
+    state = _load_packages_state()
+    state[pkg_id] = {
+        'installed': installed,
+        'installed_at': datetime.utcnow().isoformat() if installed else '',
+    }
+    _save_packages_state(state)
+
+    elog('packages', 'info',
+         f'App {"enabled" if installed else "disabled"}: {pkg.get("name", pkg_id)}')
+    return jsonify({'ok': True, 'id': pkg_id, 'installed': installed})
+
 
 @app.route('/api/ethos-packages/<pkg_id>/uninstall', methods=['POST'])
 @require_auth
