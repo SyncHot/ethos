@@ -171,8 +171,6 @@ AppRegistry['wireguard'] = function (appDef) {
                 </button>
             </div>`;
         }).join('');
-            }
-        });
 
         peersList.querySelectorAll('.wg-delete-btn').forEach(btn => {
             btn.addEventListener('click', () => deletePeer(btn.dataset.key, btn.dataset.name));
