@@ -1212,6 +1212,121 @@ def delete_image(filename):
     return jsonify({'ok': True})
 
 
+@vm_bp.route('/import-disk', methods=['POST'])
+@admin_required
+@_require_qemu
+def import_disk():
+    """Create a VM from an uploaded or server-path disk image.
+
+    Accepts multipart/form-data (file upload) or JSON with src_path.
+    Converts vmdk/vdi/raw/img → qcow2 via qemu-img convert.
+    """
+    import shutil
+
+    err = require_tools('qemu-img')
+    if err:
+        return err
+
+    is_upload = 'file' in request.files
+
+    if is_upload:
+        f      = request.files['file']
+        name   = (request.form.get('name') or '').strip()
+        cpu    = int(request.form.get('cpu', 2))
+        ram    = int(request.form.get('ram', 2048))
+        os_type= request.form.get('os_type', 'linux')
+        desc   = request.form.get('description', '')
+        do_convert = request.form.get('convert', 'true') == 'true'
+    else:
+        data   = request.get_json(force=True) if request.data else {}
+        name   = (data.get('name') or '').strip()
+        cpu    = int(data.get('cpu', 2))
+        ram    = int(data.get('ram', 2048))
+        os_type= data.get('os_type', 'linux')
+        desc   = data.get('description', '')
+        do_convert = data.get('convert', True)
+        src_path   = (data.get('src_path') or '').strip()
+
+    if not name:
+        return jsonify({'error': 'Podaj nazwę VM'}), 400
+
+    # Build VM id/dir
+    vm_id  = re.sub(r'-+', '-', _sanitize_name(name).lower().replace(' ', '-'))
+    vm_id  = f'{vm_id}-{str(int(time.time()))[-6:]}'
+    vm_path = _vm_dir(vm_id)
+    os.makedirs(vm_path, exist_ok=True)
+
+    try:
+        if is_upload:
+            fname = f.filename or 'disk'
+            ext   = os.path.splitext(fname)[1].lower()
+            valid = {'.qcow2', '.raw', '.vmdk', '.vdi', '.img', '.vhd', '.vhdx'}
+            if ext not in valid:
+                shutil.rmtree(vm_path, ignore_errors=True)
+                return jsonify({'error': f'Nieobsługiwany format: {ext}. Dozwolone: {", ".join(sorted(valid))}'}), 400
+            tmp = os.path.join(vm_path, f'import_tmp{ext}')
+            f.save(tmp)
+            src_path = tmp
+        else:
+            if not src_path:
+                shutil.rmtree(vm_path, ignore_errors=True)
+                return jsonify({'error': 'src_path wymagany'}), 400
+            real = os.path.realpath(src_path)
+            allowed_roots = _allowed_image_roots() + [os.path.realpath(_iso_root())]
+            if not any(real.startswith(r + '/') or real == r for r in allowed_roots):
+                shutil.rmtree(vm_path, ignore_errors=True)
+                return jsonify({'error': 'Ścieżka niedozwolona'}), 403
+            src_path = real
+
+        ext = os.path.splitext(src_path)[1].lower()
+
+        if do_convert and ext != '.qcow2':
+            disk_file   = os.path.join(vm_path, 'disk.qcow2')
+            disk_format = 'qcow2'
+            r = host_run(f'qemu-img convert -O qcow2 "{src_path}" "{disk_file}"', timeout=7200)
+            if r.returncode != 0:
+                raise Exception(f'Konwersja nie powiodła się: {r.stderr[:300]}')
+            if is_upload:
+                os.remove(src_path)
+        else:
+            disk_format = {'img': 'raw', 'vhd': 'vpc', 'vhdx': 'vhdx'}.get(ext.lstrip('.'), ext.lstrip('.'))
+            disk_file   = os.path.join(vm_path, f'disk{ext}')
+            if is_upload:
+                os.rename(src_path, disk_file)
+            else:
+                shutil.copy2(src_path, disk_file)
+
+        # Read actual disk size from image metadata
+        try:
+            ir = host_run(f'qemu-img info --output=json "{disk_file}"', timeout=30)
+            info = json.loads(ir.stdout) if ir.returncode == 0 else {}
+            disk_size = _human_size(info.get('virtual-size', 0))
+        except Exception:
+            disk_size = 'imported'
+
+        vms = _load_vms()
+        vms[vm_id] = {
+            'name':        name,
+            'cpu':         max(1, min(32, cpu)),
+            'ram':         max(256, min(65536, ram)),
+            'disk_size':   disk_size,
+            'disk_format': disk_format,
+            'disk_file':   disk_file,
+            'os_type':     os_type,
+            'boot_image':  '',
+            'description': desc,
+            'network':     _default_network(os_type),
+            'created':     time.strftime('%Y-%m-%d %H:%M:%S'),
+            'imported':    True,
+        }
+        _save_vms(vms)
+        return jsonify({'status': 'ok', 'id': vm_id, 'name': name, 'disk_size': disk_size})
+
+    except Exception as e:
+        shutil.rmtree(vm_path, ignore_errors=True)
+        return jsonify({'error': str(e)}), 500
+
+
 # ═══════════════════════════════════════════════════════════
 #  DISK MANAGEMENT
 # ═══════════════════════════════════════════════════════════

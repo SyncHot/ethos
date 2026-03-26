@@ -6179,6 +6179,7 @@ function renderVMManager(body) {
             <div class="vm-toolbar">
                 <span class="vm-toolbar-title"><i class="fas fa-desktop"></i> Wirtualne maszyny <span class="vm-badge" id="vm-cnt">0</span></span>
                 <button class="vm-btn vm-btn-primary" id="vm-create-btn"><i class="fas fa-plus"></i> Nowa VM</button>
+                <button class="vm-btn" id="vm-import-btn" title="${t('Importuj istniejący dysk qcow2/vmdk/vdi/raw')}"><i class="fas fa-file-import"></i> Importuj dysk</button>
                 <button class="vm-btn" id="vm-refresh-btn"><i class="fas fa-sync-alt"></i></button>
             </div>
             <div class="vm-table-wrap">
@@ -6198,6 +6199,7 @@ function renderVMManager(body) {
             </div>
         `;
         main.querySelector('#vm-create-btn').addEventListener('click', showCreateModal);
+        main.querySelector('#vm-import-btn').addEventListener('click', showImportDiskModal);
         main.querySelector('#vm-refresh-btn').addEventListener('click', async () => {
             await loadMachines(); fillMachinesTable();
         });
@@ -6388,6 +6390,157 @@ function renderVMManager(body) {
             } catch (e) {
                 toast(e.message || t('Błąd tworzenia VM'), 'error');
             }
+        });
+    }
+
+
+    // ─── IMPORT DISK MODAL ───
+
+    async function showImportDiskModal() {
+        const overlay = document.createElement('div');
+        overlay.className = 'vm-modal-overlay';
+        overlay.innerHTML = `
+            <div class="vm-modal" style="max-width:540px">
+                <div class="vm-modal-header">
+                    <span><i class="fas fa-file-import" style="color:#7c3aed;margin-right:8px"></i>Importuj dysk VM</span>
+                    <button class="vm-modal-close">&times;</button>
+                </div>
+                <div class="vm-modal-body">
+                    <div class="vm-form-group">
+                        <label>${t('Nazwa VM')}</label>
+                        <input type="text" id="vi-name" class="vm-input" placeholder="np. Ubuntu Import">
+                    </div>
+                    <div class="vm-form-row">
+                        <div class="vm-form-group">
+                            <label>CPU (rdzenie)</label>
+                            <input type="number" id="vi-cpu" class="vm-input" value="2" min="1" max="32">
+                        </div>
+                        <div class="vm-form-group">
+                            <label>RAM (MB)</label>
+                            <input type="number" id="vi-ram" class="vm-input" value="2048" min="256" max="65536" step="256">
+                        </div>
+                    </div>
+                    <div class="vm-form-row">
+                        <div class="vm-form-group">
+                            <label>${t('Typ systemu')}</label>
+                            <select id="vi-os" class="vm-input">
+                                <option value="linux">Linux</option>
+                                <option value="windows">Windows</option>
+                                <option value="other">Inny</option>
+                            </select>
+                        </div>
+                        <div class="vm-form-group">
+                            <label>${t('Konwertuj do QCOW2')}</label>
+                            <select id="vi-convert" class="vm-input">
+                                <option value="true">${t('Tak (zalecane, snapshoty)')}</option>
+                                <option value="false">${t('Nie (zachowaj format)')}</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="vm-form-group">
+                        <label>${t('Plik dysku')} <span style="color:var(--text-muted);font-weight:400">(.qcow2, .vmdk, .vdi, .raw, .img, .vhd)</span></label>
+                        <div style="display:flex;gap:8px;align-items:center">
+                            <input type="file" id="vi-file" accept=".qcow2,.vmdk,.vdi,.raw,.img,.vhd,.vhdx" style="flex:1;font-size:13px;color:var(--text-primary)">
+                        </div>
+                    </div>
+                    <div id="vi-progress-wrap" style="display:none">
+                        <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted);margin-bottom:4px">
+                            <span id="vi-progress-label">${t('Przesyłanie...')}</span>
+                            <span id="vi-progress-pct">0%</span>
+                        </div>
+                        <div style="background:var(--bg-surface-alt);border-radius:999px;height:6px;overflow:hidden">
+                            <div id="vi-progress-bar" style="height:100%;background:#7c3aed;width:0%;transition:width .3s;border-radius:999px"></div>
+                        </div>
+                    </div>
+                    <div id="vi-error" style="display:none;color:#ef4444;font-size:13px;margin-top:8px;padding:8px 10px;background:rgba(239,68,68,.08);border-radius:6px"></div>
+                </div>
+                <div class="vm-modal-footer">
+                    <button class="vm-btn" id="vi-cancel">${t('Anuluj')}</button>
+                    <button class="vm-btn vm-btn-primary" id="vi-ok" style="background:#7c3aed;border-color:#7c3aed"><i class="fas fa-file-import"></i> ${t('Importuj')}</button>
+                </div>
+            </div>
+        `;
+        body.appendChild(overlay);
+
+        const close = () => overlay.remove();
+        overlay.querySelector('.vm-modal-close').addEventListener('click', close);
+        overlay.querySelector('#vi-cancel').addEventListener('click', close);
+        overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
+        overlay.querySelector('#vi-ok').addEventListener('click', () => {
+            const name = overlay.querySelector('#vi-name').value.trim();
+            if (!name) { toast(t('Podaj nazwę VM'), 'warning'); return; }
+            const file = overlay.querySelector('#vi-file').files[0];
+            if (!file) { toast(t('Wybierz plik dysku'), 'warning'); return; }
+
+            const errEl = overlay.querySelector('#vi-error');
+            const progWrap = overlay.querySelector('#vi-progress-wrap');
+            const progBar = overlay.querySelector('#vi-progress-bar');
+            const progPct = overlay.querySelector('#vi-progress-pct');
+            const progLabel = overlay.querySelector('#vi-progress-label');
+            const okBtn = overlay.querySelector('#vi-ok');
+
+            errEl.style.display = 'none';
+            progWrap.style.display = 'block';
+            okBtn.disabled = true;
+            overlay.querySelector('#vi-cancel').disabled = true;
+
+            const fd = new FormData();
+            fd.append('file', file);
+            fd.append('name', name);
+            fd.append('cpu', overlay.querySelector('#vi-cpu').value);
+            fd.append('ram', overlay.querySelector('#vi-ram').value);
+            fd.append('os_type', overlay.querySelector('#vi-os').value);
+            fd.append('convert', overlay.querySelector('#vi-convert').value);
+
+            const token = NAS && NAS.token;
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', '/api/vm/import-disk');
+            if (token) xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+
+            xhr.upload.addEventListener('progress', e => {
+                if (e.lengthComputable) {
+                    const pct = Math.round(e.loaded / e.total * 100);
+                    progBar.style.width = (pct * 0.7) + '%'; // upload = 0-70%
+                    progPct.textContent = pct + '%';
+                    progLabel.textContent = pct < 100 ? t('Przesyłanie...') : t('Konwertowanie...');
+                }
+            });
+
+            xhr.addEventListener('load', async () => {
+                progBar.style.width = '100%';
+                progPct.textContent = '100%';
+                progLabel.textContent = t('Gotowe');
+                try {
+                    const resp = JSON.parse(xhr.responseText);
+                    if (xhr.status >= 400 || resp.error) {
+                        errEl.textContent = resp.error || t('Błąd importu');
+                        errEl.style.display = 'block';
+                        progWrap.style.display = 'none';
+                        okBtn.disabled = false;
+                        overlay.querySelector('#vi-cancel').disabled = false;
+                        return;
+                    }
+                    toast(t('Dysk zaimportowany:') + ' ' + resp.name, 'success');
+                    close();
+                    await loadMachines(); fillMachinesTable();
+                } catch (e) {
+                    errEl.textContent = t('Nieoczekiwany błąd parsowania odpowiedzi');
+                    errEl.style.display = 'block';
+                    okBtn.disabled = false;
+                    overlay.querySelector('#vi-cancel').disabled = false;
+                }
+            });
+
+            xhr.addEventListener('error', () => {
+                errEl.textContent = t('Błąd sieci podczas przesyłania');
+                errEl.style.display = 'block';
+                progWrap.style.display = 'none';
+                okBtn.disabled = false;
+                overlay.querySelector('#vi-cancel').disabled = false;
+            });
+
+            xhr.send(fd);
         });
     }
 
