@@ -234,7 +234,7 @@ function renderFM(body, state) {
                             <button class="fm-toolbar-btn" id="fm-ana-back-btn" title="${t('Zamknij analizę')}"><i class="fas fa-arrow-left"></i></button>
                             <span class="app-title-sm"><i class="fas fa-chart-pie app-btn-icon app-icon-accent"></i>${t('Analiza dysku')}</span>
                             <div class="app-flex-1"></div>
-                            <button class="fm-toolbar-btn btn-green" id="fm-ana-scan" class="fm-toolbar-btn-compact"><i class="fas fa-search"></i> ${t('Skanuj')}</button>
+                            <button class="fm-toolbar-btn btn-green fm-toolbar-btn-compact" id="fm-ana-scan"><i class="fas fa-search"></i> ${t('Skanuj')}</button>
                         </div>
                         <div id="fm-ana-breadcrumbs" class="fm-ana-breadcrumbs"></div>
                         <div id="fm-ana-summary" class="fm-ana-summary hidden"></div>
@@ -797,7 +797,12 @@ function renderFM(body, state) {
         const colPanel = body.querySelector('#fm-header-columns');
         const header = body.querySelector('#fm-list-header');
         const count = state.selected.size;
-        if (count > 0) {
+        // In select mode, use floating batch bar — hide header selection panel
+        if (state.selectMode) {
+            selPanel.classList.add('hidden');
+            colPanel.classList.remove('hidden');
+            header.classList.remove('fm-header-selecting');
+        } else if (count > 0) {
             selPanel.classList.remove('hidden');
             colPanel.classList.add('hidden');
             header.classList.add('fm-header-selecting');
@@ -807,7 +812,41 @@ function renderFM(body, state) {
             colPanel.classList.remove('hidden');
             header.classList.remove('fm-header-selecting');
         }
+        updateFMBatchBar();
         updateClipboardBar();
+    }
+
+    function updateFMBatchBar() {
+        const main = body.querySelector('.fm-main');
+        if (!main) return;
+        let bar = main.querySelector('.fm-batch-bar');
+        const count = state.selected.size;
+        // Show batch bar only in select mode with items selected
+        if (!state.selectMode || count === 0) {
+            if (bar) bar.remove();
+            return;
+        }
+        if (!bar) {
+            bar = document.createElement('div');
+            bar.className = 'fm-batch-bar';
+            bar.innerHTML = `
+                <span class="fm-batch-count"></span>
+                <button class="fm-toolbar-btn fm-batch-copy" title="${t('Copy')}"><i class="fas fa-copy"></i> ${t('Copy')}</button>
+                <button class="fm-toolbar-btn fm-batch-cut" title="${t('Cut')}"><i class="fas fa-cut"></i> ${t('Cut')}</button>
+                <button class="fm-toolbar-btn fm-batch-download" title="${t('Pobierz')}"><i class="fas fa-download"></i></button>
+                <button class="fm-toolbar-btn fm-btn-danger fm-batch-delete" title="${t('Move to Trash')}"><i class="fas fa-trash"></i></button>
+                <button class="fm-batch-cancel">${t('Anuluj')}</button>
+            `;
+            bar.querySelector('.fm-batch-copy').addEventListener('click', clipboardCopy);
+            bar.querySelector('.fm-batch-cut').addEventListener('click', clipboardCut);
+            bar.querySelector('.fm-batch-download').addEventListener('click', downloadSelected);
+            bar.querySelector('.fm-batch-delete').addEventListener('click', deleteSelected);
+            bar.querySelector('.fm-batch-cancel').addEventListener('click', () => {
+                setFMSelectMode(false);
+            });
+            main.appendChild(bar);
+        }
+        bar.querySelector('.fm-batch-count').textContent = count + ' ' + t('zaznaczonych');
     }
 
     /* ─── Keyboard focus indicator (roving highlight) ─── */
@@ -2606,7 +2645,7 @@ function renderFM(body, state) {
                         <div class="app-sublabel">${t('Co chcesz zrobić?')}</div>
                     </div>
                     <div class="modal-footer app-row-wrap">
-                        <button class="btn" id="conflict-cancel" class="app-mr-auto">Anuluj</button>
+                        <button class="btn app-mr-auto" id="conflict-cancel">Anuluj</button>
                         <button class="btn" id="conflict-skip" title="${t('Nie kopiuj istniejących')}"><i class="fas fa-forward"></i> ${t('Pomiń')}</button>
                         <button class="btn" id="conflict-rename" title="${t('Zachowaj oba z nową nazwą')}"><i class="fas fa-clone"></i> ${t('Zachowaj oba')}</button>
                         <button class="btn btn-primary" id="conflict-overwrite" title="${t('Zastąp istniejące')}"><i class="fas fa-sync-alt"></i> ${t('Nadpisz')}</button>
@@ -2657,7 +2696,7 @@ function renderFM(body, state) {
                         </div>
                         <label class="modal-label">Nazwa archiwum:</label>
                         <div class="app-input-group">
-                            <input class="modal-input" id="compress-name-input" value="${suggestion}" class="app-input-prefix">
+                            <input class="modal-input app-input-prefix" id="compress-name-input" value="${suggestion}">
                             <span class="app-input-suffix">${ext}</span>
                         </div>
                     </div>
@@ -2995,7 +3034,7 @@ function renderFM(body, state) {
                             <div class="app-filename">${selLabel}</div>
                         </div>
                         <label class="modal-label">Serwer docelowy:</label>
-                        <select class="modal-input" id="transfer-server" class="app-mb-md">
+                        <select class="modal-input app-mb-md" id="transfer-server">
                             ${servers.map(s => `<option value="${s.id}">${s.name} (${s.host})</option>`).join('')}
                         </select>
                         <label class="modal-label">${t('Ścieżka zdalna:')}</label>
@@ -3178,8 +3217,8 @@ function renderFM(body, state) {
                         <div class="app-note">${t('Udostępniono:')} <strong>${name}</strong></div>
                         ${isUserShare ? `<div class="app-note app-note--accent"><i class="fas fa-users"></i> Dla: ${result.shared_with.join(', ')}</div>` : ''}
                         <div class="app-row">
-                            <input class="modal-input" id="share-link-url" value="${shareUrl}" readonly class="app-mono-input">
-                            <button class="btn btn-primary" id="share-link-copy" class="app-nowrap"><i class="fas fa-copy"></i> ${t('Copy')}</button>
+                            <input class="modal-input app-mono-input" id="share-link-url" value="${shareUrl}" readonly>
+                            <button class="btn btn-primary app-nowrap" id="share-link-copy"><i class="fas fa-copy"></i> ${t('Copy')}</button>
                         </div>
                         ${parseInt(result.hours) > 0 ? `<div class="app-hint"><i class="fas fa-clock"></i> Wygasa za ${result.hours === '1' ? t('1 godzinę') : result.hours + ' godz.'}</div>` : '<div class="app-hint"><i class="fas fa-infinity"></i> Link nie wygasa</div>'}
                         ${isUserShare ? `<div class="app-hint app-mt-xs"><i class="fas fa-lock"></i> ${t('Dostępny tylko dla wybranych użytkowników')}</div>` : ''}
@@ -4351,7 +4390,11 @@ function renderFM(body, state) {
     async function startBgDirSizes() {
         const dirs = state.items.filter(i => i.is_dir);
         if (!dirs.length) return;
-        const paths = dirs.map(d => itemFullPath(d)).filter(p => !(p in state.dirSizes));
+        // Skip pseudo-filesystem paths that would block the server
+        const _skipPaths = new Set(['/proc', '/sys', '/dev', '/run', '/snap']);
+        const paths = dirs.map(d => itemFullPath(d)).filter(p =>
+            !(p in state.dirSizes) && !_skipPaths.has(p)
+        );
         if (!paths.length) return;
         state._dirSizePollInterval = 1500;  // reset backoff
         try {
@@ -4535,7 +4578,7 @@ function renderFM(body, state) {
         const content = body.querySelector('#fm-ana-content');
         let sec = 0;
         const timerId = setInterval(() => { sec++; const el = content.querySelector('.ana-timer'); if (el) el.textContent = sec + 's'; }, 1000);
-        content.innerHTML = `<div class="app-empty"><i class="fas fa-spinner fa-spin app-spinner-lg"></i><div class="app-mt-md">Analizowanie <b>${anaState.path}</b>... <span class="ana-timer">0s</span></div></div>`;
+        content.innerHTML = `<div class="app-empty"><i class="fas fa-spinner fa-spin app-spinner-lg"></i><div class="app-mt-md">${t('Analizowanie')} <b>${anaState.path}</b>... <span class="ana-timer">0s</span></div></div>`;
         try {
             const [dirData, fileData] = await Promise.all([
                 api(`/storage/analyze?path=${encodeURIComponent(anaState.path)}&limit=60`),
@@ -5679,7 +5722,7 @@ function renderDockerManager(body) {
                     const card = b.closest('.dkr-project-card');
                     const project = card.dataset.project;
                     const action = b.dataset.paction;
-                    if (action === 'down' && !confirm(`Docker Compose Down dla projektu ${project}?`)) return;
+                    if (action === 'down' && !(await confirmDialog(`Docker Compose Down ${t('dla projektu')} ${project}?`, ''))) return;
                     // Note: Original code had complex handling here (loading state etc).
                     // I will replicate it simplified or assume it's fine.
                     // The view showed: b.disabled = true; ... toast ...
@@ -6513,7 +6556,7 @@ function renderVMManager(body) {
                     ${running && vm.pid ? `<div class="vm-info-row"><span>PID:</span><span>${vm.pid}</span></div>` : ''}
                 </div>
                 <div class="vm-info-card">
-                    <h4><i class="fas fa-sliders-h"></i> Zasoby ${!running ? '<button class="vm-btn vm-btn-sm" id="vm-edit-config" class="app-ml-auto"><i class="fas fa-edit"></i> Edytuj</button>' : ''}</h4>
+                    <h4><i class="fas fa-sliders-h"></i> Zasoby ${!running ? '<button class="vm-btn vm-btn-sm app-ml-auto" id="vm-edit-config"><i class="fas fa-edit"></i> Edytuj</button>' : ''}</h4>
                     <div class="vm-info-row"><span>CPU:</span><span id="vm-cfg-cpu">${vm.cpu} rdzeni</span></div>
                     <div class="vm-info-row"><span>RAM:</span><span id="vm-cfg-ram">${vm.ram} MB</span></div>
                     <div class="vm-info-row"><span>Dysk:</span><span>${esc(vm.disk_size)}</span></div>
@@ -6861,7 +6904,7 @@ function renderVMManager(body) {
         `;
 
         dc.querySelector('#vm-snap-create')?.addEventListener('click', async () => {
-            const name = prompt('Nazwa snapshotu:');
+            const name = await promptDialog(t('Snapshot'), t('Nazwa snapshotu:'));
             if (!name) return;
             try {
                 const r = await api(`/vm/machines/${vm.id}/snapshots`, { method: 'POST', body: { name } });
@@ -6918,7 +6961,7 @@ function renderVMManager(body) {
         `;
 
         dc.querySelector('#vm-disk-resize')?.addEventListener('click', async () => {
-            const size = prompt(t('Powiększ o (np. +10G, +512M):'), '+10G');
+            const size = await promptDialog(t('Powiększ dysk'), t('Powiększ o (np. +10G, +512M):'), '+10G');
             if (!size) return;
             try {
                 const r = await api(`/vm/machines/${vm.id}/resize-disk`, { method: 'POST', body: { size } });
@@ -8531,7 +8574,7 @@ function renderRemoteLog(body) {
                 </div>
                 <div class="rl-row">
                     <label>${t('Interwał (min)')}</label>
-                    <input class="rl-input" id="rl-interval" type="number" min="5" value="${config.interval_minutes || 60}" class="app-input-narrow">
+                    <input class="rl-input app-input-narrow" id="rl-interval" type="number" min="5" value="${config.interval_minutes || 60}">
                 </div>
                 <div class="rl-row">
                     <label>${t('Wyślij przy starcie')}</label>

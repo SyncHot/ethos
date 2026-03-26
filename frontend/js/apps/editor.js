@@ -361,8 +361,7 @@ function renderDocEditor(body, launchOpts) {
 
         const res = await api('/editor/save', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ html, path: currentPath })
+            body: { html, path: currentPath }
         });
 
         if (res.ok) {
@@ -467,8 +466,7 @@ function renderDocEditor(body, launchOpts) {
 
             const res = await api(endpoint, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
+                body: payload
             });
 
             if (res.ok) {
@@ -616,8 +614,7 @@ function renderDocEditor(body, launchOpts) {
 
         const res = await api('/editor/open', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path })
+            body: { path }
         });
 
         if (res.ok) {

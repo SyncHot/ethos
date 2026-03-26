@@ -78,7 +78,7 @@ from host import NATIVE_MODE, host_run as _host_run_base, host_run_stream as _ho
     get_data_disk as _get_data_disk, get_user_home as _get_user_home, ensure_user_home_structure as _ensure_user_home_structure, \
     get_photo_folders as _get_photo_folders, fs_call_with_timeout as _fs_call
 from utils import load_json as _load_json, save_json as _save_json, \
-    safe_path as _safe_path_util, fmt_bytes, DATA_ROOT, \
+    safe_path as _safe_path_util, fmt_bytes, DATA_ROOT, ALLOWED_ROOTS as _ALLOWED_ROOTS, \
     generate_thumbnail, THUMB_CACHE_DIR, THUMBS_DIR_NAME, \
     _thumb_cache_key, _local_thumb_path, list_directory as _list_dir, \
     systemd_notify_ready
@@ -4589,7 +4589,18 @@ def _calc_dir_size_worker(job_id, path, real):
     Uses an iterative os.scandir stack for better performance on large trees
     (avoids repeated string joins from os.walk and leverages DirEntry caching).
     """
+    _PSEUDO_FS = {'/proc', '/sys', '/dev', '/run'}
+    # Skip pseudo-filesystems early
+    if real in _PSEUDO_FS or any(real.startswith(p + '/') for p in _PSEUDO_FS):
+        _dirsize_cache_set(path, 0)
+        with _dirsize_bg_lock:
+            if job_id in _dirsize_bg_jobs:
+                _dirsize_bg_jobs[job_id].update({'size': 0, 'done': True, 'error': False, 'ts': time.monotonic()})
+            _dirsize_running_by_path.pop(path, None)
+        return
+
     total = 0
+    _scan_count = 0
     try:
         stack = [real]
         while stack:
@@ -4604,6 +4615,10 @@ def _calc_dir_size_worker(job_id, path, real):
                             total += entry.stat(follow_symlinks=False).st_size
                     except OSError:
                         pass
+                    _scan_count += 1
+                    # Yield to gevent event loop every 500 entries to avoid blocking
+                    if _scan_count % 500 == 0:
+                        gevent.sleep(0)
             except (PermissionError, OSError):
                 pass
         _dirsize_cache_set(path, total)
@@ -4635,7 +4650,14 @@ def files_dir_sizes_start():
     cached = {}
     # Prune stale completed jobs to keep _dirsize_bg_jobs tidy
     _dirsize_bg_jobs_prune()
+    # Pseudo-filesystems and virtual paths that block gevent event loop
+    _PSEUDO_FS_PATHS = {'/proc', '/sys', '/dev', '/run', '/snap', '/snap/bin'}
+
     for p in paths[:50]:
+        # Skip pseudo-filesystems — scanning them would block the gevent event loop
+        if p in _PSEUDO_FS_PATHS or p.startswith('/proc/') or p.startswith('/sys/') or p.startswith('/dev/'):
+            cached[p] = 0
+            continue
         # Return from cache immediately if fresh
         cv = _dirsize_cache_get(p)
         if cv is not None:
@@ -4698,6 +4720,9 @@ def files_download():
     real_path = safe_path(path)
     if not real_path or not os.path.isfile(real_path):
         return jsonify({'error': 'File not found'}), 404
+    # Enforce allowed roots even for admins — prevents reading /etc/shadow etc.
+    if not any(real_path == r or real_path.startswith(r + '/') for r in _ALLOWED_ROOTS):
+        return jsonify({'error': 'Access denied'}), 403
     # Block download from protected folders
     blocked = _require_folder_access(path)
     if blocked is not None:

@@ -3698,8 +3698,8 @@ a.dkr-port-link:hover {
 
 /* Mobile sidebar toggle — hidden on desktop, shown on mobile */
 #fm-sidebar-toggle { display: none; }
-/* Mobile select mode button — hidden on desktop, shown on mobile */
-#fm-select-mode-btn { display: none; }
+/* Select mode button — always shown */
+#fm-select-mode-btn { display: flex; }
 /* Keyboard shortcuts button */
 .fm-shortcuts-btn { color: var(--text-muted); }
 .fm-shortcuts-btn:hover { color: var(--accent); }
@@ -3709,6 +3709,13 @@ a.dkr-port-link:hover {
 .fm-file-list.fm-select-mode .fm-file-item:hover .fm-cb-custom,
 .fm-file-list.fm-select-mode .fm-grid-item:hover .fm-cb-custom,
 .fm-file-list.fm-select-mode .fm-thumb-item:hover .fm-cb-custom { opacity: 1 !important; }
+/* In select mode make checkboxes always visible (not just on hover) */
+.fm-file-list.fm-select-mode .fm-file-item .fm-cb-custom,
+.fm-file-list.fm-select-mode .fm-grid-item .fm-cb-custom,
+.fm-file-list.fm-select-mode .fm-thumb-item .fm-cb-custom { opacity: 0.6 !important; }
+.fm-file-list.fm-select-mode .fm-file-item.selected .fm-cb-custom,
+.fm-file-list.fm-select-mode .fm-grid-item.selected .fm-cb-custom,
+.fm-file-list.fm-select-mode .fm-thumb-item.selected .fm-cb-custom { opacity: 1 !important; }
 
 /* ─── FM Keyboard Shortcuts Overlay ─── */
 .fm-shortcuts-overlay {
@@ -5558,6 +5565,7 @@ a.dkr-port-link:hover {
     width: 100%;
     max-width: 794px; /* ~A4 */
     min-height: 600px;
+    align-self: flex-start; /* grow with content, don't clamp to viewport height */
     background: #ffffff;
     border: 1px solid var(--border);
     border-radius: 2px;
