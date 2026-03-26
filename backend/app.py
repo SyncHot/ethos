@@ -390,6 +390,7 @@ app.register_blueprint(surveillance_bp)
 if _HAS_AICHAT:
     app.register_blueprint(aichat_bp)
     aichat_bp._socketio = socketio  # for install progress events
+    wireguard_bp._socketio = socketio  # for install progress events
 app.register_blueprint(vm_bp)
 app.register_blueprint(ddns_bp)
 app.register_blueprint(settings_bp)
@@ -9055,19 +9056,27 @@ _ETHOS_PACKAGES = [
         'color': '#7c3aed',
         'description': 'WireGuard VPN server — manage peers, generate QR codes.',
         'app_id': 'wireguard',
-        'deps_label': 'no requirements',
-        'simple': True,
+        'deps_label': 'wireguard, wireguard-tools',
+        'install_endpoint': '/api/wireguard/install',
+        'uninstall_endpoint': '/api/wireguard/uninstall',
+        'status_endpoint': '/api/wireguard/pkg-status',
         'category': 'Network',
     },
 
 ]
 
+# Lock to prevent concurrent reads/writes corrupting the packages state under gevent
+import gevent.lock as _gevent_lock
+_PACKAGES_STATE_LOCK = _gevent_lock.RLock()
+
 def _load_packages_state():
     """Load dict of package_id → { installed: bool, installed_at: str }"""
-    return _load_json(PACKAGES_STATE_FILE, {})
+    with _PACKAGES_STATE_LOCK:
+        return _load_json(PACKAGES_STATE_FILE, {})
 
 def _save_packages_state(state):
-    _save_json(PACKAGES_STATE_FILE, state)
+    with _PACKAGES_STATE_LOCK:
+        _save_json(PACKAGES_STATE_FILE, state)
 
 @app.route('/api/ethos-packages')
 @require_auth
@@ -9102,6 +9111,20 @@ def list_ethos_packages():
         import shutil as _shutil_qm
         if _shutil_qm.which('qemu-system-x86_64'):
             state['vm-manager'] = {'installed': True, 'installed_at': 'auto-detected'}
+            changed = True
+
+    # Auto-detect wireguard (also correct migration/auto-detected state if binary missing)
+    import shutil as _shutil_wg
+    _wg_present = bool(_shutil_wg.which('wg') or _shutil_wg.which('wg-quick'))
+    _wg_state = state.get('wireguard', {})
+    if 'wireguard' not in state:
+        if _wg_present:
+            state['wireguard'] = {'installed': True, 'installed_at': 'auto-detected'}
+            changed = True
+    elif _wg_state.get('installed') and _wg_state.get('installed_at') in ('migration', 'auto-detected'):
+        # Correct: binary check overrides migration guess for non-simple packages
+        if not _wg_present:
+            state['wireguard'] = {'installed': False, 'installed_at': ''}
             changed = True
 
     # Auto-detect dep-based packages

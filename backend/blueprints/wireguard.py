@@ -435,3 +435,64 @@ def delete_peer(public_key):
     
     return jsonify({'success': True})
 
+
+
+import threading as _wg_threading
+import secrets as _wg_secrets
+
+@wireguard_bp.route('/install', methods=['POST'])
+@admin_required
+def wireguard_install():
+    """Install wireguard-tools via apt. Returns task_id for progress tracking."""
+    task_id = _wg_secrets.token_hex(8)
+    _socketio = getattr(wireguard_bp, '_socketio', None)
+
+    def _bg():
+        def _emit(stage, pct, msg):
+            if _socketio:
+                _socketio.emit('wireguard_install', {
+                    'task_id': task_id, 'stage': stage, 'percent': pct, 'message': msg
+                })
+
+        _emit('start', 0, 'Installing wireguard-tools…')
+        try:
+            r = subprocess.run(
+                ['apt-get', 'install', '-y', 'wireguard', 'wireguard-tools'],
+                capture_output=True, text=True, timeout=300
+            )
+            if r.returncode != 0:
+                _emit('error', 0, f'Installation error: {r.stderr[:300]}')
+                return
+            _emit('done', 100, 'WireGuard installed!')
+        except Exception as e:
+            _emit('error', 0, str(e))
+
+    _wg_threading.Thread(target=_bg, daemon=True).start()
+    return jsonify({'ok': True, 'task_id': task_id})
+
+
+@wireguard_bp.route('/uninstall', methods=['POST'])
+@admin_required
+def wireguard_uninstall():
+    """Stop WireGuard interface. Optionally wipe config."""
+    wipe = (request.json or {}).get('wipe_data', False)
+    # Stop interface
+    try:
+        subprocess.run(['wg-quick', 'down', 'wg0'], capture_output=True, timeout=15)
+    except Exception:
+        pass
+    if wipe:
+        import glob
+        for f in glob.glob('/etc/wireguard/*.conf'):
+            try:
+                os.remove(f)
+            except Exception:
+                pass
+    return jsonify({'ok': True})
+
+
+@wireguard_bp.route('/pkg-status', methods=['GET'])
+@admin_required
+def wireguard_pkg_status():
+    installed = _ensure_wg_installed()
+    return jsonify({'installed': installed})

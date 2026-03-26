@@ -485,7 +485,9 @@ def test_sharing_opens(pw_page):
 
 # ─── Cloud Backup ─────────────────────────────────────────────────────────────
 
-def test_cloud_backup_opens(pw_page):
+def test_cloud_backup_opens(pw_page, nas_apps):
+    if not any(a["id"] == "cloud-backup" for a in nas_apps):
+        pytest.skip("cloud-backup not installed")
     open_app(pw_page, "cloud-backup")
     pw_page.wait_for_selector("#win-body-cloud-backup .cb-app", timeout=10_000)
     close_app(pw_page, "cloud-backup")
@@ -517,7 +519,9 @@ def test_duplicates_opens(pw_page):
 
 # ─── Document Editor ─────────────────────────────────────────────────────────
 
-def test_doc_editor_opens(pw_page):
+def test_doc_editor_opens(pw_page, nas_apps):
+    if not any(a["id"] == "doc-editor" for a in nas_apps):
+        pytest.skip("doc-editor not installed")
     open_app(pw_page, "doc-editor")
     pw_page.wait_for_selector("#win-body-doc-editor .doceditor", timeout=10_000)
     close_app(pw_page, "doc-editor")
@@ -525,7 +529,9 @@ def test_doc_editor_opens(pw_page):
 
 # ─── Code Editor ─────────────────────────────────────────────────────────────
 
-def test_code_editor_opens(pw_page):
+def test_code_editor_opens(pw_page, nas_apps):
+    if not any(a["id"] == "code-editor" for a in nas_apps):
+        pytest.skip("code-editor not installed")
     open_app(pw_page, "code-editor")
     pw_page.wait_for_selector("#win-body-code-editor .code-editor", timeout=10_000)
     close_app(pw_page, "code-editor")
@@ -541,7 +547,9 @@ def test_download_manager_opens(pw_page):
 
 # ─── USB Flasher ─────────────────────────────────────────────────────────────
 
-def test_usb_flasher_opens(pw_page):
+def test_usb_flasher_opens(pw_page, nas_apps):
+    if not any(a["id"] == "usb-flasher" for a in nas_apps):
+        pytest.skip("usb-flasher not installed")
     open_app(pw_page, "usb-flasher")
     pw_page.wait_for_selector("#win-body-usb-flasher .fl-wrap", timeout=10_000)
     close_app(pw_page, "usb-flasher")
@@ -650,7 +658,9 @@ def test_fail2ban_opens(pw_page):
 
 # ─── WireGuard ───────────────────────────────────────────────────────────────
 
-def test_wireguard_opens(pw_page):
+def test_wireguard_opens(pw_page, nas_apps):
+    if not any(a["id"] == "wireguard" for a in nas_apps):
+        pytest.skip("wireguard not installed")
     open_app(pw_page, "wireguard")
     pw_page.wait_for_selector("#win-body-wireguard #wg-status-badge, #win-body-wireguard #wg-toggle", timeout=10_000)
     close_app(pw_page, "wireguard")
