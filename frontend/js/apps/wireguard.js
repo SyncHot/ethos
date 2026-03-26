@@ -1,16 +1,12 @@
 /* ═══════════════════════════════════════════════════════════
    EthOS — WireGuard VPN Manager
-   ${t('Zarządzanie serwerem VPN: peery, QR kody, status')}
    ═══════════════════════════════════════════════════════════ */
 
 AppRegistry['wireguard'] = function (appDef) {
     function esc(str) {
         if (typeof str !== 'string') return str;
-        return str.replace(/&/g, '&amp;')
-                  .replace(/</g, '&lt;')
-                  .replace(/>/g, '&gt;')
-                  .replace(/"/g, '&quot;')
-                  .replace(/'/g, '&#039;');
+        return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                  .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
     }
 
     const win = createWindow('wireguard', {
@@ -18,111 +14,133 @@ AppRegistry['wireguard'] = function (appDef) {
         icon: 'fa-shield-halved',
         iconColor: '#7c3aed',
         width: 820,
-        height: 640,
+        height: 600,
         resizable: true,
         maximizable: true
     });
 
     const body = win.body;
-    body.style.cssText = 'display:flex;flex-direction:column;background:var(--bg-default);color:var(--text-default);padding:20px;gap:16px;overflow-y:auto';
+    body.style.cssText = 'display:flex;flex-direction:column;height:100%;overflow:hidden;background:var(--window-bg)';
 
     body.innerHTML = `
-        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
-            <div>
-                <h2 style="margin:0 0 4px 0;display:flex;align-items:center;gap:10px">
+        <!-- Status bar -->
+        <div class="pwr-status-bar">
+            <div class="pwr-status-chip" id="wg-state-chip">
+                <i class="fas fa-shield-halved" style="color:#7c3aed"></i>
+                <span>${t('Ładowanie...')}</span>
+            </div>
+            <div class="pwr-status-chip" id="wg-endpoint-chip" style="display:none">
+                <i class="fas fa-globe" style="color:#3b82f6"></i>
+                <span id="wg-endpoint-text"></span>
+            </div>
+        </div>
+
+        <!-- Scrollable body -->
+        <div class="pwr-scroll">
+
+            <!-- VPN Toggle card -->
+            <div class="pwr-card">
+                <div class="pwr-card-header">
                     <i class="fas fa-shield-halved" style="color:#7c3aed"></i>
-                    WireGuard VPN
-                </h2>
-                <p style="margin:0;opacity:0.65;font-size:13px">${t('Bezpieczny dostęp do sieci domowej z dowolnego miejsca')}</p>
-            </div>
-            <div style="display:flex;align-items:center;gap:10px">
-                <span id="wg-status-badge" style="font-size:12px;padding:3px 10px;border-radius:20px;background:var(--bg-surface);border:1px solid var(--border)">${t('Ładowanie...')}</span>
-                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px">
-                    <span>VPN</span>
-                    <div id="wg-toggle-wrap" style="position:relative;width:44px;height:24px">
-                        <input type="checkbox" id="wg-toggle" style="opacity:0;width:0;height:0;position:absolute">
-                        <span id="wg-toggle-track" style="position:absolute;inset:0;border-radius:12px;background:#555;transition:background 0.2s;cursor:pointer"></span>
-                        <span id="wg-toggle-thumb" style="position:absolute;left:3px;top:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:transform 0.2s;pointer-events:none"></span>
+                    <div style="flex:1">
+                        <div class="pwr-card-title">WireGuard VPN</div>
+                        <div class="pwr-card-sub">${t('Bezpieczny dostęp do sieci domowej z dowolnego miejsca')}</div>
                     </div>
-                </label>
+                    <label class="pwr-toggle" title="${t('Włącz / wyłącz VPN')}">
+                        <input type="checkbox" id="wg-toggle">
+                        <span class="pwr-toggle-track"><span class="pwr-toggle-thumb"></span></span>
+                    </label>
+                </div>
+                <div id="wg-port-row" class="pwr-info-row" style="display:none">
+                    <span class="pwr-info-label"><i class="fas fa-plug"></i> Port</span>
+                    <span class="pwr-info-val" id="wg-port-val"></span>
+                </div>
             </div>
-        </div>
 
-        <div id="wg-info-bar" style="background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:13px;display:none">
-            <span style="opacity:0.7">Endpoint DDNS: </span>
-            <span id="wg-endpoint" style="font-family:monospace;font-weight:600"></span>
-            <span style="opacity:0.7;margin-left:16px">Port: </span>
-            <span id="wg-port" style="font-family:monospace;font-weight:600"></span>
-        </div>
+            <!-- Peers card -->
+            <div class="pwr-card">
+                <div class="pwr-card-header">
+                    <i class="fas fa-laptop-mobile" style="color:#3b82f6"></i>
+                    <div style="flex:1">
+                        <div class="pwr-card-title">${t('Urządzenia (Peery)')}</div>
+                        <div class="pwr-card-sub">${t('Klienci VPN z dostępem do sieci')}</div>
+                    </div>
+                    <button id="wg-add-btn" class="app-btn app-btn-accent app-btn-sm">
+                        <i class="fas fa-plus"></i> ${t('Dodaj')}
+                    </button>
+                </div>
+                <div id="wg-peers-list" style="padding:0 0 4px 0"></div>
+            </div>
 
-        <div style="display:flex;align-items:center;justify-content:space-between">
-            <h3 style="margin:0;font-size:15px">${t('Peery (urządzenia)')}</h3>
-            <button id="wg-add-btn" class="app-btn app-btn-accent" style="font-size:13px">
-                <i class="fas fa-plus"></i> ${t('Dodaj urządzenie')}
-            </button>
-        </div>
+        </div><!-- end .pwr-scroll -->
 
-        <div id="wg-peers-list" style="display:flex;flex-direction:column;gap:10px">
-            <div style="opacity:0.5;text-align:center;padding:20px">${t('Ładowanie...')}</div>
-        </div>
-
-        <!-- Add Peer Modal -->
-        <div id="wg-add-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9999;align-items:center;justify-content:center">
-            <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:12px;padding:24px;width:380px;max-width:95vw">
-                <h3 style="margin:0 0 16px 0">${t('Dodaj urządzenie')}</h3>
-                <label style="display:block;margin-bottom:8px;font-size:13px;opacity:0.8">${t('Nazwa urządzenia')}</label>
-                <input id="wg-peer-name" type="text" class="app-input" placeholder="np. Telefon, Laptop" style="width:100%;margin-bottom:16px;box-sizing:border-box">
-                <div style="display:flex;gap:10px;justify-content:flex-end">
-                    <button id="wg-add-cancel" class="app-btn">Anuluj</button>
-                    <button id="wg-add-confirm" class="app-btn app-btn-accent"><i class="fas fa-check"></i> Generuj</button>
+        <!-- Add Peer overlay (inside window) -->
+        <div id="wg-add-overlay" class="pwr-overlay" style="position:absolute">
+            <div class="pwr-dialog">
+                <div class="pwr-dialog-header">
+                    <i class="fas fa-plus" style="color:#7c3aed"></i>
+                    <span>${t('Dodaj urządzenie')}</span>
+                    <button class="pwr-icon-btn" id="wg-add-x"><i class="fas fa-times"></i></button>
+                </div>
+                <div class="pwr-dialog-body">
+                    <div>
+                        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">${t('Nazwa urządzenia')}</label>
+                        <input id="wg-peer-name" type="text" class="app-input" placeholder="${t('np. Telefon, Laptop')}" style="width:100%;box-sizing:border-box">
+                    </div>
+                </div>
+                <div class="pwr-dialog-footer">
+                    <button class="pwr-btn-ghost" id="wg-add-cancel">${t('Anuluj')}</button>
+                    <button class="pwr-btn-primary" id="wg-add-confirm" style="background:#7c3aed"><i class="fas fa-key"></i> ${t('Generuj')}</button>
                 </div>
             </div>
         </div>
 
-        <!-- QR/Config Modal -->
-        <div id="wg-qr-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center">
-            <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:12px;padding:24px;width:480px;max-width:95vw;max-height:90vh;overflow-y:auto">
-                <h3 style="margin:0 0 4px 0" id="wg-qr-title">Konfiguracja peera</h3>
-                <p style="margin:0 0 16px 0;font-size:13px;opacity:0.7">Zeskanuj QR kodem lub pobierz plik .conf</p>
-                <div id="wg-qr-img-wrap" style="text-align:center;margin-bottom:16px">
-                    <img id="wg-qr-img" style="max-width:220px;border-radius:8px;border:4px solid #fff" src="" alt="QR code">
-                    <div id="wg-qr-missing" style="display:none;opacity:0.5;font-size:13px;padding:20px">${t('Brak QR (qrencode niedostępny)')}</div>
+        <!-- QR/Config overlay -->
+        <div id="wg-qr-overlay" class="pwr-overlay" style="position:absolute">
+            <div class="pwr-dialog" style="width:480px">
+                <div class="pwr-dialog-header">
+                    <i class="fas fa-qrcode" style="color:#7c3aed"></i>
+                    <span id="wg-qr-title">${t('Konfiguracja')}</span>
+                    <button class="pwr-icon-btn" id="wg-qr-x"><i class="fas fa-times"></i></button>
                 </div>
-                <textarea id="wg-conf-text" readonly style="width:100%;height:160px;font-family:monospace;font-size:11px;background:var(--bg-default);color:var(--text-default);border:1px solid var(--border);border-radius:6px;padding:8px;box-sizing:border-box;resize:vertical"></textarea>
-                <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px">
-                    <button id="wg-qr-download" class="app-btn app-btn-accent"><i class="fas fa-download"></i> Pobierz .conf</button>
-                    <button id="wg-qr-close" class="app-btn">Zamknij</button>
+                <div class="pwr-dialog-body">
+                    <div style="text-align:center">
+                        <img id="wg-qr-img" style="max-width:200px;border-radius:8px;border:4px solid #fff;display:none" src="" alt="QR">
+                        <div id="wg-qr-missing" style="display:none;color:var(--text-muted);font-size:13px;padding:16px">
+                            <i class="fas fa-triangle-exclamation" style="color:#f59e0b"></i> ${t('Brak QR (qrencode niedostępny)')}
+                        </div>
+                    </div>
+                    <div>
+                        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">${t('Plik konfiguracyjny')}</label>
+                        <textarea id="wg-conf-text" readonly style="width:100%;height:150px;font-family:monospace;font-size:11px;background:var(--bg-default);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:8px;box-sizing:border-box;resize:vertical"></textarea>
+                    </div>
+                </div>
+                <div class="pwr-dialog-footer">
+                    <button class="pwr-btn-ghost" id="wg-qr-close">${t('Zamknij')}</button>
+                    <button class="pwr-btn-primary" id="wg-qr-download" style="background:#7c3aed"><i class="fas fa-download"></i> ${t('Pobierz .conf')}</button>
                 </div>
             </div>
         </div>
     `;
 
-    const statusBadge = body.querySelector('#wg-status-badge');
-    const toggle = body.querySelector('#wg-toggle');
-    const toggleTrack = body.querySelector('#wg-toggle-track');
-    const toggleThumb = body.querySelector('#wg-toggle-thumb');
-    const infoBar = body.querySelector('#wg-info-bar');
-    const peersList = body.querySelector('#wg-peers-list');
-    const addBtn = body.querySelector('#wg-add-btn');
-    const addModal = body.querySelector('#wg-add-modal');
-    const qrModal = body.querySelector('#wg-qr-modal');
-
-    function setToggleUI(active) {
-        toggle.checked = active;
-        toggleTrack.style.background = active ? '#7c3aed' : '#555';
-        toggleThumb.style.transform = active ? 'translateX(20px)' : 'translateX(0)';
-    }
+    const toggle       = body.querySelector('#wg-toggle');
+    const stateChip    = body.querySelector('#wg-state-chip');
+    const endpointChip = body.querySelector('#wg-endpoint-chip');
+    const portRow      = body.querySelector('#wg-port-row');
+    const peersList    = body.querySelector('#wg-peers-list');
+    const addOverlay   = body.querySelector('#wg-add-overlay');
+    const qrOverlay    = body.querySelector('#wg-qr-overlay');
 
     function fmtBytes(b) {
         if (!b) return '0 B';
         if (b < 1024) return b + ' B';
-        if (b < 1024 * 1024) return (b / 1024).toFixed(1) + ' KB';
-        if (b < 1024 * 1024 * 1024) return (b / 1024 / 1024).toFixed(1) + ' MB';
-        return (b / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+        if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+        if (b < 1073741824) return (b / 1048576).toFixed(1) + ' MB';
+        return (b / 1073741824).toFixed(2) + ' GB';
     }
 
     function fmtHandshake(ts) {
-        if (!ts) return 'Nigdy';
+        if (!ts) return t('Nigdy');
         const diff = Math.floor(Date.now() / 1000) - ts;
         if (diff < 120) return t('Przed chwilą');
         if (diff < 3600) return Math.floor(diff / 60) + ' min temu';
@@ -132,32 +150,29 @@ AppRegistry['wireguard'] = function (appDef) {
 
     function renderPeers(peers) {
         if (!peers || peers.length === 0) {
-            peersList.innerHTML = `<div style="opacity:0.5;text-align:center;padding:30px;border:1px dashed var(--border);border-radius:8px">
-                ${t('Brak peerów. Kliknij „Dodaj urządzenie" aby wygenerować pierwszą konfigurację.')}
-            </div>`;
+            peersList.innerHTML = `<div class="pwr-empty"><i class="fas fa-mobile-screen-button"></i> ${t('Brak urządzeń. Kliknij „Dodaj" aby wygenerować pierwszą konfigurację.')}</div>`;
             return;
         }
         peersList.innerHTML = peers.map(p => {
             const active = p.status === 'active';
-            const dot = active ? '#22c55e' : '#6b7280';
             const name = esc(p.Name || p.PublicKey.slice(0, 12) + '…');
             return `
-            <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
-                <div style="display:flex;align-items:center;gap:10px;min-width:0">
-                    <span style="width:10px;height:10px;border-radius:50%;background:${dot};flex-shrink:0"></span>
-                    <div style="min-width:0">
-                        <div style="font-weight:600;font-size:14px">${name}</div>
-                        <div style="font-family:monospace;font-size:11px;opacity:0.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(p.PublicKey)}</div>
-                        <div style="font-size:12px;opacity:0.7;margin-top:2px">
-                            ${active ? `↓ ${fmtBytes(p.transfer_rx)} ↑ ${fmtBytes(p.transfer_tx)} · ${t('ostatnie połączenie:')} ${fmtHandshake(p.latest_handshake)}` : t('Nieaktywny')}
-                        </div>
-                    </div>
+            <div class="pwr-info-row" style="flex-wrap:wrap;gap:8px;">
+                <span class="pwr-badge ${active ? 'pwr-badge-green' : 'pwr-badge-gray'}" style="flex-shrink:0">
+                    ${active ? t('Online') : t('Offline')}
+                </span>
+                <div style="flex:1;min-width:0">
+                    <div style="font-size:13px;font-weight:600;color:var(--text-primary)">${name}</div>
+                    <div style="font-family:monospace;font-size:10px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(p.PublicKey)}</div>
+                    ${active ? `<div style="font-size:11px;color:var(--text-muted)">↓ ${fmtBytes(p.transfer_rx)} ↑ ${fmtBytes(p.transfer_tx)} · ${fmtHandshake(p.latest_handshake)}</div>` : ''}
                 </div>
-                <button class="app-btn app-btn-sm wg-delete-btn" data-key="${esc(p.PublicKey)}" data-name="${name}" style="color:#ef4444;flex-shrink:0">
+                <button class="pwr-icon-btn wg-delete-btn" data-key="${esc(p.PublicKey)}" data-name="${name}" title="${t('Usuń')}" style="color:var(--danger,#ef4444)">
                     <i class="fas fa-trash"></i>
                 </button>
             </div>`;
         }).join('');
+            }
+        });
 
         peersList.querySelectorAll('.wg-delete-btn').forEach(btn => {
             btn.addEventListener('click', () => deletePeer(btn.dataset.key, btn.dataset.name));
@@ -168,62 +183,64 @@ AppRegistry['wireguard'] = function (appDef) {
         try {
             const r = await api('/wireguard/status');
             if (!r.installed) {
-                statusBadge.textContent = 'wireguard-tools nie zainstalowane';
-                statusBadge.style.color = '#ef4444';
-                setToggleUI(false);
+                stateChip.innerHTML = `<i class="fas fa-circle-xmark" style="color:#ef4444"></i> <span>${t('WireGuard nie zainstalowany')}</span>`;
                 toggle.disabled = true;
-                peersList.innerHTML = `<div style="opacity:0.6;padding:20px">WireGuard nie jest zainstalowany w systemie.</div>`;
+                peersList.innerHTML = `<div class="pwr-empty"><i class="fas fa-circle-xmark" style="color:#ef4444"></i> ${t('Zainstaluj WireGuard z App Store.')}</div>`;
                 return;
             }
             const active = r.active;
-            statusBadge.textContent = active ? 'Aktywny' : 'Nieaktywny';
-            statusBadge.style.background = active ? 'rgba(124,58,237,0.15)' : 'var(--bg-surface)';
-            statusBadge.style.color = active ? '#7c3aed' : 'var(--text-muted)';
-            statusBadge.style.borderColor = active ? '#7c3aed' : 'var(--border)';
-            setToggleUI(active);
+            toggle.checked = active;
+            stateChip.innerHTML = `<i class="fas fa-shield-halved" style="color:${active ? '#7c3aed' : 'var(--text-muted)'}"></i> <span style="color:${active ? '#7c3aed' : 'var(--text-muted)'}">${active ? t('Aktywny') : t('Nieaktywny')}</span>`;
+
             if (r.hostname) {
-                infoBar.style.display = 'block';
-                body.querySelector('#wg-endpoint').textContent = r.hostname;
-                body.querySelector('#wg-port').textContent = r.port || 51820;
+                endpointChip.style.display = 'flex';
+                body.querySelector('#wg-endpoint-text').textContent = r.hostname + ':' + (r.port || 51820);
+                portRow.style.display = 'flex';
+                body.querySelector('#wg-port-val').textContent = r.port || 51820;
+            } else {
+                endpointChip.style.display = 'none';
+                portRow.style.display = 'none';
             }
             renderPeers(r.peers);
         } catch (e) {
-            statusBadge.textContent = t('Błąd');
-            peersList.innerHTML = `<div style="color:#ef4444;padding:10px">${t('Błąd:')} ${esc(String(e))}</div>`;
+            stateChip.innerHTML = `<i class="fas fa-triangle-exclamation" style="color:#f59e0b"></i> <span>${t('Błąd')}</span>`;
+            peersList.innerHTML = `<div class="pwr-empty" style="color:var(--danger,#ef4444)"><i class="fas fa-triangle-exclamation"></i> ${esc(String(e))}</div>`;
         }
     }
 
     toggle.addEventListener('change', async () => {
         const enable = toggle.checked;
-        setToggleUI(enable);
-        statusBadge.textContent = enable ? 'Uruchamianie…' : 'Zatrzymywanie…';
+        stateChip.innerHTML = `<i class="fas fa-spinner fa-spin" style="color:#7c3aed"></i> <span>${enable ? t('Uruchamianie…') : t('Zatrzymywanie…')}</span>`;
         toggle.disabled = true;
         try {
             await api('/wireguard/toggle', { method: 'POST', body: { enable } });
             await loadStatus();
         } catch (e) {
-            showNotification(t('Błąd:') + ' ' + e.message, 'error');            await loadStatus();
+            showNotification(t('Błąd:') + ' ' + e.message, 'error');
+            await loadStatus();
         } finally {
             toggle.disabled = false;
         }
     });
 
-    // Click on the track also toggles
-    body.querySelector('#wg-toggle-track').addEventListener('click', () => toggle.click());
-
-    // Add peer flow
-    addBtn.addEventListener('click', () => {
+    // Add peer
+    function openAddModal() {
         body.querySelector('#wg-peer-name').value = '';
-        addModal.style.display = 'flex';
+        addOverlay.classList.add('visible');
         setTimeout(() => body.querySelector('#wg-peer-name').focus(), 50);
-    });
-    body.querySelector('#wg-add-cancel').addEventListener('click', () => { addModal.style.display = 'none'; });
+    }
+    function closeAddModal() { addOverlay.classList.remove('visible'); }
+
+    body.querySelector('#wg-add-btn').addEventListener('click', openAddModal);
+    body.querySelector('#wg-add-cancel').addEventListener('click', closeAddModal);
+    body.querySelector('#wg-add-x').addEventListener('click', closeAddModal);
     body.querySelector('#wg-peer-name').addEventListener('keydown', e => { if (e.key === 'Enter') body.querySelector('#wg-add-confirm').click(); });
+    addOverlay.addEventListener('click', e => { if (e.target === addOverlay) closeAddModal(); });
 
     body.querySelector('#wg-add-confirm').addEventListener('click', async () => {
         const name = body.querySelector('#wg-peer-name').value.trim() || t('Urządzenie');
-        addModal.style.display = 'none';
-        statusBadge.textContent = 'Generowanie…';
+        closeAddModal();
+        stateChip.innerHTML = `<i class="fas fa-spinner fa-spin" style="color:#7c3aed"></i> <span>${t('Generowanie…')}</span>`;
         try {
             const r = await api('/wireguard/peer', { method: 'POST', body: { name } });
             showQR(name, r.config, r.qr_code);
@@ -235,13 +252,12 @@ AppRegistry['wireguard'] = function (appDef) {
     });
 
     // QR modal
-    let _currentConf = '';
-    let _currentPeerName = '';
+    let _currentConf = '', _currentPeerName = '';
 
     function showQR(name, conf, qrB64) {
         _currentConf = conf;
         _currentPeerName = name;
-        body.querySelector('#wg-qr-title').textContent = 'Konfiguracja: ' + name;
+        body.querySelector('#wg-qr-title').textContent = name;
         body.querySelector('#wg-conf-text').value = conf;
         const img = body.querySelector('#wg-qr-img');
         const missing = body.querySelector('#wg-qr-missing');
@@ -253,10 +269,13 @@ AppRegistry['wireguard'] = function (appDef) {
             img.style.display = 'none';
             missing.style.display = 'block';
         }
-        qrModal.style.display = 'flex';
+        qrOverlay.classList.add('visible');
     }
 
-    body.querySelector('#wg-qr-close').addEventListener('click', () => { qrModal.style.display = 'none'; });
+    body.querySelector('#wg-qr-close').addEventListener('click', () => qrOverlay.classList.remove('visible'));
+    body.querySelector('#wg-qr-x').addEventListener('click', () => qrOverlay.classList.remove('visible'));
+    qrOverlay.addEventListener('click', e => { if (e.target === qrOverlay) qrOverlay.classList.remove('visible'); });
+
     body.querySelector('#wg-qr-download').addEventListener('click', () => {
         const blob = new Blob([_currentConf], { type: 'text/plain' });
         const url = URL.createObjectURL(blob);
