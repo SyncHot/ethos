@@ -4687,3 +4687,18 @@ select.cb-input { cursor: pointer; }
 .pwr-btn-ghost:hover { background: var(--bg-hover); color: var(--text-primary); }
 .pwr-btn-primary { display: flex; align-items: center; gap: 6px; padding: 7px 16px; background: #3b82f6; color: #fff; border: none; border-radius: var(--r-md); font-size: 13px; cursor: pointer; }
 .pwr-btn-primary:hover { background: #2563eb; }
+
+/* ─── app-btn: universal button class used across apps ─── */
+.app-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--r-md, 8px); color: var(--text-primary); font-size: 13px; cursor: pointer; transition: background .15s, border-color .15s; white-space: nowrap; }
+.app-btn:hover:not(:disabled) { background: var(--bg-hover); border-color: var(--border-hover, var(--border)); }
+.app-btn:disabled { opacity: .45; cursor: not-allowed; }
+.app-btn-sm  { padding: 4px 10px; font-size: 12px; }
+.app-btn-xs  { padding: 2px 7px; font-size: 11px; }
+.app-btn-primary { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+.app-btn-primary:hover:not(:disabled) { background: #2563eb; border-color: #2563eb; }
+.app-btn-accent  { background: rgba(124,58,237,.15); border-color: rgba(124,58,237,.4); color: #7c3aed; }
+.app-btn-accent:hover:not(:disabled) { background: rgba(124,58,237,.25); }
+.app-btn-danger  { background: rgba(239,68,68,.12); border-color: rgba(239,68,68,.35); color: #ef4444; }
+.app-btn-danger:hover:not(:disabled) { background: rgba(239,68,68,.22); }
+.app-btn-secondary { background: var(--bg-surface-alt); border-color: var(--border); color: var(--text-muted); }
+.app-btn-secondary:hover:not(:disabled) { color: var(--text-primary); }
