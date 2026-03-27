@@ -137,6 +137,30 @@ _load_build_state()
 # ── Paths ──
 _HOST_NASOS_DIR = None
 
+# ── Optional app JS files (excluded from base image; installed via Package Center) ──
+def _compute_optional_js():
+    try:
+        import importlib, sys as _sys
+        _bp_dir = os.path.join(os.path.dirname(__file__))
+        _sys.path.insert(0, os.path.join(_bp_dir, '..'))
+        am = importlib.import_module('blueprints.app_manager')
+        core_js = set()
+        for aid in am.CORE_APPS:
+            fn = am._get_frontend_filename(aid)
+            if fn:
+                core_js.add(fn + '.js')
+        optional = set()
+        for app in am.BUILTIN_CATALOG:
+            if app['id'] not in am.CORE_APPS:
+                fn = am._get_frontend_filename(app['id'])
+                if fn and fn + '.js' not in core_js:
+                    optional.add(fn + '.js')
+        return sorted(optional)
+    except Exception:
+        return []
+
+_OPTIONAL_JS = _compute_optional_js()
+
 
 def _get_host_nasos_dir():
     """Get the host path to the nasos project directory."""
@@ -409,6 +433,7 @@ def build_release():
             pkg_name = f"ethos-{new_ver}"
             build_dir = f"/tmp/ethos-release-web-$$"
             releases_dir = f"{nasos}/installer/releases"
+            optional_js = ' '.join(_OPTIONAL_JS)
 
             # The build-release.sh is interactive. We run equivalent steps directly.
             script = f"""
@@ -437,7 +462,15 @@ cp "$NASOS/frontend/share.html" "$BUILD_DIR/$PKG/frontend/" 2>/dev/null || true
 cp "$NASOS/frontend/manifest.json" "$BUILD_DIR/$PKG/frontend/" 2>/dev/null || true
 cp "$NASOS/frontend/css/"*.css "$BUILD_DIR/$PKG/frontend/css/"
 cp "$NASOS/frontend/js/"*.js "$BUILD_DIR/$PKG/frontend/js/"
-cp "$NASOS/frontend/js/apps/"*.js "$BUILD_DIR/$PKG/frontend/js/apps/"
+# Copy only CORE app JS files — optional apps are installed via Package Center
+OPTIONAL_JS="{' '.join(sorted(optional_js))}"
+for js in "$NASOS/frontend/js/apps/"*.js; do
+  fname=$(basename "$js")
+  if echo "$OPTIONAL_JS" | grep -qw "$fname"; then
+    continue
+  fi
+  cp "$js" "$BUILD_DIR/$PKG/frontend/js/apps/"
+done
 cp -r "$NASOS/frontend/vendor/"* "$BUILD_DIR/$PKG/frontend/vendor/" 2>/dev/null || true
 cp -r "$NASOS/frontend/mobile/"* "$BUILD_DIR/$PKG/frontend/mobile/" 2>/dev/null || true
 cp -r "$NASOS/frontend/img" "$BUILD_DIR/$PKG/frontend/" 2>/dev/null || true
@@ -602,6 +635,7 @@ def _build_image_worker(nasos):
 
 def _x86_wrapper_script(nasos: str) -> str:
     """Return bash wrapper script for building x86 image."""
+    optional_js_list = ' '.join(_OPTIONAL_JS)
     return f"""
 set -e
 set -o pipefail
@@ -1249,6 +1283,13 @@ done
 # ── Copy entire frontend/ ──
 echo "LOG:Copying frontend..."
 cp -r "$NASOS/frontend" "$ETHOS_DIR/"
+# Remove optional app JS files — they are installed via Package Center
+OPTIONAL_JS="{optional_js_list}"
+for fname in $OPTIONAL_JS; do
+  rm -f "$ETHOS_DIR/frontend/js/apps/$fname"
+  rm -f "$ETHOS_DIR/frontend_dist/js/apps/$fname" 2>/dev/null || true
+done
+echo "LOG:Optional app JS removed from base image ($(echo $OPTIONAL_JS | wc -w) files)"
 
 # ── Copy tools ──
 echo "LOG:Copying tools..."
