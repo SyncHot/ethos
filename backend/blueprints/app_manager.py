@@ -32,7 +32,7 @@ import urllib.error
 from flask import Blueprint, request, jsonify, g
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from host import host_run, data_path, app_path, q
+from host import host_run, data_path, app_path, q, _apt_exec
 
 log = logging.getLogger('app_manager')
 app_manager_bp = Blueprint('app_manager', __name__, url_prefix='/api/app-manager')
@@ -153,7 +153,7 @@ BUILTIN_CATALOG = [
         'id': 'surveillance', 'name': 'Surveillance', 'version': '1.0.0',
         'icon': 'fa-video', 'color': '#dc2626', 'category': 'Security', 'admin_only': False,
         'description': 'Monitoring IP kamer z detekcja ruchu i podgladem na zywo.',
-        'apt_deps': ['ffmpeg'], 'pip_deps': ['python-onvif-zeep'],
+        'apt_deps': ['ffmpeg'], 'pip_deps': ['onvif-zeep'],
         'install_endpoint': '/api/surveillance/install',
         'uninstall_endpoint': '/api/surveillance/uninstall',
         'status_endpoint': '/api/surveillance/status',
@@ -671,7 +671,9 @@ def _install_apt_deps(deps, emit_fn):
         return True
     pkgs = ' '.join(q(d) for d in deps)
     emit_fn({'stage': 'deps_apt', 'message': 'Instalowanie pakietow apt: ' + ', '.join(deps), 'percent': 30})
-    result = host_run('DEBIAN_FRONTEND=noninteractive apt-get install -y ' + pkgs, timeout=300)
+    result = _apt_exec('DEBIAN_FRONTEND=noninteractive apt-get install -y ' + pkgs, timeout=300, retries=2)
+    if result.returncode != 0:
+        log.error('[app_manager] apt install failed (rc=%s): %s', result.returncode, result.stderr[-500:])
     return result.returncode == 0
 
 
