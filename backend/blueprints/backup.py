@@ -2977,6 +2977,58 @@ def _discover_via_scan(port=9000, timeout=2.0):
     return devices
 
 
+def _discover_via_vms():
+    """Discover EthOS instances running inside local QEMU VMs.
+
+    Reads VM Manager state to find VMs with port forwards mapping to
+    guest port 9000 (EthOS). Probes localhost:{host_port} to verify
+    the instance is live.
+    """
+    import urllib.request
+    vm_state_file = os.path.join(
+        os.path.dirname(__file__), '..', '..', 'data', 'vm_state.json'
+    )
+    if not os.path.isfile(vm_state_file):
+        return []
+
+    try:
+        with open(vm_state_file, 'r') as f:
+            vms = json.load(f)
+    except Exception:
+        return []
+
+    devices = []
+    for vm_id, vm in vms.items():
+        net = vm.get('network') or {}
+        if net.get('net_type') not in ('user', None):
+            continue
+        for rule in net.get('port_forwards', []):
+            if rule.get('guest') != 9000 or rule.get('proto', 'tcp') != 'tcp':
+                continue
+            host_port = rule.get('host', 0)
+            if not host_port:
+                continue
+            try:
+                url = f'http://127.0.0.1:{host_port}/api/ethos/identify'
+                req = urllib.request.Request(url, headers={'Accept': 'application/json'})
+                resp = urllib.request.urlopen(req, timeout=2)
+                data = json.loads(resp.read().decode())
+                if data.get('ethos'):
+                    devices.append({
+                        'name': data.get('name', vm.get('name', vm_id)),
+                        'hostname': data.get('hostname', vm.get('name', vm_id)),
+                        'ip': '127.0.0.1',
+                        'port': host_port,
+                        'version': data.get('version', '?'),
+                        'source': 'vm',
+                        'vm_id': vm_id,
+                        'vm_name': vm.get('name', vm_id),
+                    })
+            except Exception:
+                pass
+    return devices
+
+
 @backup_bp.route('/discover-nas', methods=['POST'])
 def discover_nas():
     """Discover other EthOS instances on the local network."""
@@ -2988,15 +3040,26 @@ def discover_nas():
     # Method 2: Subnet scan fallback / supplement
     scanned = _discover_via_scan()
 
-    # Merge: deduplicate by IP
-    known_ips = {d['ip'] for d in devices}
+    # Method 3: Local QEMU VMs with port-forwarded EthOS
+    vm_devices = _discover_via_vms()
+
+    # Merge: deduplicate by IP:port
+    known = {(d['ip'], d.get('port', 9000)) for d in devices}
     for sd in scanned:
-        if sd['ip'] not in known_ips:
+        key = (sd['ip'], sd.get('port', 9000))
+        if key not in known:
             devices.append(sd)
-            known_ips.add(sd['ip'])
+            known.add(key)
+    for vd in vm_devices:
+        key = (vd['ip'], vd.get('port', 9000))
+        if key not in known:
+            devices.append(vd)
+            known.add(key)
 
     # Filter out self
-    devices = [d for d in devices if d['ip'] != my_ip]
+    my_port = int(os.environ.get('ETHOS_PORT', 9000))
+    devices = [d for d in devices
+               if not (d['ip'] == my_ip and d.get('port', 9000) == my_port)]
 
     return jsonify({'devices': devices, 'my_ip': my_ip})
 

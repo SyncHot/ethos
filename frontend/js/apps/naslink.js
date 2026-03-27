@@ -493,12 +493,12 @@ function _nlRender(body, launchOpts) {
                 <h4 class="nl-discover-title"><i class="fas fa-broadcast-tower nl-icon-accent"></i> ${t('Znalezione urządzenia')} (${_discoverResults.length})</h4>
                 ${_discoverResults.map(d => `
                     <div class="nl-discover-row">
-                        <i class="fas fa-server nl-icon-accent"></i>
+                        <i class="fas ${d.source === 'vm' ? 'fa-desktop' : 'fa-server'} nl-icon-accent"></i>
                         <div class="nl-flex-1">
-                            <div class="nl-discover-name">${_nlEsc(d.name || d.hostname || d.ip)}</div>
-                            <div class="nl-muted-sm">${_nlEsc(d.ip)}:${d.port || 9000}</div>
+                            <div class="nl-discover-name">${_nlEsc(d.name || d.hostname || d.ip)}${d.source === 'vm' ? ' <span class="nl-snap-badge local">VM</span>' : ''}</div>
+                            <div class="nl-muted-sm">${_nlEsc(d.ip)}:${d.port || 9000} • v${_nlEsc(d.version || '?')}</div>
                         </div>
-                        <button class="nl-btn sm primary nl-discover-add" data-ip="${_nlEsc(d.ip)}" data-name="${_nlEsc(d.name || d.hostname || '')}"><i class="fas fa-plus"></i> ${t('Dodaj')}</button>
+                        <button class="nl-btn sm primary nl-discover-add" data-ip="${_nlEsc(d.ip)}" data-port="${d.port || 9000}" data-name="${_nlEsc(d.name || d.hostname || '')}"><i class="fas fa-plus"></i> ${t('Dodaj')}</button>
                     </div>
                 `).join('')}
             </div>`;
