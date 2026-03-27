@@ -698,6 +698,27 @@ def _sync_frontend_dist():
         host_run('rsync -av --delete ' + q(frontend + '/') + ' ' + q(dist + '/'), timeout=60)
 
 
+_active_tasks = 0
+_active_tasks_lock = threading.Lock()
+
+
+def _task_start():
+    """Increment active background task counter."""
+    global _active_tasks
+    with _active_tasks_lock:
+        _active_tasks += 1
+
+
+def _task_done():
+    """Decrement active background task counter. Restart server when all tasks finish."""
+    global _active_tasks
+    with _active_tasks_lock:
+        _active_tasks = max(0, _active_tasks - 1)
+        remaining = _active_tasks
+    if remaining == 0:
+        _restart_server()
+
+
 def _restart_server():
     def _do():
         import time as _t
@@ -749,6 +770,7 @@ def _bg_install(app_id, app_def, task_id):
     def emit(extra):
         _emit({'task_id': task_id, 'app_id': app_id, **extra})
 
+    _task_start()
     try:
         emit({'stage': 'start', 'percent': 5, 'message': 'Instalowanie ' + app_def['name'] + '...', 'status': 'running'})
 
@@ -808,17 +830,19 @@ def _bg_install(app_id, app_def, task_id):
 
         emit({'stage': 'done', 'percent': 100, 'message': app_def['name'] + ' zainstalowano pomyslnie', 'status': 'done'})
         emit({'stage': 'restart', 'percent': 100, 'message': 'Restartowanie serwera...', 'status': 'restarting'})
-        _restart_server()
 
     except Exception as e:
         log.exception('[app_manager] install error for %s', app_id)
         emit({'stage': 'error', 'percent': 0, 'message': 'Bład: ' + str(e), 'status': 'error'})
+    finally:
+        _task_done()
 
 
 def _bg_uninstall(app_id, app_def, task_id, wipe_data=False):
     def emit(extra):
         _emit({'task_id': task_id, 'app_id': app_id, **extra})
 
+    _task_start()
     try:
         emit({'stage': 'start', 'percent': 10, 'message': 'Odinstalowywanie ' + app_def['name'] + '...', 'status': 'running'})
 
@@ -868,11 +892,12 @@ def _bg_uninstall(app_id, app_def, task_id, wipe_data=False):
 
         emit({'stage': 'done', 'percent': 100, 'message': app_def['name'] + ' odinstalowano', 'status': 'done'})
         emit({'stage': 'restart', 'percent': 100, 'message': 'Restartowanie serwera...', 'status': 'restarting'})
-        _restart_server()
 
     except Exception as e:
         log.exception('[app_manager] uninstall error for %s', app_id)
         emit({'stage': 'error', 'percent': 0, 'message': 'Bład: ' + str(e), 'status': 'error'})
+    finally:
+        _task_done()
 
 
 # ─── Auth helper ──────────────────────────────────────────────
