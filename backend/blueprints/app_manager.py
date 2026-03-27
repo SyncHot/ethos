@@ -153,7 +153,7 @@ BUILTIN_CATALOG = [
         'id': 'surveillance', 'name': 'Surveillance', 'version': '1.0.0',
         'icon': 'fa-video', 'color': '#dc2626', 'category': 'Security', 'admin_only': False,
         'description': 'Monitoring IP kamer z detekcja ruchu i podgladem na zywo.',
-        'apt_deps': ['ffmpeg', 'ffprobe'], 'pip_deps': ['python-onvif-zeep'],
+        'apt_deps': ['ffmpeg'], 'pip_deps': ['python-onvif-zeep'],
         'install_endpoint': '/api/surveillance/install',
         'uninstall_endpoint': '/api/surveillance/uninstall',
         'status_endpoint': '/api/surveillance/status',
