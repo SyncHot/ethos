@@ -474,6 +474,30 @@ def _set_installed(app_id, version, source='bundled'):
     _save_installed(state)
 
 
+def _get_internal_token():
+    """Return a valid admin token from tokens.db for internal test_client calls."""
+    try:
+        import sqlite3 as _sq
+        with _sq.connect(data_path('tokens.db')) as _conn:
+            _row = _conn.execute(
+                "SELECT token FROM tokens WHERE expires_at > datetime('now') "
+                "ORDER BY created_at DESC LIMIT 1"
+            ).fetchone()
+        return _row[0] if _row else None
+    except Exception as e:
+        log.warning('[app_manager] Could not fetch internal token: %s', e)
+        return None
+
+
+def _internal_post(tc, endpoint, **kwargs):
+    """POST to an internal endpoint with an admin token."""
+    token = _get_internal_token()
+    headers = kwargs.pop('headers', {})
+    if token:
+        headers['Authorization'] = f'Bearer {token}'
+    return tc.post(endpoint, headers=headers, **kwargs)
+
+
 def _set_uninstalled(app_id):
     state = _load_installed()
     state.pop(app_id, None)
@@ -765,7 +789,7 @@ def _bg_install(app_id, app_def, task_id):
             try:
                 from flask import current_app
                 with current_app.test_client() as tc:
-                    tc.post(install_ep)
+                    _internal_post(tc, install_ep)
             except Exception as e:
                 log.warning('[app_manager] install_endpoint %s failed: %s', install_ep, e)
 
@@ -800,7 +824,9 @@ def _bg_uninstall(app_id, app_def, task_id, wipe_data=False):
             try:
                 from flask import current_app
                 with current_app.test_client() as tc:
-                    tc.post(uninstall_ep, json={'wipe_data': wipe_data})
+                    resp = _internal_post(tc, uninstall_ep, json={'wipe_data': wipe_data})
+                    if resp.status_code not in (200, 204):
+                        log.warning('[app_manager] uninstall_endpoint %s returned %s', uninstall_ep, resp.status_code)
             except Exception as e:
                 log.warning('[app_manager] uninstall_endpoint %s failed: %s', uninstall_ep, e)
 
