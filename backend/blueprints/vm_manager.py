@@ -199,12 +199,17 @@ def _bridge_status():
 
 
 def _setup_bridge():
-    """Create br0 bridge and slave the primary ethernet interface to it via nmcli."""
+    """Create br0 bridge and slave the primary ethernet interface to it via nmcli.
+
+    Cleans up duplicate/stale br0 and br0-port connections before creating fresh ones.
+    Properly disconnects the existing ethernet connection so eth0 can join the bridge.
+    """
     br = _BRIDGE_NAME
-    if _bridge_exists(br):
-        st = _bridge_status()
-        if st['ready']:
-            return True, 'Bridge already configured'
+
+    # Already working?
+    st = _bridge_status()
+    if st['ready']:
+        return True, 'Bridge already configured'
 
     primary = _get_primary_iface()
     if not primary:
@@ -213,24 +218,56 @@ def _setup_bridge():
         return True, f'Already using bridge {primary}'
 
     try:
-        cmds = [
-            f'nmcli connection add type bridge con-name {br} ifname {br} stp no',
-            f'nmcli connection add type bridge-slave con-name {br}-port ifname {primary} master {br}',
-            f'nmcli connection up {br}',
-        ]
-        for cmd in cmds:
-            r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
-            if r.returncode != 0:
-                err = r.stderr.strip()
-                if 'already exists' not in err:
-                    return False, f'{cmd}: {err}'
+        def nmcli(cmd):
+            return subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+
+        # 1. Remove all stale br0 and br0-port connections to avoid duplicates
+        show = nmcli('nmcli -t -f NAME,UUID connection show')
+        for line in show.stdout.splitlines():
+            parts = line.split(':')
+            if len(parts) >= 2:
+                name, uuid = parts[0], parts[1]
+                if name in (br, f'{br}-port'):
+                    nmcli(f'nmcli connection delete {uuid}')
+
+        # 2. Get MAC of primary interface so bridge gets same DHCP lease
+        mac_r = subprocess.run(
+            f"ip link show {primary} | grep -o 'link/ether [^ ]*' | awk '{{print $2}}'",
+            shell=True, capture_output=True, text=True, timeout=5
+        )
+        primary_mac = mac_r.stdout.strip()
+
+        # 2. Create the bridge connection, cloning MAC so DHCP assigns the same IP
+        mac_opt = f' 802-3-ethernet.cloned-mac-address {primary_mac}' if primary_mac else ''
+        r = nmcli(f'nmcli connection add type bridge con-name {br} ifname {br} stp no autoconnect yes{mac_opt}')
+        if r.returncode != 0:
+            return False, f'create bridge: {r.stderr.strip()}'
+
+        # 3. Create the bridge-slave for the primary ethernet interface
+        r = nmcli(f'nmcli connection add type ethernet con-name {br}-port ifname {primary} master {br} slave-type bridge autoconnect yes')
+        if r.returncode != 0:
+            return False, f'create bridge-port: {r.stderr.strip()}'
+
+        # 4. Find and disconnect the existing non-slave connection on primary iface
+        show = nmcli('nmcli -t -f NAME,UUID,DEVICE connection show --active')
+        for line in show.stdout.splitlines():
+            parts = line.split(':')
+            if len(parts) >= 3 and parts[2] == primary:
+                nmcli(f'nmcli connection down {parts[1]}')
+
+        # 5. Activate the slave so eth0 joins the bridge
+        nmcli(f'nmcli connection up {br}-port')
+
+        # 6. Bring up the bridge
+        nmcli(f'nmcli connection up {br}')
+
         # Wait for bridge to get IP via DHCP
-        for _ in range(10):
+        for _ in range(15):
             time.sleep(1)
             st = _bridge_status()
             if st['ready']:
                 return True, f'Bridge {br} active with IP {st["bridge_ip"]}'
-        return False, 'Bridge created but did not get an IP (DHCP timeout)'
+        return False, 'Bridge created but did not get an IP (DHCP timeout — check router/DHCP)'
     except Exception as e:
         return False, str(e)
 
@@ -431,6 +468,55 @@ def _human_size(size_bytes):
             return f'{size_bytes:.1f} {unit}'
         size_bytes /= 1024.0
     return f'{size_bytes:.1f} PB'
+
+
+def _disk_has_gpt(path):
+    """Detect GPT partition table on a disk image (raw or qcow2).
+
+    For raw images we read the GPT header directly (LBA 1, offset 512).
+    For qcow2/vmdk/vdi we use `qemu-img dd` to extract the first 1024 bytes.
+    Falls back to fdisk/sfdisk if available.
+    """
+    _GPT_MAGIC = b'EFI PART'
+
+    ext = os.path.splitext(path)[1].lower()
+    is_raw = ext in ('.img', '.raw', '.iso')
+
+    # Raw images — read directly
+    if is_raw:
+        try:
+            with open(path, 'rb') as f:
+                f.seek(512)
+                return f.read(8) == _GPT_MAGIC
+        except Exception:
+            return False
+
+    # qcow2/vmdk/vdi — use qemu-img dd to extract the first 1024 bytes
+    try:
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix='.bin') as tmp:
+            subprocess.run(
+                ['qemu-img', 'dd', f'if={path}', f'of={tmp.name}',
+                 'bs=1024', 'count=1', 'skip=0'],
+                capture_output=True, timeout=10)
+            data = tmp.read()
+            if len(data) >= 520:
+                return data[512:520] == _GPT_MAGIC
+    except Exception:
+        pass
+
+    # Fallback: try fdisk or sfdisk
+    for tool in ('fdisk', 'sfdisk'):
+        try:
+            r = subprocess.run(
+                [tool, '-l', path],
+                capture_output=True, timeout=5)
+            if b'gpt' in r.stdout.lower() or b'GPT' in r.stdout:
+                return True
+        except Exception:
+            continue
+
+    return False
 
 
 def _check_vm_process(vm_id):
@@ -670,6 +756,58 @@ def bridge_info():
 def bridge_setup():
     """Set up bridge networking (creates br0 from primary ethernet)."""
     ok, msg = _setup_bridge()
+    if ok:
+        return jsonify({'ok': True, 'message': msg, **_bridge_status()})
+    return jsonify({'error': msg}), 500
+
+
+def _teardown_bridge():
+    """Remove br0 bridge and restore direct ethernet connection via nmcli."""
+    br = _BRIDGE_NAME
+    try:
+        def nmcli(cmd):
+            return subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+
+        # Find the slave interface before destroying the bridge
+        r = subprocess.run(
+            f"ip link show master {br} | grep -oP '^\\d+: \\K[^@:]+'",
+            shell=True, capture_output=True, text=True, timeout=5
+        )
+        slave = r.stdout.strip() or None
+
+        # Delete br0 and br0-port nmcli connections
+        show = nmcli('nmcli -t -f NAME,UUID connection show')
+        for line in show.stdout.splitlines():
+            parts = line.split(':')
+            if len(parts) >= 2 and parts[0] in (br, f'{br}-port'):
+                nmcli(f'nmcli connection delete {parts[1]}')
+
+        # Restore a plain DHCP connection on the slave interface
+        if slave:
+            nmcli(f'nmcli connection add type ethernet con-name {slave} ifname {slave} autoconnect yes ipv4.method auto')
+            nmcli(f'nmcli connection up {slave}')
+
+        # Wait for IP on restored interface
+        for _ in range(15):
+            time.sleep(1)
+            r = subprocess.run(
+                f"ip -4 -o addr show {slave} scope global | awk '{{print $4}}' | cut -d/ -f1 | head -1",
+                shell=True, capture_output=True, text=True, timeout=5
+            )
+            ip = r.stdout.strip()
+            if ip:
+                return True, f'Bridge removed, {slave} restored with IP {ip}'
+        return True, f'Bridge removed, {slave} restored (waiting for DHCP)'
+    except Exception as e:
+        return False, str(e)
+
+
+@vm_bp.route('/bridge/teardown', methods=['POST'])
+@admin_required
+@_require_qemu
+def bridge_teardown():
+    """Remove br0 bridge and restore direct ethernet connection."""
+    ok, msg = _teardown_bridge()
     if ok:
         return jsonify({'ok': True, 'message': msg, **_bridge_status()})
     return jsonify({'error': msg}), 500
@@ -954,15 +1092,9 @@ def start_vm(vm_id):
             # Auto-detect: check if any disk has GPT (EFI) partition table
             for check_disk in [boot_image, disk_file]:
                 if check_disk and os.path.exists(check_disk):
-                    try:
-                        r = subprocess.run(
-                            ['fdisk', '-l', check_disk],
-                            capture_output=True, timeout=5)
-                        if b'Disklabel type: gpt' in r.stdout:
-                            need_uefi = True
-                            break
-                    except Exception:
-                        pass
+                    need_uefi = _disk_has_gpt(check_disk)
+                    if need_uefi:
+                        break
         if need_uefi:
             for ovmf in ovmf_paths:
                 if os.path.exists(ovmf):
