@@ -40,11 +40,18 @@ app_manager_bp = Blueprint('app_manager', __name__, url_prefix='/api/app-manager
 # ─── SocketIO ref ────────────────────────────────────────────
 
 _socketio = None
+_flask_app = None
 
 
 def init_app_manager(sio):
     global _socketio
     _socketio = sio
+
+
+@app_manager_bp.record_once
+def _on_register(state):
+    global _flask_app
+    _flask_app = state.app
 
 
 def _emit(event_data):
@@ -786,12 +793,12 @@ def _bg_install(app_id, app_def, task_id):
 
         # Wywolaj wlasny endpoint instalacji apki (jesli ma)
         install_ep = app_def.get('install_endpoint')
-        if install_ep and not app_def.get('simple'):
+        if install_ep and not app_def.get('simple') and _flask_app:
             emit({'stage': 'configure', 'percent': 65, 'message': 'Konfigurowanie apki...', 'status': 'running'})
             try:
-                from flask import current_app
-                with current_app.test_client() as tc:
-                    _internal_post(tc, install_ep)
+                with _flask_app.app_context():
+                    with _flask_app.test_client() as tc:
+                        _internal_post(tc, install_ep)
             except Exception as e:
                 log.warning('[app_manager] install_endpoint %s failed: %s', install_ep, e)
 
@@ -821,14 +828,14 @@ def _bg_uninstall(app_id, app_def, task_id, wipe_data=False):
 
         # Wywolaj wlasny endpoint uninstall
         uninstall_ep = app_def.get('uninstall_endpoint')
-        if uninstall_ep and not app_def.get('simple'):
+        if uninstall_ep and not app_def.get('simple') and _flask_app:
             emit({'stage': 'cleanup', 'percent': 30, 'message': 'Czyszczenie danych apki...', 'status': 'running'})
             try:
-                from flask import current_app
-                with current_app.test_client() as tc:
-                    resp = _internal_post(tc, uninstall_ep, json={'wipe_data': wipe_data})
-                    if resp.status_code not in (200, 204):
-                        log.warning('[app_manager] uninstall_endpoint %s returned %s', uninstall_ep, resp.status_code)
+                with _flask_app.app_context():
+                    with _flask_app.test_client() as tc:
+                        resp = _internal_post(tc, uninstall_ep, json={'wipe_data': wipe_data})
+                        if resp.status_code not in (200, 204):
+                            log.warning('[app_manager] uninstall_endpoint %s returned %s', uninstall_ep, resp.status_code)
             except Exception as e:
                 log.warning('[app_manager] uninstall_endpoint %s failed: %s', uninstall_ep, e)
 
