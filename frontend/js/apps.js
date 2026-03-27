@@ -5554,18 +5554,24 @@ function renderPackageCenter(body) {
 
     function renderCard(app) {
         const prog = S.progressMap[app.id];
-        const isInstalling = prog && prog.status === 'running';
+        const isRunning = prog && prog.status === 'running';
+        const isFinishing = prog && prog.status === 'finishing';
         const hasError = prog && prog.status === 'error';
 
         let actionHtml = '';
         if (app.core) {
             actionHtml = `<span class="pm-badge-core"><i class="fas fa-lock"></i> Core</span>`;
-        } else if (isInstalling) {
+        } else if (isFinishing) {
+            actionHtml = `<div class="pm-progress-wrap">
+              <div class="pm-progress-bar"><div class="pm-progress-fill pm-progress-done" style="width:100%"></div></div>
+              <div class="pm-progress-msg pm-progress-success"><i class="fas fa-check-circle"></i> ${escHtml(prog.message?.replace(/<[^>]*>/g,'') || t('Gotowe'))}</div>
+            </div>`;
+        } else if (isRunning) {
             const pct = prog.percent || 0;
             const msg = prog.message || t('Instalowanie…');
             actionHtml = `<div class="pm-progress-wrap">
               <div class="pm-progress-bar"><div class="pm-progress-fill" style="width:${pct}%"></div></div>
-              <div class="pm-progress-msg">${escHtml(msg)}</div>
+              <div class="pm-progress-msg"><i class="fas fa-circle-notch fa-spin"></i> ${escHtml(msg)}</div>
             </div>`;
         } else if (hasError) {
             actionHtml = `<div class="pm-error-msg"><i class="fas fa-exclamation-triangle"></i> ${escHtml(prog.message)}</div>
@@ -5583,7 +5589,7 @@ function renderPackageCenter(body) {
             ? `<div class="pm-card-deps">${[...(app.apt_deps||[]), ...(app.pip_deps||[])].slice(0,3).join(', ')}${([...(app.apt_deps||[]), ...(app.pip_deps||[])].length > 3) ? '…' : ''}</div>`
             : '';
 
-        return `<div class="pm-card ${app.installed || app.core ? 'pm-card-installed' : ''} ${app.core ? 'pm-card-core' : ''}" data-id="${app.id}">
+        return `<div class="pm-card ${app.installed || app.core ? 'pm-card-installed' : ''} ${app.core ? 'pm-card-core' : ''} ${isRunning ? 'pm-card-busy' : ''}" data-id="${app.id}">
   <div class="pm-card-body">
     <div class="pm-card-icon" style="background:${app.color || '#6b7280'}20;color:${app.color || '#6b7280'}"><i class="fas ${app.icon || 'fa-cube'}"></i></div>
     <div class="pm-card-info">
@@ -5669,7 +5675,7 @@ function renderPackageCenter(body) {
     /* ── app actions ── */
     async function installApp(appId) {
         if (S.progressMap[appId]?.status === 'running') return;
-        S.progressMap[appId] = { stage: 'start', percent: 5, message: t('Uruchamianie…'), status: 'running' };
+        S.progressMap[appId] = { stage: 'start', percent: 5, message: t('Uruchamianie…'), status: 'running', _started: Date.now() };
         render();
         const data = await api('/app-manager/' + appId + '/install', { method: 'POST' });
         if (data.error) { toast(data.error, 'error'); delete S.progressMap[appId]; render(); }
@@ -5679,14 +5685,14 @@ function renderPackageCenter(body) {
         const app = [...S.catalog, ...S.core].find(a => a.id === appId);
         const nm = app ? app.name : appId;
         if (!confirm(t('Odinstalować') + ' ' + nm + '?')) return;
-        S.progressMap[appId] = { stage: 'start', percent: 5, message: t('Odinstalowywanie…'), status: 'running' };
+        S.progressMap[appId] = { stage: 'start', percent: 5, message: t('Odinstalowywanie…'), status: 'running', _started: Date.now() };
         render();
         const data = await api('/app-manager/' + appId + '/uninstall', { method: 'POST' });
         if (data.error) { toast(data.error, 'error'); delete S.progressMap[appId]; render(); }
     }
 
     async function updateApp(appId) {
-        S.progressMap[appId] = { stage: 'start', percent: 5, message: t('Aktualizowanie…'), status: 'running' };
+        S.progressMap[appId] = { stage: 'start', percent: 5, message: t('Aktualizowanie…'), status: 'running', _started: Date.now() };
         render();
         const data = await api('/app-manager/' + appId + '/update', { method: 'POST' });
         if (data.error) { toast(data.error, 'error'); delete S.progressMap[appId]; render(); }
@@ -5696,10 +5702,21 @@ function renderPackageCenter(body) {
     function onProgress(ev) {
         const { app_id, stage, percent, message, status } = ev;
         if (!app_id) return;
-        S.progressMap[app_id] = { stage, percent, message, status };
 
-        // Reload catalog after done/error
         if (status === 'done' || status === 'error') {
+            // Show brief success/error state before clearing
+            const started = S.progressMap[app_id]?._started || Date.now();
+            const label = status === 'done'
+                ? '<i class="fas fa-check"></i> ' + (message || t('Gotowe'))
+                : '<i class="fas fa-exclamation-triangle"></i> ' + (message || t('Błąd'));
+            S.progressMap[app_id] = { stage, percent: 100, message: label, status: 'finishing' };
+            render();
+
+            // Enforce minimum visible time so user sees feedback
+            const elapsed = Date.now() - started;
+            const minTime = 1500;
+            const delay = Math.max(minTime - elapsed, 800);
+
             setTimeout(async () => {
                 delete S.progressMap[app_id];
                 loadCatalog();
@@ -5710,9 +5727,11 @@ function renderPackageCenter(body) {
                         renderMenuGrid();
                     } catch (e) {}
                 }
-            }, status === 'done' ? 500 : 3000);
+            }, delay);
+        } else {
+            S.progressMap[app_id] = { stage, percent, message, status, _started: S.progressMap[app_id]?._started || Date.now() };
+            render();
         }
-        render();
     }
 
     if (NAS.socket) {
