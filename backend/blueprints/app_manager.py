@@ -2,7 +2,7 @@
 EthOS - App Manager (Package Center)
 
 Zarządza opcjonalnymi paczkami EthOS: install/uninstall/update z GitHub catalog.
-Pobiera katalog z: https://raw.githubusercontent.com/ethos-os/ethos-apps/main/catalog.json
+Pobiera katalog z: https://raw.githubusercontent.com/SyncHot/ethos-os-ethos-apps/main/catalog.json
 
 Endpoints:
   GET  /api/app-manager/catalog            -> pelny katalog z statusem instalacji
@@ -62,8 +62,8 @@ INSTALLED_FILE = data_path('installed_apps.json')
 CATALOG_CACHE_FILE = '/tmp/ethos_app_catalog.json'
 CATALOG_CACHE_TTL = 3600 * 6
 
-GITHUB_CATALOG_URL = 'https://raw.githubusercontent.com/ethos-os/ethos-apps/main/catalog.json'
-GITHUB_APP_BASE    = 'https://raw.githubusercontent.com/ethos-os/ethos-apps/main/apps'
+GITHUB_CATALOG_URL = 'https://raw.githubusercontent.com/SyncHot/ethos-os-ethos-apps/main/catalog.json'
+GITHUB_APP_BASE    = 'https://raw.githubusercontent.com/SyncHot/ethos-os-ethos-apps/main/apps'
 
 # ─── Core Apps (wbudowane, nieusuwalne) ──────────────────────
 
