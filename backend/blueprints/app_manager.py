@@ -478,6 +478,24 @@ def _set_uninstalled(app_id):
     state = _load_installed()
     state.pop(app_id, None)
     _save_installed(state)
+    # Also clear legacy ethos_packages.json so get_apps() doesn't show the app
+    _clear_legacy_pkg(app_id)
+
+
+def _clear_legacy_pkg(app_id):
+    """Remove app_id from ethos_packages.json (legacy state file)."""
+    try:
+        legacy = data_path('ethos_packages.json')
+        if not os.path.isfile(legacy):
+            return
+        with open(legacy) as f:
+            state = json.load(f)
+        if app_id in state:
+            state[app_id] = {'installed': False, 'installed_at': ''}
+            with open(legacy, 'w') as f:
+                json.dump(state, f, indent=2)
+    except Exception as e:
+        log.warning('[app_manager] Could not clear legacy pkg state for %s: %s', app_id, e)
 
 
 # ─── Migration from ethos_packages.json ──────────────────────
