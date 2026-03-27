@@ -8486,6 +8486,7 @@ def get_apps():
     _pm_installed = _load_app_manager_installed()
 
     apps = [a for a in apps if a['id'] not in _pkg_by_app
+            or a['id'] in _APP_MANAGER_CORE_APPS
             or a['id'] in _pm_installed
             or any(pkg_state.get(pid, {}).get('installed') for pid in _pkg_by_app[a['id']])]
 
