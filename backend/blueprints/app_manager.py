@@ -205,7 +205,7 @@ BUILTIN_CATALOG = [
         'id': 'docker-manager', 'name': 'Docker Manager', 'version': '1.0.0',
         'icon': 'fa-cubes', 'color': '#2496ed', 'category': 'System', 'admin_only': True,
         'description': 'Zarządzanie kontenerami Docker, projektami Compose, obrazami i logami.',
-        'apt_deps': ['docker.io', 'docker-compose-plugin'], 'pip_deps': [],
+        'apt_deps': [], 'pip_deps': [],
         'install_endpoint': '/api/docker/install',
         'uninstall_endpoint': '/api/docker/uninstall',
         'status_endpoint': '/api/docker/pkg-status',

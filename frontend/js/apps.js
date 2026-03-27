@@ -5718,8 +5718,11 @@ function renderPackageCenter(body) {
             const delay = Math.max(minTime - elapsed, 800);
 
             setTimeout(async () => {
+                // Reload catalog FIRST (while finishing state still visible)
+                await loadCatalog();
+                // Now catalog has updated installed state — safe to clear progress
                 delete S.progressMap[app_id];
-                loadCatalog();
+                render();
                 if (status === 'done') {
                     try {
                         NAS.apps = await api('/apps');
