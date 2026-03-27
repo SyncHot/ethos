@@ -480,8 +480,8 @@ def _get_internal_token():
         import sqlite3 as _sq
         with _sq.connect(data_path('tokens.db')) as _conn:
             _row = _conn.execute(
-                "SELECT token FROM tokens WHERE expires_at > datetime('now') "
-                "ORDER BY created_at DESC LIMIT 1"
+                "SELECT token FROM tokens WHERE role='admin' AND expires > strftime('%s','now') "
+                "ORDER BY expires DESC LIMIT 1"
             ).fetchone()
         return _row[0] if _row else None
     except Exception as e:
