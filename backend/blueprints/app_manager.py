@@ -710,21 +710,91 @@ def _task_start():
 
 
 def _task_done():
-    """Decrement active background task counter. Restart server when all tasks finish."""
+    """Decrement active background task counter."""
     global _active_tasks
     with _active_tasks_lock:
         _active_tasks = max(0, _active_tasks - 1)
-        remaining = _active_tasks
-    if remaining == 0:
-        _restart_server()
 
 
 def _restart_server():
+    """Full server restart — only used as fallback when hot-load fails."""
     def _do():
         import time as _t
         _t.sleep(1.5)
         host_run('systemctl restart ethos', timeout=10)
     threading.Thread(target=_do, daemon=True).start()
+
+
+def _hot_load_blueprint(app_id):
+    """Load an optional blueprint at runtime without server restart.
+    Returns True if blueprint is ready (loaded or no backend needed).
+    Returns False if loading failed (caller should fall back to restart).
+    """
+    import importlib
+    import inspect
+
+    bp_info = _OPTIONAL_BLUEPRINTS.get(app_id)
+    if not bp_info:
+        return True  # No backend needed (frontend-only / simple app)
+
+    module_name, bp_var, init_fn, needs_sio = bp_info
+
+    bp_file = os.path.join(_BLUEPRINTS_DIR, module_name + '.py')
+    if not os.path.isfile(bp_file):
+        return True  # No backend file on disk — frontend-only app
+
+    if not _flask_app:
+        log.warning('[app_manager] Flask app not available for hot-load')
+        return False
+
+    # Check if already loaded (module in cache + blueprint registered)
+    mod_key = 'blueprints.' + module_name
+    if mod_key in sys.modules:
+        mod = sys.modules[mod_key]
+        bp = getattr(mod, bp_var, None)
+        if bp and bp.name in _flask_app.blueprints:
+            log.info('[app_manager] Blueprint %s already loaded, skipping hot-load', bp.name)
+            return True
+
+    try:
+        if mod_key in sys.modules:
+            mod = importlib.reload(sys.modules[mod_key])
+        else:
+            mod = importlib.import_module(mod_key)
+
+        bp = getattr(mod, bp_var)
+
+        if needs_sio and _socketio:
+            bp._socketio = _socketio
+
+        # Skip registration if blueprint name already in app (e.g. bundled reload)
+        if bp.name in _flask_app.blueprints:
+            log.info('[app_manager] Blueprint %s already registered', bp.name)
+            return True
+
+        # Temporarily bypass Flask's first-request assertion to allow
+        # runtime blueprint registration.  Gevent is cooperative so no
+        # other greenlet can interleave between the flag flip.
+        _flask_app._got_first_request = False
+        try:
+            _flask_app.register_blueprint(bp)
+        finally:
+            _flask_app._got_first_request = True
+
+        if init_fn:
+            fn = getattr(mod, init_fn, None)
+            if fn:
+                sig = inspect.signature(fn)
+                if sig.parameters and _socketio:
+                    fn(_socketio)
+                else:
+                    fn()
+
+        log.info('[app_manager] Hot-loaded blueprint: %s', module_name)
+        return True
+    except Exception as e:
+        log.error('[app_manager] Hot-load failed for %s: %s', module_name, e)
+        return False
 
 
 def load_optional_blueprints(flask_app, socketio_instance):
@@ -770,6 +840,7 @@ def _bg_install(app_id, app_def, task_id):
     def emit(extra):
         _emit({'task_id': task_id, 'app_id': app_id, **extra})
 
+    _needs_restart = False
     _task_start()
     try:
         emit({'stage': 'start', 'percent': 5, 'message': 'Instalowanie ' + app_def['name'] + '...', 'status': 'running'})
@@ -809,7 +880,11 @@ def _bg_install(app_id, app_def, task_id):
             emit({'stage': 'error', 'percent': 0, 'message': 'Bład instalacji pip deps', 'status': 'error'})
             return
 
-        # Wywolaj wlasny endpoint instalacji apki (jesli ma)
+        # Hot-load blueprint so its routes are available immediately
+        emit({'stage': 'load', 'percent': 60, 'message': 'Ładowanie modułu...', 'status': 'running'})
+        hot_ok = _hot_load_blueprint(app_id)
+
+        # Call app's install endpoint (now works even for first install)
         install_ep = app_def.get('install_endpoint')
         if install_ep and not app_def.get('simple') and _flask_app:
             emit({'stage': 'configure', 'percent': 65, 'message': 'Konfigurowanie apki...', 'status': 'running'})
@@ -829,13 +904,21 @@ def _bg_install(app_id, app_def, task_id):
         _set_installed(app_id, version, source)
 
         emit({'stage': 'done', 'percent': 100, 'message': app_def['name'] + ' zainstalowano pomyslnie', 'status': 'done'})
-        emit({'stage': 'restart', 'percent': 100, 'message': 'Restartowanie serwera...', 'status': 'restarting'})
+
+        if not hot_ok:
+            log.warning('[app_manager] Hot-load failed for %s, falling back to restart', app_id)
+            _needs_restart = True
+        else:
+            _needs_restart = False
 
     except Exception as e:
         log.exception('[app_manager] install error for %s', app_id)
         emit({'stage': 'error', 'percent': 0, 'message': 'Bład: ' + str(e), 'status': 'error'})
+        _needs_restart = False
     finally:
         _task_done()
+        if _needs_restart:
+            _restart_server()
 
 
 def _bg_uninstall(app_id, app_def, task_id, wipe_data=False):
@@ -891,7 +974,6 @@ def _bg_uninstall(app_id, app_def, task_id, wipe_data=False):
         _sync_frontend_dist()
 
         emit({'stage': 'done', 'percent': 100, 'message': app_def['name'] + ' odinstalowano', 'status': 'done'})
-        emit({'stage': 'restart', 'percent': 100, 'message': 'Restartowanie serwera...', 'status': 'restarting'})
 
     except Exception as e:
         log.exception('[app_manager] uninstall error for %s', app_id)

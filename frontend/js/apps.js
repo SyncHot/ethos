@@ -5555,15 +5555,14 @@ function renderPackageCenter(body) {
     function renderCard(app) {
         const prog = S.progressMap[app.id];
         const isInstalling = prog && prog.status === 'running';
-        const isRestarting = prog && prog.status === 'restarting';
         const hasError = prog && prog.status === 'error';
 
         let actionHtml = '';
         if (app.core) {
             actionHtml = `<span class="pm-badge-core"><i class="fas fa-lock"></i> Core</span>`;
-        } else if (isInstalling || isRestarting) {
+        } else if (isInstalling) {
             const pct = prog.percent || 0;
-            const msg = isRestarting ? t('Restartowanie…') : (prog.message || t('Instalowanie…'));
+            const msg = prog.message || t('Instalowanie…');
             actionHtml = `<div class="pm-progress-wrap">
               <div class="pm-progress-bar"><div class="pm-progress-fill" style="width:${pct}%"></div></div>
               <div class="pm-progress-msg">${escHtml(msg)}</div>
@@ -5704,7 +5703,6 @@ function renderPackageCenter(body) {
             setTimeout(async () => {
                 delete S.progressMap[app_id];
                 loadCatalog();
-                // Refresh desktop icons and menu — app may have been installed or uninstalled
                 if (status === 'done') {
                     try {
                         NAS.apps = await api('/apps');
@@ -5712,7 +5710,7 @@ function renderPackageCenter(body) {
                         renderMenuGrid();
                     } catch (e) {}
                 }
-            }, status === 'done' ? 3000 : 5000);
+            }, status === 'done' ? 500 : 3000);
         }
         render();
     }
