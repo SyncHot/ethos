@@ -868,7 +868,8 @@ def _bg_install(app_id, app_def, task_id):
                 bp_url = GITHUB_APP_BASE + '/' + app_id + '/backend.py'
                 emit({'stage': 'download_backend', 'percent': 15, 'message': 'Pobieranie backend...', 'status': 'running'})
                 if not _download_file(bp_url, bp_dest):
-                    log.warning('[app_manager] No backend.py for %s (optional)', app_id)
+                    emit({'stage': 'error', 'percent': 0, 'message': 'Bład pobierania backend — sprawdz połaczenie z internetem', 'status': 'error'})
+                    return
 
         # Instalacja zaleznosci
         apt_deps = app_def.get('apt_deps', [])
