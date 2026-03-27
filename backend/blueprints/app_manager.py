@@ -99,11 +99,11 @@ _FRONTEND_FILENAME = {
     'sharing-ftp':      'sharing',
     # W apps.js monolicie
     'file-manager':     None,
-    'docker-manager':   None,
-    'vm-manager':       None,
+    'docker-manager':   'docker-manager',
+    'vm-manager':       'vm-manager',
     'event-log':        None,
     'app-store':        None,
-    'remote-log':       None,
+    'remote-log':       'remote-log',
     'system-settings':  None,
 }
 
