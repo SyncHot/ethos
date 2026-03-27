@@ -564,7 +564,7 @@ def migrate_from_ethos_packages():
             new_state[aid] = {'version': 'bundled', 'source': 'bundled', 'installed_at': now}
             continue
         fp = os.path.join(_FRONTEND_APPS_DIR, fn + '.js')
-        if os.path.isfile(fp):
+        if os.path.isfile(fp) and os.path.getsize(fp) > 0:
             new_state[aid] = {'version': 'bundled', 'source': 'bundled', 'installed_at': now}
 
     _save_installed(new_state)
@@ -651,7 +651,7 @@ def _is_bundled(app_id):
     if fn is None:
         return True
     fp = os.path.join(_FRONTEND_APPS_DIR, fn + '.js')
-    return os.path.isfile(fp)
+    return os.path.isfile(fp) and os.path.getsize(fp) > 0
 
 
 def _download_file(url, dest_path):
