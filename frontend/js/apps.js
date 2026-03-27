@@ -5672,7 +5672,7 @@ function renderPackageCenter(body) {
         if (S.progressMap[appId]?.status === 'running') return;
         S.progressMap[appId] = { stage: 'start', percent: 5, message: t('Uruchamianie…'), status: 'running' };
         render();
-        const data = await api('/app-manager/' + appId + '/install', 'POST');
+        const data = await api('/app-manager/' + appId + '/install', { method: 'POST' });
         if (data.error) { toast(data.error, 'error'); delete S.progressMap[appId]; render(); }
     }
 
@@ -5682,14 +5682,14 @@ function renderPackageCenter(body) {
         if (!confirm(t('Odinstalować') + ' ' + nm + '?')) return;
         S.progressMap[appId] = { stage: 'start', percent: 5, message: t('Odinstalowywanie…'), status: 'running' };
         render();
-        const data = await api('/app-manager/' + appId + '/uninstall', 'POST');
+        const data = await api('/app-manager/' + appId + '/uninstall', { method: 'POST' });
         if (data.error) { toast(data.error, 'error'); delete S.progressMap[appId]; render(); }
     }
 
     async function updateApp(appId) {
         S.progressMap[appId] = { stage: 'start', percent: 5, message: t('Aktualizowanie…'), status: 'running' };
         render();
-        const data = await api('/app-manager/' + appId + '/update', 'POST');
+        const data = await api('/app-manager/' + appId + '/update', { method: 'POST' });
         if (data.error) { toast(data.error, 'error'); delete S.progressMap[appId]; render(); }
     }
 
@@ -5701,9 +5701,17 @@ function renderPackageCenter(body) {
 
         // Reload catalog after done/error
         if (status === 'done' || status === 'error') {
-            setTimeout(() => {
+            setTimeout(async () => {
                 delete S.progressMap[app_id];
                 loadCatalog();
+                // Refresh desktop icons and menu — app may have been installed or uninstalled
+                if (status === 'done') {
+                    try {
+                        NAS.apps = await api('/apps');
+                        renderDesktopIcons();
+                        renderMenuGrid();
+                    } catch (e) {}
+                }
             }, status === 'done' ? 3000 : 5000);
         }
         render();

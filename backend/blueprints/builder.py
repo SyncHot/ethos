@@ -162,6 +162,25 @@ def _compute_optional_js():
 _OPTIONAL_JS = _compute_optional_js()
 
 
+def _compute_optional_py():
+    try:
+        import importlib, sys as _sys
+        _bp_dir = os.path.join(os.path.dirname(__file__))
+        _sys.path.insert(0, os.path.join(_bp_dir, '..'))
+        am = importlib.import_module('blueprints.app_manager')
+        seen = set()
+        result = []
+        for app_id, (module_name, _, _, _) in am._OPTIONAL_BLUEPRINTS.items():
+            if module_name not in seen:
+                seen.add(module_name)
+                result.append(module_name + '.py')
+        return sorted(result)
+    except Exception:
+        return []
+
+_OPTIONAL_PY = _compute_optional_py()
+
+
 def _get_host_nasos_dir():
     """Get the host path to the nasos project directory."""
     global _HOST_NASOS_DIR
@@ -434,6 +453,7 @@ def build_release():
             build_dir = f"/tmp/ethos-release-web-$$"
             releases_dir = f"{nasos}/installer/releases"
             optional_js = ' '.join(_OPTIONAL_JS)
+            optional_py = ' '.join(_OPTIONAL_PY)
 
             # The build-release.sh is interactive. We run equivalent steps directly.
             script = f"""
@@ -451,7 +471,15 @@ echo "STEP:25:Copying backend..."
 cp "$NASOS/backend/"*.py "$BUILD_DIR/$PKG/backend/"
 cp "$NASOS/backend/version.json" "$BUILD_DIR/$PKG/backend/"
 cp "$NASOS/backend/requirements.txt" "$BUILD_DIR/$PKG/backend/"
-cp "$NASOS/backend/blueprints/"*.py "$BUILD_DIR/$PKG/backend/blueprints/"
+# Copy only CORE blueprints — optional ones are installed via Package Center
+OPTIONAL_PY="{optional_py}"
+for py in "$NASOS/backend/blueprints/"*.py; do
+  fname=$(basename "$py")
+  if echo "$OPTIONAL_PY" | grep -qw "$fname"; then
+    continue
+  fi
+  cp "$py" "$BUILD_DIR/$PKG/backend/blueprints/"
+done
 touch "$BUILD_DIR/$PKG/backend/blueprints/__init__.py"
 cp "$NASOS/backend/middleware/"*.py "$BUILD_DIR/$PKG/backend/middleware/" 2>/dev/null || true
 cp -r "$NASOS/backend/i18n/"* "$BUILD_DIR/$PKG/backend/i18n/" 2>/dev/null || true
@@ -636,6 +664,7 @@ def _build_image_worker(nasos):
 def _x86_wrapper_script(nasos: str) -> str:
     """Return bash wrapper script for building x86 image."""
     optional_js_list = ' '.join(_OPTIONAL_JS)
+    optional_py_list = ' '.join(_OPTIONAL_PY)
     return f"""
 set -e
 set -o pipefail
@@ -1290,6 +1319,11 @@ for fname in $OPTIONAL_JS; do
   rm -f "$ETHOS_DIR/frontend_dist/js/apps/$fname" 2>/dev/null || true
 done
 echo "LOG:Optional app JS removed from base image ($(echo $OPTIONAL_JS | wc -w) files)"
+# Remove optional blueprint .py files — installed via Package Center
+OPTIONAL_PY="{optional_py_list}"
+for fname in $OPTIONAL_PY; do
+  rm -f "$ETHOS_DIR/backend/blueprints/$fname"
+done
 
 # ── Copy tools ──
 echo "LOG:Copying tools..."

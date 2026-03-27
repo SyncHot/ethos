@@ -92,8 +92,6 @@ from blueprints.monitor import (
 
 # Blueprints
 from blueprints.storage import storage_bp, init_storage, get_usb_notifications, usb_monitor_loop, keepalive_loop, try_wake_path
-from blueprints.ups import ups_bp, init_ups
-from blueprints.printer import printer_bp
 from blueprints.resources import resources_bp, resources_background_collector
 from blueprints.resources_db import init_db as init_resources_db
 from blueprints.backup import backup_bp, init_backup, get_backup_notifications
@@ -102,51 +100,29 @@ from blueprints.users import users_bp, _load_privileges
 from blueprints.network import network_bp
 from blueprints.eventlog import eventlog_bp, init_eventlog, log as elog
 from audit import audit_log
-from blueprints.docker_manager import docker_bp
 from blueprints.sandbox_policy import sandbox_bp
-from blueprints.appstore import appstore_bp, init_appstore
-from blueprints.gallery import gallery_bp
-from blueprints.editor import editor_bp
-from blueprints.downloads import downloads_bp, init_downloads
 from blueprints.updater import update_bp, updates_public_bp, init_update, update_auto_check_loop
-from blueprints.flasher import flasher_bp
-from blueprints.builder import builder_bp
-from blueprints.fail2ban import fail2ban_bp
-from blueprints.wireguard import wireguard_bp
-from blueprints.antivirus import antivirus_bp
-from blueprints.firewall import firewall_bp
-from blueprints.diskrepair import diskrepair_bp
-from blueprints.remote_log import remote_log_bp, init_remote_log
-from blueprints.surveillance import surveillance_bp, init_surveillance
-try:
-    from blueprints.aichat import aichat_bp
-    _HAS_AICHAT = True
-except ImportError:
-    _HAS_AICHAT = False
-from blueprints.vm_manager import vm_bp
 from blueprints.ddns import ddns_bp, start_ddns
 from blueprints.settings import settings_bp
 from blueprints.ssh_manager import ssh_bp
-from blueprints.websites import websites_bp
-from blueprints.domains_manager import domains_mgr_bp
-from blueprints.stickynotes import notes_bp
-from blueprints.tickets import tickets_bp, init_tickets
-from blueprints.familyhub import familyhub_bp
-from blueprints.sharing import sharing_bp
-from blueprints.rollback import rollback_bp
-from blueprints.cloud_backup import cloud_backup_bp
 from blueprints.installer import installer_bp
-from blueprints.ups import _ups_status
+try:
+    from blueprints.ups import _ups_status
+except ImportError:
+    _ups_status = lambda: {}
 from blueprints.power import power_bp
-from blueprints.dlna import dlna_bp
 from blueprints.notifications import notifications_bp
 from blueprints.dashboard import dashboard_bp
 from blueprints.admin_required import admin_required
 from blueprints.totp import totp_bp, is_totp_enabled, verify_totp_code, verify_backup_code
-from blueprints.cron_manager import cron_bp
-from blueprints.raid_manager import raid_bp
 from blueprints.api_docs import api_docs_bp
-from blueprints.app_manager import app_manager_bp, init_app_manager, migrate_from_ethos_packages, CORE_APPS as _APP_MANAGER_CORE_APPS, load_installed as _load_app_manager_installed
+from blueprints.app_manager import (
+    app_manager_bp, init_app_manager, migrate_from_ethos_packages,
+    CORE_APPS as _APP_MANAGER_CORE_APPS,
+    load_installed as _load_app_manager_installed,
+    load_optional_blueprints as _load_optional_blueprints,
+    OPTIONAL_BLUEPRINTS as _OPTIONAL_BLUEPRINTS,
+)
 
 # ── Shadow password verification (avoids crypt DeprecationWarning) ──
 import warnings as _warnings
@@ -368,67 +344,29 @@ def _handle_500(e):
 # Register blueprints
 app.register_blueprint(storage_bp)
 init_storage(socketio)
-app.register_blueprint(printer_bp)
 app.register_blueprint(resources_bp)
 app.register_blueprint(backup_bp)
 app.register_blueprint(packages_bp)
 app.register_blueprint(users_bp)
 app.register_blueprint(network_bp)
 app.register_blueprint(eventlog_bp)
-app.register_blueprint(docker_bp)
 app.register_blueprint(sandbox_bp)
-app.register_blueprint(appstore_bp)
-app.register_blueprint(gallery_bp)
-app.register_blueprint(editor_bp)
-app.register_blueprint(downloads_bp)
 app.register_blueprint(update_bp)
 app.register_blueprint(updates_public_bp)
-app.register_blueprint(flasher_bp)
-app.register_blueprint(builder_bp)
-app.register_blueprint(diskrepair_bp)
-app.register_blueprint(firewall_bp)
-app.register_blueprint(remote_log_bp)
-app.register_blueprint(surveillance_bp)
-if _HAS_AICHAT:
-    app.register_blueprint(aichat_bp)
-    aichat_bp._socketio = socketio  # for install progress events
-    wireguard_bp._socketio = socketio  # for install progress events
-    antivirus_bp._socketio = socketio  # for install progress events
-app.register_blueprint(vm_bp)
 app.register_blueprint(ddns_bp)
 app.register_blueprint(settings_bp)
 app.register_blueprint(ssh_bp)
-app.register_blueprint(websites_bp)
-app.register_blueprint(domains_mgr_bp)
 app.register_blueprint(installer_bp)
-app.register_blueprint(notes_bp)
-app.register_blueprint(tickets_bp)
-app.register_blueprint(familyhub_bp)
-app.register_blueprint(sharing_bp)
-app.register_blueprint(rollback_bp)
-app.register_blueprint(cloud_backup_bp)
-app.register_blueprint(fail2ban_bp)
-app.register_blueprint(wireguard_bp)
-app.register_blueprint(antivirus_bp)
-app.register_blueprint(ups_bp)
 app.register_blueprint(power_bp, url_prefix='/api/power')
 app.register_blueprint(notifications_bp)
 app.register_blueprint(totp_bp)
-app.register_blueprint(dlna_bp)
 app.register_blueprint(dashboard_bp)
-app.register_blueprint(cron_bp)
-app.register_blueprint(raid_bp)
 app.register_blueprint(api_docs_bp)
 app.register_blueprint(app_manager_bp)
-init_appstore(socketio)
 init_app_manager(socketio)
+_load_optional_blueprints(app, socketio)
 migrate_from_ethos_packages()
-init_downloads(socketio)
 init_update(socketio)
-init_remote_log(socketio)
-init_surveillance(socketio)
-init_tickets(socketio)
-init_ups()
 
 # ── Migrate data from app_path → data_path (one-time, for existing installs) ──
 def _migrate_app_data():

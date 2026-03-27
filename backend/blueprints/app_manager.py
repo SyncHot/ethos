@@ -107,6 +107,45 @@ _FRONTEND_FILENAME = {
     'system-settings':  None,
 }
 
+# Maps app_id → (module_filename, blueprint_var, init_func_or_None, socketio_attr_needed)
+# module_filename: the .py filename without extension in backend/blueprints/
+# blueprint_var: the variable name of the Blueprint object in that module
+# init_func_or_None: function name to call with (socketio) after registering, or None
+# socketio_attr_needed: if True, set bp._socketio = socketio before registering
+_OPTIONAL_BLUEPRINTS = {
+    'surveillance':    ('surveillance',    'surveillance_bp',  'init_surveillance', False),
+    'ai-chat':         ('aichat',          'aichat_bp',        None,                True),
+    'gallery':         ('gallery',         'gallery_bp',        None,                False),
+    'download-manager':('downloads',       'downloads_bp',     'init_downloads',    True),
+    'printer':         ('printer',         'printer_bp',        None,                False),
+    'docker-manager':  ('docker_manager',  'docker_bp',         None,                True),
+    'vm-manager':      ('vm_manager',      'vm_bp',             None,                True),
+    'doc-editor':      ('editor',          'editor_bp',         None,                False),
+    'usb-flasher':     ('flasher',         'flasher_bp',        None,                False),
+    'builder':         ('builder',         'builder_bp',        None,                False),
+    'disk-repair':     ('diskrepair',      'diskrepair_bp',     None,                False),
+    'remote-log':      ('remote_log',      'remote_log_bp',    'init_remote_log',   False),
+    'sharing-samba':   ('sharing',         'sharing_bp',        None,                False),
+    'sharing-dlna':    ('dlna',            'dlna_bp',           None,                False),
+    'domains-manager': ('domains_manager', 'domains_mgr_bp',    None,                False),
+    'websites':        ('websites',        'websites_bp',       None,                False),
+    'cloud-backup':    ('cloud_backup',    'cloud_backup_bp',   None,                False),
+    'raid-lvm':        ('raid_manager',    'raid_bp',           None,                False),
+    'wireguard':       ('wireguard',       'wireguard_bp',      None,                True),
+    'antivirus':       ('antivirus',       'antivirus_bp',      None,                True),
+    'rollback':        ('rollback',        'rollback_bp',       None,                False),
+    'firewall':        ('firewall',        'firewall_bp',       None,                False),
+    'fail2ban':        ('fail2ban',        'fail2ban_bp',       None,                False),
+    'cron':            ('cron_manager',    'cron_bp',           None,                False),
+    'ups':             ('ups',             'ups_bp',           'init_ups',          False),
+    'family-hub':      ('familyhub',       'familyhub_bp',      None,                False),
+    'sticky-notes':    ('stickynotes',     'notes_bp',          None,                False),
+    'tickets':         ('tickets',         'tickets_bp',       'init_tickets',      True),
+}
+
+# Public alias
+OPTIONAL_BLUEPRINTS = _OPTIONAL_BLUEPRINTS
+
 # ─── Built-in catalog (fallback gdy GitHub niedostepny) ──────
 
 BUILTIN_CATALOG = [
@@ -620,6 +659,43 @@ def _restart_server():
     threading.Thread(target=_do, daemon=True).start()
 
 
+def load_optional_blueprints(flask_app, socketio_instance):
+    """Dynamically load optional blueprints that are present on disk.
+    Called from app.py after Flask app and SocketIO are initialized.
+    Blueprints missing from disk (not yet installed) are silently skipped.
+    """
+    import importlib
+    import inspect
+    blueprints_dir = os.path.join(os.path.dirname(__file__))
+    loaded_modules = set()
+
+    for app_id, (module_name, bp_var, init_fn, needs_sio) in _OPTIONAL_BLUEPRINTS.items():
+        bp_file = os.path.join(blueprints_dir, module_name + '.py')
+        if not os.path.isfile(bp_file):
+            log.debug('[app_manager] Optional blueprint not found, skipping: %s', module_name)
+            continue
+        if module_name in loaded_modules:
+            continue
+        loaded_modules.add(module_name)
+        try:
+            mod = importlib.import_module('blueprints.' + module_name)
+            bp = getattr(mod, bp_var)
+            if needs_sio and socketio_instance:
+                bp._socketio = socketio_instance
+            flask_app.register_blueprint(bp)
+            if init_fn:
+                fn = getattr(mod, init_fn, None)
+                if fn:
+                    sig = inspect.signature(fn)
+                    if sig.parameters and socketio_instance:
+                        fn(socketio_instance)
+                    else:
+                        fn()
+            log.info('[app_manager] Loaded optional blueprint: %s', module_name)
+        except Exception as e:
+            log.error('[app_manager] Failed to load optional blueprint %s: %s', module_name, e)
+
+
 # ─── Background tasks ─────────────────────────────────────────
 
 def _bg_install(app_id, app_def, task_id):
@@ -641,6 +717,17 @@ def _bg_install(app_id, app_def, task_id):
                     return
         else:
             emit({'stage': 'download', 'percent': 20, 'message': 'Pliki juz dostepne (bundled)', 'status': 'running'})
+
+        # Download backend.py from GitHub if not bundled
+        if not _is_bundled(app_id):
+            bp_info = _OPTIONAL_BLUEPRINTS.get(app_id)
+            if bp_info:
+                module_name = bp_info[0]
+                bp_url = GITHUB_APP_BASE + '/' + app_id + '/backend.py'
+                bp_dest = os.path.join(_BLUEPRINTS_DIR, module_name + '.py')
+                emit({'stage': 'download_backend', 'percent': 15, 'message': 'Pobieranie backend...', 'status': 'running'})
+                if not _download_file(bp_url, bp_dest):
+                    log.warning('[app_manager] No backend.py for %s (optional)', app_id)
 
         # Instalacja zaleznosci
         apt_deps = app_def.get('apt_deps', [])
@@ -708,6 +795,20 @@ def _bg_uninstall(app_id, app_def, task_id, wipe_data=False):
                 fp = os.path.join(_FRONTEND_APPS_DIR, fn + '.js')
                 if os.path.isfile(fp):
                     os.remove(fp)
+            # Remove backend blueprint
+            bp_info = _OPTIONAL_BLUEPRINTS.get(app_id)
+            if bp_info:
+                module_name = bp_info[0]
+                bp_file = os.path.join(_BLUEPRINTS_DIR, module_name + '.py')
+                # Only delete if no other installed app uses same blueprint
+                other_using_same = [
+                    aid for aid, bpi in _OPTIONAL_BLUEPRINTS.items()
+                    if bpi[0] == module_name and aid != app_id
+                    and aid in _load_installed()
+                ]
+                if not other_using_same and os.path.isfile(bp_file):
+                    os.remove(bp_file)
+                    log.info('[app_manager] Removed backend blueprint: %s', module_name)
         else:
             emit({'stage': 'remove', 'percent': 60, 'message': 'Apka bundled - oznaczam jako odinstalowana', 'status': 'running'})
 
