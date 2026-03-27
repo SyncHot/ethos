@@ -32,7 +32,7 @@ import urllib.error
 from flask import Blueprint, request, jsonify, g
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from host import host_run, data_path, app_path, q, _apt_exec
+from host import host_run, data_path, app_path, q, _apt_exec, apt_install as _host_apt_install
 
 log = logging.getLogger('app_manager')
 app_manager_bp = Blueprint('app_manager', __name__, url_prefix='/api/app-manager')
@@ -120,7 +120,7 @@ _FRONTEND_FILENAME = {
 # init_func_or_None: function name to call with (socketio) after registering, or None
 # socketio_attr_needed: if True, set bp._socketio = socketio before registering
 _OPTIONAL_BLUEPRINTS = {
-    'surveillance':    ('surveillance',    'surveillance_bp',  'init_surveillance', False),
+    'surveillance':    ('surveillance',    'surveillance_bp',  'init_surveillance', True),
     'ai-chat':         ('aichat',          'aichat_bp',        None,                True),
     'gallery':         ('gallery',         'gallery_bp',        None,                False),
     'download-manager':('downloads',       'downloads_bp',     'init_downloads',    True),
@@ -674,7 +674,7 @@ def _install_apt_deps(deps, emit_fn):
         return True
     pkgs = ' '.join(q(d) for d in deps)
     emit_fn({'stage': 'deps_apt', 'message': 'Instalowanie pakietow apt: ' + ', '.join(deps), 'percent': 30})
-    result = _apt_exec('DEBIAN_FRONTEND=noninteractive apt-get install -y ' + pkgs, timeout=300, retries=2)
+    result = _host_apt_install(pkgs, timeout=300)
     if result.returncode != 0:
         log.error('[app_manager] apt install failed (rc=%s): %s', result.returncode, result.stderr[-500:])
     return result.returncode == 0
@@ -858,13 +858,14 @@ def _bg_install(app_id, app_def, task_id):
         else:
             emit({'stage': 'download', 'percent': 20, 'message': 'Pliki juz dostepne (bundled)', 'status': 'running'})
 
-        # Download backend.py from GitHub if not bundled
-        if not _is_bundled(app_id):
-            bp_info = _OPTIONAL_BLUEPRINTS.get(app_id)
-            if bp_info:
-                module_name = bp_info[0]
+        # Download backend.py from GitHub if not on disk
+        # (Builder images keep frontend JS but remove optional backend .py)
+        bp_info = _OPTIONAL_BLUEPRINTS.get(app_id)
+        if bp_info:
+            module_name = bp_info[0]
+            bp_dest = os.path.join(_BLUEPRINTS_DIR, module_name + '.py')
+            if not os.path.isfile(bp_dest):
                 bp_url = GITHUB_APP_BASE + '/' + app_id + '/backend.py'
-                bp_dest = os.path.join(_BLUEPRINTS_DIR, module_name + '.py')
                 emit({'stage': 'download_backend', 'percent': 15, 'message': 'Pobieranie backend...', 'status': 'running'})
                 if not _download_file(bp_url, bp_dest):
                     log.warning('[app_manager] No backend.py for %s (optional)', app_id)
