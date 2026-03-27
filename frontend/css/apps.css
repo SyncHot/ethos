@@ -4703,6 +4703,14 @@ select.cb-input { cursor: pointer; }
 .app-btn-secondary { background: var(--bg-surface-alt); border-color: var(--border); color: var(--text-muted); }
 .app-btn-secondary:hover:not(:disabled) { color: var(--text-primary); }
 
+/* ─── app-input: universal input/select class used across apps ─── */
+.app-input { padding: 7px 10px; background: var(--bg-default); border: 1px solid var(--border); border-radius: var(--r-md, 8px); color: var(--text-primary); font-size: 13px; font-family: inherit; outline: none; transition: border-color .15s, box-shadow .15s; }
+.app-input:focus { border-color: var(--accent, #3b82f6); box-shadow: 0 0 0 2px rgba(59,130,246,.2); }
+.app-input::placeholder { color: var(--text-muted); }
+.app-input:disabled { opacity: .45; cursor: not-allowed; }
+select.app-input { cursor: pointer; }
+textarea.app-input { resize: vertical; line-height: 1.5; }
+
 /* ─── Antivirus (ClamAV) ─── */
 .av-prog-bar { background:var(--bg-default); border-radius:6px; height:6px; overflow:hidden; }
 .av-prog-fill { height:100%; background:#16a34a; border-radius:6px; transition:width .3s; width:0%; }
