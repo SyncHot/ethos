@@ -46,6 +46,21 @@ def q(s):
     return "'" + s.replace("'", "'\\''") + "'"
 
 
+def safe_path(path, base=None):
+    """Validate that *path* does not escape *base* (default: ETHOS_ROOT).
+
+    Returns the resolved absolute path if it is safe, raises ValueError
+    if the path would traverse outside the base directory.
+    """
+    if base is None:
+        base = ETHOS_ROOT
+    base = os.path.realpath(base)
+    resolved = os.path.realpath(os.path.join(base, path) if not os.path.isabs(path) else path)
+    if not resolved.startswith(base + os.sep) and resolved != base:
+        raise ValueError(f"Path traversal attempt: {path!r} escapes {base!r}")
+    return resolved
+
+
 def host_run(cmd, timeout=30, cwd=None):
     """Run a shell command on the host.
 

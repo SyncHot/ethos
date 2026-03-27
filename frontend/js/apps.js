@@ -6831,7 +6831,21 @@ function renderVMManager(body) {
                         if (bs.ready) {
                             el.innerHTML = `
                                 <div class="vm-info-row"><span>Bridge IP:</span><span class="vm-mono">${esc(bs.bridge_ip)}</span></div>
-                                <div class="vm-info-row"><span>Status:</span><span class="app-text-ok"><i class="fas fa-check-circle"></i> Gotowy</span></div>`;
+                                <div class="vm-info-row"><span>Status:</span><span class="app-text-ok"><i class="fas fa-check-circle"></i> Gotowy</span></div>
+                                ${!running ? `<button class="vm-btn vm-btn-secondary vm-btn-sm" id="vm-bridge-reset" style="margin-top:8px">
+                                    <i class="fas fa-redo"></i> Resetuj bridge
+                                </button>` : ''}`;
+                            dc.querySelector('#vm-bridge-reset')?.addEventListener('click', async () => {
+                                if (!confirm(t('Resetować bridge? Połączenie zostanie chwilowo przerwane.'))) return;
+                                try {
+                                    const r1 = await api('/vm/bridge/teardown', { method: 'POST' });
+                                    toast(r1.message || 'Bridge usunięty', 'info');
+                                    await new Promise(res => setTimeout(res, 2000));
+                                    const r2 = await api('/vm/bridge/setup', { method: 'POST' });
+                                    toast(r2.message || 'Bridge skonfigurowany', 'success');
+                                    renderNetworkPanel(dc);
+                                } catch (err) { toast(err.message || t('Błąd resetu bridge'), 'error'); }
+                            });
                         } else {
                             el.innerHTML = `
                                 <div class="vm-info-row"><span>Status:</span><span class="app-text-warn"><i class="fas fa-exclamation-triangle"></i> Bridge nie skonfigurowany</span></div>
@@ -7560,1116 +7574,358 @@ function renderEventLog(body) {
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   APP STORE  — browse, search & install containers from catalog
+   PACKAGE CENTER  — instalowanie i zarządzanie paczkami EthOS
    ═══════════════════════════════════════════════════════════════ */
 AppRegistry['app-store'] = function (appDef) {
     createWindow('app-store', {
-        title: t('Sklep z aplikacjami'),
+        title: t('Package Center'),
         icon: appDef.icon,
         iconColor: appDef.color,
-        width: 1100,
-        height: 700,
-        onRender: (body) => renderAppStore(body),
+        width: 1100, height: 720,
+        onRender: (body) => renderPackageCenter(body),
     });
 };
 
-function renderAppStore(body) {
-    body.innerHTML = `<div class="as-loading"><i class="fas fa-spinner fa-spin"></i> ${t('Ładowanie katalogu…')}</div>`;
-
+function renderPackageCenter(body) {
     /* ── state ── */
     const S = {
-        catalog: [],
-        filtered: [],
-        search: '',
+        catalog: [],         // optional apps from API
+        core: [],            // core apps
+        filtered: [],        // after filter/search
+        tab: 'all',          // 'all' | 'installed' | 'available' | 'updates'
         category: 'all',
-        categories: [],
-        repo: 'all',           // filter by repo_id
-        repos: [],             // available repos from catalog
-        allRepos: [],          // full repo list for management
-        view: 'browse',        // 'browse' | 'repos'
-        tab: 'ethos',         // 'docker' | 'ethos'
-        packages: [],          // EthOS packages
+        search: '',
         detail: null,
-        installing: null,
-        cacheStats: null,
+        installing: {},      // task_id -> app_id map
+        progressMap: {},     // app_id -> {stage, percent, message, status}
     };
 
-    const formatAge = (seconds) => {
-        if (seconds === null || seconds === undefined) return '';
-        const s = Math.max(0, Number(seconds) || 0);
-        if (s < 60) return `${Math.round(s)}s`;
-        const m = Math.floor(s / 60);
-        if (m < 60) return `${m}m`;
-        const h = Math.floor(m / 60);
-        const remM = m % 60;
-        if (h < 48) return `${h}h${remM ? ' ' + remM + 'm' : ''}`;
-        const d = Math.floor(h / 24);
-        return `${d}d`;
-    };
+    const CATEGORIES = ['System', 'Storage', 'Network', 'Media', 'Security', 'Tools'];
 
-    const escapeHtml = (str) => String(str || '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
+    /* ── init skeleton ── */
+    body.className = 'pm-body';
+    body.innerHTML = `
+<div class="pm-layout">
+  <aside class="pm-sidebar">
+    <div class="pm-logo"><i class="fas fa-th"></i> <span>Package Center</span></div>
+    <nav class="pm-nav">
+      <button class="pm-nav-btn active" data-tab="all"><i class="fas fa-border-all"></i> ${t('Wszystkie')}<span class="pm-nav-badge" id="pm-badge-all"></span></button>
+      <button class="pm-nav-btn" data-tab="installed"><i class="fas fa-check-circle"></i> ${t('Zainstalowane')}<span class="pm-nav-badge" id="pm-badge-inst"></span></button>
+      <button class="pm-nav-btn" data-tab="available"><i class="fas fa-download"></i> ${t('Dostępne')}<span class="pm-nav-badge" id="pm-badge-avail"></span></button>
+      <button class="pm-nav-btn" data-tab="updates"><i class="fas fa-sync-alt"></i> ${t('Aktualizacje')}<span class="pm-nav-badge pm-nav-badge-warn" id="pm-badge-upd"></span></button>
+    </nav>
+    <div class="pm-sidebar-sep">${t('Kategorie')}</div>
+    <nav class="pm-nav">
+      <button class="pm-cat-btn active" data-cat="all"><i class="fas fa-border-all"></i> ${t('Wszystkie')}</button>
+      ${CATEGORIES.map(c => `<button class="pm-cat-btn" data-cat="${c}"><i class="fas fa-tag"></i> ${c}</button>`).join('')}
+    </nav>
+    <div class="pm-sidebar-bottom">
+      <button class="pm-refresh-btn" id="pm-btn-refresh"><i class="fas fa-sync-alt"></i> ${t('Odśwież katalog')}</button>
+    </div>
+  </aside>
+  <main class="pm-main">
+    <div class="pm-toolbar">
+      <div class="pm-search-wrap"><i class="fas fa-search"></i><input class="pm-search" id="pm-search" placeholder="${t('Szukaj paczki…')}" type="text"></div>
+    </div>
+    <div class="pm-content" id="pm-content">
+      <div class="pm-loading"><i class="fas fa-spinner fa-spin"></i> ${t('Ładowanie katalogu…')}</div>
+    </div>
+  </main>
+</div>
+<div class="pm-detail-overlay" id="pm-detail-overlay" style="display:none"></div>
+`;
 
-    /* ── API helpers ── */
-    const load = async (refresh) => {
-        try {
-            const url = refresh ? '/appstore/catalog?refresh=1' : '/appstore/catalog';
-            const [r, stats] = await Promise.all([
-                api(url),
-                api('/appstore/cache/stats').catch(() => null)
-            ]);
-            S.catalog = r;
-            S.cacheStats = stats || null;
-            S.categories = [...new Set(r.map(a => a.category).filter(Boolean))].sort();
-            S.repos = [...new Set(r.map(a => a.repo_id).filter(Boolean))].map(id => {
-                const app = r.find(a => a.repo_id === id);
-                return { id, name: app?.repo_name || id };
-            });
-            applyFilter();
-            render();
-        } catch (e) {
-            body.innerHTML = `<div class="as-error">${t('Błąd ładowania katalogu:')} ${e.message}</div>`;
-        }
-    };
+    /* ── helpers ── */
+    const $ = sel => body.querySelector(sel);
+    const $$ = sel => body.querySelectorAll(sel);
+    const content_el = $('#pm-content');
 
-    const applyFilter = () => {
-        let list = S.catalog;
-        if (S.repo !== 'all') {
-            list = list.filter(a => a.repo_id === S.repo);
-        }
-        if (S.category !== 'all') {
-            list = list.filter(a => a.category === S.category);
-        }
-        if (S.search) {
-            const q = S.search.toLowerCase();
-            list = list.filter(a =>
-                (a.title || '').toLowerCase().includes(q) ||
-                (a.id || '').toLowerCase().includes(q) ||
-                (a.description || '').toLowerCase().includes(q) ||
-                (a.developer || '').toLowerCase().includes(q) ||
-                (a.tagline || '').toLowerCase().includes(q)
-            );
-        }
-        S.filtered = list;
-    };
+    function applyFilter() {
+        const all = [...S.core, ...S.catalog];
+        S.filtered = all.filter(app => {
+            if (S.category !== 'all' && app.category !== S.category && !(app.core && S.category === 'System')) return false;
+            if (S.search) {
+                const q = S.search.toLowerCase();
+                if (!((app.name || '').toLowerCase().includes(q) ||
+                      (app.description || '').toLowerCase().includes(q) ||
+                      (app.id || '').toLowerCase().includes(q))) return false;
+            }
+            if (S.tab === 'installed') return app.installed || app.core;
+            if (S.tab === 'available') return !app.installed && !app.core;
+            if (S.tab === 'updates') return app.update_available;
+            return true;
+        });
+        render();
+    }
+
+    function updateBadges() {
+        const installed = S.catalog.filter(a => a.installed).length;
+        const available = S.catalog.filter(a => !a.installed).length;
+        const updates = S.catalog.filter(a => a.update_available).length;
+        const all = S.core.length + S.catalog.length;
+        const badgeAll = $('#pm-badge-all');
+        const badgeInst = $('#pm-badge-inst');
+        const badgeAvail = $('#pm-badge-avail');
+        const badgeUpd = $('#pm-badge-upd');
+        if (badgeAll) badgeAll.textContent = all || '';
+        if (badgeInst) badgeInst.textContent = (installed + S.core.length) || '';
+        if (badgeAvail) badgeAvail.textContent = available || '';
+        if (badgeUpd) badgeUpd.textContent = updates || '';
+        badgeUpd && (badgeUpd.style.display = updates ? '' : 'none');
+    }
 
     /* ── render ── */
-    const render = () => {
-        if (S.view === 'repos') { renderReposView(); return; }
-        body.innerHTML = '';
-
-        /* Tab bar */
-        const tabBar = document.createElement('div');
-        tabBar.className = 'as-tab-bar';
-        tabBar.innerHTML = `
-            <button class="as-tab ${S.tab === 'ethos' ? 'active' : ''}" data-tab="ethos">
-                <i class="fas fa-cube"></i> Pakiety EthOS
-            </button>
-            <button class="as-tab ${S.tab === 'docker' ? 'active' : ''}" data-tab="docker">
-                <i class="fab fa-docker"></i> Kontenery Docker
-            </button>
-        `;
-        body.appendChild(tabBar);
-        tabBar.querySelectorAll('.as-tab').forEach(btn => {
-            btn.addEventListener('click', () => {
-                S.tab = btn.dataset.tab;
-                if (S.tab === 'ethos') {
-                    loadPackages();
-                } else {
-                    render();
-                }
-            });
-        });
-
-        if (S.tab === 'ethos') {
-            renderPackagesTab();
-            return;
-        }
-
-        /* toolbar */
-        const toolbar = document.createElement('div');
-        toolbar.className = 'as-toolbar';
-        toolbar.innerHTML = `
-            <div class="as-search-wrap">
-                <i class="fas fa-search"></i>
-                <input type="text" class="as-search" placeholder="Szukaj aplikacji…" value="${S.search}">
-            </div>
-            <select class="as-repo-select">
-                <option value="all">Wszystkie repo (${S.catalog.length})</option>
-                ${S.repos.map(r => `<option value="${r.id}" ${r.id === S.repo ? 'selected' : ''}>${r.name}</option>`).join('')}
-            </select>
-            <select class="as-cat-select">
-                <option value="all">Wszystkie kat.</option>
-                ${S.categories.map(c => `<option value="${c}" ${c === S.category ? 'selected' : ''}>${c}</option>`).join('')}
-            </select>
-            <button class="as-refresh-btn" title="${t('Odśwież katalog')}"><i class="fas fa-sync-alt"></i></button>
-            <button class="as-repos-btn" title="${t('Zarządzaj repozytoriami')}"><i class="fas fa-cog"></i></button>
-            ${S.cacheStats && S.cacheStats.catalog_age_seconds !== null
-                ? `<span class="as-cache-meta" title="${t('Czas od ostatniego odświeżenia cache')}">
-                        <i class="fas fa-clock"></i> Cache: ${formatAge(S.cacheStats.catalog_age_seconds)} temu
-                   </span>`
-                : ''}
-            <span class="as-count">${S.filtered.length} aplikacji</span>
-        `;
-        body.appendChild(toolbar);
-
-        const searchInput = toolbar.querySelector('.as-search');
-        searchInput.addEventListener('input', e => {
-            S.search = e.target.value;
-            applyFilter();
-            renderGrid();
-            body.querySelector('.as-count').textContent = S.filtered.length + ' aplikacji';
-        });
-        toolbar.querySelector('.as-repo-select').addEventListener('change', e => {
-            S.repo = e.target.value;
-            applyFilter();
-            renderGrid();
-            body.querySelector('.as-count').textContent = S.filtered.length + ' aplikacji';
-        });
-        toolbar.querySelector('.as-cat-select').addEventListener('change', e => {
-            S.category = e.target.value;
-            applyFilter();
-            renderGrid();
-            body.querySelector('.as-count').textContent = S.filtered.length + ' aplikacji';
-        });
-        toolbar.querySelector('.as-refresh-btn').addEventListener('click', () => {
-            body.innerHTML = `<div class="as-loading"><i class="fas fa-spinner fa-spin"></i> ${t('Odświeżanie katalogu…')}</div>`;
-            load(true);
-        });
-        toolbar.querySelector('.as-repos-btn').addEventListener('click', () => {
-            S.view = 'repos';
-            renderReposView();
-        });
-
-        /* grid */
-        const grid = document.createElement('div');
-        grid.className = 'as-grid';
-        grid.id = 'as-grid';
-        body.appendChild(grid);
-        renderGrid();
-    };
-
-    const renderGrid = () => {
-        const grid = body.querySelector('#as-grid');
-        if (!grid) return;
-        grid.innerHTML = '';
-
+    function render() {
+        updateBadges();
         if (!S.filtered.length) {
-            grid.innerHTML = `<div class="as-empty">${t('Brak wyników')}</div>`;
+            const emptyMsg = S.tab === 'updates'
+                ? `<i class="fas fa-check-circle" style="color:var(--green)"></i> ${t('Brak dostępnych aktualizacji')}`
+                : `<i class="fas fa-box-open"></i> ${t('Brak wyników')}`;
+            content_el.innerHTML = `<div class="pm-empty">${emptyMsg}</div>`;
             return;
         }
 
-        S.filtered.forEach(app => {
-            const card = document.createElement('div');
-            card.className = 'as-card' + (app.installed ? ' as-installed' : '');
-            const iconUrl = app.icon || '';
-            const iconHtml = iconUrl
-                ? `<img class="as-card-icon" src="${iconUrl}" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
-                  + `<div class="as-card-icon-fallback hidden"><i class="fas fa-cube"></i></div>`
-                : `<div class="as-card-icon-fallback"><i class="fas fa-cube"></i></div>`;
+        // Group: core first if tab=all or installed, then installed optional, then available
+        let groups = [];
+        if (S.tab === 'all' || S.tab === 'installed') {
+            const coreApps = S.filtered.filter(a => a.core);
+            const instApps = S.filtered.filter(a => !a.core && a.installed);
+            const availApps = S.filtered.filter(a => !a.core && !a.installed);
+            if (coreApps.length) groups.push({ label: t('Wbudowane (Core)'), icon: 'fa-lock', apps: coreApps });
+            if (instApps.length) groups.push({ label: t('Zainstalowane'), icon: 'fa-check-circle', apps: instApps });
+            if (availApps.length && S.tab === 'all') groups.push({ label: t('Dostępne do instalacji'), icon: 'fa-download', apps: availApps });
+        } else {
+            groups.push({ label: null, apps: S.filtered });
+        }
 
-            card.innerHTML = `
-                <div class="as-card-header">
-                    ${iconHtml}
-                    <div class="as-card-title-block">
-                        <div class="as-card-title">${app.title || app.id}</div>
-                        <div class="as-card-dev">${app.developer || ''}</div>
-                    </div>
-                </div>
-                <div class="as-card-tagline">${app.tagline || app.description || ''}</div>
-                <div class="as-card-footer">
-                    ${app.repo_name ? `<span class="as-card-repo">${app.repo_name}</span>` : ''}
-                    ${(app.host_ports && app.host_ports.length) ? `<a class="as-card-port" href="http://${location.hostname}:${app.host_ports[0]}" target="_blank" rel="noopener" title="Port :${app.host_ports[0]}">:${app.host_ports[0]}</a>` : (app.port_map ? `<a class="as-card-port" href="http://${location.hostname}:${app.port_map}" target="_blank" rel="noopener" title="Otwórz :${app.port_map}">:${app.port_map}</a>` : '')}
-                    ${app.service_count > 1 ? `<span class="as-card-svc" title="${app.service_count} ${t('serwisów')}"><i class="fas fa-layer-group"></i> ${app.service_count}</span>` : ''}
-                    ${app.installed ? `<span class="as-badge-installed">${t('Zainstalowana')}</span>` : ''}
-                </div>
-            `;
-            card.addEventListener('click', () => showDetail(app.id));
-            const portLink = card.querySelector('.as-card-port');
-            if (portLink) portLink.addEventListener('click', e => e.stopPropagation());
-            grid.appendChild(card);
+        content_el.innerHTML = groups.map(g => `
+<div class="pm-group">
+  ${g.label ? `<div class="pm-group-header"><i class="fas ${g.icon}"></i> ${g.label}</div>` : ''}
+  <div class="pm-grid">
+    ${g.apps.map(app => renderCard(app)).join('')}
+  </div>
+</div>`).join('');
+
+        content_el.querySelectorAll('.pm-card').forEach(card => {
+            const appId = card.dataset.id;
+            card.querySelector('.pm-card-body')?.addEventListener('click', () => {
+                const app = [...S.catalog, ...S.core].find(a => a.id === appId);
+                if (app) showDetail(app);
+            });
+            const installBtn = card.querySelector('.pm-btn-install');
+            if (installBtn) installBtn.addEventListener('click', e => { e.stopPropagation(); installApp(appId); });
+            const uninstallBtn = card.querySelector('.pm-btn-uninstall');
+            if (uninstallBtn) uninstallBtn.addEventListener('click', e => { e.stopPropagation(); uninstallApp(appId); });
+            const updateBtn = card.querySelector('.pm-btn-update');
+            if (updateBtn) updateBtn.addEventListener('click', e => { e.stopPropagation(); updateApp(appId); });
         });
-    };
+    }
+
+    function renderCard(app) {
+        const prog = S.progressMap[app.id];
+        const isInstalling = prog && prog.status === 'running';
+        const isRestarting = prog && prog.status === 'restarting';
+        const hasError = prog && prog.status === 'error';
+
+        let actionHtml = '';
+        if (app.core) {
+            actionHtml = `<span class="pm-badge-core"><i class="fas fa-lock"></i> Core</span>`;
+        } else if (isInstalling || isRestarting) {
+            const pct = prog.percent || 0;
+            const msg = isRestarting ? t('Restartowanie…') : (prog.message || t('Instalowanie…'));
+            actionHtml = `<div class="pm-progress-wrap">
+              <div class="pm-progress-bar"><div class="pm-progress-fill" style="width:${pct}%"></div></div>
+              <div class="pm-progress-msg">${escHtml(msg)}</div>
+            </div>`;
+        } else if (hasError) {
+            actionHtml = `<div class="pm-error-msg"><i class="fas fa-exclamation-triangle"></i> ${escHtml(prog.message)}</div>
+              <button class="pm-btn-install" data-id="${app.id}">${t('Spróbuj ponownie')}</button>`;
+        } else if (app.update_available) {
+            actionHtml = `<button class="pm-btn-update" data-id="${app.id}"><i class="fas fa-sync-alt"></i> ${t('Aktualizuj')} ${app.version}</button>
+              <button class="pm-btn-uninstall" data-id="${app.id}"><i class="fas fa-trash"></i></button>`;
+        } else if (app.installed) {
+            actionHtml = `<button class="pm-btn-uninstall" data-id="${app.id}"><i class="fas fa-trash"></i> ${t('Odinstaluj')}</button>`;
+        } else {
+            actionHtml = `<button class="pm-btn-install" data-id="${app.id}"><i class="fas fa-download"></i> ${t('Instaluj')}</button>`;
+        }
+
+        const depsHtml = app.apt_deps?.length || app.pip_deps?.length
+            ? `<div class="pm-card-deps">${[...(app.apt_deps||[]), ...(app.pip_deps||[])].slice(0,3).join(', ')}${([...(app.apt_deps||[]), ...(app.pip_deps||[])].length > 3) ? '…' : ''}</div>`
+            : '';
+
+        return `<div class="pm-card ${app.installed || app.core ? 'pm-card-installed' : ''} ${app.core ? 'pm-card-core' : ''}" data-id="${app.id}">
+  <div class="pm-card-body">
+    <div class="pm-card-icon" style="background:${app.color || '#6b7280'}20;color:${app.color || '#6b7280'}"><i class="fas ${app.icon || 'fa-cube'}"></i></div>
+    <div class="pm-card-info">
+      <div class="pm-card-name">${escHtml(app.name)}</div>
+      <div class="pm-card-meta">${escHtml(app.category || '')} ${app.version ? '• v' + escHtml(app.version) : ''}</div>
+      <div class="pm-card-desc">${escHtml((app.description || '').substring(0, 80))}${(app.description||'').length > 80 ? '…' : ''}</div>
+      ${depsHtml}
+    </div>
+  </div>
+  <div class="pm-card-footer">${actionHtml}</div>
+</div>`;
+    }
+
+    function escHtml(s) {
+        return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
 
     /* ── detail modal ── */
-    const showDetail = async (appId) => {
-        const app = S.catalog.find(a => a.id === appId);
-        if (!app) return;
+    function showDetail(app) {
+        S.detail = app;
+        const prog = S.progressMap[app.id];
+        const overlay = $('#pm-detail-overlay');
+        const isCore = app.core;
+        const isInst = app.installed || isCore;
+        const isInstalling = prog && prog.status === 'running';
 
-        let compose = '';
-        let composeAdaptWarnings = [];
-        let installConfig = null;
-        try {
-            const r = await api('/appstore/compose/' + appId);
-            compose = r.compose || '';
-            composeAdaptWarnings = r.adapt_warnings || [];
-            if (r.config) installConfig = JSON.parse(JSON.stringify(r.config));
-        } catch (_) {}
+        const depsApt = (app.apt_deps || []).map(d => `<span class="pm-dep-tag">${escHtml(d)}</span>`).join('');
+        const depsPip = (app.pip_deps || []).map(d => `<span class="pm-dep-tag pm-dep-pip">${escHtml(d)}</span>`).join('');
+        const depsSection = (depsApt || depsPip) ? `
+<div class="pm-detail-section">
+  <div class="pm-detail-label">${t('Zależności')}</div>
+  <div class="pm-detail-deps">
+    ${depsApt ? `<div><small>apt:</small> ${depsApt}</div>` : ''}
+    ${depsPip ? `<div><small>pip:</small> ${depsPip}</div>` : ''}
+  </div>
+</div>` : '';
 
-        const heroUrl = app.thumbnail || (app.screenshots && app.screenshots[0]) || '';
-        const extraShots = (app.screenshots || []).filter(s => s && s !== heroUrl);
-        const mediaHtml = heroUrl
-            ? `<div class="as-detail-media"><img src="${heroUrl}" onerror="this.parentElement.style.display='none'"></div>`
-            : '';
-        const galleryHtml = extraShots.length
-            ? `<div class="as-detail-gallery">${extraShots.map(s => `<img src="${s}" loading="lazy" onerror="this.style.display='none'">`).join('')}</div>`
-            : '';
-        const adaptWarningsHtml = composeAdaptWarnings.length
-            ? `<div class="as-adapt-warnings">${composeAdaptWarnings.map(w => `<div class="as-adapt-warning"><i class="fas fa-shield-alt"></i> ${escapeHtml(w)}</div>`).join('')}</div>`
-            : '';
-
-        const overlay = document.createElement('div');
-        overlay.className = 'as-modal-overlay';
-        overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
-
-        const modal = document.createElement('div');
-        modal.className = 'as-modal';
-
-        const iconUrl = app.icon || '';
-        const iconHtml = iconUrl
-            ? `<img class="as-detail-icon" src="${iconUrl}" onerror="this.style.display='none'">`
-            : '';
-
-        const tipsHtml = app.tips ? `<div class="as-detail-tips"><i class="fas fa-info-circle"></i> ${app.tips}</div>` : '';
-        const portsHtml = (app.host_ports && app.host_ports.length)
-            ? app.host_ports.map(p => `<a class="as-port-link" href="http://${location.hostname}:${p}" target="_blank" rel="noopener">:${p}</a>`).join(' ')
-            : (app.port_map ? `<a class="as-port-link" href="http://${location.hostname}:${app.port_map}" target="_blank" rel="noopener">:${app.port_map}</a>` : '');
-        const svcCountHtml = app.service_count > 1 ? `<div class="as-meta-item"><strong>${t('Serwisy')}:</strong> ${app.service_count}</div>` : '';
-        const volumeMeta = app.named_volumes?.length ? `<div class="as-meta-item"><strong>${t('Dane')}:</strong> ${app.named_volumes.join(', ')}</div>` : '';
-        const imagesMeta = app.all_images?.length ? `<div class="as-meta-item"><strong>${t('Obrazy')}:</strong> ${app.all_images.join(', ')}</div>` : '';
-        const storeIdMeta = app.store_app_id ? `<div class="as-meta-item"><strong>ID sklepu:</strong> ${app.store_app_id}</div>` : '';
-        const mainSvcMeta = app.main_service ? `<div class="as-meta-item"><strong>${t('Główny serwis')}:</strong> ${app.main_service}</div>` : '';
-        const sandboxNote = `<div class="as-sandbox-note"><i class="fas fa-shield-alt"></i> ${t('Polityka zasobów sandbox jest stosowana automatycznie przy uruchomieniu')}.</div>`;
-
-        const renderConfigSection = () => {
-            if (!installConfig || Object.keys(installConfig).length === 0) return '';
-
-            let html = '<div class="as-config-section">';
-            html += `<div class="as-config-title"><i class="fas fa-sliders-h"></i> ${t('Konfiguracja')}</div>`;
-
-            for (const [svcName, svc] of Object.entries(installConfig)) {
-                if (Object.keys(installConfig).length > 1) {
-                    html += `<div class="as-svc-header">${svcName}</div>`;
-                }
-
-                // Ports
-                if (svc.ports && svc.ports.length) {
-                    html += `<table class="as-config-table">
-                        <thead><tr><th>${t('Port kontenera')}</th><th>${t('Port hosta')}</th></tr></thead>
-                        <tbody>`;
-                    svc.ports.forEach((p, idx) => {
-                        html += `<tr>
-                            <td>${p.container}${p.protocol !== 'tcp' ? '/'+p.protocol : ''}</td>
-                            <td>
-                                <input type="text" class="as-config-input as-port-input"
-                                    data-svc="${svcName}" data-idx="${idx}" value="${p.host}" placeholder="Auto">
-                                <div class="as-config-warning hidden"></div>
-                            </td>
-                        </tr>`;
-                    });
-                    html += `</tbody></table>`;
-                }
-
-                // Volumes
-                if (svc.volumes && svc.volumes.length) {
-                    html += `<table class="as-config-table">
-                        <thead><tr><th>${t('Ścieżka w kontenerze')}</th><th>${t('Ścieżka na hoście')}</th></tr></thead>
-                        <tbody>`;
-                    svc.volumes.forEach((v, idx) => {
-                         html += `<tr>
-                            <td>${v.container} <span style="opacity:0.5;font-size:0.8em">(${v.mode})</span></td>
-                            <td>
-                                <input type="text" class="as-config-input as-vol-input"
-                                    data-svc="${svcName}" data-idx="${idx}" value="${v.host}">
-                                <div class="as-config-warning hidden"></div>
-                            </td>
-                        </tr>`;
-                    });
-                    html += `</tbody></table>`;
-                }
+        let actionBtn = '';
+        if (isCore) {
+            actionBtn = `<span class="pm-badge-core"><i class="fas fa-lock"></i> ${t('Wbudowane — nie do odinstalowania')}</span>`;
+        } else if (isInstalling) {
+            actionBtn = `<span class="pm-badge-progress">${t('Instalowanie…')}</span>`;
+        } else if (isInst) {
+            actionBtn = `<button class="pm-btn-uninstall" onclick="document.getElementById('pm-detail-overlay').style.display='none'; window._pmUninstall('${app.id}')">${t('Odinstaluj')}</button>`;
+            if (app.update_available) {
+                actionBtn = `<button class="pm-btn-update" onclick="document.getElementById('pm-detail-overlay').style.display='none'; window._pmUpdate('${app.id}')">${t('Aktualizuj do')} v${escHtml(app.version)}</button> ` + actionBtn;
             }
-            html += '</div>';
-            return html;
-        };
-
-        modal.innerHTML = `
-            <div class="as-modal-header">
-                ${iconHtml}
-                <div>
-                    <h2 class="as-modal-title">${app.title || app.id}</h2>
-                    <div class="as-modal-dev">${app.developer || ''} ${app.version ? '· v' + app.version : ''}</div>
-                    ${app.repo_name ? `<div class="as-modal-repo"><i class="fas fa-database"></i> ${app.repo_name}</div>` : ''}
-                </div>
-                <button class="as-modal-close">&times;</button>
-            </div>
-            <div class="as-modal-body">
-                ${mediaHtml}
-                ${tipsHtml}
-                ${adaptWarningsHtml}
-                <div class="as-detail-section">
-                    <div class="as-detail-tagline">${app.tagline || ''}</div>
-                    <div class="as-detail-desc">${app.description || ''}</div>
-                </div>
-                <div class="as-detail-meta">
-                    ${app.image ? `<div class="as-meta-item"><strong>${t('Obraz')}:</strong> ${app.image}</div>` : ''}
-                    ${portsHtml ? `<div class="as-meta-item"><strong>${t('Porty')}:</strong> ${portsHtml}</div>` : ''}
-                    ${app.architectures?.length ? `<div class="as-meta-item"><strong>Arch:</strong> ${app.architectures.join(', ')}</div>` : ''}
-                    ${app.category ? `<div class="as-meta-item"><strong>${t('Kategoria')}:</strong> ${app.category}</div>` : ''}
-                    ${storeIdMeta}
-                    ${mainSvcMeta}
-                    ${svcCountHtml}
-                    ${volumeMeta}
-                    ${imagesMeta}
-                </div>
-                ${galleryHtml}
-                ${sandboxNote}
-                ${renderConfigSection()}
-                ${compose ? `
-                <div class="as-detail-section">
-                    <div class="as-compose-label-row">
-                        <span class="as-compose-label">Docker Compose:</span>
-                        <button class="as-compose-reset" title="${t('Przywróć oryginał')}"><i class="fas fa-undo"></i> Reset</button>
-                    </div>
-                    <textarea class="as-compose-editor" spellcheck="false">${compose.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</textarea>
-                </div>` : ''}
-                <div class="as-validation-area hidden"></div>
-            </div>
-            <div class="as-modal-footer">
-                ${app.installed
-                    ? `<button class="as-btn as-btn-danger as-uninstall-btn"><i class="fas fa-trash"></i> ${t('Odinstaluj')}</button>
-                       <button class="as-btn as-btn-reinstall as-reinstall-btn"><i class="fas fa-sync-alt"></i> ${t('Aktualizuj')}</button>
-                       <span class="as-badge-installed-lg">${t('Zainstalowana')}</span>`
-                    : `<div class="as-install-area">
-                        <button class="as-btn as-btn-install as-install-btn">
-                            <i class="fas fa-download"></i> ${t('Zainstaluj')}
-                        </button>
-                        <div class="as-progress-wrap hidden">
-                            <div class="as-progress-header">
-                                <span class="as-progress-stage"></span>
-                                <span class="as-progress-pct">0%</span>
-                            </div>
-                            <div class="as-progress-bar"><div class="as-progress-fill"></div></div>
-                            <div class="as-progress-msg"></div>
-                        </div>
-                       </div>`
-                }
-            </div>
-        `;
-
-        overlay.appendChild(modal);
-        body.appendChild(overlay);
-
-        modal.querySelector('.as-modal-close').addEventListener('click', () => overlay.remove());
-
-        /* Config Logic */
-        const validatePortInput = (el, val) => {
-            const warningEl = el.nextElementSibling;
-            if (!warningEl) return;
-            if (!val) {
-                 warningEl.textContent = ''; warningEl.classList.add('hidden'); return;
-            }
-            // Host field may be "ip:port" (e.g. "127.0.0.1:8080") — extract only the port number
-            const portStr = val.includes(':') ? val.split(':').pop() : val;
-            const port = parseInt(portStr);
-            if (port < 1024) {
-                warningEl.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Port < 1024 (wymaga root)';
-                warningEl.classList.remove('hidden');
-            } else {
-                warningEl.classList.add('hidden');
-            }
-        };
-
-        const validateVolInput = (el, val) => {
-             const warningEl = el.nextElementSibling;
-             if (!warningEl) return;
-             if (!val) { warningEl.textContent = ''; warningEl.classList.add('hidden'); return; }
-             const sensitive = ['/', '/usr', '/etc', '/var', '/boot', '/proc', '/sys', '/dev'];
-             if (sensitive.some(s => val === s || val.startsWith(s + '/'))) {
-                 warningEl.innerHTML = '<i class="fas fa-exclamation-triangle"></i> ' + t('Ścieżka systemowa!');
-                 warningEl.classList.remove('hidden');
-             } else {
-                 warningEl.classList.add('hidden');
-             }
-        };
-
-        modal.querySelectorAll('.as-port-input').forEach(input => {
-            input.addEventListener('input', e => {
-                const svc = e.target.dataset.svc;
-                const idx = parseInt(e.target.dataset.idx);
-                const val = e.target.value;
-                if (installConfig[svc] && installConfig[svc].ports[idx]) {
-                    installConfig[svc].ports[idx].host = val;
-                    validatePortInput(e.target, val);
-                }
-            });
-            validatePortInput(input, input.value);
-        });
-
-        modal.querySelectorAll('.as-vol-input').forEach(input => {
-             input.addEventListener('input', e => {
-                const svc = e.target.dataset.svc;
-                const idx = parseInt(e.target.dataset.idx);
-                const val = e.target.value;
-                if (installConfig[svc] && installConfig[svc].volumes[idx]) {
-                    installConfig[svc].volumes[idx].host = val;
-                    validateVolInput(e.target, val);
-                }
-            });
-            validateVolInput(input, input.value);
-        });
-
-        /* compose editor: reset button */
-        const composeEditor = modal.querySelector('.as-compose-editor');
-        const resetBtn = modal.querySelector('.as-compose-reset');
-        if (resetBtn && composeEditor) {
-            resetBtn.addEventListener('click', () => {
-                composeEditor.value = compose;
-                composeEditor.classList.remove('as-compose-modified');
-                // Note: we don't reset config inputs here, maybe we should?
-                // Or maybe we should reload the config from backend?
-                // For now, let's keep them separate.
-            });
-            composeEditor.addEventListener('input', () => {
-                composeEditor.classList.toggle('as-compose-modified', composeEditor.value !== compose);
-            });
+        } else {
+            actionBtn = `<button class="pm-btn-primary" onclick="document.getElementById('pm-detail-overlay').style.display='none'; window._pmInstall('${app.id}')">${t('Zainstaluj')}</button>`;
         }
 
-        const installBtn = modal.querySelector('.as-install-btn');
-        if (installBtn) {
-            installBtn.addEventListener('click', async () => {
-                installBtn.disabled = true;
-                installBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sprawdzanie…';
-                S.installing = appId;
-                const editorVal = composeEditor ? composeEditor.value : '';
-                const composeOverride = (editorVal && editorVal !== compose) ? editorVal : '';
-
-                /* Pre-install validation */
-                const validationArea = modal.querySelector('.as-validation-area');
-                try {
-                    const body = { app_id: appId, compose_override: composeOverride };
-                    if (installConfig) body.options_override = installConfig;
-
-                    const vr = await api('/appstore/validate', { method: 'POST', body });
-                    if (vr.errors && vr.errors.length) {
-                        if (validationArea) {
-                            validationArea.innerHTML = vr.errors.map(e => `<div class="as-val-error"><i class="fas fa-exclamation-circle"></i> ${e.message}</div>`).join('');
-                            validationArea.classList.remove('hidden');
-                        }
-                        installBtn.innerHTML = `<i class="fas fa-download"></i> ${t('Zainstaluj')}`;
-                        installBtn.disabled = false;
-                        S.installing = null;
-                        return;
-                    }
-                    if (vr.warnings && vr.warnings.length) {
-                        if (validationArea) {
-                            validationArea.innerHTML = vr.warnings.map(w => `<div class="as-val-warning"><i class="fas fa-exclamation-triangle"></i> ${w.message}</div>`).join('');
-                            validationArea.classList.remove('hidden');
-                        }
-                    }
-                } catch (_) { /* proceed even if validation endpoint fails */ }
-
-                installBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Instalowanie…';
-
-                /* show progress area */
-                const progressWrap = modal.querySelector('.as-progress-wrap');
-                const progressFill = modal.querySelector('.as-progress-fill');
-                const progressPct = modal.querySelector('.as-progress-pct');
-                const progressStage = modal.querySelector('.as-progress-stage');
-                const progressMsg = modal.querySelector('.as-progress-msg');
-                if (progressWrap) progressWrap.style.display = '';
-
-                const stageLabels = {
-                    prepare: 'Przygotowywanie…',
-                    pull: t('Pobieranie obrazów…'),
-                    start: 'Uruchamianie…',
-                    verify: t('Weryfikacja…'),
-                    done: 'Gotowe!',
-                    warning: t('Uwaga'),
-                    error: t('Błąd')
-                };
-
-                /* listen for progress */
-                let taskId = null;
-                const onProgress = (data) => {
-                    if (taskId && data.task_id !== taskId) return;
-                    if (!taskId && data.app_id === appId) taskId = data.task_id;
-                    if (data.task_id !== taskId) return;
-
-                    const pct = Math.min(data.percent || 0, 100);
-                    if (progressFill) progressFill.style.width = pct + '%';
-                    if (progressPct) progressPct.textContent = pct + '%';
-                    if (progressStage) progressStage.textContent = stageLabels[data.stage] || data.stage;
-                    if (progressMsg) progressMsg.textContent = data.message || '';
-
-                    if (data.stage === 'error') {
-                        if (progressFill) progressFill.classList.add('as-progress-error');
-                        installBtn.innerHTML = `<i class="fas fa-exclamation-triangle"></i> ${t('Błąd')}`;
-                        S.installing = null;
-                        toast(t('Błąd instalacji: ') + (data.message || ''), 'error');
-                        cleanup();
-                    }
-                    if (data.stage === 'done') {
-                        app.installed = true;
-                        S.installing = null;
-                        toast(t('Zainstalowano') + ' ' + (app.title || appId), 'success');
-                        cleanup();
-                        setTimeout(() => { overlay.remove(); renderGrid(); }, 1200);
-                    }
-                    if (data.stage === 'warning') {
-                        app.installed = true;
-                        S.installing = null;
-                        if (progressFill) progressFill.style.background = '#fbbf24';
-                        toast(data.message || (app.title || appId) + ' ' + t('zainstalowana z ostrzeżeniami'), 'warning');
-                        cleanup();
-                        setTimeout(() => { overlay.remove(); renderGrid(); }, 2500);
-                    }
-                };
-
-                const cleanup = () => {
-                    if (NAS.socket) NAS.socket.off('appstore_install_progress', onProgress);
-                };
-
-                if (NAS.socket) {
-                    NAS.socket.on('appstore_install_progress', onProgress);
-                }
-
-                try {
-                    const body = { app_id: appId, compose_override: composeOverride };
-                    if (installConfig) body.options_override = installConfig;
-                    const r = await api('/appstore/install', { method: 'POST', body });
-                    if (r.task_id) taskId = r.task_id;
-                } catch (e) {
-                    installBtn.innerHTML = `<i class="fas fa-exclamation-triangle"></i> ${t('Błąd')}`;
-                    if (progressFill) { progressFill.style.width = '100%'; progressFill.classList.add('as-progress-error'); }
-                    if (progressStage) progressStage.textContent = t('Błąd');
-                    if (progressMsg) progressMsg.textContent = e.message || '';
-                    toast(t('Błąd instalacji: ') + e.message, 'error');
-                    S.installing = null;
-                    cleanup();
-                }
-            });
-        }
-
-        const uninstallBtn = modal.querySelector('.as-uninstall-btn');
-        if (uninstallBtn) {
-            uninstallBtn.addEventListener('click', async () => {
-                if (!confirm(t('Odinstalować') + ` ${app.title || appId}? ` + t('Kontener zostanie zatrzymany i usunięty.'))) return;
-                uninstallBtn.disabled = true;
-                uninstallBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Usuwanie…');
-                try {
-                    await api('/appstore/uninstall', { method: 'POST', body: { app_id: appId } });
-                    app.installed = false;
-                    overlay.remove();
-                    renderGrid();
-                    toast(t('Odinstalowano') + ' ' + (app.title || appId), 'success');
-                } catch (e) {
-                    toast(t('Błąd odinstalowania: ') + e.message, 'error');
-                    uninstallBtn.innerHTML = '<i class="fas fa-trash"></i> ' + t('Odinstaluj');
-                    uninstallBtn.disabled = false;
-                }
-            });
-        }
-
-        /* Reinstall / Update button */
-        const reinstallBtn = modal.querySelector('.as-reinstall-btn');
-        if (reinstallBtn) {
-            reinstallBtn.addEventListener('click', async () => {
-                if (!confirm(t('Zaktualizować') + ` ${app.title || appId}? ` + t('Kontenery zostaną zrestartowane.'))) return;
-                reinstallBtn.disabled = true;
-                reinstallBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Aktualizacja…');
-                const editorVal = composeEditor ? composeEditor.value : '';
-                const composeOverride = (editorVal && editorVal !== compose) ? editorVal : '';
-
-                const onProgress = (data) => {
-                    if (data.app_id !== appId) return;
-                    if (data.stage === 'done') {
-                        toast(t('Zaktualizowano ') + (app.title || appId), 'success');
-                        if (NAS.socket) NAS.socket.off('appstore_install_progress', onProgress);
-                        overlay.remove();
-                        renderGrid();
-                    } else if (data.stage === 'error') {
-                        toast(t('Błąd aktualizacji: ') + (data.message || ''), 'error');
-                        if (NAS.socket) NAS.socket.off('appstore_install_progress', onProgress);
-                        reinstallBtn.innerHTML = '<i class="fas fa-sync-alt"></i> ' + t('Aktualizuj');
-                        reinstallBtn.disabled = false;
-                    }
-                };
-                if (NAS.socket) NAS.socket.on('appstore_install_progress', onProgress);
-
-                try {
-                    const body = { app_id: appId, compose_override: composeOverride };
-                    if (installConfig) body.options_override = installConfig;
-                    await api('/appstore/reinstall', { method: 'POST', body });
-                } catch (e) {
-                    toast(t('Błąd aktualizacji: ') + e.message, 'error');
-                    if (NAS.socket) NAS.socket.off('appstore_install_progress', onProgress);
-                    reinstallBtn.innerHTML = '<i class="fas fa-sync-alt"></i> ' + t('Aktualizuj');
-                    reinstallBtn.disabled = false;
-                }
-            });
-        }
-    };
-
-    /* ── repos management view ── */
-    const renderReposView = async () => {
-        body.innerHTML = `<div class="as-loading"><i class="fas fa-spinner fa-spin"></i> ${t('Ładowanie repozytoriów…')}</div>`;
-        try {
-            S.allRepos = await api('/appstore/repos');
-        } catch (e) {
-            body.innerHTML = `<div class="as-error">${t('Błąd:')} ${e.message}</div>`;
-            return;
-        }
-
-        body.innerHTML = '';
-
-        const toolbar = document.createElement('div');
-        toolbar.className = 'as-toolbar';
-        toolbar.innerHTML = `
-            <button class="as-btn" id="as-repos-back"><i class="fas fa-arrow-left"></i> Katalog</button>
-            <span class="as-toolbar-title"><i class="fas fa-database"></i> ${t('Zarządzanie repozytoriami')}</span>
-            <button class="as-btn as-btn-install" id="as-repos-add"><i class="fas fa-plus"></i> Dodaj</button>
-        `;
-        body.appendChild(toolbar);
-
-        toolbar.querySelector('#as-repos-back').addEventListener('click', () => {
-            S.view = 'browse';
-            body.innerHTML = `<div class="as-loading"><i class="fas fa-spinner fa-spin"></i> ${t('Ładowanie katalogu…')}</div>`;
-            load(false);
-        });
-        toolbar.querySelector('#as-repos-add').addEventListener('click', showAddRepoDialog);
-
-        const list = document.createElement('div');
-        list.className = 'as-repos-list';
-        body.appendChild(list);
-
-        S.allRepos.forEach((repo, idx) => {
-            const row = document.createElement('div');
-            row.className = 'as-repo-row' + (repo.enabled ? '' : ' as-repo-disabled');
-            row.innerHTML = `
-                <div class="as-repo-icon" style="color:${repo.color || '#94a3b8'}">
-                    <i class="fas ${repo.icon || 'fa-box'}"></i>
-                </div>
-                <div class="as-repo-info">
-                    <div class="as-repo-name">${repo.name}</div>
-                    <div class="as-repo-url">${repo.url}</div>
-                </div>
-                <div class="as-repo-actions">
-                    <label class="as-repo-toggle" title="${repo.enabled ? t('Wyłącz') : t('Włącz')}">
-                        <input type="checkbox" ${repo.enabled ? 'checked' : ''} data-repoid="${repo.id}">
-                        <span class="as-toggle-slider"></span>
-                    </label>
-                    <button class="as-repo-del-btn" data-repoid="${repo.id}" title="${t('Usuń')}"><i class="fas fa-trash"></i></button>
-                </div>
-            `;
-            list.appendChild(row);
-        });
-
-        // Toggle handlers
-        list.querySelectorAll('input[type="checkbox"][data-repoid]').forEach(cb => {
-            cb.addEventListener('change', async () => {
-                const repoId = cb.dataset.repoid;
-                try {
-                    await api(`/appstore/repos/${repoId}/toggle`, {
-                        method: 'POST',
-                        body: { enabled: cb.checked }
-                    });
-                    const r = S.allRepos.find(r => r.id === repoId);
-                    if (r) r.enabled = cb.checked;
-                    const row = cb.closest('.as-repo-row');
-                    if (row) row.classList.toggle('as-repo-disabled', !cb.checked);
-                    toast(`${r?.name || repoId}: ${cb.checked ? t('włączone') : t('wyłączone')}`, 'success');
-                } catch (e) {
-                    cb.checked = !cb.checked;
-                    toast(t('Błąd'), 'error');
-                }
-            });
-        });
-
-        // Delete handlers
-        list.querySelectorAll('.as-repo-del-btn').forEach(btn => {
-            btn.addEventListener('click', async () => {
-                const repoId = btn.dataset.repoid;
-                const repo = S.allRepos.find(r => r.id === repoId);
-                if (!confirm(`${t('Usunąć repozytorium')} "${repo?.name || repoId}"?`)) return;
-                try {
-                    await api(`/appstore/repos/${repoId}`, { method: 'DELETE' });
-                    toast(`${t('Usunięto')} ${repo?.name || repoId}`, 'success');
-                    renderReposView();
-                } catch (e) {
-                    toast(t('Błąd usuwania'), 'error');
-                }
-            });
-        });
-    };
-
-    /* ── add repo dialog ── */
-    const showAddRepoDialog = () => {
-        const overlay = document.createElement('div');
-        overlay.className = 'as-modal-overlay';
-        overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
-
-        const modal = document.createElement('div');
-        modal.className = 'as-modal';
-        modal.style.maxWidth = '550px';
-        modal.innerHTML = `
-            <div class="as-modal-header">
-                <div><h2 class="as-modal-title">Dodaj repozytorium</h2></div>
-                <button class="as-modal-close">&times;</button>
-            </div>
-            <div class="as-modal-body as-modal-body-form">
-                <div class="as-form-group">
-                    <label class="as-form-label">Nazwa</label>
-                    <input type="text" class="as-form-input" id="as-repo-add-name" placeholder="Moje repozytorium">
-                </div>
-                <div class="as-form-group">
-                    <label class="as-form-label">URL do ZIP</label>
-                    <input type="text" class="as-form-input" id="as-repo-add-url"
-                           placeholder="https://github.com/user/repo/archive/refs/heads/main.zip">
-                    <div class="as-form-hint">${t('Repozytorium musi zawierać katalog Apps/ ze strukturą CasaOS')}</div>
-                </div>
-                <div id="as-repo-add-error" class="app-error-text hidden"></div>
-            </div>
-            <div class="as-modal-footer">
-                <button class="as-btn" id="as-repo-add-cancel">Anuluj</button>
-                <button class="as-btn as-btn-install" id="as-repo-add-submit"><i class="fas fa-plus"></i> Dodaj</button>
-            </div>
-        `;
-
-        overlay.appendChild(modal);
-        body.appendChild(overlay);
-
-        modal.querySelector('.as-modal-close').addEventListener('click', () => overlay.remove());
-        modal.querySelector('#as-repo-add-cancel').addEventListener('click', () => overlay.remove());
-
-        modal.querySelector('#as-repo-add-submit').addEventListener('click', async () => {
-            const name = modal.querySelector('#as-repo-add-name').value.trim();
-            const url = modal.querySelector('#as-repo-add-url').value.trim();
-            const errEl = modal.querySelector('#as-repo-add-error');
-
-            if (!url) { errEl.textContent = 'URL jest wymagany'; errEl.style.display = 'block'; return; }
-
-            const btn = modal.querySelector('#as-repo-add-submit');
-            btn.disabled = true;
-            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sprawdzanie…';
-            errEl.style.display = 'none';
-
-            try {
-                await api('/appstore/repos', { method: 'POST', body: { name, url } });
-                toast('Repozytorium dodane!', 'success');
-                overlay.remove();
-                renderReposView();
-            } catch (e) {
-                errEl.textContent = e.message || t('Błąd dodawania');
-                errEl.style.display = 'block';
-                btn.disabled = false;
-                btn.innerHTML = '<i class="fas fa-plus"></i> Dodaj';
-            }
-        });
-    };
-
-    /* ── EthOS Packages Tab ── */
-    const loadPackages = async () => {
-        try {
-            S.packages = await api('/ethos-packages');
-            S.pkgCategory = S.pkgCategory || 'all';
-            S.pkgSearch = S.pkgSearch || '';
-            render();
-        } catch (e) {
-            body.innerHTML = `<div class="as-error">${t('Błąd ładowania pakietów:')} ${e.message}</div>`;
-        }
-    };
-
-    const renderPackagesTab = () => {
-        const pkgs = S.packages;
-        const allCats = ['all', ...Array.from(new Set(pkgs.map(p => p.category).filter(Boolean))).sort()];
-        const installed = pkgs.filter(p => p.installed).length;
-
-        const filtered = pkgs.filter(p => {
-            const catMatch = S.pkgCategory === 'all' || p.category === S.pkgCategory;
-            const q = (S.pkgSearch || '').toLowerCase();
-            const searchMatch = !q || (p.name || '').toLowerCase().includes(q) ||
-                (p.description || '').toLowerCase().includes(q) ||
-                (p.id || '').toLowerCase().includes(q);
-            return catMatch && searchMatch;
-        });
-
-        const content = document.createElement('div');
-        content.className = 'gp-content';
-
-        const catLabels = {
-            all: t('Wszystkie'), System: t('System'), Storage: t('Pamięć'),
-            Tools: t('Narzędzia'), Network: t('Sieć'), Security: t('Bezpieczeństwo'),
-            Media: t('Media'), Dev: t('Deweloperskie'),
-        };
-
-        content.innerHTML = `
-            <div class="gp-header">
-                <div class="gp-header-icon"><i class="fas fa-cube"></i></div>
-                <div class="gp-header-text">
-                    <h3 class="gp-title">${t('Katalog aplikacji EthOS')}</h3>
-                    <p class="gp-subtitle">${t('Zainstalowane:')} <strong>${installed}</strong> / ${pkgs.length} &nbsp;·&nbsp; ${t('Włącz lub wyłącz aplikacje')}</p>
-                </div>
-                <div class="gp-header-search">
-                    <i class="fas fa-search"></i>
-                    <input type="text" class="gp-search-input" placeholder="${t('Szukaj…')}" value="${S.pkgSearch || ''}">
-                </div>
-            </div>
-            <div class="gp-cat-bar">
-                ${allCats.map(c => {
-                    const count = c === 'all' ? pkgs.length : pkgs.filter(p => p.category === c).length;
-                    return `<button class="gp-cat-btn ${S.pkgCategory === c ? 'active' : ''}" data-cat="${c}">
-                        ${catLabels[c] || c}
-                        <span class="gp-cat-count">${count}</span>
-                    </button>`;
-                }).join('')}
-            </div>
-            <div class="gp-grid" id="gp-grid">
-                ${!filtered.length ? `<div class="gp-empty"><i class="fas fa-box-open"></i><p>${t('Brak wyników')}</p></div>` : ''}
-                ${filtered.map(pkg => `
-                    <div class="gp-card ${pkg.installed ? 'gp-installed' : ''}" data-pkg="${pkg.id}">
-                        <div class="gp-card-icon" style="background:${pkg.color || '#6366f1'}">
-                            <i class="fas ${pkg.icon || 'fa-puzzle-piece'}"></i>
-                        </div>
-                        <div class="gp-card-body">
-                            <div class="gp-card-name">${pkg.name}
-                                ${pkg.simple ? '' : '<span class="gp-badge-deps" title="Wymaga dependencji systemowych"><i class="fas fa-microchip"></i></span>'}
-                            </div>
-                            <div class="gp-card-desc">${pkg.description}</div>
-                            ${pkg.deps_label && pkg.deps_label !== 'no requirements'
-                                ? `<div class="gp-card-deps"><i class="fas fa-box"></i> ${pkg.deps_label}</div>`
-                                : ''}
-                        </div>
-                        <div class="gp-card-actions">
-                            ${pkg.installed
-                                ? `<span class="gp-status gp-status-on"><i class="fas fa-check-circle"></i> ${t('Włączony')}</span>
-                                   <button class="gp-btn gp-btn-open" data-pkg="${pkg.id}" data-app="${pkg.app_id}"><i class="fas fa-arrow-up-right-from-square"></i> ${t('Otwórz')}</button>
-                                   <button class="gp-btn gp-btn-remove" data-pkg="${pkg.id}" data-simple="${pkg.simple ? '1' : ''}"><i class="fas fa-power-off"></i> ${t('Wyłącz')}</button>`
-                                : `<span class="gp-status gp-status-off"><i class="fas fa-circle"></i> ${t('Wyłączony')}</span>
-                                   <button class="gp-btn gp-btn-install" data-pkg="${pkg.id}" data-simple="${pkg.simple ? '1' : ''}"><i class="fas fa-power-off"></i> ${t('Włącz')}</button>`
-                            }
-                        </div>
-                    </div>
-                `).join('')}
-            </div>
-        `;
-        body.appendChild(content);
-
-        // Category filter
-        content.querySelectorAll('.gp-cat-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                S.pkgCategory = btn.dataset.cat;
-                const gpContent = body.querySelector('.gp-content');
-                if (gpContent) gpContent.remove();
-                renderPackagesTab();
-            });
-        });
-
-        // Search
-        const searchInput = content.querySelector('.gp-search-input');
-        if (searchInput) {
-            searchInput.addEventListener('input', e => {
-                S.pkgSearch = e.target.value;
-                const gpContent = body.querySelector('.gp-content');
-                if (gpContent) gpContent.remove();
-                renderPackagesTab();
-            });
-        }
-
-        // Install (enable) buttons
-        content.querySelectorAll('.gp-btn-install').forEach(btn => {
-            btn.addEventListener('click', async (e) => {
-                e.stopPropagation();
-                const pkgId = btn.dataset.pkg;
-                const isSimple = btn.dataset.simple === '1';
-                const pkg = S.packages.find(p => p.id === pkgId);
-                if (!pkg) return;
-
-                if (isSimple) {
-                    // Simple package — just toggle state
-                    btn.disabled = true;
-                    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
-                    try {
-                        await api('/apps/set-installed', { method: 'POST', body: { id: pkgId, installed: true } });
-                        toast(`${pkg.name} ${t('włączony')}`, 'success');
-                        api('/apps').then(apps => { NAS.apps = apps; updateDesktopApps && updateDesktopApps(); }).catch(() => {});
-                        setTimeout(() => loadPackages(), 400);
-                    } catch (err) {
-                        toast(t('Błąd: ') + err.message, 'error');
-                        btn.disabled = false;
-                        btn.innerHTML = `<i class="fas fa-power-off"></i> ${t('Włącz')}`;
-                    }
-                    return;
-                }
-
-                btn.disabled = true;
-                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Instalowanie…';
-
-                try {
-                    const reg = await api('/ethos-packages/' + pkgId + '/install', { method: 'POST' });
-                    const installEp = reg.install_endpoint;
-
-                    if (!installEp) {
-                        toast(t('Pakiet zainstalowany!'), 'success');
-                        api('/apps').then(apps => { NAS.apps = apps; updateDesktopApps && updateDesktopApps(); }).catch(() => {});
-                        setTimeout(() => loadPackages(), 500);
-                        return;
-                    }
-
-                    const ep = installEp.startsWith('/api') ? installEp.slice(4) : installEp;
-                    const r = await api(ep, { method: 'POST' });
-
-                    if (r.task_id && NAS.socket) {
-                        const defaultEvtName = pkgId.replace(/-/g, '_') + '_install';
-                        const evtName = r.progress_event || defaultEvtName;
-                        const taskId = `pkg:${pkgId}:${r.task_id}`;
-
-                        if (NAS.taskProgress) {
-                            NAS.taskProgress.upsert({ id: taskId, source: 'Pakiety EthOS', title: `Instalacja: ${pkg.name || pkgId}`, percent: 1, message: t('Rozpoczynanie…'), status: 'running', action: { app: 'app-store', tab: 'packages' } });
-                        }
-
-                        const progressEl = document.createElement('div');
-                        progressEl.className = 'gp-progress';
-                        progressEl.innerHTML = `<div class="gp-progress-bar"><div class="gp-progress-fill"></div></div><div class="gp-progress-msg">${t('Instalowanie zależności…')}</div>`;
-                        btn.parentElement.appendChild(progressEl);
-
-                        const handler = (data) => {
-                            if (r.task_id && data?.task_id && data.task_id !== r.task_id) return;
-                            const fill = progressEl.querySelector('.gp-progress-fill');
-                            const msg = progressEl.querySelector('.gp-progress-msg');
-                            const percent = Math.max(0, Math.min(100, Number(data?.percent || 0)));
-                            const message = data?.message || '';
-                            if (fill) fill.style.width = percent + '%';
-                            if (msg) msg.textContent = message;
-                            if (NAS.taskProgress) NAS.taskProgress.upsert({ id: taskId, source: 'Pakiety EthOS', title: `Instalacja: ${pkg.name || pkgId}`, percent, message, status: 'running', action: { app: 'app-store', tab: 'packages' } });
-                            if (data.stage === 'done') {
-                                NAS.socket.off(evtName, handler);
-                                toast(t('Pakiet zainstalowany!'), 'success');
-                                if (NAS.taskProgress) NAS.taskProgress.finish(taskId, true, message || t('Pakiet zainstalowany'));
-                                api('/apps').then(apps => { NAS.apps = apps; updateDesktopApps && updateDesktopApps(); }).catch(() => {});
-                                setTimeout(() => loadPackages(), 1000);
-                            }
-                            if (data.stage === 'error') {
-                                NAS.socket.off(evtName, handler);
-                                toast(t('Błąd instalacji: ') + data.message, 'error');
-                                if (NAS.taskProgress) NAS.taskProgress.finish(taskId, false, message || t('Błąd instalacji'));
-                                btn.disabled = false;
-                                btn.innerHTML = `<i class="fas fa-power-off"></i> ${t('Włącz')}`;
-                                progressEl.remove();
-                            }
-                        };
-                        NAS.socket.on(evtName, handler);
-                    } else {
-                        toast(t('Pakiet zainstalowany!'), 'success');
-                        api('/apps').then(apps => { NAS.apps = apps; updateDesktopApps && updateDesktopApps(); }).catch(() => {});
-                        setTimeout(() => loadPackages(), 500);
-                    }
-                } catch (e) {
-                    toast(t('Błąd: ') + e.message, 'error');
-                    btn.disabled = false;
-                    btn.innerHTML = `<i class="fas fa-power-off"></i> ${t('Włącz')}`;
-                }
-            });
-        });
-
-        // Uninstall (disable) buttons
-        content.querySelectorAll('.gp-btn-remove').forEach(btn => {
-            btn.addEventListener('click', async (e) => {
-                e.stopPropagation();
-                const pkgId = btn.dataset.pkg;
-                const isSimple = btn.dataset.simple === '1';
-                const pkg = S.packages.find(p => p.id === pkgId);
-
-                if (isSimple) {
-                    // Simple package — just toggle off without confirm dialog
-                    btn.disabled = true;
-                    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
-                    try {
-                        await api('/apps/set-installed', { method: 'POST', body: { id: pkgId, installed: false } });
-                        toast(`${pkg?.name || pkgId} ${t('wyłączony')}`, 'info');
-                        api('/apps').then(apps => { NAS.apps = apps; updateDesktopApps && updateDesktopApps(); }).catch(() => {});
-                        setTimeout(() => loadPackages(), 400);
-                    } catch (err) {
-                        toast(t('Błąd: ') + err.message, 'error');
-                        btn.disabled = false;
-                        btn.innerHTML = `<i class="fas fa-power-off"></i> ${t('Wyłącz')}`;
-                    }
-                    return;
-                }
-
-                // Complex package — confirm dialog
-                const confirmOverlay = document.createElement('div');
-                confirmOverlay.className = 'as-modal-overlay';
-                confirmOverlay.innerHTML = `
-                    <div class="as-modal app-modal-sm">
-                        <div class="as-modal-header app-justify-center">
-                            <div class="app-text-center">
-                                <i class="fas fa-exclamation-triangle app-confirm-icon"></i>
-                                <h2 class="as-modal-title app-confirm-title">${t('Odinstalować')} ${pkg?.name || pkgId}?</h2>
-                            </div>
-                        </div>
-                        <div class="as-modal-body app-text-center app-p-md">
-                            <p class="app-desc">${t('Zatrzyma wszystkie procesy pakietu.')}</p>
-                            <label class="app-check-label app-check-label--center">
-                                <input type="checkbox" id="gp-wipe-data"> ${t('Usuń również dane (nagrania, konfigurację)')}
-                            </label>
-                            ${pkgId === 'ai-chat' ? `
-                            <label class="app-check-label app-check-label--center" style="margin-top:8px;color:var(--text-secondary)">
-                                <input type="checkbox" id="gp-wipe-models"> ${t('Usuń pobrane modele AI')} <span style="opacity:.6;font-size:11px">(${t('może zajmować wiele GB')})</span>
-                            </label>` : ''}
-                        </div>
-                        <div class="as-modal-footer app-justify-center app-gap-md">
-                            <button class="as-btn" id="gp-cancel-uninstall">${t('Anuluj')}</button>
-                            <button class="as-btn as-btn-danger" id="gp-confirm-uninstall"><i class="fas fa-trash"></i> ${t('Odinstaluj')}</button>
-                        </div>
-                    </div>
-                `;
-                body.appendChild(confirmOverlay);
-                confirmOverlay.addEventListener('click', (ev) => { if (ev.target === confirmOverlay) confirmOverlay.remove(); });
-                confirmOverlay.querySelector('#gp-cancel-uninstall').addEventListener('click', () => confirmOverlay.remove());
-                confirmOverlay.querySelector('#gp-confirm-uninstall').addEventListener('click', async () => {
-                    const wipe = confirmOverlay.querySelector('#gp-wipe-data').checked;
-                    const wipeModels = pkgId === 'ai-chat' && (confirmOverlay.querySelector('#gp-wipe-models')?.checked ?? false);
-                    confirmOverlay.remove();
-                    btn.disabled = true;
-                    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Odinstalowywanie…';
-                    try {
-                        await api('/ethos-packages/' + pkgId + '/uninstall', { method: 'POST', body: { wipe_data: wipe, wipe_models: wipeModels } });
-                        toast(t('Pakiet odinstalowany'), 'success');
-                        api('/apps').then(apps => { NAS.apps = apps; updateDesktopApps && updateDesktopApps(); }).catch(() => {});
-                        setTimeout(() => loadPackages(), 500);
-                    } catch (e) {
-                        toast(t('Błąd: ') + e.message, 'error');
-                        btn.disabled = false;
-                        btn.innerHTML = `<i class="fas fa-power-off"></i> ${t('Wyłącz')}`;
-                    }
-                });
-            });
-        });
-
-        // Open app buttons
-        content.querySelectorAll('.gp-btn-open').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const appId = btn.dataset.app;
-                const appDef = (NAS.apps || []).find(a => a.id === appId);
-                if (appDef && typeof openApp === 'function') {
-                    openApp(appDef);
-                } else {
-                    toast(t('Otwórz aplikację z menu'), 'info');
-                }
-            });
-        });
-    };
-
-    /* ── init ── */
-    if (S.tab === 'ethos') {
-        loadPackages();
-    } else {
-        load(false);
+        overlay.style.display = 'flex';
+        overlay.innerHTML = `
+<div class="pm-detail-modal" onclick="event.stopPropagation()">
+  <div class="pm-detail-header">
+    <div class="pm-detail-icon" style="background:${app.color || '#6b7280'}20;color:${app.color || '#6b7280'}"><i class="fas ${app.icon || 'fa-cube'} fa-2x"></i></div>
+    <div class="pm-detail-title">
+      <h2>${escHtml(app.name)}</h2>
+      <div class="pm-detail-sub">${escHtml(app.category || '')} ${app.version ? '• v' + escHtml(app.version) : ''} ${isCore ? '<span class="pm-badge-core-sm">Core</span>' : ''}</div>
+    </div>
+    <button class="pm-detail-close" onclick="document.getElementById('pm-detail-overlay').style.display='none'"><i class="fas fa-times"></i></button>
+  </div>
+  <div class="pm-detail-body">
+    <div class="pm-detail-section">
+      <div class="pm-detail-desc">${escHtml(app.description || '')}</div>
+    </div>
+    ${depsSection}
+    <div class="pm-detail-section">
+      <div class="pm-detail-label">${t('Status')}</div>
+      <div>${isCore ? `<span class="pm-status-core"><i class="fas fa-lock"></i> ${t('Wbudowane (Core)')}</span>` : isInst ? `<span class="pm-status-installed"><i class="fas fa-check"></i> ${t('Zainstalowane')} ${app.installed_version ? '(v' + escHtml(app.installed_version) + ')' : ''}</span>` : `<span class="pm-status-available"><i class="fas fa-download"></i> ${t('Dostępne do instalacji')}</span>`}</div>
+    </div>
+  </div>
+  <div class="pm-detail-footer">${actionBtn}</div>
+</div>`;
+        overlay.onclick = () => { overlay.style.display = 'none'; };
     }
-};
+
+    // Expose to onclick handlers
+    window._pmInstall = installApp;
+    window._pmUninstall = uninstallApp;
+    window._pmUpdate = updateApp;
+
+    /* ── app actions ── */
+    async function installApp(appId) {
+        if (S.progressMap[appId]?.status === 'running') return;
+        S.progressMap[appId] = { stage: 'start', percent: 5, message: t('Uruchamianie…'), status: 'running' };
+        render();
+        const data = await api('/app-manager/' + appId + '/install', 'POST');
+        if (data.error) { toast(data.error, 'error'); delete S.progressMap[appId]; render(); }
+    }
+
+    async function uninstallApp(appId) {
+        const app = [...S.catalog, ...S.core].find(a => a.id === appId);
+        const nm = app ? app.name : appId;
+        if (!confirm(t('Odinstalować') + ' ' + nm + '?')) return;
+        S.progressMap[appId] = { stage: 'start', percent: 5, message: t('Odinstalowywanie…'), status: 'running' };
+        render();
+        const data = await api('/app-manager/' + appId + '/uninstall', 'POST');
+        if (data.error) { toast(data.error, 'error'); delete S.progressMap[appId]; render(); }
+    }
+
+    async function updateApp(appId) {
+        S.progressMap[appId] = { stage: 'start', percent: 5, message: t('Aktualizowanie…'), status: 'running' };
+        render();
+        const data = await api('/app-manager/' + appId + '/update', 'POST');
+        if (data.error) { toast(data.error, 'error'); delete S.progressMap[appId]; render(); }
+    }
+
+    /* ── SocketIO progress ── */
+    function onProgress(ev) {
+        const { app_id, stage, percent, message, status } = ev;
+        if (!app_id) return;
+        S.progressMap[app_id] = { stage, percent, message, status };
+
+        // Reload catalog after done/error
+        if (status === 'done' || status === 'error') {
+            setTimeout(() => {
+                delete S.progressMap[app_id];
+                loadCatalog();
+            }, status === 'done' ? 3000 : 5000);
+        }
+        render();
+    }
+
+    if (NAS.socket) {
+        NAS.socket.on('app_manager_progress', onProgress);
+        body.closest('.window')?.addEventListener('window-close', () => {
+            NAS.socket.off('app_manager_progress', onProgress);
+        });
+    }
+
+    /* ── load & filter events ── */
+    async function loadCatalog(refresh) {
+        try {
+            const url = refresh ? '/app-manager/catalog?refresh=1' : '/app-manager/catalog';
+            const data = await api(url);
+            if (data.error) { content_el.innerHTML = `<div class="pm-empty">${escHtml(data.error)}</div>`; return; }
+            S.catalog = data.optional || [];
+            S.core = data.core || [];
+            applyFilter();
+        } catch (e) {
+            content_el.innerHTML = `<div class="pm-empty"><i class="fas fa-exclamation-triangle"></i> ${t('Błąd ładowania katalogu')}</div>`;
+        }
+    }
+
+    $('#pm-search').addEventListener('input', e => { S.search = e.target.value; applyFilter(); });
+
+    $$('.pm-nav-btn').forEach(btn => btn.addEventListener('click', () => {
+        $$('.pm-nav-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        S.tab = btn.dataset.tab;
+        applyFilter();
+    }));
+
+    $$('.pm-cat-btn').forEach(btn => btn.addEventListener('click', () => {
+        $$('.pm-cat-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        S.category = btn.dataset.cat;
+        applyFilter();
+    }));
+
+    $('#pm-btn-refresh').addEventListener('click', async () => {
+        const btn = $('#pm-btn-refresh');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+        await loadCatalog(true);
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-sync-alt"></i> ' + t('Odśwież katalog');
+    });
+
+    loadCatalog();
+}
 
 
 // ═══════════════════════════════════════════════════════════

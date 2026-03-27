@@ -1,0 +1,930 @@
+"""
+EthOS - App Manager (Package Center)
+
+Zarządza opcjonalnymi paczkami EthOS: install/uninstall/update z GitHub catalog.
+Pobiera katalog z: https://raw.githubusercontent.com/ethos-os/ethos-apps/main/catalog.json
+
+Endpoints:
+  GET  /api/app-manager/catalog            -> pelny katalog z statusem instalacji
+  POST /api/app-manager/catalog/refresh    -> wymusz odswiazenie z GitHub
+  GET  /api/app-manager/installed          -> tylko zainstalowane apki
+  GET  /api/app-manager/core               -> lista core apps
+  GET  /api/app-manager/check-updates      -> sprawdz aktualizacje
+  POST /api/app-manager/<id>/install       -> zainstaluj paczke (async)
+  POST /api/app-manager/<id>/uninstall     -> odinstaluj paczke
+  POST /api/app-manager/<id>/update        -> zaktualizuj do najnowszej wersji
+  GET  /api/app-manager/<id>/status        -> status instalacji paczki
+
+SocketIO events:
+  app_manager_progress  ->  { task_id, stage, percent, message, app_id, status }
+"""
+
+import os
+import json
+import time
+import threading
+import logging
+import sys
+import uuid
+import urllib.request
+import urllib.error
+
+from flask import Blueprint, request, jsonify, g
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from host import host_run, data_path, app_path, q
+
+log = logging.getLogger('app_manager')
+app_manager_bp = Blueprint('app_manager', __name__, url_prefix='/api/app-manager')
+
+# ─── SocketIO ref ────────────────────────────────────────────
+
+_socketio = None
+
+
+def init_app_manager(sio):
+    global _socketio
+    _socketio = sio
+
+
+def _emit(event_data):
+    if _socketio:
+        _socketio.emit('app_manager_progress', event_data)
+
+
+# ─── Paths ───────────────────────────────────────────────────
+
+_ETHOS_ROOT = app_path()
+_FRONTEND_APPS_DIR = os.path.join(_ETHOS_ROOT, 'frontend', 'js', 'apps')
+_BLUEPRINTS_DIR = os.path.join(_ETHOS_ROOT, 'backend', 'blueprints')
+
+INSTALLED_FILE = data_path('installed_apps.json')
+CATALOG_CACHE_FILE = '/tmp/ethos_app_catalog.json'
+CATALOG_CACHE_TTL = 3600 * 6
+
+GITHUB_CATALOG_URL = 'https://raw.githubusercontent.com/ethos-os/ethos-apps/main/catalog.json'
+GITHUB_APP_BASE    = 'https://raw.githubusercontent.com/ethos-os/ethos-apps/main/apps'
+
+# ─── Core Apps (wbudowane, nieusuwalne) ──────────────────────
+
+CORE_APPS = frozenset({
+    'dashboard', 'file-manager', 'storage-manager', 'terminal',
+    'system-settings', 'users', 'updates', 'app-store', 'packages',
+    'event-log', 'network', 'services', 'resource-monitor', 'backup',
+    'power', 'notifications', 'ssh-manager', 'naslink',
+})
+
+# ─── Frontend filename map ────────────────────────────────────
+
+_FRONTEND_FILENAME = {
+    'ai-chat':          'aichat',
+    'disk-repair':      'diskrepair',
+    'doc-editor':       'editor',
+    'download-manager': 'downloads',
+    'domains-manager':  'domains',
+    'family-hub':       'familyhub',
+    'raid-lvm':         'raid',
+    'ssh-manager':      'ssh',
+    'sticky-notes':     'stickynotes',
+    'storage-manager':  'storage',
+    'usb-flasher':      'flasher',
+    'resource-monitor': 'resources',
+    'cloud-backup':     'cloud-backup',
+    'code-editor':      'code-editor',
+    'sharing-samba':    'sharing',
+    'sharing-nfs':      'sharing',
+    'sharing-dlna':     'dlna',
+    'sharing-webdav':   'sharing',
+    'sharing-sftp':     'sharing',
+    'sharing-ftp':      'sharing',
+    # W apps.js monolicie
+    'file-manager':     None,
+    'docker-manager':   None,
+    'vm-manager':       None,
+    'event-log':        None,
+    'app-store':        None,
+    'remote-log':       None,
+    'system-settings':  None,
+}
+
+# ─── Built-in catalog (fallback gdy GitHub niedostepny) ──────
+
+BUILTIN_CATALOG = [
+    {
+        'id': 'surveillance', 'name': 'Surveillance', 'version': '1.0.0',
+        'icon': 'fa-video', 'color': '#dc2626', 'category': 'Security', 'admin_only': False,
+        'description': 'Monitoring IP kamer z detekcja ruchu i podgladem na zywo.',
+        'apt_deps': ['ffmpeg', 'ffprobe'], 'pip_deps': ['python-onvif-zeep'],
+        'install_endpoint': '/api/surveillance/install',
+        'uninstall_endpoint': '/api/surveillance/uninstall',
+        'status_endpoint': '/api/surveillance/status',
+    },
+    {
+        'id': 'ai-chat', 'name': 'AI Assistant', 'version': '1.0.0',
+        'icon': 'fa-robot', 'color': '#8b5cf6', 'category': 'Tools', 'admin_only': False,
+        'description': 'Asystent AI z obsługą GPT, Claude i lokalnych modeli LLM.',
+        'apt_deps': [], 'pip_deps': ['openai', 'anthropic', 'huggingface_hub'],
+        'install_endpoint': '/api/aichat/install',
+        'uninstall_endpoint': '/api/aichat/uninstall',
+        'status_endpoint': '/api/aichat/status',
+    },
+    {
+        'id': 'gallery', 'name': 'Gallery', 'version': '1.0.0',
+        'icon': 'fa-images', 'color': '#ec4899', 'category': 'Media', 'admin_only': False,
+        'description': 'Galeria zdjec i filmow z EXIF, miniaturkami i haslami folderow.',
+        'apt_deps': [], 'pip_deps': [],
+        'install_endpoint': '/api/gallery/install',
+        'uninstall_endpoint': '/api/gallery/uninstall',
+        'status_endpoint': '/api/gallery/pkg-status',
+    },
+    {
+        'id': 'download-manager', 'name': 'Download Manager', 'version': '1.0.0',
+        'icon': 'fa-cloud-download-alt', 'color': '#10b981', 'category': 'Tools', 'admin_only': False,
+        'description': 'Pobieranie plikow z HTTP, torrent, magnet i serwisow premium.',
+        'apt_deps': [], 'pip_deps': [],
+        'install_endpoint': '/api/downloads/install',
+        'uninstall_endpoint': '/api/downloads/uninstall',
+        'status_endpoint': '/api/downloads/pkg-status',
+    },
+    {
+        'id': 'printer', 'name': 'Print Server', 'version': '1.0.0',
+        'icon': 'fa-print', 'color': '#ef4444', 'category': 'Tools', 'admin_only': True,
+        'description': 'Serwer drukowania z automatycznym wykrywaniem drukarek i konwersja PDF.',
+        'apt_deps': ['cups', 'cups-browsed', 'libreoffice'], 'pip_deps': [],
+        'install_endpoint': '/api/printer/install',
+        'uninstall_endpoint': '/api/printer/uninstall',
+        'status_endpoint': '/api/printer/pkg-status',
+    },
+    {
+        'id': 'docker-manager', 'name': 'Docker Manager', 'version': '1.0.0',
+        'icon': 'fa-cubes', 'color': '#2496ed', 'category': 'System', 'admin_only': True,
+        'description': 'Zarządzanie kontenerami Docker, projektami Compose, obrazami i logami.',
+        'apt_deps': ['docker.io', 'docker-compose-plugin'], 'pip_deps': [],
+        'install_endpoint': '/api/docker/install',
+        'uninstall_endpoint': '/api/docker/uninstall',
+        'status_endpoint': '/api/docker/pkg-status',
+    },
+    {
+        'id': 'vm-manager', 'name': 'VM Manager', 'version': '1.0.0',
+        'icon': 'fa-desktop', 'color': '#8b5cf6', 'category': 'System', 'admin_only': True,
+        'description': 'Maszyny wirtualne QEMU/KVM z migawkami i dostepem VNC.',
+        'apt_deps': ['qemu-system-x86', 'qemu-utils', 'ovmf'], 'pip_deps': [],
+        'install_endpoint': '/api/vm/install',
+        'uninstall_endpoint': '/api/vm/uninstall',
+        'status_endpoint': '/api/vm/pkg-status',
+    },
+    {
+        'id': 'doc-editor', 'name': 'Documents', 'version': '1.0.0',
+        'icon': 'fa-file-word', 'color': '#2563eb', 'category': 'Tools', 'admin_only': False,
+        'description': 'Tworzenie i edycja dokumentow Word z eksportem do PDF.',
+        'apt_deps': ['libreoffice'], 'pip_deps': ['mammoth', 'python-docx'],
+        'install_endpoint': '/api/editor/install',
+        'uninstall_endpoint': '/api/editor/uninstall',
+        'status_endpoint': '/api/editor/pkg-status',
+    },
+    {
+        'id': 'code-editor', 'name': 'Code Editor', 'version': '1.0.0',
+        'icon': 'fa-code', 'color': '#22d3ee', 'category': 'Tools', 'admin_only': False,
+        'description': 'Edytor kodu z podswietlaniem skladni i numerami linii.',
+        'apt_deps': [], 'pip_deps': [],
+        'install_endpoint': '/api/code-editor/install',
+        'uninstall_endpoint': '/api/code-editor/uninstall',
+        'status_endpoint': '/api/code-editor/pkg-status',
+    },
+    {
+        'id': 'duplicates', 'name': 'Duplicates', 'version': '1.0.0',
+        'icon': 'fa-clone', 'color': '#a78bfa', 'category': 'Tools', 'admin_only': False,
+        'description': 'Znajdz identyczne i podobne zdjecia uzywajac perceptual hashing.',
+        'apt_deps': [], 'pip_deps': [],
+        'install_endpoint': '/api/files/duplicates/install',
+        'uninstall_endpoint': '/api/files/duplicates/uninstall',
+        'status_endpoint': '/api/files/duplicates/pkg-status',
+    },
+    {
+        'id': 'usb-flasher', 'name': 'USB Creator', 'version': '1.0.0',
+        'icon': 'fa-usb', 'color': '#a855f7', 'category': 'Tools', 'admin_only': True,
+        'description': 'Flashowanie obrazow ISO/IMG na pendrive z monitoringiem postepu.',
+        'apt_deps': [], 'pip_deps': [],
+        'install_endpoint': '/api/flasher/install',
+        'uninstall_endpoint': '/api/flasher/uninstall',
+        'status_endpoint': '/api/flasher/pkg-status',
+    },
+    {
+        'id': 'builder', 'name': 'Builder', 'version': '1.0.0',
+        'icon': 'fa-hammer', 'color': '#f97316', 'category': 'System', 'admin_only': True,
+        'description': 'Budowanie wydan EthOS i obrazow systemowych przez interfejs webowy.',
+        'apt_deps': ['squashfs-tools', 'genisoimage', 'rsync'], 'pip_deps': [],
+        'install_endpoint': '/api/builder/install',
+        'uninstall_endpoint': '/api/builder/uninstall',
+        'status_endpoint': '/api/builder/pkg-status',
+    },
+    {
+        'id': 'disk-repair', 'name': 'Disk Repair', 'version': '1.0.0',
+        'icon': 'fa-wrench', 'color': '#ef4444', 'category': 'Storage', 'admin_only': True,
+        'description': 'Diagnostyka SMART i sprawdzanie systemu plikow z narzedziami naprawczymi.',
+        'apt_deps': ['smartmontools', 'e2fsprogs'], 'pip_deps': [],
+        'install_endpoint': '/api/diskrepair/install',
+        'uninstall_endpoint': '/api/diskrepair/uninstall',
+        'status_endpoint': '/api/diskrepair/pkg-status',
+    },
+    {
+        'id': 'remote-log', 'name': 'Remote Logs', 'version': '1.0.0',
+        'icon': 'fa-satellite-dish', 'color': '#0891b2', 'category': 'System', 'admin_only': True,
+        'description': 'Wysylanie logow diagnostycznych na centralny serwer.',
+        'apt_deps': [], 'pip_deps': [],
+        'install_endpoint': '/api/remote-log/install',
+        'uninstall_endpoint': '/api/remote-log/uninstall',
+        'status_endpoint': '/api/remote-log/pkg-status',
+    },
+    {
+        'id': 'sharing-samba', 'name': 'File Sharing (Samba)', 'version': '1.0.0',
+        'icon': 'fa-windows', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
+        'description': 'Udostepnianie plikow przez siec (Windows, Mac, Linux).',
+        'apt_deps': ['samba'], 'pip_deps': [],
+        'install_endpoint': '/api/storage/samba/pkg-install',
+        'uninstall_endpoint': '/api/storage/samba/pkg-uninstall',
+        'status_endpoint': '/api/storage/samba/pkg-status',
+    },
+    {
+        'id': 'sharing-nfs', 'name': 'NFS', 'version': '1.0.0',
+        'icon': 'fa-network-wired', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
+        'description': 'Szybkie udostepnianie plikow dla Linux/Unix przez NFS.',
+        'apt_deps': ['nfs-kernel-server'], 'pip_deps': [],
+        'install_endpoint': '/api/storage/nfs/pkg-install',
+        'uninstall_endpoint': '/api/storage/nfs/pkg-uninstall',
+        'status_endpoint': '/api/storage/nfs/pkg-status',
+    },
+    {
+        'id': 'sharing-dlna', 'name': 'DLNA (MiniDLNA)', 'version': '1.0.0',
+        'icon': 'fa-photo-video', 'color': '#6366f1', 'category': 'Media', 'admin_only': True,
+        'description': 'Serwer DLNA do strumieniowania multimediow na TV i odtwarzacze.',
+        'apt_deps': ['minidlna'], 'pip_deps': [],
+        'install_endpoint': '/api/storage/dlna/pkg-install',
+        'uninstall_endpoint': '/api/storage/dlna/pkg-uninstall',
+        'status_endpoint': '/api/storage/dlna/pkg-status',
+    },
+    {
+        'id': 'sharing-webdav', 'name': 'WebDAV', 'version': '1.0.0',
+        'icon': 'fa-globe', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
+        'description': 'Serwer WebDAV z dostepem do plikow przez HTTP.',
+        'apt_deps': ['lighttpd'], 'pip_deps': [],
+        'install_endpoint': '/api/storage/webdav/pkg-install',
+        'uninstall_endpoint': '/api/storage/webdav/pkg-uninstall',
+        'status_endpoint': '/api/storage/webdav/pkg-status',
+    },
+    {
+        'id': 'sharing-sftp', 'name': 'SFTP', 'version': '1.0.0',
+        'icon': 'fa-lock', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
+        'description': 'Bezpieczny transfer plikow przez SSH.',
+        'apt_deps': ['openssh-server'], 'pip_deps': [],
+        'install_endpoint': '/api/storage/sftp/pkg-install',
+        'uninstall_endpoint': '/api/storage/sftp/pkg-uninstall',
+        'status_endpoint': '/api/storage/sftp/pkg-status',
+    },
+    {
+        'id': 'sharing-ftp', 'name': 'FTP', 'version': '1.0.0',
+        'icon': 'fa-upload', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
+        'description': 'Klasyczny serwer FTP z obsługa vsftpd.',
+        'apt_deps': ['vsftpd'], 'pip_deps': [],
+        'install_endpoint': '/api/storage/ftp/pkg-install',
+        'uninstall_endpoint': '/api/storage/ftp/pkg-uninstall',
+        'status_endpoint': '/api/storage/ftp/pkg-status',
+    },
+    {
+        'id': 'domains-manager', 'name': 'Domains & SSL', 'version': '1.0.0',
+        'icon': 'fa-globe', 'color': '#059669', 'category': 'Network', 'admin_only': True,
+        'description': 'Domeny z certyfikatami SSL, reverse proxy i Dynamic DNS.',
+        'apt_deps': [], 'pip_deps': [],
+        'install_endpoint': '/api/ddns/install',
+        'uninstall_endpoint': '/api/ddns/uninstall',
+        'status_endpoint': '/api/ddns/pkg-status',
+    },
+    {
+        'id': 'websites', 'name': 'Websites', 'version': '1.0.0',
+        'icon': 'fa-globe-americas', 'color': '#14b8a6', 'category': 'Tools', 'admin_only': False,
+        'description': 'Kreator stron z CMS, szablonami i edytorem wizualnym.',
+        'apt_deps': [], 'pip_deps': [],
+        'install_endpoint': '/api/websites/install',
+        'uninstall_endpoint': '/api/websites/uninstall',
+        'status_endpoint': '/api/websites/pkg-status',
+    },
+    {
+        'id': 'cloud-backup', 'name': 'Cloud Backup', 'version': '1.0.0',
+        'icon': 'fa-cloud-upload-alt', 'color': '#0ea5e9', 'category': 'Storage', 'admin_only': True,
+        'description': 'Backup do S3, Backblaze, Google Drive, WebDAV i SFTP z harmonogramem.',
+        'apt_deps': ['rclone'], 'pip_deps': [],
+        'install_endpoint': '/api/cloud-backup/install',
+        'uninstall_endpoint': '/api/cloud-backup/uninstall',
+        'status_endpoint': '/api/cloud-backup/pkg-status',
+    },
+    {
+        'id': 'raid-lvm', 'name': 'RAID / LVM', 'version': '1.0.0',
+        'icon': 'fa-layer-group', 'color': '#f59e0b', 'category': 'Storage', 'admin_only': True,
+        'description': 'Macierze RAID z mdadm i wolumeny LVM.',
+        'apt_deps': ['mdadm', 'lvm2'], 'pip_deps': [],
+        'install_endpoint': '/api/raid/install',
+        'uninstall_endpoint': '/api/raid/uninstall',
+        'status_endpoint': '/api/raid/pkg-status',
+    },
+    {
+        'id': 'wireguard', 'name': 'VPN (WireGuard)', 'version': '1.0.0',
+        'icon': 'fa-shield-halved', 'color': '#7c3aed', 'category': 'Network', 'admin_only': True,
+        'description': 'Serwer VPN WireGuard z peerami i kodami QR.',
+        'apt_deps': ['wireguard', 'wireguard-tools', 'qrencode'], 'pip_deps': [],
+        'install_endpoint': '/api/wireguard/install',
+        'uninstall_endpoint': '/api/wireguard/uninstall',
+        'status_endpoint': '/api/wireguard/pkg-status',
+    },
+    {
+        'id': 'antivirus', 'name': 'Antivirus (ClamAV)', 'version': '1.0.0',
+        'icon': 'fa-shield-virus', 'color': '#16a34a', 'category': 'Security', 'admin_only': True,
+        'description': 'ClamAV antywirus — skanowanie na zadanie i zaplanowane.',
+        'apt_deps': ['clamav', 'clamav-freshclam'], 'pip_deps': [],
+        'install_endpoint': '/api/antivirus/install',
+        'uninstall_endpoint': '/api/antivirus/uninstall',
+        'status_endpoint': '/api/antivirus/pkg-status',
+    },
+    {
+        'id': 'rollback', 'name': 'Rollback', 'version': '1.0.0',
+        'icon': 'fa-history', 'color': '#f97316', 'category': 'System', 'admin_only': True,
+        'description': 'Migawki systemu i przywracanie poprzednich wersji.',
+        'apt_deps': [], 'pip_deps': [], 'simple': True,
+    },
+    {
+        'id': 'firewall', 'name': 'Firewall (UFW)', 'version': '1.0.0',
+        'icon': 'fa-fire', 'color': '#e05d44', 'category': 'Security', 'admin_only': True,
+        'description': 'Zarządzanie regułami zapory i portami.',
+        'apt_deps': [], 'pip_deps': [], 'simple': True,
+    },
+    {
+        'id': 'fail2ban', 'name': 'Intrusion Protection', 'version': '1.0.0',
+        'icon': 'fa-shield-alt', 'color': '#ef4444', 'category': 'Security', 'admin_only': True,
+        'description': 'Fail2Ban — aktywne bany, whitelist, ochrona SSH/Samba/Web.',
+        'apt_deps': [], 'pip_deps': [], 'simple': True,
+    },
+    {
+        'id': 'cron', 'name': 'Scheduler', 'version': '1.0.0',
+        'icon': 'fa-clock', 'color': '#6366f1', 'category': 'System', 'admin_only': True,
+        'description': 'Harmonogram zadan z zarządzaniem cron jobs.',
+        'apt_deps': [], 'pip_deps': [], 'simple': True,
+    },
+    {
+        'id': 'ups', 'name': 'UPS', 'version': '1.0.0',
+        'icon': 'fa-battery-full', 'color': '#f59e0b', 'category': 'System', 'admin_only': True,
+        'description': 'Status baterii UPS i zarządzanie bezpiecznym wyłączeniem.',
+        'apt_deps': [], 'pip_deps': [], 'simple': True,
+    },
+    {
+        'id': 'family-hub', 'name': 'Family Hub', 'version': '1.0.0',
+        'icon': 'fa-house-user', 'color': '#f472b6', 'category': 'Tools', 'admin_only': False,
+        'description': 'Tablica ogloszen, listy zakupow, zadania i kalendarz rodzinny.',
+        'apt_deps': [], 'pip_deps': [], 'simple': True,
+    },
+    {
+        'id': 'sticky-notes', 'name': 'Sticky Notes', 'version': '1.0.0',
+        'icon': 'fa-sticky-note', 'color': '#fbbf24', 'category': 'Tools', 'admin_only': False,
+        'description': 'Szybkie notatki przyklejane do pulpitu.',
+        'apt_deps': [], 'pip_deps': [], 'simple': True,
+    },
+    {
+        'id': 'tickets', 'name': 'Tickets', 'version': '1.0.0',
+        'icon': 'fa-tasks', 'color': '#06b6d4', 'category': 'Tools', 'admin_only': False,
+        'description': 'Kanban — zarządzanie projektami i zadaniami.',
+        'apt_deps': [], 'pip_deps': [], 'simple': True,
+    },
+]
+
+# ─── State lock ───────────────────────────────────────────────
+
+_state_lock = threading.RLock()
+_catalog_lock = threading.RLock()
+
+# ─── Installed state helpers ──────────────────────────────────
+
+def _load_installed():
+    with _state_lock:
+        try:
+            if os.path.isfile(INSTALLED_FILE):
+                with open(INSTALLED_FILE) as f:
+                    return json.load(f)
+        except Exception:
+            pass
+        return {}
+
+
+def _save_installed(state):
+    with _state_lock:
+        tmp = INSTALLED_FILE + '.tmp'
+        with open(tmp, 'w') as f:
+            json.dump(state, f, indent=2)
+        os.replace(tmp, INSTALLED_FILE)
+
+
+def _set_installed(app_id, version, source='bundled'):
+    from datetime import datetime
+    state = _load_installed()
+    state[app_id] = {
+        'version': version,
+        'source': source,
+        'installed_at': datetime.utcnow().isoformat(),
+    }
+    _save_installed(state)
+
+
+def _set_uninstalled(app_id):
+    state = _load_installed()
+    state.pop(app_id, None)
+    _save_installed(state)
+
+
+# ─── Migration from ethos_packages.json ──────────────────────
+
+def migrate_from_ethos_packages():
+    """Jednorazowa migracja: wczytaj ethos_packages.json -> installed_apps.json.
+    Wywolywana przy starcie serwera z app.py."""
+    if os.path.isfile(INSTALLED_FILE):
+        return
+
+    from datetime import datetime
+    now = datetime.utcnow().isoformat()
+
+    old_file = data_path('ethos_packages.json')
+    new_state = {}
+
+    if os.path.isfile(old_file):
+        try:
+            with open(old_file) as f:
+                old_state = json.load(f)
+            for pkg_id, pkg_info in old_state.items():
+                if isinstance(pkg_info, dict) and pkg_info.get('installed'):
+                    new_state[pkg_id] = {
+                        'version': 'bundled',
+                        'source': 'bundled',
+                        'installed_at': pkg_info.get('installed_at', now),
+                    }
+        except Exception as e:
+            log.warning('Migration from ethos_packages.json failed: %s', e)
+
+    # Wykryj apki bundled na podstawie plikow na dysku
+    for app in BUILTIN_CATALOG:
+        aid = app['id']
+        if aid in new_state:
+            continue
+        fn = _get_frontend_filename(aid)
+        if fn is None:
+            # W monolicie apps.js — traktuj jako zainstalowane
+            new_state[aid] = {'version': 'bundled', 'source': 'bundled', 'installed_at': now}
+            continue
+        fp = os.path.join(_FRONTEND_APPS_DIR, fn + '.js')
+        if os.path.isfile(fp):
+            new_state[aid] = {'version': 'bundled', 'source': 'bundled', 'installed_at': now}
+
+    _save_installed(new_state)
+    log.info('[app_manager] Migrated %d packages to installed_apps.json', len(new_state))
+
+
+# ─── Catalog helpers ─────────────────────────────────────────
+
+def _get_frontend_filename(app_id):
+    if app_id in _FRONTEND_FILENAME:
+        return _FRONTEND_FILENAME[app_id]
+    return app_id
+
+
+def _load_catalog_cache():
+    try:
+        if not os.path.isfile(CATALOG_CACHE_FILE):
+            return None
+        age = time.time() - os.path.getmtime(CATALOG_CACHE_FILE)
+        if age > CATALOG_CACHE_TTL:
+            return None
+        with open(CATALOG_CACHE_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _save_catalog_cache(data):
+    try:
+        tmp = CATALOG_CACHE_FILE + '.tmp'
+        with open(tmp, 'w') as f:
+            json.dump(data, f)
+        os.replace(tmp, CATALOG_CACHE_FILE)
+    except Exception as e:
+        log.warning('[app_manager] Cannot save catalog cache: %s', e)
+
+
+def _fetch_github_catalog():
+    try:
+        req = urllib.request.Request(
+            GITHUB_CATALOG_URL,
+            headers={'User-Agent': 'EthOS-AppManager/1.0'},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+        if isinstance(data, dict) and 'apps' in data:
+            return data['apps']
+        if isinstance(data, list):
+            return data
+    except Exception as e:
+        log.debug('[app_manager] GitHub catalog unavailable: %s', e)
+    return None
+
+
+def _get_catalog(force_refresh=False):
+    with _catalog_lock:
+        cached = None if force_refresh else _load_catalog_cache()
+        if cached is not None:
+            return cached.get('apps', BUILTIN_CATALOG)
+
+        github_apps = _fetch_github_catalog()
+        if github_apps is not None:
+            builtin_by_id = {a['id']: a for a in BUILTIN_CATALOG}
+            merged = []
+            for app in github_apps:
+                base = builtin_by_id.get(app['id'], {}).copy()
+                base.update(app)
+                merged.append(base)
+            github_ids = {a['id'] for a in github_apps}
+            for app in BUILTIN_CATALOG:
+                if app['id'] not in github_ids:
+                    merged.append(app)
+            _save_catalog_cache({'apps': merged, 'source': 'github', 'fetched_at': time.time()})
+            return merged
+
+        _save_catalog_cache({'apps': BUILTIN_CATALOG, 'source': 'builtin', 'fetched_at': time.time()})
+        return BUILTIN_CATALOG
+
+
+# ─── Install helpers ─────────────────────────────────────────
+
+def _is_bundled(app_id):
+    fn = _get_frontend_filename(app_id)
+    if fn is None:
+        return True
+    fp = os.path.join(_FRONTEND_APPS_DIR, fn + '.js')
+    return os.path.isfile(fp)
+
+
+def _download_file(url, dest_path):
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'EthOS-AppManager/1.0'})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            content = resp.read()
+        tmp = dest_path + '.tmp'
+        with open(tmp, 'wb') as f:
+            f.write(content)
+        os.replace(tmp, dest_path)
+        return True
+    except Exception as e:
+        log.error('[app_manager] Download failed %s: %s', url, e)
+        return False
+
+
+def _install_apt_deps(deps, emit_fn):
+    if not deps:
+        return True
+    pkgs = ' '.join(q(d) for d in deps)
+    emit_fn({'stage': 'deps_apt', 'message': 'Instalowanie pakietow apt: ' + ', '.join(deps), 'percent': 30})
+    result = host_run('DEBIAN_FRONTEND=noninteractive apt-get install -y ' + pkgs, timeout=300)
+    return result.returncode == 0
+
+
+def _install_pip_deps(deps, emit_fn):
+    if not deps:
+        return True
+    pkgs = ' '.join(q(d) for d in deps)
+    venv = os.path.join(_ETHOS_ROOT, 'venv')
+    pip = os.path.join(venv, 'bin', 'pip') if os.path.isdir(venv) else 'pip3'
+    emit_fn({'stage': 'deps_pip', 'message': 'Instalowanie pakietow pip: ' + ', '.join(deps), 'percent': 50})
+    result = host_run(q(pip) + ' install --quiet ' + pkgs, timeout=300)
+    return result.returncode == 0
+
+
+def _sync_frontend_dist():
+    frontend = os.path.join(_ETHOS_ROOT, 'frontend')
+    dist = os.path.join(_ETHOS_ROOT, 'frontend_dist')
+    if os.path.isdir(dist):
+        host_run('rsync -av --delete ' + q(frontend + '/') + ' ' + q(dist + '/'), timeout=60)
+
+
+def _restart_server():
+    def _do():
+        import time as _t
+        _t.sleep(1.5)
+        host_run('systemctl restart ethos', timeout=10)
+    threading.Thread(target=_do, daemon=True).start()
+
+
+# ─── Background tasks ─────────────────────────────────────────
+
+def _bg_install(app_id, app_def, task_id):
+    def emit(extra):
+        _emit({'task_id': task_id, 'app_id': app_id, **extra})
+
+    try:
+        emit({'stage': 'start', 'percent': 5, 'message': 'Instalowanie ' + app_def['name'] + '...', 'status': 'running'})
+
+        # Pobierz pliki z GitHub jesli nie ma na dysku
+        if not _is_bundled(app_id):
+            emit({'stage': 'download', 'percent': 10, 'message': 'Pobieranie pliku frontend...', 'status': 'running'})
+            fn = _get_frontend_filename(app_id)
+            if fn:
+                url = GITHUB_APP_BASE + '/' + app_id + '/frontend.js'
+                dest = os.path.join(_FRONTEND_APPS_DIR, fn + '.js')
+                if not _download_file(url, dest):
+                    emit({'stage': 'error', 'percent': 0, 'message': 'Bląd pobierania frontend', 'status': 'error'})
+                    return
+        else:
+            emit({'stage': 'download', 'percent': 20, 'message': 'Pliki juz dostepne (bundled)', 'status': 'running'})
+
+        # Instalacja zaleznosci
+        apt_deps = app_def.get('apt_deps', [])
+        if apt_deps and not _install_apt_deps(apt_deps, emit):
+            emit({'stage': 'error', 'percent': 0, 'message': 'Bład instalacji apt deps', 'status': 'error'})
+            return
+
+        pip_deps = app_def.get('pip_deps', [])
+        if pip_deps and not _install_pip_deps(pip_deps, emit):
+            emit({'stage': 'error', 'percent': 0, 'message': 'Bład instalacji pip deps', 'status': 'error'})
+            return
+
+        # Wywolaj wlasny endpoint instalacji apki (jesli ma)
+        install_ep = app_def.get('install_endpoint')
+        if install_ep and not app_def.get('simple'):
+            emit({'stage': 'configure', 'percent': 65, 'message': 'Konfigurowanie apki...', 'status': 'running'})
+            try:
+                from flask import current_app
+                with current_app.test_client() as tc:
+                    tc.post(install_ep)
+            except Exception as e:
+                log.warning('[app_manager] install_endpoint %s failed: %s', install_ep, e)
+
+        # Synchronizacja frontend_dist
+        emit({'stage': 'sync', 'percent': 80, 'message': 'Synchronizacja plikow frontend...', 'status': 'running'})
+        _sync_frontend_dist()
+
+        version = app_def.get('version', 'bundled')
+        source = 'bundled' if _is_bundled(app_id) else 'github'
+        _set_installed(app_id, version, source)
+
+        emit({'stage': 'done', 'percent': 100, 'message': app_def['name'] + ' zainstalowano pomyslnie', 'status': 'done'})
+        emit({'stage': 'restart', 'percent': 100, 'message': 'Restartowanie serwera...', 'status': 'restarting'})
+        _restart_server()
+
+    except Exception as e:
+        log.exception('[app_manager] install error for %s', app_id)
+        emit({'stage': 'error', 'percent': 0, 'message': 'Bład: ' + str(e), 'status': 'error'})
+
+
+def _bg_uninstall(app_id, app_def, task_id, wipe_data=False):
+    def emit(extra):
+        _emit({'task_id': task_id, 'app_id': app_id, **extra})
+
+    try:
+        emit({'stage': 'start', 'percent': 10, 'message': 'Odinstalowywanie ' + app_def['name'] + '...', 'status': 'running'})
+
+        # Wywolaj wlasny endpoint uninstall
+        uninstall_ep = app_def.get('uninstall_endpoint')
+        if uninstall_ep and not app_def.get('simple'):
+            emit({'stage': 'cleanup', 'percent': 30, 'message': 'Czyszczenie danych apki...', 'status': 'running'})
+            try:
+                from flask import current_app
+                with current_app.test_client() as tc:
+                    tc.post(uninstall_ep, json={'wipe_data': wipe_data})
+            except Exception as e:
+                log.warning('[app_manager] uninstall_endpoint %s failed: %s', uninstall_ep, e)
+
+        # Usun pliki jesli pobrane z GitHub
+        inst = _load_installed().get(app_id, {})
+        if inst.get('source') == 'github':
+            emit({'stage': 'remove', 'percent': 60, 'message': 'Usuwanie plikow apki...', 'status': 'running'})
+            fn = _get_frontend_filename(app_id)
+            if fn:
+                fp = os.path.join(_FRONTEND_APPS_DIR, fn + '.js')
+                if os.path.isfile(fp):
+                    os.remove(fp)
+        else:
+            emit({'stage': 'remove', 'percent': 60, 'message': 'Apka bundled - oznaczam jako odinstalowana', 'status': 'running'})
+
+        _set_uninstalled(app_id)
+
+        emit({'stage': 'sync', 'percent': 85, 'message': 'Synchronizacja...', 'status': 'running'})
+        _sync_frontend_dist()
+
+        emit({'stage': 'done', 'percent': 100, 'message': app_def['name'] + ' odinstalowano', 'status': 'done'})
+        emit({'stage': 'restart', 'percent': 100, 'message': 'Restartowanie serwera...', 'status': 'restarting'})
+        _restart_server()
+
+    except Exception as e:
+        log.exception('[app_manager] uninstall error for %s', app_id)
+        emit({'stage': 'error', 'percent': 0, 'message': 'Bład: ' + str(e), 'status': 'error'})
+
+
+# ─── Auth helper ──────────────────────────────────────────────
+
+def _require_admin():
+    if getattr(g, 'role', None) != 'admin':
+        return jsonify({'error': 'Brak uprawnien (wymagane admin)'}), 403
+    return None
+
+
+# ─── Core apps info ───────────────────────────────────────────
+
+_CORE_META = {
+    'dashboard':        ('Dashboard',        'fa-tachometer-alt',    '#3b82f6', 'System',  'Przeglad systemu'),
+    'file-manager':     ('File Manager',     'fa-folder-open',       '#f59e0b', 'System',  'Przegladanie i zarzadzanie plikami'),
+    'storage-manager':  ('Storage Manager',  'fa-hdd',               '#10b981', 'Storage', 'Dyski, partycje, montowanie'),
+    'terminal':         ('Terminal',         'fa-terminal',          '#22c55e', 'System',  'Terminal przez przegladarke'),
+    'system-settings':  ('Settings',         'fa-cog',               '#6b7280', 'System',  'Ustawienia systemowe NAS'),
+    'users':            ('Users',            'fa-users',             '#6366f1', 'System',  'Zarzadzanie uzytkownikami'),
+    'updates':          ('Updates',          'fa-cloud-download-alt','#8b5cf6', 'System',  'Aktualizacje systemu EthOS'),
+    'app-store':        ('App Manager',      'fa-th',                '#f97316', 'System',  'Zarzadzanie paczkami EthOS'),
+    'packages':         ('Package Manager',  'fa-box',               '#0ea5e9', 'System',  'Zarzadzanie pakietami apt'),
+    'event-log':        ('Event Log',        'fa-list-alt',          '#94a3b8', 'System',  'Logi i historia operacji'),
+    'network':          ('Network',          'fa-network-wired',     '#0ea5e9', 'Network', 'Interfejsy sieciowe i WiFi'),
+    'services':         ('Services',         'fa-server',            '#64748b', 'System',  'Zarzadzanie serwisami systemowymi'),
+    'resource-monitor': ('Resource Monitor', 'fa-chart-area',        '#8b5cf6', 'System',  'CPU, RAM, dysk, siec - wykresy'),
+    'backup':           ('Backup',           'fa-shield-alt',        '#06b6d4', 'Storage', 'Tworzenie i przywracanie backupow'),
+    'power':            ('Power',            'fa-power-off',         '#22c55e', 'System',  'Harmonogram, WOL, spindown, governor'),
+    'notifications':    ('Notifications',    'fa-bell',              '#f59e0b', 'System',  'Kanaly powiadomien'),
+    'ssh-manager':      ('SSH Manager',      'fa-key',               '#10b981', 'Network', 'Zarzadzanie kluczami SSH'),
+    'naslink':          ('NASLink',          'fa-link',              '#a78bfa', 'Network', 'Polaczenia miedzy urzadzeniami NAS'),
+}
+
+
+def get_core_apps_info():
+    result = []
+    for aid in sorted(CORE_APPS):
+        meta = _CORE_META.get(aid, (aid, 'fa-cube', '#6b7280', 'System', ''))
+        result.append({
+            'id': aid,
+            'name': meta[0],
+            'icon': meta[1],
+            'color': meta[2],
+            'category': meta[3],
+            'description': meta[4],
+            'core': True,
+            'installed': True,
+            'installed_version': 'core',
+            'installed_source': 'core',
+        })
+    return result
+
+
+# ─── Endpoints ────────────────────────────────────────────────
+
+@app_manager_bp.route('/catalog')
+def get_catalog_endpoint():
+    if not getattr(g, 'role', None):
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    force = request.args.get('refresh') == '1'
+    catalog = _get_catalog(force_refresh=force)
+    installed = _load_installed()
+
+    result = []
+    for app in catalog:
+        inst = installed.get(app['id'], {})
+        item = dict(app)
+        item['installed'] = app['id'] in installed
+        item['installed_version'] = inst.get('version', '')
+        item['installed_source'] = inst.get('source', '')
+        item['installed_at'] = inst.get('installed_at', '')
+        item['core'] = app['id'] in CORE_APPS
+        item['update_available'] = (
+            item['installed']
+            and item['installed_version'] not in ('bundled', 'core', app.get('version', ''))
+            and app.get('version', '') > item['installed_version']
+        )
+        result.append(item)
+
+    return jsonify({'optional': result, 'core': get_core_apps_info()})
+
+
+@app_manager_bp.route('/catalog/refresh', methods=['POST'])
+def refresh_catalog():
+    err = _require_admin()
+    if err:
+        return err
+    apps = _get_catalog(force_refresh=True)
+    return jsonify({'ok': True, 'count': len(apps)})
+
+
+@app_manager_bp.route('/installed')
+def get_installed():
+    if not getattr(g, 'role', None):
+        return jsonify({'error': 'Unauthorized'}), 401
+    installed = _load_installed()
+    catalog = _get_catalog()
+    cat_by_id = {a['id']: a for a in catalog}
+    result = []
+    for app_id, inst in installed.items():
+        app = cat_by_id.get(app_id, {'id': app_id, 'name': app_id})
+        result.append({
+            **app,
+            'installed': True,
+            'installed_version': inst.get('version', 'bundled'),
+            'installed_source': inst.get('source', 'bundled'),
+            'installed_at': inst.get('installed_at', ''),
+            'core': app_id in CORE_APPS,
+        })
+    return jsonify(result)
+
+
+@app_manager_bp.route('/core')
+def get_core():
+    if not getattr(g, 'role', None):
+        return jsonify({'error': 'Unauthorized'}), 401
+    return jsonify(get_core_apps_info())
+
+
+@app_manager_bp.route('/check-updates')
+def check_updates():
+    if not getattr(g, 'role', None):
+        return jsonify({'error': 'Unauthorized'}), 401
+    catalog = _get_catalog(force_refresh=True)
+    installed = _load_installed()
+    updates = []
+    for app in catalog:
+        inst = installed.get(app['id'])
+        if inst and inst.get('version') not in ('bundled', 'core', app.get('version', '')):
+            if app.get('version', '') > inst.get('version', ''):
+                updates.append({
+                    'id': app['id'],
+                    'name': app.get('name', app['id']),
+                    'current_version': inst['version'],
+                    'latest_version': app['version'],
+                })
+    return jsonify(updates)
+
+
+@app_manager_bp.route('/<app_id>/install', methods=['POST'])
+def install_app(app_id):
+    err = _require_admin()
+    if err:
+        return err
+    if app_id in CORE_APPS:
+        return jsonify({'error': 'Core apps nie wymagaja instalacji'}), 400
+
+    catalog = _get_catalog()
+    app_def = next((a for a in catalog if a['id'] == app_id), None)
+    if not app_def:
+        return jsonify({'error': 'Nieznana apka: ' + app_id}), 404
+
+    task_id = str(uuid.uuid4())[:8]
+    from gevent import spawn
+    spawn(_bg_install, app_id, app_def, task_id)
+    return jsonify({'ok': True, 'task_id': task_id})
+
+
+@app_manager_bp.route('/<app_id>/uninstall', methods=['POST'])
+def uninstall_app(app_id):
+    err = _require_admin()
+    if err:
+        return err
+    if app_id in CORE_APPS:
+        return jsonify({'error': 'Nie mozna odinstalowac core app'}), 400
+
+    catalog = _get_catalog()
+    app_def = next((a for a in catalog if a['id'] == app_id), None)
+    if not app_def:
+        return jsonify({'error': 'Nieznana apka: ' + app_id}), 404
+
+    body = request.get_json(silent=True) or {}
+    wipe_data = bool(body.get('wipe_data', False))
+
+    task_id = str(uuid.uuid4())[:8]
+    from gevent import spawn
+    spawn(_bg_uninstall, app_id, app_def, task_id, wipe_data)
+    return jsonify({'ok': True, 'task_id': task_id})
+
+
+@app_manager_bp.route('/<app_id>/update', methods=['POST'])
+def update_app(app_id):
+    err = _require_admin()
+    if err:
+        return err
+    if app_id in CORE_APPS:
+        return jsonify({'error': 'Aktualizacje core apps przez OTA'}), 400
+
+    catalog = _get_catalog(force_refresh=True)
+    app_def = next((a for a in catalog if a['id'] == app_id), None)
+    if not app_def:
+        return jsonify({'error': 'Nieznana apka: ' + app_id}), 404
+
+    task_id = str(uuid.uuid4())[:8]
+    from gevent import spawn
+    spawn(_bg_install, app_id, app_def, task_id)
+    return jsonify({'ok': True, 'task_id': task_id})
+
+
+@app_manager_bp.route('/<app_id>/status')
+def app_status(app_id):
+    if not getattr(g, 'role', None):
+        return jsonify({'error': 'Unauthorized'}), 401
+    installed = _load_installed()
+    inst = installed.get(app_id)
+    if inst:
+        return jsonify({'installed': True, **inst, 'core': app_id in CORE_APPS})
+    return jsonify({'installed': False, 'core': app_id in CORE_APPS})

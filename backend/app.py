@@ -113,6 +113,7 @@ from blueprints.flasher import flasher_bp
 from blueprints.builder import builder_bp
 from blueprints.fail2ban import fail2ban_bp
 from blueprints.wireguard import wireguard_bp
+from blueprints.antivirus import antivirus_bp
 from blueprints.firewall import firewall_bp
 from blueprints.diskrepair import diskrepair_bp
 from blueprints.remote_log import remote_log_bp, init_remote_log
@@ -145,6 +146,7 @@ from blueprints.totp import totp_bp, is_totp_enabled, verify_totp_code, verify_b
 from blueprints.cron_manager import cron_bp
 from blueprints.raid_manager import raid_bp
 from blueprints.api_docs import api_docs_bp
+from blueprints.app_manager import app_manager_bp, init_app_manager, migrate_from_ethos_packages, CORE_APPS as _APP_MANAGER_CORE_APPS
 
 # ── Shadow password verification (avoids crypt DeprecationWarning) ──
 import warnings as _warnings
@@ -391,6 +393,7 @@ if _HAS_AICHAT:
     app.register_blueprint(aichat_bp)
     aichat_bp._socketio = socketio  # for install progress events
     wireguard_bp._socketio = socketio  # for install progress events
+    antivirus_bp._socketio = socketio  # for install progress events
 app.register_blueprint(vm_bp)
 app.register_blueprint(ddns_bp)
 app.register_blueprint(settings_bp)
@@ -406,6 +409,7 @@ app.register_blueprint(rollback_bp)
 app.register_blueprint(cloud_backup_bp)
 app.register_blueprint(fail2ban_bp)
 app.register_blueprint(wireguard_bp)
+app.register_blueprint(antivirus_bp)
 app.register_blueprint(ups_bp)
 app.register_blueprint(power_bp, url_prefix='/api/power')
 app.register_blueprint(notifications_bp)
@@ -415,7 +419,10 @@ app.register_blueprint(dashboard_bp)
 app.register_blueprint(cron_bp)
 app.register_blueprint(raid_bp)
 app.register_blueprint(api_docs_bp)
+app.register_blueprint(app_manager_bp)
 init_appstore(socketio)
+init_app_manager(socketio)
+migrate_from_ethos_packages()
 init_downloads(socketio)
 init_update(socketio)
 init_remote_log(socketio)
@@ -747,6 +754,7 @@ _API_TO_APP = {
     '/api/docker/': 'docker-manager',
     '/api/vm/': 'vm-manager',
     '/api/appstore/': 'app-store',
+    '/api/app-manager/': 'app-store',
     '/api/gallery/': 'gallery',
     '/api/files/duplicates/': 'duplicates',
     '/api/files/transfer-remote': 'naslink',
@@ -776,6 +784,7 @@ _API_TO_APP = {
     '/api/sandbox/': 'docker-manager',
     '/api/fail2ban/': 'fail2ban',
     '/api/wireguard/': 'wireguard',
+    '/api/antivirus/': 'antivirus',
     '/api/power/': 'power',
     '/api/ups/': 'ups',
     '/api/cloud-backup/': 'cloud-backup',
@@ -794,7 +803,7 @@ _ADMIN_ONLY_APPS = {
     'users', 'usb-flasher', 'builder', 'updates', 'services',
     'disk-repair', 'remote-log', 'surveillance',
     'system-settings', 'domains-manager', 'vm-manager', 'app-store',
-    'fail2ban', 'wireguard', 'power', 'ups', 'cloud-backup', 'rollback',
+    'fail2ban', 'wireguard', 'antivirus', 'power', 'ups', 'cloud-backup', 'rollback',
     'raid', 'cron',
 }
 
@@ -880,7 +889,7 @@ def _blueprint_auth_guard():
                         '/api/flasher/', '/api/builder/', '/api/services/',
                         '/api/surveillance/', '/api/notes/', '/api/familyhub/', '/api/update/',
                         '/api/remote-log/', '/api/websites/', '/api/sandbox/',
-                        '/api/fail2ban/', '/api/firewall/', '/api/wireguard/',
+                        '/api/fail2ban/', '/api/firewall/', '/api/wireguard/', '/api/antivirus/',
                         '/api/power/', '/api/ups/', '/api/totp/',
                         '/api/cloud-backup/', '/api/cron/', '/api/dashboard/',
                         '/api/dlna/', '/api/notifications/', '/api/raid/',
@@ -8507,6 +8516,17 @@ def get_apps():
             'description': 'WireGuard VPN server — manage peers, generate QR codes',
             'admin_only': True,
             'package': 'wireguard',
+        },
+        {
+            'id': 'antivirus',
+            'name': 'Antivirus (ClamAV)',
+            'icon': 'fa-shield-virus',
+            'color': '#16a34a',
+            'type': 'builtin',
+            'category': 'Security',
+            'description': 'ClamAV antivirus — on-demand and scheduled scans',
+            'admin_only': True,
+            'package': 'antivirus',
         }
     ]
 
@@ -9061,6 +9081,19 @@ _ETHOS_PACKAGES = [
         'uninstall_endpoint': '/api/wireguard/uninstall',
         'status_endpoint': '/api/wireguard/pkg-status',
         'category': 'Network',
+    },
+    {
+        'id': 'antivirus',
+        'name': 'Antivirus (ClamAV)',
+        'icon': 'fa-shield-virus',
+        'color': '#16a34a',
+        'description': 'ClamAV antivirus scanner with scheduler.',
+        'app_id': 'antivirus',
+        'deps_label': 'clamav, clamav-freshclam',
+        'install_endpoint': '/api/antivirus/install',
+        'uninstall_endpoint': '/api/antivirus/uninstall',
+        'status_endpoint': '/api/antivirus/pkg-status',
+        'category': 'Security',
     },
 
 ]
