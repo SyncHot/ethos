@@ -146,7 +146,7 @@ from blueprints.totp import totp_bp, is_totp_enabled, verify_totp_code, verify_b
 from blueprints.cron_manager import cron_bp
 from blueprints.raid_manager import raid_bp
 from blueprints.api_docs import api_docs_bp
-from blueprints.app_manager import app_manager_bp, init_app_manager, migrate_from_ethos_packages, CORE_APPS as _APP_MANAGER_CORE_APPS
+from blueprints.app_manager import app_manager_bp, init_app_manager, migrate_from_ethos_packages, CORE_APPS as _APP_MANAGER_CORE_APPS, load_installed as _load_app_manager_installed
 
 # ── Shadow password verification (avoids crypt DeprecationWarning) ──
 import warnings as _warnings
@@ -8543,8 +8543,13 @@ def get_apps():
     _pkg_by_app = _dtd(list)
     for _p in _ETHOS_PACKAGES:
         _pkg_by_app[_p['app_id']].append(_p['id'])
-    apps = [a for a in apps if a['id'] not in _pkg_by_app or
-            any(pkg_state.get(pid, {}).get('installed') for pid in _pkg_by_app[a['id']])]
+
+    # Also check installed_apps.json (Package Center state)
+    _pm_installed = _load_app_manager_installed()
+
+    apps = [a for a in apps if a['id'] not in _pkg_by_app
+            or a['id'] in _pm_installed
+            or any(pkg_state.get(pid, {}).get('installed') for pid in _pkg_by_app[a['id']])]
 
     # Filter by privileges
     user = get_current_user()

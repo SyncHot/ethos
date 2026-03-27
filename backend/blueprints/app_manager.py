@@ -412,6 +412,10 @@ def _load_installed():
         return {}
 
 
+# Public alias so app.py can import without touching private names
+load_installed = _load_installed
+
+
 def _save_installed(state):
     with _state_lock:
         tmp = INSTALLED_FILE + '.tmp'
