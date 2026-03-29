@@ -6,13 +6,13 @@ import os
 import json
 import time
 import socket
-import subprocess
 from datetime import timedelta
 
 from flask import Blueprint, jsonify
 
 import psutil
 
+from host import host_run, q
 from utils import require_tools, check_tool
 
 dashboard_bp = Blueprint('dashboard', __name__, url_prefix='/api/dashboard')
@@ -24,11 +24,8 @@ VERSION_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'version
 # ── helpers ──────────────────────────────────────────────────────
 
 def _run(cmd, timeout=5):
-    try:
-        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
-        return r.stdout.strip()
-    except Exception:
-        return ''
+    r = host_run(cmd, timeout=timeout)
+    return r.stdout.strip() if r.returncode >= 0 else ''
 
 
 def _read_install_conf():
@@ -132,7 +129,7 @@ def _get_shares_count():
 
 def _service_active(name):
     """Check if a systemd service is active."""
-    code = _run(f"systemctl is-active {name} 2>/dev/null")
+    code = _run(f"systemctl is-active {q(name)} 2>/dev/null")
     return code == 'active'
 
 

@@ -3,10 +3,11 @@ import re
 import json
 import shlex
 import shutil
-import subprocess
 import time
 from flask import Blueprint, jsonify, request
 from blueprints.eventlog import log
+
+from host import host_run
 
 # This blueprint handles WOL, Schedule, HDD Spindown, CPU Governor
 
@@ -35,11 +36,8 @@ def save_config(config):
         json.dump(config, f, indent=2)
 
 def run_cmd(cmd):
-    try:
-        res = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
-        return res.stdout.strip()
-    except Exception as e:
-        return str(e)
+    r = host_run(cmd, timeout=5)
+    return r.stdout.strip() if r.returncode >= 0 else ''
 
 @power_bp.route('/status', methods=['GET'])
 def get_status():
@@ -49,7 +47,7 @@ def get_status():
     iface = _get_primary_iface()
     wol_status = "Unknown"
     if iface:
-        out = run_cmd(f"ethtool {iface} | grep 'Wake-on'")
+        out = run_cmd(f"ethtool {shlex.quote(iface)} | grep 'Wake-on'")
         # Supports Wake-on: pumbg
         # Wake-on: g
         if "Wake-on: g" in out:

@@ -38,34 +38,34 @@ AppRegistry['notifications'] = function (appDef) {
                 { key: 'port',      label: 'Port',       type: 'number' },
                 { key: 'username',  label: t('Użytkownik'), type: 'text' },
                 { key: 'password',  label: t('Hasło'),      type: 'password' },
-                { key: 'from_addr', label: 'Od (e-mail)', type: 'text' },
-                { key: 'to_addr',   label: 'Do (e-mail)', type: 'text' },
+                { key: 'from_addr', label: t('Od (e-mail)'), type: 'text' },
+                { key: 'to_addr',   label: t('Do (e-mail)'), type: 'text' },
                 { key: 'use_tls',   label: 'TLS',         type: 'checkbox' },
             ]},
         webhook: { label: 'Webhook', icon: 'fa-globe', color: '#10b981',
             fields: [
                 { key: 'url',    label: 'URL',    type: 'password' },
-                { key: 'method', label: 'Metoda', type: 'select', options: ['POST', 'PUT', 'PATCH'] },
+                { key: 'method', label: t('Metoda'), type: 'select', options: ['POST', 'PUT', 'PATCH'] },
             ]},
     };
 
     const TRIGGERS = {
         smart_warning:    { label: t('Ostrzeżenie S.M.A.R.T.'),    icon: 'fa-hdd' },
         backup_failed:    { label: t('Kopia zapasowa — błąd'),      icon: 'fa-exclamation-triangle' },
-        backup_completed: { label: 'Kopia zapasowa — sukces',    icon: 'fa-check-circle' },
+        backup_completed: { label: t('Kopia zapasowa — sukces'),    icon: 'fa-check-circle' },
         disk_full_90:     { label: t('Dysk zapełniony (>90%)'),     icon: 'fa-database' },
-        login_failed:     { label: 'Nieudane logowanie',         icon: 'fa-sign-in-alt' },
-        container_crash:  { label: 'Awaria kontenera Docker',    icon: 'fa-cubes' },
+        login_failed:     { label: t('Nieudane logowanie'),         icon: 'fa-sign-in-alt' },
+        container_crash:  { label: t('Awaria kontenera Docker'),    icon: 'fa-cubes' },
         update_available: { label: t('Dostępna aktualizacja'),      icon: 'fa-download' },
-        raid_degraded:    { label: 'Degradacja macierzy RAID',   icon: 'fa-layer-group' },
+        raid_degraded:    { label: t('Degradacja macierzy RAID'),   icon: 'fa-layer-group' },
     };
 
     /* ── Tabs ───────────────────────────────────────────────── */
 
     const tabs = [
         { id: 'channels', label: t('Kanały'),       icon: 'fa-satellite-dish' },
-        { id: 'triggers', label: 'Wyzwalacze',   icon: 'fa-bolt' },
-        { id: 'history',  label: 'Historia',      icon: 'fa-history' },
+        { id: 'triggers', label: t('Wyzwalacze'),   icon: 'fa-bolt' },
+        { id: 'history',  label: t('Historia'),      icon: 'fa-history' },
     ];
 
     let activeTab = 'channels';

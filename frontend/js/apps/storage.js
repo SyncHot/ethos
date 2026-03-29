@@ -178,8 +178,8 @@ function renderStorageApp(body) {
 
         const groupDefs = [
             { key: 'usb',     icon: 'fa-usb',    color: '#a78bfa', label: 'USB' },
-            { key: 'storage', icon: 'fa-hdd',     color: '#f59e0b', label: 'Magazyn' },
-            { key: 'system',  icon: 'fa-server',  color: '#3b82f6', label: 'System' },
+            { key: 'storage', icon: 'fa-hdd',     color: '#f59e0b', label: t('Magazyn') },
+            { key: 'system',  icon: 'fa-server',  color: '#3b82f6', label: t('System') },
         ];
 
         let html = '';
@@ -721,7 +721,7 @@ function renderStorageApp(body) {
                 <div class="st-split-bar">
                     ${splitParts.map((p, i) => {
                         const pctW = p.size_mb ? Math.max(2, (p.size_mb / diskSizeMB) * 100) : Math.max(2, (freeMB / diskSizeMB) * 100);
-                        return `<div class="st-split-bar-seg" style="width:${pctW}%;background:${colors[i % colors.length]}" title="Part ${i+1}: ${p.size_mb ? p.size_mb + ' MB' : 'Reszta'}"></div>`;
+                        return `<div class="st-split-bar-seg" style="width:${pctW}%;background:${colors[i % colors.length]}" title="Part ${i+1}: ${p.size_mb ? p.size_mb + ' MB' : t('Reszta')}"></div>`;
                     }).join('')}
                 </div>
                 <div class="st-split-parts" id="st-split-parts">
@@ -790,7 +790,7 @@ function renderStorageApp(body) {
             const totalMB = splitParts.reduce((s, p) => s + (p.size_mb || 0), 0);
             if (totalMB > diskSizeMB) { toast('Suma przekracza rozmiar dysku!', 'error'); return; }
 
-            const descs = splitParts.map((p, i) => `  ${i+1}. ${p.size_mb ? p.size_mb + ' MB' : 'Reszta'} (${p.fstype})`).join('\n');
+            const descs = splitParts.map((p, i) => `  ${i+1}. ${p.size_mb ? p.size_mb + ' MB' : t('Reszta')} (${p.fstype})`).join('\n');
             if (!confirm(`⚠️ ${t('UWAGA!')}\n\n${t('Podzielić')} /dev/${parentDisk.name} ${t('na')} ${splitParts.length} ${t('partycji?')}\n\n${descs}\n\n${t('WSZYSTKIE DANE ZOSTANĄ UTRACONE!')}`)) return;
 
             fmtFooter.style.display = 'none';

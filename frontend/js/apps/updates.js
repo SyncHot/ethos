@@ -226,7 +226,7 @@ function renderUpdatesApp(body) {
         const lastMsg = $('#upd-last-check-msg');
         if (lastMsg) {
             const last = status.last_check || config.last_check;
-            lastMsg.textContent = last ? `Ostatnie sprawdzenie: ${fmtDate(last)}` : 'Nie sprawdzano jeszcze';
+            lastMsg.textContent = last ? `${t('Ostatnie sprawdzenie')}: ${fmtDate(last)}` : t('Nie sprawdzano jeszcze');
         }
 
         // Available update
@@ -239,7 +239,7 @@ function renderUpdatesApp(body) {
             avUp.style.display = '';
             $('#upd-remote-ver').textContent = available.version || '?';
             const sizeEl = $('#upd-pkg-size');
-            if (sizeEl) sizeEl.textContent = available.size ? `Rozmiar: ${fmtBytes(available.size)}` : '';
+            if (sizeEl) sizeEl.textContent = available.size ? `${t('Rozmiar')}: ${fmtBytes(available.size)}` : '';
             renderChangelog(available.changelog);
         } else {
             noUp.style.display = '';
@@ -255,8 +255,8 @@ function renderUpdatesApp(body) {
             $('#upd-progress-fill').style.width = pct + '%';
             $('#upd-progress-pct').textContent = pct + '%';
             const label = $('#upd-progress-label');
-            if (status.downloading) label.textContent = 'Pobieranie aktualizacji…';
-            else if (status.applying) label.textContent = 'Instalowanie aktualizacji…';
+            if (status.downloading) label.textContent = t('Pobieranie aktualizacji…');
+            else if (status.applying) label.textContent = t('Instalowanie aktualizacji…');
             const stepEl = $('#upd-progress-step');
             if (stepEl) stepEl.textContent = status.message || '';
             // Highlight completed steps
@@ -280,7 +280,7 @@ function renderUpdatesApp(body) {
         if (checkBtn) {
             checkBtn.disabled = status.checking || busy;
             if (status.checking) {
-                checkBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sprawdzanie…';
+                checkBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Sprawdzanie…');
             } else {
                 checkBtn.innerHTML = `<i class="fas fa-sync-alt"></i> ${t('Sprawdź aktualizacje')}`;
             }
@@ -298,7 +298,7 @@ function renderUpdatesApp(body) {
             </div>`;
         } else if (busy) {
             bar.style.display = '';
-            const msg = status.message || (status.downloading ? 'Pobieranie aktualizacji…' : 'Instalowanie aktualizacji…');
+            const msg = status.message || (status.downloading ? t('Pobieranie aktualizacji…') : t('Instalowanie aktualizacji…'));
             bar.innerHTML = `<div style="background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.15);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--accent);">
                 <i class="fas fa-spinner fa-spin" style="margin-right:6px;"></i>${msg}
             </div>`;

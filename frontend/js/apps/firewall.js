@@ -66,7 +66,7 @@ AppRegistry['firewall'] = function (appDef) {
 
     const tabBanned = document.createElement('button');
     tabBanned.className = 'tab-btn';
-    tabBanned.textContent = 'Zablokowane IP (Fail2Ban)';
+    tabBanned.textContent = t('Zablokowane IP (Fail2Ban)');
     tabBanned.onclick = () => switchTab('banned');
 
     tabsContainer.appendChild(tabRules);
@@ -526,7 +526,7 @@ AppRegistry['firewall'] = function (appDef) {
                     jailDiv.appendChild(ul);
                 } else {
                     const empty = document.createElement('div');
-                    empty.textContent = 'Brak zablokowanych IP.';
+                    empty.textContent = t('Brak zablokowanych IP.');
                     empty.style.opacity = '0.6';
                     empty.style.fontSize = '0.85rem';
                     empty.style.paddingLeft = '10px';

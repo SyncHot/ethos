@@ -344,25 +344,25 @@ function renderResourcesApp(body) {
                 ${c.driver_installed ? `
                 <div class="res-gpu-status-ok">
                     <i class="fas fa-check-circle res-gpu-status-ok-icon"></i>
-                    <span class="res-gpu-status-ok-text">Sterowniki zainstalowane</span>
+                    <span class="res-gpu-status-ok-text">${t('Sterowniki zainstalowane')}</span>
                 </div>` : (c.packages_installed && c.reboot_required) ? `
                 <div class="res-gpu-status-warn">
                     <i class="fas fa-exclamation-triangle res-gpu-status-warn-icon"></i>
-                    <span class="res-gpu-status-warn-text">Sterowniki zainstalowane, wymagany restart systemu</span>
+                    <span class="res-gpu-status-warn-text">${t('Sterowniki zainstalowane, wymagany restart systemu')}</span>
                 </div>
                 <div class="res-reboot-area">
                     <button onclick="window._resReboot(this)"
                         class="res-reboot-btn">
-                        <i class="fas fa-redo"></i> Uruchom ponownie
+                        <i class="fas fa-redo"></i> ${t('Uruchom ponownie')}
                     </button>
                 </div>` : c.install_cmd ? `
                 <div id="gpu-install-area-${i}" class="res-mt-md">
                     <button onclick="window._gpuInstallDriver(${i})"
                         class="res-gpu-install-btn res-gpu-install-btn-base"
                         style="background:${vendorColors[c.vendor]||'#3b82f6'}">
-                        <i class="fas fa-download"></i> Pobierz i zainstaluj sterowniki
+                        <i class="fas fa-download"></i> ${t('Pobierz i zainstaluj sterowniki')}
                     </button>
-                </div>` : `<p class="res-no-install">Brak automatycznej instalacji dla tego producenta.</p>`}
+                </div>` : `<p class="res-no-install">${t('Brak automatycznej instalacji dla tego producenta.')}</p>`}
             </div>
         </div>`).join('');
 
@@ -375,7 +375,7 @@ function renderResourcesApp(body) {
                 <div class="res-install-wrap">
                     <div class="res-install-status-row">
                         <i class="fas fa-spinner fa-spin res-install-spinner"></i>
-                        <span id="gpu-install-status" class="res-install-status">Rozpoczynanie…</span>
+                        <span id="gpu-install-status" class="res-install-status">${t('Rozpoczynanie…')}</span>
                     </div>
                     <div class="res-install-bar-bg">
                         <div id="gpu-install-bar" class="res-install-bar-fill"></div>
@@ -419,11 +419,10 @@ function renderResourcesApp(body) {
             if (NAS.socket) NAS.socket.on('gpu_driver_progress', _gpuInstallListener);
 
             // Trigger install
-            fetch('/api/resources/gpu/install', {
+            api('/resources/gpu/install', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + NAS.token, 'X-CSRFToken': NAS.csrfToken},
                 body: JSON.stringify({card_index: cardIndex})
-            }).then(r => r.json()).then(res => {
+            }).then(res => {
                 if (res.error) {
                     const statusEl = document.getElementById('gpu-install-status');
                     if (statusEl) statusEl.innerHTML = '<span class="res-status-error">' + res.error + '</span>';

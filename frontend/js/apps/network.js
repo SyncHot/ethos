@@ -23,7 +23,7 @@ AppRegistry['network'] = function (appDef) {
                     <span class="net-badge" id="net-wifi-badge" style="display:none">0</span>
                 </button>
                 <button class="net-nav-btn" data-tab="saved">
-                    <i class="fas fa-bookmark"></i><span>Zapisane sieci</span>
+                    <i class="fas fa-bookmark"></i><span>${t('Zapisane sieci')}</span>
                 </button>
                 <button class="net-nav-btn" data-tab="hotspot">
                     <i class="fas fa-broadcast-tower"></i><span>Hotspot</span>
@@ -72,7 +72,7 @@ AppRegistry['network'] = function (appDef) {
             <!-- Saved -->
             <div class="net-tab" id="net-tab-saved">
                 <div class="net-header">
-                    <h2>Zapisane sieci WiFi</h2>
+                    <h2>${t('Zapisane sieci WiFi')}</h2>
                     <button class="net-btn net-btn-sm" id="net-refresh-saved">
                         <i class="fas fa-sync-alt"></i> ${t('Odśwież')}
                     </button>
@@ -272,8 +272,8 @@ AppRegistry['network'] = function (appDef) {
             const list = root.querySelector('#net-wifi-list');
             const btn = root.querySelector('#net-wifi-scan');
             btn.disabled = true;
-            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Skanowanie...';
-            list.innerHTML = '<div class="net-loading"><i class="fas fa-spinner fa-spin"></i> Skanowanie sieci WiFi...</div>';
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Skanowanie...');
+            list.innerHTML = '<div class="net-loading"><i class="fas fa-spinner fa-spin"></i> ' + t('Skanowanie sieci WiFi...') + '</div>';
 
             try {
                 const data = await api('/network/wifi/scan', { method: 'POST' });
@@ -388,7 +388,7 @@ AppRegistry['network'] = function (appDef) {
                         </div>
                         <div class="net-saved-actions">
                             <button class="net-btn net-btn-sm net-btn-danger" data-forget="${esc(conn.name)}">
-                                <i class="fas fa-trash"></i> Zapomnij
+                                <i class="fas fa-trash"></i> ${t('Zapomnij')}
                             </button>
                         </div>
                     `;
