@@ -80,7 +80,7 @@ def _get_ddns_hostname():
         out, _, _ = _run_cmd(['curl', '-s', 'ifconfig.me'])
         if out and re.match(r'^\d+\.\d+\.\d+\.\d+$', out):
             return out
-    except:
+    except Exception:
         pass
         
     return None
@@ -213,7 +213,7 @@ def _get_next_ip(peers):
                     addr = parts[0]
                     octet = int(addr.split('.')[-1])
                     used_ips.add(octet)
-                except:
+                except (ValueError, IndexError):
                     pass
     
     # Server is usually .1

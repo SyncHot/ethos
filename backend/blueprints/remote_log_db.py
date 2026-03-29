@@ -39,7 +39,7 @@ def init_db():
     # Check if empty and migrate from JSON files
     try:
         count = conn.execute('SELECT COUNT(*) FROM device_logs').fetchone()[0]
-    except:
+    except Exception:
         count = 0
     conn.close()
 

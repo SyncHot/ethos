@@ -140,7 +140,7 @@ def _row_to_dict(row):
         if field in d and d[field]:
             try:
                 d[field] = json.loads(d[field])
-            except:
+            except (json.JSONDecodeError, ValueError, TypeError):
                 d[field] = []
     
     # Convert booleans

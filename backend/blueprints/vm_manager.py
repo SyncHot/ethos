@@ -107,6 +107,9 @@ def _build_net_opts(vm):
 
     if net_type == 'bridge':
         bridge = net.get('bridge', 'br0')
+        if not _validate_bridge_name(bridge):
+            log.warning("Invalid bridge name rejected: %s", bridge)
+            bridge = _BRIDGE_NAME
         tap = _create_tap(bridge)
         if not tap:
             # Fallback to user mode if bridge setup fails
@@ -141,6 +144,13 @@ def _build_net_opts(vm):
 
 _BRIDGE_NAME = 'br0'
 
+
+def _validate_bridge_name(name):
+    """Validate bridge interface name to prevent shell injection."""
+    if not name or not isinstance(name, str):
+        return False
+    return bool(re.match(r'^[a-zA-Z][a-zA-Z0-9\-]{0,14}$', name))
+
 log = __import__('logging').getLogger('vm-manager')
 
 
@@ -164,6 +174,8 @@ def _get_primary_iface():
 
 def _bridge_exists(br='br0'):
     """Check if a bridge interface exists."""
+    if not _validate_bridge_name(br):
+        return False
     try:
         r = subprocess.run(
             f'ip link show {br} type bridge',
@@ -717,7 +729,10 @@ def update_vm(vm_id):
         pf = _validate_port_forwards(net.get('port_forwards', []) if isinstance(net, dict) else [])
         net_cfg = {'net_type': net_type, 'port_forwards': pf}
         if net_type == 'bridge':
-            net_cfg['bridge'] = net.get('bridge', _BRIDGE_NAME) if isinstance(net, dict) else _BRIDGE_NAME
+            bridge = net.get('bridge', _BRIDGE_NAME) if isinstance(net, dict) else _BRIDGE_NAME
+            if not _validate_bridge_name(bridge):
+                return jsonify({'error': 'Invalid bridge name'}), 400
+            net_cfg['bridge'] = bridge
         vm['network'] = net_cfg
 
     _save_vms(vms)
@@ -792,7 +807,10 @@ def update_vm_network(vm_id):
     pf = _validate_port_forwards(data.get('port_forwards', []))
     net_cfg = {'net_type': net_type, 'port_forwards': pf}
     if net_type == 'bridge':
-        net_cfg['bridge'] = data.get('bridge', _BRIDGE_NAME)
+        bridge = data.get('bridge', _BRIDGE_NAME)
+        if not _validate_bridge_name(bridge):
+            return jsonify({'error': 'Invalid bridge name'}), 400
+        net_cfg['bridge'] = bridge
     vms[vm_id]['network'] = net_cfg
     _save_vms(vms)
     return jsonify({'ok': True})

@@ -15,6 +15,18 @@ AppRegistry['resource-monitor'] = function (appDef) {
 };
 
 function renderResourcesApp(body) {
+    // Reboot helper — replaces inline fetch() in onclick attributes
+    window._resReboot = function(btn) {
+        api('/power/action', { method: 'POST', body: JSON.stringify({ action: 'reboot' }) })
+            .then(() => {
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Restartowanie…');
+            })
+            .catch(() => {
+                btn.textContent = t('Błąd restartu');
+            });
+    };
+
     const sections = ['overview','cpu','ram','gpu','disks','smart','network','processes','usb'];
     const sectionLabels = {
         overview: `<i class="fas fa-tachometer-alt"></i> ${t('Przegląd')}`,
@@ -339,7 +351,7 @@ function renderResourcesApp(body) {
                     <span class="res-gpu-status-warn-text">Sterowniki zainstalowane, wymagany restart systemu</span>
                 </div>
                 <div class="res-reboot-area">
-                    <button onclick="fetch('/api/power/action',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+NAS.token,'X-CSRFToken':NAS.csrfToken},body:JSON.stringify({action:'reboot'})}).then(()=>{this.disabled=true;this.innerHTML='<i class=\\'fas fa-spinner fa-spin\\'></i> Restartowanie…'})"
+                    <button onclick="window._resReboot(this)"
                         class="res-reboot-btn">
                         <i class="fas fa-redo"></i> Uruchom ponownie
                     </button>
@@ -392,7 +404,7 @@ function renderResourcesApp(body) {
                     if (ev.reboot_required) {
                         const rebootArea = document.createElement('div');
                         rebootArea.style.cssText = 'margin-top:10px';
-                        rebootArea.innerHTML = `<button onclick="fetch('/api/power/action',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+NAS.token,'X-CSRFToken':NAS.csrfToken},body:JSON.stringify({action:'reboot'})}).then(()=>{this.disabled=true;this.innerHTML='<i class=\\'fas fa-spinner fa-spin\\'></i> Restartowanie…'})"
+                        rebootArea.innerHTML = `<button onclick="window._resReboot(this)"
                             class="res-reboot-btn">
                             <i class="fas fa-redo"></i> Uruchom ponownie
                         </button>`;

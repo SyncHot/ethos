@@ -3128,7 +3128,7 @@ def _resume_interrupted_compress():
     for p in (archive_path, archive_path + '.ethos_archive_tmp'):
         if _safe_exists(p):
             try: os.remove(p)
-            except: pass
+            except OSError: pass
 
     cur_user = {'username': username} if username else None
 
@@ -4833,7 +4833,7 @@ def _bg_download_zip(resolved, tmp_path, zip_name, download_id, total):
         if cancelled:
             if os.path.exists(tmp_path):
                 try: os.remove(tmp_path)
-                except: pass
+                except OSError: pass
             _clear_zip_task()
             _fileop_finish('download', False, 'Cancelled')
             return
@@ -4849,7 +4849,7 @@ def _bg_download_zip(resolved, tmp_path, zip_name, download_id, total):
     except Exception as e:
         if os.path.exists(tmp_path):
             try: os.remove(tmp_path)
-            except: pass
+            except OSError: pass
         _clear_zip_task()
         _fileop_finish('download', False, str(e))
 
@@ -4880,7 +4880,7 @@ def files_download_zip_file(download_id):
         try:
             if os.path.exists(info['path']):
                 os.remove(info['path'])
-        except:
+        except OSError:
             pass
     return resp
 
@@ -7340,7 +7340,7 @@ def _bg_compress(resolved, archive_path, fmt, total, cur_user=None):
             for p in (tmp_archive_path,):
                 if os.path.exists(p):
                     try: os.remove(p)
-                    except: pass
+                    except OSError: pass
             _clear_compress_task()
             _fileop_finish('compress', False, 'Cancelled')
             return
@@ -7355,7 +7355,7 @@ def _bg_compress(resolved, archive_path, fmt, total, cur_user=None):
         for p in (tmp_archive_path, archive_path):
             if os.path.exists(p):
                 try: os.remove(p)
-                except: pass
+                except OSError: pass
         _clear_compress_task()
         _fileop_finish('compress', False, str(e))
 

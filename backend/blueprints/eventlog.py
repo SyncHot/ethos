@@ -51,7 +51,7 @@ def init_eventlog(socketio_instance):
     # Check if empty and migrate
     try:
         count = conn.execute('SELECT COUNT(*) FROM events').fetchone()[0]
-    except:
+    except Exception:
         count = 0
     conn.close()
 
@@ -81,7 +81,7 @@ def _migrate_from_json():
                             json.dumps(e.get('details')) if e.get('details') else None
                         )
                     )
-                except:
+                except (json.JSONDecodeError, ValueError, KeyError):
                     pass
         conn.commit()
         conn.close()
@@ -261,7 +261,7 @@ def eventlog_list():
             if d['details']:
                 try:
                     d['details'] = json.loads(d['details'])
-                except:
+                except (json.JSONDecodeError, ValueError, TypeError):
                     pass
             events.append(d)
     finally:
