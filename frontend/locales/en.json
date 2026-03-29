@@ -1787,5 +1787,9 @@
   "Brak historii skanowań.": "No scan history.",
   "zagrożeń": "threats",
   "Ręczne": "Manual",
-  "Zaplanowane": "Scheduled"
+  "Zaplanowane": "Scheduled",
+  "Odinstaluj ClamAV": "Uninstall ClamAV",
+  "Czy na pewno chcesz odinstalować ClamAV?": "Are you sure you want to uninstall ClamAV?",
+  "ClamAV odinstalowany": "ClamAV uninstalled",
+  "Błąd": "Error"
 }

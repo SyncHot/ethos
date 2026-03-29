@@ -4797,7 +4797,8 @@ textarea.app-input { resize: vertical; line-height: 1.5; }
 /* ─── Antivirus (ClamAV) ─── */
 .av-prog-bar { background:var(--bg-default); border-radius:6px; height:6px; overflow:hidden; }
 .av-prog-fill { height:100%; background:#16a34a; border-radius:6px; transition:width .3s; width:0%; }
-@keyframes av-slide { 0%{transform:translateX(-100%)} 100%{transform:translateX(350%)} }
+.av-prog-indeterminate { width:30% !important; animation:av-slide 1.5s ease-in-out infinite; }
+@keyframes av-slide { 0%{margin-left:-30%} 100%{margin-left:100%} }
 .av-prog-msg { font-size:12px; color:var(--text-muted); margin-top:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .av-threat-item { font-size:11px; font-family:monospace; color:var(--text-primary); padding:2px 0; display:flex; gap:6px; align-items:flex-start; word-break:break-all; }
 .av-badge-red { background:rgba(239,68,68,.15); color:#ef4444; }
