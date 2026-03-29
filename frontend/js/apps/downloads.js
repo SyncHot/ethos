@@ -59,7 +59,7 @@ function renderDownloadManager(body, launchOpts) {
     body.innerHTML = `
         <div class="dlm dl-layout-row">
             <div class="dlm-sidebar">
-                <div class="dlm-nav active" data-tab="downloads"><i class="fas fa-download"></i> <span>${t('Pobieranie')}</span></div>
+                <div class="dlm-nav active" data-tab="downloads"><i class="fas fa-download"></i> <span>${t('Pobieranie')}</span><span class="dlm-nav-badge" id="dlm-badge-active" style="display:none"></span></div>
                 <div class="dlm-nav" data-tab="history"><i class="fas fa-history"></i> <span>${t('Historia')}</span></div>
                 <div class="dlm-nav" data-tab="stats"><i class="fas fa-chart-line"></i> <span>${t('Statystyki')}</span></div>
                 <div class="dlm-nav" data-tab="settings"><i class="fas fa-cog"></i> <span>${t('Ustawienia')}</span></div>
@@ -93,7 +93,7 @@ function renderDownloadManager(body, launchOpts) {
                     </div>
                 </div>
                 <div class="dlm-list" id="dlm-list">
-                    <div class="dlm-empty"><i class="fas fa-cloud-download-alt"></i><span>${t('Brak pobierań')}</span></div>
+                    <div class="dlm-empty"><i class="fas fa-cloud-download-alt"></i><span>${t('Brak pobierań')}</span><div class="dlm-empty-sub">${t('Wklej link powyżej lub przeciągnij plik .torrent')}</div></div>
                 </div>
             </div>
             <div class="dlm-content" id="dlm-tab-history" style="display:none;">
@@ -1155,6 +1155,7 @@ function renderDownloadManager(body, launchOpts) {
         const isPausable = ['downloading', 'pending', 'torrent_downloading'].includes(dl.status);
         const isCancellable = ['downloading', 'resolving', 'pending', 'paused', 'torrent_uploading', 'torrent_downloading'].includes(dl.status);
         const isMovable = ['pending', 'paused'].includes(dl.status);
+        const ftypeClass = _dlmFileTypeClass(dl.filename, dl.is_torrent);
 
         let sizeInfo = '';
         if (dl.status === 'downloading') {
@@ -1179,7 +1180,7 @@ function renderDownloadManager(body, launchOpts) {
         const catBadge = cat ? `<span class="dlm-cat-badge">${_dlmEsc(cat.name)}</span>` : '';
 
         return `
-            <div class="dlm-item dlm-status-${dl.status}${isMovable ? ' dlm-draggable' : ''}" data-id="${dl.id}"${isMovable ? ' draggable="true"' : ''}>
+            <div class="dlm-item dlm-status-${dl.status}${ftypeClass ? ' ' + ftypeClass : ''}${isMovable ? ' dlm-draggable' : ''}" data-id="${dl.id}"${isMovable ? ' draggable="true"' : ''}>
                 <div class="dlm-item-icon">${icon}</div>
                 <div class="dlm-item-info">
                     <div class="dlm-item-name" title="${_dlmEsc(dl.filename || dl.url)}">${nameDisplay}</div>
@@ -1308,10 +1309,19 @@ function renderDownloadManager(body, launchOpts) {
     function renderDownloads() {
         const list = body.querySelector('#dlm-list');
         const filtered = downloads.filter(_matchesFilter);
+
+        // Update sidebar badge
+        const activeCount = downloads.filter(d => ['downloading','resolving','torrent_downloading','torrent_uploading','pending'].includes(d.status)).length;
+        const badge = body.querySelector('#dlm-badge-active');
+        if (badge) {
+            if (activeCount > 0) { badge.textContent = activeCount; badge.style.display = ''; }
+            else { badge.style.display = 'none'; }
+        }
+
         if (!filtered.length) {
             list.innerHTML = filterText
-                ? `<div class="dlm-empty"><i class="fas fa-search"></i><span>${t('Brak wyników')}</span></div>`
-                : `<div class="dlm-empty"><i class="fas fa-cloud-download-alt"></i><span>${t('Brak pobierań')}</span></div>`;
+                ? `<div class="dlm-empty"><i class="fas fa-search"></i><span>${t('Brak wyników')}</span><div class="dlm-empty-sub">${t('Spróbuj zmienić filtr lub kategorię')}</div></div>`
+                : `<div class="dlm-empty"><i class="fas fa-cloud-download-alt"></i><span>${t('Brak pobierań')}</span><div class="dlm-empty-sub">${t('Wklej link powyżej lub przeciągnij plik .torrent')}</div></div>`;
             return;
         }
 
@@ -2081,4 +2091,23 @@ function _dlmStatusLabel(status, dl) {
         case 'cancelled': return t('Anulowano');
         default: return status;
     }
+}
+
+function _dlmFileTypeClass(filename, isTorrent) {
+    if (isTorrent) return 'dlm-ftype-torrent';
+    if (!filename) return '';
+    const ext = filename.split('.').pop().toLowerCase();
+    const VIDEO = ['mp4','mkv','avi','mov','wmv','flv','webm','m4v','mpg','mpeg','ts','vob'];
+    const AUDIO = ['mp3','flac','wav','aac','ogg','wma','m4a','opus','alac'];
+    const ARCHIVE = ['zip','rar','7z','tar','gz','bz2','xz','iso','cab','dmg'];
+    const IMAGE = ['jpg','jpeg','png','gif','bmp','svg','webp','tiff','ico','heic'];
+    const DOC = ['pdf','doc','docx','xls','xlsx','ppt','pptx','txt','rtf','odt','epub','mobi'];
+    const CODE = ['js','py','html','css','json','xml','yml','yaml','sh','bat','sql','php','java','c','cpp','go','rs'];
+    if (VIDEO.includes(ext)) return 'dlm-ftype-video';
+    if (AUDIO.includes(ext)) return 'dlm-ftype-audio';
+    if (ARCHIVE.includes(ext)) return 'dlm-ftype-archive';
+    if (IMAGE.includes(ext)) return 'dlm-ftype-image';
+    if (DOC.includes(ext)) return 'dlm-ftype-document';
+    if (CODE.includes(ext)) return 'dlm-ftype-code';
+    return '';
 }
