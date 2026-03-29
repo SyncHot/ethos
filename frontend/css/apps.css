@@ -328,6 +328,7 @@ select.fm-input {
 
 /* ═══ Backup App ═══ */
 .bak-app { height: 100%; display: flex; flex-direction: column; overflow: hidden; position: relative; }
+.bak-app .fm-toolbar-btn { width: auto; height: auto; padding: 6px 12px; gap: 6px; font-size: 12px; white-space: nowrap; }
 .bak-tabs { display: flex; gap: 4px; padding: 8px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .bak-tab { background: none; border: none; color: var(--text-muted); padding: 8px 14px; cursor: pointer; border-radius: var(--r-sm); font-size: 0.9em; display: flex; align-items: center; gap: 6px; transition: all var(--transition-fast); }
 .bak-tab:hover { background: var(--overlay-2); }
@@ -1712,7 +1713,7 @@ select.fm-input {
 .bak-row-noshrink { display:flex; gap:6px; flex-shrink:0; }
 .bak-row-sm { display:flex; gap:6px; }
 .bak-row-between-mb { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
-.bak-row-end { display:flex; justify-content:flex-end; margin-bottom:8px; }
+.bak-row-end { display:flex; justify-content:flex-end; margin-bottom:8px; padding-bottom:8px; border-bottom:1px solid var(--border); position:sticky; top:0; background:var(--bg-surface); z-index:2; }
 .bak-col-gap8 { display:flex; flex-direction:column; gap:8px; }
 .bak-col-gap10 { display:flex; flex-direction:column; gap:10px; }
 .bak-row-mb14 { display:flex; gap:8px; margin-bottom:14px; }

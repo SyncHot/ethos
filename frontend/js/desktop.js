@@ -1906,7 +1906,7 @@ function connectSocket() {
             loadNotifications();
         });
         NAS.socket.on('backup_progress', () => {
-            if (!NAS._lastBackupNotifRefresh || Date.now() - NAS._lastBackupNotifRefresh > 10000) {
+            if (!NAS._lastBackupNotifRefresh || Date.now() - NAS._lastBackupNotifRefresh > 30000) {
                 NAS._lastBackupNotifRefresh = Date.now();
                 loadNotifications();
             }

@@ -187,12 +187,14 @@ def get_backup_notifications():
     notifs = []
 
     # 1) In-progress backup
+    in_progress = False
     with operation_lock:
         op = current_operation
     with _progress_lock:
         prog = progress_state.get('last')
         prog_ts = progress_state.get('timestamp', time.time())
     if op and prog:
+        in_progress = True
         pct = prog.get('overall_percent', prog.get('percent', 0))
         stage = prog.get('stage', 'archive')
         stage_label = 'Transfer' if stage == 'transfer' else 'Archiving'
@@ -205,42 +207,44 @@ def get_backup_notifications():
         })
 
     # 2) Recent completed/failed backups from history (last 24h, max 5)
-    try:
-        history = load_history()
-        cutoff = time.time() - 86400
-        count = 0
-        for entry in history:
-            if count >= 5:
-                break
-            ts = entry.get('timestamp', '')
-            try:
-                entry_time = datetime.fromisoformat(ts).timestamp()
-            except Exception:
-                continue
-            if entry_time < cutoff:
-                break
-            status = entry.get('status', '')
-            if status == 'completed':
-                size_mb = round(entry.get('size', 0) / (1024 * 1024), 1)
-                duration = entry.get('duration', 0)
-                notifs.append({
-                    'type': 'success',
-                    'title': 'Backup completed',
-                    'message': f'{entry.get("archive_file", "?")} — {size_mb} MB, {round(duration)}s',
-                    'time': entry_time,
-                    'action': {'app': 'backup', 'tab': 'history'}
-                })
-            elif status == 'failed':
-                notifs.append({
-                    'type': 'error',
-                    'title': 'Backup failed',
-                    'message': entry.get('error', 'Unknown error'),
-                    'time': entry_time,
-                    'action': {'app': 'backup', 'tab': 'history'}
-                })
-            count += 1
-    except Exception:
-        pass
+    # Skip history entries while a backup is in progress to avoid "double" notifications
+    if not in_progress:
+        try:
+            history = load_history()
+            cutoff = time.time() - 86400
+            count = 0
+            for entry in history:
+                if count >= 5:
+                    break
+                ts = entry.get('timestamp', '')
+                try:
+                    entry_time = datetime.fromisoformat(ts).timestamp()
+                except Exception:
+                    continue
+                if entry_time < cutoff:
+                    break
+                status = entry.get('status', '')
+                if status == 'completed':
+                    size_mb = round(entry.get('size', 0) / (1024 * 1024), 1)
+                    duration = entry.get('duration', 0)
+                    notifs.append({
+                        'type': 'success',
+                        'title': 'Backup completed',
+                        'message': f'{entry.get("archive_file", "?")} — {size_mb} MB, {round(duration)}s',
+                        'time': entry_time,
+                        'action': {'app': 'backup', 'tab': 'history'}
+                    })
+                elif status == 'failed':
+                    notifs.append({
+                        'type': 'error',
+                        'title': 'Backup failed',
+                        'message': entry.get('error', 'Unknown error'),
+                        'time': entry_time,
+                        'action': {'app': 'backup', 'tab': 'history'}
+                    })
+                count += 1
+        except Exception:
+            pass
 
     return notifs
 
@@ -818,7 +822,7 @@ def run_backup(paths, destination=None, profile_name=None, retention=0, incremen
         last_progress_time = 0
         tar_errors = []
 
-        for line in process.stdout:
+        for line in iter(process.stdout.readline, ''):
             line = line.strip()
             if line:
                 files_done += 1
@@ -827,7 +831,6 @@ def run_backup(paths, destination=None, profile_name=None, retention=0, incremen
                         bytes_done += os.path.getsize('/' + line)
                 except Exception:
                     pass
-                # Yield to gevent event loop periodically
                 if files_done % 50 == 0:
                     gevent.sleep(0)
                 percent = (files_done / total_files * 100) if total_files > 0 else (files_done / max(files_done, 1) * 50)
@@ -1002,7 +1005,7 @@ def run_restore(backup_file, target_path=None, archive_dir=None, decrypt_passphr
                 cmd.insert(1, '--listed-incremental=/dev/null')
 
             process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-            for line in process.stdout:
+            for line in iter(process.stdout.readline, ''):
                 line = line.strip()
                 if line:
                     files_done += 1

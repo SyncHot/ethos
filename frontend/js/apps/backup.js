@@ -39,7 +39,7 @@ function renderBackupApp(body) {
         return '<span class="bak-path-dir">' + dir + '</span><span class="bak-path-name">' + name + '</span>';
     }
     function destLabelHtml(dest) {
-        if (!dest) return '<span class="bak-badge"><i class="fas fa-hdd"></i> Lokalnie</span>';
+        if (!dest) return '<span class="bak-badge"><i class="fas fa-hdd"></i> ' + t('Lokalnie') + '</span>';
         if (dest.type === 'usb') {
             var usbName = dest.path ? dest.path.split('/').pop() : 'USB';
             return '<span class="bak-badge bak-badge-green"><i class="fas fa-usb"></i> USB: ' + usbName + '</span>';
@@ -150,7 +150,7 @@ function renderBackupApp(body) {
             <div class="bak-section-header">
                 <h3><i class="fas fa-bookmark"></i> ${t('Profile backupów')}</h3>
                 <div class="bak-row">
-                    <button class="fm-toolbar-btn btn-green" id="bak-profile-new"><i class="fas fa-plus"></i> Nowy profil</button>
+                    <button class="fm-toolbar-btn btn-green" id="bak-profile-new"><i class="fas fa-plus"></i> ${t('Nowy profil')}</button>
                     <button class="fm-toolbar-btn" id="bak-profile-export" title="Eksportuj profile"><i class="fas fa-file-export"></i> Eksportuj</button>
                     <button class="fm-toolbar-btn" id="bak-profile-import" title="Importuj profile"><i class="fas fa-file-import"></i> Importuj</button>
                     <input type="file" id="bak-profile-import-file" accept=".json" class="bak-hidden">
@@ -173,7 +173,7 @@ function renderBackupApp(body) {
                     <div class="bak-step-label">${t('Wybierz foldery do zabezpieczenia')}</div>
                     <div class="bak-paths-list" id="bak-paths"></div>
                     <div class="bak-mt8">
-                        <button class="fm-toolbar-btn btn-green" id="bak-browse-btn"><i class="fas fa-folder-plus"></i> Dodaj folder</button>
+                        <button class="fm-toolbar-btn btn-green" id="bak-browse-btn"><i class="fas fa-folder-plus"></i> ${t('Dodaj folder')}</button>
                     </div>
                 </div>
             </div>
@@ -184,7 +184,7 @@ function renderBackupApp(body) {
                     <div class="bak-step-label">${t('Gdzie zapisać kopię?')}</div>
                 <div class="bak-dest-row">
                     <select id="bak-dest-type" class="fm-input bak-w-auto">
-                        <option value="local">Lokalnie</option>
+                        <option value="local">${t('Lokalnie')}</option>
                         <option value="usb">USB</option>
                         <option value="ssh">SSH</option>
                     </select>
@@ -212,8 +212,8 @@ function renderBackupApp(body) {
             </div>
 
             <div class="bak-start-area">
-                <button class="printer-btn bak-shrink0" id="bak-start-btn"><i class="fas fa-play"></i> Rozpocznij backup</button>
-                <span class="bak-caption">Kopia zostanie utworzona w wybranej lokalizacji</span>
+                <button class="printer-btn bak-shrink0" id="bak-start-btn"><i class="fas fa-play"></i> ${t('Rozpocznij backup')}</button>
+                <span class="bak-caption">${t('Kopia zostanie utworzona w wybranej lokalizacji')}</span>
             </div>
             <!-- Progress panel -->
             <div class="bak-progress hidden" id="bak-progress">
@@ -229,7 +229,7 @@ function renderBackupApp(body) {
                     <div class="bak-log-viewer" id="bak-log-viewer"></div>
                 </details>
                 <div class="bak-row-mt8">
-                    <button class="fm-toolbar-btn btn-red btn-sm" id="bak-cancel-btn"><i class="fas fa-stop"></i> Anuluj</button>
+                    <button class="fm-toolbar-btn btn-red btn-sm" id="bak-cancel-btn"><i class="fas fa-stop"></i> ${t('Anuluj')}</button>
                     <button class="fm-toolbar-btn btn-sm bak-ml-auto" id="bak-progress-close"><i class="fas fa-times"></i> Zamknij</button>
                 </div>
             </div>
@@ -577,22 +577,22 @@ function renderBackupApp(body) {
         <div class="bak-modal hidden" id="bak-profile-modal">
             <div class="bak-modal-content bak-modal-600">
                 <div class="bak-modal-header">
-                    <h3 id="bak-pm-title"><i class="fas fa-bookmark"></i> Nowy profil</h3>
+                    <h3 id="bak-pm-title"><i class="fas fa-bookmark"></i> ${t('Nowy profil')}</h3>
                     <button class="fm-toolbar-btn" id="bak-pm-close"><i class="fas fa-times"></i></button>
                 </div>
                 <div class="bak-scroll-body">
-                    <div class="storage-form-row"><label>Nazwa:</label><input type="text" id="bak-pm-name" class="fm-input"></div>
+                    <div class="storage-form-row"><label>${t('Nazwa:')}</label><input type="text" id="bak-pm-name" class="fm-input"></div>
 
                     <label class="bak-block-mt12"><strong>${t('Ścieżki:')}</strong></label>
                     <div class="bak-pm-paths" id="bak-pm-paths"></div>
                     <div class="bak-mt6">
-                        <button class="fm-toolbar-btn btn-green" id="bak-pm-browse"><i class="fas fa-folder-plus"></i> Dodaj folder</button>
+                        <button class="fm-toolbar-btn btn-green" id="bak-pm-browse"><i class="fas fa-folder-plus"></i> ${t('Dodaj folder')}</button>
                     </div>
 
                     <div class="storage-form-row bak-mt14">
-                        <label>Cel:</label>
+                        <label>${t('Cel:')}</label>
                         <select id="bak-pm-dest" class="fm-input bak-w-auto">
-                            <option value="local">Lokalnie</option>
+                            <option value="local">${t('Lokalnie')}</option>
                             <option value="usb">USB</option>
                             <option value="ssh">SSH</option>
                         </select>
@@ -607,13 +607,13 @@ function renderBackupApp(body) {
                     </div>
 
                     <div class="storage-form-row bak-mt10">
-                        <label>Harmonogram:</label>
+                        <label>${t('Harmonogram:')}</label>
                         <select id="bak-pm-sched-type" class="fm-input bak-w-auto">
                             <option value="manual">${t('Ręczny')}</option>
-                            <option value="daily">Codziennie</option>
+                            <option value="daily">${t('Codziennie')}</option>
                             <option value="weekly">${t('Co tydzień')}</option>
                         </select>
-                        <label>Godzina:</label>
+                        <label>${t('Godzina:')}</label>
                         <input type="time" id="bak-pm-sched-time" class="fm-input bak-w120" value="03:00">
                     </div>
                     <div class="bak-pm-days hidden bak-tag-row" id="bak-pm-days">
@@ -627,19 +627,19 @@ function renderBackupApp(body) {
                     </div>
 
                     <div class="storage-form-row bak-mt10">
-                        <label>Retencja (kopii):</label>
+                        <label>${t('Retencja (kopii):')}</label>
                         <input type="number" id="bak-pm-retention" class="fm-input bak-w80" value="3" min="0">
-                        <label class="storage-check"><input type="checkbox" id="bak-pm-incr"> Przyrostowy</label>
+                        <label class="storage-check"><input type="checkbox" id="bak-pm-incr"> ${t('Przyrostowy')}</label>
                     </div>
 
                     <div class="storage-form-row bak-mt10">
-                        <label class="storage-check"><input type="checkbox" id="bak-pm-encrypt"> <i class="fas fa-lock"></i> Szyfruj backup (AES-256)</label>
+                        <label class="storage-check"><input type="checkbox" id="bak-pm-encrypt"> <i class="fas fa-lock"></i> ${t('Szyfruj backup (AES-256)')}</label>
                     </div>
                     <div class="hidden" id="bak-pm-encrypt-opts">
                         <div class="storage-form-row bak-mt10">
-                            <label>Tryb klucza:</label>
+                            <label>${t('Tryb klucza:')}</label>
                             <label class="storage-check"><input type="radio" name="bak-pm-enc-mode" value="passphrase" id="bak-pm-enc-passphrase" checked> <i class="fas fa-keyboard"></i> ${t('Hasło (wpisywane)')}</label>
-                            <label class="storage-check"><input type="radio" name="bak-pm-enc-mode" value="key" id="bak-pm-enc-key"> <i class="fas fa-key"></i> Klucz automatyczny</label>
+                            <label class="storage-check"><input type="radio" name="bak-pm-enc-mode" value="key" id="bak-pm-enc-key"> <i class="fas fa-key"></i> ${t('Klucz automatyczny')}</label>
                         </div>
                         <div class="bak-encrypt-warning" id="bak-pm-encrypt-warning">
                             <i class="fas fa-exclamation-triangle"></i>
@@ -652,8 +652,8 @@ function renderBackupApp(body) {
                     </div>
                 </div>
                 <div class="bak-modal-footer bak-gap8">
-                    <button class="fm-toolbar-btn btn-green" id="bak-pm-save"><i class="fas fa-save"></i> Zapisz</button>
-                    <button class="fm-toolbar-btn" id="bak-pm-cancel"><i class="fas fa-times"></i> Anuluj</button>
+                    <button class="fm-toolbar-btn btn-green" id="bak-pm-save"><i class="fas fa-save"></i> ${t('Zapisz')}</button>
+                    <button class="fm-toolbar-btn" id="bak-pm-cancel"><i class="fas fa-times"></i> ${t('Anuluj')}</button>
                 </div>
             </div>
         </div>
@@ -893,7 +893,7 @@ function renderBackupApp(body) {
                     destDetailHtml = '<i class="fas fa-server"></i> SSH (id: ' + dest.server_id + ')';
                 }
             } else {
-                destDetailHtml = '<i class="fas fa-hdd"></i> Lokalnie: <strong>/app/backups</strong>';
+                destDetailHtml = '<i class="fas fa-hdd"></i> ' + t('Lokalnie') + ': <strong>/app/backups</strong>';
             }
 
             return '<div class="bak-profile-card">'
@@ -918,8 +918,8 @@ function renderBackupApp(body) {
                 + '</div>'
                 + '</div>'
                 + '<div class="bak-profile-card-actions">'
-                + '<button class="fm-toolbar-btn btn-green btn-sm" data-run-profile="' + p.id + '"><i class="fas fa-play"></i> Uruchom</button>'
-                + '<button class="fm-toolbar-btn btn-sm" data-edit-profile="' + p.id + '"><i class="fas fa-edit"></i> Edytuj</button>'
+                + '<button class="fm-toolbar-btn btn-green btn-sm" data-run-profile="' + p.id + '"><i class="fas fa-play"></i> ' + t('Uruchom') + '</button>'
+                + '<button class="fm-toolbar-btn btn-sm" data-edit-profile="' + p.id + '"><i class="fas fa-edit"></i> ' + t('Edytuj') + '</button>'
                 + (enc && enc.enabled && enc.mode === 'key' ? '<button class="fm-toolbar-btn btn-sm" data-view-key="' + p.id + '" title="' + t('Pokaż klucz szyfrowania') + '"><i class="fas fa-key"></i></button>' : '')
                 + '<button class="fm-toolbar-btn btn-red btn-sm" data-del-profile="' + p.id + '"><i class="fas fa-trash"></i></button>'
                 + '</div></div>';
@@ -992,7 +992,7 @@ function renderBackupApp(body) {
 
     function openProfileEditor(profile) {
         pmEditId = profile ? profile.id : null;
-        var title = profile ? 'Edytuj profil' : 'Nowy profil';
+        var title = profile ? t('Edytuj profil') : t('Nowy profil');
         QS('#bak-pm-title').innerHTML = '<i class="fas fa-bookmark"></i> ' + title;
 
         if (profile) {
@@ -1434,7 +1434,7 @@ function renderBackupApp(body) {
 
     /* ── Ad-hoc source browse ── */
     QS('#bak-browse-btn').onclick = function() {
-        openDirPicker(null, 'Dodaj folder do backupu', async function(path) {
+        openDirPicker(null, t('Dodaj folder do backupu'), async function(path) {
             try {
                 await api('/backup/paths', { method: 'POST', body: { path: path } });
                 loadPaths();
@@ -1445,7 +1445,7 @@ function renderBackupApp(body) {
 
     /* ── Profile source browse ── */
     QS('#bak-pm-browse').onclick = function() {
-        openDirPicker(null, 'Dodaj folder do profilu', function(path) {
+        openDirPicker(null, t('Dodaj folder do profilu'), function(path) {
             if (pmPaths.indexOf(path) === -1) { pmPaths.push(path); renderPmPaths(); }
         });
     };
@@ -1889,10 +1889,10 @@ function renderBackupApp(body) {
         if (!state.history.length) { el.innerHTML = `<div class="bak-empty-state"><i class="fas fa-history"></i><p>${t('Brak historii')}</p><span>${t('Historia operacji pojawi się tutaj')}</span></div>`; return; }
 
         function destBadge(h) {
-            if (!h.destination) return '<span class="bak-badge">Lokalnie</span>';
+            if (!h.destination) return '<span class="bak-badge">' + t('Lokalnie') + '</span>';
             if (h.destination.type === 'usb') return '<span class="bak-badge bak-badge-blue"><i class="fas fa-usb"></i> USB</span>';
             if (h.destination.type === 'ssh') return '<span class="bak-badge bak-badge-purple"><i class="fas fa-server"></i> SSH</span>';
-            return '<span class="bak-badge">Lokalnie</span>';
+            return '<span class="bak-badge">' + t('Lokalnie') + '</span>';
         }
         function opBadge(h) {
             if (h.operation === 'restore') return ' <span class="bak-badge bak-badge-green"><i class="fas fa-undo"></i> ' + t('Przywrócenie') + '</span>';
