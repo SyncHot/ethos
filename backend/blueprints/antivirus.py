@@ -303,16 +303,17 @@ def start_scan():
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                bufsize=1,
             )
             _active_scan['proc'] = proc
 
-            for line in proc.stdout:
+            for line in iter(proc.stdout.readline, ''):
                 line = line.rstrip()
                 if not line:
                     continue
                 if line.endswith(': OK'):
                     scanned += 1
-                    if scanned % 200 == 0:
+                    if scanned % 50 == 0:
                         _emit('progress', -1,
                               'Scanned ' + str(scanned) + ' files...',
                               scanned=scanned, threats=len(threats))

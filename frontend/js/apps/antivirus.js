@@ -376,6 +376,7 @@ AppRegistry['antivirus'] = function (appDef) {
             progDiv.style.display = 'none';
             return;
         }
+        progMsg.textContent = t('Skanowanie') + ': ' + scanPath;
         attachScanListener(r.scan_id);
     }
 
