@@ -328,6 +328,10 @@ def _allowed_image_roots():
     builder_images = _app_path('installer/images')
     if builder_images:
         roots.append(os.path.realpath(builder_images))
+    # Allow ISOs from mounted drives
+    for mnt in ('/media', '/mnt'):
+        if os.path.isdir(mnt):
+            roots.append(os.path.realpath(mnt))
     return [r.rstrip(os.sep) for r in roots if r]
 
 
@@ -573,6 +577,7 @@ def list_vms():
             'disk_size': vm.get('disk_size', '10G'),
             'os_type': vm.get('os_type', 'linux'),
             'boot_image': vm.get('boot_image', ''),
+            'autostart': vm.get('autostart', False),
             'status': 'running' if is_running else 'stopped',
             'vnc_port': info.get('vnc_port') if is_running else None,
             'vnc_display': info.get('vnc_display') if is_running else None,
@@ -702,6 +707,8 @@ def update_vm(vm_id):
         vm['boot_image'] = new_boot
     if 'description' in data:
         vm['description'] = data['description']
+    if 'autostart' in data:
+        vm['autostart'] = bool(data['autostart'])
     if 'network' in data:
         net = data['network']
         net_type = net.get('net_type', 'user') if isinstance(net, dict) else 'user'
@@ -715,6 +722,55 @@ def update_vm(vm_id):
 
     _save_vms(vms)
     return jsonify({'ok': True})
+
+
+@vm_bp.route('/machines/<vm_id>/autostart', methods=['PUT'])
+@admin_required
+@_require_qemu
+def set_vm_autostart(vm_id):
+    """Toggle autostart for a VM (allowed even while running)."""
+    vms = _load_vms()
+    if vm_id not in vms:
+        return jsonify({'error': 'VM not found'}), 404
+    data = request.get_json(force=True) if request.data else {}
+    vms[vm_id]['autostart'] = bool(data.get('autostart', False))
+    _save_vms(vms)
+    return jsonify({'ok': True, 'autostart': vms[vm_id]['autostart']})
+
+
+def vm_autostart_boot():
+    """Start all VMs with autostart=True. Called on EthOS startup."""
+    import logging
+    from flask import current_app, g
+    log = logging.getLogger('vm_autostart')
+    try:
+        vms = _load_vms()
+    except Exception:
+        return
+    candidates = [(vid, v) for vid, v in vms.items() if v.get('autostart')]
+    if not candidates:
+        return
+    if not _qemu_available():
+        log.warning('[vm] Autostart: QEMU not installed, skipping')
+        return
+    log.info('[vm] Autostart: %d VM(s) queued', len(candidates))
+    for vm_id, vm in candidates:
+        if _check_vm_process(vm_id):
+            log.info('[vm] Autostart: %s already running, skip', vm.get('name', vm_id))
+            continue
+        try:
+            with current_app.test_request_context():
+                g.username = 'system'
+                g.role = 'admin'
+                g.groups = ['sudo']
+                resp = start_vm(vm_id)
+                status = resp[1] if isinstance(resp, tuple) else 200
+                if status >= 400:
+                    log.warning('[vm] Autostart: %s failed (HTTP %d)', vm.get('name', vm_id), status)
+                else:
+                    log.info('[vm] Autostart: %s started OK', vm.get('name', vm_id))
+        except Exception as e:
+            log.warning('[vm] Autostart: %s failed: %s', vm.get('name', vm_id), e)
 
 
 @vm_bp.route('/machines/<vm_id>/network', methods=['PUT'])

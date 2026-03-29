@@ -26,6 +26,82 @@ function renderVMManager(body) {
     function clearAllIntervals() { S._intervals.forEach(clearInterval); S._intervals.length = 0; }
     function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
 
+    const _ISO_EXTS = ['.iso', '.img', '.raw', '.qcow2', '.vdi', '.vmdk'];
+
+    function openIsoPicker(startPath, onSelect) {
+        let browsePath = startPath || '/media';
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        overlay.innerHTML = `
+            <div class="modal-box" style="width:520px;">
+                <div class="modal-header"><span>${t('Wybierz obraz ISO/IMG')}</span><button class="modal-close"><i class="fas fa-times"></i></button></div>
+                <div class="modal-body" style="padding:0;">
+                    <div class="ux-dir-toolbar">
+                        <button class="dlm-btn-sm" id="vip-up"><i class="fas fa-arrow-up"></i></button>
+                        <span id="vip-path" class="ux-dir-path"></span>
+                    </div>
+                    <div id="vip-list" class="ux-dir-list" style="max-height:340px;overflow-y:auto"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" id="vip-cancel">${t('Anuluj')}</button>
+                </div>
+            </div>`;
+        document.body.appendChild(overlay);
+
+        const pathEl = overlay.querySelector('#vip-path');
+        const listEl = overlay.querySelector('#vip-list');
+        const close = () => overlay.remove();
+
+        overlay.querySelector('.modal-close').addEventListener('click', close);
+        overlay.querySelector('#vip-cancel').addEventListener('click', close);
+        overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+        overlay.querySelector('#vip-up').addEventListener('click', () => {
+            const parent = browsePath.substring(0, browsePath.lastIndexOf('/')) || '/';
+            loadDir(parent);
+        });
+
+        async function loadDir(path) {
+            browsePath = path;
+            pathEl.textContent = path;
+            listEl.innerHTML = '<div class="ux-placeholder"><i class="fas fa-spinner fa-spin"></i></div>';
+            const data = await api(`/files/list?path=${encodeURIComponent(path)}`);
+            if (!data || data.error || data.locked) {
+                listEl.innerHTML = `<div class="ux-placeholder">${t('Brak dostępu')}</div>`;
+                return;
+            }
+            const items = (data.items || []).sort((a, b) => {
+                if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+                return a.name.localeCompare(b.name);
+            });
+            listEl.innerHTML = '';
+            let count = 0;
+            items.forEach(item => {
+                const lower = item.name.toLowerCase();
+                const isIso = !item.is_dir && _ISO_EXTS.some(ext => lower.endsWith(ext));
+                if (!item.is_dir && !isIso) return;
+                count++;
+                const row = document.createElement('div');
+                row.className = 'dte-browse-item';
+                if (item.is_dir) {
+                    row.innerHTML = `<i class="fas fa-folder ux-folder-icon"></i> ${esc(item.name)}`;
+                    row.addEventListener('click', () => loadDir(path + (path === '/' ? '' : '/') + item.name));
+                } else {
+                    row.innerHTML = `<i class="fas fa-compact-disc" style="color:var(--accent);margin-right:6px"></i> ${esc(item.name)}`;
+                    row.style.cursor = 'pointer';
+                    row.addEventListener('click', () => {
+                        onSelect(path + (path === '/' ? '' : '/') + item.name, item.name);
+                        close();
+                    });
+                }
+                listEl.appendChild(row);
+            });
+            if (!count) {
+                listEl.innerHTML = `<div class="ux-placeholder">${t('Brak plików ISO/IMG')}</div>`;
+            }
+        }
+        loadDir(browsePath);
+    }
+
     body.innerHTML = `
         <div class="vm">
             <div class="vm-sidebar">
@@ -112,6 +188,7 @@ function renderVMManager(body) {
         tbody.innerHTML = S.machines.map(vm => {
             const running = vm.status === 'running';
             const statusDot = running ? `<span class="vm-dot vm-dot-running"></span> ${t('Działa')}` : '<span class="vm-dot vm-dot-stopped"></span> Zatrzymana';
+            const autostartIcon = vm.autostart ? ' <i class="fas fa-bolt" style="color:#8b5cf6;font-size:11px" title="Autostart"></i>' : '';
             const osIcon = osIcons[vm.os_type] || 'fa-question-circle';
             const archBadge = vm.arch === 'raspi' ? '<span class="vm-arch-badge arm"><i class="fab fa-raspberry-pi"></i> RPi</span>'
                 : vm.arch === 'aarch64' ? '<span class="vm-arch-badge arm">ARM64</span>'
@@ -131,7 +208,7 @@ function renderVMManager(body) {
                 <td>${vm.cpu} vCPU</td>
                 <td>${vm.ram} MB</td>
                 <td>${esc(vm.disk_size)}</td>
-                <td>${statusDot}</td>
+                <td>${statusDot}${autostartIcon}</td>
                 <td class="vm-actions">
                     ${running
                         ? `<button class="vm-btn vm-btn-sm vm-btn-warn" data-action="stop" data-id="${esc(vm.id)}" title="Zatrzymaj"><i class="fas fa-stop"></i></button>
@@ -235,11 +312,14 @@ function renderVMManager(body) {
                             </select>
                         </div>
                         <div class="vm-form-group">
-                            <label>Obraz rozruchowy (ISO/IMG)</label>
-                            <select id="vm-new-image" class="vm-input">
-                                <option value="">— brak —</option>
-                                ${imgs.map(i => `<option value="${esc(i.path)}">${esc(i.name)} (${esc(i.size_human)})</option>`).join('')}
-                            </select>
+                            <label>${t('Obraz rozruchowy (ISO/IMG)')}</label>
+                            <div style="display:flex;gap:6px;align-items:center">
+                                <select id="vm-new-image" class="vm-input" style="flex:1">
+                                    <option value="">— ${t('brak')} —</option>
+                                    ${imgs.map(i => `<option value="${esc(i.path)}">${esc(i.name)} (${esc(i.size_human)})</option>`).join('')}
+                                </select>
+                                <button class="vm-btn" id="vm-new-browse-iso" title="${t('Przeglądaj dyski')}" style="padding:6px 10px"><i class="fas fa-folder-open"></i></button>
+                            </div>
                         </div>
                     </div>
                     <div class="vm-form-group">
@@ -259,6 +339,21 @@ function renderVMManager(body) {
         overlay.querySelector('.vm-modal-close').addEventListener('click', close);
         overlay.querySelector('#vm-modal-cancel').addEventListener('click', close);
         overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
+        overlay.querySelector('#vm-new-browse-iso').addEventListener('click', () => {
+            openIsoPicker('/media', (filePath, fileName) => {
+                const sel = overlay.querySelector('#vm-new-image');
+                // Add as option if not already present, then select it
+                let opt = Array.from(sel.options).find(o => o.value === filePath);
+                if (!opt) {
+                    opt = document.createElement('option');
+                    opt.value = filePath;
+                    opt.textContent = fileName;
+                    sel.appendChild(opt);
+                }
+                sel.value = filePath;
+            });
+        });
 
         overlay.querySelector('#vm-modal-ok').addEventListener('click', async () => {
             const name = overlay.querySelector('#vm-new-name').value.trim();
@@ -609,6 +704,7 @@ function renderVMManager(body) {
                     <div class="vm-info-row"><span>Opis:</span><span>${esc(vm.description) || '—'}</span></div>
                     <div class="vm-info-row"><span>Utworzona:</span><span>${esc(vm.created)}</span></div>
                     <div class="vm-info-row"><span>Status:</span><span>${running ? `<span class="vm-dot vm-dot-running"></span> ${t('Działa')}` : '<span class="vm-dot vm-dot-stopped"></span> Zatrzymana'}</span></div>
+                    <div class="vm-info-row"><span>Autostart:</span><span><label class="vm-toggle" title="${t('Automatyczne uruchamianie przy starcie EthOS')}"><input type="checkbox" id="vm-autostart-toggle" ${vm.autostart ? 'checked' : ''}><span class="vm-toggle-slider"></span></label></span></div>
                     ${running && vm.pid ? `<div class="vm-info-row"><span>PID:</span><span>${vm.pid}</span></div>` : ''}
                 </div>
                 <div class="vm-info-card">
@@ -625,6 +721,17 @@ function renderVMManager(body) {
         `;
 
         main.querySelector('#vm-edit-config')?.addEventListener('click', () => showEditModal(vm));
+
+        main.querySelector('#vm-autostart-toggle')?.addEventListener('change', async (e) => {
+            try {
+                await api(`/vm/machines/${vm.id}/autostart`, { method: 'PUT', body: { autostart: e.target.checked } });
+                vm.autostart = e.target.checked;
+                toast(e.target.checked ? t('Autostart włączony') : t('Autostart wyłączony'), 'success');
+            } catch (err) {
+                e.target.checked = !e.target.checked;
+                toast(err.message || t('Błąd'), 'error');
+            }
+        });
 
         main.querySelector('#vm-eject-boot')?.addEventListener('click', async () => {
             if (!confirm(t('Odłączyć obraz boot? VM będzie bootować z dysku.'))) return;
@@ -893,16 +1000,24 @@ function renderVMManager(body) {
                             </select>
                         </div>
                         <div class="vm-form-group">
-                            <label>Obraz rozruchowy</label>
-                            <select id="vm-e-image" class="vm-input">
-                                <option value="">— brak —</option>
-                                ${imgs.map(i => `<option value="${esc(i.path)}" ${vm.boot_image === i.path ? 'selected' : ''}>${esc(i.name)}</option>`).join('')}
-                            </select>
+                            <label>${t('Obraz rozruchowy')}</label>
+                            <div style="display:flex;gap:6px;align-items:center">
+                                <select id="vm-e-image" class="vm-input" style="flex:1">
+                                    <option value="">— ${t('brak')} —</option>
+                                    ${imgs.map(i => `<option value="${esc(i.path)}" ${vm.boot_image === i.path ? 'selected' : ''}>${esc(i.name)}</option>`).join('')}
+                                    ${vm.boot_image && !imgs.find(i => i.path === vm.boot_image) ? `<option value="${esc(vm.boot_image)}" selected>${esc(vm.boot_image.split('/').pop())}</option>` : ''}
+                                </select>
+                                <button class="vm-btn" id="vm-e-browse-iso" title="${t('Przeglądaj dyski')}" style="padding:6px 10px"><i class="fas fa-folder-open"></i></button>
+                            </div>
                         </div>
                     </div>
                     <div class="vm-form-group">
                         <label>Opis</label>
                         <input type="text" id="vm-e-desc" class="vm-input" value="${esc(vm.description || '')}">
+                    </div>
+                    <div class="vm-form-group" style="display:flex;align-items:center;gap:10px">
+                        <label class="vm-toggle"><input type="checkbox" id="vm-e-autostart" ${vm.autostart ? 'checked' : ''}><span class="vm-toggle-slider"></span></label>
+                        <label for="vm-e-autostart" style="margin:0;cursor:pointer">${t('Autostart przy starcie EthOS')}</label>
                     </div>
                 </div>
                 <div class="vm-modal-footer">
@@ -918,6 +1033,20 @@ function renderVMManager(body) {
         overlay.querySelector('#vm-e-cancel').addEventListener('click', close);
         overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
 
+        overlay.querySelector('#vm-e-browse-iso').addEventListener('click', () => {
+            openIsoPicker('/media', (filePath, fileName) => {
+                const sel = overlay.querySelector('#vm-e-image');
+                let opt = Array.from(sel.options).find(o => o.value === filePath);
+                if (!opt) {
+                    opt = document.createElement('option');
+                    opt.value = filePath;
+                    opt.textContent = fileName;
+                    sel.appendChild(opt);
+                }
+                sel.value = filePath;
+            });
+        });
+
         overlay.querySelector('#vm-e-save').addEventListener('click', async () => {
             const payload = {
                 name: overlay.querySelector('#vm-e-name').value.trim(),
@@ -926,6 +1055,7 @@ function renderVMManager(body) {
                 os_type: overlay.querySelector('#vm-e-os').value,
                 boot_image: overlay.querySelector('#vm-e-image').value,
                 description: overlay.querySelector('#vm-e-desc').value,
+                autostart: overlay.querySelector('#vm-e-autostart').checked,
             };
             try {
                 await api(`/vm/machines/${vm.id}`, { method: 'PUT', body: payload });
