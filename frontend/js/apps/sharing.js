@@ -25,6 +25,16 @@ function _shBadge(ok, label) {
         : `<span class="fm-badge shr-badge-err">${label || t('Nieaktywny')}</span>`;
 }
 
+function _shEsc(s) {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+}
+
+function _shEscAttr(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
 /* All 6 protocols — order matters for sidebar */
 const _SH_ALL_PROTOS = [
     { id: 'samba',  pkgId: 'sharing-samba',  icon: 'fa-windows',      label: 'Samba' },
@@ -140,13 +150,13 @@ async function renderSharingApp(body) {
                     <th class="shr-th">${t('Nazwa')}</th><th class="shr-th">${t('Ścieżka')}</th>
                     <th class="shr-td-center">${t('Gość')}</th><th class="shr-td-center">${t('Zapis')}</th><th></th>
                 </tr></thead><tbody>${st.shares.map(s => `<tr class="shr-tr">
-                    <td class="shr-td-name">${s.name}</td>
-                    <td class="shr-td-sec">${s.path}</td>
+                    <td class="shr-td-name">${_shEsc(s.name)}</td>
+                    <td class="shr-td-sec">${_shEsc(s.path)}</td>
                     <td class="shr-td-center">${s.guest_ok ? '<i class="fas fa-check shr-check-ok"></i>' : '<i class="fas fa-times shr-check-no"></i>'}</td>
                     <td class="shr-td-center">${s.writable ? '<i class="fas fa-check shr-check-ok"></i>' : '<i class="fas fa-times shr-check-no"></i>'}</td>
                     <td class="shr-td-actions">
-                        <button class="fm-toolbar-btn btn-sm sh-sme" data-name="${s.name}" data-path="${s.path}" data-guest="${s.guest_ok}" data-writable="${s.writable}"><i class="fas fa-pen"></i></button>
-                        <button class="fm-toolbar-btn btn-sm btn-red sh-smd" data-name="${s.name}"><i class="fas fa-trash"></i></button>
+                        <button class="fm-toolbar-btn btn-sm sh-sme" data-name="${_shEscAttr(s.name)}" data-path="${_shEscAttr(s.path)}" data-guest="${s.guest_ok}" data-writable="${s.writable}"><i class="fas fa-pen"></i></button>
+                        <button class="fm-toolbar-btn btn-sm btn-red sh-smd" data-name="${_shEscAttr(s.name)}"><i class="fas fa-trash"></i></button>
                     </td></tr>`).join('')}</tbody></table>`;
             w.querySelectorAll('.sh-sme').forEach(b => b.onclick = () => showForm({ name: b.dataset.name, path: b.dataset.path, guest_ok: b.dataset.guest === 'true', writable: b.dataset.writable === 'true' }));
             w.querySelectorAll('.sh-smd').forEach(b => b.onclick = async () => { if (!await confirmDialog(t('Usunąć udział'), t('Usunąć') + ` "${b.dataset.name}"?`)) return; await api('/storage/samba/share', { method: 'DELETE', body: { name: b.dataset.name } }); toast(t('Usunięto'), 'success'); load(); });
@@ -213,7 +223,7 @@ async function renderSharingApp(body) {
                 const [exports, status] = await Promise.all([api('/storage/nfs/exports'), api('/storage/nfs/status')]);
                 panel.querySelector('#sh-nfs-st').innerHTML = _shBadge(status.running);
                 renderList(exports.exports || []);
-            } catch (e) { panel.querySelector('#sh-nfs-list').innerHTML = `<div class="shr-error">${e.message}</div>`; }
+            } catch (e) { panel.querySelector('#sh-nfs-list').innerHTML = `<div class="shr-error">${t('Błąd')}: ${_shEsc(e.message)}</div>`; }
         }
 
         function renderList(exports) {
@@ -223,9 +233,9 @@ async function renderSharingApp(body) {
                 <thead><tr class="shr-thead-row">
                     <th class="shr-th">${t('Ścieżka')}</th><th class="shr-th">${t('Klienci / opcje')}</th><th></th>
                 </tr></thead><tbody>${exports.map(e => `<tr class="shr-tr">
-                    <td class="shr-td-name">${e.path}</td>
-                    <td class="shr-td-sec">${e.clients}</td>
-                    <td class="shr-td-actions"><button class="fm-toolbar-btn btn-sm btn-red sh-nfsd" data-path="${e.path}"><i class="fas fa-trash"></i></button></td>
+                    <td class="shr-td-name">${_shEsc(e.path)}</td>
+                    <td class="shr-td-sec">${_shEsc(e.clients)}</td>
+                    <td class="shr-td-actions"><button class="fm-toolbar-btn btn-sm btn-red sh-nfsd" data-path="${_shEscAttr(e.path)}"><i class="fas fa-trash"></i></button></td>
                 </tr>`).join('')}</tbody></table>`;
             w.querySelectorAll('.sh-nfsd').forEach(b => b.onclick = async () => {
                 if (!await confirmDialog(t('Usunąć eksport'), t('Usunąć eksport') + ` "${b.dataset.path}"?`)) return;
@@ -274,7 +284,7 @@ async function renderSharingApp(body) {
         </div>
         <div id="sh-dlna-stats" class="shr-dlna-stats" style="display:none">
             <span class="shr-dlna-stat"><i class="fas fa-film"></i> <span id="sh-dlna-fcount">0</span> ${t('plików')}</span>
-            <span class="shr-dlna-stat"><i class="fas fa-network-wired"></i> Port: <span id="sh-dlna-port">8200</span></span>
+            <span class="shr-dlna-stat"><i class="fas fa-network-wired"></i> ${t('Port')}: <span id="sh-dlna-port">8200</span></span>
             <span class="shr-dlna-stat"><i class="fas fa-signature"></i> <span id="sh-dlna-fname">—</span></span>
         </div>
         <p class="shr-desc">${t('DLNA streamuje media (filmy, muzykę, zdjęcia) do Smart TV, konsol i innych urządzeń w sieci.')}</p>
@@ -365,8 +375,8 @@ async function renderSharingApp(body) {
                             <span>${_dlnaEsc(drive)}</span>
                         </label>
                         <span class="shr-dlna-types" data-drive-types="${_dlnaEsc(drive)}">
-                            <button class="shr-dlna-type-tag ${types.includes('V') ? 'active' : ''}" data-type="V" title="Video">V</button>
-                            <button class="shr-dlna-type-tag ${types.includes('A') ? 'active' : ''}" data-type="A" title="Audio">A</button>
+                            <button class="shr-dlna-type-tag ${types.includes('V') ? 'active' : ''}" data-type="V" title="${t('Wideo')}">V</button>
+                            <button class="shr-dlna-type-tag ${types.includes('A') ? 'active' : ''}" data-type="A" title="${t('Audio')}">A</button>
                             <button class="shr-dlna-type-tag ${types.includes('P') ? 'active' : ''}" data-type="P" title="${t('Zdjęcia')}">P</button>
                         </span>
                     </div>`;
@@ -383,7 +393,7 @@ async function renderSharingApp(body) {
                     <input type="text" id="sh-dlna-name" class="fm-input" value="${_dlnaEsc(config.friendly_name || 'EthOS Media Server')}" style="width:200px;margin-left:8px" maxlength="64">
                 </div>
                 <div class="shr-form-row-inline">
-                    <label class="shr-label">Port:</label>
+                    <label class="shr-label">${t('Port')}:</label>
                     <input type="number" id="sh-dlna-port-in" class="fm-input" value="${config.port || 8200}" min="1024" max="65535" style="width:100px;margin-left:8px">
                 </div>
                 <label class="shr-label">${t('Katalogi z mediami')}:</label>
@@ -393,8 +403,8 @@ async function renderSharingApp(body) {
                     return `<div class="shr-dir-row">
                         <div class="shr-input-group" style="flex:1"><input type="text" class="fm-input sh-dlna-cdir" value="${_dlnaEsc(d)}" style="flex:1;border-radius:6px 0 0 6px" readonly><button class="fm-toolbar-btn sh-dlna-br shr-input-group-btn" title="${t('Przeglądaj')}"><i class="fas fa-folder-open"></i></button></div>
                         <span class="shr-dlna-types shr-dlna-ctypes">
-                            <button class="shr-dlna-type-tag ${types.includes('V') ? 'active' : ''}" data-type="V" title="Video">V</button>
-                            <button class="shr-dlna-type-tag ${types.includes('A') ? 'active' : ''}" data-type="A" title="Audio">A</button>
+                            <button class="shr-dlna-type-tag ${types.includes('V') ? 'active' : ''}" data-type="V" title="${t('Wideo')}">V</button>
+                            <button class="shr-dlna-type-tag ${types.includes('A') ? 'active' : ''}" data-type="A" title="${t('Audio')}">A</button>
                             <button class="shr-dlna-type-tag ${types.includes('P') ? 'active' : ''}" data-type="P" title="${t('Zdjęcia')}">P</button>
                         </span>
                         <button class="fm-toolbar-btn btn-sm btn-red sh-dlna-rmcdir"><i class="fas fa-minus"></i></button>
@@ -438,8 +448,8 @@ async function renderSharingApp(body) {
                 row.className = 'shr-dir-row';
                 row.innerHTML = `<div class="shr-input-group" style="flex:1"><input type="text" class="fm-input sh-dlna-cdir" placeholder="/home/media" style="flex:1;border-radius:6px 0 0 6px" readonly><button class="fm-toolbar-btn sh-dlna-br shr-input-group-btn" title="${t('Przeglądaj')}"><i class="fas fa-folder-open"></i></button></div>
                     <span class="shr-dlna-types shr-dlna-ctypes">
-                        <button class="shr-dlna-type-tag active" data-type="V" title="Video">V</button>
-                        <button class="shr-dlna-type-tag active" data-type="A" title="Audio">A</button>
+                        <button class="shr-dlna-type-tag active" data-type="V" title="${t('Wideo')}">V</button>
+                        <button class="shr-dlna-type-tag active" data-type="A" title="${t('Audio')}">A</button>
                         <button class="shr-dlna-type-tag active" data-type="P" title="${t('Zdjęcia')}">P</button>
                     </span>
                     <button class="fm-toolbar-btn btn-sm btn-red sh-dlna-rmcdir"><i class="fas fa-minus"></i></button>`;
@@ -477,6 +487,7 @@ async function renderSharingApp(body) {
             panel.querySelector('#sh-dlna-save').onclick = async () => {
                 const btn = panel.querySelector('#sh-dlna-save');
                 btn.disabled = true;
+                btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${t('Zapisywanie…')}`;
                 try {
                     const payload = {
                         friendly_name: panel.querySelector('#sh-dlna-name').value.trim() || 'EthOS Media Server',
@@ -492,7 +503,7 @@ async function renderSharingApp(body) {
                         toast(data.error || t('Nie udało się zapisać'), 'error');
                     }
                 } catch (e) { toast(`${t('Błąd')}: ${e.message}`, 'error'); }
-                finally { btn.disabled = false; }
+                finally { btn.disabled = false; btn.innerHTML = `<i class="fas fa-save"></i> ${t('Zapisz')}`; }
             };
 
             // Rescan
@@ -556,7 +567,7 @@ async function renderSharingApp(body) {
                 const [status, shares] = await Promise.all([api('/storage/webdav/status'), api('/storage/webdav/shares').catch(() => ({ shares: [], port: 8888 }))]);
                 panel.querySelector('#sh-dav-st').innerHTML = _shBadge(status.running, status.running ? `Port ${shares.port}` : null);
                 renderList(shares.shares || [], shares.port);
-            } catch (e) { panel.querySelector('#sh-dav-list').innerHTML = `<div class="shr-error">${e.message}</div>`; }
+            } catch (e) { panel.querySelector('#sh-dav-list').innerHTML = `<div class="shr-error">${t('Błąd')}: ${_shEsc(e.message)}</div>`; }
         }
 
         function renderList(shares, port) {
@@ -566,9 +577,9 @@ async function renderSharingApp(body) {
                 <thead><tr class="shr-thead-row">
                     <th class="shr-th">URL</th><th class="shr-th">${t('Ścieżka')}</th><th></th>
                 </tr></thead><tbody>${shares.map(s => `<tr class="shr-tr">
-                    <td class="shr-td-name">:${port}${s.url_path}</td>
-                    <td class="shr-td-sec">${s.fs_path}</td>
-                    <td class="shr-td-actions"><button class="fm-toolbar-btn btn-sm btn-red sh-davd" data-url="${s.url_path}"><i class="fas fa-trash"></i></button></td>
+                    <td class="shr-td-name">:${port}${_shEsc(s.url_path)}</td>
+                    <td class="shr-td-sec">${_shEsc(s.fs_path)}</td>
+                    <td class="shr-td-actions"><button class="fm-toolbar-btn btn-sm btn-red sh-davd" data-url="${_shEscAttr(s.url_path)}"><i class="fas fa-trash"></i></button></td>
                 </tr>`).join('')}</tbody></table>`;
             w.querySelectorAll('.sh-davd').forEach(b => b.onclick = async () => {
                 if (!await confirmDialog(t('Usunąć udział WebDAV'), t('Usunąć udział WebDAV?'))) return;
@@ -647,10 +658,10 @@ async function renderSharingApp(body) {
                     <thead><tr class="shr-thead-row">
                         <th class="shr-th">${t('Użytkownik')}</th><th class="shr-th">${t('Katalog domowy')}</th>
                     </tr></thead><tbody>${ul.map(u => `<tr class="shr-tr">
-                        <td class="shr-td-name">${u.username}</td>
-                        <td class="shr-td-sec">${u.home}</td>
+                        <td class="shr-td-name">${_shEsc(u.username)}</td>
+                        <td class="shr-td-sec">${_shEsc(u.home)}</td>
                     </tr>`).join('')}</tbody></table>`;
-            } catch (e) { panel.querySelector('#sh-sftp-users').innerHTML = `<div class="shr-error">${e.message}</div>`; }
+            } catch (e) { panel.querySelector('#sh-sftp-users').innerHTML = `<div class="shr-error">${t('Błąd')}: ${_shEsc(e.message)}</div>`; }
         }
 
         panel.querySelector('#sh-sftp-ref').onclick = () => load();
@@ -687,7 +698,7 @@ async function renderSharingApp(body) {
                     await api('/storage/ftp/toggle', { method: 'POST', body: { enable: e.target.checked } });
                     toast(e.target.checked ? t('FTP włączony') : t('FTP wyłączony'), 'success'); load();
                 };
-            } catch (e) { panel.querySelector('#sh-ftp-ctl').innerHTML = `<div class="shr-error">${e.message}</div>`; }
+            } catch (e) { panel.querySelector('#sh-ftp-ctl').innerHTML = `<div class="shr-error">${t('Błąd')}: ${_shEsc(e.message)}</div>`; }
         }
 
         panel.querySelector('#sh-ftp-ref').onclick = () => load();

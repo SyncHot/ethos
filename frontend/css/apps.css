@@ -1689,6 +1689,19 @@ select.fm-input {
 .shr-muted { color: var(--text-muted); }
 .shr-note { font-size: var(--fs-sm); color: var(--text-muted); margin-top: var(--space-sm); }
 .shr-icon-warn { color: var(--warning); }
+.shr-form-row-inline { display: flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap; margin-bottom: var(--space-sm); }
+.shr-dlna-form { display: flex; flex-direction: column; gap: var(--space-sm); }
+.shr-dlna-stats { display: flex; gap: var(--space-lg); flex-wrap: wrap; margin-bottom: var(--space-md); padding: var(--space-sm) var(--space-md); background: var(--overlay-1); border-radius: var(--r-md); font-size: var(--fs-sm); }
+.shr-dlna-stat { display: flex; align-items: center; gap: var(--space-xs); color: var(--text-muted); }
+.shr-dlna-stat i { color: var(--accent); }
+.shr-dlna-drives { display: flex; flex-direction: column; gap: 2px; margin: var(--space-xs) 0; }
+.shr-dlna-drive { padding: var(--space-xs) 0; }
+.shr-dlna-drv-check { display: flex; align-items: center; gap: var(--space-sm); cursor: pointer; font-size: 13px; }
+.shr-dlna-types { display: inline-flex; gap: 3px; margin-left: var(--space-sm); }
+.shr-dlna-type-tag { padding: 1px 7px; font-size: 11px; font-weight: 600; border: 1px solid var(--border); border-radius: var(--r-sm); background: transparent; cursor: pointer; color: var(--text-muted); transition: all .15s; }
+.shr-dlna-type-tag.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.shr-dlna-ctypes { display: inline-flex; gap: 3px; margin-left: var(--space-sm); }
+.shr-dlna-toggle-label { display: flex; align-items: center; gap: var(--space-sm); cursor: pointer; font-size: 13px; }
 
 /* ── Backup App: extracted inline styles ── */
 

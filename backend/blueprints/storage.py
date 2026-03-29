@@ -946,6 +946,24 @@ def smart_info():
 # API – Samba
 # ---------------------------------------------------------------------------
 
+def _detect_lan_subnet():
+    """Detect the primary LAN subnet (e.g. '192.168.1.0/24') from the default route interface."""
+    try:
+        r = host_run("ip -4 route show default 2>/dev/null | awk '{print $5}' | head -1")
+        iface = r.stdout.strip()
+        if not iface:
+            return '192.168.0.0/16'
+        r2 = host_run(f"ip -4 -o addr show {Q(iface)} 2>/dev/null | awk '{{print $4}}' | head -1")
+        cidr = r2.stdout.strip()
+        if '/' not in cidr:
+            return '192.168.0.0/16'
+        import ipaddress
+        net = ipaddress.ip_network(cidr, strict=False)
+        return str(net)
+    except Exception:
+        return '192.168.0.0/16'
+
+
 @storage_bp.route('/samba/status')
 def samba_status():
     r = host_run("command -v smbd")
@@ -958,13 +976,16 @@ def samba_status():
 
 
 @storage_bp.route('/samba/install', methods=['POST'])
+@admin_required
 def samba_install():
     r = host_run("command -v smbd")
     if r.returncode == 0:
         return jsonify({"status": "ok", "installed": True}), 200
 
+    subnet = _detect_lan_subnet()
+
     def generate():
-        install_script = """
+        install_script = f"""
 export DEBIAN_FRONTEND=noninteractive
 echo '::STEP::Repairing package manager...'
 dpkg --configure -a 2>/dev/null || true
@@ -979,27 +1000,37 @@ if [ ! -f /etc/samba/smb.conf ] || ! grep -q 'map to guest' /etc/samba/smb.conf 
     workgroup = WORKGROUP
     server string = EthOS NAS
     security = user
-    map to guest = Bad User
+    map to guest = never
     guest account = nobody
-    server min protocol = SMB2
+    restrict anonymous = 2
+    server min protocol = SMB3
+    server signing = mandatory
+    smb encrypt = desired
+    interfaces = 127.0.0.0/8 {subnet}
+    bind interfaces only = yes
+    hosts allow = 127.0.0.1 {subnet}
+    hosts deny = 0.0.0.0/0
     log file = /var/log/samba/log.%m
     max log size = 1000
     logging = file
+    log level = 2 auth:3
     dns proxy = no
     unix extensions = yes
     wide links = no
-    follow symlinks = yes
+    follow symlinks = no
+    load printers = no
+    printing = bsd
+    printcap name = /dev/null
+    disable spoolss = yes
 
     # Performance tuning
-    socket options = TCP_NODELAY IPTOS_LOWDELAY SO_RCVBUF=131072 SO_SNDBUF=131072
+    socket options = TCP_NODELAY IPTOS_LOWDELAY
     read raw = yes
     write raw = yes
-    max xmit = 65535
-    dead time = 15
-    getwd cache = yes
     use sendfile = yes
     aio read size = 16384
     aio write size = 16384
+    dead time = 15
 SMBEOF
 fi
 echo '::STEP::Enabling Samba services...'
@@ -1060,6 +1091,7 @@ def samba_shares():
 
 
 @storage_bp.route('/samba/share', methods=['POST'])
+@admin_required
 def samba_share_add():
     # Check if Samba is installed first
     r_smb = host_run("command -v smbd")
@@ -1069,7 +1101,7 @@ def samba_share_add():
     data = request.json or {}
     share_name = data.get("name", "").strip()
     share_path = data.get("path", "").strip()
-    guest_ok = data.get("guest_ok", True)
+    guest_ok = data.get("guest_ok", False)
 
     if not share_name or not share_path:
         return jsonify({"error": "name and path are required"}), 400
@@ -1094,12 +1126,18 @@ def samba_share_add():
     gid_r = host_run("id -gn")
     user = uid_r.stdout.strip() or "nobody"
     group = gid_r.stdout.strip() or "nogroup"
+    # Security: never allow root as forced user
+    if user == "root":
+        user = "nasadmin"
+    if group == "root":
+        group = "nasadmin"
 
     writable = data.get("writable", True)
     guest_str = "yes" if guest_ok else "no"
     writable_str = "yes" if writable else "no"
 
     # Use safe temp-file approach to avoid shell/Python injection
+    subnet = _detect_lan_subnet()
     share_conf = {
         "name": share_name,
         "path": share_path,
@@ -1107,6 +1145,7 @@ def samba_share_add():
         "writable": writable_str,
         "user": user,
         "group": group,
+        "subnet": subnet,
     }
     script = """import json, re
 NL = chr(10)
@@ -1116,6 +1155,7 @@ path = params['path']
 guest = params['guest_ok']
 user = params['user']
 group = params['group']
+subnet = params['subnet']
 try:
     conf = open('/etc/samba/smb.conf').read()
 except FileNotFoundError:
@@ -1126,10 +1166,17 @@ GLOBAL_DEFAULTS = {
     'workgroup': 'WORKGROUP',
     'server string': 'EthOS NAS',
     'security': 'user',
-    'map to guest': 'Bad User',
+    'map to guest': 'never',
     'guest account': 'nobody',
-    'server min protocol': 'SMB2',
+    'restrict anonymous': '2',
+    'server min protocol': 'SMB3',
+    'server signing': 'mandatory',
+    'smb encrypt': 'desired',
     'dns proxy': 'no',
+    'interfaces': f'127.0.0.0/8 {subnet}',
+    'bind interfaces only': 'yes',
+    'hosts allow': f'127.0.0.1 {subnet}',
+    'hosts deny': '0.0.0.0/0',
 }
 if '[global]' not in conf:
     header = '[global]' + NL
@@ -1162,16 +1209,15 @@ block += '    browseable = yes' + NL
 block += f'    writable = {writable}' + NL
 block += f'    read only = {read_only}' + NL
 block += f'    guest ok = {guest}' + NL
-block += f'    public = {guest}' + NL
 block += f'    force user = {user}' + NL
 block += f'    force group = {group}' + NL
-block += '    create mask = 0777' + NL
-block += '    directory mask = 0777' + NL
+block += '    create mask = 0664' + NL
+block += '    directory mask = 0775' + NL
 open('/etc/samba/smb.conf', 'w').write(conf + block)
 
 # Ensure share path exists
 import os
-os.makedirs(path, mode=0o777, exist_ok=True)
+os.makedirs(path, mode=0o775, exist_ok=True)
 """
     _host_write_json('/tmp/_samba_params.json', share_conf)
     _host_write_script('/tmp/_samba_edit.py', script)
@@ -1186,6 +1232,7 @@ os.makedirs(path, mode=0o777, exist_ok=True)
 
 
 @storage_bp.route('/samba/share', methods=['DELETE'])
+@admin_required
 def samba_share_remove():
     data = request.json or {}
     share_name = data.get("name", "").strip()
@@ -1217,6 +1264,7 @@ open('/etc/samba/smb.conf', 'w').write(conf.strip() + NL)
 
 
 @storage_bp.route('/samba/password', methods=['POST'])
+@admin_required
 def samba_password():
     """Set Samba password for a user (creates the user if needed)."""
     err = require_tools('smbpasswd')
