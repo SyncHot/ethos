@@ -1092,6 +1092,27 @@ WEB
 
 chroot "$ROOT" systemctl enable fail2ban || true
 
+# ── SSH Hardening ──
+echo "LOG:SSH hardening..."
+mkdir -p "$ROOT/etc/ssh/sshd_config.d"
+cat > "$ROOT/etc/ssh/sshd_config.d/ethos-hardening.conf" <<'SSHH'
+# EthOS SSH Hardening
+PermitRootLogin no
+MaxAuthTries 3
+LoginGraceTime 30
+X11Forwarding no
+PermitEmptyPasswords no
+SSHH
+
+# Gate SSH login until the default password is changed via the Web UI.
+# ForceCommand runs check_password_changed.sh which blocks or exec's the shell.
+cat >> "$ROOT/etc/ssh/sshd_config" <<'SSHGATE'
+
+# EthOS: block SSH until default password changed via Web UI
+Match User *
+    ForceCommand /opt/ethos/tools/check_password_changed.sh
+SSHGATE
+
 # ── Force password change on first boot ──
 rm -f "$ROOT/opt/ethos/.password_changed"
 

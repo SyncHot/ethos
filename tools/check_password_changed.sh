@@ -1,6 +1,7 @@
 #!/bin/bash
-# Block SSH login until the default password has been changed via the Web UI.
-# The marker file is created by the backend after a successful password change.
+# Gate SSH login until the default password has been changed via the Web UI.
+# Used as ForceCommand in sshd_config — must exec the user's intended
+# command/shell when the gate passes, or exit 1 to deny access.
 MARKER="/opt/ethos/.password_changed"
 
 if [ ! -f "$MARKER" ]; then
@@ -11,4 +12,10 @@ if [ ! -f "$MARKER" ]; then
     echo "======================================================================"
     exit 1
 fi
-exit 0
+
+# Password was changed — allow the session
+if [ -n "$SSH_ORIGINAL_COMMAND" ]; then
+    exec /bin/bash -c "$SSH_ORIGINAL_COMMAND"
+else
+    exec /bin/bash --login
+fi
