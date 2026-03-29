@@ -13,9 +13,15 @@ AppRegistry['gallery'] = function (appDef, launchOpts) {
 };
 
 /* ━━━━  CONSTANTS  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+function _galThumbSize() {
+  const w = window.innerWidth;
+  if (w <= 480) return 150;
+  if (w <= 768) return 200;
+  return 280;
+}
 const GAL = {
   PAGE: 80,
-  THUMB_SIZE: 280,
+  THUMB_SIZE: _galThumbSize(),
   items: [],
   total: 0,
   offset: 0,
