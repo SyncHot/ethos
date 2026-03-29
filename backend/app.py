@@ -9326,6 +9326,8 @@ def set_desktop_apps():
 
 # ─────────────────────────── Notifications (per-user) ────────────────
 _DISMISSED_NOTIFS_GLOBAL = _data_path('dismissed_notifications.json')  # legacy
+_PERSISTENT_NOTIFS_FILE = _data_path('persistent_notifications.json')
+_MAX_PERSISTENT = 50
 
 def _dismissed_file():
     cur = get_current_user()
@@ -9345,6 +9347,28 @@ def _notif_key(n):
     return n.get('title', '') + '::' + n.get('message', '')
 
 
+def add_persistent_notification(title, message, ntype='info', action=None):
+    """Store a notification that persists until the user clears it."""
+    notifs = _load_json(_PERSISTENT_NOTIFS_FILE, [])
+    entry = {
+        'type': ntype,
+        'title': title,
+        'message': message,
+        'time': time.time(),
+    }
+    if action:
+        entry['action'] = action
+    notifs.insert(0, entry)
+    notifs = notifs[:_MAX_PERSISTENT]
+    _save_json(_PERSISTENT_NOTIFS_FILE, notifs)
+
+def _load_persistent_notifications():
+    return _load_json(_PERSISTENT_NOTIFS_FILE, [])
+
+def _clear_persistent_notifications():
+    _save_json(_PERSISTENT_NOTIFS_FILE, [])
+
+
 
 
 @app.route('/api/notifications')
@@ -9352,6 +9376,13 @@ def _notif_key(n):
 def get_notifications():
     notifications = []
 
+    # 1) Persistent notifications (stored by events — stay until cleared)
+    try:
+        notifications.extend(_load_persistent_notifications())
+    except Exception:
+        pass
+
+    # 2) Live system warnings (ephemeral — recomputed each call)
     for part in psutil.disk_partitions():
         try:
             usage = psutil.disk_usage(part.mountpoint)
@@ -9383,31 +9414,13 @@ def get_notifications():
             'time': time.time()
         })
 
-    # Check for package updates
+    # 3) Live in-progress tasks (backup, file ops, etc.)
     try:
-        r = _host_run_base(
-            "apt list --upgradable 2>/dev/null | grep -c upgradable || echo 0",
-            timeout=15
-        )
-        upgradable = int(r.stdout.strip()) if r.returncode == 0 else 0
-        if upgradable > 0:
-            notifications.append({
-                'type': 'info',
-                'title': 'Updates available',
-                'message': f'{upgradable} packages to update',
-                'time': time.time(),
-                'action': {'app': 'packages', 'tab': 'updates'}
-            })
-    except Exception:
-        pass
-
-    # Backup notifications (in-progress + recent completed/failed)
-    try:
+        from blueprints.backup import get_backup_notifications
         notifications.extend(get_backup_notifications())
     except Exception:
         pass
 
-    # File operation notifications (copy/move/compress/extract)
     try:
         notifications.extend(get_fileop_notifications())
     except Exception:
@@ -9436,8 +9449,9 @@ def get_notifications():
 @app.route('/api/notifications/clear', methods=['POST'])
 @require_auth
 def clear_notifications():
-    """Dismiss all current notifications. They won't reappear until conditions change."""
-    # First, get current notifications to know what to dismiss
+    """Clear all persistent and dismiss all ephemeral notifications."""
+    _clear_persistent_notifications()
+    # Also dismiss ephemeral (system warnings) so they don't reappear immediately
     all_notifs = []
     for part in psutil.disk_partitions():
         try:
@@ -9453,25 +9467,6 @@ def clear_notifications():
     cpu = psutil.cpu_percent(interval=0.1)
     if cpu > 90:
         all_notifs.append({'title': 'High CPU load', 'message': f'{cpu}%'})
-    try:
-        r = _host_run_base(
-            "apt list --upgradable 2>/dev/null | grep -c upgradable || echo 0",
-            timeout=15
-        )
-        upgradable = int(r.stdout.strip()) if r.returncode == 0 else 0
-        if upgradable > 0:
-            all_notifs.append({'title': 'Updates available',
-                               'message': f'{upgradable} packages to update'})
-    except Exception:
-        pass
-    try:
-        all_notifs.extend(get_backup_notifications())
-    except Exception:
-        pass
-    try:
-        all_notifs.extend(get_fileop_notifications())
-    except Exception:
-        pass
 
     dismissed = {}
     for n in all_notifs:
@@ -9866,6 +9861,17 @@ if __name__ == '__main__':
     gevent.spawn_later(11, _cleanup_stale_ethos_tmp)
     # Pre-warm listing cache for all user home directories (background, low priority)
     gevent.spawn_later(12, _bg_prewarm_home_listing)
+
+    # VM autostart — start VMs flagged with autostart=True
+    def _vm_autostart():
+        try:
+            from blueprints.vm_manager import vm_autostart_boot
+            vm_autostart_boot()
+        except ImportError:
+            pass  # VM Manager not installed
+        except Exception as e:
+            logging.getLogger('vm_autostart').warning('[vm] Autostart error: %s', e)
+    gevent.spawn_later(15, _vm_autostart)
 
     # Start event-loop watchdog (ticker in gevent, monitor in real thread)
     socketio.start_background_task(_watchdog_ticker)

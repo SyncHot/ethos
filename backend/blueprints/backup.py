@@ -183,18 +183,14 @@ def init_backup(socketio):
 
 
 def get_backup_notifications():
-    """Return backup-related notification items for the global notification panel."""
+    """Return live in-progress backup notification for the global panel."""
     notifs = []
-
-    # 1) In-progress backup
-    in_progress = False
     with operation_lock:
         op = current_operation
     with _progress_lock:
         prog = progress_state.get('last')
         prog_ts = progress_state.get('timestamp', time.time())
     if op and prog:
-        in_progress = True
         pct = prog.get('overall_percent', prog.get('percent', 0))
         stage = prog.get('stage', 'archive')
         stage_label = 'Transfer' if stage == 'transfer' else 'Archiving'
@@ -205,47 +201,6 @@ def get_backup_notifications():
             'time': prog_ts,
             'action': {'app': 'backup', 'tab': 'backup'}
         })
-
-    # 2) Recent completed/failed backups from history (last 24h, max 5)
-    # Skip history entries while a backup is in progress to avoid "double" notifications
-    if not in_progress:
-        try:
-            history = load_history()
-            cutoff = time.time() - 86400
-            count = 0
-            for entry in history:
-                if count >= 5:
-                    break
-                ts = entry.get('timestamp', '')
-                try:
-                    entry_time = datetime.fromisoformat(ts).timestamp()
-                except Exception:
-                    continue
-                if entry_time < cutoff:
-                    break
-                status = entry.get('status', '')
-                if status == 'completed':
-                    size_mb = round(entry.get('size', 0) / (1024 * 1024), 1)
-                    duration = entry.get('duration', 0)
-                    notifs.append({
-                        'type': 'success',
-                        'title': 'Backup completed',
-                        'message': f'{entry.get("archive_file", "?")} — {size_mb} MB, {round(duration)}s',
-                        'time': entry_time,
-                        'action': {'app': 'backup', 'tab': 'history'}
-                    })
-                elif status == 'failed':
-                    notifs.append({
-                        'type': 'error',
-                        'title': 'Backup failed',
-                        'message': entry.get('error', 'Unknown error'),
-                        'time': entry_time,
-                        'action': {'app': 'backup', 'tab': 'history'}
-                    })
-                count += 1
-        except Exception:
-            pass
-
     return notifs
 
 
@@ -905,7 +860,18 @@ def run_backup(paths, destination=None, profile_name=None, retention=0, incremen
             progress_state['last'] = None
         emit_log(f"Backup completed: {final_location}", 'success')
         _emit('backup_complete', {'message': f'Backup completed: {backup_filename}'})
-
+        # Persistent notification — stays until user clears
+        try:
+            from app import add_persistent_notification
+            size_mb = round(history_entry.get('size', 0) / (1024 * 1024), 1)
+            add_persistent_notification(
+                'Backup completed',
+                f'{backup_filename} — {size_mb} MB, {round(history_entry["duration"])}s',
+                ntype='success',
+                action={'app': 'backup', 'tab': 'history'}
+            )
+        except Exception:
+            pass
         if retention and retention > 0:
             # For USB: apply retention on USB directory (archives are there)
             retention_dir = destination['path'] if direct_to_usb else BACKUP_DIR
@@ -934,6 +900,16 @@ def run_backup(paths, destination=None, profile_name=None, retention=0, incremen
             progress_state['last'] = None
         emit_log(f"Backup error: {e}", 'error')
         _emit('backup_error', {'message': str(e)})
+        try:
+            from app import add_persistent_notification
+            add_persistent_notification(
+                'Backup failed',
+                str(e)[:200],
+                ntype='error',
+                action={'app': 'backup', 'tab': 'history'}
+            )
+        except Exception:
+            pass
     finally:
         with operation_lock:
             current_operation = None
@@ -1033,12 +1009,32 @@ def run_restore(backup_file, target_path=None, archive_dir=None, decrypt_passphr
         with _progress_lock:
             progress_state['last'] = None
         _emit('backup_complete', {'message': f'Restore completed: {backup_file}'})
+        try:
+            from app import add_persistent_notification
+            add_persistent_notification(
+                'Restore completed',
+                f'{backup_file} → {target_path or "original locations"}',
+                ntype='success',
+                action={'app': 'backup', 'tab': 'history'}
+            )
+        except Exception:
+            pass
 
     except Exception as e:
         emit_log(f"Restore error: {e}", 'error')
         with _progress_lock:
             progress_state['last'] = None
         _emit('backup_error', {'message': str(e)})
+        try:
+            from app import add_persistent_notification
+            add_persistent_notification(
+                'Restore failed',
+                str(e)[:200],
+                ntype='error',
+                action={'app': 'backup', 'tab': 'history'}
+            )
+        except Exception:
+            pass
     finally:
         # Clean up all temporary decrypted files (sensitive data)
         for tmp in temp_decrypted_files:
