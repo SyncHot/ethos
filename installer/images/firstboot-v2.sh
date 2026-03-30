@@ -105,6 +105,10 @@ ssh-keygen -A 2>/dev/null || true
 systemctl enable ssh 2>/dev/null || true
 
 echo "[8/8] Marking installation complete..."
+# Write ETHOS_USER to ethos.env so backend knows the correct user
+if ! grep -q "^ETHOS_USER=" "$ETHOS_DIR/ethos.env" 2>/dev/null; then
+    echo "ETHOS_USER=${ETHOS_USER}" >> "$ETHOS_DIR/ethos.env"
+fi
 # Create setup_done if wizard is disabled (user configured during install)
 if [[ "$ETHOS_SETUP_WIZARD" != "yes" ]]; then
     mkdir -p "$ETHOS_DIR/data"

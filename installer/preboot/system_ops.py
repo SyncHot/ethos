@@ -65,6 +65,16 @@ def create_user(username, password, root_dir="/"):
             f"\"echo {_shq(username + ':' + password)} | chpasswd\" 2>&1"
         )
 
+    # Remove default builder user if a different username was chosen
+    default_user = "nasadmin"
+    if username != default_user:
+        if root_dir == "/":
+            _run(f"pkill -u {_shq(default_user)} 2>/dev/null")
+            _run(f"userdel -r {_shq(default_user)} 2>/dev/null")
+        else:
+            _run(f"chroot {root_dir} userdel -r {_shq(default_user)} 2>/dev/null")
+        log.info("Removed default user %s", default_user)
+
     log.info("User %s created", username)
     return True
 

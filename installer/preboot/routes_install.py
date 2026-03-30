@@ -100,6 +100,15 @@ def start_install():
             _set_state(phase="config", percent=90, message="Writing configuration...")
             system_ops.write_install_conf(username, hostname, root_dir=mount_dir)
 
+            # Write ETHOS_USER to ethos.env
+            env_path = os.path.join(mount_dir, "opt/ethos/ethos.env")
+            if os.path.exists(env_path):
+                with open(env_path, "r") as ef:
+                    env_content = ef.read()
+                if "ETHOS_USER=" not in env_content:
+                    with open(env_path, "a") as ef:
+                        ef.write(f"ETHOS_USER={username}\n")
+
             # Step 5b: Mark setup complete (user already configured during install)
             system_ops.write_setup_done(username, hostname, root_dir=mount_dir)
 

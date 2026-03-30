@@ -1947,7 +1947,7 @@ def setup_complete():
         _write_env_file_key('LANGUAGE', language)
 
     # 5. Update env files on host for persistence across restarts
-    _update_compose_env(password, nas_name, data_disk)
+    _update_compose_env(username, password, nas_name, data_disk)
 
     # 6. Mark setup as done
     _setup_progress_update('finalize', 'Finalizing configuration...')
@@ -2121,12 +2121,16 @@ def _restrict_admin_users(primary_user, errors):
             _host_run_base(f'usermod -p "!" {su} 2>/dev/null || true', timeout=10)
 
 
-def _update_compose_env(password, nas_name, data_disk=''):
-    """Update NAS_NAME, DATA_DISK in ethos.env."""
+def _update_compose_env(username, password, nas_name, data_disk=''):
+    """Update ETHOS_USER, NAS_NAME, DATA_DISK in ethos.env."""
     import shlex
     try:
         ethos_root = os.environ.get('ETHOS_ROOT', '/opt/ethos')
         env_file = os.path.join(ethos_root, 'ethos.env')
+
+        # Write ETHOS_USER
+        _write_env_file_key('ETHOS_USER', username)
+
         safe_name = shlex.quote(nas_name)
         _host_run_base(
             f'sed -i "s|NAS_NAME=.*|NAS_NAME={safe_name}|" {shlex.quote(env_file)}',
