@@ -28,6 +28,18 @@ function renderVMManager(body) {
 
     const _ISO_EXTS = ['.iso', '.img', '.raw', '.qcow2', '.vdi', '.vmdk'];
 
+    // VM port-forwarded links must use the LAN IP, not a domain (QEMU binds to host IP)
+    let _vmHost = location.hostname;
+    if (!/^\d+\.\d+\.\d+\.\d+$/.test(_vmHost)) {
+        api('/network/interfaces').then(d => {
+            for (const iface of (d.interfaces || [])) {
+                if (iface.state !== 'UP') continue;
+                const v4 = (iface.addresses || []).find(a => a.family === 'inet' && a.scope === 'global');
+                if (v4) { _vmHost = v4.address; break; }
+            }
+        }).catch(() => {});
+    }
+
     function openIsoPicker(startPath, onSelect) {
         let browsePath = startPath || '/media';
         const overlay = document.createElement('div');
@@ -198,7 +210,7 @@ function renderVMManager(body) {
             if (running && net.net_type === 'user' && net.port_forwards?.length) {
                 quickLinks = net.port_forwards.map(pf => {
                     const lbl = pf.label ? esc(pf.label) : `${pf.guest}`;
-                    return `<a href="http://${location.hostname}:${pf.host}" target="_blank" class="vm-link-chip" style="padding:3px 8px;font-size:11px" title="${pf.proto} :${pf.host}→:${pf.guest}" onclick="event.stopPropagation()"><i class="fas fa-external-link-alt"></i> ${lbl} :${pf.host}</a>`;
+                    return `<a href="http://${_vmHost}:${pf.host}" target="_blank" class="vm-link-chip" style="padding:3px 8px;font-size:11px" title="${pf.proto} :${pf.host}→:${pf.guest}" onclick="event.stopPropagation()"><i class="fas fa-external-link-alt"></i> ${lbl} :${pf.host}</a>`;
                 }).join(' ');
             }
             return `<tr class="vm-row" data-id="${esc(vm.id)}">
@@ -564,11 +576,11 @@ function renderVMManager(body) {
             <div class="vm-vnc-bar">
                 <i class="fas fa-tv"></i>
                 <span>${t('Konsola dostępna w zakładce')} <strong>${t('Konsola')}</strong> ${t('poniżej')}</span>
-                <span class="vm-vnc-hint">VNC: ${location.hostname}:${vm.vnc_port} | WS: ${vm.ws_port}</span>
+                <span class="vm-vnc-hint">VNC: ${_vmHost}:${vm.vnc_port} | WS: ${vm.ws_port}</span>
             </div>` : running && vm.vnc_port ? `
             <div class="vm-vnc-bar">
                 <i class="fas fa-tv"></i>
-                <span>${t('VNC:')} <strong>${location.hostname}:${vm.vnc_port}</strong></span>
+                <span>${t('VNC:')} <strong>${_vmHost}:${vm.vnc_port}</strong></span>
                 <span class="vm-vnc-hint">${t('Połącz klientem VNC (np. TigerVNC, Remmina)')}</span>
             </div>` : ''}
             <div class="vm-detail-tabs">
@@ -634,7 +646,7 @@ function renderVMManager(body) {
             dc.innerHTML = `<div class="vm-empty">${t('Konsola dostępna tylko dla działających maszyn z aktywnym WebSocket.')}</div>`;
             return;
         }
-        const wsHost = location.hostname;
+        const wsHost = _vmHost;
         // Serve noVNC through Flask (same-origin) so iframe isn't blocked by CSP.
         // WebSocket connects directly to websockify port.
         const novncUrl = `/api/vm/novnc/vnc_lite.html?host=${wsHost}&port=${vm.ws_port}&autoconnect=true&resize=scale&reconnect=true&path=websockify`;
@@ -661,7 +673,7 @@ function renderVMManager(body) {
         const vm = S.selectedVM;
         const running = vm.status === 'running';
         const osLabels = { linux: 'Linux', windows: 'Windows', other: 'Inny' };
-        const host = location.hostname;
+        const host = _vmHost;
         const net = vm.network || { net_type: 'user', port_forwards: [] };
 
         // Build connection links for running VMs
