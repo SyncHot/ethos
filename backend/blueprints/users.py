@@ -153,13 +153,13 @@ _HELPER = '/opt/ethos/tools/ethos-system-helper.sh'
 
 @users_bp.route('/list')
 def list_users():
-    """List all system users (uid >= 1000 + root)."""
+    """List all system users (uid >= 1000, excluding system accounts)."""
     now = time.time()
     if _users_cache['data'] is not None and (now - _users_cache['ts']) < _USERS_CACHE_TTL:
         return jsonify(_users_cache['data'])
     try:
         r = host_run(
-            "getent passwd | awk -F: '($3 >= 1000 && $3 < 65534) || $3 == 0 "
+            "getent passwd | awk -F: '($3 >= 1000 && $3 < 65534) "
             "{print $1\"\\t\"$3\"\\t\"$4\"\\t\"$6\"\\t\"$7}'"
         )
         users = []
