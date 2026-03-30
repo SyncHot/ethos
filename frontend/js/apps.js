@@ -4536,17 +4536,18 @@ function renderFM(body, state) {
     const anaState = { path: '/', entries: [], files: [], totalSize: 0, history: [], activeTab: 'dirs', loading: false };
 
     body.querySelector('#fm-analyze').onclick = () => {
-        anaPanel.style.display = '';
+        anaPanel.classList.remove('hidden');
         anaState.path = state.path;
         anaState.history = [];
         renderAnaBreadcrumbs();
+        runAnalysis();
     };
     body.querySelector('#fm-ana-back-btn').onclick = () => {
         if (anaState.history.length) {
             const prev = anaState.history.pop();
             runAnalysis(prev);
         } else {
-            anaPanel.style.display = 'none';
+            anaPanel.classList.add('hidden');
         }
     };
     body.querySelector('#fm-ana-scan').onclick = () => {

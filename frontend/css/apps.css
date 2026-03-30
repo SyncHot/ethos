@@ -2112,7 +2112,7 @@ select.fm-input {
 
 /* ── FM specific overrides ── */
 .fm-main-flex { flex: 1; display: flex; flex-direction: column; overflow: hidden; position: relative; }
-.fm-ana-overlay { display: none; position: absolute; inset: 0; background: var(--bg-surface); z-index: 10; overflow-y: auto; }
+.fm-ana-overlay { position: absolute; inset: 0; background: var(--bg-surface); z-index: 10; overflow-y: auto; }
 .fm-toolbar-btn-compact { width: auto; padding: 4px 10px; font-size: 12px; white-space: nowrap; }
 
 /* ── Docker specific ── */
