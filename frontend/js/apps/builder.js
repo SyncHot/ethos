@@ -457,6 +457,15 @@ function renderBuilderApp(body) {
         }
         html += '</div>';
 
+        // Build History
+        html += `<div class="bl-section">
+            <div class="bl-section-title" style="justify-content:space-between">
+                <span><i class="fas fa-history"></i> ${t('Historia budowań')}</span>
+                <button class="bl-btn bl-btn-sm bl-btn-outline" id="bl-history-clear" style="font-size:11px;color:#ef4444;border-color:#ef4444"><i class="fas fa-trash"></i></button>
+            </div>
+            <div id="bl-history-list" style="font-size:12px;color:var(--text-muted)">${t('Ładowanie…')}</div>
+        </div>`;
+
         // Build cache
         html += `<div class="bl-section">
             <div class="bl-section-title"><i class="fas fa-database"></i> Cache budowania</div>
@@ -539,6 +548,44 @@ function renderBuilderApp(body) {
             await api('/builder/cache', { method: 'DELETE' });
             toast('Cache wyczyszczony', 'success');
             loadInfo();
+        };
+
+        // Build History
+        (async () => {
+            try {
+                const h = await api('/builder/history');
+                const el = blBody.querySelector('#bl-history-list');
+                if (!el) return;
+                const items = h.items || [];
+                if (!items.length) {
+                    el.innerHTML = `<div style="text-align:center;color:var(--text-muted);padding:12px">${t('Brak historii')}</div>`;
+                    return;
+                }
+                let rows = '';
+                for (const b of items) {
+                    const ok = b.result?.success;
+                    const icon = ok ? '<i class="fas fa-check-circle" style="color:#10b981"></i>' : '<i class="fas fa-times-circle" style="color:#ef4444"></i>';
+                    const type = b.build_type === 'release' ? '<i class="fas fa-tag"></i> Release' : '<i class="fas fa-hdd"></i> Image';
+                    const dt = b.end_time ? new Date(b.end_time * 1000).toLocaleString('pl-PL') : '—';
+                    const dur = b.duration ? `${Math.floor(b.duration / 60)}m ${b.duration % 60}s` : '—';
+                    const msg = b.message || '';
+                    rows += `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border-color)">
+                        ${icon}
+                        <span style="min-width:80px">${type}</span>
+                        <span style="color:var(--text-secondary);min-width:130px;font-size:11px">${dt}</span>
+                        <span style="color:var(--text-muted);min-width:60px;font-size:11px">${dur}</span>
+                        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px" title="${msg.replace(/"/g, '&quot;')}">${msg}</span>
+                    </div>`;
+                }
+                el.innerHTML = rows;
+            } catch {}
+        })();
+        const histClearBtn = blBody.querySelector('#bl-history-clear');
+        if (histClearBtn) histClearBtn.onclick = async () => {
+            if (!confirm(t('Wyczyścić historię budowań?'))) return;
+            await api('/builder/history/clear', { method: 'POST' });
+            toast(t('Historia wyczyszczona'), 'success');
+            renderArtifacts();
         };
     }
 

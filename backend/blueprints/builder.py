@@ -36,7 +36,9 @@ _logger.addHandler(_fh)
 
 # ── Build State (persistent across SSE reconnects) ──
 _BUILD_STATE_FILE = data_path('builder_state.json')
+_BUILD_HISTORY_FILE = data_path('build_history.json')
 _MAX_STATE_LOGS = 500
+_MAX_HISTORY = 50
 
 _build_state = {
     'status': 'idle',       # idle | building | done | error
@@ -55,6 +57,30 @@ def _save_build_state():
     """Persist build state to disk for crash recovery."""
     try:
         _save_json(_BUILD_STATE_FILE, _build_state)
+    except Exception:
+        pass
+
+
+def _save_to_history():
+    """Append completed build to persistent history."""
+    try:
+        history = _load_json(_BUILD_HISTORY_FILE, [])
+        if not isinstance(history, list):
+            history = []
+        entry = {
+            'build_type': _build_state.get('build_type', ''),
+            'status': _build_state.get('status', ''),
+            'message': _build_state.get('message', ''),
+            'result': _build_state.get('result'),
+            'start_time': _build_state.get('start_time', 0),
+            'end_time': time.time(),
+        }
+        if entry['start_time']:
+            entry['duration'] = int(entry['end_time'] - entry['start_time'])
+        history.append(entry)
+        if len(history) > _MAX_HISTORY:
+            history = history[-_MAX_HISTORY:]
+        _save_json(_BUILD_HISTORY_FILE, history)
     except Exception:
         pass
 
@@ -113,6 +139,8 @@ def _update_build(status=None, percent=None, message=None, log=None, result=None
         if status:
             _logger.info('[%s] %s', status, message or '')
         _save_build_state()
+        if status in ('done', 'error'):
+            _save_to_history()
 
 
 def _reset_build(build_type=''):
@@ -343,6 +371,23 @@ def dismiss_build():
             'result': None,
         })
         _save_build_state()
+    return jsonify({'ok': True})
+
+
+@builder_bp.route('/history')
+def build_history():
+    """Return persistent build history (last N builds)."""
+    history = _load_json(_BUILD_HISTORY_FILE, [])
+    if not isinstance(history, list):
+        history = []
+    # Return newest first
+    return jsonify({'ok': True, 'items': list(reversed(history))})
+
+
+@builder_bp.route('/history/clear', methods=['POST'])
+def clear_history():
+    """Clear build history."""
+    _save_json(_BUILD_HISTORY_FILE, [])
     return jsonify({'ok': True})
 
 
@@ -1364,8 +1409,13 @@ cp "$NASOS/tools/ethos-power-config.sh" "$ETHOS_DIR/tools/"
 cp "$NASOS/tools/ethos-system-helper.sh" "$ETHOS_DIR/tools/"
 cp "$NASOS/tools/ethos-power.service" "$ETHOS_DIR/tools/"
 cp "$NASOS/tools/ethos-power-blacklist.conf" "$ETHOS_DIR/tools/"
+# Security scripts — SSH password gate + fail2ban event logger
+cp "$NASOS/tools/check_password_changed.sh" "$ETHOS_DIR/tools/" 2>/dev/null || echo "WARN:check_password_changed.sh not found"
+cp "$NASOS/tools/fail2ban_eventlog.py"      "$ETHOS_DIR/tools/" 2>/dev/null || echo "WARN:fail2ban_eventlog.py not found"
 chmod +x "$ETHOS_DIR/tools/ethos-power-config.sh"
 chmod +x "$ETHOS_DIR/tools/ethos-system-helper.sh"
+chmod +x "$ETHOS_DIR/tools/check_password_changed.sh" 2>/dev/null || true
+chmod +x "$ETHOS_DIR/tools/fail2ban_eventlog.py" 2>/dev/null || true
 
 # ── CUPS config ──
 if [[ -d "$NASOS/cups-config" ]]; then
