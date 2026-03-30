@@ -9919,7 +9919,7 @@ if __name__ == '__main__':
     def _vm_autostart():
         try:
             from blueprints.vm_manager import vm_autostart_boot
-            vm_autostart_boot()
+            vm_autostart_boot(flask_app=app)
         except ImportError:
             pass  # VM Manager not installed
         except Exception as e:

@@ -1142,11 +1142,13 @@ chroot "$ROOT" systemctl enable fail2ban || true
 
 # ── UFW Firewall ──
 echo "LOG:Configuring UFW firewall..."
+LAN="192.168.0.0/16"
 chroot "$ROOT" bash -c 'command -v ufw &>/dev/null || apt-get install -y -qq ufw' 2>&1 | tail -3
 chroot "$ROOT" ufw default deny incoming 2>/dev/null || true
 chroot "$ROOT" ufw default allow outgoing 2>/dev/null || true
-chroot "$ROOT" ufw allow 22/tcp comment 'SSH' 2>/dev/null || true
-chroot "$ROOT" ufw allow 9000/tcp comment 'EthOS Web UI' 2>/dev/null || true
+chroot "$ROOT" ufw allow from $LAN to any port 22 proto tcp comment 'SSH' 2>/dev/null || true
+chroot "$ROOT" ufw allow from $LAN to any port 9000 proto tcp comment 'EthOS Web UI' 2>/dev/null || true
+chroot "$ROOT" ufw allow from $LAN to any port 80,443 proto tcp comment 'HTTP / HTTPS' 2>/dev/null || true
 # Enable UFW non-interactively
 chroot "$ROOT" bash -c 'echo "y" | ufw enable' 2>/dev/null || true
 chroot "$ROOT" systemctl enable ufw 2>/dev/null || true

@@ -753,10 +753,10 @@ def set_vm_autostart(vm_id):
     return jsonify({'ok': True, 'autostart': vms[vm_id]['autostart']})
 
 
-def vm_autostart_boot():
+def vm_autostart_boot(flask_app=None):
     """Start all VMs with autostart=True. Called on EthOS startup."""
     import logging
-    from flask import current_app, g
+    from flask import g
     log = logging.getLogger('vm_autostart')
     try:
         vms = _load_vms()
@@ -769,12 +769,19 @@ def vm_autostart_boot():
         log.warning('[vm] Autostart: QEMU not installed, skipping')
         return
     log.info('[vm] Autostart: %d VM(s) queued', len(candidates))
+    if not flask_app:
+        try:
+            from flask import current_app
+            flask_app = current_app._get_current_object()
+        except RuntimeError:
+            log.warning('[vm] Autostart: no Flask app context available')
+            return
     for vm_id, vm in candidates:
         if _check_vm_process(vm_id):
             log.info('[vm] Autostart: %s already running, skip', vm.get('name', vm_id))
             continue
         try:
-            with current_app.test_request_context():
+            with flask_app.test_request_context():
                 g.username = 'system'
                 g.role = 'admin'
                 g.groups = ['sudo']

@@ -81,9 +81,10 @@ AppRegistry['firewall'] = function (appDef) {
 
     // ─── Presets ───
     var PRESETS = [
+        { icon: 'fa-server',        name: 'EthOS',        ports: '9000',    proto: 'tcp', access: 'lan',    color: '#38bdf8' },
         { icon: 'fa-terminal',      name: 'SSH',          ports: '22',      proto: 'tcp', access: 'lan',    color: '#22c55e' },
         { icon: 'fa-folder-open',   name: 'Samba',        ports: '139,445', proto: 'tcp', access: 'lan',    color: '#3b82f6' },
-        { icon: 'fa-globe',         name: 'HTTP / HTTPS', ports: '80,443',  proto: 'tcp', access: 'public', color: '#f59e0b' },
+        { icon: 'fa-globe',         name: 'HTTP / HTTPS', ports: '80,443',  proto: 'tcp', access: 'lan',    color: '#f59e0b' },
         { icon: 'fa-play-circle',   name: 'Plex',         ports: '32400',   proto: 'tcp', access: 'lan',    color: '#e5a00d' },
         { icon: 'fa-print',         name: 'CUPS',         ports: '631',     proto: 'tcp', access: 'lan',    color: '#8b5cf6' },
         { icon: 'fa-hdd',           name: 'NFS',          ports: '2049',    proto: 'tcp', access: 'lan',    color: '#06b6d4' },
