@@ -32,7 +32,7 @@ import urllib.error
 from flask import Blueprint, request, jsonify, g
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from host import host_run, data_path, app_path, q, _apt_exec, apt_install as _host_apt_install
+from host import host_run, host_run_stream, data_path, app_path, q, _apt_exec, apt_install as _host_apt_install
 
 log = logging.getLogger('app_manager')
 app_manager_bp = Blueprint('app_manager', __name__, url_prefix='/api/app-manager')
@@ -671,25 +671,87 @@ def _download_file(url, dest_path):
 
 
 def _install_apt_deps(deps, emit_fn):
+    """Install APT dependencies with streaming progress updates."""
     if not deps:
         return True
     pkgs = ' '.join(q(d) for d in deps)
-    emit_fn({'stage': 'deps_apt', 'message': 'Instalowanie pakietow apt: ' + ', '.join(deps), 'percent': 30})
-    result = _host_apt_install(pkgs, timeout=300)
-    if result.returncode != 0:
-        log.error('[app_manager] apt install failed (rc=%s): %s', result.returncode, result.stderr[-500:])
-    return result.returncode == 0
+    emit_fn({'stage': 'deps_apt', 'message': 'apt-get update...', 'percent': 25, 'status': 'running'})
+
+    cmd = (
+        f'DEBIAN_FRONTEND=noninteractive apt-get update -y -qq 2>/dev/null; '
+        f'DEBIAN_FRONTEND=noninteractive apt-get install -y {pkgs} 2>&1'
+    )
+    lock_file = '/tmp/ethos-apt.lock'
+    wrapped = f"flock -w 180 {q(lock_file)} bash -lc {q(cmd)}"
+
+    exit_code = -1
+    last_err = ''
+    count = 0
+    for line in host_run_stream(wrapped):
+        stripped = line.strip()
+        if stripped.startswith('__EXIT_CODE__:'):
+            exit_code = int(stripped.split(':', 1)[1])
+            break
+        if not stripped:
+            continue
+        # Track apt progress — emit every few meaningful lines
+        lower = stripped.lower()
+        if any(kw in lower for kw in ('unpacking', 'setting up', 'installing', 'get:', 'fetched')):
+            count += 1
+            pct = min(40, 28 + count)
+            short = stripped[:80]
+            emit_fn({'stage': 'deps_apt', 'message': short, 'percent': pct, 'status': 'running'})
+        if 'e:' in lower or 'err' in lower:
+            last_err = stripped
+
+    if exit_code != 0:
+        detail = last_err[:120] if last_err else f'exit code {exit_code}'
+        log.error('[app_manager] apt install failed (rc=%s): %s', exit_code, detail)
+        emit_fn({'stage': 'error', 'percent': 0,
+                 'message': f'apt: {detail}', 'status': 'error'})
+        return False
+    emit_fn({'stage': 'deps_apt', 'message': 'Pakiety apt zainstalowane', 'percent': 42, 'status': 'running'})
+    return True
 
 
 def _install_pip_deps(deps, emit_fn):
+    """Install pip dependencies with streaming progress updates."""
     if not deps:
         return True
     pkgs = ' '.join(q(d) for d in deps)
     venv = os.path.join(_ETHOS_ROOT, 'venv')
     pip = os.path.join(venv, 'bin', 'pip') if os.path.isdir(venv) else 'pip3'
-    emit_fn({'stage': 'deps_pip', 'message': 'Instalowanie pakietow pip: ' + ', '.join(deps), 'percent': 50})
-    result = host_run(q(pip) + ' install --quiet ' + pkgs, timeout=300)
-    return result.returncode == 0
+    emit_fn({'stage': 'deps_pip', 'message': 'pip install: ' + ', '.join(deps), 'percent': 45, 'status': 'running'})
+
+    cmd = q(pip) + ' install --progress-bar off ' + pkgs + ' 2>&1'
+
+    exit_code = -1
+    last_err = ''
+    count = 0
+    for line in host_run_stream(cmd):
+        stripped = line.strip()
+        if stripped.startswith('__EXIT_CODE__:'):
+            exit_code = int(stripped.split(':', 1)[1])
+            break
+        if not stripped:
+            continue
+        lower = stripped.lower()
+        if any(kw in lower for kw in ('collecting', 'downloading', 'installing', 'building', 'successfully')):
+            count += 1
+            pct = min(55, 47 + count)
+            short = stripped[:80]
+            emit_fn({'stage': 'deps_pip', 'message': short, 'percent': pct, 'status': 'running'})
+        if 'error' in lower:
+            last_err = stripped
+
+    if exit_code != 0:
+        detail = last_err[:120] if last_err else f'exit code {exit_code}'
+        log.error('[app_manager] pip install failed (rc=%s): %s', exit_code, detail)
+        emit_fn({'stage': 'error', 'percent': 0,
+                 'message': f'pip: {detail}', 'status': 'error'})
+        return False
+    emit_fn({'stage': 'deps_pip', 'message': 'Pakiety pip zainstalowane', 'percent': 57, 'status': 'running'})
+    return True
 
 
 def _sync_frontend_dist():
@@ -857,7 +919,7 @@ def _bg_install(app_id, app_def, task_id):
                     emit({'stage': 'error', 'percent': 0, 'message': 'Bląd pobierania frontend', 'status': 'error'})
                     return
         else:
-            emit({'stage': 'download', 'percent': 20, 'message': 'Pliki juz dostepne (bundled)', 'status': 'running'})
+            emit({'stage': 'download', 'percent': 15, 'message': 'Pliki juz dostepne (bundled)', 'status': 'running'})
 
         # Download backend.py from GitHub if not on disk
         # (Builder images keep frontend JS but remove optional backend .py)
@@ -867,30 +929,28 @@ def _bg_install(app_id, app_def, task_id):
             bp_dest = os.path.join(_BLUEPRINTS_DIR, module_name + '.py')
             if not os.path.isfile(bp_dest):
                 bp_url = GITHUB_APP_BASE + '/' + app_id + '/backend.py'
-                emit({'stage': 'download_backend', 'percent': 15, 'message': 'Pobieranie backend...', 'status': 'running'})
+                emit({'stage': 'download_backend', 'percent': 20, 'message': 'Pobieranie backend...', 'status': 'running'})
                 if not _download_file(bp_url, bp_dest):
                     emit({'stage': 'error', 'percent': 0, 'message': 'Bład pobierania backend — sprawdz połaczenie z internetem', 'status': 'error'})
                     return
 
-        # Instalacja zaleznosci
+        # Instalacja zaleznosci (apt: 25-42%, pip: 45-57%)
         apt_deps = app_def.get('apt_deps', [])
         if apt_deps and not _install_apt_deps(apt_deps, emit):
-            emit({'stage': 'error', 'percent': 0, 'message': 'Bład instalacji apt deps', 'status': 'error'})
             return
 
         pip_deps = app_def.get('pip_deps', [])
         if pip_deps and not _install_pip_deps(pip_deps, emit):
-            emit({'stage': 'error', 'percent': 0, 'message': 'Bład instalacji pip deps', 'status': 'error'})
             return
 
         # Hot-load blueprint so its routes are available immediately
-        emit({'stage': 'load', 'percent': 60, 'message': 'Ładowanie modułu...', 'status': 'running'})
+        emit({'stage': 'load', 'percent': 65, 'message': 'Ładowanie modułu...', 'status': 'running'})
         hot_ok = _hot_load_blueprint(app_id)
 
         # Call app's install endpoint (now works even for first install)
         install_ep = app_def.get('install_endpoint')
         if install_ep and not app_def.get('simple') and _flask_app:
-            emit({'stage': 'configure', 'percent': 65, 'message': 'Konfigurowanie apki...', 'status': 'running'})
+            emit({'stage': 'configure', 'percent': 75, 'message': 'Konfigurowanie apki...', 'status': 'running'})
             try:
                 with _flask_app.app_context():
                     with _flask_app.test_client() as tc:
@@ -899,7 +959,7 @@ def _bg_install(app_id, app_def, task_id):
                 log.warning('[app_manager] install_endpoint %s failed: %s', install_ep, e)
 
         # Synchronizacja frontend_dist
-        emit({'stage': 'sync', 'percent': 80, 'message': 'Synchronizacja plikow frontend...', 'status': 'running'})
+        emit({'stage': 'sync', 'percent': 85, 'message': 'Synchronizacja plikow frontend...', 'status': 'running'})
         _sync_frontend_dist()
 
         version = app_def.get('version', 'bundled')
