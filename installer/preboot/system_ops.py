@@ -59,7 +59,7 @@ def create_user(username, password, root_dir="/"):
             log.error("chpasswd failed: %s", err)
             return False
     else:
-        # Chroot — write directly
+        # Chroot — /dev must be bind-mounted by caller for chpasswd
         for g in ("ethos-admin", "ethos-user", "ethos-family"):
             _run(f"chroot {root_dir} bash -c 'getent group {g} >/dev/null 2>&1 || groupadd {g}'")
 
@@ -67,10 +67,16 @@ def create_user(username, password, root_dir="/"):
             f"chroot {root_dir} useradd -m -s /bin/bash -G sudo,ethos-admin,ethos-user "
             f"{_shq(username)} 2>&1"
         )
-        _run(
+        out, err, rc = _run(
             f"chroot {root_dir} bash -c "
             f"\"echo {_shq(username + ':' + password)} | chpasswd\" 2>&1"
         )
+        if rc != 0:
+            log.warning("chpasswd returned code %d: %s — falling back to usermod", rc, err)
+            import crypt
+            salt = crypt.mksalt(crypt.METHOD_SHA512)
+            hashed = crypt.crypt(password, salt)
+            _run(f"chroot {root_dir} usermod -p {_shq(hashed)} {_shq(username)}")
 
     # Remove default builder user if a different username was chosen
     default_user = "nasadmin"

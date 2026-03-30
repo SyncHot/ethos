@@ -88,6 +88,11 @@ def start_install():
             # Step 2: Mount target for post-config
             from disk_ops import _run, _part
             _run(f"mount {_part('/dev/' + os_disk, 2)} {mount_dir}", timeout=30)
+            # Bind-mount /dev for chroot operations (chpasswd, ssh-keygen, systemctl)
+            _run(f"mount --bind /dev {mount_dir}/dev")
+            _run(f"mount --bind /dev/pts {mount_dir}/dev/pts 2>/dev/null")
+            _run(f"mount -t proc proc {mount_dir}/proc 2>/dev/null")
+            _run(f"mount -t sysfs sysfs {mount_dir}/sys 2>/dev/null")
 
             # Step 3: Create user
             _set_state(phase="user", percent=85, message="Creating user account...")
