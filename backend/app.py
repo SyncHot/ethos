@@ -7360,50 +7360,75 @@ def _bg_compress(resolved, archive_path, fmt, total, cur_user=None):
         _fileop_finish('compress', False, str(e))
 
 
+_EXTRACT_COMPOUND_EXTS = ('.tar.gz', '.tgz', '.tar.bz2', '.tbz2', '.tar.xz', '.txz')
+_EXTRACT_SIMPLE_EXTS = ('.tar', '.zip')
+_EXTRACT_7Z_EXTS = ('.gz', '.bz2', '.xz', '.rar', '.7z', '.cab', '.iso')
+_EXTRACT_ALL_EXTS = _EXTRACT_COMPOUND_EXTS + _EXTRACT_SIMPLE_EXTS + _EXTRACT_7Z_EXTS
+
+
+def _extract_folder_name(basename):
+    """Derive output folder name from archive filename."""
+    low = basename.lower()
+    for ext in _EXTRACT_COMPOUND_EXTS:
+        if low.endswith(ext):
+            return basename[:len(basename) - len(ext)]
+    for ext in _EXTRACT_SIMPLE_EXTS + _EXTRACT_7Z_EXTS:
+        if low.endswith(ext):
+            return basename[:len(basename) - len(ext)]
+    return basename + '_extracted'
+
+
+def _needs_7z(basename):
+    """Return True if this archive format requires 7z CLI rather than Python stdlib."""
+    low = basename.lower()
+    return any(low.endswith(ext) for ext in _EXTRACT_7Z_EXTS)
+
+
 @app.route('/api/files/extract', methods=['POST'])
 @require_auth
 def files_extract():
-    """Extract a zip or tar archive."""
+    """Extract an archive (zip, tar.*, gz, rar, 7z, bz2, xz, cab, iso)."""
     data = request.json or {}
     archive = safe_path(data.get('path', ''))
     if not archive or not os.path.isfile(archive):
         return jsonify({'error': 'Archive file does not exist'}), 400
 
     basename = os.path.basename(archive)
-    # Determine extract dir
-    if basename.endswith('.tar.gz') or basename.endswith('.tgz'):
-        folder_name = basename.rsplit('.tar.gz', 1)[0] if basename.endswith('.tar.gz') else basename.rsplit('.tgz', 1)[0]
-    elif basename.endswith('.tar.bz2'):
-        folder_name = basename.rsplit('.tar.bz2', 1)[0]
-    elif basename.endswith('.tar.xz'):
-        folder_name = basename.rsplit('.tar.xz', 1)[0]
-    elif basename.endswith('.tar'):
-        folder_name = basename.rsplit('.tar', 1)[0]
-    elif basename.endswith('.zip'):
-        folder_name = basename.rsplit('.zip', 1)[0]
-    else:
+    low = basename.lower()
+
+    if not any(low.endswith(ext) for ext in _EXTRACT_ALL_EXTS):
         return jsonify({'error': 'Unsupported archive format'}), 400
 
+    folder_name = _extract_folder_name(basename)
     extract_to = os.path.join(os.path.dirname(archive), folder_name)
     counter = 1
     base_extract = extract_to
     while os.path.exists(extract_to):
         extract_to = f"{base_extract}_{counter}"
         counter += 1
+
+    # For 7z-only formats, verify or install 7z first (before going async)
+    use_7z = _needs_7z(basename)
+    if use_7z:
+        from host import ensure_dep
+        ok, msg = ensure_dep('7z', install=True)
+        if not ok:
+            return jsonify({'error': f'Cannot extract: {msg}'}), 400
+
     os.makedirs(extract_to, exist_ok=True)
 
-    # Count members
-    try:
-        if basename.endswith('.zip'):
-            with zipfile.ZipFile(archive, 'r') as zf:
-                total = len(zf.namelist())
-        elif basename.endswith(('.tar.gz', '.tgz', '.tar.bz2', '.tar.xz', '.tar')):
-            with tarfile.open(archive, 'r:*') as tf:
-                total = len(tf.getnames())
-        else:
+    # Count members (only for Python-handled formats)
+    total = 0
+    if not use_7z:
+        try:
+            if low.endswith('.zip'):
+                with zipfile.ZipFile(archive, 'r') as zf:
+                    total = len(zf.namelist())
+            elif low.endswith(('.tar.gz', '.tgz', '.tar.bz2', '.tbz2', '.tar.xz', '.txz', '.tar')):
+                with tarfile.open(archive, 'r:*') as tf:
+                    total = len(tf.getnames())
+        except Exception:
             total = 0
-    except Exception:
-        total = 0
 
     with _fileop_lock:
         _fm = _fileop_channels['fm']
@@ -7415,11 +7440,11 @@ def files_extract():
         _fm['cancel'] = False
         _fm['paused'] = False
 
-    socketio.start_background_task(_bg_extract, archive, extract_to, total, get_current_user())
+    socketio.start_background_task(_bg_extract, archive, extract_to, total, use_7z, get_current_user())
     return jsonify({'async': True, 'message': f'Extracting {basename} to {folder_name}/'})
 
 
-def _bg_extract(archive, extract_to, total, cur_user=None):
+def _bg_extract(archive, extract_to, total, use_7z, cur_user=None):
     """Background archive extraction with progress and cancel support."""
     _bg_username = cur_user['username'] if cur_user else None
     done = 0
@@ -7431,7 +7456,30 @@ def _bg_extract(archive, extract_to, total, cur_user=None):
             return _fm.get('cancel', False)
 
     try:
-        if basename.endswith('.zip'):
+        if use_7z:
+            # Use 7z CLI for formats Python can't handle (.gz, .rar, .7z, .bz2, .xz, .cab, .iso)
+            import subprocess as _sp
+            cmd = ['7z', 'x', '-y', f'-o{extract_to}', archive]
+            _fileop_progress('extract', basename, 0, 1)
+            proc = _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.STDOUT, text=True, bufsize=1)
+            for line in iter(proc.stdout.readline, ''):
+                if _check_cancel():
+                    proc.kill()
+                    try: shutil.rmtree(extract_to, ignore_errors=True)
+                    except Exception: pass
+                    _fileop_finish('extract', False, 'Cancelled')
+                    return
+                line = line.strip()
+                if line.startswith('- ') or line.startswith('Extracting '):
+                    fname = line.split(' ', 1)[-1] if ' ' in line else line
+                    done += 1
+                    _fileop_progress('extract', fname[:80], done, max(done, 1))
+                    gevent.sleep(0)
+            proc.wait()
+            if proc.returncode != 0:
+                _fileop_finish('extract', False, f'7z exited with code {proc.returncode}')
+                return
+        elif basename.lower().endswith('.zip'):
             with zipfile.ZipFile(archive, 'r') as zf:
                 for member in zf.namelist():
                     if _check_cancel():
@@ -7444,7 +7492,8 @@ def _bg_extract(archive, extract_to, total, cur_user=None):
                     if done % 20 == 0 or done == total:
                         _fileop_progress('extract', member.split('/')[-1] or member, done, total)
                         gevent.sleep(0)
-        elif basename.endswith(('.tar.gz', '.tgz', '.tar.bz2', '.tar.xz', '.tar')):
+        else:
+            # tar variants
             with tarfile.open(archive, 'r:*') as tf:
                 for member in tf:
                     if _check_cancel():

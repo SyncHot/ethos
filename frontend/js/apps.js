@@ -1137,7 +1137,7 @@ function renderFM(body, state) {
             const filePath = getFilePath(file.name);
             try {
                 await api('/files/delete', { method: 'DELETE', body: { paths: [filePath] } });
-                toast(`Przeniesiono do kosza: "${file.name}"`, 'success');
+                toast(t('Przeniesiono do kosza:') + ` "${file.name}"`, 'success');
 
                 // Also remove from photo favorites if it was favorited
                 if (isPhotoFavorite(filePath)) {
@@ -1168,8 +1168,9 @@ function renderFM(body, state) {
             const file = mediaFiles[currentIdx];
             if (!file) return;
             const filePath = getFilePath(file.name);
+            const tk = NAS.token || '';
             const a = document.createElement('a');
-            a.href = `/api/files/download?path=${encodeURIComponent(filePath)}`;
+            a.href = `/api/files/download?path=${encodeURIComponent(filePath)}&token=${encodeURIComponent(tk)}`;
             a.download = file.name;
             document.body.appendChild(a);
             a.click();
@@ -1301,7 +1302,7 @@ function renderFM(body, state) {
         // Extract — single archive file
         if (singleItem && !singleItem.is_dir) {
             const ext = singleItem.name.split('.').pop().toLowerCase();
-            const archiveExts = ['zip', 'rar', '7z', 'gz', 'tgz', 'bz2', 'xz', 'tar', 'cab', 'iso'];
+            const archiveExts = ['zip', 'rar', '7z', 'gz', 'tgz', 'tbz2', 'txz', 'bz2', 'xz', 'tar', 'cab', 'iso'];
             const fullName = singleItem.name.toLowerCase();
             if (archiveExts.includes(ext) || fullName.endsWith('.tar.gz') || fullName.endsWith('.tar.bz2') || fullName.endsWith('.tar.xz') || /\.part\d+\.rar$/i.test(fullName) || /\.r\d+$/i.test(fullName)) {
                 items.push({ icon: 'fa-box-open', label: t('Rozpakuj tutaj'), action: 'extract' });
@@ -1978,7 +1979,7 @@ function renderFM(body, state) {
         if (!name) return;
         try {
             await api('/files/mkdir', { method: 'POST', body: { path: joinCurrentPath(name) } });
-            toast(`Folder "${name}" utworzony`, 'success');
+            toast(t('Folder utworzony:') + ` "${name}"`, 'success');
             navigateTo(state.path);
         } catch {
             toast(t('Błąd tworzenia folderu'), 'error');
@@ -1986,7 +1987,7 @@ function renderFM(body, state) {
     }
 
     async function createNewFile() {
-        const name = await promptDialog('Nowy plik', 'Nazwa pliku:', 'nowy_plik.txt');
+        const name = await promptDialog(t('Nowy plik'), t('Nazwa pliku:'), 'nowy_plik.txt');
         if (!name) return;
         try {
             const blob = new Blob([''], { type: 'text/plain' });
@@ -2000,7 +2001,7 @@ function renderFM(body, state) {
             });
             const data = await resp.json();
             if (data.ok || data.uploaded) {
-                toast(`Plik "${name}" utworzony`, 'success');
+                toast(t('Plik utworzony:') + ` "${name}"`, 'success');
                 navigateTo(state.path);
             } else {
                 toast(data.error || t('Błąd tworzenia pliku'), 'error');
@@ -2370,7 +2371,7 @@ function renderFM(body, state) {
 
     async function downloadSelected() {
         const sel = [...state.selected];
-        if (!sel.length) { toast('Zaznacz elementy do pobrania', 'warning'); return; }
+        if (!sel.length) { toast(t('Zaznacz elementy do pobrania'), 'warning'); return; }
 
         // Single regular file — direct download (fast, no zip)
         if (sel.length === 1) {
@@ -2456,7 +2457,7 @@ function renderFM(body, state) {
 
     async function renameSelected() {
         const name = [...state.selected][0];
-        if (!name) { toast('Zaznacz element do zmiany nazwy', 'warning'); return; }
+        if (!name) { toast(t('Zaznacz element do zmiany nazwy'), 'warning'); return; }
         // Try inline rename first
         if (_startInlineRename(name)) return;
         // Fallback to dialog
@@ -2552,14 +2553,14 @@ function renderFM(body, state) {
     }
 
     function clipboardCopy() {
-        if (!state.selected.size) { toast('Zaznacz elementy', 'warning'); return; }
+        if (!state.selected.size) { toast(t('Zaznacz elementy'), 'warning'); return; }
         state.clipboard = { mode: 'copy', paths: getSelectedPaths(), basePath: state.path };
         toast(t('Copied') + ' ' + state.clipboard.paths.length + ' ' + t('item(s)') + ' ' + t('to clipboard'), 'info');
         updateClipboardBar();
     }
 
     function clipboardCut() {
-        if (!state.selected.size) { toast('Zaznacz elementy', 'warning'); return; }
+        if (!state.selected.size) { toast(t('Zaznacz elementy'), 'warning'); return; }
         state.clipboard = { mode: 'cut', paths: getSelectedPaths(), basePath: state.path };
         toast(t('Cut') + ' ' + state.clipboard.paths.length + ' ' + t('item(s)'), 'info');
         updateClipboardBar();
@@ -2585,7 +2586,7 @@ function renderFM(body, state) {
                 const r = await api('/files/copy', { method: 'POST', body: { sources: paths, dest, on_conflict: onConflict } });
                 if (r.error) { toast(r.error, 'error'); return; }
                 if (r.async) {
-                    toast(r.message || 'Kopiowanie w tle…', 'info');
+                    toast(r.message || t('Kopiowanie w tle…'), 'info');
                     state.clipboard = null;
                     updateClipboardBar();
                     return;
@@ -2600,7 +2601,7 @@ function renderFM(body, state) {
                 const r = await api('/files/move-multi', { method: 'POST', body: { sources: paths, dest, on_conflict: onConflict } });
                 if (r.error) { toast(r.error, 'error'); return; }
                 if (r.async) {
-                    toast(r.message || 'Przenoszenie w tle…', 'info');
+                    toast(r.message || t('Przenoszenie w tle…'), 'info');
                     state.clipboard = null;
                     updateClipboardBar();
                     return;
@@ -2665,7 +2666,7 @@ function renderFM(body, state) {
 
     async function compressSelected(format) {
         const paths = getSelectedPaths();
-        if (!paths.length) { toast('Zaznacz elementy do kompresji', 'warning'); return; }
+        if (!paths.length) { toast(t('Zaznacz elementy do kompresji'), 'warning'); return; }
 
         const ext = format === 'zip' ? '.zip' : '.tar.gz';
 
@@ -2689,20 +2690,20 @@ function renderFM(body, state) {
             overlay.className = 'modal-overlay';
             overlay.innerHTML = `
                 <div class="modal">
-                    <div class="modal-header"><i class="fas fa-file-archive app-hdr-icon"></i>Kompresuj do ${ext}</div>
+                    <div class="modal-header"><i class="fas fa-file-archive app-hdr-icon"></i>${t('Kompresuj do')} ${ext}</div>
                     <div class="modal-body">
                         <div class="app-note">
                             ${sel.length} element${sel.length > 1 ? t('ów') : ''} ${t('selected')}
                         </div>
-                        <label class="modal-label">Nazwa archiwum:</label>
+                        <label class="modal-label">${t('Nazwa archiwum:')}</label>
                         <div class="app-input-group">
                             <input class="modal-input app-input-prefix" id="compress-name-input" value="${suggestion}">
                             <span class="app-input-suffix">${ext}</span>
                         </div>
                     </div>
                     <div class="modal-footer">
-                        <button class="btn" id="compress-dlg-cancel">Anuluj</button>
-                        <button class="btn btn-primary" id="compress-dlg-ok"><i class="fas fa-compress app-btn-icon"></i>Kompresuj</button>
+                        <button class="btn" id="compress-dlg-cancel">${t('Anuluj')}</button>
+                        <button class="btn btn-primary" id="compress-dlg-ok"><i class="fas fa-compress app-btn-icon"></i>${t('Kompresuj')}</button>
                     </div>
                 </div>
             `;
@@ -2730,7 +2731,7 @@ function renderFM(body, state) {
                 body: { sources: paths, format: format, name: archiveName }
             });
             if (r.error) { toast(r.error, 'error'); return; }
-            toast(r.message || 'Kompresja w tle…', 'info');
+            toast(r.message || t('Kompresja w tle…'), 'info');
         } catch {
             toast(t('Błąd kompresji'), 'error');
         }
@@ -2738,7 +2739,7 @@ function renderFM(body, state) {
 
     async function extractSelected() {
         const sel = [...state.selected];
-        if (sel.length !== 1) { toast('Zaznacz jeden plik archiwum', 'warning'); return; }
+        if (sel.length !== 1) { toast(t('Zaznacz jeden plik archiwum'), 'warning'); return; }
         const archivePath = joinCurrentPath(sel[0]);
         try {
             const r = await api('/files/extract', {
@@ -2746,7 +2747,7 @@ function renderFM(body, state) {
                 body: { path: archivePath }
             });
             if (r.error) { toast(r.error, 'error'); return; }
-            toast(r.message || 'Rozpakowywanie w tle…', 'info');
+            toast(r.message || t('Rozpakowywanie w tle…'), 'info');
         } catch {
             toast(t('Błąd rozpakowywania'), 'error');
         }
@@ -2999,7 +3000,7 @@ function renderFM(body, state) {
 
     async function transferToRemoteNAS() {
         const paths = getSelectedPaths();
-        if (!paths.length) { toast('Zaznacz elementy do transferu', 'warning'); return; }
+        if (!paths.length) { toast(t('Zaznacz elementy do transferu'), 'warning'); return; }
 
         // Fetch available servers
         let servers = [];
@@ -3026,27 +3027,27 @@ function renderFM(body, state) {
             overlay.innerHTML = `
                 <div class="modal app-modal-md">
                     <div class="modal-header">
-                        <i class="fas fa-cloud-upload-alt app-hdr-icon"></i>Transferuj do NAS
+                        <i class="fas fa-cloud-upload-alt app-hdr-icon"></i>${t('Transferuj do NAS')}
                     </div>
                     <div class="modal-body">
                         <div class="app-info-box">
-                            <div class="app-sublabel">Zaznaczone pliki:</div>
+                            <div class="app-sublabel">${t('Zaznaczone pliki:')}</div>
                             <div class="app-filename">${selLabel}</div>
                         </div>
-                        <label class="modal-label">Serwer docelowy:</label>
+                        <label class="modal-label">${t('Serwer docelowy:')}</label>
                         <select class="modal-input app-mb-md" id="transfer-server">
                             ${servers.map(s => `<option value="${s.id}">${s.name} (${s.host})</option>`).join('')}
                         </select>
                         <label class="modal-label">${t('Ścieżka zdalna:')}</label>
-                        <input class="modal-input" id="transfer-remote-path" value="${servers[0]?.remote_path || '~/'}" placeholder="np. ~/received">
+                        <input class="modal-input" id="transfer-remote-path" value="${servers[0]?.remote_path || '~/'}" placeholder="${t('np.')} ~/received">
                         <div class="app-hint app-mt-xs">
-                            Folder docelowy na zdalnym serwerze. Zostanie utworzony automatycznie.
+                            ${t('Folder docelowy na zdalnym serwerze. Zostanie utworzony automatycznie.')}
                         </div>
                     </div>
                     <div class="modal-footer">
-                        <button class="btn" id="transfer-cancel">Anuluj</button>
+                        <button class="btn" id="transfer-cancel">${t('Anuluj')}</button>
                         <button class="btn btn-primary" id="transfer-start">
-                            <i class="fas fa-paper-plane app-btn-icon"></i>Transferuj
+                            <i class="fas fa-paper-plane app-btn-icon"></i>${t('Transferuj')}
                         </button>
                     </div>
                 </div>
@@ -3097,19 +3098,19 @@ function renderFM(body, state) {
         NAS.socket.on('fileop_complete', (data) => {
             const op = data.operation || '';
             if (op === 'download') return; // handled by fileop_download_ready
-            const labels = { copy: 'Kopiowanie', move: 'Przenoszenie', compress: 'Kompresja', extract: 'Rozpakowywanie', transfer: 'Transfer do NAS' };
+            const labels = { copy: t('Kopiowanie'), move: t('Przenoszenie'), compress: t('Kompresja'), extract: t('Rozpakowywanie'), transfer: t('Transfer do NAS') };
             toast(`${labels[op] || t('Operacja')} ${t('zakończona:')} ${data.message || ''}`, 'success');
             navigateTo(state.path);
         });
         NAS.socket.on('fileop_error', (data) => {
             const op = data.operation || '';
-            const labels = { copy: 'Kopiowanie', move: 'Przenoszenie', compress: 'Kompresja', extract: 'Rozpakowywanie', download: 'Pobieranie ZIP', transfer: 'Transfer do NAS' };
+            const labels = { copy: t('Kopiowanie'), move: t('Przenoszenie'), compress: t('Kompresja'), extract: t('Rozpakowywanie'), download: t('Pobieranie ZIP'), transfer: t('Transfer do NAS') };
             toast(`${labels[op] || t('Operacja')} — ${t('błąd:')} ${data.message || ''}`, 'error');
             navigateTo(state.path);
         });
         NAS.socket.on('fileop_download_ready', (data) => {
             // Notification only — actual download triggered by polling in downloadSelected
-            toast(`Archiwum ${data.name || ''} gotowe do pobrania`, 'success');
+            toast(t('Archiwum gotowe do pobrania:') + ` ${data.name || ''}`, 'success');
         });
     }
 
