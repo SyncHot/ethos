@@ -301,10 +301,13 @@ def _watch_handle_torrent(fpath, fname, cfg):
                     torrent_name = rest[colon + 1:colon + 1 + length].decode('utf-8', errors='replace')
         except Exception:
             pass
+        # Extract magnet URI for retry/resume support
+        magnet_url = _extract_magnet_from_torrent(torrent_data)
+        torrent_url = magnet_url or f'torrent://{torrent_name}'
         dest_dir = cfg.get('default_dir_torrent', '/home')
         dl = {
             'id': dl_id,
-            'url': f'torrent://{torrent_name}',
+            'url': torrent_url,
             'filename': torrent_name,
             'filesize': 0,
             'downloaded': 0,
@@ -457,8 +460,10 @@ def _watch_handle_txt(fpath, fname, cfg):
         pass
 
 
-# Keys internal to runtime — never persisted or sent to clients
-_INTERNAL_KEYS = {'_speed_samples', '_actual_dest'}
+# Keys internal to runtime — never sent to clients but some are persisted
+_INTERNAL_KEYS = {'_speed_samples'}
+# Keys hidden from frontend but saved to state file
+_PERSIST_HIDDEN = {'_actual_dest', 'torrent_cache_path'}
 
 
 # ─── State persistence ───
@@ -479,6 +484,18 @@ def _load_state():
     global _downloads, _packages
     data = _load_json_safe(DOWNLOADS_STATE_FILE)
     for d in data:
+        # Migrate legacy torrent:// URLs to magnet URIs where possible
+        url = d.get('url', '')
+        if url.startswith('torrent://'):
+            cache = d.get('torrent_cache_path', '')
+            if cache and os.path.isfile(cache):
+                try:
+                    with open(cache, 'rb') as f:
+                        magnet = _extract_magnet_from_torrent(f.read())
+                    if magnet:
+                        d['url'] = magnet
+                except Exception:
+                    pass
         # Restore completed/failed/paused, skip active ones
         if d.get('status') in ('completed', 'failed', 'cancelled', 'paused'):
             _downloads[d['id']] = d
@@ -740,10 +757,64 @@ def _resolve_debrid(url, config):
 
 
 def _is_torrent(url):
-    """Check if URL is a magnet link or .torrent URL."""
+    """Check if URL is a magnet link, .torrent URL, or torrent:// placeholder."""
     if not url:
         return False
-    return url.strip().startswith('magnet:') or url.strip().lower().endswith('.torrent')
+    u = url.strip()
+    return (u.startswith('magnet:') or u.startswith('torrent://')
+            or u.lower().endswith('.torrent'))
+
+
+def _extract_magnet_from_torrent(torrent_data):
+    """Extract magnet URI from .torrent file bytes by computing info_hash."""
+    import hashlib
+    try:
+        # Find the 'info' dictionary in bencode. Pattern: ...4:infod...
+        idx = torrent_data.find(b'4:infod')
+        if idx < 0:
+            return None
+        info_start = idx + 6  # start of the 'd' after '4:info'
+        # Parse the bencoded info dict to find its end
+        depth = 0
+        i = info_start
+        while i < len(torrent_data):
+            c = torrent_data[i:i + 1]
+            if c == b'd' or c == b'l':
+                depth += 1
+                i += 1
+            elif c == b'e':
+                depth -= 1
+                i += 1
+                if depth == 0:
+                    break
+            elif c == b'i':
+                # Integer: i<number>e
+                end = torrent_data.index(b'e', i + 1)
+                i = end + 1
+            elif c.isdigit():
+                # String: <length>:<data>
+                colon = torrent_data.index(b':', i)
+                slen = int(torrent_data[i:colon])
+                i = colon + 1 + slen
+            else:
+                i += 1
+        info_bytes = torrent_data[info_start:i]
+        info_hash = hashlib.sha1(info_bytes).hexdigest()
+        # Extract name for display
+        name = ''
+        name_idx = info_bytes.find(b'4:name')
+        if name_idx >= 0:
+            rest = info_bytes[name_idx + 6:]
+            if rest[0:1].isdigit():
+                colon = rest.index(b':')
+                slen = int(rest[:colon])
+                name = rest[colon + 1:colon + 1 + slen].decode('utf-8', errors='replace')
+        magnet = f'magnet:?xt=urn:btih:{info_hash}'
+        if name:
+            magnet += f'&dn={urllib.parse.quote(name)}'
+        return magnet
+    except Exception:
+        return None
 
 
 # Known file hoster domains that require debrid/premium for direct downloads.
@@ -2388,25 +2459,26 @@ def clear_history():
 def retry_history_download():
     """Retry a download from history."""
     data = request.get_json(force=True)
-    # We expect the frontend to pass the history item's details or we find it
-    # Ideally frontend sends the details needed to restart
     url = data.get('url')
     if not url:
         return jsonify({'error': 'No URL provided'}), 400
-        
-    # Re-use add_download logic (simplified)
-    # We can invoke add_download logic by constructing a fake request or calling logic directly
-    # But since add_download is complex, let's just do the minimal insert
-    
+
+    # Handle legacy torrent:// URLs — not retryable without original magnet/torrent
+    if url.startswith('torrent://'):
+        return jsonify({'error': 'Cannot retry: original torrent data no longer available. '
+                        'Please re-add the magnet link or .torrent file.'}), 400
+
     dl_id = str(uuid.uuid4())[:8]
     is_t = _is_torrent(url)
     dest_dir = data.get('dest_dir')
-    
-    # If dest_dir not provided, use default
+
     if not dest_dir:
         _cfg = _load_config()
         _default_key = 'default_dir_torrent' if is_t else 'default_dir'
         dest_dir = _cfg.get(_default_key, '/home')
+
+    # Respect original debrid setting from history; default True for torrents
+    use_debrid = data.get('use_debrid', True) if is_t else data.get('use_debrid', True)
 
     dl = {
         'id': dl_id,
@@ -2421,19 +2493,20 @@ def retry_history_download():
         'debrid_error': '',
         'dest_dir': dest_dir,
         'dest_path': '',
-        'use_debrid': True, # Default to true for retries
+        'use_debrid': use_debrid,
         'added_at': time.time(),
         'started_at': 0,
         'completed_at': 0,
         'is_torrent': is_t,
-        'package_id': '', # Detach from package on retry
+        'package_id': '',
         'user': _get_username() or '',
     }
-    
+
     with _lock:
         _downloads[dl_id] = dl
         _save_state()
-        
+
+    _emit('dl:update', _sanitize(dl))
     _start_next()
     return jsonify({'ok': True, 'id': dl_id})
 
@@ -2617,9 +2690,13 @@ def add_torrent_file():
     except Exception:
         pass
 
+    # Extract magnet URI for retry/resume support
+    magnet_url = _extract_magnet_from_torrent(torrent_data)
+    torrent_url = magnet_url or f'torrent://{torrent_name}'
+
     dl = {
         'id': dl_id,
-        'url': f'torrent://{torrent_name}',
+        'url': torrent_url,
         'filename': torrent_name,
         'filesize': 0,
         'downloaded': 0,

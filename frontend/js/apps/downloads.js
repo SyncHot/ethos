@@ -1007,6 +1007,7 @@ function renderDownloadManager(body, launchOpts) {
                 const size = h.filesize ? _dlmFormatBytes(h.filesize) : '';
                 const duration = h.duration > 0 ? _dlmFormatEta(Math.round(h.duration)) : '';
                 const torrentBadge = h.is_torrent ? '<i class="fas fa-magnet dl-icon-torrent-sm"></i>' : '';
+                const canRetry = !h.url.startsWith('torrent://');
                 
                 // Escape attributes
                 const safeUrl = _dlmEsc(h.url).replace(/"/g, '&quot;');
@@ -1029,7 +1030,10 @@ function renderDownloadManager(body, launchOpts) {
                         </div>
                         <div class="dlm-item-actions">
                             <button class="dlm-btn-icon" title="${t('Kopiuj link')}" onclick="navigator.clipboard.writeText('${safeUrlCopy}');if(typeof toast==='function')toast(typeof t==='function'?t('Skopiowano'):'Skopiowano','info')"><i class="fas fa-copy"></i></button>
-                            <button class="dlm-btn-icon dlm-retry-btn" title="${t('Pobierz ponownie')}" data-url="${safeUrl}" data-filename="${safeName}" data-dest="${safeDest}"><i class="fas fa-redo"></i></button>
+                            ${canRetry
+                                ? `<button class="dlm-btn-icon dlm-retry-btn" title="${t('Pobierz ponownie')}" data-url="${safeUrl}" data-filename="${safeName}" data-dest="${safeDest}" data-debrid="${h.use_debrid ? '1' : '0'}"><i class="fas fa-redo"></i></button>`
+                                : `<button class="dlm-btn-icon" title="${t('Ponowne pobranie niedostępne — dodaj ponownie magnet lub plik .torrent')}" disabled style="opacity:0.3"><i class="fas fa-redo"></i></button>`
+                            }
                         </div>
                     </div>`;
             }).join('');
@@ -1041,18 +1045,25 @@ function renderDownloadManager(body, launchOpts) {
                     const url = btn.dataset.url;
                     const filename = btn.dataset.filename;
                     const dest = btn.dataset.dest;
+                    const useDebrid = btn.dataset.debrid !== '0';
                     
-                    if (!confirm(`${t('Czy na pewno chcesz pobrać ponownie:')}\n${filename || url}?`)) return;
+                    btn.disabled = true;
+                    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
                     
                     const r = await api('/downloads/history/retry', {
                         method: 'POST',
-                        body: JSON.stringify({ url, filename, dest_dir: dest })
+                        body: JSON.stringify({ url, filename, dest_dir: dest, use_debrid: useDebrid })
                     });
                     
                     if (r.ok) {
                         toast(t('Dodano do pobierania'), 'success');
+                        // Switch to downloads tab
+                        const dlTab = body.querySelector('.dlm-nav[data-tab="downloads"]');
+                        if (dlTab) dlTab.click();
                     } else {
-                        toast(t('Błąd: ') + (r.error || t('Nieznany')), 'error');
+                        toast(r.error || t('Błąd'), 'error');
+                        btn.disabled = false;
+                        btn.innerHTML = '<i class="fas fa-redo"></i>';
                     }
                 });
             });

@@ -1907,5 +1907,8 @@
   "Brak zablokowanych IP": "No blocked IPs",
   "Odblokować": "Unblock",
   "Odblokowano": "Unblocked",
-  "Twoja sieć LAN": "Your LAN network"
+  "Twoja sieć LAN": "Your LAN network",
+  "Ponowne pobranie niedostępne — dodaj ponownie magnet lub plik .torrent": "Retry unavailable — re-add the magnet link or .torrent file",
+  "Dodano do pobierania": "Added to downloads",
+  "Pobierz ponownie": "Download again"
 }
