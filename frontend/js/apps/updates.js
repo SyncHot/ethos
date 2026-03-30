@@ -515,19 +515,18 @@ function renderUpdatesApp(body) {
 
         socket.on('update_complete', (data) => {
             addLog(t('Aktualizacja do') + ` ${data.version} ` + t('zakończona!'));
-            toast(`EthOS zaktualizowany do wersji ${data.version}${t('! Odśwież stronę.')}`, 'success');
             status.applying = false;
             status.downloading = false;
             status.available = null;
             status.progress = 100;
             refreshUI();
 
-            // Prompt reload after a brief delay (container restarts)
-            setTimeout(() => {
-                if (confirm(t('Aktualizacja do') + ` ${data.version} ` + t('zakończona.') + '\n' + t('Odświeżyć stronę?'))) {
-                    location.reload();
-                }
-            }, 3000);
+            // Show restart overlay with countdown + auto-reconnect (same as app restart)
+            if (typeof showRestartOverlay === 'function') {
+                showRestartOverlay(t('Aktualizacja do') + ` ${data.version} — ` + t('restart…'));
+            } else {
+                setTimeout(() => location.reload(), 5000);
+            }
         });
     }
 
