@@ -2,6 +2,7 @@
 WiFi operations — thin wrapper around nmcli.
 """
 
+import os
 import re
 import subprocess
 import time

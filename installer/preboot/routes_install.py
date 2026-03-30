@@ -1,5 +1,6 @@
 """Installation execution API routes — start, progress, reboot."""
 
+import os
 import threading
 import time
 import logging

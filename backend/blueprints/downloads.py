@@ -2883,9 +2883,9 @@ def remove_download():
 
 @downloads_bp.route('/api/downloads/clear', methods=['POST'])
 def clear_downloads():
-    """Clear completed/failed/cancelled downloads."""
+    """Clear completed downloads."""
     with _lock:
-        to_remove = [k for k, v in _downloads.items() if v['status'] in ('completed', 'failed', 'cancelled')]
+        to_remove = [k for k, v in _downloads.items() if v['status'] == 'completed']
         for k in to_remove:
             del _downloads[k]
         _save_state()
