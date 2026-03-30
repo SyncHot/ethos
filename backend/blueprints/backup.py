@@ -44,7 +44,7 @@ from blueprints.profiles_db import get_db_connection, init_profiles_db
 
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from host import app_path, data_path, log_path
+from host import app_path, data_path, log_path, q
 from crypto_utils import encrypt_secret, decrypt_secret
 
 backup_bp = Blueprint('backup', __name__, url_prefix='/api/backup')
@@ -554,7 +554,7 @@ def transfer_to_ssh(backup_path, ssh_config, backup_filename):
                               key_path=ssh_config.get('key_path'), timeout=30)
         remote_path = ssh_config.get('remote_path', '/tmp')
         remote_file = f"{remote_path}/{backup_filename}"
-        ssh.exec_command(f"mkdir -p {remote_path}")
+        ssh.exec_command(f"mkdir -p {q(remote_path)}")
         with SCPClient(ssh.get_transport(), progress=progress_callback) as scp:
             scp.put(backup_path, remote_file)
         ssh.close()
@@ -2838,7 +2838,7 @@ def _pull_snapshot_worker(snap_id, ssh_config):
             scp.get(remote_archive, tmp_archive)
 
         # Clean up remote archive
-        ssh.exec_command(f'rm -f {remote_archive}')
+        ssh.exec_command(f'rm -f {q(remote_archive)}')
         ssh.close()
 
         _snap_update(percent=85, message='Extracting...',

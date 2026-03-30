@@ -228,9 +228,25 @@ def _parse_scan_log(log_path):
 
 
 def _validate_cron_expr(expr):
+    """Strict cron expression validation — prevents shell injection."""
+    import re
     parts = expr.strip().split()
     if len(parts) != 5:
         return 'Cron expression must have 5 fields'
+    _FIELD_RE = re.compile(
+        r'^(\*|\d{1,2}(?:-\d{1,2})?(?:/\d{1,2})?'
+        r'(?:,\d{1,2}(?:-\d{1,2})?(?:/\d{1,2})?)*)$'
+    )
+    limits = [(0, 59), (0, 23), (1, 31), (1, 12), (0, 7)]
+    names  = ['minute', 'hour', 'day', 'month', 'weekday']
+    for part, (lo, hi), name in zip(parts, limits, names):
+        if not _FIELD_RE.match(part):
+            return f'Invalid {name}: {part}'
+        for tok in re.split(r'[,/\-]', part):
+            if tok == '*':
+                continue
+            if tok.isdigit() and not (lo <= int(tok) <= hi):
+                return f'{name} value {tok} out of range ({lo}-{hi})'
     return None
 
 
@@ -296,6 +312,17 @@ def start_scan():
         scanned = 0
         threats = []
         start   = time.time()
+        total_estimate = 0
+
+        # Quick file count for progress percentage
+        try:
+            count_proc = subprocess.run(
+                ['find', scan_path, '-type', 'f'],
+                capture_output=True, text=True, timeout=15,
+            )
+            total_estimate = max(count_proc.stdout.count('\n'), 1)
+        except Exception:
+            total_estimate = 0
 
         try:
             proc = subprocess.Popen(
@@ -314,13 +341,15 @@ def start_scan():
                 if line.endswith(': OK'):
                     scanned += 1
                     if scanned % 50 == 0:
-                        _emit('progress', -1,
+                        pct = min(int(scanned * 95 / total_estimate), 95) if total_estimate else -1
+                        _emit('progress', pct,
                               'Scanned ' + str(scanned) + ' files...',
                               scanned=scanned, threats=len(threats))
                 elif ': ' in line and 'FOUND' in line:
                     scanned += 1
                     threats.append(line)
-                    _emit('threat', -1, 'Threat: ' + line,
+                    pct = min(int(scanned * 95 / total_estimate), 95) if total_estimate else -1
+                    _emit('threat', pct, 'Threat: ' + line,
                           threat=line, scanned=scanned, threats=len(threats))
                 else:
                     m = re.search(r'Scanned files:\s+(\d+)', line)

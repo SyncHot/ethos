@@ -404,7 +404,7 @@ PersistentKeepalive = 25
         'qr_code': qr_b64
     })
 
-@wireguard_bp.route('/peer/<public_key>', methods=['DELETE'])
+@wireguard_bp.route('/peer/<path:public_key>', methods=['DELETE'])
 @admin_required
 def delete_peer(public_key):
     err = require_tools('wg')
