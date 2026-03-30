@@ -199,6 +199,9 @@ def _compute_optional_py():
         seen = set()
         result = []
         for app_id, (module_name, _, _, _) in am._OPTIONAL_BLUEPRINTS.items():
+            # Don't strip core app backends — they must stay on disk
+            if app_id in am.CORE_APPS:
+                continue
             if module_name not in seen:
                 seen.add(module_name)
                 result.append(module_name + '.py')

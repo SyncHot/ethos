@@ -422,17 +422,19 @@ AppRegistry['users'] = function (appDef) {
                         </tr>
                     </thead>
                     <tbody>
-                        ${groups.map(g => `
-                            <tr>
-                                <td class="usr-priv-group-name">${g.name} <small class="usr-muted">(${(g.members||[]).length})</small></td>
+                        ${groups.map(g => {
+                            const isAdmin = g.name === 'ethos-admin' || g.name === 'sudo';
+                            return `<tr>
+                                <td class="usr-priv-group-name">${g.name} <small class="usr-muted">(${(g.members||[]).length})</small>${isAdmin ? ` <small style="color:var(--accent)">${t('pełny dostęp')}</small>` : ''}</td>
                                 ${availableApps.map(a => `
                                     <td class="usr-priv-cell">
                                         <input type="checkbox" data-group="${g.name}" data-app="${a.id}"
-                                            ${privData[g.name]?.has(a.id) ? 'checked' : ''}>
+                                            ${isAdmin || privData[g.name]?.has(a.id) ? 'checked' : ''}
+                                            ${isAdmin ? 'disabled' : ''}>
                                     </td>
                                 `).join('')}
-                            </tr>
-                        `).join('')}
+                            </tr>`;
+                        }).join('')}
                     </tbody>
                 </table>
             `;

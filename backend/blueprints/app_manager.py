@@ -1129,7 +1129,14 @@ def install_app(app_id):
     if err:
         return err
     if app_id in CORE_APPS:
-        return jsonify({'error': 'Core apps nie wymagaja instalacji'}), 400
+        # Allow install if backend .py is missing (stripped by builder)
+        bp_info = _OPTIONAL_BLUEPRINTS.get(app_id)
+        if bp_info:
+            bp_file = os.path.join(_BLUEPRINTS_DIR, bp_info[0] + '.py')
+            if os.path.isfile(bp_file):
+                return jsonify({'error': 'Core apps nie wymagaja instalacji'}), 400
+        else:
+            return jsonify({'error': 'Core apps nie wymagaja instalacji'}), 400
 
     catalog = _get_catalog()
     app_def = next((a for a in catalog if a['id'] == app_id), None)
