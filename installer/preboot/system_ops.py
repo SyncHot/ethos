@@ -40,7 +40,11 @@ def create_user(username, password, root_dir="/"):
             _run(f"echo {_shq(username + ':' + password)} | chpasswd")
             return True
 
-        groups = "sudo"
+        # Ensure groups exist
+        for g in ("ethos-admin", "ethos-user", "ethos-family"):
+            _run(f"getent group {g} >/dev/null 2>&1 || groupadd {g}")
+
+        groups = "sudo,ethos-admin,ethos-user"
         _, err, rc = _run(
             f"useradd -m -s /bin/bash -G {groups} {_shq(username)} 2>&1"
         )
@@ -56,8 +60,11 @@ def create_user(username, password, root_dir="/"):
             return False
     else:
         # Chroot — write directly
+        for g in ("ethos-admin", "ethos-user", "ethos-family"):
+            _run(f"chroot {root_dir} bash -c 'getent group {g} >/dev/null 2>&1 || groupadd {g}'")
+
         _run(
-            f"chroot {root_dir} useradd -m -s /bin/bash -G sudo "
+            f"chroot {root_dir} useradd -m -s /bin/bash -G sudo,ethos-admin,ethos-user "
             f"{_shq(username)} 2>&1"
         )
         _run(

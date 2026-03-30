@@ -63,6 +63,8 @@ echo "[4/8] Creating EthOS groups..."
 getent group ethos-admin &>/dev/null || groupadd ethos-admin
 getent group ethos-user  &>/dev/null || groupadd ethos-user
 getent group ethos-family &>/dev/null || groupadd ethos-family
+# Ensure the main user belongs to all required groups
+usermod -aG sudo,ethos-admin,ethos-user "$ETHOS_USER" 2>/dev/null || true
 echo "  Groups ready."
 
 echo "[5/8] Setting hostname: $ETHOS_HOSTNAME..."
