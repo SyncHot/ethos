@@ -42,6 +42,10 @@ async function api(path, options = {}) {
         // But if we consume json here, we need to return it.
         return data;
     }
+    const ct = resp.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+        return { error: 'API not available (non-JSON response)' };
+    }
     return resp.json();
 }
 

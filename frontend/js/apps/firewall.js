@@ -220,7 +220,11 @@ AppRegistry['firewall'] = function (appDef) {
 
         try {
             var res = await api('/firewall/status');
-            if (res.error) { statusEl.innerHTML = '<span class="fw-dot red"></span> ' + t('Błąd'); return; }
+            if (res.error) {
+                statusEl.innerHTML = '<span class="fw-dot red"></span> ' + (res.error.includes('not available') ? t('Firewall nie zainstalowany') : t('Błąd'));
+                tbody.innerHTML = '<tr><td colspan="7" class="fw-empty-msg">' + res.error + '</td></tr>';
+                return;
+            }
 
             var active = res.status === 'active';
             toggle.checked = active;
