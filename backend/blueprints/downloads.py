@@ -746,6 +746,46 @@ def _is_torrent(url):
     return url.strip().startswith('magnet:') or url.strip().lower().endswith('.torrent')
 
 
+# Known file hoster domains that require debrid/premium for direct downloads.
+# If debrid fails for these, the original URL serves an HTML page, not the file.
+_FILE_HOSTER_DOMAINS = {
+    'rapidgator', 'uploaded', 'nitroflare', 'turbobit', 'filefactory',
+    'mega', 'mediafire', 'zippyshare', 'ddownload', 'katfile',
+    'filejoker', 'keep2share', 'k2s', 'publish2', 'fboom',
+    'tezfiles', 'hexupload', 'clicknupload', 'oboom', 'alfafile',
+    'fileal', 'rosefile', 'filestore', 'mexa', 'wdupload',
+    'ddl', 'ddlvalley', 'rapidrar', '1fichier', 'uptobox',
+}
+
+
+def _looks_like_direct_url(url):
+    """Check if URL looks like a direct download (not a file hoster page).
+
+    Returns True for CDN links, direct file URLs with media extensions, etc.
+    Returns False for known file hoster domains that require premium/debrid.
+    """
+    try:
+        parsed = urllib.parse.urlparse(url.strip())
+        host = parsed.hostname or ''
+        host_lower = host.lower()
+        # Check against known file hosters
+        for hoster in _FILE_HOSTER_DOMAINS:
+            if hoster in host_lower:
+                return False
+        # Check if path ends with a common file extension → likely direct
+        path_lower = parsed.path.lower()
+        direct_exts = ('.mp4', '.mkv', '.avi', '.mov', '.wmv', '.m4v',
+                       '.mp3', '.flac', '.wav', '.zip', '.rar', '.7z',
+                       '.iso', '.exe', '.tar', '.gz', '.pdf', '.bin')
+        if any(path_lower.endswith(ext) for ext in direct_exts):
+            return True
+        # URLs with no recognizable extension and on unknown domains —
+        # assume direct to avoid false-positives blocking legitimate links
+        return True
+    except Exception:
+        return True
+
+
 # ─── Torrent via Debrid ───
 
 def _torrent_alldebrid(magnet_or_url, api_key, torrent_file=None):
@@ -1179,8 +1219,7 @@ def _download_single_url(dl, download_url, filename, filesize, dest_dir, config)
     else:
         # New download — handle overwrite/rename
         dest_path = os.path.join(dest_dir, filename)
-        cfg_ow = _load_config()
-        if not cfg_ow.get('overwrite_existing', False):
+        if not config.get('overwrite_existing', False):
             base, ext = os.path.splitext(dest_path)
             counter = 1
             while os.path.exists(dest_path):
@@ -1265,6 +1304,9 @@ def _download_single_url(dl, download_url, filename, filesize, dest_dir, config)
                     dl['downloaded'] = downloaded
                     if total > 0:
                         dl['progress'] = round(downloaded / total * 100, 1)
+                    else:
+                        # Unknown total — use -1 to signal indeterminate progress
+                        dl['progress'] = -1
                     dl['speed'] = _calc_speed(dl)
                     now = time.time()
                     if now - last_emit >= 0.5:
@@ -1502,15 +1544,61 @@ def _download_worker(dl_id):
 
     # ─── Regular download flow ───
     resolved = None
-    if dl.get('use_debrid', True) and config.get('debrid_service', 'none') != 'none':
+    debrid_was_requested = dl.get('use_debrid', True) and config.get('debrid_service', 'none') != 'none'
+    if debrid_was_requested:
         try:
             resolved = _resolve_debrid(original_url, config)
         except Exception as e:
             dl['debrid_error'] = str(e)
 
+    # If debrid was requested but failed and the URL doesn't look like a direct
+    # download, fail immediately instead of downloading an HTML error page.
+    if debrid_was_requested and not resolved:
+        if not _looks_like_direct_url(original_url):
+            with _lock:
+                dl['status'] = 'failed'
+                dl['error'] = f"Debrid resolution failed: {dl.get('debrid_error', 'unknown')}. " \
+                              "Link is not a direct download URL."
+                _save_state()
+            _emit('dl:update', _sanitize(dl))
+            _log_history(dl, 'failed')
+            _flush_state()
+            return
+
     download_url = resolved['url'] if resolved else original_url
     filename = dl.get('filename') or (resolved or {}).get('filename') or _guess_filename(download_url)
     filesize = (resolved or {}).get('filesize', 0)
+
+    # Deduplicate: skip if same resolved URL or filename already downloaded in same package
+    pkg_id = dl.get('package_id')
+    if pkg_id and resolved:
+        with _lock:
+            for other in _downloads.values():
+                if other.get('id') == dl_id or other.get('package_id') != pkg_id:
+                    continue
+                if other.get('status') != 'completed':
+                    continue
+                # Same debrid-resolved filename + similar size → duplicate
+                other_fn = other.get('filename', '')
+                other_sz = other.get('filesize', 0)
+                if other_fn and other_fn == filename and (
+                    not filesize or not other_sz or abs(filesize - other_sz) < 1024
+                ):
+                    dl['status'] = 'completed'
+                    dl['progress'] = 100
+                    dl['completed_at'] = time.time()
+                    dl['filename'] = filename
+                    dl['dest_path'] = other.get('dest_path', '')
+                    dl['error'] = ''
+                    dl['_dedup_of'] = other.get('id', '')
+                    _save_state()
+            if dl.get('_dedup_of'):
+                logging.info('[downloads] Skipping duplicate %s (same as %s): %s',
+                             dl_id, dl['_dedup_of'], filename)
+                _emit('dl:update', _sanitize(dl))
+                _log_history(dl, 'completed')
+                _flush_state()
+                return
 
     # Auto-categorize
     if config.get('auto_categorize', True):
@@ -1548,6 +1636,41 @@ def _download_worker(dl_id):
                 _emit('dl:update', _sanitize(dl))
                 return
             elif success:
+                # Validate downloaded file — detect bogus HTML error pages
+                actual_size = dl.get('downloaded', 0)
+                expected_size = filesize
+                is_bogus = False
+                if expected_size > 100_000 and actual_size < 50_000:
+                    # Expected large file but got tiny → likely HTML error page
+                    is_bogus = True
+                elif actual_size < 1000 and not dl.get('is_torrent'):
+                    # Sub-1KB "file" for a non-torrent download is suspicious
+                    is_bogus = True
+
+                if is_bogus:
+                    # Remove the bogus file
+                    dest = dl.get('dest_path', '')
+                    if dest and os.path.isfile(dest):
+                        try:
+                            os.remove(dest)
+                        except OSError:
+                            pass
+                    with _lock:
+                        dl['status'] = 'failed'
+                        dl['error'] = (
+                            f'Downloaded file too small ({actual_size} bytes) — '
+                            f'likely an error page, not the real file. '
+                            f'Expected ~{expected_size} bytes.'
+                            if expected_size
+                            else f'Downloaded file too small ({actual_size} bytes) — '
+                                 f'likely an error page.'
+                        )
+                        _save_state()
+                    _emit('dl:update', _sanitize(dl))
+                    _log_history(dl, 'failed')
+                    _flush_state()
+                    return
+
                 with _lock:
                     dl['status'] = 'completed'
                     dl['progress'] = 100
