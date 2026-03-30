@@ -948,4 +948,5 @@ register_pkg_routes(
     wipe_dirs=[UPLOAD_FOLDER],
     on_uninstall=_printer_on_uninstall,
     status_extras=lambda: {'cups': check_dep('lpadmin')},
+    ufw_ports=[(631, 'tcp', 'CUPS Print Server')],
 )

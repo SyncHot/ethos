@@ -1326,4 +1326,5 @@ register_pkg_routes(
     websites_bp,
     install_message='Websites ready.',
     wipe_dirs=[_DATA_DIR],
+    ufw_ports=[(80, 'tcp', 'HTTP'), (443, 'tcp', 'HTTPS')],
 )

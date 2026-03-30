@@ -15,7 +15,7 @@ import sys
 from flask import Blueprint, jsonify, request, Response, stream_with_context
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from host import host_run as _host_run_base, host_run_stream as _host_run_stream_base, data_path, q as _q_imported, apt_install as _apt_install, claim_dep, release_dep
+from host import host_run as _host_run_base, host_run_stream as _host_run_stream_base, data_path, q as _q_imported, apt_install as _apt_install, claim_dep, release_dep, ufw_allow, ufw_delete
 from utils import fmt_bytes, require_tools, check_tool
 from blueprints.admin_required import admin_required
 
@@ -1322,6 +1322,8 @@ def samba_pkg_install():
     if not ok:
         return jsonify({'ok': False, 'error': msg or 'Samba installation failed'}), 500
     host_run("systemctl unmask smbd nmbd 2>/dev/null; systemctl enable smbd nmbd 2>/dev/null; systemctl start smbd nmbd 2>/dev/null || true")
+    ufw_allow(139, 'tcp', 'Samba NetBIOS')
+    ufw_allow(445, 'tcp', 'Samba SMB')
     return jsonify({'status': 'ok'})
 
 
@@ -1337,6 +1339,8 @@ def samba_pkg_uninstall():
     host_run("systemctl disable smbd nmbd 2>/dev/null || true")
 
     ok, dep_msg = release_dep('smbd', 'sharing-samba')
+    ufw_delete(139, 'tcp')
+    ufw_delete(445, 'tcp')
 
     if wipe:
         # 3. Remove Samba configuration
@@ -1456,6 +1460,7 @@ def nfs_pkg_install():
     if not ok:
         return jsonify({'ok': False, 'error': msg or 'NFS installation failed'}), 500
     host_run("systemctl enable nfs-server && systemctl start nfs-server", timeout=15)
+    ufw_allow(2049, 'tcp', 'NFS')
     return jsonify({'status': 'ok'})
 
 
@@ -1465,6 +1470,7 @@ def nfs_pkg_uninstall():
     host_run("systemctl stop nfs-server 2>/dev/null || true")
     host_run("systemctl disable nfs-server 2>/dev/null || true")
     ok, dep_msg = release_dep('exportfs', 'sharing-nfs')
+    ufw_delete(2049, 'tcp')
     if wipe:
         host_run("rm -f /etc/exports 2>/dev/null || true")
     try:
@@ -1563,6 +1569,7 @@ def dlna_pkg_install():
     if not ok:
         return jsonify({'ok': False, 'error': msg or 'MiniDLNA installation failed'}), 500
     host_run("systemctl enable minidlna", timeout=10)
+    ufw_allow(8200, 'tcp', 'DLNA')
     return jsonify({'status': 'ok'})
 
 
@@ -1572,6 +1579,7 @@ def dlna_pkg_uninstall():
     host_run("systemctl stop minidlna 2>/dev/null || true")
     host_run("systemctl disable minidlna 2>/dev/null || true")
     ok, dep_msg = release_dep('minidlnad', 'sharing-dlna')
+    ufw_delete(8200, 'tcp')
     if wipe:
         host_run("rm -f /etc/minidlna.conf 2>/dev/null || true")
     try:
@@ -1826,6 +1834,7 @@ def webdav_pkg_install():
     if not ok:
         return jsonify({'ok': False, 'error': msg or 'lighttpd installation failed'}), 500
     host_run("lighttpd-enable-mod webdav 2>/dev/null || true")
+    ufw_allow(8888, 'tcp', 'WebDAV')
     return jsonify({'status': 'ok'})
 
 
@@ -1836,6 +1845,7 @@ def webdav_pkg_uninstall():
     host_run("systemctl stop lighttpd 2>/dev/null || true")
     host_run("systemctl disable lighttpd 2>/dev/null || true")
     ok, dep_msg = release_dep('lighttpd', 'sharing-webdav')
+    ufw_delete(8888, 'tcp')
     if wipe:
         host_run(f"rm -f {_WEBDAV_CONF} 2>/dev/null || true")
         host_run("rm -f /etc/lighttpd/webdav_*.htpasswd 2>/dev/null || true")
@@ -1918,6 +1928,7 @@ def ftp_pkg_install():
     if not ok:
         return jsonify({'ok': False, 'error': msg or 'vsftpd installation failed'}), 500
     host_run("systemctl enable vsftpd && systemctl restart vsftpd", timeout=10)
+    ufw_allow(21, 'tcp', 'FTP')
     return jsonify({'status': 'ok'})
 
 
@@ -1927,6 +1938,7 @@ def ftp_pkg_uninstall():
     host_run("systemctl stop vsftpd 2>/dev/null || true")
     host_run("systemctl disable vsftpd 2>/dev/null || true")
     ok, dep_msg = release_dep('vsftpd', 'sharing-ftp')
+    ufw_delete(21, 'tcp')
     if wipe:
         host_run("rm -f /etc/vsftpd.conf 2>/dev/null || true")
     try:

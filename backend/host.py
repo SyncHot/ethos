@@ -692,3 +692,30 @@ def release_dep(binary, owner):
     state.pop(binary, None)
     _save_dep_owners(state)
     return True, None
+
+
+# ─── UFW Firewall Helpers ───────────────────────────────────────────
+
+def ufw_allow(port, proto='tcp', comment=''):
+    """Open a port in UFW firewall. Safe no-op if UFW is not installed."""
+    try:
+        p = int(port)
+        if proto not in ('tcp', 'udp'):
+            proto = 'tcp'
+        cmd = f'ufw allow {p}/{proto}'
+        if comment:
+            cmd += f' comment {q(comment)}'
+        host_run(cmd, timeout=10)
+    except Exception:
+        pass
+
+
+def ufw_delete(port, proto='tcp'):
+    """Remove a UFW allow rule. Safe no-op if UFW is not installed."""
+    try:
+        p = int(port)
+        if proto not in ('tcp', 'udp'):
+            proto = 'tcp'
+        host_run(f'ufw delete allow {p}/{proto}', timeout=10)
+    except Exception:
+        pass

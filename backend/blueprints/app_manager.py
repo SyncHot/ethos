@@ -79,6 +79,7 @@ CORE_APPS = frozenset({
     'system-settings', 'users', 'updates', 'app-store', 'packages',
     'event-log', 'network', 'services', 'resource-monitor', 'backup',
     'power', 'notifications', 'ssh-manager', 'naslink',
+    'firewall', 'fail2ban',
 })
 
 # ─── Frontend filename map ────────────────────────────────────
@@ -141,8 +142,8 @@ _OPTIONAL_BLUEPRINTS = {
     'wireguard':       ('wireguard',       'wireguard_bp',      None,                True),
     'antivirus':       ('antivirus',       'antivirus_bp',      None,                True),
     'rollback':        ('rollback',        'rollback_bp',       None,                False),
-    'firewall':        ('firewall',        'firewall_bp',       None,                False),
-    'fail2ban':        ('fail2ban',        'fail2ban_bp',       None,                False),
+    'firewall':        ('firewall',        'firewall_bp',       None,                True),
+    'fail2ban':        ('fail2ban',        'fail2ban_bp',       None,                True),
     'cron':            ('cron_manager',    'cron_bp',           None,                False),
     'ups':             ('ups',             'ups_bp',           'init_ups',          False),
     'family-hub':      ('familyhub',       'familyhub_bp',      None,                False),
@@ -396,13 +397,13 @@ BUILTIN_CATALOG = [
         'id': 'firewall', 'name': 'Firewall (UFW)', 'version': '1.0.0',
         'icon': 'fa-fire', 'color': '#e05d44', 'category': 'Security', 'admin_only': True,
         'description': 'Zarządzanie regułami zapory i portami.',
-        'apt_deps': [], 'pip_deps': [], 'simple': True,
+        'apt_deps': [], 'pip_deps': [], 'simple': True, 'core': True,
     },
     {
         'id': 'fail2ban', 'name': 'Intrusion Protection', 'version': '1.0.0',
         'icon': 'fa-shield-alt', 'color': '#ef4444', 'category': 'Security', 'admin_only': True,
         'description': 'Fail2Ban — aktywne bany, whitelist, ochrona SSH/Samba/Web.',
-        'apt_deps': [], 'pip_deps': [], 'simple': True,
+        'apt_deps': [], 'pip_deps': [], 'simple': True, 'core': True,
     },
     {
         'id': 'cron', 'name': 'Scheduler', 'version': '1.0.0',

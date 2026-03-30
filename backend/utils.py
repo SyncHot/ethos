@@ -402,7 +402,8 @@ def register_pkg_routes(bp, *,
                         url_prefix=None,
                         dep_owner=None,
                         require_admin_install=True,
-                        require_sudo_install=True):
+                        require_sudo_install=True,
+                        ufw_ports=None):
     """Register the standard /install, /uninstall, /pkg-status routes on *bp*.
 
     Parameters
@@ -416,8 +417,9 @@ def register_pkg_routes(bp, *,
     on_uninstall : callable | None – extra cleanup, receives wipe (bool)
     url_prefix : str | None – override route prefix (default auto-detect)
     dep_owner : str | None – dependency owner id for shared apt cleanup
+    ufw_ports : list[tuple] | None – UFW rules: [(port, proto, comment), ...]
     """
-    from host import claim_dep, release_dep, check_dep  # avoid circular at module level
+    from host import claim_dep, release_dep, check_dep, ufw_allow, ufw_delete
     import shutil as _shutil
     from blueprints.admin_required import admin_required
 
@@ -436,6 +438,9 @@ def register_pkg_routes(bp, *,
                     errors.append(f'Installation error for {dep}: {exc}')
         if errors:
             return jsonify({'ok': False, 'errors': errors}), 500
+        for rule in (ufw_ports or []):
+            ufw_allow(rule[0], rule[1] if len(rule) > 1 else 'tcp',
+                      rule[2] if len(rule) > 2 else '')
         return jsonify({'ok': True, 'message': install_message})
 
     def _pkg_uninstall():
@@ -449,6 +454,8 @@ def register_pkg_routes(bp, *,
                         dep_errors.append(msg or f'Uninstallation of dependency {dep} failed')
                 except Exception as exc:
                     dep_errors.append(f'Uninstallation error for {dep}: {exc}')
+        for rule in (ufw_ports or []):
+            ufw_delete(rule[0], rule[1] if len(rule) > 1 else 'tcp')
         if on_uninstall:
             on_uninstall(wipe)
         if wipe:
