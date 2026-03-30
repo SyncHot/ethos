@@ -385,7 +385,6 @@ function renderUpdatesApp(body) {
     }
 
     async function applyUpdate() {
-        if (!confirm(t('Zainstalować aktualizację? System zostanie zrestartowany.'))) return;
         addLog(t('Rozpoczynam instalację aktualizacji…'));
         try {
             const data = await api('/update/apply', { method: 'POST' });
@@ -410,7 +409,6 @@ function renderUpdatesApp(body) {
             toast('Wymagany plik .tar.gz', 'warning');
             return;
         }
-        if (!confirm(t('Zainstalować z pliku') + ` ${file.name}? ` + t('System zostanie zrestartowany.'))) return;
 
         addLog(t('Przesyłanie pliku') + ` ${file.name} (${fmtBytes(file.size)})…`);
         const fd = new FormData();
