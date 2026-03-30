@@ -1092,6 +1092,17 @@ WEB
 
 chroot "$ROOT" systemctl enable fail2ban || true
 
+# ── UFW Firewall ──
+echo "LOG:Configuring UFW firewall..."
+chroot "$ROOT" bash -c 'command -v ufw &>/dev/null || apt-get install -y -qq ufw' 2>&1 | tail -3
+chroot "$ROOT" ufw default deny incoming 2>/dev/null || true
+chroot "$ROOT" ufw default allow outgoing 2>/dev/null || true
+chroot "$ROOT" ufw allow 22/tcp comment 'SSH' 2>/dev/null || true
+chroot "$ROOT" ufw allow 9000/tcp comment 'EthOS Web UI' 2>/dev/null || true
+# Enable UFW non-interactively
+chroot "$ROOT" bash -c 'echo "y" | ufw enable' 2>/dev/null || true
+chroot "$ROOT" systemctl enable ufw 2>/dev/null || true
+
 # ── SSH Hardening ──
 echo "LOG:SSH hardening..."
 mkdir -p "$ROOT/etc/ssh/sshd_config.d"
@@ -1404,6 +1415,7 @@ PORT=$NAS_PORT
 ETHOS_ROOT=/opt/ethos
 BACKUP_DIR=/opt/ethos/backups
 ENVFILE
+chmod 640 "$ETHOS_DIR/ethos.env"
 
 cat > "$ETHOS_DIR/start.sh" <<'MGMT_STARTSH'
 #!/bin/bash
