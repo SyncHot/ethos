@@ -1049,13 +1049,15 @@ def get_catalog_endpoint():
 
     result = []
     for app in catalog:
+        if app['id'] in CORE_APPS:
+            continue
         inst = installed.get(app['id'], {})
         item = dict(app)
         item['installed'] = app['id'] in installed
         item['installed_version'] = inst.get('version', '')
         item['installed_source'] = inst.get('source', '')
         item['installed_at'] = inst.get('installed_at', '')
-        item['core'] = app['id'] in CORE_APPS
+        item['core'] = False
         item['update_available'] = (
             item['installed']
             and item['installed_version'] not in ('bundled', 'core', app.get('version', ''))
