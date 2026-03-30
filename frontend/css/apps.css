@@ -5005,3 +5005,89 @@ textarea.app-input { resize: vertical; line-height: 1.5; }
 .pm-status-installed { color:#22c55e; font-size:13px; display:flex; align-items:center; gap:5px; }
 .pm-status-available { color:var(--accent); font-size:13px; display:flex; align-items:center; gap:5px; }
 .pm-status-core { color:var(--text-muted); font-size:13px; display:flex; align-items:center; gap:5px; }
+
+/* ─── Firewall (fw-) ─── */
+.fw-body { display:flex; flex-direction:column; background:var(--bg-default); color:var(--text-primary); padding:0; overflow:hidden; height:100%; }
+.fw-header { padding:16px 20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; background:var(--bg-surface); flex-shrink:0; }
+.fw-header-left { display:flex; flex-direction:column; gap:4px; }
+.fw-header-right { display:flex; align-items:center; gap:10px; }
+.fw-title { margin:0; font-size:16px; font-weight:700; display:flex; align-items:center; gap:8px; color:var(--text-primary); }
+.fw-title i { color:#e05d44; }
+.fw-status { font-size:13px; color:var(--text-muted); display:flex; align-items:center; gap:6px; }
+.fw-toggle-label { font-size:13px; color:var(--text-muted); font-weight:500; }
+.fw-dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:4px; }
+.fw-dot.green { background:#22c55e; box-shadow:0 0 6px rgba(34,197,94,.5); }
+.fw-dot.red { background:#ef4444; box-shadow:0 0 6px rgba(239,68,68,.5); }
+
+/* Toggle switch */
+.fw-switch { position:relative; display:inline-block; width:40px; height:22px; cursor:pointer; }
+.fw-switch input { opacity:0; width:0; height:0; position:absolute; }
+.fw-switch-slider { position:absolute; inset:0; background:#555; border-radius:22px; transition:background .3s; }
+.fw-switch-slider::before { content:''; position:absolute; width:16px; height:16px; left:3px; bottom:3px; background:#fff; border-radius:50%; transition:transform .3s; }
+.fw-switch input:checked + .fw-switch-slider { background:#22c55e; }
+.fw-switch input:checked + .fw-switch-slider::before { transform:translateX(18px); }
+
+/* Tabs */
+.fw-tabs { display:flex; border-bottom:1px solid var(--border); background:var(--bg-surface); flex-shrink:0; }
+.fw-tab { padding:10px 18px; background:transparent; border:none; border-bottom:2px solid transparent; color:var(--text-muted); cursor:pointer; font-size:13px; font-weight:500; transition:all .2s; display:flex; align-items:center; gap:6px; }
+.fw-tab:hover { color:var(--text-primary); background:rgba(255,255,255,.04); }
+.fw-tab.active { border-bottom-color:#e05d44; color:#e05d44; }
+
+/* Content */
+.fw-content { flex:1; overflow-y:auto; padding:16px 20px; }
+.fw-panel { display:flex; flex-direction:column; gap:16px; }
+.fw-section { background:var(--bg-surface); border:1px solid var(--border); border-radius:10px; padding:14px 16px; }
+.fw-section-title { font-size:13px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); margin-bottom:10px; }
+.fw-section-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+.fw-section-actions { display:flex; gap:6px; }
+
+/* Preset grid */
+.fw-preset-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(130px, 1fr)); gap:8px; }
+.fw-preset-card { display:flex; flex-direction:column; align-items:center; gap:4px; padding:10px 6px; background:var(--bg-default); border:1px solid var(--border); border-radius:8px; cursor:pointer; transition:all .15s; text-align:center; }
+.fw-preset-card:hover { border-color:var(--accent, #3b82f6); background:var(--bg-hover); transform:translateY(-1px); }
+.fw-preset-card i { font-size:18px; }
+.fw-preset-name { font-size:12px; font-weight:600; color:var(--text-primary); }
+.fw-preset-ports { font-size:10px; font-family:var(--font-mono, monospace); color:var(--text-muted); }
+
+/* Form */
+.fw-form-row { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; }
+.fw-form-group { display:flex; flex-direction:column; gap:3px; flex:1; min-width:100px; }
+.fw-form-group label { font-size:11px; font-weight:600; color:var(--text-muted); text-transform:uppercase; letter-spacing:.04em; }
+.fw-form-narrow { max-width:110px; min-width:90px; }
+.fw-form-custom-ip { min-width:140px; }
+.fw-form-action { flex:0 0 auto; min-width:auto; }
+.fw-form-hint { font-size:11px; color:var(--text-muted); margin-top:6px; }
+
+/* Rules table */
+.fw-rules-wrap { overflow-x:auto; border:1px solid var(--border); border-radius:8px; }
+.fw-rules-table { width:100%; border-collapse:collapse; font-size:13px; }
+.fw-rules-table thead { background:var(--bg-base); }
+.fw-rules-table th { padding:8px 10px; text-align:left; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--text-muted); border-bottom:1px solid var(--border); white-space:nowrap; }
+.fw-rules-table td { padding:8px 10px; border-bottom:1px solid var(--border-subtle, var(--border)); }
+.fw-rules-table tbody tr:last-child td { border-bottom:none; }
+.fw-rules-table tbody tr:hover { background:rgba(255,255,255,.03); }
+.fw-mono { font-family:var(--font-mono, monospace); font-size:12px; }
+.fw-comment-cell { font-size:12px; color:var(--text-muted); max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.fw-empty-msg { padding:20px; text-align:center; color:var(--text-muted); font-size:13px; }
+
+/* Action & Access badges */
+.fw-action-badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:700; letter-spacing:.04em; }
+.fw-action-badge.allow { background:rgba(34,197,94,.12); color:#22c55e; }
+.fw-action-badge.deny { background:rgba(239,68,68,.12); color:#ef4444; }
+.fw-action-badge.limit { background:rgba(245,158,11,.12); color:#f59e0b; }
+.fw-access-badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:500; }
+.fw-access-badge.lan { background:rgba(59,130,246,.10); color:#3b82f6; }
+.fw-access-badge.public { background:rgba(245,158,11,.10); color:#f59e0b; }
+.fw-access-badge.custom { background:rgba(139,92,246,.10); color:#8b5cf6; }
+
+/* Fail2Ban / Banned */
+.fw-banned-list { display:flex; flex-direction:column; gap:12px; }
+.fw-jail { background:var(--bg-default); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+.fw-jail-header { display:flex; justify-content:space-between; align-items:center; padding:10px 12px; border-bottom:1px solid var(--border-subtle, var(--border)); background:var(--bg-base); }
+.fw-jail-name { font-size:13px; font-weight:600; color:var(--text-primary); display:flex; align-items:center; gap:6px; }
+.fw-jail-name i { color:#ef4444; font-size:12px; }
+.fw-jail-stats { display:flex; gap:12px; }
+.fw-jail-stat { font-size:11px; color:var(--text-muted); }
+.fw-ban-items { display:flex; flex-direction:column; }
+.fw-ban-item { display:flex; justify-content:space-between; align-items:center; padding:8px 12px; border-bottom:1px solid var(--border-subtle, var(--border)); }
+.fw-ban-item:last-child { border-bottom:none; }

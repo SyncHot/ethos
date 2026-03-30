@@ -4,570 +4,352 @@
    ═══════════════════════════════════════════════════════════ */
 
 AppRegistry['firewall'] = function (appDef) {
+    let _lanSubnet = '';
+    let _rules = [];
+
     const win = createWindow('firewall', {
-        title: 'Firewall',
+        title: t('Firewall'),
         icon: 'fa-fire',
         iconColor: '#e05d44',
-        width: 900,
+        width: 960,
         height: 700,
         resizable: true,
         maximizable: true
     });
 
     const body = win.body;
-    body.style.display = 'flex';
-    body.style.flexDirection = 'column';
-    body.style.background = 'var(--bg-default)';
-    body.style.color = 'var(--text-default)';
-    body.style.padding = '0'; // No padding on body, padding in content
-    body.style.overflow = 'hidden';
+    body.className = 'fw-body';
 
-    // ─── Header ───
-    const header = document.createElement('div');
-    header.style.padding = '20px';
-    header.style.borderBottom = '1px solid var(--border)';
-    header.style.display = 'flex';
-    header.style.justifyContent = 'space-between';
-    header.style.alignItems = 'center';
-    header.style.background = 'var(--bg-surface)';
+    body.innerHTML = '<div class="fw-header">' +
+        '<div class="fw-header-left">' +
+            '<h2 class="fw-title"><i class="fas fa-shield-alt"></i> Firewall (UFW)</h2>' +
+            '<div class="fw-status" id="fw-status"><i class="fas fa-spinner fa-spin"></i> ' + t('Ładowanie...') + '</div>' +
+        '</div>' +
+        '<div class="fw-header-right">' +
+            '<span class="fw-toggle-label" id="fw-toggle-label">' + t('Wyłączony') + '</span>' +
+            '<label class="fw-switch"><input type="checkbox" id="fw-toggle"><span class="fw-switch-slider"></span></label>' +
+        '</div>' +
+    '</div>' +
+    '<div class="fw-tabs" id="fw-tabs">' +
+        '<button class="fw-tab active" data-tab="rules"><i class="fas fa-list-ul"></i> ' + t('Reguły') + '</button>' +
+        '<button class="fw-tab" data-tab="banned"><i class="fas fa-ban"></i> ' + t('Zablokowane IP') + '</button>' +
+    '</div>' +
+    '<div class="fw-content" id="fw-content">' +
+        '<div class="fw-panel" id="fw-panel-rules">' +
+            '<div class="fw-section">' +
+                '<div class="fw-section-title">' + t('Szybkie presety') + '</div>' +
+                '<div class="fw-preset-grid" id="fw-preset-grid"></div>' +
+            '</div>' +
+            '<div class="fw-section">' +
+                '<div class="fw-section-title">' + t('Dodaj regułę') + '</div>' +
+                '<div class="fw-form-row">' +
+                    '<div class="fw-form-group"><label>' + t('Port(y)') + '</label><input type="text" class="app-input" id="fw-port" placeholder="np. 8080, 3000:3100"></div>' +
+                    '<div class="fw-form-group fw-form-narrow"><label>' + t('Protokół') + '</label><select class="app-input" id="fw-proto"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="">TCP+UDP</option></select></div>' +
+                    '<div class="fw-form-group fw-form-narrow"><label>' + t('Akcja') + '</label><select class="app-input" id="fw-action"><option value="allow">' + t('Allow') + '</option><option value="deny">' + t('Deny') + '</option><option value="limit">' + t('Limit') + '</option></select></div>' +
+                    '<div class="fw-form-group"><label>' + t('Dostęp') + '</label><select class="app-input" id="fw-access"><option value="lan">🏠 ' + t('Tylko LAN') + '</option><option value="public">🌐 ' + t('Publiczny') + '</option><option value="custom">📍 ' + t('Własny IP') + '</option></select></div>' +
+                    '<div class="fw-form-group fw-form-custom-ip hidden" id="fw-custom-ip-group"><label>' + t('Adres IP / podsieć') + '</label><input type="text" class="app-input" id="fw-custom-ip" placeholder="np. 10.0.0.0/8"></div>' +
+                    '<div class="fw-form-group"><label>' + t('Komentarz') + '</label><input type="text" class="app-input" id="fw-comment" placeholder="' + t('np. Serwer WWW') + '"></div>' +
+                    '<div class="fw-form-group fw-form-action"><label>&nbsp;</label><button class="app-btn app-btn-primary" id="fw-add-btn"><i class="fas fa-plus"></i> ' + t('Dodaj') + '</button></div>' +
+                '</div>' +
+                '<div class="fw-form-hint" id="fw-subnet-hint"></div>' +
+            '</div>' +
+            '<div class="fw-section">' +
+                '<div class="fw-section-header">' +
+                    '<span class="fw-section-title">' + t('Aktywne reguły') + '</span>' +
+                    '<div class="fw-section-actions">' +
+                        '<button class="app-btn app-btn-sm" id="fw-refresh-btn"><i class="fas fa-sync-alt"></i> ' + t('Odśwież') + '</button>' +
+                        '<button class="app-btn app-btn-sm app-btn-danger" id="fw-reset-btn"><i class="fas fa-undo"></i> ' + t('Resetuj domyślne') + '</button>' +
+                    '</div>' +
+                '</div>' +
+                '<div class="fw-rules-wrap">' +
+                    '<table class="fw-rules-table"><thead><tr>' +
+                        '<th>#</th><th>' + t('Port / Usługa') + '</th><th>' + t('Akcja') + '</th><th>' + t('Dostęp') + '</th><th>' + t('Źródło') + '</th><th>' + t('Komentarz') + '</th><th></th>' +
+                    '</tr></thead><tbody id="fw-rules-tbody"><tr><td colspan="7" class="fw-empty-msg">' + t('Ładowanie...') + '</td></tr></tbody></table>' +
+                '</div>' +
+            '</div>' +
+        '</div>' +
+        '<div class="fw-panel hidden" id="fw-panel-banned">' +
+            '<div class="fw-section">' +
+                '<div class="fw-section-header">' +
+                    '<span class="fw-section-title">' + t('Zablokowane adresy IP') + ' (Fail2Ban)</span>' +
+                    '<button class="app-btn app-btn-sm" id="fw-refresh-banned"><i class="fas fa-sync-alt"></i> ' + t('Odśwież') + '</button>' +
+                '</div>' +
+                '<div id="fw-banned-list" class="fw-banned-list"><div class="fw-empty-msg">' + t('Ładowanie...') + '</div></div>' +
+            '</div>' +
+        '</div>' +
+    '</div>';
 
-    const titleArea = document.createElement('div');
-    titleArea.innerHTML = `
-        <h2 style="margin:0;display:flex;align-items:center;gap:10px">
-            <i class="fas fa-shield-alt" style="color:#e05d44"></i>
-            Firewall (UFW)
-        </h2>
-        <div id="fw-status-text" style="margin-top:5px;font-size:0.9em;opacity:0.8">
-            ${t('Ładowanie statusu...')}
-        </div>
-    `;
+    // ─── Presets ───
+    var PRESETS = [
+        { icon: 'fa-terminal',      name: 'SSH',          ports: '22',      proto: 'tcp', access: 'lan',    color: '#22c55e' },
+        { icon: 'fa-folder-open',   name: 'Samba',        ports: '139,445', proto: 'tcp', access: 'lan',    color: '#3b82f6' },
+        { icon: 'fa-globe',         name: 'HTTP / HTTPS', ports: '80,443',  proto: 'tcp', access: 'public', color: '#f59e0b' },
+        { icon: 'fa-play-circle',   name: 'Plex',         ports: '32400',   proto: 'tcp', access: 'lan',    color: '#e5a00d' },
+        { icon: 'fa-print',         name: 'CUPS',         ports: '631',     proto: 'tcp', access: 'lan',    color: '#8b5cf6' },
+        { icon: 'fa-hdd',           name: 'NFS',          ports: '2049',    proto: 'tcp', access: 'lan',    color: '#06b6d4' },
+        { icon: 'fa-download',      name: 'FTP',          ports: '21',      proto: 'tcp', access: 'lan',    color: '#f97316' },
+        { icon: 'fa-tv',            name: 'DLNA',         ports: '8200',    proto: 'tcp', access: 'lan',    color: '#ec4899' },
+    ];
 
-    const toggleArea = document.createElement('div');
-    toggleArea.innerHTML = `
-        <label class="switch">
-            <input type="checkbox" id="fw-toggle">
-            <span class="slider round"></span>
-        </label>
-    `;
-    header.appendChild(titleArea);
-    header.appendChild(toggleArea);
-    body.appendChild(header);
+    var presetGrid = document.getElementById('fw-preset-grid');
+    PRESETS.forEach(function(p) {
+        var btn = document.createElement('button');
+        btn.className = 'fw-preset-card';
+        btn.innerHTML =
+            '<i class="fas ' + p.icon + '" style="color:' + p.color + '"></i>' +
+            '<span class="fw-preset-name">' + p.name + '</span>' +
+            '<span class="fw-preset-ports">' + p.ports + '/' + p.proto + '</span>' +
+            '<span class="fw-access-badge ' + p.access + '">' + (p.access === 'lan' ? '🏠 LAN' : '🌐 Public') + '</span>';
+        btn.onclick = function() { addRule(p.ports, p.proto, 'allow', p.access, '', p.name); };
+        presetGrid.appendChild(btn);
+    });
 
     // ─── Tabs ───
-    const tabsContainer = document.createElement('div');
-    tabsContainer.style.display = 'flex';
-    tabsContainer.style.borderBottom = '1px solid var(--border)';
-    tabsContainer.style.background = 'var(--bg-surface)';
+    document.querySelectorAll('#fw-tabs .fw-tab').forEach(function(tab) {
+        tab.onclick = function() {
+            document.querySelectorAll('#fw-tabs .fw-tab').forEach(function(t) { t.classList.remove('active'); });
+            tab.classList.add('active');
+            var target = tab.dataset.tab;
+            document.getElementById('fw-panel-rules').classList.toggle('hidden', target !== 'rules');
+            document.getElementById('fw-panel-banned').classList.toggle('hidden', target !== 'banned');
+            if (target === 'banned') loadBanned();
+        };
+    });
 
-    const tabRules = document.createElement('button');
-    tabRules.className = 'tab-btn active';
-    tabRules.textContent = t('Reguły');
-    tabRules.onclick = () => switchTab('rules');
-
-    const tabBanned = document.createElement('button');
-    tabBanned.className = 'tab-btn';
-    tabBanned.textContent = t('Zablokowane IP (Fail2Ban)');
-    tabBanned.onclick = () => switchTab('banned');
-
-    tabsContainer.appendChild(tabRules);
-    tabsContainer.appendChild(tabBanned);
-    body.appendChild(tabsContainer);
-
-    // ─── Content Areas ───
-    const contentArea = document.createElement('div');
-    contentArea.style.flex = '1';
-    contentArea.style.overflowY = 'auto';
-    contentArea.style.padding = '20px';
-    contentArea.style.position = 'relative';
-    body.appendChild(contentArea);
-
-    // ─── Tab: Rules ───
-    const rulesView = document.createElement('div');
-    rulesView.style.display = 'flex';
-    rulesView.style.flexDirection = 'column';
-    rulesView.style.gap = '20px';
-
-    // Quick Actions
-    const quickActions = document.createElement('div');
-    quickActions.className = 'card'; // Assuming card class exists or standard styling
-    quickActions.style.padding = '15px';
-    quickActions.style.background = 'var(--bg-surface)';
-    quickActions.style.border = '1px solid var(--border)';
-    quickActions.style.borderRadius = '8px';
-    quickActions.innerHTML = `
-        <h3 style="margin-top:0;font-size:1rem;margin-bottom:10px">Szybkie akcje</h3>
-        <div style="display:flex;gap:10px;flex-wrap:wrap">
-            <button class="app-btn app-btn-sm" onclick="app_firewall_addRule('22', 'tcp', 'SSH')"><i class="fas fa-terminal"></i> Allow SSH</button>
-            <button class="app-btn app-btn-sm" onclick="app_firewall_addRule('139,445', 'tcp', 'Samba')"><i class="fas fa-network-wired"></i> Allow Samba</button>
-            <button class="app-btn app-btn-sm" onclick="app_firewall_addRule('32400', 'tcp', 'Plex')"><i class="fas fa-play-circle"></i> Allow Plex</button>
-            <button class="app-btn app-btn-sm" onclick="app_firewall_addRule('80,443', 'tcp', 'Web')"><i class="fas fa-globe"></i> Allow HTTP/HTTPS</button>
-            <button class="app-btn app-btn-sm app-btn-secondary" onclick="app_firewall_resetDefaults()"><i class="fas fa-undo"></i> ${t('Resetuj do domyślnych')}</button>
-        </div>
-    `;
-    rulesView.appendChild(quickActions);
-
-    // Custom Rule
-    const customRule = document.createElement('div');
-    customRule.className = 'card';
-    customRule.style.padding = '15px';
-    customRule.style.background = 'var(--bg-surface)';
-    customRule.style.border = '1px solid var(--border)';
-    customRule.style.borderRadius = '8px';
-    customRule.innerHTML = `
-        <h3 style="margin-top:0;font-size:1rem;margin-bottom:10px">${t('Dodaj własną regułę')}</h3>
-        <div style="display:flex;gap:10px;align-items:end;flex-wrap:wrap">
-            <div style="flex:1;min-width:100px">
-                <label style="display:block;font-size:0.8rem;opacity:0.7">Port(y)</label>
-                <input type="text" id="fw-custom-port" class="app-input" placeholder="np. 8080 lub 8000:8100">
-            </div>
-            <div style="width:100px">
-                <label style="display:block;font-size:0.8rem;opacity:0.7">${t('Protokół')}</label>
-                <select id="fw-custom-proto" class="app-select">
-                    <option value="tcp">TCP</option>
-                    <option value="udp">UDP</option>
-                    <option value="">Both</option>
-                </select>
-            </div>
-            <div style="flex:1;min-width:120px">
-                <label style="display:block;font-size:0.8rem;opacity:0.7">${t('Źródło IP (opcjonalne)')}</label>
-                <input type="text" id="fw-custom-ip" class="app-input" placeholder="np. 192.168.1.100 lub 'any'">
-            </div>
-            <button class="app-btn app-btn-primary" id="fw-add-custom-btn"><i class="fas fa-plus"></i> Dodaj</button>
-        </div>
-    `;
-    rulesView.appendChild(customRule);
-
-    // Rules List
-    const rulesList = document.createElement('div');
-    rulesList.innerHTML = `
-        <h3 style="margin-top:0;font-size:1rem;margin-bottom:10px">${t('Aktywne reguły')}</h3>
-        <div id="fw-rules-table-container" style="background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;overflow:hidden">
-            <table style="width:100%;border-collapse:collapse">
-                <thead style="background:var(--bg-base);border-bottom:1px solid var(--border)">
-                    <tr>
-                        <th style="padding:10px;text-align:left">ID</th>
-                        <th style="padding:10px;text-align:left">${t('Port / Usługa')}</th>
-                        <th style="padding:10px;text-align:left">Akcja</th>
-                        <th style="padding:10px;text-align:left">Kierunek</th>
-                        <th style="padding:10px;text-align:left">${t('Źródło')}</th>
-                        <th style="padding:10px;text-align:right">Opcje</th>
-                    </tr>
-                </thead>
-                <tbody id="fw-rules-tbody">
-                    <tr><td colspan="6" style="padding:20px;text-align:center">${t('Ładowanie...')}</td></tr>
-                </tbody>
-            </table>
-        </div>
-    `;
-    rulesView.appendChild(rulesList);
-
-    // ─── Tab: Banned ───
-    const bannedView = document.createElement('div');
-    bannedView.style.display = 'none'; // Hidden by default
-    bannedView.style.flexDirection = 'column';
-    bannedView.style.gap = '20px';
-    bannedView.innerHTML = `
-        <div class="card" style="padding:15px;background:var(--bg-surface);border:1px solid var(--border);border-radius:8px">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-                <h3 style="margin:0;font-size:1rem">Zablokowane adresy IP (Fail2Ban)</h3>
-                <button class="app-btn app-btn-sm" id="fw-refresh-banned"><i class="fas fa-sync-alt"></i> ${t('Odśwież')}</button>
-            </div>
-            <div id="fw-banned-list">
-                ${t('Ładowanie...')}
-            </div>
-        </div>
-    `;
-
-    contentArea.appendChild(rulesView);
-    contentArea.appendChild(bannedView);
-
-    // ─── Helper CSS for Tabs ───
-    const style = document.createElement('style');
-    style.textContent = `
-        .tab-btn {
-            padding: 10px 20px;
-            background: transparent;
-            border: none;
-            border-bottom: 2px solid transparent;
-            color: var(--text-default);
-            cursor: pointer;
-            font-weight: 500;
-            opacity: 0.7;
-            transition: all 0.2s;
-        }
-        .tab-btn:hover { opacity: 1; background: rgba(255,255,255,0.05); }
-        .tab-btn.active {
-            border-bottom-color: #e05d44;
-            opacity: 1;
-            color: #e05d44;
-        }
-        .switch {
-            position: relative;
-            display: inline-block;
-            width: 40px;
-            height: 20px;
-        }
-        .switch input { opacity: 0; width: 0; height: 0; }
-        .slider {
-            position: absolute;
-            cursor: pointer;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background-color: #ccc;
-            transition: .4s;
-        }
-        .slider:before {
-            position: absolute;
-            content: "";
-            height: 16px;
-            width: 16px;
-            left: 2px;
-            bottom: 2px;
-            background-color: white;
-            transition: .4s;
-        }
-        input:checked + .slider { background-color: #e05d44; }
-        input:focus + .slider { box-shadow: 0 0 1px #e05d44; }
-        input:checked + .slider:before { transform: translateX(20px); }
-        .slider.round { border-radius: 34px; }
-        .slider.round:before { border-radius: 50%; }
-    `;
-    body.appendChild(style);
-
-    // ─── Logic ───
-
-    // Tab Switching
-    function switchTab(tab) {
-        if (tab === 'rules') {
-            rulesView.style.display = 'flex';
-            bannedView.style.display = 'none';
-            tabRules.classList.add('active');
-            tabBanned.classList.remove('active');
-            loadRules();
-        } else {
-            rulesView.style.display = 'none';
-            bannedView.style.display = 'flex';
-            tabRules.classList.remove('active');
-            tabBanned.classList.add('active');
-            loadBanned();
-        }
-    }
-
-    // Load Rules & Status
-    async function loadRules() {
-        const statusText = document.getElementById('fw-status-text');
-        const toggle = document.getElementById('fw-toggle');
-        const tbody = document.getElementById('fw-rules-tbody');
-
-        // Prevent triggering toggle event
-        toggle.onclick = null;
-
-        try {
-            const res = await api('/firewall/status');
-
-            // Update Header Status
-            if (res.status === 'active') {
-                statusText.innerHTML = '<span style="color:#2ecc71">● Aktywny</span>';
-                toggle.checked = true;
-            } else {
-                statusText.innerHTML = '<span style="color:#ef4444">● Nieaktywny</span>';
-                toggle.checked = false;
-            }
-
-            // Bind Toggle
-            toggle.onclick = async (e) => {
-                e.preventDefault(); // Don't switch yet
-                const newState = !toggle.checked; // Current state is technically already switched in UI? No, e.preventDefault stops it?
-                // Wait, onclick happens after change? Usually input type checkbox uses onchange.
-                // Let's use logic: if checked, we want to uncheck (disable).
-
-                // Better approach:
-                // Checkbox state is *before* the click unless we prevent default?
-                // Actually, let's just use the current visual state relative to data.
-
-                const enable = !toggle.checked; // If it was checked, we clicked to uncheck
-
-                // Confirm action
-                if (!confirm(`${t('Czy na pewno chcesz')} ${enable ? t('włączyć') : t('wyłączyć')} firewall?`)) {
-                    toggle.checked = !enable; // Revert visual
-                    return;
-                }
-
-                // Optimistic UI? No, wait for result.
-                try {
-                    const tRes = await api('/firewall/toggle', {
-                        method: 'POST',
-                        body: { enable: enable }
-                    });
-                    if (tRes.success) {
-                        toast(tRes.message, 'success');
-                        loadRules();
-                    } else {
-                        toast(tRes.error || t('Błąd zmiany statusu'), 'error');
-                        toggle.checked = !enable; // Revert
-                    }
-                } catch (err) {
-                    toast(err.message, 'error');
-                    toggle.checked = !enable;
-                }
-            };
-            // Need to re-bind onchange actually, creating onclick logic on checkbox is tricky.
-            // Let's just reset onclick to handle it properly.
-            toggle.onclick = null;
-            toggle.onchange = async function() {
-                const enable = this.checked;
-                // Revert immediately to wait for confirmation/api
-                this.checked = !enable;
-
-                if (!confirm(`${t('Czy na pewno chcesz')} ${enable ? t('włączyć') : t('wyłączyć')} firewall?`)) return;
-
-                try {
-                    const tRes = await api('/firewall/toggle', {
-                        method: 'POST',
-                        body: { enable: enable }
-                    });
-                    if (tRes.success) {
-                        toast(tRes.message, 'success');
-                        this.checked = enable;
-                        loadRules(); // Refresh status text
-                    } else {
-                        toast(tRes.error || t('Błąd'), 'error');
-                    }
-                } catch (err) {
-                    toast(err.message, 'error');
-                }
-            };
-
-
-            // Render Rules
-            tbody.innerHTML = '';
-            if (!res.rules || res.rules.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6" style="padding:20px;text-align:center;opacity:0.6">' + t('Brak reguł lub firewall nieaktywny') + '</td></tr>';
-            } else {
-                res.rules.forEach(rule => {
-                    const tr = document.createElement('tr');
-                    tr.style.borderBottom = '1px solid var(--border-subtle)';
-
-                    const actionColor = rule.action.includes('ALLOW') ? '#2ecc71' : '#ef4444';
-
-                    tr.innerHTML = `
-                        <td style="padding:10px">${rule.id}</td>
-                        <td style="padding:10px;font-family:monospace">${rule.to}</td>
-                        <td style="padding:10px;color:${actionColor};font-weight:bold">${rule.action}</td>
-                        <td style="padding:10px">${rule.direction}</td>
-                        <td style="padding:10px;font-family:monospace">${rule.from}</td>
-                        <td style="padding:10px;text-align:right">
-                            <button class="app-btn app-btn-xs app-btn-danger delete-rule-btn" data-id="${rule.id}">
-                                <i class="fas fa-trash"></i>
-                            </button>
-                        </td>
-                    `;
-                    tbody.appendChild(tr);
-                });
-
-                // Bind delete buttons
-                tbody.querySelectorAll('.delete-rule-btn').forEach(btn => {
-                    btn.onclick = () => deleteRule(btn.dataset.id);
-                });
-            }
-
-        } catch (e) {
-            console.error(e);
-            tbody.innerHTML = `<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--text-error)">${t('Błąd:')} ${e.message}</td></tr>`;
-        }
-    }
-
-    // Add Rule Helper
-    window.app_firewall_addRule = async (port, proto, name) => {
-        if (!confirm(`${t('Dodać regułę dla')} ${name || port}?`)) return;
-        try {
-            const res = await api('/firewall/rules', {
-                method: 'POST',
-                body: { action: 'add', port, proto }
-            });
-            if (res.success) {
-                toast('Reguła dodana', 'success');
-                loadRules();
-            } else {
-                toast(res.error, 'error');
-            }
-        } catch (e) {
-            toast(e.message, 'error');
-        }
+    // ─── Access type toggle ───
+    var accessSel = document.getElementById('fw-access');
+    var customIpGroup = document.getElementById('fw-custom-ip-group');
+    accessSel.onchange = function() {
+        customIpGroup.classList.toggle('hidden', accessSel.value !== 'custom');
     };
 
-    // Reset Defaults
-    window.app_firewall_resetDefaults = async () => {
-        if (!confirm(t('UWAGA: To usunie wszystkie obecne reguły i przywróci domyślne (SSH, Web, Samba, Plex). Kontynuować?'))) return;
+    // ─── Toggle ───
+    var toggle = document.getElementById('fw-toggle');
+    toggle.onchange = async function () {
+        var enable = this.checked;
+        this.checked = !enable;
+        if (!confirm(t('Czy na pewno chcesz') + ' ' + (enable ? t('włączyć') : t('wyłączyć')) + ' firewall?')) return;
         try {
-            const res = await api('/firewall/rules', {
-                method: 'POST',
-                body: { action: 'reset_defaults' }
-            });
-            if (res.success) {
-                toast('Przywrócono domyślne reguły', 'success');
-                loadRules();
+            var res = await api('/firewall/toggle', { method: 'POST', body: { enable: enable } });
+            if (res.ok) {
+                toast(enable ? t('Firewall włączony') : t('Firewall wyłączony'), 'success');
+                loadStatus();
             } else {
-                toast(res.error, 'error');
+                toast(res.error || t('Błąd'), 'error');
             }
-        } catch (e) {
-            toast(e.message, 'error');
-        }
+        } catch (e) { toast(e.message, 'error'); }
     };
 
-    // Delete Rule
-    async function deleteRule(id) {
-        if (!confirm(`${t('Czy na pewno usunąć regułę #')}${id}?`)) return;
+    // ─── Add Rule ───
+    document.getElementById('fw-add-btn').onclick = function() {
+        var port = document.getElementById('fw-port').value.trim();
+        if (!port) { toast(t('Podaj numer portu'), 'error'); return; }
+        addRule(
+            port,
+            document.getElementById('fw-proto').value,
+            document.getElementById('fw-action').value,
+            accessSel.value,
+            document.getElementById('fw-custom-ip').value.trim(),
+            document.getElementById('fw-comment').value.trim()
+        );
+    };
+
+    async function addRule(port, proto, action, access, customIp, comment) {
         try {
-            const res = await api('/firewall/rules', {
-                method: 'POST',
-                body: { action: 'delete', id: id }
-            });
-            if (res.success) {
-                toast('Reguła usunięta', 'success');
-                loadRules();
-            } else {
-                toast(res.error, 'error');
-            }
-        } catch (e) {
-            toast(e.message, 'error');
-        }
-    }
-
-    // Custom Add Logic
-    document.getElementById('fw-add-custom-btn').onclick = async () => {
-        const port = document.getElementById('fw-custom-port').value.trim();
-        const proto = document.getElementById('fw-custom-proto').value;
-        const ip = document.getElementById('fw-custom-ip').value.trim();
-
-        if (!port) {
-            toast('Podaj port', 'error');
-            return;
-        }
-
-        try {
-            const res = await api('/firewall/rules', {
+            var res = await api('/firewall/rules', {
                 method: 'POST',
                 body: {
                     action: 'add',
-                    port: port,
-                    proto: proto || null,
-                    from: ip || 'any'
+                    port: port, proto: proto,
+                    ufw_action: action,
+                    access: access,
+                    from: customIp,
+                    comment: comment || ''
                 }
             });
-            if (res.success) {
-                toast('Reguła dodana', 'success');
-                // Clear inputs
-                document.getElementById('fw-custom-port').value = '';
+            if (res.ok) {
+                toast(t('Reguła dodana'), 'success');
+                document.getElementById('fw-port').value = '';
+                document.getElementById('fw-comment').value = '';
                 document.getElementById('fw-custom-ip').value = '';
-                loadRules();
+                loadStatus();
             } else {
-                toast(res.error, 'error');
+                toast(res.error || t('Błąd dodawania reguły'), 'error');
             }
-        } catch (e) {
-            toast(e.message, 'error');
-        }
+        } catch (e) { toast(e.message, 'error'); }
+    }
+
+    // ─── Delete Rule ───
+    async function deleteRule(id, v6Id) {
+        if (!confirm(t('Czy na pewno usunąć regułę') + ' #' + id + '?')) return;
+        try {
+            var res = await api('/firewall/rules', {
+                method: 'POST',
+                body: { action: 'delete', id: id, v6_id: v6Id || null }
+            });
+            if (res.ok) {
+                toast(t('Reguła usunięta'), 'success');
+                loadStatus();
+            } else {
+                toast(res.error || t('Błąd'), 'error');
+            }
+        } catch (e) { toast(e.message, 'error'); }
+    }
+
+    // ─── Reset Defaults ───
+    document.getElementById('fw-reset-btn').onclick = async function() {
+        if (!confirm(t('UWAGA: To usunie wszystkie reguły i przywróci domyślne (SSH, EthOS Web — tylko LAN). Kontynuować?'))) return;
+        try {
+            var res = await api('/firewall/rules', { method: 'POST', body: { action: 'reset_defaults' } });
+            if (res.ok) {
+                toast(t('Przywrócono domyślne reguły'), 'success');
+                loadStatus();
+            } else {
+                toast(res.error || t('Błąd'), 'error');
+            }
+        } catch (e) { toast(e.message, 'error'); }
     };
 
-    // Load Banned IPs
-    async function loadBanned() {
-        const list = document.getElementById('fw-banned-list');
-        list.innerHTML = t('Ładowanie...');
+    document.getElementById('fw-refresh-btn').onclick = function() { loadStatus(); };
+
+    // ─── Load Status & Rules ───
+    async function loadStatus() {
+        var statusEl = document.getElementById('fw-status');
+        var toggleLabel = document.getElementById('fw-toggle-label');
+        var tbody = document.getElementById('fw-rules-tbody');
 
         try {
-            const res = await api('/firewall/banned');
+            var res = await api('/firewall/status');
+            if (res.error) { statusEl.innerHTML = '<span class="fw-dot red"></span> ' + t('Błąd'); return; }
+
+            var active = res.status === 'active';
+            toggle.checked = active;
+            toggleLabel.textContent = active ? t('Aktywny') : t('Wyłączony');
+
+            if (active) {
+                var def = res.defaults || {};
+                statusEl.innerHTML = '<span class="fw-dot green"></span> ' + t('Aktywny') +
+                    (def.incoming ? ' &middot; ' + t('Domyślnie') + ': <strong>' + def.incoming + '</strong> ' + t('przychodzące') : '');
+            } else {
+                statusEl.innerHTML = '<span class="fw-dot red"></span> ' + t('Nieaktywny');
+            }
+
+            _rules = res.rules || [];
+            renderRules(tbody);
+        } catch (e) {
+            statusEl.innerHTML = '<span class="fw-dot red"></span> ' + t('Błąd połączenia');
+            tbody.innerHTML = '<tr><td colspan="7" class="fw-empty-msg">' + t('Błąd:') + ' ' + e.message + '</td></tr>';
+        }
+    }
+
+    function renderRules(tbody) {
+        tbody.innerHTML = '';
+        if (_rules.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" class="fw-empty-msg">' + t('Brak reguł lub firewall nieaktywny') + '</td></tr>';
+            return;
+        }
+        _rules.forEach(function(rule) {
+            var tr = document.createElement('tr');
+            var actionCls = rule.action === 'ALLOW' ? 'allow' : (rule.action === 'LIMIT' ? 'limit' : 'deny');
+            var accessCls = rule.access || 'public';
+            var accessLabel = accessCls === 'lan' ? '🏠 LAN' : (accessCls === 'public' ? '🌐 ' + t('Publiczny') : '📍 ' + t('Własny'));
+
+            tr.innerHTML =
+                '<td>' + rule.id + '</td>' +
+                '<td class="fw-mono">' + rule.to + '</td>' +
+                '<td><span class="fw-action-badge ' + actionCls + '">' + rule.action + '</span></td>' +
+                '<td><span class="fw-access-badge ' + accessCls + '">' + accessLabel + '</span></td>' +
+                '<td class="fw-mono">' + rule.from + '</td>' +
+                '<td class="fw-comment-cell">' + (rule.comment || '') + '</td>' +
+                '<td><button class="app-btn app-btn-xs app-btn-danger fw-del-btn" data-id="' + rule.id + '" data-v6="' + (rule.v6_id || '') + '"><i class="fas fa-trash"></i></button></td>';
+            tbody.appendChild(tr);
+        });
+        tbody.querySelectorAll('.fw-del-btn').forEach(function(btn) {
+            btn.onclick = function() { deleteRule(parseInt(btn.dataset.id), btn.dataset.v6 ? parseInt(btn.dataset.v6) : null); };
+        });
+    }
+
+    // ─── Load Banned IPs ───
+    async function loadBanned() {
+        var list = document.getElementById('fw-banned-list');
+        list.innerHTML = '<div class="fw-empty-msg"><i class="fas fa-spinner fa-spin"></i> ' + t('Ładowanie...') + '</div>';
+
+        try {
+            var res = await api('/firewall/banned');
             list.innerHTML = '';
 
             if (res.error) {
-                list.innerHTML = `<div style="color:var(--text-error)">${t('Błąd:')} ${res.error}</div>`;
+                list.innerHTML = '<div class="fw-empty-msg" style="color:#ef4444">' + t('Błąd:') + ' ' + res.error + '</div>';
                 return;
             }
 
-            if (!res.jails || res.jails.length === 0) {
-                list.innerHTML = '<div style="opacity:0.6;padding:10px">' + t('Brak aktywnych więzień Fail2Ban.') + '</div>';
+            var jails = res.jails || [];
+            if (jails.length === 0) {
+                list.innerHTML = '<div class="fw-empty-msg"><i class="fas fa-check-circle" style="color:#22c55e"></i> ' + t('Brak aktywnych banów') + '</div>';
                 return;
             }
 
-            res.jails.forEach(jail => {
-                const jailDiv = document.createElement('div');
-                jailDiv.style.marginBottom = '15px';
-                jailDiv.innerHTML = `
-                    <h4 style="margin:0 0 5px 0;font-size:0.95rem;color:var(--text-accent)">
-                        <i class="fas fa-lock"></i> ${jail.name}
-                    </h4>
-                `;
+            jails.forEach(function(jail) {
+                var jailEl = document.createElement('div');
+                jailEl.className = 'fw-jail';
 
-                if (jail.banned_ips && jail.banned_ips.length > 0) {
-                    const ul = document.createElement('ul');
-                    ul.style.listStyle = 'none';
-                    ul.style.padding = '0';
-                    ul.style.margin = '0';
-                    ul.style.background = 'var(--bg-base)';
-                    ul.style.borderRadius = '6px';
-                    ul.style.border = '1px solid var(--border-subtle)';
+                var stats =
+                    '<span class="fw-jail-stat">' + t('Zbanowanych') + ': <strong>' + jail.banned_ips.length + '</strong></span>' +
+                    '<span class="fw-jail-stat">' + t('Łącznie') + ': <strong>' + jail.total_banned + '</strong></span>' +
+                    '<span class="fw-jail-stat">' + t('Nieudanych') + ': <strong>' + jail.failed + '</strong></span>';
 
-                    jail.banned_ips.forEach(ip => {
-                        const li = document.createElement('li');
-                        li.style.padding = '8px 10px';
-                        li.style.borderBottom = '1px solid var(--border-subtle)';
-                        li.style.display = 'flex';
-                        li.style.justifyContent = 'space-between';
-                        li.style.alignItems = 'center';
-                        li.innerHTML = `
-                            <span style="font-family:monospace">${ip}</span>
-                            <button class="app-btn app-btn-xs app-btn-danger unban-btn" data-jail="${jail.name}" data-ip="${ip}">
-                                Unban
-                            </button>
-                        `;
-                        ul.appendChild(li);
-                    });
-                    // remove last border
-                    if (ul.lastChild) ul.lastChild.style.borderBottom = 'none';
-
-                    jailDiv.appendChild(ul);
+                var ipsHtml = '';
+                if (jail.banned_ips.length === 0) {
+                    ipsHtml = '<div class="fw-empty-msg" style="padding:8px">' + t('Brak zablokowanych IP') + '</div>';
                 } else {
-                    const empty = document.createElement('div');
-                    empty.textContent = t('Brak zablokowanych IP.');
-                    empty.style.opacity = '0.6';
-                    empty.style.fontSize = '0.85rem';
-                    empty.style.paddingLeft = '10px';
-                    jailDiv.appendChild(empty);
+                    ipsHtml = jail.banned_ips.map(function(ip) {
+                        return '<div class="fw-ban-item">' +
+                            '<span class="fw-mono">' + ip + '</span>' +
+                            '<button class="app-btn app-btn-xs app-btn-danger fw-unban-btn" data-jail="' + jail.name + '" data-ip="' + ip + '">Unban</button>' +
+                        '</div>';
+                    }).join('');
                 }
 
-                list.appendChild(jailDiv);
+                jailEl.innerHTML =
+                    '<div class="fw-jail-header">' +
+                        '<span class="fw-jail-name"><i class="fas fa-lock"></i> ' + jail.name + '</span>' +
+                        '<div class="fw-jail-stats">' + stats + '</div>' +
+                    '</div>' +
+                    '<div class="fw-ban-items">' + ipsHtml + '</div>';
+                list.appendChild(jailEl);
             });
 
-            // Bind unban
-            list.querySelectorAll('.unban-btn').forEach(btn => {
-                btn.onclick = async () => {
-                    const jail = btn.dataset.jail;
-                    const ip = btn.dataset.ip;
-                    if (!confirm(`${t('Odblokować IP')} ${ip}?`)) return;
-
+            list.querySelectorAll('.fw-unban-btn').forEach(function(btn) {
+                btn.onclick = async function() {
+                    var jail = btn.dataset.jail, ip = btn.dataset.ip;
+                    if (!confirm(t('Odblokować') + ' ' + ip + '?')) return;
                     try {
-                        const uRes = await api('/firewall/unban', {
-                            method: 'POST',
-                            body: { jail, ip }
-                        });
-                        if (uRes.success) {
-                            toast(`Odblokowano ${ip}`, 'success');
-                            loadBanned();
-                        } else {
-                            toast(uRes.error, 'error');
-                        }
-                    } catch (e) {
-                        toast(e.message, 'error');
-                    }
+                        var r = await api('/firewall/unban', { method: 'POST', body: { jail: jail, ip: ip } });
+                        if (r.ok) { toast(t('Odblokowano') + ' ' + ip, 'success'); loadBanned(); }
+                        else toast(r.error || t('Błąd'), 'error');
+                    } catch (e) { toast(e.message, 'error'); }
                 };
             });
-
         } catch (e) {
-            console.error(e);
-            list.innerHTML = `<div style="color:var(--text-error)">${t('Błąd:')} ${e.message}</div>`;
+            list.innerHTML = '<div class="fw-empty-msg" style="color:#ef4444">' + t('Błąd:') + ' ' + e.message + '</div>';
         }
     }
 
     document.getElementById('fw-refresh-banned').onclick = loadBanned;
 
-    // Initial load
-    loadRules();
+    // ─── Load subnet hint ───
+    async function loadSubnet() {
+        try {
+            var res = await api('/firewall/subnet');
+            if (res.ok && res.subnet) {
+                _lanSubnet = res.subnet;
+                document.getElementById('fw-subnet-hint').textContent =
+                    t('Twoja sieć LAN') + ': ' + res.subnet;
+            }
+        } catch (e) { /* ignore */ }
+    }
+
+    // ─── Init ───
+    loadStatus();
+    loadSubnet();
 };
