@@ -123,7 +123,7 @@ def _call_llm(text_chunk):
 
     messages = [
         {'role': 'system', 'content': _SYSTEM_PROMPT},
-        {'role': 'user', 'content': _USER_PROMPT_TEMPLATE.format(text=text_chunk[:6000])},
+        {'role': 'user', 'content': _USER_PROMPT_TEMPLATE.format(text=text_chunk[:3000])},
     ]
 
     resp = llm.create_chat_completion(
