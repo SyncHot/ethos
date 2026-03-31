@@ -87,6 +87,7 @@ CORE_APPS = frozenset({
 _FRONTEND_FILENAME = {
     'ai-chat':          'aichat',
     'disk-repair':      'diskrepair',
+    'doc-anonymizer':   'doc-anonymizer',
     'doc-editor':       'editor',
     'download-manager': 'downloads',
     'domains-manager':  'domains',
@@ -123,6 +124,7 @@ _FRONTEND_FILENAME = {
 _OPTIONAL_BLUEPRINTS = {
     'surveillance':    ('surveillance',    'surveillance_bp',  'init_surveillance', True),
     'ai-chat':         ('aichat',          'aichat_bp',        None,                True),
+    'doc-anonymizer':  ('doc_anonymizer',  'doc_anonymizer_bp', None,               True),
     'gallery':         ('gallery',         'gallery_bp',        None,                False),
     'download-manager':('downloads',       'downloads_bp',     'init_downloads',    True),
     'printer':         ('printer',         'printer_bp',        None,                False),
@@ -174,6 +176,16 @@ BUILTIN_CATALOG = [
         'install_endpoint': '/api/aichat/install',
         'uninstall_endpoint': '/api/aichat/uninstall',
         'status_endpoint': '/api/aichat/status',
+    },
+    {
+        'id': 'doc-anonymizer', 'name': 'Document Anonymizer', 'version': '1.0.0',
+        'icon': 'fa-user-shield', 'color': '#0ea5e9', 'category': 'Tools', 'admin_only': False,
+        'description': 'Anonimizacja dokumentow medycznych PDF/DOCX przy uzyciu polskiego modelu Bielik LLM.',
+        'apt_deps': [], 'pip_deps': ['PyPDF2', 'python-docx', 'reportlab'],
+        'depends_on': ['ai-chat'],
+        'install_endpoint': '/api/doc-anonymizer/install',
+        'uninstall_endpoint': '/api/doc-anonymizer/uninstall',
+        'status_endpoint': '/api/doc-anonymizer/pkg-status',
     },
     {
         'id': 'gallery', 'name': 'Gallery', 'version': '1.0.0',

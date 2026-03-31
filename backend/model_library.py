@@ -1002,6 +1002,42 @@ MODEL_CATALOG = [
         'languages': ['en', 'pl', 'de', 'fr', 'es'],
         'use_cases': ['chat', 'code', 'reasoning', 'math', 'multilingual', 'long-context'],
     },
+    # ── Bielik (Polish) ────────────────────────────────────────────
+    {
+        'id': 'bielik-7b-q4',
+        'name': 'Bielik 7B Instruct',
+        'family': 'Bielik',
+        'params': '7B',
+        'quant': 'Q4_K_M',
+        'size_gb': 4.1,
+        'ram_required_gb': 6.5,
+        'vram_required_gb': 5,
+        'description': 'SpeakLeash Bielik 7B — najlepszy polski model LLM. '
+                       'Idealny do anonimizacji dokumentów medycznych i pracy z tekstem PL.',
+        'hf_repo': 'speakleash/Bielik-7B-Instruct-v0.1-GGUF',
+        'hf_filename': 'Bielik-7B-Instruct-v0.1.Q4_K_M.gguf',
+        'context_length': 8192,
+        'license': 'CC BY-NC 4.0',
+        'languages': ['pl', 'en'],
+        'use_cases': ['chat', 'anonymization', 'polish-nlp'],
+    },
+    {
+        'id': 'bielik-7b-q8',
+        'name': 'Bielik 7B Instruct',
+        'family': 'Bielik',
+        'params': '7B',
+        'quant': 'Q8_0',
+        'size_gb': 7.2,
+        'ram_required_gb': 10,
+        'vram_required_gb': 8,
+        'description': 'Bielik 7B Q8 — wyższa jakość generowania, wymaga więcej RAM.',
+        'hf_repo': 'speakleash/Bielik-7B-Instruct-v0.1-GGUF',
+        'hf_filename': 'Bielik-7B-Instruct-v0.1.Q8_0.gguf',
+        'context_length': 8192,
+        'license': 'CC BY-NC 4.0',
+        'languages': ['pl', 'en'],
+        'use_cases': ['chat', 'anonymization', 'polish-nlp'],
+    },
 ]
 
 

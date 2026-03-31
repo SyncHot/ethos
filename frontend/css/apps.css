@@ -5091,3 +5091,58 @@ textarea.app-input { resize: vertical; line-height: 1.5; }
 .fw-ban-items { display:flex; flex-direction:column; }
 .fw-ban-item { display:flex; justify-content:space-between; align-items:center; padding:8px 12px; border-bottom:1px solid var(--border-subtle, var(--border)); }
 .fw-ban-item:last-child { border-bottom:none; }
+
+/* ── Document Anonymizer (anon-*) ───────────────────────────────── */
+.anon-app { display:flex; flex-direction:column; height:100%; overflow:hidden; }
+.anon-header { padding:12px 16px; font-size:15px; font-weight:600; color:var(--text); border-bottom:1px solid var(--border); display:flex; align-items:center; gap:8px; flex-shrink:0; }
+.anon-header i { color:#0ea5e9; font-size:18px; }
+.anon-body { flex:1; overflow:auto; padding:20px; display:flex; flex-direction:column; gap:16px; }
+
+.anon-upload-zone { border:2px dashed var(--border); border-radius:12px; padding:40px 24px; text-align:center; cursor:pointer; transition:border-color .2s, background .2s; }
+.anon-upload-zone:hover, .anon-drag-over { border-color:#0ea5e9; background:rgba(14,165,233,.06); }
+.anon-upload-icon { font-size:36px; color:#0ea5e9; margin-bottom:8px; display:block; }
+.anon-upload-zone p { margin:4px 0; color:var(--text-muted); font-size:13px; }
+.anon-upload-hint { font-size:11px !important; opacity:.6; }
+
+.anon-status { display:flex; flex-direction:column; align-items:center; gap:12px; padding:30px 0; }
+.anon-progress-wrap { position:relative; width:64px; height:64px; }
+.anon-progress-ring { width:64px; height:64px; transform:rotate(-90deg); }
+.anon-ring-bg { fill:none; stroke:var(--border); stroke-width:4; }
+.anon-ring-fg { fill:none; stroke:#0ea5e9; stroke-width:4; stroke-linecap:round; transition:stroke-dashoffset .4s ease; }
+.anon-progress-pct { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:600; color:var(--text); }
+.anon-status-msg { font-size:12px; color:var(--text-muted); text-align:center; max-width:400px; }
+
+.anon-jobs-header { font-size:12px; font-weight:600; color:var(--text-muted); text-transform:uppercase; letter-spacing:.5px; padding-bottom:6px; border-bottom:1px solid var(--border-subtle, var(--border)); }
+.anon-job-row { display:flex; justify-content:space-between; align-items:center; padding:10px 8px; border-bottom:1px solid var(--border-subtle, var(--border)); cursor:pointer; border-radius:6px; transition:background .15s; }
+.anon-job-row:hover { background:var(--bg-hover, rgba(255,255,255,.04)); }
+.anon-job-info { display:flex; align-items:center; gap:8px; min-width:0; flex:1; }
+.anon-job-info i { font-size:14px; flex-shrink:0; }
+.anon-job-done i { color:#22c55e; }
+.anon-job-error i { color:#ef4444; }
+.anon-job-processing i { color:#0ea5e9; }
+.anon-job-name { font-size:13px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.anon-job-date { font-size:11px; color:var(--text-muted); white-space:nowrap; margin-left:8px; }
+.anon-job-actions { display:flex; align-items:center; gap:6px; flex-shrink:0; }
+.anon-job-entities { font-size:11px; color:var(--text-muted); padding:2px 6px; background:rgba(14,165,233,.1); border-radius:4px; white-space:nowrap; }
+.anon-btn { background:none; border:1px solid var(--border); border-radius:6px; padding:5px 8px; cursor:pointer; color:var(--text-muted); transition:color .15s, border-color .15s; font-size:12px; }
+.anon-btn:hover { color:var(--text); border-color:var(--text-muted); }
+.anon-btn-dl:hover { color:#0ea5e9; border-color:#0ea5e9; }
+.anon-btn-del:hover { color:#ef4444; border-color:#ef4444; }
+.anon-empty { text-align:center; color:var(--text-muted); font-size:13px; padding:20px 0; }
+
+.anon-dep-warning { padding:10px 16px; background:rgba(245,158,11,.1); border-top:1px solid rgba(245,158,11,.3); color:#f59e0b; font-size:12px; display:flex; align-items:center; gap:8px; flex-shrink:0; }
+
+.anon-detail { padding:16px; }
+.anon-detail h3 { margin:0 0 12px; font-size:15px; }
+.anon-detail p { margin:4px 0; font-size:13px; color:var(--text-muted); }
+.anon-detail-table { width:100%; border-collapse:collapse; margin-top:12px; font-size:12px; }
+.anon-detail-table th { text-align:left; padding:6px 8px; border-bottom:2px solid var(--border); color:var(--text-muted); font-weight:600; }
+.anon-detail-table td { padding:5px 8px; border-bottom:1px solid var(--border-subtle, var(--border)); }
+.anon-detail-table code { background:rgba(14,165,233,.1); padding:1px 5px; border-radius:3px; font-size:11px; color:#0ea5e9; }
+.anon-cat { font-size:10px; font-weight:600; padding:2px 6px; border-radius:3px; text-transform:uppercase; }
+.anon-cat-imie, .anon-cat-nazwisko, .anon-cat-lekarz { background:rgba(139,92,246,.15); color:#8b5cf6; }
+.anon-cat-pesel, .anon-cat-nr_pacjenta, .anon-cat-nr_dokumentu { background:rgba(239,68,68,.15); color:#ef4444; }
+.anon-cat-adres, .anon-cat-telefon, .anon-cat-email { background:rgba(14,165,233,.15); color:#0ea5e9; }
+.anon-cat-data_urodzenia { background:rgba(245,158,11,.15); color:#f59e0b; }
+.anon-cat-nazwa_placowki { background:rgba(16,185,129,.15); color:#10b981; }
+.anon-error-msg { color:#ef4444; font-size:12px; margin-top:8px; padding:8px; background:rgba(239,68,68,.08); border-radius:6px; }
