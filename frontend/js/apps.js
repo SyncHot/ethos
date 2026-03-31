@@ -5561,7 +5561,10 @@ function renderPackageCenter(body) {
     function _ringSvg(pct, done) {
         const r = 13, c = 2 * Math.PI * r;
         const offset = c - (c * Math.min(pct, 100) / 100);
-        return `<svg class="pm-ring-svg" viewBox="0 0 32 32"><circle class="pm-ring-bg" cx="16" cy="16" r="${r}"/><circle class="pm-ring-fill${done ? ' pm-ring-fill-done' : ''}" cx="16" cy="16" r="${r}" stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${offset.toFixed(1)}"/></svg>`;
+        const inner = done
+            ? `<text x="16" y="17" class="pm-ring-icon">✓</text>`
+            : `<text x="16" y="17" class="pm-ring-pct">${Math.round(pct)}</text>`;
+        return `<svg class="pm-ring-svg" viewBox="0 0 32 32"><circle class="pm-ring-bg" cx="16" cy="16" r="${r}"/><circle class="pm-ring-fill${done ? ' pm-ring-fill-done' : ''}" cx="16" cy="16" r="${r}" stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${offset.toFixed(1)}"/>${inner}</svg>`;
     }
 
     function renderCard(app) {
@@ -5576,17 +5579,10 @@ function renderPackageCenter(body) {
         if (app.core) {
             actionHtml = `<span class="pm-badge-core"><i class="fas fa-lock"></i> Core</span>`;
         } else if (isFinishing) {
-            actionHtml = `<div class="pm-ring-wrap">
-              ${_ringSvg(100, true)}
-              <span class="pm-ring-label pm-ring-success"><i class="fas fa-check-circle"></i> ${escHtml(prog.message?.replace(/<[^>]*>/g,'') || t('Gotowe'))}</span>
-            </div>`;
+            actionHtml = `<div class="pm-ring-wrap">${_ringSvg(100, true)}</div>`;
         } else if (isRunning) {
             const pct = prog.percent || 0;
-            const msg = prog.message || t('Instalowanie…');
-            actionHtml = `<div class="pm-ring-wrap">
-              ${_ringSvg(pct, false)}
-              <span class="pm-ring-label"><i class="fas fa-circle-notch fa-spin"></i> ${escHtml(msg)}</span>
-            </div>`;
+            actionHtml = `<div class="pm-ring-wrap">${_ringSvg(pct, false)}</div>`;
         } else if (hasError) {
             actionHtml = `<div class="pm-error-msg"><i class="fas fa-exclamation-triangle"></i> ${escHtml(prog.message)}</div>
               <button class="pm-btn-install"${dis} data-id="${app.id}" title="${t('Spróbuj ponownie')}"><i class="fas fa-redo"></i></button>`;
