@@ -144,6 +144,16 @@ def _remount_keepalive_drive(dev_name, info):
 
     print(f'[keepalive] Re-mounting /dev/{dev_name} → {mp}')
     fstype = info.get('fstype', 'auto')
+
+    # Run quick fsck on ext filesystems before remounting
+    if fstype in ('ext4', 'ext3', 'ext2'):
+        print(f'[keepalive] Running e2fsck -p on /dev/{dev_name}')
+        fsck_r = host_run(f'e2fsck -p /dev/{dev_name} 2>&1', timeout=300)
+        if fsck_r.returncode in (0, 1):
+            print(f'[keepalive] e2fsck OK (code {fsck_r.returncode})')
+        else:
+            print(f'[keepalive] e2fsck warning (code {fsck_r.returncode}): {fsck_r.stdout.strip()[:200]}')
+
     if fstype in ('ntfs', 'ntfs3'):
         fstype = 'ntfs-3g'
 
@@ -2187,6 +2197,10 @@ def format_drive():
             if line.startswith("__EXIT_CODE__:"):
                 code = int(line.split(":")[1])
                 if code == 0:
+                    # For ext filesystems, set periodic fsck (every 30 mounts or 90 days)
+                    if fstype in ('ext4', 'ext3', 'ext2'):
+                        host_run(f'tune2fs -c 30 -i 90d {dev_path} 2>/dev/null', timeout=10)
+                        yield f"data: {json.dumps({'type': 'step', 'message': 'Periodic fsck configured (30 mounts / 90 days)'})}\n\n"
                     yield f"data: {json.dumps({'type': 'step', 'message': 'Format completed successfully!'})}\n\n"
                     yield f"data: {json.dumps({'type': 'done', 'success': True})}\n\n"
                 else:
@@ -2339,6 +2353,8 @@ def merge_partitions():
             if line.startswith("__EXIT_CODE__:"):
                 code = int(line.split(":")[1])
                 if code == 0:
+                    if fstype in ('ext4', 'ext3', 'ext2'):
+                        host_run(f'tune2fs -c 30 -i 90d {new_part} 2>/dev/null', timeout=10)
                     yield f"data: {json.dumps({'type': 'step', 'message': 'Format completed successfully!'})}\n\n"
                     yield f"data: {json.dumps({'type': 'done', 'success': True, 'partition': new_part_name})}\n\n"
                 else:
