@@ -57,15 +57,69 @@ def _get_username():
 # -- Text extraction --------------------------------------------------------
 
 def _extract_text_pdf(filepath):
-    """Extract text from a PDF file page by page."""
+    """Extract text from a PDF using pdftotext (poppler), fallback to PyPDF2."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ['pdftotext', '-layout', filepath, '-'],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            raw = result.stdout
+            # Split by form-feed (page separator) if present
+            pages = raw.split('\x0c')
+            pages = [p for p in pages if p.strip()]
+            if pages:
+                return [_cleanup_pdf_text(p) for p in pages]
+    except Exception as e:
+        log.warning('[doc_anonymizer] pdftotext failed, using PyPDF2: %s', e)
+
     import PyPDF2
     pages = []
     with open(filepath, 'rb') as f:
         reader = PyPDF2.PdfReader(f)
         for page in reader.pages:
             text = page.extract_text() or ''
-            pages.append(text)
+            pages.append(_cleanup_pdf_text(text))
     return pages
+
+
+def _cleanup_pdf_text(text):
+    """Reassemble fragmented text from PDF extraction.
+
+    Tables in PDFs often produce single-char lines, scattered digits, and
+    broken words.  This tries to rejoin them for better PII detection.
+    """
+    lines = text.split('\n')
+    cleaned = []
+    digit_buf = []
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            # Flush digit buffer on blank line
+            if digit_buf:
+                cleaned.append(''.join(digit_buf))
+                digit_buf = []
+            continue
+
+        # Collect scattered single digits (likely PESEL fragments)
+        if re.match(r'^\d{1,2}$', stripped):
+            digit_buf.append(stripped)
+            continue
+
+        if digit_buf:
+            cleaned.append(''.join(digit_buf))
+            digit_buf = []
+
+        # Collapse excessive whitespace within a line
+        stripped = re.sub(r'\s{3,}', '  ', stripped)
+        cleaned.append(stripped)
+
+    if digit_buf:
+        cleaned.append(''.join(digit_buf))
+
+    return '\n'.join(cleaned)
 
 
 def _extract_text_docx(filepath):
@@ -78,37 +132,67 @@ def _extract_text_docx(filepath):
 
 # -- Regex-based PII detection (fast, reliable for structured data) ---------
 
+_MONTHS_PL = ('stycznia|lutego|marca|kwietnia|maja|czerwca|lipca|sierpnia|'
+              'wrzesnia|września|pazdziernika|października|listopada|grudnia')
+
 _REGEX_PATTERNS = [
     # PESEL: exactly 11 digits, not part of a longer number
     (re.compile(r'(?<!\d)\d{11}(?!\d)'), 'PESEL'),
-    # Phone: Polish formats (9 digits, optional +48 / 0048 prefix)
+    # Polish bank account (IBAN): 2+26 digits with spaces
+    (re.compile(r'(?<!\d)\d{2}\s?\d{4}\s?\d{4}\s?\d{4}\s?\d{4}\s?\d{4}\s?\d{4}(?!\d)'), 'NR_KONTA'),
+    # Document ID: 3 uppercase letters + 6 digits (e.g. CBA 123456)
+    (re.compile(r'\b[A-Z]{3}\s?\d{6}\b'), 'NR_DOKUMENTU'),
+    # Phone: Polish formats with +48
     (re.compile(r'(?:\+48|0048)[\s-]?\d{3}[\s-]?\d{3}[\s-]?\d{3}'), 'TELEFON'),
+    # Phone: 9 digits with separators
     (re.compile(r'(?<!\d)\d{3}[\s-]\d{3}[\s-]\d{3}(?!\d)'), 'TELEFON'),
+    # Phone: landline (2-digit area + 7 digits, e.g. "22 620 00 00")
+    (re.compile(r'(?<!\d)\d{2}\s\d{3}\s\d{2}\s\d{2}(?!\d)'), 'TELEFON'),
     # Email
     (re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'), 'EMAIL'),
     # Polish postal code + city (e.g. "00-001 Warszawa")
-    (re.compile(r'\d{2}-\d{3}\s+[A-Z\u0104\u0106\u0118\u0141\u0143\u00d3\u015a\u0179\u017b]'
-                r'[a-z\u0105\u0107\u0119\u0142\u0144\u00f3\u015b\u017a\u017c]+'), 'ADRES'),
-    # Street address (ul./al./os./pl. + name + optional number)
-    (re.compile(r'(?:ul\.|al\.|os\.|pl\.)\s+[A-Z\u0104-\u017b][a-z\u0105-\u017c]+'
-                r'(?:\s+[A-Z\u0104-\u017b]?[a-z\u0105-\u017c]+)*'
+    (re.compile(r'\d{2}-\d{3}\s+[A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]+'), 'ADRES'),
+    # Street address (ul./al./os./pl. + name + optional number) — single line only
+    (re.compile(r'(?:ul\.|al\.|os\.|pl\.|Al\.)\s+[A-ZĄ-Ż][a-ząćęłńóśźż]+'
+                r'(?:\s[A-ZĄ-Ż]?[a-ząćęłńóśźż]+)*'
                 r'(?:\s+\d+[a-zA-Z]?(?:/\d+[a-zA-Z]?)?)'), 'ADRES'),
     # Dates: DD.MM.YYYY, DD-MM-YYYY, DD/MM/YYYY
     (re.compile(r'(?<!\d)\d{1,2}[./-]\d{1,2}[./-]\d{4}(?!\d)'), 'DATA'),
+    # Written dates: "31 marca 2026" / "1 stycznia 2025 r."
+    (re.compile(r'\d{1,2}\s+(?:' + _MONTHS_PL + r')\s+\d{4}(?:\s+r\.)?', re.I), 'DATA'),
 ]
 
 
 def _regex_detect(text):
     """Detect PII using regex patterns. Returns list of entity dicts."""
+    # Normalize: collapse whitespace/newlines between digits
+    normalized = re.sub(r'(\d)[\s\n]+(\d)', r'\1 \2', text)
+
     entities = []
     seen = set()
     for pattern, category in _REGEX_PATTERNS:
-        for m in pattern.finditer(text):
+        for m in pattern.finditer(normalized):
             matched = m.group(0).strip()
-            if matched and matched not in seen:
+            if not matched or len(matched) < 3:
+                continue
+            # Skip matches containing newlines (broken table fragments)
+            if '\n' in matched:
+                continue
+            if matched not in seen:
                 seen.add(matched)
                 entities.append({'text': matched, 'category': category})
-    return entities
+
+    # Remove entities that are substrings of a longer entity in same category
+    final = []
+    for e in entities:
+        is_substring = False
+        for other in entities:
+            if other is not e and e['text'] in other['text'] and e['category'] == other['category']:
+                is_substring = True
+                break
+        if not is_substring:
+            final.append(e)
+    return final
 
 
 # -- LLM anonymization (for names, doctor names, facility names) ------------
@@ -204,6 +288,7 @@ _PLACEHOLDER_MAP = {
     'EMAIL': '[EMAIL]',
     'NR_PACJENTA': '[NR_PACJENTA]',
     'NR_DOKUMENTU': '[NR_DOKUMENTU]',
+    'NR_KONTA': '[NR_KONTA]',
     'NAZWA_PLACOWKI': '[PLACOWKA]',
     'LEKARZ': '[LEKARZ]',
     'INNE_PII': '[DANE_OSOBOWE]',
@@ -412,25 +497,31 @@ def _run_anonymization(job_id, src_path, filename, file_ext, username):
         total_parts = len(text_parts)
         all_entities = []
 
-        # Phase 1: Regex-based detection (fast, reliable for structured PII)
+        # For PDFs, normalize text to fix fragmented extraction
+        # (digits split across lines, newlines in bank accounts, etc.)
+        if file_ext == '.pdf':
+            text_parts = [re.sub(r'(\d)[\s\n]+(\d)', r'\1 \2', p) for p in text_parts]
+
+        # Concatenate all text for detection (catches items spanning pages)
+        full_text = '\n\n'.join(t for t in text_parts if t.strip())
+        # Normalize digit sequences in full text (catches cross-page items)
+        full_text = re.sub(r'(\d)[\s\n]+(\d)', r'\1 \2', full_text)
+
+        # Phase 1: Regex-based detection on full text (fast, reliable)
         _emit_progress(job_id, 'regex', 20,
                        'Wykrywanie PESEL, telefonow, adresow (regex)...')
-        for text_part in text_parts:
-            regex_hits = _regex_detect(text_part)
-            all_entities.extend(regex_hits)
+        regex_hits = _regex_detect(full_text)
+        all_entities.extend(regex_hits)
 
         # Phase 2: LLM-based detection (names, doctor names, facilities)
-        for i, text_part in enumerate(text_parts):
-            if not text_part.strip():
-                continue
-            pct = 30 + int(50 * (i / max(total_parts, 1)))
-            _emit_progress(job_id, 'analyzing', pct,
-                           'Analiza LLM (imiona/nazwiska) - fragment %d/%d...' % (i + 1, total_parts))
-            try:
-                entities = _call_llm(text_part)
-                all_entities.extend(entities)
-            except Exception as e:
-                log.warning('[doc_anonymizer] LLM error on chunk %d: %s', i, e)
+        # Send full text to LLM in one chunk (more context = better results)
+        _emit_progress(job_id, 'analyzing', 30,
+                       'Analiza LLM (imiona/nazwiska)...')
+        try:
+            entities = _call_llm(full_text)
+            all_entities.extend(entities)
+        except Exception as e:
+            log.warning('[doc_anonymizer] LLM error: %s', e)
 
         _emit_progress(job_id, 'replacing', 85,
                        'Zastepowanie danych osobowych...')

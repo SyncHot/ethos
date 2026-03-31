@@ -183,7 +183,7 @@ img {{ max-width: 100%; }}
 
 @editor_bp.route('/api/editor/save-pdf', methods=['POST'])
 def editor_save_pdf():
-    """Export HTML content as PDF using LibreOffice."""
+    """Export HTML content as PDF using WeasyPrint (produces text-extractable PDFs)."""
     data = request.json or {}
     html = data.get('html', '')
     path = data.get('path', '')
@@ -198,7 +198,8 @@ def editor_save_pdf():
     full_html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
 <style>
-body {{ font-family: 'Liberation Sans', 'DejaVu Sans', 'Calibri', Arial, sans-serif; font-size: 11pt; line-height: 1.6; color: #1a1a1a; margin: 2cm; }}
+@page {{ size: A4; margin: 2cm; }}
+body {{ font-family: 'Liberation Sans', 'DejaVu Sans', 'Calibri', Arial, sans-serif; font-size: 11pt; line-height: 1.6; color: #1a1a1a; }}
 h1 {{ font-size: 22pt; margin-top: 0; }}
 h2 {{ font-size: 16pt; }}
 h3 {{ font-size: 13pt; }}
@@ -210,24 +211,8 @@ blockquote {{ border-left: 3px solid #ccc; margin-left: 0; padding-left: 12pt; c
 </style></head><body>{html}</body></html>"""
 
     try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            html_path = os.path.join(tmpdir, 'document.html')
-            with open(html_path, 'w', encoding='utf-8') as f:
-                f.write(full_html)
-
-            # Use LibreOffice to convert HTML → PDF
-            ensure_dep('libreoffice', install=True)
-            result = subprocess.run([
-                'soffice', '--headless', '--convert-to', 'pdf',
-                '--outdir', tmpdir, html_path
-            ], capture_output=True, text=True, timeout=30)
-
-            pdf_path = os.path.join(tmpdir, 'document.pdf')
-            if not os.path.isfile(pdf_path):
-                return jsonify({'error': f'PDF conversion failed: {result.stderr}'}), 500
-
-            with open(pdf_path, 'rb') as f:
-                pdf_bytes = f.read()
+        from weasyprint import HTML as WeasyHTML
+        pdf_bytes = WeasyHTML(string=full_html).write_pdf()
 
         if path:
             real = _safe_path(path)
@@ -245,8 +230,6 @@ blockquote {{ border-left: 3px solid #ccc; margin-left: 0; padding-left: 12pt; c
             buf = io.BytesIO(pdf_bytes)
             buf.seek(0)
             return send_file(buf, mimetype='application/pdf', download_name=filename, as_attachment=True)
-    except subprocess.TimeoutExpired:
-        return jsonify({'error': 'PDF conversion timed out'}), 500
     except Exception as e:
         return jsonify({'error': f'PDF export error: {str(e)}'}), 500
 
