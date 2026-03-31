@@ -708,6 +708,7 @@ _API_TO_APP = {
     '/api/diskrepair/': 'disk-repair',
     '/api/surveillance/': 'surveillance',
     '/api/aichat/': 'ai-chat',
+    '/api/doc-anonymizer/': 'doc-anonymizer',
     '/api/ddns/': 'domains-manager',
     '/api/domains-mgr/': 'domains-manager',
     '/api/settings/': 'system-settings',
@@ -822,7 +823,7 @@ def _blueprint_auth_guard():
                         '/api/appstore/', '/api/gallery/', '/api/files/',
                         '/api/photos/', '/api/sync/', '/api/terminal/',
                         '/api/editor/', '/api/code-editor/', '/api/downloads/',
-                        '/api/diskrepair/', '/api/aichat/', '/api/ddns/',
+                        '/api/diskrepair/', '/api/aichat/', '/api/doc-anonymizer/', '/api/ddns/',
                         '/api/domains-mgr/', '/api/settings/', '/api/ssh/',
                         '/api/flasher/', '/api/builder/', '/api/services/',
                         '/api/surveillance/', '/api/notes/', '/api/familyhub/', '/api/update/',
@@ -8422,6 +8423,16 @@ def get_apps():
             'description': 'AI assistant — chat with GPT, Claude and other models',
             'admin_only': True,
             'package': 'ai-chat'
+        },
+        {
+            'id': 'doc-anonymizer',
+            'name': 'Document Anonymizer',
+            'icon': 'fa-user-shield',
+            'color': '#0ea5e9',
+            'type': 'builtin',
+            'category': 'Tools',
+            'description': 'Anonymize medical PDF/DOCX documents using Bielik LLM',
+            'package': 'doc-anonymizer'
         },
         {
             'id': 'system-settings',
