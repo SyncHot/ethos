@@ -25,6 +25,7 @@ import time
 import uuid
 import logging
 import threading
+import unicodedata
 
 from flask import Blueprint, request, jsonify, send_file, g
 
@@ -75,35 +76,60 @@ def _extract_text_docx(filepath):
     return paragraphs
 
 
-# -- LLM anonymization -----------------------------------------------------
+# -- Regex-based PII detection (fast, reliable for structured data) ---------
+
+_REGEX_PATTERNS = [
+    # PESEL: exactly 11 digits, not part of a longer number
+    (re.compile(r'(?<!\d)\d{11}(?!\d)'), 'PESEL'),
+    # Phone: Polish formats (9 digits, optional +48 / 0048 prefix)
+    (re.compile(r'(?:\+48|0048)[\s-]?\d{3}[\s-]?\d{3}[\s-]?\d{3}'), 'TELEFON'),
+    (re.compile(r'(?<!\d)\d{3}[\s-]\d{3}[\s-]\d{3}(?!\d)'), 'TELEFON'),
+    # Email
+    (re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'), 'EMAIL'),
+    # Polish postal code + city (e.g. "00-001 Warszawa")
+    (re.compile(r'\d{2}-\d{3}\s+[A-Z\u0104\u0106\u0118\u0141\u0143\u00d3\u015a\u0179\u017b]'
+                r'[a-z\u0105\u0107\u0119\u0142\u0144\u00f3\u015b\u017a\u017c]+'), 'ADRES'),
+    # Street address (ul./al./os./pl. + name + optional number)
+    (re.compile(r'(?:ul\.|al\.|os\.|pl\.)\s+[A-Z\u0104-\u017b][a-z\u0105-\u017c]+'
+                r'(?:\s+[A-Z\u0104-\u017b]?[a-z\u0105-\u017c]+)*'
+                r'(?:\s+\d+[a-zA-Z]?(?:/\d+[a-zA-Z]?)?)'), 'ADRES'),
+    # Dates: DD.MM.YYYY, DD-MM-YYYY, DD/MM/YYYY
+    (re.compile(r'(?<!\d)\d{1,2}[./-]\d{1,2}[./-]\d{4}(?!\d)'), 'DATA'),
+]
+
+
+def _regex_detect(text):
+    """Detect PII using regex patterns. Returns list of entity dicts."""
+    entities = []
+    seen = set()
+    for pattern, category in _REGEX_PATTERNS:
+        for m in pattern.finditer(text):
+            matched = m.group(0).strip()
+            if matched and matched not in seen:
+                seen.add(matched)
+                entities.append({'text': matched, 'category': category})
+    return entities
+
+
+# -- LLM anonymization (for names, doctor names, facility names) ------------
 
 _SYSTEM_PROMPT = (
-    "Jestes ekspertem od anonimizacji dokumentow medycznych zgodnie z RODO/GDPR.\n"
-    "Twoim zadaniem jest zidentyfikowanie WSZYSTKICH danych osobowych (PII) w podanym tekscie\n"
-    "i zwrocenie ich jako lista JSON.\n\n"
-    "Szukaj nastepujacych kategorii danych:\n"
-    "- IMIE: imiona (np. Jan, Maria, Krzysztof)\n"
-    "- NAZWISKO: nazwiska (np. Kowalski, Nowak)\n"
-    "- PESEL: numery PESEL (11 cyfr)\n"
-    "- DATA_URODZENIA: daty urodzenia\n"
-    "- ADRES: adresy zamieszkania (ulice, miasta, kody pocztowe)\n"
-    "- TELEFON: numery telefonow\n"
-    "- EMAIL: adresy email\n"
-    "- NR_PACJENTA: numery pacjentow, numery kart, ID medyczne\n"
-    "- NR_DOKUMENTU: numery dowodow, paszportow\n"
-    "- NAZWA_PLACOWKI: nazwy szpitali, przychodni, gabinetow (jesli moga identyfikowac pacjenta)\n"
-    "- LEKARZ: imiona i nazwiska lekarzy\n"
-    "- INNE_PII: inne dane pozwalajace na identyfikacje osoby\n\n"
-    "Odpowiedz TYLKO w formacie JSON -- tablica obiektow:\n"
-    '[{"text": "oryginalny tekst", "category": "KATEGORIA"}, ...]\n\n'
-    "Jesli nie ma danych osobowych, zwroc pusta tablice: []\n"
-    "Nie dodawaj zadnych komentarzy, tylko JSON."
+    "Jestes ekspertem od anonimizacji dokumentow medycznych.\n"
+    "Znajdz WSZYSTKIE imiona i nazwiska osob w tekscie.\n"
+    "Szukaj: imion pacjentow, nazwisk, imion lekarzy (po 'dr', 'lek.', 'prof.').\n\n"
+    "Zwroc TYLKO tablice JSON:\n"
+    '[{"text": "Jan Kowalski", "category": "IMIE_NAZWISKO"}, '
+    '{"text": "Anna Nowak", "category": "LEKARZ"}]\n\n'
+    "Kategorie: IMIE_NAZWISKO (pacjent), LEKARZ (lekarz/personel), "
+    "NAZWA_PLACOWKI (szpital/przychodnia).\n"
+    "Jesli brak, zwroc: []\n"
+    "Odpowiedz TYLKO JSON, bez komentarzy."
 )
 
 _USER_PROMPT_TEMPLATE = (
-    "Zidentyfikuj WSZYSTKIE dane osobowe (PII) w ponizszym tekscie dokumentu medycznego:\n\n"
+    "Znajdz imiona, nazwiska i nazwy placowek w tekscie:\n\n"
     "---\n{text}\n---\n\n"
-    "Odpowiedz TYLKO tablica JSON z znalezionymi danymi osobowymi."
+    "JSON:"
 )
 
 
@@ -157,13 +183,22 @@ def _call_llm(text_chunk):
     return [e for e in entities if isinstance(e, dict) and 'text' in e and 'category' in e]
 
 
+def _normalize_category(cat):
+    """Strip diacritics and uppercase: IMIĘ -> IMIE, Nazwisko -> NAZWISKO."""
+    nfkd = unicodedata.normalize('NFKD', cat)
+    ascii_str = ''.join(c for c in nfkd if not unicodedata.combining(c))
+    return ascii_str.upper().strip()
+
+
 # -- Replacement logic ------------------------------------------------------
 
 _PLACEHOLDER_MAP = {
     'IMIE': '[IMIE]',
     'NAZWISKO': '[NAZWISKO]',
+    'IMIE_NAZWISKO': '[OSOBA]',
     'PESEL': '[PESEL]',
-    'DATA_URODZENIA': '[DATA_URODZENIA]',
+    'DATA_URODZENIA': '[DATA]',
+    'DATA': '[DATA]',
     'ADRES': '[ADRES]',
     'TELEFON': '[TELEFON]',
     'EMAIL': '[EMAIL]',
@@ -177,14 +212,13 @@ _PLACEHOLDER_MAP = {
 
 def _replace_entities_in_text(text, entities):
     """Replace PII entities with placeholders in text."""
-    seen = set()
-    unique = []
+    seen_texts = {}
     for e in entities:
-        key = (e['text'], e.get('category', 'INNE_PII'))
-        if key not in seen:
-            seen.add(key)
-            unique.append(e)
+        cat = _normalize_category(e.get('category', 'INNE_PII'))
+        if e['text'] not in seen_texts:
+            seen_texts[e['text']] = cat
 
+    unique = [{'text': t, 'category': c} for t, c in seen_texts.items()]
     unique.sort(key=lambda e: len(e['text']), reverse=True)
 
     result = text
@@ -266,19 +300,18 @@ def _anonymize_docx_inplace(src_path, output_path, all_entities):
     """Anonymize a DOCX preserving original formatting."""
     import docx
 
-    seen = set()
-    unique = []
+    seen_texts = {}
     for e in all_entities:
-        key = (e['text'], e.get('category', 'INNE_PII'))
-        if key not in seen:
-            seen.add(key)
-            unique.append(e)
+        cat = _normalize_category(e.get('category', 'INNE_PII'))
+        if e['text'] not in seen_texts:
+            seen_texts[e['text']] = cat
+
+    unique = [{'text': t, 'category': c} for t, c in seen_texts.items()]
     unique.sort(key=lambda e: len(e['text']), reverse=True)
 
     replacements = {}
     for e in unique:
-        category = e.get('category', 'INNE_PII')
-        placeholder = _PLACEHOLDER_MAP.get(category, '[' + category + ']')
+        placeholder = _PLACEHOLDER_MAP.get(e['category'], '[' + e['category'] + ']')
         replacements[e['text']] = placeholder
 
     document = docx.Document(src_path)
@@ -315,6 +348,30 @@ def _anonymize_docx_inplace(src_path, output_path, all_entities):
 
 _active_jobs = {}
 _jobs_lock = threading.Lock()
+
+
+def _cleanup_stuck_jobs():
+    """Mark any 'processing' jobs as 'error' on startup (server crashed)."""
+    if not os.path.isdir(_JOBS_DIR):
+        return
+    for entry in os.listdir(_JOBS_DIR):
+        meta_path = os.path.join(_JOBS_DIR, entry, 'meta.json')
+        if not os.path.isfile(meta_path):
+            continue
+        try:
+            with open(meta_path) as f:
+                meta = json.load(f)
+            if meta.get('status') == 'processing':
+                meta['status'] = 'error'
+                meta['error'] = 'Serwer zostal zrestartowany w trakcie przetwarzania.'
+                with open(meta_path, 'w') as f:
+                    json.dump(meta, f, ensure_ascii=False, indent=2)
+                log.info('[doc_anonymizer] Marked stuck job %s as error', entry)
+        except Exception:
+            continue
+
+
+_cleanup_stuck_jobs()
 
 
 def _emit_progress(job_id, stage, percent, message):
@@ -355,12 +412,20 @@ def _run_anonymization(job_id, src_path, filename, file_ext, username):
         total_parts = len(text_parts)
         all_entities = []
 
+        # Phase 1: Regex-based detection (fast, reliable for structured PII)
+        _emit_progress(job_id, 'regex', 20,
+                       'Wykrywanie PESEL, telefonow, adresow (regex)...')
+        for text_part in text_parts:
+            regex_hits = _regex_detect(text_part)
+            all_entities.extend(regex_hits)
+
+        # Phase 2: LLM-based detection (names, doctor names, facilities)
         for i, text_part in enumerate(text_parts):
             if not text_part.strip():
                 continue
-            pct = 20 + int(60 * (i / max(total_parts, 1)))
+            pct = 30 + int(50 * (i / max(total_parts, 1)))
             _emit_progress(job_id, 'analyzing', pct,
-                           'Analiza LLM - fragment %d/%d...' % (i + 1, total_parts))
+                           'Analiza LLM (imiona/nazwiska) - fragment %d/%d...' % (i + 1, total_parts))
             try:
                 entities = _call_llm(text_part)
                 all_entities.extend(entities)
