@@ -95,15 +95,83 @@ def _validate_port_forwards(forwards):
     return clean
 
 
+_INTERNAL_PORT_BASE = 19000
+
+
+def _find_free_internal_port(host_port):
+    """Find a free localhost port for QEMU's internal hostfwd binding."""
+    import socket
+    # Try deterministic offset first for debuggability
+    candidate = _INTERNAL_PORT_BASE + (host_port % 1000)
+    for _ in range(100):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            s.bind(('127.0.0.1', candidate))
+            s.close()
+            return candidate
+        except OSError:
+            candidate += 1
+        finally:
+            s.close()
+    raise RuntimeError(f'Cannot find free internal port for hostfwd (host_port={host_port})')
+
+
+_SOCAT_BIN = '/usr/bin/socat'
+
+
+def _start_socat_proxies(proxy_map):
+    """Start socat TCP proxies for QEMU user-mode port forwards.
+    proxy_map: {public_host_port: internal_localhost_port}.
+    Returns list of Popen objects.
+    """
+    procs = []
+    if not proxy_map or not os.path.isfile(_SOCAT_BIN):
+        return procs
+    for host_port, internal_port in proxy_map.items():
+        try:
+            proc = subprocess.Popen(
+                [_SOCAT_BIN,
+                 f'TCP-LISTEN:{host_port},fork,reuseaddr',
+                 f'TCP:127.0.0.1:{internal_port}'],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            time.sleep(0.3)
+            if proc.poll() is not None:
+                log.error("socat proxy :%s→:%s exited early", host_port, internal_port)
+            else:
+                log.info("socat proxy :%s → 127.0.0.1:%s (pid %s)",
+                         host_port, internal_port, proc.pid)
+                procs.append(proc)
+        except Exception as e:
+            log.error("Failed to start socat proxy :%s: %s", host_port, e)
+    return procs
+
+
+def _stop_socat_proxies(info):
+    """Stop all socat proxy processes associated with a VM."""
+    for proc in info.get('socat_procs', []):
+        try:
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        except Exception:
+            pass
+
+
 def _build_net_opts(vm):
     """Build QEMU -netdev options string from VM network config.
-    Returns (netdev_args_list, tap_device_or_None).
+    Returns (netdev_args_list, tap_device_or_None, proxy_map).
+    proxy_map is {host_port: internal_port} for TCP proxies (user-mode only).
     """
     net = vm.get('network') or _default_network(vm.get('os_type', 'linux'))
     net_type = net.get('net_type', 'user')
 
     if net_type == 'none':
-        return None, None
+        return None, None, {}
 
     if net_type == 'bridge':
         bridge = net.get('bridge', 'br0')
@@ -117,10 +185,11 @@ def _build_net_opts(vm):
             net_type = 'user'
         else:
             return ['-netdev', f'tap,id=net0,ifname={tap},script=no,downscript=no',
-                    '-device', 'virtio-net-pci,netdev=net0'], tap
+                    '-device', 'virtio-net-pci,netdev=net0'], tap, {}
 
     # User-mode NAT — check port availability first
     opts = 'user,id=net0'
+    proxy_map = {}  # {public_host_port: internal_localhost_port}
     for rule in net.get('port_forwards', []):
         proto = rule.get('proto', 'tcp')
         host = rule.get('host', 0)
@@ -136,8 +205,14 @@ def _build_net_opts(vm):
                 raise RuntimeError(
                     f'Port {host} jest zajęty (inny proces go używa). '
                     f'Zmień port hosta w ustawieniach sieci VM lub zwolnij port.')
-            opts += f',hostfwd={proto}::{host}-:{guest}'
-    return ['-netdev', opts, '-device', 'virtio-net-pci,netdev=net0'], None
+            # QEMU user-mode networking has a tiny TCP backlog (1) and poor
+            # connection cleanup, causing CLOSE-WAIT accumulation that blocks
+            # new external connections.  Bind QEMU to localhost on an internal
+            # port and use a socat TCP proxy on the public port instead.
+            internal = _find_free_internal_port(int(host))
+            proxy_map[int(host)] = internal
+            opts += f',hostfwd={proto}:127.0.0.1:{internal}-:{guest}'
+    return ['-netdev', opts, '-device', 'virtio-net-pci,netdev=net0'], None, proxy_map
 
 
 # ─── Bridge Networking ────────────────────────────────────────
@@ -543,8 +618,9 @@ def _check_vm_process(vm_id):
     proc = info.get('proc')
     if proc and proc.poll() is None:
         return True
-    # Process is dead, clean up websockify too
+    # Process is dead, clean up websockify and socat proxies too
     _stop_websockify(info)
+    _stop_socat_proxies(info)
     _running_vms.pop(vm_id, None)
     return False
 
@@ -957,6 +1033,7 @@ def start_vm(vm_id):
 
     is_arm = _is_arm_image(boot_image, vm.get('name', ''))
     is_rpi = _is_rpi_image(boot_image, vm.get('name', ''))
+    proxy_map = {}  # populated by _build_net_opts for user-mode networking
 
     # Validate that the required QEMU system binary is available
     if is_arm or is_rpi:
@@ -1080,7 +1157,7 @@ def start_vm(vm_id):
 
         # Network — configurable per-VM
         try:
-            net_args, tap_dev = _build_net_opts(vm)
+            net_args, tap_dev, proxy_map = _build_net_opts(vm)
         except RuntimeError as e:
             return jsonify({'error': str(e)}), 409
         if net_args:
@@ -1153,7 +1230,7 @@ def start_vm(vm_id):
 
         # Network — configurable per-VM
         try:
-            net_args, tap_dev = _build_net_opts(vm)
+            net_args, tap_dev, proxy_map = _build_net_opts(vm)
         except RuntimeError as e:
             return jsonify({'error': str(e)}), 409
         if net_args:
@@ -1216,7 +1293,12 @@ def start_vm(vm_id):
             'ws_proc': None,
             'ws_port': None,
             'tap_dev': tap_dev,
+            'socat_procs': [],
         }
+
+        # Start socat TCP proxies for user-mode port forwards
+        if proxy_map:
+            _running_vms[vm_id]['socat_procs'] = _start_socat_proxies(proxy_map)
 
         # Start websockify for browser-based console (noVNC)
         ws_port = _next_ws_port()
@@ -1268,6 +1350,7 @@ def stop_vm(vm_id):
         pass
 
     _stop_websockify(info)
+    _stop_socat_proxies(info)
     _destroy_tap(info.get('tap_dev'))
     _running_vms.pop(vm_id, None)
     return jsonify({'status': 'ok'})
@@ -1289,6 +1372,7 @@ def restart_vm(vm_id):
             except subprocess.TimeoutExpired:
                 proc.kill()
             _stop_websockify(info)
+            _stop_socat_proxies(info)
             _destroy_tap(info.get('tap_dev'))
         _running_vms.pop(vm_id, None)
         time.sleep(1)
@@ -1791,11 +1875,12 @@ def convert_image():
 
 def _on_uninstall(wipe):
     """Cleanup when the VM Manager package is uninstalled."""
-    # Stop all running VMs and their websockify processes
+    # Stop all running VMs and their websockify/socat processes
     for vm_id in list(_running_vms.keys()):
         try:
             info = _running_vms[vm_id]
             _stop_websockify(info)
+            _stop_socat_proxies(info)
             proc = info.get('proc')
             if proc:
                 proc.kill()
