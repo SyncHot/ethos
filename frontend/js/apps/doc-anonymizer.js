@@ -231,7 +231,7 @@ AppRegistry['doc-anonymizer'] = function (appDef) {
                 btn.addEventListener('click', function (e) {
                     e.stopPropagation();
                     var id = btn.getAttribute('data-del');
-                    showConfirm(
+                    confirmDialog(
                         t('Usunac wynik anonimizacji?'),
                         async function () {
                             await api('/doc-anonymizer/job/' + id, { method: 'DELETE' });
