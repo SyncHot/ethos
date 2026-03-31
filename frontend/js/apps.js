@@ -5554,37 +5554,49 @@ function renderPackageCenter(body) {
         });
     }
 
+    function _anyBusy() {
+        return Object.values(S.progressMap).some(p => p.status === 'running' || p.status === 'finishing');
+    }
+
+    function _ringSvg(pct, done) {
+        const r = 13, c = 2 * Math.PI * r;
+        const offset = c - (c * Math.min(pct, 100) / 100);
+        return `<svg class="pm-ring-svg" viewBox="0 0 32 32"><circle class="pm-ring-bg" cx="16" cy="16" r="${r}"/><circle class="pm-ring-fill${done ? ' pm-ring-fill-done' : ''}" cx="16" cy="16" r="${r}" stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${offset.toFixed(1)}"/></svg>`;
+    }
+
     function renderCard(app) {
         const prog = S.progressMap[app.id];
         const isRunning = prog && prog.status === 'running';
         const isFinishing = prog && prog.status === 'finishing';
         const hasError = prog && prog.status === 'error';
+        const busy = _anyBusy();
+        const dis = busy && !isRunning && !isFinishing ? ' disabled' : '';
 
         let actionHtml = '';
         if (app.core) {
             actionHtml = `<span class="pm-badge-core"><i class="fas fa-lock"></i> Core</span>`;
         } else if (isFinishing) {
-            actionHtml = `<div class="pm-progress-wrap">
-              <div class="pm-progress-bar"><div class="pm-progress-fill pm-progress-done" style="width:100%"></div></div>
-              <div class="pm-progress-msg pm-progress-success"><i class="fas fa-check-circle"></i> ${escHtml(prog.message?.replace(/<[^>]*>/g,'') || t('Gotowe'))}</div>
+            actionHtml = `<div class="pm-ring-wrap">
+              ${_ringSvg(100, true)}
+              <span class="pm-ring-label pm-ring-success"><i class="fas fa-check-circle"></i> ${escHtml(prog.message?.replace(/<[^>]*>/g,'') || t('Gotowe'))}</span>
             </div>`;
         } else if (isRunning) {
             const pct = prog.percent || 0;
             const msg = prog.message || t('Instalowanie…');
-            actionHtml = `<div class="pm-progress-wrap">
-              <div class="pm-progress-bar"><div class="pm-progress-fill" style="width:${pct}%"></div></div>
-              <div class="pm-progress-msg"><i class="fas fa-circle-notch fa-spin"></i> ${escHtml(msg)}</div>
+            actionHtml = `<div class="pm-ring-wrap">
+              ${_ringSvg(pct, false)}
+              <span class="pm-ring-label"><i class="fas fa-circle-notch fa-spin"></i> ${escHtml(msg)}</span>
             </div>`;
         } else if (hasError) {
             actionHtml = `<div class="pm-error-msg"><i class="fas fa-exclamation-triangle"></i> ${escHtml(prog.message)}</div>
-              <button class="pm-btn-install" data-id="${app.id}">${t('Spróbuj ponownie')}</button>`;
+              <button class="pm-btn-install"${dis} data-id="${app.id}" title="${t('Spróbuj ponownie')}"><i class="fas fa-redo"></i></button>`;
         } else if (app.update_available) {
-            actionHtml = `<button class="pm-btn-update" data-id="${app.id}"><i class="fas fa-sync-alt"></i> ${t('Aktualizuj')} ${app.version}</button>
-              <button class="pm-btn-uninstall" data-id="${app.id}"><i class="fas fa-trash"></i></button>`;
+            actionHtml = `<button class="pm-btn-update"${dis} data-id="${app.id}" title="${t('Aktualizuj')}"><i class="fas fa-sync-alt"></i></button>
+              <button class="pm-btn-uninstall"${dis} data-id="${app.id}" title="${t('Odinstaluj')}"><i class="fas fa-trash"></i></button>`;
         } else if (app.installed) {
-            actionHtml = `<button class="pm-btn-uninstall" data-id="${app.id}"><i class="fas fa-trash"></i> ${t('Odinstaluj')}</button>`;
+            actionHtml = `<button class="pm-btn-uninstall"${dis} data-id="${app.id}" title="${t('Odinstaluj')}"><i class="fas fa-trash"></i></button>`;
         } else {
-            actionHtml = `<button class="pm-btn-install" data-id="${app.id}"><i class="fas fa-download"></i> ${t('Instaluj')}</button>`;
+            actionHtml = `<button class="pm-btn-install"${dis} data-id="${app.id}" title="${t('Instaluj')}"><i class="fas fa-download"></i></button>`;
         }
 
         const depsHtml = app.apt_deps?.length || app.pip_deps?.length
@@ -5633,14 +5645,16 @@ function renderPackageCenter(body) {
         if (isCore) {
             actionBtn = `<span class="pm-badge-core"><i class="fas fa-lock"></i> ${t('Wbudowane — nie do odinstalowania')}</span>`;
         } else if (isInstalling) {
-            actionBtn = `<span class="pm-badge-progress">${t('Instalowanie…')}</span>`;
+            actionBtn = `<span class="pm-badge-progress"><i class="fas fa-circle-notch fa-spin"></i> ${t('Instalowanie…')}</span>`;
         } else if (isInst) {
-            actionBtn = `<button class="pm-btn-uninstall" onclick="document.getElementById('pm-detail-overlay').style.display='none'; window._pmUninstall('${app.id}')">${t('Odinstaluj')}</button>`;
+            const dis = _anyBusy() ? ' disabled' : '';
+            actionBtn = `<button class="pm-btn-uninstall"${dis} style="width:auto;padding:5px 12px" onclick="document.getElementById('pm-detail-overlay').style.display='none'; window._pmUninstall('${app.id}')"><i class="fas fa-trash"></i> ${t('Odinstaluj')}</button>`;
             if (app.update_available) {
-                actionBtn = `<button class="pm-btn-update" onclick="document.getElementById('pm-detail-overlay').style.display='none'; window._pmUpdate('${app.id}')">${t('Aktualizuj do')} v${escHtml(app.version)}</button> ` + actionBtn;
+                actionBtn = `<button class="pm-btn-update"${dis} style="width:auto;padding:5px 12px" onclick="document.getElementById('pm-detail-overlay').style.display='none'; window._pmUpdate('${app.id}')"><i class="fas fa-sync-alt"></i> ${t('Aktualizuj do')} v${escHtml(app.version)}</button> ` + actionBtn;
             }
         } else {
-            actionBtn = `<button class="pm-btn-primary" onclick="document.getElementById('pm-detail-overlay').style.display='none'; window._pmInstall('${app.id}')">${t('Zainstaluj')}</button>`;
+            const dis = _anyBusy() ? ' disabled' : '';
+            actionBtn = `<button class="pm-btn-primary"${dis} onclick="document.getElementById('pm-detail-overlay').style.display='none'; window._pmInstall('${app.id}')">${t('Zainstaluj')}</button>`;
         }
 
         overlay.style.display = 'flex';
@@ -5676,6 +5690,7 @@ function renderPackageCenter(body) {
 
     /* ── app actions ── */
     async function installApp(appId) {
+        if (_anyBusy()) return;
         if (S.progressMap[appId]?.status === 'running') return;
         S.progressMap[appId] = { stage: 'start', percent: 5, message: t('Uruchamianie…'), status: 'running', _started: Date.now() };
         render();
@@ -5684,6 +5699,7 @@ function renderPackageCenter(body) {
     }
 
     async function uninstallApp(appId) {
+        if (_anyBusy()) return;
         const app = [...S.catalog, ...S.core].find(a => a.id === appId);
         const nm = app ? app.name : appId;
         if (!confirm(t('Odinstalować') + ' ' + nm + '?')) return;
@@ -5694,6 +5710,7 @@ function renderPackageCenter(body) {
     }
 
     async function updateApp(appId) {
+        if (_anyBusy()) return;
         S.progressMap[appId] = { stage: 'start', percent: 5, message: t('Aktualizowanie…'), status: 'running', _started: Date.now() };
         render();
         const data = await api('/app-manager/' + appId + '/update', { method: 'POST' });
