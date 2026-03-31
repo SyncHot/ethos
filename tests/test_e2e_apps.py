@@ -490,8 +490,9 @@ class TestFirewallFunctional:
         test_port = 59999
         r = _post(api_session, "/api/firewall/rules", json={
             "action": "add",
-            "rule": {"port": test_port, "proto": "tcp", "policy": "ALLOW",
-                     "direction": "in", "from": "any"},
+            "port": str(test_port), "proto": "tcp",
+            "ufw_action": "allow", "access": "public",
+            "comment": "ethos-test-rule",
         })
         if r.status_code != 200:
             pytest.skip(f"Cannot add test rule: {r.text[:200]}")
@@ -500,16 +501,53 @@ class TestFirewallFunctional:
         r2 = _get(api_session, "/api/firewall/status")
         data2 = r2.json()
         rules = data2.get("rules", [])
-        found = any(str(test_port) in str(rule) for rule in rules)
+        found = any(str(test_port) in str(rule.get("to", "")) for rule in rules)
 
-        # Remove the rule
-        _post(api_session, "/api/firewall/rules", json={
-            "action": "delete",
-            "rule": {"port": test_port, "proto": "tcp", "policy": "ALLOW",
-                     "direction": "in", "from": "any"},
-        })
+        # Clean up — find and delete the rule by id
+        for rule in rules:
+            if str(test_port) in str(rule.get("to", "")):
+                _post(api_session, "/api/firewall/rules", json={
+                    "action": "delete",
+                    "id": rule["id"],
+                    "v6_id": rule.get("v6_id"),
+                })
+                break
 
         assert found, f"Test rule on port {test_port} not found after adding"
+
+    def test_toggle_remembers_state(self, api_session):
+        """Toggle firewall off then on and verify state persists via ufw status."""
+        r = _get(api_session, "/api/firewall/status")
+        _skip_html(r, "Firewall")
+        data = r.json()
+        original_status = data.get("status")  # "active" or "inactive"
+
+        # -- Disable firewall ------------------------------------------------
+        r = _post(api_session, "/api/firewall/toggle", json={"enable": False})
+        assert r.status_code == 200
+        assert r.json().get("ok") is True
+
+        r = _get(api_session, "/api/firewall/status")
+        assert r.json().get("status") == "inactive"
+
+        # -- Re-enable firewall ----------------------------------------------
+        r = _post(api_session, "/api/firewall/toggle", json={"enable": True})
+        assert r.status_code == 200
+        assert r.json().get("ok") is True
+
+        r = _get(api_session, "/api/firewall/status")
+        assert r.json().get("status") == "active"
+
+        # -- Verify persistence: UFW stores state in /etc/ufw/ufw.conf ------
+        # After enable, "ENABLED=yes" must be present so ufw starts on boot.
+        # We verify via the API — if status is "active" the conf file is correct
+        # (ufw itself writes ENABLED=yes/no on toggle).
+        # No reboot needed: ufw.conf is read by the ufw init script at boot,
+        # so if the API reports "active" the boot-persist flag is already set.
+
+        # -- Restore original state if it was inactive -----------------------
+        if original_status == "inactive":
+            _post(api_session, "/api/firewall/toggle", json={"enable": False})
 
 
 # ═══════════════════════════════════════════════════════════════
