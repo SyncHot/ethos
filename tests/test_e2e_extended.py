@@ -480,9 +480,10 @@ class TestFileManagerCRUD:
         r = _get(api_session, "/api/files/info", params={"path": f"{base}/renamed.txt"})
         assert r.status_code in (200, 400, 404, 405, 429, 500)
 
-        # Copy
+        # Copy (correct API: sources array + dest directory)
+        r = _post(api_session, "/api/files/mkdir", json={"path": f"{base}/cp_dest"})
         r = _post(api_session, "/api/files/copy", json={
-            "src": f"{base}/renamed.txt", "dest": f"{base}/copy.txt"
+            "sources": [f"{base}/renamed.txt"], "dest": f"{base}/cp_dest"
         })
         assert r.status_code in (200, 400, 404, 405, 429, 500)
 
