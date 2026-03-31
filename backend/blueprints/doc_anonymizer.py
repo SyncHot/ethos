@@ -328,57 +328,64 @@ def _replace_entities_in_text(text, entities):
 
 # -- Document generation ----------------------------------------------------
 
-def _generate_pdf(anonymized_pages, output_path):
-    """Generate a PDF from anonymized text pages using reportlab."""
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.units import cm
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib.enums import TA_LEFT
-    from reportlab.pdfbase import pdfmetrics
-    from reportlab.pdfbase.ttfonts import TTFont
+def _redact_pdf(src_path, output_path, entities):
+    """Redact PII in a PDF using PyMuPDF — preserves original layout."""
+    import fitz
 
-    font_name = 'Helvetica'
-    for font_path in ['/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
-                      '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf']:
-        if os.path.exists(font_path):
-            try:
-                fname = os.path.basename(font_path).replace('.ttf', '')
-                pdfmetrics.registerFont(TTFont(fname, font_path))
-                font_name = fname
-                break
-            except Exception:
-                continue
+    seen_texts = {}
+    for e in entities:
+        cat = _normalize_category(e.get('category', 'INNE_PII'))
+        txt = e.get('text', '').strip()
+        if txt and txt not in seen_texts:
+            seen_texts[txt] = _PLACEHOLDER_MAP.get(cat, '[DANE]')
 
-    doc = SimpleDocTemplate(output_path, pagesize=A4,
-                            leftMargin=2 * cm, rightMargin=2 * cm,
-                            topMargin=2 * cm, bottomMargin=2 * cm)
+    # Sort by length descending so longer matches take priority
+    sorted_items = sorted(seen_texts.items(), key=lambda x: len(x[0]), reverse=True)
 
-    styles = getSampleStyleSheet()
-    body_style = ParagraphStyle(
-        'AnonBody', parent=styles['Normal'],
-        fontName=font_name, fontSize=10, leading=14,
-        alignment=TA_LEFT,
+    doc = fitz.open(src_path)
+    total_redactions = []
+
+    for page in doc:
+        for original, placeholder in sorted_items:
+            instances = page.search_for(original)
+            for inst in instances:
+                page.add_redact_annot(
+                    inst, text=placeholder, fontsize=0,
+                    fill=(0, 0, 0), text_color=(1, 1, 1),
+                )
+                total_redactions.append({
+                    'original': original,
+                    'placeholder': placeholder,
+                    'category': next(
+                        (_normalize_category(e['category'])
+                         for e in entities if e.get('text', '').strip() == original),
+                        'INNE_PII'),
+                    'occurrences': 1,
+                })
+
+    for page in doc:
+        page.apply_redactions()
+
+    # Add a small "ZANONIMIZOWANO" watermark on first page
+    first = doc[0]
+    first.insert_text(
+        (first.rect.width - 180, 20),
+        'DOKUMENT ZANONIMIZOWANY',
+        fontsize=8, color=(0.5, 0.5, 0.5),
     )
-    header_style = ParagraphStyle(
-        'AnonHeader', parent=styles['Normal'],
-        fontName=font_name, fontSize=8, leading=10,
-        textColor='gray',
-    )
 
-    story = [
-        Paragraph('DOKUMENT ZANONIMIZOWANY', header_style),
-        Spacer(1, 0.5 * cm),
-    ]
+    doc.save(output_path, garbage=4, deflate=True)
+    doc.close()
 
-    for i, page_text in enumerate(anonymized_pages):
-        safe = page_text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-        safe = safe.replace('\n', '<br/>')
-        story.append(Paragraph(safe, body_style))
-        if i < len(anonymized_pages) - 1:
-            story.append(PageBreak())
-
-    doc.build(story)
+    # Merge redaction counts
+    seen = {}
+    for r in total_redactions:
+        key = r['original']
+        if key not in seen:
+            seen[key] = r
+        else:
+            seen[key]['occurrences'] += 1
+    return list(seen.values())
 
 
 def _anonymize_docx_inplace(src_path, output_path, all_entities):
@@ -526,21 +533,6 @@ def _run_anonymization(job_id, src_path, filename, file_ext, username):
         _emit_progress(job_id, 'replacing', 85,
                        'Zastepowanie danych osobowych...')
 
-        anonymized_parts = []
-        total_replacements = []
-        for part in text_parts:
-            anon_text, repls = _replace_entities_in_text(part, all_entities)
-            anonymized_parts.append(anon_text)
-            total_replacements.extend(repls)
-
-        seen_repls = {}
-        for r in total_replacements:
-            key = r['original']
-            if key not in seen_repls:
-                seen_repls[key] = r
-            else:
-                seen_repls[key]['occurrences'] += r['occurrences']
-
         _emit_progress(job_id, 'generating', 90,
                        'Generowanie zanonimizowanego dokumentu...')
 
@@ -548,9 +540,30 @@ def _run_anonymization(job_id, src_path, filename, file_ext, username):
         out_path = os.path.join(job, out_filename)
 
         if file_ext == '.pdf':
-            _generate_pdf(anonymized_parts, out_path)
+            redact_repls = _redact_pdf(src_path, out_path, all_entities)
+            seen_repls = {}
+            for r in redact_repls:
+                key = r['original']
+                if key not in seen_repls:
+                    seen_repls[key] = r
+                else:
+                    seen_repls[key]['occurrences'] += r['occurrences']
         elif file_ext in ('.docx', '.doc'):
             _anonymize_docx_inplace(src_path, out_path, all_entities)
+            seen_repls = {}
+            for e in all_entities:
+                txt = e.get('text', '').strip()
+                if not txt or txt in seen_repls:
+                    continue
+                cat = _normalize_category(e.get('category', 'INNE_PII'))
+                seen_repls[txt] = {
+                    'original': txt,
+                    'placeholder': _PLACEHOLDER_MAP.get(cat, '[DANE]'),
+                    'category': cat,
+                    'occurrences': 1,
+                }
+        else:
+            seen_repls = {}
 
         meta = {
             'job_id': job_id,
