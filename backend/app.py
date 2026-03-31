@@ -3618,7 +3618,7 @@ def _copy_with_progress(real_src, target, op_label, done_ref, total, gevent_yiel
                 if partial_files is not None:
                     partial_files.append(tmp_d)
                 try:
-                    shutil.copy2(s, tmp_d)
+                    _fs_call(shutil.copy2, s, tmp_d, timeout=300)
                     os.replace(tmp_d, d)
                     if partial_files is not None and tmp_d in partial_files:
                         partial_files.remove(tmp_d)
@@ -3638,7 +3638,7 @@ def _copy_with_progress(real_src, target, op_label, done_ref, total, gevent_yiel
         if partial_files is not None:
             partial_files.append(tmp_target)
         try:
-            shutil.copy2(real_src, tmp_target)
+            _fs_call(shutil.copy2, real_src, tmp_target, timeout=300)
             os.replace(tmp_target, target)
             if partial_files is not None and tmp_target in partial_files:
                 partial_files.remove(tmp_target)
@@ -6811,7 +6811,8 @@ def files_move():
         new_user_path = dest_user + '/' + os.path.basename(old_user_path)
 
         target = os.path.join(dest, os.path.basename(src))
-        _atomic_move(src, target)
+        # Run in thread pool to avoid blocking gevent on cross-device moves
+        _fs_call(_atomic_move, src, target, timeout=300)
 
         # Migrate folder passwords for moved folder
         _migrate_folder_passwords(old_user_path, new_user_path)
@@ -6923,7 +6924,8 @@ def files_copy():
         socketio.start_background_task(_bg_copy, resolved, dest_dir, total, on_conflict, cur_user)
         return jsonify({'async': True, 'message': f'Copying {len(resolved)} items ({total} files) in background'})
 
-    # Small operation — synchronous (atomic write per file)
+    # Small operation — synchronous but run I/O in thread pool
+    # to avoid blocking gevent on slow disks (USB, cross-device)
     copied = []
     skipped = []
     errors = []
@@ -6939,19 +6941,22 @@ def files_copy():
             continue
         try:
             if os.path.isdir(real_src):
-                # Atomic directory copy: write to temp dir, then rename
                 tmp_target = target + '.ethos_tmp_dir'
-                try:
-                    shutil.copytree(real_src, tmp_target)
-                    os.rename(tmp_target, target)
-                except Exception:
-                    shutil.rmtree(tmp_target, ignore_errors=True)
-                    raise
+                def _do_copy_dir(_src=real_src, _tmp=tmp_target, _tgt=target):
+                    try:
+                        shutil.copytree(_src, _tmp)
+                        os.rename(_tmp, _tgt)
+                    except Exception:
+                        shutil.rmtree(_tmp, ignore_errors=True)
+                        raise
+                _fs_call(_do_copy_dir, timeout=300)
                 _chown_recursive(target)
             else:
                 tmp_target = target + '.ethos_tmp'
-                shutil.copy2(real_src, tmp_target)
-                os.replace(tmp_target, target)
+                def _do_copy_file(_src=real_src, _tmp=tmp_target, _tgt=target):
+                    shutil.copy2(_src, _tmp)
+                    os.replace(_tmp, _tgt)
+                _fs_call(_do_copy_file, timeout=300)
                 _chown_to_user(target)
             copied.append(base_name)
         except Exception as e:
@@ -7103,7 +7108,8 @@ def files_move_multi():
             skipped.append(base_name)
             continue
         try:
-            _atomic_move(real_src, target)
+            # Run in thread pool to avoid blocking gevent on cross-device moves
+            _fs_call(_atomic_move, real_src, target, timeout=300)
             _chown_recursive(target)
             moved.append(base_name)
             # Migrate folder passwords
@@ -7177,7 +7183,8 @@ def _bg_move(resolved_sources, dest_dir, total, on_conflict='rename', dest_user_
                 gevent.sleep(0)
                 continue
             try:
-                _atomic_move(real_src, target)
+                # Run in thread pool to avoid blocking gevent on cross-device moves
+                _fs_call(_atomic_move, real_src, target, timeout=600)
                 _chown_recursive(target, _bg_username)
                 done += item_count
                 moved.append(base_name)
