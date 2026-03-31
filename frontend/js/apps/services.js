@@ -176,8 +176,8 @@ function renderServicesApp(body) {
                 const svc = btn.dataset.svc;
                 const action = btn.dataset.action;
 
-                if (action === 'stop' && !confirm(t('Zatrzymać') + ' ' + svc + '?')) return;
-                if (action === 'uninstall' && !confirm(t('Odinstalować') + ' ' + svc + ' (' + btn.dataset.pkg + ')? ' + t('To usunie pakiet z systemu.'))) return;
+                if (action === 'stop' && !await confirmDialog(t('Zatrzymać') + ' ' + svc + '?')) return;
+                if (action === 'uninstall' && !await confirmDialog(t('Odinstalować') + ' ' + svc + ' (' + btn.dataset.pkg + ')? ' + t('To usunie pakiet z systemu.'))) return;
 
                 btn.disabled = true;
                 const origIcon = btn.innerHTML;

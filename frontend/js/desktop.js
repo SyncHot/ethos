@@ -2234,16 +2234,23 @@ async function promptDialog(title, label, defaultValue = '') {
 }
 
 async function confirmDialog(titleOrMsg, messageOrCallback) {
-    // Support both: confirmDialog(title, message) -> bool  AND  confirmDialog(message, callback)
+    // Signatures:
+    //   confirmDialog(message)           -> modal with default title, returns bool
+    //   confirmDialog(title, message)    -> modal with custom title, returns bool
+    //   confirmDialog(message, callback) -> modal with default title, calls callback if confirmed
+    const nl = s => String(s || '').replace(/\n/g, '<br>');
+    if (messageOrCallback === undefined) {
+        return confirmDialog(t('Potwierdzenie'), titleOrMsg);
+    }
     if (typeof messageOrCallback === 'function') {
-        const ok = await showModal(t('Potwierdzenie'), `<p style="color:var(--text-secondary)">${titleOrMsg}</p>`, [
+        const ok = await showModal(t('Potwierdzenie'), `<p style="color:var(--text-secondary)">${nl(titleOrMsg)}</p>`, [
             { label: t('Anuluj'), value: false },
             { label: t('Potwierdź'), cls: 'btn-danger', value: true }
         ]);
         if (ok) await messageOrCallback();
         return ok;
     }
-    return await showModal(titleOrMsg, `<p style="color:var(--text-secondary)">${messageOrCallback}</p>`, [
+    return await showModal(titleOrMsg, `<p style="color:var(--text-secondary)">${nl(messageOrCallback)}</p>`, [
         { label: t('Anuluj'), value: false },
         { label: t('Potwierdź'), cls: 'btn-danger', value: true }
     ]);

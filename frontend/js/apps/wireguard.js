@@ -285,7 +285,7 @@ AppRegistry['wireguard'] = function (appDef) {
     });
 
     async function deletePeer(pubKey, name) {
-        if (!confirm(t('Usunąć peera') + ` "${name}"?`)) return;
+        if (!await confirmDialog(t('Usunąć peera') + ` "${name}"?`)) return;
         try {
             await api('/wireguard/peer/' + encodeURIComponent(pubKey), { method: 'DELETE' });
             await loadStatus();

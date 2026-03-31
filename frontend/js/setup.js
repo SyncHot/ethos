@@ -857,7 +857,7 @@ async function setupPrepareDisk() {
     } else {
         confirmMsg = t('UWAGA: Wszystkie dane na dysku') + ' ' + device + ' ' + t('zostaną NIEODWRACALNIE usunięte!') + '\n\n' + t('Czy chcesz kontynuować?');
     }
-    if (!confirm(confirmMsg)) return;
+    if (!await confirmDialog(confirmMsg)) return;
 
     if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Przygotowuję...'); }
     var statusMsg = mode === 'syspart'

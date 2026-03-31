@@ -481,8 +481,8 @@ function _aicPollRagIndexing() {
     }, 2000);
 }
 
-window._aicClearIndex = function () {
-    if (!confirm(t('Czy na pewno wyczyścić indeks RAG?'))) return;
+window._aicClearIndex = async function () {
+    if (!await confirmDialog(t('Czy na pewno wyczyścić indeks RAG?'))) return;
     _aicFetch('/api/aichat/rag/clear', { method: 'POST' })
         .then(function (r) { return r.json(); })
         .then(function (d) {
@@ -552,9 +552,9 @@ window._aicSelectConv = function (id) {
         });
 };
 
-window._aicDeleteConv = function (id) {
+window._aicDeleteConv = async function (id) {
     if (_aic.streaming) return;
-    if (!confirm(t('Usunąć tę rozmowę?'))) return;
+    if (!await confirmDialog(t('Usunąć tę rozmowę?'))) return;
     _aicFetch('/api/aichat/conversations/' + id, { method: 'DELETE' })
         .then(function () {
             _aic.convs = _aic.convs.filter(function (c) { return c.id !== id; });
@@ -1245,8 +1245,8 @@ window._mlCancelDownload = function () {
     });
 };
 
-window._mlDeleteModel = function (modelId) {
-    if (!confirm(t('Usunąć pobrany model? Plik GGUF zostanie usunięty z dysku.'))) return;
+window._mlDeleteModel = async function (modelId) {
+    if (!await confirmDialog(t('Usunąć pobrany model? Plik GGUF zostanie usunięty z dysku.'))) return;
     _aicFetch('/api/aichat/models/' + encodeURIComponent(modelId), { method: 'DELETE' })
         .then(function (r) { return r.json(); }).then(function (d) {
             if (d.error) {
@@ -1312,8 +1312,8 @@ window._mlAddCustom = function () {
     });
 };
 
-window._mlRemoveCustom = function (modelId) {
-    if (!confirm(t('Usunąć ten model z katalogu?'))) return;
+window._mlRemoveCustom = async function (modelId) {
+    if (!await confirmDialog(t('Usunąć ten model z katalogu?'))) return;
     _aicFetch('/api/aichat/models/custom/' + encodeURIComponent(modelId), { method: 'DELETE' })
         .then(function (r) { return r.json(); }).then(function (d) {
             if (d.error) {

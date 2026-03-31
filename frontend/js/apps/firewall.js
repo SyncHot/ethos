@@ -129,7 +129,7 @@ AppRegistry['firewall'] = function (appDef) {
     toggle.onchange = async function () {
         var enable = this.checked;
         this.checked = !enable;
-        if (!confirm(t('Czy na pewno chcesz') + ' ' + (enable ? t('włączyć') : t('wyłączyć')) + ' firewall?')) return;
+        if (!await confirmDialog(t('Czy na pewno chcesz') + ' ' + (enable ? t('włączyć') : t('wyłączyć')) + ' firewall?')) return;
         try {
             var res = await api('/firewall/toggle', { method: 'POST', body: { enable: enable } });
             if (res.ok) {
@@ -182,7 +182,7 @@ AppRegistry['firewall'] = function (appDef) {
 
     // ─── Delete Rule ───
     async function deleteRule(id, v6Id) {
-        if (!confirm(t('Czy na pewno usunąć regułę') + ' #' + id + '?')) return;
+        if (!await confirmDialog(t('Czy na pewno usunąć regułę') + ' #' + id + '?')) return;
         try {
             var res = await api('/firewall/rules', {
                 method: 'POST',
@@ -199,7 +199,7 @@ AppRegistry['firewall'] = function (appDef) {
 
     // ─── Reset Defaults ───
     document.getElementById('fw-reset-btn').onclick = async function() {
-        if (!confirm(t('UWAGA: To usunie wszystkie reguły i przywróci domyślne (SSH, EthOS Web — tylko LAN). Kontynuować?'))) return;
+        if (!await confirmDialog(t('UWAGA: To usunie wszystkie reguły i przywróci domyślne (SSH, EthOS Web — tylko LAN). Kontynuować?'))) return;
         try {
             var res = await api('/firewall/rules', { method: 'POST', body: { action: 'reset_defaults' } });
             if (res.ok) {
@@ -327,7 +327,7 @@ AppRegistry['firewall'] = function (appDef) {
             list.querySelectorAll('.fw-unban-btn').forEach(function(btn) {
                 btn.onclick = async function() {
                     var jail = btn.dataset.jail, ip = btn.dataset.ip;
-                    if (!confirm(t('Odblokować') + ' ' + ip + '?')) return;
+                    if (!await confirmDialog(t('Odblokować') + ' ' + ip + '?')) return;
                     try {
                         var r = await api('/firewall/unban', { method: 'POST', body: { jail: jail, ip: ip } });
                         if (r.ok) { toast(t('Odblokowano') + ' ' + ip, 'success'); loadBanned(); }

@@ -270,7 +270,7 @@ AppRegistry['cron'] = function (appDef) {
 
     // ── Delete ──
     async function deleteJob(idx) {
-        if (!confirm(t('Czy na pewno usunąć to zadanie?'))) return;
+        if (!await confirmDialog(t('Czy na pewno usunąć to zadanie?'))) return;
         try {
             const res = await api(`/cron/jobs/${idx}`, { method: 'DELETE' });
             if (res.success) {

@@ -400,7 +400,7 @@ async function _survRenderCameras(el) {
       if (btn.dataset.action === 'edit' && cam) {
         _survShowCameraDialog(cam);
       } else if (btn.dataset.action === 'delete') {
-        if (!confirm(`${t('Usunąć kamerę')} "${cam?.name || camId}"?`)) return;
+        if (!await confirmDialog(`${t('Usunąć kamerę')} "${cam?.name || camId}"?`)) return;
         try {
           await api(`/surveillance/cameras/${camId}`, { method: 'DELETE' });
           toast(t('Kamera usunięta'), 'success');
@@ -743,7 +743,7 @@ function _survBindRecEvents(el) {
   });
   el.querySelectorAll('.surv-cam-btn[data-action="delete-rec"]').forEach(btn => {
     btn.addEventListener('click', async () => {
-      if (!confirm(t('Usunąć to nagranie?'))) return;
+      if (!await confirmDialog(t('Usunąć to nagranie?'))) return;
       try {
         await api('/surveillance/recordings/delete', { method: 'DELETE', body: { paths: [btn.dataset.path] } });
         btn.closest('.surv-rec-item')?.remove();

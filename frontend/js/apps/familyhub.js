@@ -259,7 +259,7 @@ function _fhInit(root, winId) {
         });
         if (existing && ov.querySelector('#fh-m-del')) {
             ov.querySelector('#fh-m-del').addEventListener('click', async () => {
-                if (!confirm(t('Na pewno usunąć?'))) return;
+                if (!await confirmDialog(t('Na pewno usunąć?'))) return;
                 try {
                     await existing.onDelete();
                     ov.remove();
@@ -463,8 +463,8 @@ function _fhInit(root, winId) {
             btn.addEventListener('click', () => shoppingDelItem(btn.dataset.list, btn.dataset.id));
         });
         content.querySelectorAll('[data-action="del-list"]').forEach(btn => {
-            btn.addEventListener('click', () => {
-                if (confirm(t('Usunąć całą listę?'))) shoppingDelList(btn.dataset.id);
+            btn.addEventListener('click', async () => {
+                if (await confirmDialog(t('Usunąć całą listę?'))) shoppingDelList(btn.dataset.id);
             });
         });
         content.querySelectorAll('[data-action="add-item-input"]').forEach(inp => {
@@ -739,7 +739,7 @@ function _fhInit(root, winId) {
         });
         ov.querySelectorAll('[data-action="del-ev"]').forEach(btn => {
             btn.addEventListener('click', async () => {
-                if (!confirm(t('Usunąć wydarzenie?'))) return;
+                if (!await confirmDialog(t('Usunąć wydarzenie?'))) return;
                 try {
                     await api(API + '/events/' + btn.dataset.id, { method: 'DELETE' });
                     ov.remove();

@@ -339,7 +339,7 @@ function _sshInit(body) {
     }
 
     async function _deleteKey(name) {
-        if (!confirm(t('Usunąć parę kluczy') + ' "' + name + '"?\n' + t('Serwery, na których wdrożono klucz publiczny, nadal będą go miały.'))) return;
+        if (!await confirmDialog(t('Usunąć parę kluczy') + ' "' + name + '"?\n' + t('Serwery, na których wdrożono klucz publiczny, nadal będą go miały.'))) return;
         try {
             await api(API + '/keys/' + encodeURIComponent(name), { method: 'DELETE' });
             toast(t('Klucz usunięty'), 'success');
@@ -404,7 +404,7 @@ function _sshInit(body) {
             if (!btn) return;
 
             if (btn.dataset.rmHost) {
-                if (!confirm(t('Usunąć zaufanie do hosta') + ' "' + btn.dataset.rmHost + '"?')) return;
+                if (!await confirmDialog(t('Usunąć zaufanie do hosta') + ' "' + btn.dataset.rmHost + '"?')) return;
                 btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
                 try {
                     const r = await api(API + '/known-hosts/remove', { method: 'POST', body: { host: btn.dataset.rmHost } });
@@ -413,7 +413,7 @@ function _sshInit(body) {
             }
 
             if (btn.dataset.rmLine) {
-                if (!confirm(t('Usunąć ten wpis z known_hosts?'))) return;
+                if (!await confirmDialog(t('Usunąć ten wpis z known_hosts?'))) return;
                 btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
                 try {
                     const r = await api(API + '/known-hosts/remove-line', { method: 'POST', body: { line: parseInt(btn.dataset.rmLine) } });

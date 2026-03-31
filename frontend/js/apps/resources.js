@@ -629,7 +629,7 @@ function renderResourcesApp(body) {
 
         el.querySelectorAll('button[data-kill]').forEach(btn => {
             btn.onclick = async () => {
-                if (!confirm(t('Zakończyć proces') + ` ${btn.dataset.name} (PID: ${btn.dataset.kill})?`)) return;
+                if (!await confirmDialog(t('Zakończyć proces') + ` ${btn.dataset.name} (PID: ${btn.dataset.kill})?`)) return;
                 try {
                     await api(`/resources/kill/${btn.dataset.kill}`, {method:'POST'});
                     toast(t('Proces zakończony'), 'success');

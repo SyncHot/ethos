@@ -543,7 +543,7 @@ AppRegistry['antivirus'] = function (appDef) {
         });
         list.querySelectorAll('.av-sched-delete').forEach(el => {
             el.addEventListener('click', async () => {
-                if (!confirm(t('Usunąć harmonogram') + ' "' + el.dataset.name + '"?')) return;
+                if (!await confirmDialog(t('Usunąć harmonogram') + ' "' + el.dataset.name + '"?')) return;
                 const r = await api('/antivirus/schedules/' + el.dataset.sid, { method: 'DELETE' });
                 if (r.error) toast(r.error, 'error');
                 else loadSchedules();
@@ -709,7 +709,7 @@ AppRegistry['antivirus'] = function (appDef) {
     });
     body.querySelector('#av-add-sched-btn').addEventListener('click', () => openSchedModal());
     body.querySelector('#av-uninstall-btn').addEventListener('click', async () => {
-        if (!confirm(t('Czy na pewno chcesz odinstalować ClamAV?'))) return;
+        if (!await confirmDialog(t('Czy na pewno chcesz odinstalować ClamAV?'))) return;
         const btn = body.querySelector('#av-uninstall-btn');
         btn.disabled = true;
         const r = await api('/antivirus/uninstall', { method: 'POST' });

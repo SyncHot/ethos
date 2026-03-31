@@ -234,7 +234,7 @@ function renderDockerManager(body) {
                 const id = row.dataset.id;
                 const name = row.dataset.name;
                 const action = b.dataset.action;
-                if (action === 'remove' && !confirm(t('Usunąć kontener') + ` ${name}?`)) return;
+                if (action === 'remove' && !await confirmDialog(t('Usunąć kontener') + ` ${name}?`)) return;
                 try {
                     await api(`/docker/containers/${id}/action`, { method: 'POST', body: { action } });
                     toast(`${name}: ${action}`, 'success');
@@ -813,7 +813,7 @@ services:
         main.querySelector('#dkr-img-filter').addEventListener('input', e => { imgFilter = e.target.value.toLowerCase(); fillImages(); });
         main.querySelector('#dkr-img-refresh').addEventListener('click', async () => { await loadImages(); fillImages(); });
         main.querySelector('#dkr-img-prune').addEventListener('click', async () => {
-            if (!confirm(t('Usunąć wszystkie nieużywane obrazy?'))) return;
+            if (!await confirmDialog(t('Usunąć wszystkie nieużywane obrazy?'))) return;
             try {
                 const r = await api('/docker/images/prune', { method: 'POST' });
                 toast(t('Wyczyszczono nieużywane obrazy'), 'success');
@@ -842,7 +842,7 @@ services:
             `).join('');
             tbody.querySelectorAll('[data-imgdel]').forEach(b => {
                 b.addEventListener('click', async () => {
-                    if (!confirm(t('Usunąć ten obraz?'))) return;
+                    if (!await confirmDialog(t('Usunąć ten obraz?'))) return;
                     try {
                         await api(`/docker/images/${encodeURIComponent(b.dataset.imgdel)}?force=true`, { method: 'DELETE' });
                         toast(t('Obraz usunięty'), 'success');
@@ -899,7 +899,7 @@ services:
                 </div>
             `;
             main.querySelector('#dkr-vol-prune')?.addEventListener('click', async () => {
-                if (!confirm(t('Usunąć nieużywane wolumeny?'))) return;
+                if (!await confirmDialog(t('Usunąć nieużywane wolumeny?'))) return;
                 try {
                     await api('/docker/volumes/prune', { method: 'POST' });
                     toast('Wyczyszczono wolumeny', 'success');

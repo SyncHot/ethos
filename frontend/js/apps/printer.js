@@ -345,7 +345,7 @@ function renderPrinterApp(body) {
     async function handlePrinterAction(action, name) {
         try {
             if (action === 'remove') {
-                if (!confirm(t('Usunąć drukarkę') + ' "' + name + '"?')) return;
+                if (!await confirmDialog(t('Usunąć drukarkę') + ' "' + name + '"?')) return;
             }
             await api(`/printer/${action}`, { method: 'POST', body: { name, printer: name } });
             toast(action === 'remove' ? t('Usunięto') : action === 'wake' ? t('Wybudzono') : 'OK', 'success');

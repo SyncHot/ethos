@@ -1954,7 +1954,7 @@ async function renderTickets(body, launchOpts) {
              overlay.querySelectorAll('.tk-att-delete').forEach(btn => {
                 btn.onclick = async (e) => {
                      e.stopPropagation(); 
-                     if(!confirm(t('Usunąć plik?'))) return;
+                     if(!await confirmDialog(t('Usunąć plik?'))) return;
                      const filename = btn.dataset.filename;
                      const item = btn.closest('.tk-attachment-item');
                      item.style.opacity = '0.5';

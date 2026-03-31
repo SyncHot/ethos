@@ -672,7 +672,7 @@ async function installerExecute() {
     }
     var confirmRaid = false;
     if (raidDevices.length > 0) {
-        if (!confirm(t('DANGER ZONE: Dyski') + ' ' + raidDevices.join(', ') + ' ' + t('są członkami macierzy RAID!') + '\n' + t('Kontynuowanie może uszkodzić macierz. Potwierdzasz?'))) return;
+        if (!await confirmDialog(t('DANGER ZONE: Dyski') + ' ' + raidDevices.join(', ') + ' ' + t('są członkami macierzy RAID!') + '\n' + t('Kontynuowanie może uszkodzić macierz. Potwierdzasz?'))) return;
         confirmRaid = true;
     }
 

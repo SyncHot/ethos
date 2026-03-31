@@ -250,7 +250,7 @@ function renderVMManager(body) {
                 else if (action === 'stop') await vmAction(id, 'stop');
                 else if (action === 'restart') await vmAction(id, 'restart');
                 else if (action === 'delete') {
-                    if (!confirm(t('Usunąć tę maszynę wirtualną i jej dyski?'))) return;
+                    if (!await confirmDialog(t('Usunąć tę maszynę wirtualną i jej dyski?'))) return;
                     try { await api(`/vm/machines/${id}`, { method: 'DELETE' }); toast(t('VM usunięta'), 'success'); }
                     catch { toast(t('Błąd usuwania'), 'error'); }
                 }
@@ -746,7 +746,7 @@ function renderVMManager(body) {
         });
 
         main.querySelector('#vm-eject-boot')?.addEventListener('click', async () => {
-            if (!confirm(t('Odłączyć obraz boot? VM będzie bootować z dysku.'))) return;
+            if (!await confirmDialog(t('Odłączyć obraz boot? VM będzie bootować z dysku.'))) return;
             try {
                 await api(`/vm/machines/${vm.id}`, { method: 'PUT', body: { boot_image: '' } });
                 toast(t('Obraz odłączony — VM będzie bootować z dysku'), 'success');
@@ -846,7 +846,7 @@ function renderVMManager(body) {
                                     <i class="fas fa-redo"></i> Resetuj bridge
                                 </button>` : ''}`;
                             dc.querySelector('#vm-bridge-reset')?.addEventListener('click', async () => {
-                                if (!confirm(t('Resetować bridge? Połączenie zostanie chwilowo przerwane.'))) return;
+                                if (!await confirmDialog(t('Resetować bridge? Połączenie zostanie chwilowo przerwane.'))) return;
                                 try {
                                     const r1 = await api('/vm/bridge/teardown', { method: 'POST' });
                                     toast(r1.message || 'Bridge usunięty', 'info');
@@ -1127,7 +1127,7 @@ function renderVMManager(body) {
 
         dc.querySelectorAll('[data-restore]').forEach(btn => {
             btn.addEventListener('click', async () => {
-                if (!confirm(`${t('Przywrócić snapshot')} "${btn.dataset.restore}"?`)) return;
+                if (!await confirmDialog(`${t('Przywrócić snapshot')} "${btn.dataset.restore}"?`)) return;
                 try {
                     const r = await api(`/vm/machines/${vm.id}/snapshots/${encodeURIComponent(btn.dataset.restore)}`, { method: 'POST' });
                     toast(r.message || t('Snapshot przywrócony'), 'success');
@@ -1137,7 +1137,7 @@ function renderVMManager(body) {
 
         dc.querySelectorAll('[data-del-snap]').forEach(btn => {
             btn.addEventListener('click', async () => {
-                if (!confirm(`${t('Usunąć snapshot')} "${btn.dataset.delSnap}"?`)) return;
+                if (!await confirmDialog(`${t('Usunąć snapshot')} "${btn.dataset.delSnap}"?`)) return;
                 try {
                     await api(`/vm/machines/${vm.id}/snapshots/${encodeURIComponent(btn.dataset.delSnap)}`, { method: 'DELETE' });
                     toast(t('Snapshot usunięty'), 'success');
@@ -1247,7 +1247,7 @@ function renderVMManager(body) {
 
         tbody.querySelectorAll('[data-del-img]').forEach(btn => {
             btn.addEventListener('click', async () => {
-                if (!confirm(`${t('Usunąć obraz')} "${btn.dataset.delImg}"?`)) return;
+                if (!await confirmDialog(`${t('Usunąć obraz')} "${btn.dataset.delImg}"?`)) return;
                 try {
                     await api(`/vm/images/${encodeURIComponent(btn.dataset.delImg)}`, { method: 'DELETE' });
                     toast(t('Obraz usunięty'), 'success');
@@ -1280,7 +1280,7 @@ function renderVMManager(body) {
         tbody.querySelectorAll('[data-copy-builder]').forEach(btn => {
             btn.addEventListener('click', async () => {
                 const name = btn.dataset.name;
-                if (!confirm(`${t('Skopiować')} "${name}" ${t('do obrazów VM?')}\n${t('Plik może być duży — to zajmie chwilę.')}`)) return;
+                if (!await confirmDialog(`${t('Skopiować')} "${name}" ${t('do obrazów VM?')}\n${t('Plik może być duży — to zajmie chwilę.')}`)) return;
                 btn.disabled = true;
                 btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Kopiowanie...';
                 try {

@@ -960,7 +960,7 @@ function renderBackupApp(body) {
         });
         el.querySelectorAll('button[data-del-profile]').forEach(btn => {
             btn.onclick = async () => {
-                if (!confirm(t('Usunąć profil?'))) return;
+                if (!await confirmDialog(t('Usunąć profil?'))) return;
                 await api('/backup/profiles/' + btn.dataset.delProfile, { method: 'DELETE' });
                 loadProfiles();
             };
@@ -1559,7 +1559,7 @@ function renderBackupApp(body) {
         }
         el.querySelectorAll('button[data-del-ssh]').forEach(function(btn) {
             btn.onclick = async function() {
-                if (!confirm(t('Usunąć serwer?'))) return;
+                if (!await confirmDialog(t('Usunąć serwer?'))) return;
                 await api('/backup/ssh-servers/' + btn.dataset.delSsh, { method: 'DELETE' });
                 loadSSH();
             };
@@ -1747,7 +1747,7 @@ function renderBackupApp(body) {
         });
         el.querySelectorAll('button[data-del-bak]').forEach(function(btn) {
             btn.onclick = async function() {
-                if (!confirm(t('Usunąć kopię?'))) return;
+                if (!await confirmDialog(t('Usunąć kopię?'))) return;
                 var url = '/backup/backups/' + btn.dataset.delBak;
                 if (btn.dataset.delPath) url += '?path=' + encodeURIComponent(btn.dataset.delPath);
                 await api(url, { method: 'DELETE' });
@@ -1857,7 +1857,7 @@ function renderBackupApp(body) {
         var msg = mode === 'original'
             ? t('UWAGA: Pliki zostaną przywrócone do oryginalnej lokalizacji. Nowsze wersje zostaną NADPISANE starszymi!') + '\n\n' + t('Przywrócić z "') + filename + '"?'
             : t('Pliki zostaną przywrócone do: ') + target + '\n\n' + t('Przywrócić z "') + filename + '"?';
-        if (!confirm(msg)) return;
+        if (!await confirmDialog(msg)) return;
 
         // Prompt for passphrase if backup is encrypted
         var decryptPassphrase = null;
@@ -1923,7 +1923,7 @@ function renderBackupApp(body) {
         el.innerHTML = html;
         el.querySelectorAll('[data-del-hist]').forEach(function(btn) {
             btn.onclick = async function() {
-                if (!confirm(t('Usunąć wpis z historii?'))) return;
+                if (!await confirmDialog(t('Usunąć wpis z historii?'))) return;
                 await api('/backup/history/' + btn.dataset.delHist, { method: 'DELETE' });
                 loadHistory();
             };
@@ -1931,7 +1931,7 @@ function renderBackupApp(body) {
         var clearBtn = QS('#bak-clear-history');
         if (clearBtn) {
             clearBtn.onclick = async function() {
-                if (!confirm(t('Usunąć całą historię?'))) return;
+                if (!await confirmDialog(t('Usunąć całą historię?'))) return;
                 await api('/backup/history', { method: 'DELETE' });
                 loadHistory();
             };
@@ -1955,7 +1955,7 @@ function renderBackupApp(body) {
     }
 
     QS('#bak-cancel-btn').onclick = async function() {
-        if (!confirm(t('Na pewno anulować operację?'))) return;
+        if (!await confirmDialog(t('Na pewno anulować operację?'))) return;
         try {
             await api('/backup/cancel', { method: 'POST' });
             toast('Anulowano', 'warning');
@@ -2206,7 +2206,7 @@ function renderBackupApp(body) {
         });
         el.querySelectorAll('button[onclick="deleteSnapshot(this)"]').forEach(function(btn) {
             btn.onclick = async function() {
-                if (!confirm(t('Usunąć punkt przywracania ') + btn.dataset.id + '?')) return;
+                if (!await confirmDialog(t('Usunąć punkt przywracania ') + btn.dataset.id + '?')) return;
                 try {
                     await api('/backup/snapshots/' + btn.dataset.id, { method: 'DELETE' });
                     NAS.toast(t('Punkt przywracania usunięty'), 'success');
@@ -2224,7 +2224,7 @@ function renderBackupApp(body) {
                 var idx = parseInt(btn.dataset.idx);
                 var s = snapshots[idx];
                 if (!s || !s.source_path) return;
-                if (!confirm(t('Skopiować „{name}” do lokalnych punktów przywracania?').replace('{name}', s.label||s.id))) return;
+                if (!await confirmDialog(t('Skopiować „{name}” do lokalnych punktów przywracania?').replace('{name}', s.label||s.id))) return;
                 try {
                     await api('/backup/snapshots/received/adopt', {
                         method: 'POST',
@@ -2616,7 +2616,7 @@ function renderBackupApp(body) {
             QS('#snap-remote-list').innerHTML = html;
             QS('#snap-remote-list').querySelectorAll('.snap-pull-btn').forEach(function(btn) {
                 btn.onclick = async function() {
-                    if (!confirm(t('Pobrać punkt przywracania ') + btn.dataset.id + ' ' + t('ze zdalnego NAS?'))) return;
+                    if (!await confirmDialog(t('Pobrać punkt przywracania ') + btn.dataset.id + ' ' + t('ze zdalnego NAS?'))) return;
                     QS('#snap-remote-modal').classList.add('hidden');
                     try {
                         await api('/backup/snapshots/pull', { method: 'POST', body: {server_id: btn.dataset.server, snap_id: btn.dataset.id} });
@@ -2800,7 +2800,7 @@ function renderBackupApp(body) {
     };
     QS('#snap-rcv-restore-go').onclick = async function() {
         if (!_rcvRestoreSnap) return;
-        if (!confirm(t('Na pewno przywrócić system z otrzymanego snapshota? Obecna konfiguracja zostanie nadpisana.'))) return;
+        if (!await confirmDialog(t('Na pewno przywrócić system z otrzymanego snapshota? Obecna konfiguracja zostanie nadpisana.'))) return;
         QS('#snap-received-restore-modal').classList.add('hidden');
         try {
             await api('/backup/snapshots/received/restore', { method: 'POST', body: {

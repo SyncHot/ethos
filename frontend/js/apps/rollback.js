@@ -237,14 +237,14 @@ function renderRollbackApp(body) {
         }
     }
 
-    function confirmRestore(id) {
+    async function confirmRestore(id) {
         var snap = snapshots.find(function(s) { return s.id === id; });
         if (!snap) return;
         var msg = t('Czy na pewno chcesz przywrócić snapshot') + ' "' + id + '"?\n\n'
                 + t('Obecne pliki systemowe zostaną nadpisane.') + '\n'
                 + t('Automatycznie zostanie utworzona kopia bieżącego stanu.') + '\n\n'
                 + t('System zostanie zrestartowany po przywróceniu.');
-        if (!confirm(msg)) return;
+        if (!await confirmDialog(msg)) return;
         doRestore(id);
     }
 
@@ -263,8 +263,8 @@ function renderRollbackApp(body) {
         }
     }
 
-    function confirmDelete(id) {
-        if (!confirm(t('Usunąć snapshot') + ' "' + id + '"?')) return;
+    async function confirmDelete(id) {
+        if (!await confirmDialog(t('Usunąć snapshot') + ' "' + id + '"?')) return;
         doDelete(id);
     }
 

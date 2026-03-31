@@ -332,7 +332,7 @@ function _stickyInit(body, panelId) {
             btn.addEventListener('click', async (e) => {
                 e.stopPropagation();
                 const n = notes.find(x => x.id === btn.dataset.id);
-                if (!confirm(`${t('Usunąć karteczkę "')}${esc(n?.title || t('Bez tytułu'))}"?`)) return;
+                if (!await confirmDialog(`${t('Usunąć karteczkę "')}${esc(n?.title || t('Bez tytułu'))}"?`)) return;
                 try {
                     await api(`${API}/${btn.dataset.id}`, { method: 'DELETE' });
                     notes = notes.filter(x => x.id !== btn.dataset.id);

@@ -461,7 +461,7 @@ function renderUpdatesApp(body) {
     async function publishUpdate() {
         const btn = $('#upd-publish-btn');
         const statusEl = $('#upd-publish-status');
-        if (!confirm(t('Opublikować obecną wersję jako aktualizację?'))) return;
+        if (!await confirmDialog(t('Opublikować obecną wersję jako aktualizację?'))) return;
         btn.disabled = true;
         btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${t('Publikuję…')}`;
         statusEl.textContent = '';

@@ -348,7 +348,7 @@ function renderStorageApp(body) {
         if (!state.selected) return;
         const drive = state.drives.find(d => d.name === state.selected);
         if (!drive?.mountpoint) { toast('Dysk nie jest zamontowany', 'warning'); return; }
-        if (!confirm(`${t('Odmontować')} ${drive.mountpoint}?`)) return;
+        if (!await confirmDialog(`${t('Odmontować')} ${drive.mountpoint}?`)) return;
         try {
             await api('/storage/unmount', { method: 'POST', body: { path: drive.mountpoint } });
             toast('Odmontowano', 'success');
@@ -379,7 +379,7 @@ function renderStorageApp(body) {
         const drive = state.drives.find(d => d.name === state.selected);
         const parent = drive?.parent ? state.drives.find(d => d.name === drive.parent) : drive;
         const diskName = parent?.name || drive?.name;
-        if (!confirm(`${t('Bezpiecznie wysunąć')} /dev/${diskName}?\n${t('Wszystkie partycje zostaną odmontowane.')}`)) return;
+        if (!await confirmDialog(`${t('Bezpiecznie wysunąć')} /dev/${diskName}?\n${t('Wszystkie partycje zostaną odmontowane.')}`)) return;
         try {
             await api('/storage/eject', { method: 'POST', body: { disk: diskName } });
             toast(t('Dysk bezpiecznie wysunięty'), 'success');
@@ -396,7 +396,7 @@ function renderStorageApp(body) {
         const isActive = !!state.keepalive[drive.name];
         const enable = !isActive;
         if (enable) {
-            if (!confirm(`${t('Włączyć auto-remount dla')} ${drive.label || drive.name}?\n${t('Dysk będzie automatycznie montowany ponownie jeśli się odmontuje, a USB autosuspend zostanie wyłączony.')}`)) return;
+            if (!await confirmDialog(`${t('Włączyć auto-remount dla')} ${drive.label || drive.name}?\n${t('Dysk będzie automatycznie montowany ponownie jeśli się odmontuje, a USB autosuspend zostanie wyłączony.')}`)) return;
         }
         try {
             await api('/storage/keepalive', { method: 'POST', body: {
@@ -511,7 +511,7 @@ function renderStorageApp(body) {
         const fstype = selectedOpt.dataset.fs;
         const label  = fmtBody.querySelector('#st-fmt-label')?.value.trim() || '';
         const fsLabel = fmtOptions.find(o => o.value === fstype)?.label || fstype;
-        if (!confirm(`⚠️ ${t('UWAGA!')}\n\n${t('Czy na pewno sformatować')} /dev/${state.selected} ${t('na')} ${fsLabel}?\n\n${t('WSZYSTKIE DANE ZOSTANĄ UTRACONE!')}\n${t('Ta operacja jest NIEODWRACALNA!')}`)) return;
+        if (!await confirmDialog(`⚠️ ${t('UWAGA!')}\n\n${t('Czy na pewno sformatować')} /dev/${state.selected} ${t('na')} ${fsLabel}?\n\n${t('WSZYSTKIE DANE ZOSTANĄ UTRACONE!')}\n${t('Ta operacja jest NIEODWRACALNA!')}`)) return;
 
         fmtFooter.style.display = 'none';
         fmtBody.innerHTML = `
@@ -633,7 +633,7 @@ function renderStorageApp(body) {
             const fstype = selectedOpt.dataset.fs;
             const label = fmtBody.querySelector('#st-fmt-label')?.value.trim() || '';
             const fsLabel = fmtOptions.find(o => o.value === fstype)?.label || fstype;
-            if (!confirm(`⚠️ ${t('UWAGA!')}\n\n${t('Połączyć partycje na')} /dev/${parent.name}?\n\n${t('Partycje')} ${childParts.map(d => d.name).join(', ')} ${t('zostaną USUNIĘTE.')}\n${t('WSZYSTKIE DANE ZOSTANĄ UTRACONE!')}`)) return;
+            if (!await confirmDialog(`⚠️ ${t('UWAGA!')}\n\n${t('Połączyć partycje na')} /dev/${parent.name}?\n\n${t('Partycje')} ${childParts.map(d => d.name).join(', ')} ${t('zostaną USUNIĘTE.')}\n${t('WSZYSTKIE DANE ZOSTANĄ UTRACONE!')}`)) return;
 
             fmtFooter.style.display = 'none';
             fmtBody.innerHTML = `<div class="st-fmt-progress"><div class="st-fmt-progress-header"><i class="fas fa-cog fa-spin sto-progress-icon-purple"></i><div><div class="sto-bold">${t('Łączenie')} /dev/${parent.name}</div><div class="sto-subtitle">${fsLabel}</div></div></div><div class="st-fmt-log" id="st-fmt-log"></div><div id="st-fmt-result" style="display:none"></div></div>`;
@@ -791,7 +791,7 @@ function renderStorageApp(body) {
             if (totalMB > diskSizeMB) { toast('Suma przekracza rozmiar dysku!', 'error'); return; }
 
             const descs = splitParts.map((p, i) => `  ${i+1}. ${p.size_mb ? p.size_mb + ' MB' : t('Reszta')} (${p.fstype})`).join('\n');
-            if (!confirm(`⚠️ ${t('UWAGA!')}\n\n${t('Podzielić')} /dev/${parentDisk.name} ${t('na')} ${splitParts.length} ${t('partycji?')}\n\n${descs}\n\n${t('WSZYSTKIE DANE ZOSTANĄ UTRACONE!')}`)) return;
+            if (!await confirmDialog(`⚠️ ${t('UWAGA!')}\n\n${t('Podzielić')} /dev/${parentDisk.name} ${t('na')} ${splitParts.length} ${t('partycji?')}\n\n${descs}\n\n${t('WSZYSTKIE DANE ZOSTANĄ UTRACONE!')}`)) return;
 
             fmtFooter.style.display = 'none';
             fmtBody.innerHTML = `<div class="st-fmt-progress"><div class="st-fmt-progress-header"><i class="fas fa-cog fa-spin sto-progress-icon-cyan"></i><div><div class="sto-bold">Partycjonowanie /dev/${parentDisk.name}</div><div class="sto-subtitle">${splitParts.length} partycji</div></div></div><div class="st-fmt-log" id="st-fmt-log"></div><div id="st-fmt-result" style="display:none"></div></div>`;

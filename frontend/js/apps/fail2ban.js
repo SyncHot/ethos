@@ -153,7 +153,7 @@ AppRegistry['fail2ban'] = function (appDef) {
                 btn.onclick = async () => {
                     const jail = btn.dataset.jail;
                     const ip = btn.dataset.ip;
-                    if (!confirm(t('Czy na pewno odblokować IP') + ' ' + ip + ' ' + t('w sekcji') + ' ' + jail + '?')) return;
+                    if (!await confirmDialog(t('Czy na pewno odblokować IP') + ' ' + ip + ' ' + t('w sekcji') + ' ' + jail + '?')) return;
 
                     try {
                         const res = await api('/fail2ban/unban', { method: 'POST', body: { jail, ip } });

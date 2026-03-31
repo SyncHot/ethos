@@ -309,7 +309,7 @@ function renderBuilderApp(body) {
     async function startImage() {
         if (state.building) return;
 
-        if (!confirm(t('Budowanie obrazu x86_64 zajmie ~15-30 minut.') + '\n' + t('Kontynuować?'))) return;
+        if (!await confirmDialog(t('Budowanie obrazu x86_64 zajmie ~15-30 minut.') + '\n' + t('Kontynuować?'))) return;
 
         state.building = true;
         setDisabled(true);
@@ -505,7 +505,7 @@ function renderBuilderApp(body) {
                 const paths = [...blBody.querySelectorAll(`.bl-sel[data-group="${g}"]:checked`)].map(cb => cb.dataset.path);
                 if (!paths.length) return;
                 const label = g === 'rel' ? t('pakietów') : t('obrazów');
-                if (!confirm(t('Usunąć') + ` ${paths.length} ${label}?`)) return;
+                if (!await confirmDialog(t('Usunąć') + ` ${paths.length} ${label}?`)) return;
                 try {
                     const res = await api('/builder/delete', { method: 'POST', body: { paths } });
                     if (res.deleted?.length) toast(`${t('Usunięto')} ${res.deleted.length} ${t('plików')}`, 'success');
@@ -519,7 +519,7 @@ function renderBuilderApp(body) {
         blBody.querySelectorAll('.bl-artifact-del').forEach(btn => {
             btn.onclick = async () => {
                 const path = btn.dataset.path;
-                if (!confirm(t('Usunąć') + ` ${path.split('/').pop()}?`)) return;
+                if (!await confirmDialog(t('Usunąć') + ` ${path.split('/').pop()}?`)) return;
                 try {
                     const res = await api('/builder/delete', { method: 'POST', body: { path } });
                     if (res.ok) { toast(t('Usunięto'), 'success'); loadInfo(); }
@@ -544,7 +544,7 @@ function renderBuilderApp(body) {
         })();
         const cacheBtn = blBody.querySelector('#bl-cache-clear');
         if (cacheBtn) cacheBtn.onclick = async () => {
-            if (!confirm(t('Wyczyścić cache? Następny build pobierze pakiety od nowa.'))) return;
+            if (!await confirmDialog(t('Wyczyścić cache? Następny build pobierze pakiety od nowa.'))) return;
             await api('/builder/cache', { method: 'DELETE' });
             toast('Cache wyczyszczony', 'success');
             loadInfo();
@@ -582,7 +582,7 @@ function renderBuilderApp(body) {
         })();
         const histClearBtn = blBody.querySelector('#bl-history-clear');
         if (histClearBtn) histClearBtn.onclick = async () => {
-            if (!confirm(t('Wyczyścić historię budowań?'))) return;
+            if (!await confirmDialog(t('Wyczyścić historię budowań?'))) return;
             await api('/builder/history/clear', { method: 'POST' });
             toast(t('Historia wyczyszczona'), 'success');
             renderArtifacts();
@@ -796,7 +796,7 @@ function renderBuilderApp(body) {
     }
 
     async function cancelBuild() {
-        if (!confirm(t('Na pewno anulować bieżący build?'))) return;
+        if (!await confirmDialog(t('Na pewno anulować bieżący build?'))) return;
         try {
             await api('/builder/cancel', { method: 'POST' });
             toast('Anulowano build', 'info');

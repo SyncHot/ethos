@@ -420,7 +420,7 @@ function renderWebsitesApp(body) {
                 e.stopPropagation();
                 const slug = btn.dataset.del;
                 const page = currentSite.pages.find(p => p.slug === slug);
-                if (!confirm(t('Usunąć podstronę') + ` „${page ? page.title : slug}"?`)) return;
+                if (!await confirmDialog(t('Usunąć podstronę') + ` „${page ? page.title : slug}"?`)) return;
                 try {
                     const r = await api('/websites/' + currentSite.id + '/pages/' + slug, { method: 'DELETE' });
                     currentSite = r.site;
@@ -545,7 +545,7 @@ function renderWebsitesApp(body) {
 
     async function deleteSite(siteId) {
         const site = sites.find(s => s.id === siteId);
-        if (!confirm(t('Usunąć stronę') + ` „${site ? site.name : siteId}" ` + t('i wszystkie jej pliki?'))) return;
+        if (!await confirmDialog(t('Usunąć stronę') + ` „${site ? site.name : siteId}" ` + t('i wszystkie jej pliki?'))) return;
         try {
             await api('/websites/' + siteId, { method: 'DELETE' });
             toast(t('Strona usunięta'), 'success');

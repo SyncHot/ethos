@@ -370,7 +370,7 @@ function renderFlasherApp(body) {
         const fs = prompt(t('System plików (fat32, exfat, ext4, ntfs):'), 'exfat');
         if (!fs) return;
         const label = prompt(t('Etykieta dysku:'), 'USB') || 'USB';
-        if (!confirm(t('Sformatować') + ` /dev/${state.selectedDisk} ` + t('jako') + ` ${fs.toUpperCase()}?\n` + t('Wszystkie dane zostaną usunięte!'))) return;
+        if (!await confirmDialog(t('Sformatować') + ` /dev/${state.selectedDisk} ` + t('jako') + ` ${fs.toUpperCase()}?\n` + t('Wszystkie dane zostaną usunięte!'))) return;
         try {
             const r = await api('/flasher/format', { method: 'POST', body: { disk: state.selectedDisk, fs_type: fs, label } });
             toast(r.message || t('Sformatowano'), 'success');
@@ -380,7 +380,7 @@ function renderFlasherApp(body) {
 
     /* ─── Cancel flash ─── */
     cancelBtn.onclick = async () => {
-        if (!confirm(t('Przerwać flashowanie? Dysk USB może być uszkodzony.'))) return;
+        if (!await confirmDialog(t('Przerwać flashowanie? Dysk USB może być uszkodzony.'))) return;
         try {
             await api('/flasher/cancel', { method: 'POST' });
             toast(t('Anulowano flashowanie'), 'warning');
@@ -394,7 +394,7 @@ function renderFlasherApp(body) {
         const drive = state.drives.find(x => x.name === state.selectedDisk);
         const dLabel = drive ? (drive.model || drive.label || drive.name) : state.selectedDisk;
 
-        if (!confirm(t('UWAGA!') + `\n\n` + t('Wszystkie dane na dysku') + ` /dev/${state.selectedDisk} (${dLabel}) ` + t('zostaną bezpowrotnie usunięte.') + `\n\n` + t('Czy na pewno chcesz kontynuować?'))) return;
+        if (!await confirmDialog(t('UWAGA!') + `\n\n` + t('Wszystkie dane na dysku') + ` /dev/${state.selectedDisk} (${dLabel}) ` + t('zostaną bezpowrotnie usunięte.') + `\n\n` + t('Czy na pewno chcesz kontynuować?'))) return;
 
         state.flashing = true;
         updateFlashBtn();

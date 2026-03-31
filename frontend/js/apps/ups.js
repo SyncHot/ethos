@@ -181,7 +181,7 @@ function renderUPSApp(body) {
                     <button class="btn btn-sm btn-green" id="ups-apply-scan">${t('Zastosuj konfigurację')}</button>
                 `;
                 $('#ups-apply-scan').onclick = async () => {
-                    if (!confirm(t('Czy na pewno chcesz zastosować tę konfigurację? Spowoduje to restart usługi UPS.'))) return;
+                    if (!await confirmDialog(t('Czy na pewno chcesz zastosować tę konfigurację? Spowoduje to restart usługi UPS.'))) return;
                     try {
                         await api('/ups/apply', { method: 'POST', body: { config: res.config } });
                         toast(t('Konfiguracja UPS zastosowana'), 'success');

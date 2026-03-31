@@ -307,7 +307,7 @@ function _domInit(body) {
         content.querySelectorAll('.dm-del-btn').forEach(btn => {
             btn.addEventListener('click', async () => {
                 const d = domains.find(x => x.id === btn.dataset.id);
-                if (!confirm(t('Usunąć konfigurację domeny') + ' ' + (d?.domain || btn.dataset.id) + '?')) return;
+                if (!await confirmDialog(t('Usunąć konfigurację domeny') + ' ' + (d?.domain || btn.dataset.id) + '?')) return;
                 btn.disabled = true;
                 try { const r = await api(`${API_D}/domains/${btn.dataset.id}`, { method: 'DELETE' }); if (r.error) throw new Error(r.error); toast(r.message, 'success'); }
                 catch (err) { toast(t('Błąd: ') + err.message, 'error'); }
@@ -327,7 +327,7 @@ function _domInit(body) {
                     email = prompt(t('Podaj email do certyfikatu SSL dla') + ' ' + d?.domain + ':\n' + t('(wymagany przez Let\'s Encrypt)'), '');
                     if (!email) return;
                 }
-                if (!confirm(t('Uzyskać certyfikat SSL dla') + ' ' + d?.domain + '?\nEmail: ' + email)) return;
+                if (!await confirmDialog(t('Uzyskać certyfikat SSL dla') + ' ' + d?.domain + '?\nEmail: ' + email)) return;
                 btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
                 try { const r = await api(`${API_D}/domains/${btn.dataset.id}/ssl`, { method: 'POST', body: { email } }); if (r.error) throw new Error(r.error); toast(r.message, 'success'); }
                 catch (err) { toast(t('Błąd: ') + err.message, 'error'); }
@@ -586,7 +586,7 @@ function _domInit(body) {
             const httpsPort = parseInt(content.querySelector('#dm-ssl-port')?.value || '443');
             if (!domain) { toast(t('Podaj domenę'), 'error'); return; }
             if (!email) { toast(t('Podaj email'), 'error'); return; }
-            if (!confirm(t('Certbot spróbuje uzyskać certyfikat dla:') + '\n\n' + domain + '\n\n' + t('Kontynuować?'))) return;
+            if (!await confirmDialog(t('Certbot spróbuje uzyskać certyfikat dla:') + '\n\n' + domain + '\n\n' + t('Kontynuować?'))) return;
             btn.disabled = true; btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${t('Uzyskiwanie…')}`;
             try { const r = await api(API_D + '/ssl/obtain', { method: 'POST', body: { domain, email, https_port: httpsPort } }); if (r.error) throw new Error(r.error); toast(r.message || t('Certyfikat uzyskany!'), 'success'); }
             catch (err) { toast(t('Błąd: ') + err.message, 'error'); }
@@ -596,7 +596,7 @@ function _domInit(body) {
         content.querySelectorAll('.dm-renew-cert').forEach(btn => {
             btn.addEventListener('click', async () => {
                 const domain = btn.dataset.domain;
-                if (!confirm(t('Odnowić certyfikat dla') + ' ' + domain + '?')) return;
+                if (!await confirmDialog(t('Odnowić certyfikat dla') + ' ' + domain + '?')) return;
                 btn.disabled = true; btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${t('Odnawianie…')}`;
                 try { const r = await api(API_D + '/ssl/renew', { method: 'POST', body: { domain } }); if (r.error) throw new Error(r.error); toast(r.message || 'Certyfikat odnowiony', 'success'); }
                 catch (err) { toast(t('Błąd: ') + err.message, 'error'); }
@@ -608,13 +608,13 @@ function _domInit(body) {
             const btn = e.currentTarget;
             const httpsPort = parseInt(content.querySelector('#dm-ssl-port')?.value || '443');
             const redirect = content.querySelector('#dm-ssl-redirect')?.checked !== false;
-            if (!confirm(t('Włączyć HTTPS na porcie') + ' ' + httpsPort + '?')) return;
+            if (!await confirmDialog(t('Włączyć HTTPS na porcie') + ' ' + httpsPort + '?')) return;
             btn.disabled = true; btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${t('Włączanie…')}`;
             try {
                 const r = await api(API_D + '/ssl/enable', { method: 'POST', body: { enabled: true, https_port: httpsPort, redirect_http: redirect } });
                 if (r.error) throw new Error(r.error);
                 toast(r.message || t('HTTPS włączony'), 'success');
-                if (r.restart_needed && confirm(t('Restart wymagany. Zrestartować teraz?'))) {
+                if (r.restart_needed && await confirmDialog(t('Restart wymagany. Zrestartować teraz?'))) {
                     await api('/settings/restart', { method: 'POST' });
                     setTimeout(() => { window.location.href = `https://${location.hostname}:${httpsPort}`; }, 10000);
                     return;
@@ -625,13 +625,13 @@ function _domInit(body) {
 
         content.querySelector('#dm-ssl-disable')?.addEventListener('click', async (e) => {
             const btn = e.currentTarget;
-            if (!confirm(t('Wyłączyć HTTPS?'))) return;
+            if (!await confirmDialog(t('Wyłączyć HTTPS?'))) return;
             btn.disabled = true; btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${t('Wyłączanie…')}`;
             try {
                 const r = await api(API_D + '/ssl/enable', { method: 'POST', body: { enabled: false } });
                 if (r.error) throw new Error(r.error);
                 toast(r.message || t('HTTPS wyłączony'), 'success');
-                if (r.restart_needed && confirm(t('Restart wymagany. Zrestartować teraz?'))) {
+                if (r.restart_needed && await confirmDialog(t('Restart wymagany. Zrestartować teraz?'))) {
                     await api('/settings/restart', { method: 'POST' });
                     setTimeout(() => { window.location.href = `http://${location.hostname}:9000`; }, 8000);
                     return;
@@ -833,10 +833,10 @@ function _domInit(body) {
 
         // Remove provider
         content.querySelectorAll('.dd-remove-prov').forEach(btn => {
-            btn.addEventListener('click', () => {
+            btn.addEventListener('click', async () => {
                 const idx = parseInt(btn.dataset.idx);
                 const p = ddnsConfig.providers[idx];
-                if (!confirm(t('Usunąć provider') + ' ' + (p?.name || '') + '?')) return;
+                if (!await confirmDialog(t('Usunąć provider') + ' ' + (p?.name || '') + '?')) return;
                 ddnsConfig.providers.splice(idx, 1);
                 _ddnsSaveConfig();
             });

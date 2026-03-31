@@ -472,8 +472,8 @@ function renderDownloadManager(body, launchOpts) {
                 if(isHidden) div.querySelector('.dlm-cat-name-input').focus();
             });
             
-            div.querySelector('.dlm-cat-del').addEventListener('click', () => {
-                if(confirm(t('Usunąć kategorię?'))) {
+            div.querySelector('.dlm-cat-del').addEventListener('click', async () => {
+                if(await confirmDialog(t('Usunąć kategorię?'))) {
                     config.categories.splice(index, 1);
                     renderCategories();
                     updateCategoryFilter();
@@ -835,7 +835,7 @@ function renderDownloadManager(body, launchOpts) {
                 });
                 if (checkRes.ok && checkRes.processed?.length) {
                     const names = checkRes.processed.map(n => '• ' + n).join('\n');
-                    const confirmed = confirm(
+                    const confirmed = await confirmDialog(
                         `${t('Następujące torrenty były już wcześniej procesowane:')}\n\n${names}\n\n${t('Czy na pewno chcesz je dodać ponownie?')}`
                     );
                     if (!confirmed) {

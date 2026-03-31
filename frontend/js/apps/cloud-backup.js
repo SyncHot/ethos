@@ -145,7 +145,7 @@ function renderCloudBackupApp(body) {
         panel.querySelector('#cb-add-provider').onclick = showProviderForm;
         panel.querySelectorAll('.cb-del-provider').forEach(btn => {
             btn.onclick = async () => {
-                if (!confirm(t('Usunąć dostawcę') + ' ' + btn.dataset.name + '?')) return;
+                if (!await confirmDialog(t('Usunąć dostawcę') + ' ' + btn.dataset.name + '?')) return;
                 await cbApi(`/providers/${encodeURIComponent(btn.dataset.name)}`, { method: 'DELETE' });
                 toast(t('Usunięto'), 'success');
                 loadAll();
@@ -261,7 +261,7 @@ function renderCloudBackupApp(body) {
         });
         panel.querySelectorAll('.cb-restore-job').forEach(btn => {
             btn.onclick = async () => {
-                if (!confirm(t('Przywrócić dane z kopii? Istniejące pliki mogą zostać nadpisane.'))) return;
+                if (!await confirmDialog(t('Przywrócić dane z kopii? Istniejące pliki mogą zostać nadpisane.'))) return;
                 toast(t('Przywracanie...'), 'info');
                 const res = await cbApi(`/jobs/${btn.dataset.id}/restore`, { method: 'POST', body: {} });
                 if (res.error) { toast(res.error, 'error'); return; }
@@ -276,7 +276,7 @@ function renderCloudBackupApp(body) {
         });
         panel.querySelectorAll('.cb-del-job').forEach(btn => {
             btn.onclick = async () => {
-                if (!confirm(t('Usunąć zadanie?'))) return;
+                if (!await confirmDialog(t('Usunąć zadanie?'))) return;
                 await cbApi(`/jobs/${btn.dataset.id}`, { method: 'DELETE' });
                 toast(t('Usunięto'), 'success');
                 loadAll();

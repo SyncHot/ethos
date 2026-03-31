@@ -3260,7 +3260,7 @@ function renderFM(body, state) {
         try {
             const sambaStatus = await api('/storage/samba/status');
             if (!sambaStatus.installed) {
-                if (confirm(t('Samba nie jest zainstalowana.\nCzy chcesz przejść do instalacji?'))) {
+                if (await confirmDialog(t('Samba nie jest zainstalowana.\nCzy chcesz przejść do instalacji?'))) {
                     if (typeof openApp === 'function') openApp('sharing');
                     else toast(t('Przejdź do aplikacji Dyski → Samba aby zainstalować'), 'info');
                 }
@@ -5378,7 +5378,7 @@ function renderEventLog(body) {
 
     body.querySelector('#elog-refresh').addEventListener('click', () => loadEvents());
     body.querySelector('#elog-clear').addEventListener('click', async () => {
-        if (!confirm(t('Wyczyścić cały dziennik zdarzeń?'))) return;
+        if (!await confirmDialog(t('Wyczyścić cały dziennik zdarzeń?'))) return;
         await api('/eventlog/clear', { method: 'POST' });
         loadEvents();
     });
@@ -5698,7 +5698,7 @@ function renderPackageCenter(body) {
         if (_anyBusy()) return;
         const app = [...S.catalog, ...S.core].find(a => a.id === appId);
         const nm = app ? app.name : appId;
-        if (!confirm(t('Odinstalować') + ' ' + nm + '?')) return;
+        if (!await confirmDialog(t('Odinstalować') + ' ' + nm + '?')) return;
         S.progressMap[appId] = { stage: 'start', percent: 5, message: t('Odinstalowywanie…'), status: 'running', _started: Date.now() };
         render();
         const data = await api('/app-manager/' + appId + '/uninstall', { method: 'POST' });
@@ -6435,7 +6435,7 @@ async function renderSystemSettings(body) {
                         list.querySelectorAll('[data-fw-delete]').forEach(el => {
                             el.addEventListener('click', async () => {
                                 const id = el.dataset.fwDelete;
-                                if (!confirm(t('Usunąć regułę #') + id + '?')) return;
+                                if (!await confirmDialog(t('Usunąć regułę #') + id + '?')) return;
                                 try {
                                     await api('/firewall/rules', { method: 'POST', body: { action: 'delete', id: parseInt(id) } });
                                     toast(t('Reguła usunięta'), 'success');
@@ -6488,7 +6488,7 @@ async function renderSystemSettings(body) {
                     btn.addEventListener('click', async () => {
                         const ip = btn.dataset.fwUnbanIp;
                         const jail = btn.dataset.fwUnbanJail;
-                        if (!confirm(t('Odblokować IP ') + ip + '?')) return;
+                        if (!await confirmDialog(t('Odblokować IP ') + ip + '?')) return;
                         try {
                             await api('/firewall/unban', { method: 'POST', body: { jail, ip } });
                             toast(t('Odblokowano ') + ip, 'success');
@@ -6503,7 +6503,7 @@ async function renderSystemSettings(body) {
 
         // Firewall toggle
         wrap.querySelector('#fw-enable-btn')?.addEventListener('click', async () => {
-            if (!confirm(t('Włączyć firewall?'))) return;
+            if (!await confirmDialog(t('Włączyć firewall?'))) return;
             try {
                 await api('/firewall/toggle', { method: 'POST', body: { enable: true } });
                 toast(t('Firewall włączony'), 'success');
@@ -6512,7 +6512,7 @@ async function renderSystemSettings(body) {
         });
 
         wrap.querySelector('#fw-disable-btn')?.addEventListener('click', async () => {
-            if (!confirm(t('Wyłączyć firewall? Ruch sieciowy będzie niezabezpieczony.'))) return;
+            if (!await confirmDialog(t('Wyłączyć firewall? Ruch sieciowy będzie niezabezpieczony.'))) return;
             try {
                 await api('/firewall/toggle', { method: 'POST', body: { enable: false } });
                 toast(t('Firewall wyłączony'), 'warn');
@@ -6563,7 +6563,7 @@ async function renderSystemSettings(body) {
 
         // Apply defaults
         wrap.querySelector('#fw-defaults-btn')?.addEventListener('click', async () => {
-            if (!confirm(t('Zastosować domyślne reguły EthOS? Obecne reguły zostaną zachowane.'))) return;
+            if (!await confirmDialog(t('Zastosować domyślne reguły EthOS? Obecne reguły zostaną zachowane.'))) return;
             try {
                 await api('/firewall/rules', { method: 'POST', body: { action: 'reset_defaults' } });
                 toast(t('Domyślne reguły zastosowane'), 'success');
@@ -6620,7 +6620,7 @@ async function renderSystemSettings(body) {
 
             if (newPort !== settings.port) {
                 // Confirm restart
-                if (!confirm(t('Zmiana portu z {old} na {new} wymaga restartu serwera.').replace('{old}', settings.port).replace('{new}', newPort) + `\n\n` + t('Po restarcie otwórz:') + `\nhttp://${location.hostname}:${newPort}\n\n` + t('Kontynuować?'))) {
+                if (!await confirmDialog(t('Zmiana portu z {old} na {new} wymaga restartu serwera.').replace('{old}', settings.port).replace('{new}', newPort) + `\n\n` + t('Po restarcie otwórz:') + `\nhttp://${location.hostname}:${newPort}\n\n` + t('Kontynuować?'))) {
                     return;
                 }
             }
