@@ -232,6 +232,14 @@ def install(os_disk, data_disk, progress_cb=None):
             progress_cb(phase, pct, msg)
 
     try:
+        # Cleanup stale mounts from any previous failed attempt
+        mount_dir = "/mnt/ethos-target"
+        _run("umount -R /mnt/ethos-target 2>/dev/null", timeout=15)
+        _run("umount /tmp/data-setup 2>/dev/null", timeout=15)
+        if os.path.isdir(mount_dir):
+            import shutil as _sh
+            _sh.rmtree(mount_dir, ignore_errors=True)
+
         # Phase 1: Wipe + partition OS disk
         _p("partitioning", 5, f"Wiping {os_dev}...")
         _wipe_disk(os_dev)
@@ -245,7 +253,6 @@ def install(os_disk, data_disk, progress_cb=None):
 
         # Phase 3: Clone root
         _p("cloning", 30, "Mounting target...")
-        mount_dir = "/mnt/ethos-target"
         os.makedirs(mount_dir, exist_ok=True)
 
         squashfs_img = "/opt/ethos/installer/images/ethos-root.sqsh"
@@ -688,6 +695,14 @@ def _setup_data_separation(mount_dir, data_part):
                 os.remove(src_dir)
             elif os.path.exists(src_dir):
                 os.remove(src_dir)
+
+            # Safety: force-remove anything still at src_dir (stale mounts, etc.)
+            if os.path.lexists(src_dir):
+                log.warning("Path still exists after cleanup: %s — force removing", src_dir)
+                if os.path.isdir(src_dir) and not os.path.islink(src_dir):
+                    shutil.rmtree(src_dir, ignore_errors=True)
+                if os.path.lexists(src_dir):
+                    os.remove(src_dir)
 
             # Create symlink: /opt/ethos/{dir} → /mnt/data/ethos/{dir}
             os.symlink(f"/mnt/data/ethos/{dirname}", src_dir)
