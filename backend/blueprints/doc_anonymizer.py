@@ -197,7 +197,38 @@ def _regex_detect(text):
 
 # -- LLM anonymization (for names, doctor names, facility names) ------------
 
-_SYSTEM_PROMPT = (
+
+def _call_llm(text_chunk):
+    """Send text to the local LLM in a subprocess to avoid blocking gevent."""
+    import subprocess as _sp
+    import tempfile
+
+    # Write text to a temp file for the subprocess
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False,
+                                     dir=_JOBS_DIR) as tf:
+        tf.write(text_chunk[:3000])
+        text_path = tf.name
+
+    script = r'''
+import sys, json, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__) if '__file__' in dir() else '.', '..'))
+sys.path.insert(0, '/opt/ethos/backend')
+sys.path.insert(0, '/opt/ethos/backend/blueprints')
+
+text_path = sys.argv[1]
+with open(text_path) as f:
+    text = f.read()
+os.unlink(text_path)
+
+from model_library import get_library
+lib = get_library()
+llm, err = lib.load_model()
+if err:
+    print(json.dumps([]))
+    sys.exit(0)
+lib.touch_model()
+
+system_prompt = (
     "Jestes ekspertem od anonimizacji dokumentow medycznych.\n"
     "Znajdz WSZYSTKIE imiona i nazwiska osob w tekscie.\n"
     "Szukaj: imion pacjentow, nazwisk, imion lekarzy (po 'dr', 'lek.', 'prof.').\n\n"
@@ -209,62 +240,60 @@ _SYSTEM_PROMPT = (
     "Jesli brak, zwroc: []\n"
     "Odpowiedz TYLKO JSON, bez komentarzy."
 )
+user_prompt = "Znajdz imiona, nazwiska i nazwy placowek w tekscie:\n\n---\n" + text + "\n---\n\nJSON:"
 
-_USER_PROMPT_TEMPLATE = (
-    "Znajdz imiona, nazwiska i nazwy placowek w tekscie:\n\n"
-    "---\n{text}\n---\n\n"
-    "JSON:"
+resp = llm.create_chat_completion(
+    messages=[
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ],
+    max_tokens=2048,
+    temperature=0.1,
 )
-
-
-def _call_llm(text_chunk):
-    """Send text to the local LLM and get PII entities back."""
-    try:
-        from model_library import get_library
-    except ImportError:
-        raise RuntimeError('AI Chat not installed - model_library unavailable')
-
-    lib = get_library()
-    llm, err = lib.load_model()
-    if err:
-        raise RuntimeError('Cannot load LLM model: ' + str(err))
-
-    lib.touch_model()
-
-    messages = [
-        {'role': 'system', 'content': _SYSTEM_PROMPT},
-        {'role': 'user', 'content': _USER_PROMPT_TEMPLATE.format(text=text_chunk[:3000])},
-    ]
-
-    resp = llm.create_chat_completion(
-        messages=messages,
-        max_tokens=2048,
-        temperature=0.1,
-    )
-
-    content = resp['choices'][0]['message']['content'].strip()
-
-    # Parse JSON from response -- handle markdown code blocks
-    if '```' in content:
-        match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', content, re.DOTALL)
-        if match:
-            content = match.group(1).strip()
+import re
+content = resp["choices"][0]["message"]["content"].strip()
+if "```" in content:
+    m = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', content, re.DOTALL)
+    if m:
+        content = m.group(1).strip()
+try:
+    entities = json.loads(content)
+    if not isinstance(entities, list):
+        entities = []
+except Exception:
+    m = re.search(r'\[.*\]', content, re.DOTALL)
+    if m:
+        try:
+            entities = json.loads(m.group(0))
+        except Exception:
+            entities = []
+    else:
+        entities = []
+result = [e for e in entities if isinstance(e, dict) and "text" in e and "category" in e]
+print(json.dumps(result, ensure_ascii=False))
+'''
 
     try:
-        entities = json.loads(content)
-        if not isinstance(entities, list):
-            entities = []
-    except json.JSONDecodeError:
-        match = re.search(r'\[.*\]', content, re.DOTALL)
-        if match:
-            try:
-                entities = json.loads(match.group(0))
-            except json.JSONDecodeError:
-                entities = []
-        else:
-            entities = []
-
-    return [e for e in entities if isinstance(e, dict) and 'text' in e and 'category' in e]
+        proc = _sp.run(
+            [sys.executable, '-c', script, text_path],
+            capture_output=True, text=True,
+            timeout=600,  # 10 min max
+            cwd='/opt/ethos/backend',
+        )
+        if proc.returncode != 0:
+            log.warning('[doc_anonymizer] LLM subprocess error: %s', proc.stderr[:500])
+            return []
+        result = json.loads(proc.stdout.strip())
+        return result
+    except _sp.TimeoutExpired:
+        log.warning('[doc_anonymizer] LLM subprocess timed out (600s)')
+        return []
+    except Exception as e:
+        log.warning('[doc_anonymizer] LLM subprocess error: %s', e)
+        return []
+    finally:
+        if os.path.exists(text_path):
+            os.unlink(text_path)
 
 
 def _normalize_category(cat):
