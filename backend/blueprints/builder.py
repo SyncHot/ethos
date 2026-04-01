@@ -21,6 +21,8 @@ from host import host_run as _host_run_base, host_run_stream as _host_run_stream
     app_path, data_path, log_path, q as _q
 from utils import load_json as _load_json, save_json as _save_json, fmt_bytes, register_pkg_routes, \
     require_tools, check_tool
+from blueprints.builder_spec import load_spec, save_spec, generate_default_spec, \
+    spec_to_shell_vars, DEFAULT_SPEC
 
 builder_bp = Blueprint('builder', __name__, url_prefix='/api/builder')
 
@@ -416,6 +418,56 @@ def cache_clear():
 
 
 # ═══════════════════════════════════════════════════════════
+#  API — Build Spec (Declarative YAML configuration)
+# ═══════════════════════════════════════════════════════════
+
+@builder_bp.route('/spec', methods=['GET'])
+def get_build_spec():
+    """Return current build spec (merged defaults + user overrides)."""
+    spec = load_spec()
+    return jsonify({'ok': True, 'spec': spec})
+
+
+@builder_bp.route('/spec', methods=['PUT'])
+def update_build_spec():
+    """Update build spec with provided values."""
+    data = request.json
+    if not data:
+        return jsonify({'error': 'No spec data provided'}), 400
+    try:
+        # Load current, merge updates, save
+        spec = load_spec()
+        for section, values in data.items():
+            if section in spec and isinstance(spec[section], dict) and isinstance(values, dict):
+                spec[section].update(values)
+            else:
+                spec[section] = values
+        save_spec(spec)
+        return jsonify({'ok': True, 'spec': spec})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@builder_bp.route('/spec', methods=['DELETE'])
+def reset_build_spec():
+    """Reset build spec to defaults."""
+    try:
+        import os as _os
+        path = data_path('build-spec.yaml')
+        if _os.path.isfile(path):
+            _os.unlink(path)
+        return jsonify({'ok': True, 'spec': DEFAULT_SPEC})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@builder_bp.route('/spec/defaults', methods=['GET'])
+def get_default_spec():
+    """Return the default build spec (unmodified)."""
+    return jsonify({'ok': True, 'spec': DEFAULT_SPEC})
+
+
+# ═══════════════════════════════════════════════════════════
 #  API — Build Release (SSE)
 # ═══════════════════════════════════════════════════════════
 
@@ -713,12 +765,20 @@ def _x86_wrapper_script(nasos: str) -> str:
     """Return bash wrapper script for building x86 image."""
     optional_js_list = ' '.join(_OPTIONAL_JS)
     optional_py_list = ' '.join(_OPTIONAL_PY)
+
+    # Load declarative build spec
+    spec = load_spec()
+    spec_vars = spec_to_shell_vars(spec)
+
     return f"""
 set -e
 set -o pipefail
 export DEBIAN_FRONTEND=noninteractive
 
 NASOS="{nasos}"
+
+# ── Declarative build spec (from data/build-spec.yaml) ──
+{spec_vars}
 
 # Check dependencies
 echo "STEP:2:Checking dependencies..."
@@ -727,8 +787,8 @@ for cmd in debootstrap parted mkfs.ext4 mkfs.vfat grub-install; do
         echo "STEP:3:Installing dependencies..."
         apt-get update -qq
         apt-get install -y -qq debootstrap parted dosfstools e2fsprogs \\
-            grub-pc-bin grub-efi-amd64-bin grub-common grub2-common \\
-            mtools xorriso isolinux debian-archive-keyring 2>/dev/null || true
+            grub-efi-amd64-bin grub-common grub2-common \\
+            mtools xorriso isolinux debian-archive-keyring squashfs-tools zstd cryptsetup-bin 2>/dev/null || true
         break
     fi
 done
@@ -742,23 +802,15 @@ fi
 
 echo "STEP:5:Preparing environment..."
 
-# Source config from the script but override with our values
+# Version from version.json (not overridden by spec)
 VERSION=$(python3 -c "import json; print(json.load(open('$NASOS/backend/version.json'))['version'])" 2>/dev/null || echo '2.4.0')
-BRAND_NAME=$(grep '^ETHOS_BRAND_NAME=' "$NASOS/install.conf" 2>/dev/null | cut -d'"' -f2)
-BRAND_NAME=${{BRAND_NAME:-EthOS}}
 FINAL_IMG="$NASOS/installer/images/ethos-x86.img"
 WORK_DIR="/tmp/ethos-x86-build-web"
-IMG_SIZE_GB=8
-DEBIAN_RELEASE="bookworm"
-DEFAULT_USER="nasadmin"
-DEFAULT_HOSTNAME="ethos"
-USER_PASS="ethos"
-NAS_PORT="9000"
 
 # ── Performance: use tmpfs (RAM) for build if enough memory ──
 TOTAL_RAM_MB=$(awk '/MemAvailable/{{print int($2/1024)}}' /proc/meminfo 2>/dev/null || echo 0)
 USE_TMPFS=0
-if [ "$TOTAL_RAM_MB" -gt 10000 ]; then
+if [ "$TOTAL_RAM_MB" -gt "$TMPFS_MIN_RAM_MB" ]; then
     USE_TMPFS=1
     echo "LOG:Available RAM: ${{TOTAL_RAM_MB}}MB — building in tmpfs (RAM) for speed"
     mkdir -p "$WORK_DIR"
@@ -808,17 +860,15 @@ LOOP_DEV=$(losetup --find --show --partscan "$OUTPUT_IMG")
 echo "LOG:Loop device: $LOOP_DEV"
 
 parted -s "$LOOP_DEV" mklabel gpt
-parted -s "$LOOP_DEV" mkpart ESP fat32 1MiB 257MiB
+parted -s "$LOOP_DEV" mkpart ESP fat32 1MiB ${{ESP_SIZE_MB}}MiB
 parted -s "$LOOP_DEV" set 1 esp on
-parted -s "$LOOP_DEV" mkpart primary 257MiB 258MiB
-parted -s "$LOOP_DEV" set 2 bios_grub on
-parted -s "$LOOP_DEV" mkpart primary ext4 258MiB 100%
+parted -s "$LOOP_DEV" mkpart primary ext4 ${{ESP_SIZE_MB}}MiB 100%
 partprobe "$LOOP_DEV"; sleep 1
 
 mkfs.vfat -F32 "${{LOOP_DEV}}p1"
-mkfs.ext4 -q -L "ethos-root" "${{LOOP_DEV}}p3"
+mkfs.ext4 -q -L "ethos-root" "${{LOOP_DEV}}p2"
 
-mount "${{LOOP_DEV}}p3" "$WORK_DIR/root"
+mount "${{LOOP_DEV}}p2" "$WORK_DIR/root"
 mkdir -p "$WORK_DIR/root/boot/efi"
 mount "${{LOOP_DEV}}p1" "$WORK_DIR/root/boot/efi"
 
@@ -831,20 +881,7 @@ if [ -d "$DEBOOTSTRAP_CACHE" ] && [ "$(ls -A "$DEBOOTSTRAP_CACHE" 2>/dev/null)" 
     echo "LOG:Using debootstrap cache ($(du -sh "$DEBOOTSTRAP_CACHE" | cut -f1))"
 fi
 debootstrap --cache-dir="$DEBOOTSTRAP_CACHE" --variant=minbase --include=\\
-systemd,systemd-sysv,dbus,\\
-linux-image-amd64,\\
-grub-pc-bin,grub-efi-amd64-bin,grub-efi-amd64,grub-common,grub2-common,\\
-efibootmgr,\\
-sudo,openssh-server,curl,ca-certificates,gnupg,lsb-release,fail2ban,\\
-iproute2,iputils-ping,wireguard-tools,qrencode,\\
-bash,locales,console-setup,\\
-python3,python3-minimal,\\
-dosfstools,e2fsprogs,parted,util-linux,\\
-rsync,smartmontools,ethtool,hdparm,cpufrequtils,\\
-cryptsetup,\\
-usbutils,pciutils,lm-sensors,nut,\\
-avahi-daemon,libnss-mdns,\\
-kmod,udev \\
+$DEBOOTSTRAP_INCLUDE \\
     "$DEBIAN_RELEASE" "$WORK_DIR/root" http://deb.debian.org/debian 2>&1 | \\
     while IFS= read -r line; do
         if echo "$line" | grep -qE "^I: Retrieving"; then
@@ -913,11 +950,11 @@ chroot "$ROOT" apt-get update -qq 2>&1 | tail -3 || true
 chroot "$ROOT" bash -c 'DEBIAN_FRONTEND=noninteractive apt-get install -y -qq network-manager dbus-user-session' 2>&1 | tail -5 || echo "LOG:network-manager install issue"
 
 echo "LOG:Creating fstab, hostname, locale..."
-ROOT_UUID=$(blkid -s UUID -o value "${{LOOP_DEV}}p3")
+ROOT_UUID=$(blkid -s UUID -o value "${{LOOP_DEV}}p2")
 EFI_UUID=$(blkid -s UUID -o value "${{LOOP_DEV}}p1")
 
 if [ -z "$ROOT_UUID" ]; then
-    echo "LOG:ERROR: Failed to read root partition UUID (${{LOOP_DEV}}p3)"
+    echo "LOG:ERROR: Failed to read root partition UUID (${{LOOP_DEV}}p2)"
     exit 1
 fi
 if [ -z "$EFI_UUID" ]; then
@@ -1246,17 +1283,12 @@ GRUBDEF
 echo "STEP:52:System configured"
 
 # ── Step 4: GRUB ──
-echo "STEP:53:Installing GRUB (BIOS + UEFI)..."
+echo "STEP:53:Installing GRUB (UEFI)..."
 
 echo "LOG:apt-get update in chroot..."
 chroot "$ROOT" apt-get update -qq 2>&1 | tail -3 || true
 echo "LOG:Installing GRUB packages..."
-chroot "$ROOT" bash -c 'DEBIAN_FRONTEND=noninteractive apt-get install -y -qq grub-efi-amd64 grub-pc-bin grub-common efibootmgr' 2>&1 | tail -5 || true
-
-echo "LOG:GRUB BIOS install..."
-chroot "$ROOT" grub-install --target=i386-pc --boot-directory=/boot "$LOOP_DEV" 2>/dev/null || \\
-    grub-install --target=i386-pc --boot-directory="$ROOT/boot" "$LOOP_DEV" 2>/dev/null || \\
-    echo "LOG:BIOS grub-install warning (UEFI ok)"
+chroot "$ROOT" bash -c 'DEBIAN_FRONTEND=noninteractive apt-get install -y -qq grub-efi-amd64 grub-common efibootmgr' 2>&1 | tail -5 || true
 
 mkdir -p "$ROOT/boot/efi/EFI/BOOT"
 echo "LOG:GRUB UEFI install..."
@@ -1288,6 +1320,12 @@ menuentry "EthOS v${{VERSION}} (recovery)" {{
 GRUBCFG
 
 cp "$ROOT/boot/grub/grub.cfg" "$ROOT/boot/efi/EFI/BOOT/grub.cfg"
+
+# Copy kernel + initrd to ESP recovery directory
+mkdir -p "$ROOT/boot/efi/EFI/recovery"
+cp "$ROOT/boot/${{KERN##*/}}" "$ROOT/boot/efi/EFI/recovery/vmlinuz" 2>/dev/null || true
+cp "$ROOT/boot/${{INITRD##*/}}" "$ROOT/boot/efi/EFI/recovery/initrd.img" 2>/dev/null || true
+echo "LOG:Recovery kernel copied to ESP"
 
 echo "STEP:60:GRUB installed"
 
@@ -1322,7 +1360,7 @@ chroot "$ROOT" apt-get install -y -qq \
 echo "LOG:Installing builder tools..."
 chroot "$ROOT" apt-get install -y -qq \
     debootstrap squashfs-tools xorriso isolinux \
-    parted dosfstools e2fsprogs mtools \
+    parted dosfstools e2fsprogs btrfs-progs mtools \
     2>&1 | tail -5 || echo "LOG:Some builder tools skipped"
 
 echo "STEP:73:Installing kernel and firmware from backports..."
@@ -1366,7 +1404,100 @@ rm -rf "$ROOT/var/lib/apt/lists/"* 2>/dev/null || true
 echo "LOG:Disk usage before initramfs:"
 df -h "$ROOT" 2>/dev/null | tail -1 || true
 
-# Rebuild initramfs with firmware (only for the new kernel)
+# ── SquashFS + OverlayFS initramfs hooks ──
+# These hooks allow the installed system to boot from a read-only squashfs
+# with a persistent overlay on the ext4 root partition.
+echo "LOG:Adding SquashFS overlay boot support to initramfs..."
+mkdir -p "$ROOT/etc/initramfs-tools/hooks"
+mkdir -p "$ROOT/etc/initramfs-tools/scripts/local-bottom"
+
+cat > "$ROOT/etc/initramfs-tools/hooks/ethos-overlay" <<'HOOKEOF'
+#!/bin/sh
+PREREQ=""
+prereqs() {{ echo "$PREREQ"; }}
+case "$1" in prereqs) prereqs; exit 0 ;; esac
+. /usr/share/initramfs-tools/hook-functions
+manual_add_modules squashfs
+manual_add_modules overlay
+manual_add_modules loop
+manual_add_modules dm_verity
+manual_add_modules dm_mod
+copy_exec /sbin/losetup /sbin
+# dm-verity support (optional — only if veritysetup is installed)
+if [ -x /sbin/veritysetup ]; then
+    copy_exec /sbin/veritysetup /sbin
+fi
+HOOKEOF
+chmod +x "$ROOT/etc/initramfs-tools/hooks/ethos-overlay"
+
+cat > "$ROOT/etc/initramfs-tools/scripts/local-bottom/ethos-overlay" <<'OVERLAYEOF'
+#!/bin/sh
+# EthOS SquashFS + OverlayFS boot script with optional dm-verity integrity check
+# Converts ext4 root into: squashfs (read-only lower) + ext4 overlay (writable upper)
+# Activated by kernel cmdline: ethos.rootfs=squashfs
+PREREQ=""
+prereqs() {{ echo "$PREREQ"; }}
+case "$1" in prereqs) prereqs; exit 0 ;; esac
+grep -q "ethos.rootfs=squashfs" /proc/cmdline || exit 0
+[ -f "${{rootmnt}}/root.sqsh" ] || exit 0
+modprobe -q squashfs 2>/dev/null || true
+modprobe -q overlay 2>/dev/null || true
+modprobe -q loop 2>/dev/null || true
+mkdir -p /run/ethos-rootfs
+mount --move "${{rootmnt}}" /run/ethos-rootfs
+
+# dm-verity integrity check (optional — runs if roothash and verity data exist)
+VERITY_OK=0
+ROOTHASH_FILE="/run/ethos-rootfs/boot/efi/EFI/ethos/roothash"
+VERITY_FILE="/run/ethos-rootfs/root.sqsh.verity"
+SQSH_FILE="/run/ethos-rootfs/root.sqsh"
+if [ -f "$ROOTHASH_FILE" ] && [ -f "$VERITY_FILE" ] && command -v veritysetup >/dev/null 2>&1; then
+    modprobe -q dm_verity 2>/dev/null || true
+    modprobe -q dm_mod 2>/dev/null || true
+    ROOTHASH=$(cat "$ROOTHASH_FILE")
+    LOOP_DEV=$(losetup --find --show "$SQSH_FILE")
+    HASH_DEV=$(losetup --find --show "$VERITY_FILE")
+    if veritysetup open --hash-offset=0 "$LOOP_DEV" ethos-verity "$HASH_DEV" "$ROOTHASH" 2>/dev/null; then
+        # Verified! Mount from dm-verity device
+        mkdir -p /run/ethos-sqsh
+        if mount -t squashfs -o ro /dev/mapper/ethos-verity /run/ethos-sqsh 2>/dev/null; then
+            VERITY_OK=1
+        else
+            veritysetup close ethos-verity 2>/dev/null
+        fi
+    fi
+    if [ "$VERITY_OK" = "0" ]; then
+        losetup -d "$LOOP_DEV" 2>/dev/null
+        losetup -d "$HASH_DEV" 2>/dev/null
+        echo "ethos-overlay: dm-verity verification FAILED — falling back to unverified mount"
+    fi
+fi
+
+# Standard mount (no verity or verity unavailable)
+if [ "$VERITY_OK" = "0" ]; then
+    mkdir -p /run/ethos-sqsh
+    if ! mount -t squashfs -o ro,loop "$SQSH_FILE" /run/ethos-sqsh 2>/dev/null; then
+        mount --move /run/ethos-rootfs "${{rootmnt}}"
+        exit 0
+    fi
+fi
+
+mkdir -p /run/ethos-rootfs/overlay/upper /run/ethos-rootfs/overlay/work
+if ! mount -t overlay overlay \
+    -o "lowerdir=/run/ethos-sqsh,upperdir=/run/ethos-rootfs/overlay/upper,workdir=/run/ethos-rootfs/overlay/work" \
+    "${{rootmnt}}" 2>/dev/null; then
+    umount /run/ethos-sqsh 2>/dev/null
+    [ "$VERITY_OK" = "1" ] && veritysetup close ethos-verity 2>/dev/null
+    mount --move /run/ethos-rootfs "${{rootmnt}}"
+    exit 0
+fi
+mkdir -p "${{rootmnt}}/.squashfs" "${{rootmnt}}/.rootfs"
+mount --move /run/ethos-rootfs "${{rootmnt}}/.rootfs"
+mount --move /run/ethos-sqsh "${{rootmnt}}/.squashfs"
+OVERLAYEOF
+chmod +x "$ROOT/etc/initramfs-tools/scripts/local-bottom/ethos-overlay"
+
+# Rebuild initramfs with firmware + overlay hooks (only for the new kernel)
 echo "LOG:Przebudowa initramfs..."
 if [[ -n "$NEW_KERN" ]]; then
     chroot "$ROOT" update-initramfs -u -k "$NEW_KERN" 2>&1 | tail -5 || echo "LOG:initramfs update failed"
@@ -1627,16 +1758,17 @@ chroot "$ROOT" systemctl set-default multi-user.target 2>/dev/null || true
 cat > "$ROOT/etc/systemd/system/ethos.service" <<SVCETHOS
 [Unit]
 Description=EthOS NAS
-After=network.target
+After=network.target local-fs.target
 Wants=network.target
 Conflicts=ethos-preboot.service
+RequiresMountsFor=/mnt/data
 
 [Service]
 Type=notify
 NotifyAccess=all
 WorkingDirectory=/opt/ethos
 EnvironmentFile=/opt/ethos/ethos.env
-ExecStartPre=/bin/mkdir -p /opt/ethos/data /opt/ethos/logs /opt/ethos/backups /opt/ethos/uploads
+ExecStartPre=/bin/bash -c 'for d in data logs backups uploads; do p="/opt/ethos/\$d"; [ -L "\$p" ] && mkdir -p "\$(readlink "\$p")" || mkdir -p "\$p"; done'
 Environment=PYTHONPATH=/opt/ethos/backend
 ExecStart=/opt/ethos/venv/bin/python /opt/ethos/backend/app.py
 Restart=on-failure
@@ -1728,6 +1860,71 @@ echo "LOG:Wykorzystanie dysku w obrazie:"
 du -sh "$ROOT"/* 2>/dev/null | sort -rh | head -10 || true
 df -h "$ROOT" 2>/dev/null || true
 
+# ── Step 7a: Create SquashFS immutable root image ──
+# SquashFS = golden image of the installed system (NOT the installer USB state).
+# Data dirs are symlinked to /mnt/data/ethos/ for persistence across updates.
+if command -v mksquashfs >/dev/null 2>&1; then
+    echo "STEP:87:Creating SquashFS immutable root image..."
+
+    ETHOS_DIR_SQ="$ROOT/opt/ethos"
+    # Prepare clean installed-system state (squashfs should NOT contain installer artifacts)
+    for d in data logs backups uploads; do
+        rm -rf "$ETHOS_DIR_SQ/$d"
+        ln -s "/mnt/data/ethos/$d" "$ETHOS_DIR_SQ/$d"
+    done
+    rm -f "$ETHOS_DIR_SQ/.installer-mode" "$ETHOS_DIR_SQ/.installed"
+    mkdir -p "$ROOT/mnt/data"
+    mkdir -p "$ROOT/mnt/snapshots"
+
+    SQSH_OUT="$WORK_DIR/ethos-root.sqsh"
+    mksquashfs "$ROOT" "$SQSH_OUT" \
+        -comp zstd -Xcompression-level $SQSH_COMPRESSION_LEVEL \
+        -noappend -no-progress \
+        -e "$ROOT/proc" \
+        -e "$ROOT/sys" \
+        -e "$ROOT/dev" \
+        -e "$ROOT/run" \
+        -e "$ROOT/tmp" \
+        -e "$ROOT/media" \
+        -e "$ROOT/lost+found" \
+        -e "$ROOT/swapfile" \
+        -e "$ROOT/var/swap" \
+        -e "$ROOT/opt/ethos/installer/images" \
+        2>&1 | tail -10
+
+    SQSH_SIZE=$(stat -c%s "$SQSH_OUT" 2>/dev/null || echo 0)
+    echo "LOG:SquashFS image: $((SQSH_SIZE / 1048576))MB"
+
+    # Generate dm-verity hash tree for integrity verification
+    if command -v veritysetup >/dev/null 2>&1; then
+        echo "LOG:Generating dm-verity hash tree..."
+        VERITY_OUT="$WORK_DIR/ethos-root.sqsh.verity"
+        ROOTHASH_OUT="$WORK_DIR/ethos-root.sqsh.roothash"
+        veritysetup format "$SQSH_OUT" "$VERITY_OUT" 2>/dev/null | tee /tmp/verity-format.txt
+        ROOTHASH=$(grep "Root hash:" /tmp/verity-format.txt | awk '{{print $NF}}')
+        if [ -n "$ROOTHASH" ]; then
+            echo "$ROOTHASH" > "$ROOTHASH_OUT"
+            VERITY_SIZE=$(stat -c%s "$VERITY_OUT" 2>/dev/null || echo 0)
+            echo "LOG:dm-verity: root hash=$ROOTHASH, hash tree=$((VERITY_SIZE / 1024))KB"
+        else
+            echo "LOG:WARNING: dm-verity format failed — skipping"
+            rm -f "$VERITY_OUT" "$ROOTHASH_OUT"
+        fi
+        rm -f /tmp/verity-format.txt
+    else
+        echo "LOG:veritysetup not found — dm-verity disabled (install cryptsetup-bin for verified boot)"
+    fi
+
+    # Restore USB/installer state (so the USB can still boot the installer)
+    for d in data logs backups uploads; do
+        rm -f "$ETHOS_DIR_SQ/$d"
+        mkdir -p "$ETHOS_DIR_SQ/$d"
+    done
+    touch "$ETHOS_DIR_SQ/.installer-mode"
+else
+    echo "LOG:WARNING: mksquashfs not found — SquashFS image will not be created"
+fi
+
 sync
 
 for m in boot/efi run sys proc dev/shm dev/pts dev; do
@@ -1737,6 +1934,71 @@ done
 sleep 1
 umount "$ROOT" 2>/dev/null || \
     umount -l "$ROOT" 2>/dev/null || true
+
+# ── Step 7b: Inject install image(s) into filesystem ──
+ROOT_PART="${{LOOP_DEV}}p2"
+
+if [ -f "$WORK_DIR/ethos-root.sqsh" ]; then
+    # SquashFS available — inject as primary install method
+    echo "STEP:88:Injecting SquashFS image..."
+    mount "$ROOT_PART" "$WORK_DIR/root"
+    mkdir -p "$WORK_DIR/root/opt/ethos/installer/images"
+    cp "$WORK_DIR/ethos-root.sqsh" "$WORK_DIR/root/opt/ethos/installer/images/ethos-root.sqsh"
+    SQSH_FINAL=$(stat -c%s "$WORK_DIR/root/opt/ethos/installer/images/ethos-root.sqsh" 2>/dev/null || echo 0)
+    echo "LOG:SquashFS image injected: $((SQSH_FINAL / 1048576))MB"
+    rm -f "$WORK_DIR/ethos-root.sqsh"
+
+    # Inject dm-verity data alongside squashfs
+    if [ -f "$WORK_DIR/ethos-root.sqsh.verity" ] && [ -f "$WORK_DIR/ethos-root.sqsh.roothash" ]; then
+        cp "$WORK_DIR/ethos-root.sqsh.verity" "$WORK_DIR/root/opt/ethos/installer/images/ethos-root.sqsh.verity"
+        cp "$WORK_DIR/ethos-root.sqsh.roothash" "$WORK_DIR/root/opt/ethos/installer/images/ethos-root.sqsh.roothash"
+        # Also copy to boot/efi for the installed system
+        mkdir -p "$WORK_DIR/root/boot/efi/EFI/ethos"
+        cp "$WORK_DIR/ethos-root.sqsh.roothash" "$WORK_DIR/root/boot/efi/EFI/ethos/roothash"
+        echo "LOG:dm-verity data injected"
+        rm -f "$WORK_DIR/ethos-root.sqsh.verity" "$WORK_DIR/ethos-root.sqsh.roothash"
+    fi
+    sync
+    umount "$WORK_DIR/root" 2>/dev/null || \
+        umount -l "$WORK_DIR/root" 2>/dev/null || true
+else
+    # Fallback: create dd+zstd compressed root image for non-squashfs install
+    echo "STEP:88:Creating compressed root image (fallback)..."
+    COMPRESSED_IMG="$WORK_DIR/ethos-root.img.zst"
+
+    echo "LOG:Running e2fsck on root partition..."
+    e2fsck -f -y "$ROOT_PART" 2>&1 | tail -5 || true
+
+    echo "LOG:Shrinking root filesystem to minimum size..."
+    resize2fs -M "$ROOT_PART" 2>&1 | tail -5
+    BLOCK_COUNT=$(dumpe2fs -h "$ROOT_PART" 2>/dev/null | awk '/Block count:/ {{print $3}}')
+    BLOCK_SIZE=$(dumpe2fs -h "$ROOT_PART" 2>/dev/null | awk '/Block size:/ {{print $3}}')
+    if [ -n "$BLOCK_COUNT" ] && [ -n "$BLOCK_SIZE" ]; then
+        USED_BYTES=$((BLOCK_COUNT * BLOCK_SIZE))
+        SAFE_BYTES=$(( (USED_BYTES * 105 / 100 + 4194303) / 4194304 * 4194304 ))
+        DD_COUNT=$((SAFE_BYTES / 4194304))
+        echo "LOG:Root partition minimized: ${{BLOCK_COUNT}} blocks x ${{BLOCK_SIZE}}B = $((USED_BYTES / 1048576))MB"
+        dd if="$ROOT_PART" bs=4M count=$DD_COUNT status=none | zstd -3 -T0 -o "$COMPRESSED_IMG" 2>&1 || true
+        if [ -f "$COMPRESSED_IMG" ]; then
+            COMP_SIZE=$(stat -c%s "$COMPRESSED_IMG" 2>/dev/null || echo 0)
+            echo "LOG:Compressed root image: $((COMP_SIZE / 1048576))MB"
+        fi
+    fi
+
+    echo "LOG:Expanding root filesystem back..."
+    resize2fs "$ROOT_PART" 2>&1 | tail -3
+
+    mount "$ROOT_PART" "$WORK_DIR/root"
+    if [ -f "$COMPRESSED_IMG" ]; then
+        mkdir -p "$WORK_DIR/root/opt/ethos/installer/images"
+        cp "$COMPRESSED_IMG" "$WORK_DIR/root/opt/ethos/installer/images/ethos-root.img.zst"
+        echo "LOG:Compressed root image injected into filesystem"
+        rm -f "$COMPRESSED_IMG"
+    fi
+    sync
+    umount "$WORK_DIR/root" 2>/dev/null || \
+        umount -l "$WORK_DIR/root" 2>/dev/null || true
+fi
 
 echo "STEP:90:Finalizacja obrazu IMG..."
 

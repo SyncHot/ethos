@@ -83,6 +83,20 @@ function renderBuilderApp(body) {
         .bl-download-links { display:flex; gap:10px; justify-content:center; margin-top:10px; }
         .bl-download-links a { display:inline-flex; align-items:center; gap:6px; background:var(--accent); color:#fff; padding:6px 14px; border-radius:6px; text-decoration:none; font-size:12px; }
         .bl-download-links a:hover { filter:brightness(1.1); }
+
+        .bl-spec-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+        .bl-spec-card { background:var(--bg-primary,#0f172a); border:1px solid var(--border); border-radius:8px; padding:14px; }
+        .bl-spec-card-title { font-size:12px; font-weight:600; color:var(--text-secondary); text-transform:uppercase; letter-spacing:.5px; margin-bottom:10px; display:flex; align-items:center; gap:6px; }
+        .bl-spec-card-title i { font-size:11px; color:var(--accent); }
+        .bl-spec-field { margin-bottom:8px; }
+        .bl-spec-field label { display:block; font-size:11px; color:var(--text-muted); margin-bottom:3px; }
+        .bl-spec-field input, .bl-spec-field select { width:100%; box-sizing:border-box; }
+        .bl-spec-pkgs { background:var(--bg-primary,#0f172a); border:1px solid var(--border); border-radius:6px; padding:8px 10px; font-family:monospace; font-size:11px; color:var(--text-secondary); max-height:140px; overflow-y:auto; line-height:1.6; white-space:pre-wrap; word-break:break-all; }
+        .bl-spec-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:12px; }
+        .bl-spec-tag { display:inline-block; background:var(--bg-hover); border:1px solid var(--border); border-radius:4px; padding:2px 7px; font-size:11px; color:var(--text-secondary); margin:2px; }
+        .bl-spec-tag .remove { cursor:pointer; margin-left:4px; color:var(--text-muted); }
+        .bl-spec-tag .remove:hover { color:#ef4444; }
+        .bl-spec-info { font-size:11px; color:var(--text-muted); margin-top:6px; }
     </style>
 
     <div class="bl-wrap">
@@ -90,6 +104,7 @@ function renderBuilderApp(body) {
             <div class="bl-nav active" data-tab="release"><i class="fas fa-box"></i> Release</div>
             <div class="bl-nav" data-tab="image"><i class="fas fa-hdd"></i> Obraz systemu</div>
             <div class="bl-nav" data-tab="artifacts"><i class="fas fa-archive"></i> Artefakty</div>
+            <div class="bl-nav" data-tab="spec"><i class="fas fa-file-code"></i> Build Spec</div>
         </div>
         <div class="bl-body" id="bl-body"></div>
     </div>`;
@@ -127,6 +142,7 @@ function renderBuilderApp(body) {
     function renderTab() {
         if (state.tab === 'release') renderRelease();
         else if (state.tab === 'image') renderImage();
+        else if (state.tab === 'spec') renderSpec();
         else renderArtifacts();
     }
 
@@ -803,6 +819,254 @@ function renderBuilderApp(body) {
         } catch (e) {
             toast(e.message || t('Błąd'), 'error');
         }
+    }
+
+    /* ═══════════════════════════════════════════
+       Build Spec Tab
+    ═══════════════════════════════════════════ */
+    async function renderSpec() {
+        blBody.innerHTML = '<div class="bl-empty"><i class="fas fa-spinner fa-spin"></i> ' + t('Ładowanie...') + '</div>';
+        let spec, defaults;
+        try {
+            const res = await api('/builder/spec');
+            spec = res.spec || {};
+            const defRes = await api('/builder/spec/defaults');
+            defaults = defRes.spec || {};
+        } catch (e) {
+            blBody.innerHTML = '<div class="bl-empty">' + t('Nie udało się pobrać konfiguracji build spec') + '</div>';
+            return;
+        }
+
+        const base = spec.base || {};
+        const identity = spec.identity || {};
+        const partitions = spec.partitions || {};
+        const buildCfg = spec.build || {};
+        const security = spec.security || {};
+        const packages = spec.packages || {};
+        const services = spec.services || {};
+
+        blBody.innerHTML = `
+        <div class="bl-section">
+            <div class="bl-section-title"><i class="fas fa-file-code"></i> ${t('Deklaratywna konfiguracja buildera')}</div>
+            <div class="bl-spec-info" style="margin-bottom:12px">${t('Konfiguracja jest zapisywana w')} <code>data/build-spec.yaml</code>. ${t('Zmiany wpływają na następny build.')}</div>
+
+            <div class="bl-spec-grid">
+                <!-- Base -->
+                <div class="bl-spec-card">
+                    <div class="bl-spec-card-title"><i class="fas fa-cube"></i> ${t('Baza systemu')}</div>
+                    <div class="bl-spec-field">
+                        <label>${t('Release Debian')}</label>
+                        <select class="bl-select" id="sp-release">
+                            <option value="bookworm" ${base.release === 'bookworm' ? 'selected' : ''}>Bookworm (12)</option>
+                            <option value="trixie" ${base.release === 'trixie' ? 'selected' : ''}>Trixie (13)</option>
+                        </select>
+                    </div>
+                    <div class="bl-spec-field">
+                        <label>${t('Architektura')}</label>
+                        <input class="bl-input" id="sp-arch" value="${base.arch || 'amd64'}" readonly style="opacity:.6">
+                    </div>
+                    <div class="bl-spec-field">
+                        <label>${t('Rozmiar obrazu (GB)')}</label>
+                        <input class="bl-input" id="sp-imgsize" type="number" min="4" max="32" value="${base.img_size_gb || 8}">
+                    </div>
+                </div>
+
+                <!-- Identity -->
+                <div class="bl-spec-card">
+                    <div class="bl-spec-card-title"><i class="fas fa-id-badge"></i> ${t('Tożsamość')}</div>
+                    <div class="bl-spec-field">
+                        <label>${t('Hostname')}</label>
+                        <input class="bl-input" id="sp-hostname" value="${identity.hostname || 'ethos'}">
+                    </div>
+                    <div class="bl-spec-field">
+                        <label>${t('Nazwa marki')}</label>
+                        <input class="bl-input" id="sp-brand" value="${identity.brand_name || 'EthOS'}">
+                    </div>
+                    <div class="bl-spec-field">
+                        <label>${t('Domyślny użytkownik')}</label>
+                        <input class="bl-input" id="sp-user" value="${identity.default_user || 'nasadmin'}">
+                    </div>
+                    <div class="bl-spec-field">
+                        <label>${t('Port NAS')}</label>
+                        <input class="bl-input" id="sp-port" type="number" min="1" max="65535" value="${identity.nas_port || 9000}">
+                    </div>
+                </div>
+
+                <!-- Partitions -->
+                <div class="bl-spec-card">
+                    <div class="bl-spec-card-title"><i class="fas fa-hdd"></i> ${t('Partycje')}</div>
+                    <div class="bl-spec-field">
+                        <label>${t('ESP (MB)')}</label>
+                        <input class="bl-input" id="sp-esp" type="number" min="128" max="1024" value="${partitions.esp_mb || 256}">
+                    </div>
+                    <div class="bl-spec-field">
+                        <label>SquashFS</label>
+                        <select class="bl-select" id="sp-sqsh">
+                            <option value="true" ${partitions.squashfs !== false ? 'selected' : ''}>${t('Włączony')}</option>
+                            <option value="false" ${partitions.squashfs === false ? 'selected' : ''}>${t('Wyłączony')}</option>
+                        </select>
+                    </div>
+                    <div class="bl-spec-field">
+                        <label>dm-verity</label>
+                        <select class="bl-select" id="sp-verity">
+                            <option value="true" ${partitions.verity !== false ? 'selected' : ''}>${t('Włączony')}</option>
+                            <option value="false" ${partitions.verity === false ? 'selected' : ''}>${t('Wyłączony')}</option>
+                        </select>
+                    </div>
+                    <div class="bl-spec-field">
+                        <label>${t('Dane (filesystem)')}</label>
+                        <input class="bl-input" value="${partitions.data_type || 'btrfs'}" readonly style="opacity:.6">
+                    </div>
+                </div>
+
+                <!-- Build -->
+                <div class="bl-spec-card">
+                    <div class="bl-spec-card-title"><i class="fas fa-cogs"></i> ${t('Parametry buildu')}</div>
+                    <div class="bl-spec-field">
+                        <label>${t('Kompresja zstd (poziom)')}</label>
+                        <input class="bl-input" id="sp-comp" type="number" min="1" max="19" value="${buildCfg.compression_level || 3}">
+                    </div>
+                    <div class="bl-spec-field">
+                        <label>${t('Min RAM do tmpfs (MB)')}</label>
+                        <input class="bl-input" id="sp-tmpfs" type="number" min="4000" max="64000" value="${buildCfg.tmpfs_min_ram_mb || 10000}">
+                    </div>
+                    <div class="bl-spec-field">
+                        <label>${t('Cache debootstrap')}</label>
+                        <select class="bl-select" id="sp-cache-deb">
+                            <option value="true" ${buildCfg.cache_debootstrap !== false ? 'selected' : ''}>${t('Włączony')}</option>
+                            <option value="false" ${buildCfg.cache_debootstrap === false ? 'selected' : ''}>${t('Wyłączony')}</option>
+                        </select>
+                    </div>
+                    <div class="bl-spec-field">
+                        <label>${t('Cache apt')}</label>
+                        <select class="bl-select" id="sp-cache-apt">
+                            <option value="true" ${buildCfg.cache_apt !== false ? 'selected' : ''}>${t('Włączony')}</option>
+                            <option value="false" ${buildCfg.cache_apt === false ? 'selected' : ''}>${t('Wyłączony')}</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Security -->
+                <div class="bl-spec-card">
+                    <div class="bl-spec-card-title"><i class="fas fa-shield-alt"></i> ${t('Bezpieczeństwo')}</div>
+                    <div class="bl-spec-field">
+                        <label>UFW</label>
+                        <select class="bl-select" id="sp-ufw">
+                            <option value="true" ${security.ufw_default_deny !== false ? 'selected' : ''}>${t('Włączony')}</option>
+                            <option value="false" ${security.ufw_default_deny === false ? 'selected' : ''}>${t('Wyłączony')}</option>
+                        </select>
+                    </div>
+                    <div class="bl-spec-field">
+                        <label>Fail2Ban</label>
+                        <select class="bl-select" id="sp-f2b">
+                            <option value="true" ${security.fail2ban !== false ? 'selected' : ''}>${t('Włączony')}</option>
+                            <option value="false" ${security.fail2ban === false ? 'selected' : ''}>${t('Wyłączony')}</option>
+                        </select>
+                    </div>
+                    <div class="bl-spec-field">
+                        <label>${t('SSH Password Auth')}</label>
+                        <select class="bl-select" id="sp-sshpw">
+                            <option value="true" ${security.ssh_password_auth !== false ? 'selected' : ''}>${t('Włączony')}</option>
+                            <option value="false" ${security.ssh_password_auth === false ? 'selected' : ''}>${t('Wyłączony')}</option>
+                        </select>
+                    </div>
+                    <div class="bl-spec-field">
+                        <label>${t('Porty UFW')}</label>
+                        <input class="bl-input" id="sp-ufw-ports" value="${(security.ufw_allow_ports || [9000, 22]).join(', ')}">
+                    </div>
+                </div>
+
+                <!-- Services -->
+                <div class="bl-spec-card">
+                    <div class="bl-spec-card-title"><i class="fas fa-server"></i> ${t('Usługi')}</div>
+                    <div class="bl-spec-field">
+                        <label>${t('Włączone')}</label>
+                        <div class="bl-spec-pkgs" id="sp-svc-enable">${(services.enable || []).join('\\n')}</div>
+                    </div>
+                    <div class="bl-spec-field">
+                        <label>${t('Wyłączone')}</label>
+                        <div class="bl-spec-pkgs" id="sp-svc-disable">${(services.disable || []).join('\\n')}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Packages -->
+        <div class="bl-section">
+            <div class="bl-section-title"><i class="fas fa-cubes"></i> ${t('Pakiety')}</div>
+            <div class="bl-spec-grid">
+                <div class="bl-spec-card" style="grid-column:1/-1">
+                    <div class="bl-spec-card-title"><i class="fas fa-box-open"></i> Debootstrap (${(packages.debootstrap || []).length} ${t('pakietów')})</div>
+                    <div class="bl-spec-pkgs" id="sp-pkgs-deb">${(packages.debootstrap || []).join(', ')}</div>
+                </div>
+                <div class="bl-spec-card">
+                    <div class="bl-spec-card-title"><i class="fas fa-plus-circle"></i> APT Extra (${(packages.apt_extra || []).length})</div>
+                    <div class="bl-spec-pkgs" id="sp-pkgs-apt">${(packages.apt_extra || []).join(', ')}</div>
+                </div>
+                <div class="bl-spec-card">
+                    <div class="bl-spec-card-title"><i class="fab fa-python"></i> Pip (${(packages.pip || []).length})</div>
+                    <div class="bl-spec-pkgs" id="sp-pkgs-pip">${(packages.pip || []).join(', ')}</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="bl-spec-actions">
+            <button class="bl-btn bl-btn-outline" id="sp-reset"><i class="fas fa-undo"></i> ${t('Przywróć domyślne')}</button>
+            <button class="bl-btn bl-btn-green" id="sp-save"><i class="fas fa-save"></i> ${t('Zapisz konfigurację')}</button>
+        </div>`;
+
+        // Save spec
+        blBody.querySelector('#sp-save').onclick = async () => {
+            const updated = {
+                base: {
+                    release: blBody.querySelector('#sp-release').value,
+                    arch: 'amd64',
+                    img_size_gb: parseInt(blBody.querySelector('#sp-imgsize').value) || 8,
+                },
+                identity: {
+                    hostname: blBody.querySelector('#sp-hostname').value.trim() || 'ethos',
+                    brand_name: blBody.querySelector('#sp-brand').value.trim() || 'EthOS',
+                    default_user: blBody.querySelector('#sp-user').value.trim() || 'nasadmin',
+                    nas_port: parseInt(blBody.querySelector('#sp-port').value) || 9000,
+                },
+                partitions: {
+                    esp_mb: parseInt(blBody.querySelector('#sp-esp').value) || 256,
+                    squashfs: blBody.querySelector('#sp-sqsh').value === 'true',
+                    verity: blBody.querySelector('#sp-verity').value === 'true',
+                },
+                build: {
+                    compression_level: parseInt(blBody.querySelector('#sp-comp').value) || 3,
+                    tmpfs_min_ram_mb: parseInt(blBody.querySelector('#sp-tmpfs').value) || 10000,
+                    cache_debootstrap: blBody.querySelector('#sp-cache-deb').value === 'true',
+                    cache_apt: blBody.querySelector('#sp-cache-apt').value === 'true',
+                },
+                security: {
+                    ufw_default_deny: blBody.querySelector('#sp-ufw').value === 'true',
+                    fail2ban: blBody.querySelector('#sp-f2b').value === 'true',
+                    ssh_password_auth: blBody.querySelector('#sp-sshpw').value === 'true',
+                    ufw_allow_ports: blBody.querySelector('#sp-ufw-ports').value.split(',').map(p => parseInt(p.trim())).filter(Boolean),
+                },
+            };
+            try {
+                await api('/builder/spec', { method: 'PUT', body: JSON.stringify(updated) });
+                toast(t('Konfiguracja zapisana'), 'success');
+            } catch (e) {
+                toast(e.message || t('Błąd zapisu'), 'error');
+            }
+        };
+
+        // Reset to defaults
+        blBody.querySelector('#sp-reset').onclick = async () => {
+            if (!await confirmDialog(t('Przywrócić domyślną konfigurację?'))) return;
+            try {
+                await api('/builder/spec', { method: 'DELETE' });
+                toast(t('Przywrócono domyślne'), 'success');
+                renderSpec();
+            } catch (e) {
+                toast(e.message || t('Błąd'), 'error');
+            }
+        };
     }
 
     /* ─── Init ─── */
