@@ -58,7 +58,7 @@ DEFAULT_SPEC = {
             'bash', 'locales', 'console-setup',
             'python3', 'python3-minimal',
             'dosfstools', 'e2fsprogs', 'btrfs-progs', 'parted', 'util-linux',
-            'squashfs-tools',
+            'squashfs-tools', 'zstd',
             'rsync', 'smartmontools', 'ethtool', 'hdparm', 'cpufrequtils',
             'cryptsetup',
             'usbutils', 'pciutils', 'lm-sensors', 'nut',

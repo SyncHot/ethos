@@ -275,6 +275,7 @@ def install(os_disk, data_disk, progress_cb=None):
                 _run(f"mount {_part(os_dev, 2)} {mount_dir}", timeout=30)
             except RuntimeError as e:
                 log.warning("dd clone failed: %s — falling back to rsync", e)
+                _p("cloning", 35, f"dd failed ({e}) — falling back to file copy...")
                 # Re-format partition (dd may have left it corrupt)
                 _run(f"mkfs.ext4 -F -L EthOS-Root-A {_part(os_dev, 2)}", timeout=120)
                 _run(f"mount {_part(os_dev, 2)} {mount_dir}", timeout=30)
