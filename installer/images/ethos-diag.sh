@@ -89,7 +89,7 @@ FILES=(
     "/opt/ethos/venv/bin/python"
     "/opt/ethos/backend/requirements.txt"
     "/opt/ethos-firstboot.sh"
-    "/opt/ethos-installer/preboot-server.py"
+    "/opt/ethos/installer/preboot/app.py"
     "/usr/local/bin/ethos-ap"
     "/etc/systemd/system/ethos.service"
     "/etc/systemd/system/ethos-firstboot.service"
@@ -157,7 +157,7 @@ else
 fi
 
 # Test HTTP response
-CURL_OUT=$(curl -sf -o /dev/null -w "%{http_code}" "http://localhost:9000/" 2>/dev/null || echo "000")
+CURL_OUT=$(curl -sf -m 5 -o /dev/null -w "%{http_code}" "http://localhost:9000/" 2>/dev/null || echo "000")
 if [[ "$CURL_OUT" == "200" ]]; then
     ok "HTTP localhost:9000/ → 200 OK"
 elif [[ "$CURL_OUT" != "000" ]]; then
@@ -167,15 +167,15 @@ else
 fi
 
 # Check if it's the real EthOS or preboot
-SETUP_OUT=$(curl -sf "http://localhost:9000/api/setup/status" 2>/dev/null || echo "")
+SETUP_OUT=$(curl -sf -m 5 "http://localhost:9000/api/setup/status" 2>/dev/null || echo "")
 if [[ -n "$SETUP_OUT" ]]; then
     ok "Real EthOS is running (/api/setup/status responds)"
     info "  Response: $(echo "$SETUP_OUT" | head -c 200)"
 else
-    PREBOOT_OUT=$(curl -sf "http://localhost:9000/api/progress" 2>/dev/null || echo "")
+    PREBOOT_OUT=$(curl -sf -m 5 "http://localhost:9000/health" 2>/dev/null || echo "")
     if [[ -n "$PREBOOT_OUT" ]]; then
-        warn "Preboot server is running (not real EthOS)"
-        info "  Progress: $PREBOOT_OUT"
+        ok "Preboot installer is running (/health responds)"
+        info "  Response: $PREBOOT_OUT"
     else
         warn "Neither EthOS nor preboot responding on :9000"
     fi
@@ -221,6 +221,20 @@ else
     fail "ethos.env not found"
 fi
 
+# ── 9b. Firewall ──
+section "9b. Firewall (UFW)"
+UFW_STATUS=$(sudo ufw status verbose 2>/dev/null || echo "unknown")
+if echo "$UFW_STATUS" | grep -q "Status: active"; then
+    warn "UFW is ACTIVE"
+    echo "$UFW_STATUS" | while read -r line; do
+        info "  $line"
+    done
+elif echo "$UFW_STATUS" | grep -q "Status: inactive"; then
+    ok "UFW is inactive (expected during installer mode)"
+else
+    info "UFW status: $UFW_STATUS"
+fi
+
 # ── 10. Python venv check ──
 section "10. Python Venv"
 if [[ -x /opt/ethos/venv/bin/python ]]; then
@@ -261,18 +275,24 @@ INSTALLED=false
 NETWORK=false
 PORT_OK=false
 ETHOS_OK=false
+PREBOOT_OK=false
 
 [[ -f /opt/ethos/.installed ]] && INSTALLED=true
 [[ -n "$IP" ]] && NETWORK=true
 [[ -n "$PORT_PID" ]] && PORT_OK=true
 [[ -n "$SETUP_OUT" ]] && ETHOS_OK=true
+[[ -n "$PREBOOT_OUT" ]] && PREBOOT_OK=true
 
 if $ETHOS_OK; then
     ok "EthOS is running and serving on :9000"
     info "Open http://${IP:-192.168.42.1}:9000 in browser"
+elif $PREBOOT_OK; then
+    ok "EthOS Installer (preboot) is running on :9000"
+    info "Open http://${IP:-192.168.42.1}:9000 in browser"
 elif $PORT_OK && ! $ETHOS_OK; then
-    warn "Something is on port 9000 but it's not EthOS wizard"
-    info "Check: journalctl -u ethos -n 50"
+    warn "Something is on port 9000 but not responding to health check"
+    info "Check: sudo journalctl -u ethos-preboot -n 50"
+    info "Or:    sudo journalctl -u ethos -n 50"
 elif $INSTALLED && ! $PORT_OK; then
     fail "EthOS is installed but NOT running"
     info "Try: sudo systemctl restart ethos"

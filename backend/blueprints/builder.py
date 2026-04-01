@@ -1149,9 +1149,11 @@ chroot "$ROOT" ufw default allow outgoing 2>/dev/null || true
 chroot "$ROOT" ufw allow from $LAN to any port 22 proto tcp comment 'SSH' 2>/dev/null || true
 chroot "$ROOT" ufw allow from $LAN to any port 9000 proto tcp comment 'EthOS Web UI' 2>/dev/null || true
 chroot "$ROOT" ufw allow from $LAN to any port 80,443 proto tcp comment 'HTTP / HTTPS' 2>/dev/null || true
-# Enable UFW non-interactively
-chroot "$ROOT" bash -c 'echo "y" | ufw enable' 2>/dev/null || true
-chroot "$ROOT" systemctl enable ufw 2>/dev/null || true
+# NOTE: Do NOT enable UFW here — during installer mode (USB boot) there is
+# no firewall needed (open hotspot). UFW is enabled by the installer when
+# it writes the system to the target disk (system_ops.configure_services).
+# Enabling UFW in chroot can also produce broken iptables state.
+echo "LOG:UFW rules configured (will be enabled after installation)"
 
 # ── SSH Hardening ──
 echo "LOG:SSH hardening..."

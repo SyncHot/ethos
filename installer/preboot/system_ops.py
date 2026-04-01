@@ -174,11 +174,13 @@ def write_setup_done(username, hostname, root_dir="/"):
 
 
 def configure_services(root_dir="/"):
-    """Enable ethos.service and disable preboot on target."""
+    """Enable ethos.service, disable preboot, and activate UFW on target."""
     if root_dir == "/":
         _run("systemctl enable ethos.service 2>/dev/null")
         _run("systemctl disable ethos-preboot.service 2>/dev/null")
         _run("systemctl disable ethos-firstboot.service 2>/dev/null")
+        _run("bash -c 'echo y | ufw enable' 2>/dev/null")
+        _run("systemctl enable ufw 2>/dev/null")
     else:
         _run(f"chroot {root_dir} systemctl enable ethos.service 2>/dev/null")
         _run(
@@ -187,6 +189,9 @@ def configure_services(root_dir="/"):
         _run(
             f"chroot {root_dir} systemctl disable ethos-firstboot.service 2>/dev/null"
         )
+        # Enable UFW on target (rules were pre-configured by the builder)
+        _run(f"chroot {root_dir} bash -c 'echo y | ufw enable' 2>/dev/null")
+        _run(f"chroot {root_dir} systemctl enable ufw 2>/dev/null")
     log.info("Services configured (root=%s)", root_dir)
 
 
