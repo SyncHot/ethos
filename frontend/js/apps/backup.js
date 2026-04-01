@@ -338,6 +338,18 @@ function renderBackupApp(body) {
                 </div>
                 <pre id="snap-progress-log" class="bak-progress-log"></pre>
             </div>
+            <!-- Btrfs instant snapshots -->
+            <div id="btrfs-snap-section" class="bak-hidden">
+                <div class="bak-section-header bak-mt12">
+                    <h4><i class="fas fa-bolt"></i> ${t('Natychmiastowe punkty (Btrfs)')}</h4>
+                    <button class="fm-toolbar-btn btn-green" id="btrfs-snap-create-btn"><i class="fas fa-camera"></i> ${t('Instant snapshot')}</button>
+                </div>
+                <p class="bak-panel-desc bak-small12-muted"><i class="fas fa-info-circle"></i>
+                    ${t('Natychmiastowe migawki CoW partycji danych. Tworzenie <1s, bez kopiowania plików.')}
+                </p>
+                <div id="btrfs-snap-list"></div>
+            </div>
+            <div class="bak-section-header bak-mt12"><h4>${t('Archiwalne punkty przywracania')}</h4></div>
             <div id="snap-list"></div>
 
             <!-- Received snapshots refresh (hidden control for programmatic use) -->
@@ -2119,6 +2131,7 @@ function renderBackupApp(body) {
             snapshots = r.snapshots || [];
             renderSnapshots();
             loadSnapSpace();
+            loadBtrfsSnapshots();
         } catch(e) { console.error('loadSnapshots', e); }
     }
 
@@ -2140,6 +2153,71 @@ function renderBackupApp(body) {
             else if (pct > 10) hint.innerHTML = '<span class="bak-text-warning"><i class="fas fa-exclamation-triangle"></i> ' + t('Punkty zajmują ponad 10% dysku — rozważ zmniejszenie ich liczby.') + '</span>';
             else hint.textContent = '';
         } catch(e) { /* ignore — space endpoint may not be available */ }
+    }
+
+    // ── Btrfs instant snapshots ──
+    async function loadBtrfsSnapshots() {
+        try {
+            var r = await api('/backup/btrfs-snapshots');
+            var sec = QS('#btrfs-snap-section');
+            if (!sec) return;
+            if (!r.ok) { sec.classList.add('bak-hidden'); return; }
+            sec.classList.remove('bak-hidden');
+            var list = QS('#btrfs-snap-list');
+            var snaps = r.snapshots || [];
+            if (!snaps.length) {
+                list.innerHTML = `<div class="bak-small12-muted bak-p8">${t('Brak migawek btrfs.')}</div>`;
+                return;
+            }
+            var html = '';
+            snaps.forEach(function(s) {
+                var dt = s.created ? new Date(s.created) : null;
+                var dateStr = dt ? dt.toLocaleString(getLocale()) : s.btrfs_created || s.id;
+                var label = s.label || s.id;
+                var isAuto = s.auto ? ' <span class="bak-badge bak-badge-green bak-fs10">' + t('auto') + '</span>' : '';
+                html += '<div class="bak-item bak-backup-item" style="border-left:4px solid #3b82f6;">';
+                html += '<div class="bak-flex1">';
+                html += '<div class="bak-fw600"><i class="fas fa-bolt bak-text-accent bak-mr4"></i>' + label + isAuto + '</div>';
+                html += '<div class="bak-small12-muted-mt">' + dateStr + ' · Btrfs CoW</div>';
+                html += '</div>';
+                html += '<div class="bak-row-noshrink">';
+                html += '<button class="fm-toolbar-btn btn-green btrfs-snap-rollback-btn" data-id="' + s.id + '" title="' + t('Przywróć') + '"><i class="fas fa-undo"></i></button>';
+                html += '<button class="fm-toolbar-btn bak-text-red btrfs-snap-del-btn" data-id="' + s.id + '" title="' + t('Usuń') + '"><i class="fas fa-trash"></i></button>';
+                html += '</div></div>';
+            });
+            list.innerHTML = html;
+            list.querySelectorAll('.btrfs-snap-del-btn').forEach(function(btn) {
+                btn.onclick = async function() {
+                    if (!await confirmDialog(t('Usunąć migawkę btrfs {id}?').replace('{id}', btn.dataset.id))) return;
+                    var r = await api('/backup/btrfs-snapshot/' + btn.dataset.id, { method: 'DELETE' });
+                    if (r.error) { toast(r.error, 'error'); return; }
+                    toast(t('Migawka usunięta'), 'success');
+                    loadBtrfsSnapshots();
+                };
+            });
+            list.querySelectorAll('.btrfs-snap-rollback-btn').forEach(function(btn) {
+                btn.onclick = async function() {
+                    if (!await confirmDialog(t('Przywrócić partycję danych z migawki {id}? EthOS zostanie zrestartowany.').replace('{id}', btn.dataset.id))) return;
+                    var r = await api('/backup/btrfs-snapshot/' + btn.dataset.id + '/rollback', { method: 'POST' });
+                    if (r.error) { toast(r.error, 'error'); return; }
+                    toast(r.message || t('Przywrócono — restart EthOS...'), 'success');
+                };
+            });
+        } catch(e) { /* btrfs not available */ }
+    }
+
+    // Wire up btrfs create button
+    var btrfsCreateBtn = QS('#btrfs-snap-create-btn');
+    if (btrfsCreateBtn) {
+        btrfsCreateBtn.onclick = async function() {
+            btrfsCreateBtn.disabled = true;
+            try {
+                var r = await api('/backup/btrfs-snapshot', { method: 'POST', body: JSON.stringify({ label: '' }) });
+                if (r.error) { toast(r.error, 'error'); return; }
+                toast(t('Migawka btrfs utworzona') + ' (' + (r.snapshot?.id || '') + ')', 'success');
+                loadBtrfsSnapshots();
+            } finally { btrfsCreateBtn.disabled = false; }
+        };
     }
 
     function renderSnapshots() {

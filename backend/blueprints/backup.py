@@ -44,7 +44,7 @@ from blueprints.profiles_db import get_db_connection, init_profiles_db
 
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from host import app_path, data_path, log_path, q
+from host import app_path, data_path, log_path, q, host_run
 from crypto_utils import encrypt_secret, decrypt_secret
 
 backup_bp = Blueprint('backup', __name__, url_prefix='/api/backup')
@@ -2103,6 +2103,223 @@ def _docker_cmd(args, timeout=120):
 def _docker_ok():
     _, rc = _docker_cmd(['info'], timeout=5)
     return rc == 0
+
+
+# ── Btrfs native snapshots (instant CoW) ──
+BTRFS_SNAPSHOTS_MOUNT = '/mnt/snapshots'
+BTRFS_DATA_MOUNT = '/mnt/data'
+
+
+def _btrfs_available():
+    """Check if /mnt/data is a btrfs filesystem with snapshot support."""
+    if not os.path.ismount(BTRFS_DATA_MOUNT):
+        return False
+    r = host_run(f'stat -f -c %T {q(BTRFS_DATA_MOUNT)}', timeout=5)
+    return r.returncode == 0 and 'btrfs' in r.stdout.lower()
+
+
+def _ensure_snapshots_mounted():
+    """Mount @snapshots subvolume if not already mounted."""
+    if os.path.ismount(BTRFS_SNAPSHOTS_MOUNT):
+        return True
+    os.makedirs(BTRFS_SNAPSHOTS_MOUNT, exist_ok=True)
+    # Find the device for /mnt/data
+    r = host_run(f"findmnt -n -o SOURCE {q(BTRFS_DATA_MOUNT)}", timeout=5)
+    if r.returncode != 0 or not r.stdout.strip():
+        return False
+    dev = r.stdout.strip().split('[')[0]  # strip subvol suffix like [/@data]
+    r = host_run(
+        f"mount -o subvol=@snapshots,noatime,compress=zstd:3 {q(dev)} {q(BTRFS_SNAPSHOTS_MOUNT)}",
+        timeout=15
+    )
+    return r.returncode == 0
+
+
+@backup_bp.route('/btrfs-snapshots', methods=['GET'])
+def list_btrfs_snapshots():
+    """List native btrfs snapshots of the data partition."""
+    if not _btrfs_available():
+        return jsonify({'ok': False, 'error': 'Btrfs not available', 'snapshots': []})
+    if not _ensure_snapshots_mounted():
+        return jsonify({'ok': False, 'error': 'Cannot mount @snapshots', 'snapshots': []})
+
+    snapshots = []
+    try:
+        for name in sorted(os.listdir(BTRFS_SNAPSHOTS_MOUNT), reverse=True):
+            snap_path = os.path.join(BTRFS_SNAPSHOTS_MOUNT, name)
+            if not os.path.isdir(snap_path):
+                continue
+            # Read metadata if available
+            meta_file = os.path.join(snap_path, '.snap_meta.json')
+            meta = {'id': name, 'type': 'btrfs'}
+            if os.path.isfile(meta_file):
+                try:
+                    with open(meta_file) as f:
+                        meta.update(json.load(f))
+                except Exception:
+                    pass
+            # Get btrfs subvolume info for creation time
+            r = host_run(f'btrfs subvolume show {q(snap_path)}', timeout=10)
+            if r.returncode == 0:
+                for line in r.stdout.splitlines():
+                    line = line.strip()
+                    if line.startswith('Creation time:'):
+                        meta['btrfs_created'] = line.split(':', 1)[1].strip()
+            if 'created' not in meta:
+                meta['created'] = meta.get('btrfs_created', name)
+            snapshots.append(meta)
+    except Exception as e:
+        logger.exception("Error listing btrfs snapshots")
+        return jsonify({'ok': False, 'error': str(e), 'snapshots': []})
+
+    return jsonify({'ok': True, 'snapshots': snapshots})
+
+
+@backup_bp.route('/btrfs-snapshot', methods=['POST'])
+def create_btrfs_snapshot():
+    """Create an instant btrfs snapshot of the data partition (@data → @snapshots)."""
+    if not _btrfs_available():
+        return jsonify({'error': 'Btrfs not available on data partition'}), 400
+    if not _ensure_snapshots_mounted():
+        return jsonify({'error': 'Cannot mount @snapshots subvolume'}), 500
+
+    data = request.json or {}
+    label = data.get('label', '').strip()
+    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+    snap_name = f'snap_{ts}'
+    snap_path = os.path.join(BTRFS_SNAPSHOTS_MOUNT, snap_name)
+
+    # Create read-only btrfs snapshot (instant, CoW — O(1) operation)
+    r = host_run(
+        f'btrfs subvolume snapshot -r {q(BTRFS_DATA_MOUNT)} {q(snap_path)}',
+        timeout=30
+    )
+    if r.returncode != 0:
+        return jsonify({'error': f'Snapshot failed: {r.stderr[:200]}'}), 500
+
+    # Write metadata
+    meta = {
+        'id': snap_name,
+        'label': label or f'Snapshot {datetime.now().strftime("%Y-%m-%d %H:%M")}',
+        'created': datetime.now().isoformat(),
+        'type': 'btrfs',
+        'hostname': _read_file_safe('/etc/hostname', 'unknown').strip(),
+    }
+    try:
+        with open(os.path.join(snap_path, '.snap_meta.json'), 'w') as f:
+            json.dump(meta, f, indent=2)
+    except OSError:
+        pass  # read-only snapshot — metadata write may fail, that's OK
+
+    _emit('snapshot_created', meta)
+    logger.info("Btrfs snapshot created: %s", snap_name)
+    return jsonify({'ok': True, 'snapshot': meta})
+
+
+@backup_bp.route('/btrfs-snapshot/<snap_id>', methods=['DELETE'])
+def delete_btrfs_snapshot(snap_id):
+    """Delete a btrfs snapshot."""
+    if not re.match(r'^snap_\d{8}_\d{6}$', snap_id):
+        return jsonify({'error': 'Invalid snapshot ID'}), 400
+    snap_path = os.path.join(BTRFS_SNAPSHOTS_MOUNT, snap_id)
+    if not os.path.isdir(snap_path):
+        return jsonify({'error': 'Snapshot not found'}), 404
+
+    r = host_run(f'btrfs subvolume delete {q(snap_path)}', timeout=30)
+    if r.returncode != 0:
+        return jsonify({'error': f'Delete failed: {r.stderr[:200]}'}), 500
+
+    logger.info("Btrfs snapshot deleted: %s", snap_id)
+    return jsonify({'ok': True})
+
+
+@backup_bp.route('/btrfs-snapshot/<snap_id>/rollback', methods=['POST'])
+def rollback_btrfs_snapshot(snap_id):
+    """Rollback data partition to a btrfs snapshot.
+
+    This replaces @data with the snapshot content. The current @data
+    is renamed to @data.replaced. Requires a service restart.
+    """
+    if not re.match(r'^snap_\d{8}_\d{6}$', snap_id):
+        return jsonify({'error': 'Invalid snapshot ID'}), 400
+    if not _ensure_snapshots_mounted():
+        return jsonify({'error': 'Cannot mount @snapshots'}), 500
+
+    snap_path = os.path.join(BTRFS_SNAPSHOTS_MOUNT, snap_id)
+    if not os.path.isdir(snap_path):
+        return jsonify({'error': 'Snapshot not found'}), 404
+
+    # Find the btrfs device
+    r = host_run(f"findmnt -n -o SOURCE {q(BTRFS_DATA_MOUNT)}", timeout=5)
+    if r.returncode != 0:
+        return jsonify({'error': 'Cannot find data device'}), 500
+    dev = r.stdout.strip().split('[')[0]
+
+    # Mount top-level btrfs (subvolid=5) to manipulate subvolumes
+    top_mount = '/tmp/btrfs-rollback'
+    os.makedirs(top_mount, exist_ok=True)
+    try:
+        host_run(f'umount {q(top_mount)} 2>/dev/null', timeout=10)
+        r = host_run(f'mount -o subvolid=5 {q(dev)} {q(top_mount)}', timeout=15)
+        if r.returncode != 0:
+            return jsonify({'error': f'Cannot mount top-level btrfs: {r.stderr[:200]}'}), 500
+
+        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+        data_old = os.path.join(top_mount, f'@data.replaced.{ts}')
+        data_new = os.path.join(top_mount, '@data')
+        snap_src = os.path.join(top_mount, f'@snapshots/{snap_id}')
+
+        # Unmount @data before rename
+        host_run(f'umount {q(BTRFS_DATA_MOUNT)} 2>/dev/null', timeout=15)
+
+        # Rename current @data
+        r = host_run(f'mv {q(data_new)} {q(data_old)}', timeout=15)
+        if r.returncode != 0:
+            # Try to remount and bail
+            host_run(f'mount -o subvol=@data,noatime,compress=zstd:3 {q(dev)} {q(BTRFS_DATA_MOUNT)}', timeout=15)
+            return jsonify({'error': f'Cannot rename @data: {r.stderr[:200]}'}), 500
+
+        # Create writable snapshot from the read-only backup
+        r = host_run(f'btrfs subvolume snapshot {q(snap_src)} {q(data_new)}', timeout=30)
+        if r.returncode != 0:
+            # Restore original
+            host_run(f'mv {q(data_old)} {q(data_new)}', timeout=15)
+            host_run(f'mount -o subvol=@data,noatime,compress=zstd:3 {q(dev)} {q(BTRFS_DATA_MOUNT)}', timeout=15)
+            return jsonify({'error': f'Snapshot restore failed: {r.stderr[:200]}'}), 500
+
+        # Remount the new @data
+        r = host_run(f'mount -o subvol=@data,noatime,compress=zstd:3 {q(dev)} {q(BTRFS_DATA_MOUNT)}', timeout=15)
+
+        # Clean up old @data (in background — may take time)
+        host_run(f'btrfs subvolume delete {q(data_old)} 2>/dev/null', timeout=60)
+
+        logger.info("Btrfs rollback to %s complete", snap_id)
+        _emit('snapshot_rollback', {'snapshot': snap_id})
+
+    finally:
+        host_run(f'umount {q(top_mount)} 2>/dev/null', timeout=10)
+
+    return jsonify({'ok': True, 'message': f'Rolled back to {snap_id}. Restart EthOS to apply.'})
+
+
+@backup_bp.route('/btrfs-info', methods=['GET'])
+def btrfs_info():
+    """Return btrfs filesystem info for the data partition."""
+    if not _btrfs_available():
+        return jsonify({'ok': False, 'btrfs': False})
+    r = host_run(f'btrfs filesystem usage -b {q(BTRFS_DATA_MOUNT)}', timeout=10)
+    info = {'ok': True, 'btrfs': True, 'raw': r.stdout if r.returncode == 0 else ''}
+    # Parse key metrics
+    for line in (r.stdout or '').splitlines():
+        line = line.strip()
+        if line.startswith('Device size:'):
+            info['device_size'] = int(''.join(c for c in line.split(':')[1] if c.isdigit()) or 0)
+        elif line.startswith('Used:'):
+            info['used'] = int(''.join(c for c in line.split(':')[1] if c.isdigit()) or 0)
+        elif line.startswith('Free (estimated):'):
+            val = line.split(':')[1].strip().split()[0]
+            info['free'] = int(''.join(c for c in val if c.isdigit()) or 0)
+    return jsonify(info)
 
 
 @backup_bp.route('/snapshots', methods=['GET'])
