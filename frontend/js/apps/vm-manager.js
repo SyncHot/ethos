@@ -251,8 +251,11 @@ function renderVMManager(body) {
                 else if (action === 'restart') await vmAction(id, 'restart');
                 else if (action === 'delete') {
                     if (!await confirmDialog(t('Usunąć tę maszynę wirtualną i jej dyski?'))) return;
-                    try { await api(`/vm/machines/${id}`, { method: 'DELETE' }); toast(t('VM usunięta'), 'success'); }
-                    catch { toast(t('Błąd usuwania'), 'error'); }
+                    try {
+                        const r = await api(`/vm/machines/${id}`, { method: 'DELETE' });
+                        if (r && r.error) { toast(r.error, 'error'); return; }
+                        toast(t('VM usunięta'), 'success');
+                    } catch { toast(t('Błąd usuwania'), 'error'); }
                 }
                 await loadMachines(); fillMachinesTable();
             });
@@ -1139,7 +1142,8 @@ function renderVMManager(body) {
             btn.addEventListener('click', async () => {
                 if (!await confirmDialog(`${t('Usunąć snapshot')} "${btn.dataset.delSnap}"?`)) return;
                 try {
-                    await api(`/vm/machines/${vm.id}/snapshots/${encodeURIComponent(btn.dataset.delSnap)}`, { method: 'DELETE' });
+                    const r = await api(`/vm/machines/${vm.id}/snapshots/${encodeURIComponent(btn.dataset.delSnap)}`, { method: 'DELETE' });
+                    if (r && r.error) { toast(r.error, 'error'); return; }
                     toast(t('Snapshot usunięty'), 'success');
                     renderSnapshotsPanel(dc);
                 } catch (e) { toast(e.message || t('Błąd'), 'error'); }
@@ -1249,7 +1253,8 @@ function renderVMManager(body) {
             btn.addEventListener('click', async () => {
                 if (!await confirmDialog(`${t('Usunąć obraz')} "${btn.dataset.delImg}"?`)) return;
                 try {
-                    await api(`/vm/images/${encodeURIComponent(btn.dataset.delImg)}`, { method: 'DELETE' });
+                    const r = await api(`/vm/images/${encodeURIComponent(btn.dataset.delImg)}`, { method: 'DELETE' });
+                    if (r && r.error) { toast(r.error, 'error'); return; }
                     toast(t('Obraz usunięty'), 'success');
                     await loadImages(); fillImagesTable();
                 } catch (e) { toast(e.message || t('Błąd usuwania'), 'error'); }
