@@ -1540,3 +1540,179 @@ def get_sysctl_params():
             pass
 
     return jsonify(result)
+
+
+# ── Config Export / Import ──────────────────────────────────────────────
+
+import zipfile
+import io
+import tempfile
+from flask import send_file
+
+_CONFIG_EXPORT_FILES = [
+    'notifications_config.json',
+    'shares.json',
+    'folder_passwords.json',
+    'power_config.json',
+    'update_config.json',
+    'ssl_config.json',
+    'domains.json',
+    'ssh_configs.json',
+    'ddns_config.json',
+    'ethos_packages.json',
+    'installed_apps.json',
+    'privileges.json',
+    'sandbox_policies.json',
+    'surveillance_settings.json',
+    'surveillance_cameras.json',
+    'rollback_auto.json',
+    'desktop_apps.json',
+    'antivirus_schedules.json',
+    'cloud_backup.json',
+]
+
+_SYSTEM_CONFIG_FILES = [
+    ('/etc/samba/smb.conf', 'system/smb.conf'),
+    ('/etc/exports', 'system/exports'),
+]
+
+
+@settings_bp.route('/config/export', methods=['POST'])
+def export_config():
+    """Export system config as a ZIP bundle."""
+
+    buf = io.BytesIO()
+    data_dir = _data_path()
+    manifest = {
+        'version': 1,
+        'exported': datetime.now().isoformat(),
+        'files': [],
+    }
+
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for fname in _CONFIG_EXPORT_FILES:
+            fpath = os.path.join(data_dir, fname)
+            if os.path.isfile(fpath):
+                zf.write(fpath, f'data/{fname}')
+                manifest['files'].append(f'data/{fname}')
+
+        env_path = os.path.join(ETHOS_ROOT, 'ethos.env')
+        if os.path.isfile(env_path):
+            zf.write(env_path, 'ethos.env')
+            manifest['files'].append('ethos.env')
+
+        for src, dst in _SYSTEM_CONFIG_FILES:
+            if os.path.isfile(src):
+                zf.write(src, dst)
+                manifest['files'].append(dst)
+
+        r = _host_run("awk -F: '$3 >= 1000 && $3 < 65534 {print $1\":\"$6\":\"$7}' /etc/passwd", timeout=5)
+        if r.returncode == 0:
+            zf.writestr('system/users.txt', r.stdout)
+            manifest['files'].append('system/users.txt')
+
+        r = _host_run("awk -F: '$3 >= 1000 {print}' /etc/group", timeout=5)
+        if r.returncode == 0:
+            zf.writestr('system/groups.txt', r.stdout)
+            manifest['files'].append('system/groups.txt')
+
+        r = _host_run("crontab -l 2>/dev/null", timeout=5)
+        if r.returncode == 0 and r.stdout.strip():
+            zf.writestr('system/crontab.txt', r.stdout)
+            manifest['files'].append('system/crontab.txt')
+
+        zf.writestr('manifest.json', json.dumps(manifest, indent=2))
+
+    buf.seek(0)
+    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+    return send_file(buf, mimetype='application/zip',
+                     as_attachment=True,
+                     download_name=f'ethos_config_{ts}.zip')
+
+
+@settings_bp.route('/config/import', methods=['POST'])
+def import_config():
+    """Import system config from uploaded ZIP bundle."""
+
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file uploaded'}), 400
+
+    f = request.files['file']
+    if not f.filename.endswith('.zip'):
+        return jsonify({'error': 'File must be a .zip archive'}), 400
+
+    try:
+        zdata = io.BytesIO(f.read())
+        zf = zipfile.ZipFile(zdata)
+    except Exception:
+        return jsonify({'error': 'Invalid ZIP file'}), 400
+
+    try:
+        manifest = json.loads(zf.read('manifest.json'))
+    except Exception:
+        return jsonify({'error': 'Missing or invalid manifest.json'}), 400
+
+    if manifest.get('version') != 1:
+        return jsonify({'error': 'Unsupported config version'}), 400
+
+    imported = []
+    errors = []
+    data_dir = _data_path()
+
+    for name in zf.namelist():
+        if name == 'manifest.json':
+            continue
+
+        try:
+            content = zf.read(name)
+
+            if name.startswith('data/'):
+                fname = name[5:]
+                if fname in _CONFIG_EXPORT_FILES:
+                    dst = os.path.join(data_dir, fname)
+                    with open(dst, 'wb') as out:
+                        out.write(content)
+                    imported.append(fname)
+
+            elif name == 'ethos.env':
+                dst = os.path.join(ETHOS_ROOT, 'ethos.env')
+                with open(dst, 'wb') as out:
+                    out.write(content)
+                imported.append('ethos.env')
+
+            elif name == 'system/smb.conf':
+                with open('/etc/samba/smb.conf', 'wb') as out:
+                    out.write(content)
+                _host_run("systemctl restart smbd 2>/dev/null", timeout=10)
+                imported.append('smb.conf')
+
+            elif name == 'system/exports':
+                with open('/etc/exports', 'wb') as out:
+                    out.write(content)
+                _host_run("exportfs -ra 2>/dev/null", timeout=10)
+                imported.append('exports')
+
+            elif name == 'system/crontab.txt':
+                tmp = tempfile.NamedTemporaryFile(mode='wb', suffix='.cron', delete=False)
+                tmp.write(content)
+                tmp.close()
+                _host_run(f"crontab {tmp.name}", timeout=5)
+                os.unlink(tmp.name)
+                imported.append('crontab')
+
+        except Exception as e:
+            errors.append(f'{name}: {e}')
+
+    zf.close()
+
+    try:
+        audit_log('Config imported', details={'imported': imported, 'errors': errors})
+    except Exception:
+        pass
+
+    return jsonify({
+        'ok': True,
+        'imported': imported,
+        'errors': errors,
+        'message': f'Imported {len(imported)} items' + (f', {len(errors)} errors' if errors else '')
+    })

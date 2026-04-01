@@ -111,7 +111,10 @@ try:
 except ImportError:
     _ups_status = lambda: {}
 from blueprints.power import power_bp
-from blueprints.notifications import notifications_bp
+from blueprints.encryption import encryption_bp
+from blueprints.ssd_cache import ssd_cache_bp
+from blueprints.hardware import hardware_bp
+from blueprints.notifications import notifications_bp, init_notifications
 from blueprints.dashboard import dashboard_bp
 from blueprints.admin_required import admin_required
 from blueprints.totp import totp_bp, is_totp_enabled, verify_totp_code, verify_backup_code
@@ -358,6 +361,9 @@ app.register_blueprint(settings_bp)
 app.register_blueprint(ssh_bp)
 app.register_blueprint(installer_bp)
 app.register_blueprint(power_bp, url_prefix='/api/power')
+app.register_blueprint(encryption_bp)
+app.register_blueprint(ssd_cache_bp)
+app.register_blueprint(hardware_bp)
 app.register_blueprint(notifications_bp)
 app.register_blueprint(totp_bp)
 app.register_blueprint(dashboard_bp)
@@ -735,6 +741,9 @@ _API_TO_APP = {
     '/api/rollback/': 'rollback',
     '/api/totp/': 'system-settings',
     '/api/firewall/': 'firewall',
+    '/api/encryption/': 'storage-manager',
+    '/api/cache/': 'storage-manager',
+    '/api/hardware/': 'system-settings',
 }
 
 # Admin-only apps — only role='admin' can access (matches admin_only: True in get_apps)
@@ -833,7 +842,8 @@ def _blueprint_auth_guard():
                         '/api/cloud-backup/', '/api/cron/', '/api/dashboard/',
                         '/api/dlna/', '/api/notifications/', '/api/raid/',
                         '/api/rollback/', '/api/tickets/', '/api/vm/',
-                        '/api/installer/')):
+                        '/api/installer/',
+                        '/api/encryption/', '/api/cache/', '/api/hardware/')):
         # Allow unauthenticated access to user auth validation
         if path == '/api/users/auth/validate':
             return
@@ -9901,6 +9911,7 @@ if __name__ == '__main__':
     init_resources_db()
     init_backup(socketio)
     init_eventlog(socketio)
+    init_notifications(socketio)
 
     # SIGTERM handler — log shutdown before dying (e.g. systemd restart)
     def _sigterm_handler(signum, frame):

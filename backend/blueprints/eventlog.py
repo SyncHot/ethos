@@ -48,6 +48,13 @@ def init_eventlog(socketio_instance):
     conn.execute('CREATE INDEX IF NOT EXISTS idx_level ON events(level)')
     conn.commit()
 
+    # Add audit columns if missing
+    for col, col_type in [('ip_address', 'TEXT'), ('user_agent', 'TEXT')]:
+        try:
+            conn.execute(f'ALTER TABLE events ADD COLUMN {col} {col_type}')
+        except Exception:
+            pass  # Column already exists
+
     # Check if empty and migrate
     try:
         count = conn.execute('SELECT COUNT(*) FROM events').fetchone()[0]
@@ -59,6 +66,14 @@ def init_eventlog(socketio_instance):
         _migrate_from_json()
 
     _log_startup()
+
+    # Auto-purge on startup
+    try:
+        rc = _load_retention_config()
+        if rc.get('auto_purge'):
+            _run_retention_purge(rc)
+    except Exception:
+        pass
 
 def _migrate_from_json():
     print(f"Migrating eventlog from {JSON_LOG_FILE}...")
@@ -141,7 +156,7 @@ def _log_startup():
 
     log('system', 'info', 'EthOS started', details=startup_details)
 
-def log(category, level, message, details=None):
+def log(category, level, message, details=None, ip_address=None, user_agent=None):
     if level not in LEVELS: level = 'info'
 
     ts = time.time()
@@ -150,8 +165,8 @@ def log(category, level, message, details=None):
     conn = get_db()
     try:
         conn.execute(
-            'INSERT INTO events (ts, time, category, level, message, details) VALUES (?, ?, ?, ?, ?, ?)',
-            (ts, t_str, category, level, message, json.dumps(details) if details else None)
+            'INSERT INTO events (ts, time, category, level, message, details, ip_address, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            (ts, t_str, category, level, message, json.dumps(details) if details else None, ip_address, user_agent)
         )
         conn.commit()
     except Exception:
@@ -165,7 +180,9 @@ def log(category, level, message, details=None):
         'category': category,
         'level': level,
         'message': message,
-        'details': details
+        'details': details,
+        'ip_address': ip_address,
+        'user_agent': user_agent
     }
 
     if _socketio:
@@ -192,6 +209,21 @@ def log(category, level, message, details=None):
         notify_event(category, level, message)
     except Exception:
         pass
+
+def log_with_request(category, level, message, details=None):
+    """Log with automatic IP and user-agent extraction from Flask request context."""
+    ip_addr = None
+    ua = None
+    try:
+        from flask import request as _req, has_request_context
+        if has_request_context():
+            ip_addr = _req.headers.get('X-Forwarded-For', _req.remote_addr)
+            if ip_addr and ',' in ip_addr:
+                ip_addr = ip_addr.split(',')[0].strip()
+            ua = _req.headers.get('User-Agent', '')[:256]
+    except Exception:
+        pass
+    log(category, level, message, details=details, ip_address=ip_addr, user_agent=ua)
 
 @eventlog_bp.route('/api/eventlog', methods=['POST'])
 def eventlog_create():
@@ -297,3 +329,112 @@ def eventlog_stats():
         conn.close()
 
     return jsonify({'total': total, 'by_category': by_category, 'by_level': by_level})
+
+_RETENTION_CONFIG = os.path.join(LOG_DIR, 'retention_config.json')
+
+def _load_retention_config():
+    try:
+        with open(_RETENTION_CONFIG, 'r') as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {'max_days': 90, 'max_entries': 50000, 'auto_purge': True}
+
+def _save_retention_config(config):
+    os.makedirs(os.path.dirname(_RETENTION_CONFIG), exist_ok=True)
+    with open(_RETENTION_CONFIG, 'w') as f:
+        json.dump(config, f, indent=2)
+
+def _run_retention_purge(config):
+    """Purge old events based on retention policy. Returns count purged."""
+    purged = 0
+    conn = get_db()
+    try:
+        if config.get('max_days', 0) > 0:
+            cutoff = time.time() - (config['max_days'] * 86400)
+            c = conn.execute('DELETE FROM events WHERE ts < ?', (cutoff,))
+            purged += c.rowcount
+        if config.get('max_entries', 0) > 0:
+            total = conn.execute('SELECT COUNT(*) FROM events').fetchone()[0]
+            if total > config['max_entries']:
+                excess = total - config['max_entries']
+                conn.execute(
+                    'DELETE FROM events WHERE id IN (SELECT id FROM events ORDER BY ts ASC LIMIT ?)',
+                    (excess,)
+                )
+                purged += excess
+        conn.commit()
+    finally:
+        conn.close()
+    return purged
+
+@eventlog_bp.route('/api/eventlog/retention', methods=['GET'])
+def eventlog_retention_get():
+    """Get current retention policy."""
+    config = _load_retention_config()
+    return jsonify(config)
+
+@eventlog_bp.route('/api/eventlog/retention', methods=['PUT'])
+def eventlog_retention_set():
+    """Set retention policy. Body: {max_days: int, max_entries: int, auto_purge: bool}"""
+    data = request.get_json(silent=True) or {}
+    config = _load_retention_config()
+
+    if 'max_days' in data:
+        val = int(data['max_days'])
+        if val < 0 or val > 3650:
+            return jsonify({'error': 'max_days must be 0-3650'}), 400
+        config['max_days'] = val
+    if 'max_entries' in data:
+        val = int(data['max_entries'])
+        if val < 0 or val > 1000000:
+            return jsonify({'error': 'max_entries must be 0-1000000'}), 400
+        config['max_entries'] = val
+    if 'auto_purge' in data:
+        config['auto_purge'] = bool(data['auto_purge'])
+
+    _save_retention_config(config)
+    if config['auto_purge']:
+        purged = _run_retention_purge(config)
+        return jsonify({'ok': True, 'purged': purged})
+    return jsonify({'ok': True})
+
+@eventlog_bp.route('/api/eventlog/purge', methods=['POST'])
+def eventlog_purge():
+    """Run retention purge now."""
+    config = _load_retention_config()
+    purged = _run_retention_purge(config)
+    log('system', 'info', f'Event log purged: {purged} entries removed')
+    return jsonify({'ok': True, 'purged': purged})
+
+@eventlog_bp.route('/api/eventlog/audit')
+def eventlog_audit():
+    """Security-focused audit view — login/security events with IP info."""
+    try:
+        limit = min(int(request.args.get('limit', 100)), 1000)
+    except (ValueError, TypeError):
+        limit = 100
+    try:
+        offset = int(request.args.get('offset', 0))
+    except (ValueError, TypeError):
+        offset = 0
+
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM events WHERE category='security' ORDER BY ts DESC LIMIT ? OFFSET ?",
+            (limit, offset)
+        ).fetchall()
+        total = conn.execute("SELECT COUNT(*) FROM events WHERE category='security'").fetchone()[0]
+        events = []
+        for r in rows:
+            d = dict(r)
+            if d.get('details'):
+                try:
+                    d['details'] = json.loads(d['details'])
+                except (json.JSONDecodeError, ValueError, TypeError):
+                    pass
+            events.append(d)
+    finally:
+        conn.close()
+
+    return jsonify({'events': events, 'total': total})

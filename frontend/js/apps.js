@@ -5954,6 +5954,8 @@ async function renderSystemSettings(body) {
             { id: 'about', icon: 'fa-info-circle', label: t('O systemie') },
             { id: 'performance', icon: 'fa-tachometer-alt', label: t('Wydajność') },
             { id: 'maintenance', icon: 'fa-tools', label: t('Konserwacja') },
+            { id: 'thermal', icon: 'fa-thermometer-half', label: t('Termika') },
+            { id: 'hardware', icon: 'fa-microchip', label: t('Sprzęt') },
         ];
         const tabBar = document.createElement('div');
         tabBar.className = 'ss-tabs';
@@ -6171,6 +6173,20 @@ async function renderSystemSettings(body) {
             <div class="ss-section" data-section="maintenance">
                 <div class="ss-section-title"><i class="fas fa-tools"></i> ${t('Konserwacja systemu')}</div>
 
+                <div class="ss-group" style="margin-bottom:24px">
+                    <div class="ss-group-title">${t('Kopia konfiguracji')}</div>
+                    <p style="font-size:13px;color:var(--text-muted);margin:0 0 12px">${t('Eksportuj lub importuj ustawienia systemowe jako plik ZIP.')}</p>
+                    <div class="ss-actions">
+                        <button class="ss-btn ss-btn-primary" id="ss-config-export">
+                            <i class="fas fa-download"></i> ${t('Eksportuj konfigurację')}
+                        </button>
+                        <button class="ss-btn ss-btn-warn" id="ss-config-import">
+                            <i class="fas fa-upload"></i> ${t('Importuj konfigurację')}
+                        </button>
+                        <input type="file" id="ss-config-file" accept=".zip" style="display:none">
+                    </div>
+                </div>
+
                 <div class="ss-reset-box">
                     <div class="ss-reset-icon"><i class="fas fa-exclamation-triangle"></i></div>
                     <div class="ss-reset-title">${t('Przywracanie ustawień fabrycznych')}</div>
@@ -6285,8 +6301,52 @@ async function renderSystemSettings(body) {
             </div>
         `;
 
+        // === Thermal Section ===
+        const thermalHtml = `
+            <div class="ss-section" data-section="thermal">
+                <div class="ss-section-title"><i class="fas fa-thermometer-half"></i> ${t('Termika i wentylatory')}</div>
+                <div class="ss-group">
+                    <div class="ss-group-title">${t('Strefy termiczne')}</div>
+                    <div id="ss-thermal-zones" style="font-size:13px"><i class="fas fa-spinner fa-spin"></i></div>
+                </div>
+                <div class="ss-group" style="margin-top:14px">
+                    <div class="ss-group-title">${t('Wentylatory')}</div>
+                    <div id="ss-thermal-fans" style="font-size:13px"><i class="fas fa-spinner fa-spin"></i></div>
+                </div>
+                <div class="ss-group" style="margin-top:14px">
+                    <div class="ss-group-title">${t('Polityka wentylatorów')}</div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px" id="ss-fan-policies">
+                        <button class="ss-btn" data-fan-policy="quiet"><i class="fas fa-volume-mute"></i> ${t('Cichy')}</button>
+                        <button class="ss-btn" data-fan-policy="balanced"><i class="fas fa-balance-scale"></i> ${t('Zrównoważony')}</button>
+                        <button class="ss-btn" data-fan-policy="performance"><i class="fas fa-bolt"></i> ${t('Wydajność')}</button>
+                    </div>
+                    <div style="margin-top:8px;font-size:12px;color:var(--text-muted)" id="ss-fan-current-policy"></div>
+                </div>
+                <div class="ss-group" style="margin-top:14px">
+                    <div class="ss-group-title">${t('Awaryjne wyłączenie')}</div>
+                    <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
+                        <label style="font-size:13px">${t('Temperatura krytyczna (°C):')}</label>
+                        <input type="number" id="ss-thermal-emergency" class="fm-input" style="width:80px" min="50" max="120" value="95">
+                        <button class="ss-btn ss-btn-warn" id="ss-thermal-emergency-save"><i class="fas fa-save"></i> ${t('Zapisz')}</button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // === Hardware Section ===
+        const hardwareHtml = `
+            <div class="ss-section" data-section="hardware">
+                <div class="ss-section-title"><i class="fas fa-microchip"></i> ${t('Sprzęt')}</div>
+                <div id="ss-hw-content"><div class="net-loading"><i class="fas fa-spinner fa-spin"></i> ${t('Ładowanie...')}</div></div>
+                <div class="ss-actions" style="margin-top:12px">
+                    <button class="ss-btn" id="ss-hw-refresh"><i class="fas fa-sync-alt"></i> ${t('Odśwież')}</button>
+                    <button class="ss-btn ss-btn-primary" id="ss-hw-recs"><i class="fas fa-lightbulb"></i> ${t('Rekomendacje')}</button>
+                </div>
+            </div>
+        `;
+
         const container = document.createElement('div');
-        container.innerHTML = generalHtml + networkHtml + securityHtml + firewallHtml + aboutHtml + performanceHtml + maintenanceHtml;
+        container.innerHTML = generalHtml + networkHtml + securityHtml + firewallHtml + aboutHtml + performanceHtml + maintenanceHtml + thermalHtml + hardwareHtml;
         wrap.appendChild(container);
 
         // -- Performance Logic --
@@ -6764,6 +6824,64 @@ async function renderSystemSettings(body) {
                 }
             });
         }
+
+        // -- Config Export/Import --
+        const exportBtn = wrap.querySelector('#ss-config-export');
+        const importBtn = wrap.querySelector('#ss-config-import');
+        const configFile = wrap.querySelector('#ss-config-file');
+
+        if (exportBtn) {
+            exportBtn.addEventListener('click', async () => {
+                exportBtn.disabled = true;
+                exportBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Eksportowanie…');
+                try {
+                    const resp = await fetch('/api/settings/config/export', {
+                        method: 'POST',
+                        headers: { 'Authorization': 'Bearer ' + NAS.token, 'X-CSRF-Token': NAS.csrfToken },
+                    });
+                    if (!resp.ok) throw new Error('Export failed');
+                    const blob = await resp.blob();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = resp.headers.get('Content-Disposition')?.match(/filename="?(.+?)"?$/)?.[1] || 'ethos_config.zip';
+                    a.click();
+                    URL.revokeObjectURL(url);
+                    toast(t('Konfiguracja wyeksportowana'), 'success');
+                } catch (e) { toast(e.message, 'error'); }
+                exportBtn.disabled = false;
+                exportBtn.innerHTML = `<i class="fas fa-download"></i> ${t('Eksportuj konfigurację')}`;
+            });
+        }
+
+        if (importBtn && configFile) {
+            importBtn.addEventListener('click', () => configFile.click());
+            configFile.addEventListener('change', async () => {
+                const file = configFile.files[0];
+                if (!file) return;
+                if (!await confirmDialog(t('Importować konfigurację? Obecne ustawienia zostaną nadpisane.'))) {
+                    configFile.value = '';
+                    return;
+                }
+                importBtn.disabled = true;
+                importBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Importowanie…');
+                try {
+                    const fd = new FormData();
+                    fd.append('file', file);
+                    const resp = await fetch('/api/settings/config/import', {
+                        method: 'POST',
+                        headers: { 'Authorization': 'Bearer ' + NAS.token, 'X-CSRF-Token': NAS.csrfToken },
+                        body: fd,
+                    });
+                    const r = await resp.json();
+                    if (r.error) { toast(r.error, 'error'); }
+                    else { toast(r.message || t('Konfiguracja zaimportowana'), 'success'); }
+                } catch (e) { toast(e.message, 'error'); }
+                importBtn.disabled = false;
+                importBtn.innerHTML = `<i class="fas fa-upload"></i> ${t('Importuj konfigurację')}`;
+                configFile.value = '';
+            });
+        }
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -6781,6 +6899,163 @@ async function renderSystemSettings(body) {
         parts.push(m + 'min');
         return parts.join(' ');
     }
+
+    // -- Thermal Logic --
+    async function loadThermal() {
+        try {
+            const data = await api('/power/thermal');
+            const zonesEl = wrap.querySelector('#ss-thermal-zones');
+            const fansEl = wrap.querySelector('#ss-thermal-fans');
+            const policyEl = wrap.querySelector('#ss-fan-current-policy');
+            const emergEl = wrap.querySelector('#ss-thermal-emergency');
+            if (zonesEl) {
+                const zones = data.zones || [];
+                zonesEl.innerHTML = zones.length ? zones.map(z => {
+                    const c = z.temp_c > 80 ? '#ef4444' : z.temp_c > 60 ? '#eab308' : '#10b981';
+                    return `<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border)"><span style="min-width:160px;font-weight:500">${esc(z.name || z.type)}</span><span style="color:${c};font-weight:700">${z.temp_c.toFixed(1)}°C</span></div>`;
+                }).join('') : `<span style="color:var(--text-muted)">${t('Brak danych')}</span>`;
+            }
+            if (fansEl) {
+                const fans = data.fans || [];
+                fansEl.innerHTML = fans.length ? fans.map(f =>
+                    `<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border)"><span style="min-width:120px;font-weight:500">${esc(f.name || 'Fan')}</span><span><i class="fas fa-fan" style="margin-right:4px"></i>${f.rpm || 0} RPM</span>${f.pwm_pct != null ? `<span style="color:var(--text-muted)">(${f.pwm_pct}%)</span>` : ''}</div>`
+                ).join('') : `<span style="color:var(--text-muted)">${t('Brak wentylatorów')}</span>`;
+            }
+            if (policyEl) policyEl.textContent = t('Aktualna polityka:') + ' ' + (data.policy || 'auto');
+            if (emergEl && data.emergency_threshold) emergEl.value = data.emergency_threshold;
+            // Highlight active policy
+            wrap.querySelectorAll('[data-fan-policy]').forEach(b => {
+                b.classList.toggle('ss-btn-primary', b.dataset.fanPolicy === data.policy);
+            });
+        } catch(e) { /* ignore on VMs without hwmon */ }
+    }
+
+    wrap.querySelectorAll('[data-fan-policy]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            try {
+                const r = await api('/power/thermal/policy', {method:'PUT', body:{policy: btn.dataset.fanPolicy}});
+                if (r.error) { toast(r.error,'error'); return; }
+                toast(t('Polityka zmieniona'),'success');
+                loadThermal();
+            } catch(e) { toast(e.message,'error'); }
+        });
+    });
+
+    const emergSaveBtn = wrap.querySelector('#ss-thermal-emergency-save');
+    if (emergSaveBtn) {
+        emergSaveBtn.addEventListener('click', async () => {
+            const val = parseInt(wrap.querySelector('#ss-thermal-emergency').value);
+            if (isNaN(val) || val < 50 || val > 120) { toast(t('Zakres: 50-120°C'),'error'); return; }
+            try {
+                const r = await api('/power/thermal/emergency', {method:'PUT', body:{threshold_celsius: val}});
+                if (r.error) { toast(r.error,'error'); return; }
+                toast(t('Próg zapisany'),'success');
+            } catch(e) { toast(e.message,'error'); }
+        });
+    }
+
+    // -- Hardware Logic --
+    async function loadHardware() {
+        const el = wrap.querySelector('#ss-hw-content');
+        if (!el) return;
+        el.innerHTML = '<div class="net-loading"><i class="fas fa-spinner fa-spin"></i></div>';
+        try {
+            const p = await api('/hardware/profile');
+            const sys = p.system || {};
+            const cpu = p.cpu || {};
+            const mem = p.memory || {};
+            const disks = p.disks || [];
+            const nics = p.network || [];
+            const gpus = p.gpus || [];
+
+            el.innerHTML = `
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px">
+                    <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:14px">
+                        <div style="font-weight:700;margin-bottom:8px"><i class="fas fa-server" style="margin-right:6px"></i>${t('System')}</div>
+                        <div style="font-size:13px;line-height:1.8">
+                            ${sys.manufacturer ? `<div>${t('Producent:')} <b>${esc(sys.manufacturer)}</b></div>` : ''}
+                            ${sys.product_name ? `<div>${t('Model:')} <b>${esc(sys.product_name)}</b></div>` : ''}
+                            ${sys.serial_number && sys.serial_number !== 'Not Specified' ? `<div>S/N: <b>${esc(sys.serial_number)}</b></div>` : ''}
+                            ${sys.bios ? `<div>BIOS: <b>${esc(sys.bios.vendor || '')} ${esc(sys.bios.version || '')}</b></div>` : ''}
+                        </div>
+                    </div>
+                    <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:14px">
+                        <div style="font-weight:700;margin-bottom:8px"><i class="fas fa-microchip" style="margin-right:6px"></i>CPU</div>
+                        <div style="font-size:13px;line-height:1.8">
+                            <div><b>${esc(cpu.model || '?')}</b></div>
+                            <div>${cpu.cores || 0} ${t('rdzeni')} / ${(cpu.cores || 0) * (cpu.threads_per_core || 1)} ${t('wątków')}</div>
+                            ${cpu.freq_max_mhz ? `<div>${t('Max:')} ${(cpu.freq_max_mhz/1000).toFixed(2)} GHz</div>` : ''}
+                            ${cpu.notable_flags?.length ? `<div>${t('Flagi:')} ${cpu.notable_flags.join(', ')}</div>` : ''}
+                        </div>
+                    </div>
+                    <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:14px">
+                        <div style="font-weight:700;margin-bottom:8px"><i class="fas fa-memory" style="margin-right:6px"></i>RAM</div>
+                        <div style="font-size:13px;line-height:1.8">
+                            <div><b>${esc(mem.total_human || '?')}</b></div>
+                            <div>${mem.slots_used || 0} / ${mem.slots_total || 0} ${t('slotów')}</div>
+                            ${(mem.dimms || []).map(d => `<div style="font-size:12px;color:var(--text-muted)">${esc(d.size || '')} ${esc(d.type || '')} ${esc(d.speed || '')}</div>`).join('')}
+                        </div>
+                    </div>
+                </div>
+                <div style="margin-top:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px">
+                    <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:14px">
+                        <div style="font-weight:700;margin-bottom:8px"><i class="fas fa-hdd" style="margin-right:6px"></i>${t('Dyski')} (${disks.length})</div>
+                        <div style="font-size:13px;line-height:1.8">
+                            ${disks.map(d => `<div>${esc(d.name)} — <b>${esc(d.type)}</b> ${esc(d.size_human)} ${d.model ? '(' + esc(d.model) + ')' : ''}</div>`).join('')}
+                        </div>
+                    </div>
+                    <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:14px">
+                        <div style="font-weight:700;margin-bottom:8px"><i class="fas fa-ethernet" style="margin-right:6px"></i>${t('Sieć')} (${nics.length})</div>
+                        <div style="font-size:13px;line-height:1.8">
+                            ${nics.map(n => `<div>${esc(n.name)} — ${esc(n.type)} ${n.speed_mbps ? n.speed_mbps + ' Mb/s' : ''} ${n.driver ? '<span style="color:var(--text-muted)">(' + esc(n.driver) + ')</span>' : ''}</div>`).join('')}
+                        </div>
+                    </div>
+                    ${gpus.length ? `<div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:14px">
+                        <div style="font-weight:700;margin-bottom:8px"><i class="fas fa-tv" style="margin-right:6px"></i>GPU (${gpus.length})</div>
+                        <div style="font-size:13px;line-height:1.8">
+                            ${gpus.map(g => `<div>${esc(g.device)}</div>`).join('')}
+                        </div>
+                    </div>` : ''}
+                </div>
+            `;
+        } catch(e) {
+            el.innerHTML = `<div style="color:var(--text-muted)">${t('Błąd:')} ${esc(e.message)}</div>`;
+        }
+    }
+
+    const hwRefreshBtn = wrap.querySelector('#ss-hw-refresh');
+    if (hwRefreshBtn) hwRefreshBtn.addEventListener('click', async () => {
+        try { await api('/hardware/refresh', {method:'POST'}); } catch(e) { /* ignore */ }
+        loadHardware();
+    });
+
+    const hwRecsBtn = wrap.querySelector('#ss-hw-recs');
+    if (hwRecsBtn) hwRecsBtn.addEventListener('click', async () => {
+        try {
+            const data = await api('/hardware/recommendations');
+            const recs = data.recommendations || [];
+            if (!recs.length) { toast(t('Brak rekomendacji'), 'info'); return; }
+            const icons = {info:'fa-info-circle', warning:'fa-exclamation-triangle'};
+            const colors = {info:'#3b82f6', warning:'#eab308'};
+            showModal(t('Rekomendacje sprzętowe'), `
+                <div style="max-height:400px;overflow-y:auto">
+                    ${recs.map(r => `<div style="display:flex;align-items:start;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
+                        <i class="fas ${icons[r.level]||'fa-info-circle'}" style="color:${colors[r.level]||'#3b82f6'};margin-top:2px"></i>
+                        <div><span style="font-weight:600;text-transform:uppercase;font-size:11px;color:var(--text-muted)">${esc(r.category)}</span><div style="font-size:13px">${esc(r.message)}</div></div>
+                    </div>`).join('')}
+                </div>
+            `, [{label:t('Zamknij'), class:'secondary'}]);
+        } catch(e) { toast(e.message,'error'); }
+    });
+
+    // Load thermal & hardware on tab switch (lazy)
+    const origTabClick = wrap.querySelectorAll('.ss-tab');
+    origTabClick.forEach(tab => {
+        tab.addEventListener('click', () => {
+            if (tab.dataset.tab === 'thermal') loadThermal();
+            if (tab.dataset.tab === 'hardware') loadHardware();
+        });
+    });
 
     load();
 }

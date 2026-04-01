@@ -621,6 +621,262 @@ def start_smart_test():
 
 
 # ---------------------------------------------------------------------------
+# 6. SMART Health Score & Prediction
+# ---------------------------------------------------------------------------
+
+import sqlite3
+
+_SMART_DB = data_path('smart_history.db')
+
+# Critical SMART attributes and their weights for health scoring
+_CRITICAL_ATTRS = {
+    5:   ('Reallocated_Sector_Ct',   30),   # Most critical
+    187: ('Reported_Uncorrect',       20),
+    188: ('Command_Timeout',          5),
+    196: ('Reallocated_Event_Count',  15),
+    197: ('Current_Pending_Sector',   20),
+    198: ('Offline_Uncorrectable',    15),
+    10:  ('Spin_Retry_Count',         10),
+    184: ('End-to-End_Error',         10),
+    199: ('UDMA_CRC_Error_Count',     5),
+    201: ('Soft_Read_Error_Rate',     5),
+}
+
+
+def _get_smart_db():
+    os.makedirs(os.path.dirname(_SMART_DB), exist_ok=True)
+    conn = sqlite3.connect(_SMART_DB, timeout=5)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS smart_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            disk TEXT NOT NULL,
+            ts REAL NOT NULL,
+            health_score INTEGER,
+            temperature INTEGER,
+            power_on_hours INTEGER,
+            attributes_json TEXT,
+            health_passed INTEGER
+        )
+    ''')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_smart_disk_ts ON smart_snapshots(disk, ts)')
+    conn.commit()
+    return conn
+
+
+def _calc_health_score(attributes):
+    """Calculate health score 0-100 from SMART attributes."""
+    score = 100
+    for attr in attributes:
+        attr_id = attr.get('id')
+        if attr_id not in _CRITICAL_ATTRS:
+            continue
+
+        name, weight = _CRITICAL_ATTRS[attr_id]
+        raw_str = str(attr.get('raw', '0'))
+        try:
+            raw_val = int(raw_str.split()[0])
+        except (ValueError, IndexError):
+            raw_val = 0
+
+        if raw_val == 0:
+            continue
+
+        # Deduct points based on severity
+        if attr_id in (5, 196):  # Reallocated sectors
+            if raw_val >= 100:
+                score -= weight
+            elif raw_val >= 10:
+                score -= weight * 0.7
+            elif raw_val >= 1:
+                score -= weight * 0.3
+        elif attr_id in (197, 198):  # Pending/Uncorrectable
+            if raw_val >= 50:
+                score -= weight
+            elif raw_val >= 5:
+                score -= weight * 0.6
+            elif raw_val >= 1:
+                score -= weight * 0.3
+        elif attr_id == 187:  # Reported uncorrectable
+            if raw_val >= 100:
+                score -= weight
+            elif raw_val >= 10:
+                score -= weight * 0.5
+            elif raw_val >= 1:
+                score -= weight * 0.2
+        else:
+            if raw_val >= 100:
+                score -= weight
+            elif raw_val >= 10:
+                score -= weight * 0.5
+            elif raw_val >= 1:
+                score -= weight * 0.15
+
+        # Failing threshold check
+        if attr.get('status') == 'failing':
+            score -= 20
+
+    return max(0, min(100, int(score)))
+
+
+def _calc_nvme_health_score(sdata):
+    """Calculate health score for NVMe drives."""
+    score = 100
+    pct_used = sdata.get('nvme_smart_health_information_log', {}).get('percentage_used', 0)
+    spare = sdata.get('nvme_smart_health_information_log', {}).get('available_spare', 100)
+    spare_thresh = sdata.get('nvme_smart_health_information_log', {}).get('available_spare_threshold', 10)
+    media_errors = sdata.get('nvme_smart_health_information_log', {}).get('media_errors', 0)
+    crit_warn = sdata.get('nvme_smart_health_information_log', {}).get('critical_warning', 0)
+
+    if pct_used > 100:
+        score -= 30
+    elif pct_used > 90:
+        score -= 15
+    elif pct_used > 80:
+        score -= 5
+
+    if spare < spare_thresh:
+        score -= 30
+    elif spare < 20:
+        score -= 15
+
+    if media_errors > 0:
+        score -= min(25, media_errors * 5)
+
+    if crit_warn > 0:
+        score -= 20
+
+    return max(0, min(100, int(score)))
+
+
+@diskrepair_bp.route('/smart/<disk>/score')
+def smart_health_score(disk):
+    """Get health score 0-100 for a disk, with snapshot storage."""
+    err = require_tools('smartctl')
+    if err:
+        return err
+    if not _validate_name(disk):
+        return jsonify({'error': 'Invalid disk name'}), 400
+    if not _dev_exists(disk):
+        return jsonify({'error': f'/dev/{disk} not found'}), 404
+
+    _ensure_smartctl()
+    sdata = _try_smartctl(disk, timeout=30)
+    if not sdata:
+        return jsonify({'error': 'SMART not available'}), 400
+
+    protocol = sdata.get('device', {}).get('protocol', '')
+    health_passed = sdata.get('smart_status', {}).get('passed', None)
+    temperature = sdata.get('temperature', {}).get('current', None)
+    power_on_hours = sdata.get('power_on_time', {}).get('hours', None)
+
+    if protocol == 'NVMe':
+        nvme_log = sdata.get('nvme_smart_health_information_log', {})
+        score = _calc_nvme_health_score(sdata)
+        attrs_json = json.dumps({
+            'percentage_used': nvme_log.get('percentage_used', 0),
+            'available_spare': nvme_log.get('available_spare', 100),
+            'media_errors': nvme_log.get('media_errors', 0),
+            'critical_warning': nvme_log.get('critical_warning', 0),
+            'data_units_written': nvme_log.get('data_units_written', 0),
+            'data_units_read': nvme_log.get('data_units_read', 0),
+            'power_on_hours': nvme_log.get('power_on_hours', 0),
+        })
+    else:
+        attributes = []
+        for attr in sdata.get('ata_smart_attributes', {}).get('table', []):
+            attributes.append({
+                'id': attr.get('id'),
+                'name': attr.get('name', ''),
+                'value': attr.get('value', 0),
+                'worst': attr.get('worst', 0),
+                'thresh': attr.get('thresh', 0),
+                'raw': attr.get('raw', {}).get('string', str(attr.get('raw', {}).get('value', ''))),
+                'status': 'ok',
+            })
+        score = _calc_health_score(attributes)
+        attrs_json = json.dumps(attributes)
+
+    # Store snapshot
+    try:
+        conn = _get_smart_db()
+        conn.execute(
+            'INSERT INTO smart_snapshots (disk, ts, health_score, temperature, power_on_hours, attributes_json, health_passed) '
+            'VALUES (?, ?, ?, ?, ?, ?, ?)',
+            (disk, time.time(), score, temperature, power_on_hours, attrs_json, 1 if health_passed else 0)
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+    grade = 'excellent' if score >= 90 else 'good' if score >= 70 else 'warning' if score >= 50 else 'critical'
+
+    return jsonify({
+        'ok': True,
+        'disk': disk,
+        'score': score,
+        'grade': grade,
+        'health_passed': health_passed,
+        'temperature': temperature,
+        'power_on_hours': power_on_hours,
+        'protocol': protocol,
+    })
+
+
+@diskrepair_bp.route('/smart/<disk>/history')
+def smart_history(disk):
+    """Get SMART trend history for a disk."""
+    if not _validate_name(disk):
+        return jsonify({'error': 'Invalid disk name'}), 400
+
+    limit = min(int(request.args.get('limit', 90)), 365)
+
+    try:
+        conn = _get_smart_db()
+        rows = conn.execute(
+            'SELECT ts, health_score, temperature, power_on_hours, health_passed '
+            'FROM smart_snapshots WHERE disk = ? ORDER BY ts DESC LIMIT ?',
+            (disk, limit)
+        ).fetchall()
+        conn.close()
+    except Exception:
+        return jsonify({'ok': True, 'history': []})
+
+    history = [{
+        'ts': r['ts'],
+        'score': r['health_score'],
+        'temperature': r['temperature'],
+        'power_on_hours': r['power_on_hours'],
+        'health_passed': bool(r['health_passed']),
+    } for r in rows]
+
+    history.reverse()
+
+    prediction = None
+    if len(history) >= 7:
+        scores = [h['score'] for h in history[-7:]]
+        avg_decline = (scores[0] - scores[-1]) / 7 if scores[0] != scores[-1] else 0
+        if avg_decline > 0:
+            days_to_zero = int(scores[-1] / avg_decline) if avg_decline > 0.1 else None
+            prediction = {
+                'trend': 'declining',
+                'avg_daily_decline': round(avg_decline, 2),
+                'estimated_days_to_failure': days_to_zero,
+            }
+        else:
+            prediction = {'trend': 'stable'}
+
+    return jsonify({
+        'ok': True,
+        'disk': disk,
+        'history': history,
+        'prediction': prediction,
+    })
+
+
+# ---------------------------------------------------------------------------
 # 6. GET /status — Current operation status
 # ---------------------------------------------------------------------------
 

@@ -28,6 +28,9 @@ AppRegistry['network'] = function (appDef) {
                 <button class="net-nav-btn" data-tab="hotspot">
                     <i class="fas fa-broadcast-tower"></i><span>Hotspot</span>
                 </button>
+                <button class="net-nav-btn" data-tab="bonding">
+                    <i class="fas fa-link"></i><span>${t('Agregacja')}</span>
+                </button>
             </nav>
         </div>
         <div class="net-main">
@@ -81,6 +84,18 @@ AppRegistry['network'] = function (appDef) {
                     <div class="net-loading"><i class="fas fa-spinner fa-spin"></i> ${t('Ładowanie...')}</div>
                 </div>
             </div>
+            <!-- Bonding -->
+            <div class="net-tab" id="net-tab-bonding">
+                <div class="net-header">
+                    <h2>${t('Agregacja połączeń (Bonding)')}</h2>
+                    <button class="net-btn net-btn-primary" id="net-bond-create">
+                        <i class="fas fa-plus"></i> ${t('Nowa grupa')}
+                    </button>
+                </div>
+                <div id="net-bond-list">
+                    <div class="net-loading"><i class="fas fa-spinner fa-spin"></i> ${t('Ładowanie...')}</div>
+                </div>
+            </div>
         </div>
     `;
 
@@ -109,6 +124,7 @@ AppRegistry['network'] = function (appDef) {
                 if (btn.dataset.tab === 'wifi') loadWifiStatus();
                 if (btn.dataset.tab === 'saved') loadSaved();
                 if (btn.dataset.tab === 'hotspot') loadApStatus();
+                if (btn.dataset.tab === 'bonding') loadBonds();
             });
         });
 
@@ -476,6 +492,99 @@ AppRegistry['network'] = function (appDef) {
                 loadApStatus();
             }
         }
+
+        /* ──────────── Bonding Tab ──────────── */
+        async function loadBonds() {
+            const list = root.querySelector('#net-bond-list');
+            list.innerHTML = `<div class="net-loading"><i class="fas fa-spinner fa-spin"></i> ${t('Ładowanie...')}</div>`;
+            try {
+                const data = await api('/network/bonds');
+                if (data.error) throw new Error(data.error);
+                const bonds = data.bonds || [];
+                if (!bonds.length) {
+                    list.innerHTML = `<div class="net-placeholder"><i class="fas fa-link"></i><p>${t('Brak skonfigurowanych grup agregacji')}</p><p style="font-size:12px;color:var(--text-secondary)">${t('Kliknij "Nowa grupa" aby połączyć interfejsy')}</p></div>`;
+                    return;
+                }
+                list.innerHTML = '';
+                bonds.forEach(bond => {
+                    const card = document.createElement('div');
+                    card.className = 'net-iface-card up';
+                    const modeLabels = {'802.3ad':'LACP','active-backup':t('Aktywny/Zapasowy'),'balance-rr':'Round-Robin','balance-xor':'XOR','balance-alb':'ALB'};
+                    card.innerHTML = `
+                        <div class="net-iface-header">
+                            <div class="net-iface-icon ethernet"><i class="fas fa-link"></i></div>
+                            <div class="net-iface-title">
+                                <h3>${esc(bond.name)}</h3>
+                                <span class="net-iface-type">${modeLabels[bond.mode] || esc(bond.mode)}</span>
+                                <span class="net-iface-state net-state-up">${t('Aktywny')}</span>
+                            </div>
+                            <div class="net-iface-actions">
+                                <button class="net-btn net-btn-sm net-btn-danger" data-del-bond="${esc(bond.name)}"><i class="fas fa-trash"></i> ${t('Usuń')}</button>
+                            </div>
+                        </div>
+                        <div class="net-iface-body">
+                            <div class="net-iface-details">
+                                <div class="net-iface-detail"><i class="fas fa-users"></i> ${t('Interfejsy:')} <b>${(bond.members || []).join(', ') || '—'}</b></div>
+                                ${bond.active_member ? `<div class="net-iface-detail"><i class="fas fa-check-circle" style="color:#10b981"></i> ${t('Aktywny:')} <b>${esc(bond.active_member)}</b></div>` : ''}
+                            </div>
+                        </div>
+                    `;
+                    card.querySelector('[data-del-bond]').addEventListener('click', async () => {
+                        if (!await confirmDialog(t('Usuń agregację'), t('Usunąć grupę') + ` ${bond.name}?`)) return;
+                        try {
+                            const r = await api(`/network/bonds/${encodeURIComponent(bond.name)}`, {method:'DELETE'});
+                            if (r.error) throw new Error(r.error);
+                            toast(t('Grupa usunięta'), 'success');
+                            loadBonds();
+                        } catch(e) { toast(e.message,'error'); }
+                    });
+                    list.appendChild(card);
+                });
+            } catch(e) {
+                list.innerHTML = `<div class="net-error"><i class="fas fa-exclamation-triangle"></i> ${esc(e.message)}</div>`;
+            }
+        }
+
+        root.querySelector('#net-bond-create').addEventListener('click', async () => {
+            try {
+                const ifData = await api('/network/interfaces');
+                const available = (ifData.interfaces || []).filter(i => i.type === 'ethernet' && i.state !== 'UNKNOWN');
+                if (available.length < 2) { toast(t('Potrzeba min. 2 interfejsów Ethernet'), 'error'); return; }
+                const modes = [
+                    {value:'active-backup', label:t('Aktywny/Zapasowy (failover)')},
+                    {value:'802.3ad', label:'LACP (802.3ad)'},
+                    {value:'balance-rr', label:'Round-Robin'},
+                    {value:'balance-xor', label:'XOR'},
+                    {value:'balance-alb', label:'ALB'},
+                ];
+                const checkboxes = available.map(i =>
+                    `<label style="display:flex;align-items:center;gap:8px;padding:4px 0"><input type="checkbox" value="${esc(i.name)}" class="net-bond-member"> ${esc(i.name)} (${i.speed ? i.speed + ' Mb/s' : t('brak prędkości')})</label>`
+                ).join('');
+                const modeOpts = modes.map(m => `<option value="${m.value}">${m.label}</option>`).join('');
+                showModal(t('Nowa grupa agregacji'), `
+                    <div style="display:flex;flex-direction:column;gap:14px">
+                        <div><label style="font-weight:600;font-size:13px">${t('Nazwa')}</label><input id="net-bond-name" class="fm-input" value="bond0" style="margin-top:4px;width:100%"></div>
+                        <div><label style="font-weight:600;font-size:13px">${t('Tryb')}</label><select id="net-bond-mode" class="fm-input" style="margin-top:4px;width:100%">${modeOpts}</select></div>
+                        <div><label style="font-weight:600;font-size:13px">${t('Interfejsy (min. 2)')}</label><div style="margin-top:4px;max-height:150px;overflow-y:auto">${checkboxes}</div></div>
+                    </div>
+                `, [
+                    {label:t('Utwórz'), class:'primary', onClick: async (modal) => {
+                        const name = modal.querySelector('#net-bond-name').value.trim();
+                        const mode = modal.querySelector('#net-bond-mode').value;
+                        const members = [...modal.querySelectorAll('.net-bond-member:checked')].map(c=>c.value);
+                        if (!name) { toast(t('Podaj nazwę'),'error'); return; }
+                        if (members.length < 2) { toast(t('Wybierz min. 2 interfejsy'),'error'); return; }
+                        try {
+                            const r = await api('/network/bonds', {method:'POST', body:{name, mode, members, ip_method:'dhcp'}});
+                            if (r.error) throw new Error(r.error);
+                            toast(t('Grupa utworzona'), 'success');
+                            loadBonds();
+                        } catch(e) { toast(e.message,'error'); }
+                    }},
+                    {label:t('Anuluj'), class:'secondary'}
+                ]);
+            } catch(e) { toast(e.message,'error'); }
+        });
 
         /* ──────────── Helpers ──────────── */
         function esc(s) { const d = document.createElement('span'); d.textContent = s; return d.innerHTML; }

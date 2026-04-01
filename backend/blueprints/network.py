@@ -559,6 +559,250 @@ def ap_stop():
 
 
 # ---------------------------------------------------------------------------
+# Link Aggregation (bonding)
+# ---------------------------------------------------------------------------
+
+_BOND_MODES = {'802.3ad', 'active-backup', 'balance-rr', 'balance-xor', 'balance-alb'}
+
+
+def _validate_bond_name(name):
+    if not name or not re.match(r'^bond[0-9]+$', name):
+        return False
+    num = int(name[4:])
+    return 0 <= num <= 99
+
+
+def _validate_iface_name(name):
+    return bool(name and re.match(r'^[a-zA-Z0-9_.-]+$', name))
+
+
+@network_bp.route('/bonds')
+def list_bonds():
+    """List active bond interfaces."""
+    err = require_tools('nmcli')
+    if err:
+        return err
+    try:
+        r = _host("nmcli -t -f NAME,TYPE,DEVICE con show 2>/dev/null")
+        bonds = []
+        if r.returncode == 0 and r.stdout.strip():
+            for line in r.stdout.strip().split('\n'):
+                parts = _nmcli_split(line)
+                if len(parts) >= 3 and parts[1] == 'bond':
+                    bname = parts[0]
+                    device = parts[2] or bname
+                    info = {'name': bname, 'device': device, 'mode': '', 'members': [], 'active_member': ''}
+                    mode_path = f'/sys/class/net/{device}/bonding/mode'
+                    mr = _host(f"cat {shlex.quote(mode_path)} 2>/dev/null")
+                    if mr.returncode == 0 and mr.stdout.strip():
+                        info['mode'] = mr.stdout.strip().split()[0]
+                    slaves_path = f'/sys/class/net/{device}/bonding/slaves'
+                    sr = _host(f"cat {shlex.quote(slaves_path)} 2>/dev/null")
+                    if sr.returncode == 0 and sr.stdout.strip():
+                        info['members'] = sr.stdout.strip().split()
+                    active_path = f'/sys/class/net/{device}/bonding/active_slave'
+                    ar = _host(f"cat {shlex.quote(active_path)} 2>/dev/null")
+                    if ar.returncode == 0 and ar.stdout.strip():
+                        info['active_member'] = ar.stdout.strip()
+                    bonds.append(info)
+        return jsonify(ok=True, items=bonds)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@network_bp.route('/bonds', methods=['POST'])
+def create_bond():
+    """Create a new bond interface.
+    Body: {name, mode, members: [iface1, iface2], ip_method: 'dhcp'|'static', ip?, prefix?, gateway?}
+    """
+    err = require_tools('nmcli')
+    if err:
+        return err
+    try:
+        data = request.get_json(force=True) or {}
+        name = (data.get('name') or '').strip()
+        mode = (data.get('mode') or '').strip()
+        members = data.get('members') or []
+        ip_method = (data.get('ip_method') or 'dhcp').strip()
+
+        if not _validate_bond_name(name):
+            return jsonify({'error': 'Invalid bond name. Use bond0-bond99.'}), 400
+        if mode not in _BOND_MODES:
+            return jsonify({'error': f'Invalid mode. Allowed: {", ".join(sorted(_BOND_MODES))}'}), 400
+        if not members or len(members) < 2:
+            return jsonify({'error': 'At least two member interfaces required.'}), 400
+        for m in members:
+            if not _validate_iface_name(m):
+                return jsonify({'error': f'Invalid interface name: {m}'}), 400
+        if ip_method not in ('dhcp', 'static'):
+            return jsonify({'error': 'ip_method must be dhcp or static.'}), 400
+        if ip_method == 'static':
+            if not data.get('ip') or not data.get('prefix'):
+                return jsonify({'error': 'Static IP requires ip and prefix.'}), 400
+
+        # Check members exist and are not already bonded
+        for m in members:
+            chk = _host(f"test -d /sys/class/net/{shlex.quote(m)}")
+            if chk.returncode != 0:
+                return jsonify({'error': f'Interface {m} does not exist.'}), 400
+            bond_chk = _host(f"cat /sys/class/net/{shlex.quote(m)}/master/uevent 2>/dev/null")
+            if bond_chk.returncode == 0 and bond_chk.stdout.strip():
+                return jsonify({'error': f'Interface {m} is already a member of another bond.'}), 400
+
+        # Check bond name not already in use
+        exist_chk = _host(f"nmcli -t -f NAME con show {shlex.quote(name)} 2>/dev/null")
+        if exist_chk.returncode == 0 and exist_chk.stdout.strip():
+            return jsonify({'error': f'Connection {name} already exists.'}), 400
+
+        # Create bond
+        q = shlex.quote
+        r = _host(
+            f"sudo nmcli con add type bond ifname {q(name)} con-name {q(name)} "
+            f"bond.options \"mode={q(mode)},miimon=100\" 2>&1",
+            timeout=30
+        )
+        if r.returncode != 0:
+            return jsonify({'error': f'Failed to create bond: {(r.stdout or "").strip()}'}), 500
+
+        # Add members
+        for m in members:
+            slave_name = f'{name}-slave-{m}'
+            mr = _host(
+                f"sudo nmcli con add type ethernet ifname {q(m)} master {q(name)} "
+                f"con-name {q(slave_name)} 2>&1",
+                timeout=15
+            )
+            if mr.returncode != 0:
+                # Rollback: delete bond connection
+                _host(f"sudo nmcli con delete {q(name)} 2>/dev/null")
+                return jsonify({'error': f'Failed to add member {m}: {(mr.stdout or "").strip()}'}), 500
+
+        # Set IP configuration
+        if ip_method == 'static':
+            ip_addr = data['ip']
+            prefix = data['prefix']
+            gateway = data.get('gateway', '')
+            _host(f"sudo nmcli con mod {q(name)} ipv4.method manual "
+                  f"ipv4.addresses {q(ip_addr + '/' + str(prefix))} 2>&1")
+            if gateway:
+                _host(f"sudo nmcli con mod {q(name)} ipv4.gateway {q(gateway)} 2>&1")
+        else:
+            _host(f"sudo nmcli con mod {q(name)} ipv4.method auto 2>&1")
+
+        # Activate
+        act = _host(f"sudo nmcli con up {q(name)} 2>&1", timeout=30)
+        if act.returncode != 0:
+            return jsonify({'error': f'Bond created but activation failed: {(act.stdout or "").strip()}'}), 500
+
+        try:
+            from blueprints.eventlog import log
+            log('network', 'info', f'Bond {name} created',
+                details={'mode': mode, 'members': members, 'ip_method': ip_method})
+        except Exception:
+            pass
+
+        return jsonify(ok=True, name=name, mode=mode, members=members)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@network_bp.route('/bonds/<name>', methods=['DELETE'])
+def delete_bond(name):
+    """Remove bond and free member interfaces."""
+    err = require_tools('nmcli')
+    if err:
+        return err
+    try:
+        if not _validate_bond_name(name):
+            return jsonify({'error': 'Invalid bond name.'}), 400
+
+        q = shlex.quote
+
+        # Find and delete slave connections first
+        r = _host("nmcli -t -f NAME,TYPE con show 2>/dev/null")
+        if r.returncode == 0 and r.stdout.strip():
+            for line in r.stdout.strip().split('\n'):
+                parts = _nmcli_split(line)
+                if len(parts) >= 2:
+                    con_name = parts[0]
+                    if con_name.startswith(f'{name}-slave-'):
+                        _host(f"sudo nmcli con delete {q(con_name)} 2>/dev/null")
+
+        # Also find any 802-3-ethernet slaves mastered to this bond
+        sr = _host(f"nmcli -t -f NAME,connection.master con show 2>/dev/null")
+        if sr.returncode == 0 and sr.stdout.strip():
+            for line in sr.stdout.strip().split('\n'):
+                parts = _nmcli_split(line)
+                if len(parts) >= 2 and parts[1] == name:
+                    _host(f"sudo nmcli con delete {q(parts[0])} 2>/dev/null")
+
+        # Delete bond connection
+        dr = _host(f"sudo nmcli con delete {q(name)} 2>&1")
+        if dr.returncode != 0:
+            return jsonify({'error': f'Failed to delete bond: {(dr.stdout or "").strip()}'}), 500
+
+        try:
+            from blueprints.eventlog import log
+            log('network', 'info', f'Bond {name} deleted')
+        except Exception:
+            pass
+
+        return jsonify(ok=True, message=f'Bond {name} deleted.')
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@network_bp.route('/bonds/<name>/status')
+def bond_status(name):
+    """Get bond status with member details."""
+    try:
+        if not _validate_bond_name(name):
+            return jsonify({'error': 'Invalid bond name.'}), 400
+
+        proc_path = f'/proc/net/bonding/{name}'
+        r = _host(f"cat {shlex.quote(proc_path)} 2>/dev/null")
+        if r.returncode != 0 or not r.stdout.strip():
+            return jsonify({'error': f'Bond {name} not found or not active.'}), 404
+
+        raw = r.stdout.strip()
+        status = {'name': name, 'mode': '', 'mii_status': '', 'members': []}
+
+        # Parse bond mode
+        mode_m = re.search(r'Bonding Mode:\s*(.+)', raw)
+        if mode_m:
+            status['mode'] = mode_m.group(1).strip()
+
+        # Parse overall MII status
+        mii_m = re.search(r'MII Status:\s*(\S+)', raw)
+        if mii_m:
+            status['mii_status'] = mii_m.group(1).strip()
+
+        # Parse member (slave) sections
+        slave_blocks = re.split(r'Slave Interface:\s*', raw)[1:]
+        for block in slave_blocks:
+            member = {}
+            lines = block.strip().split('\n')
+            member['interface'] = lines[0].strip()
+            mii = re.search(r'MII Status:\s*(\S+)', block)
+            if mii:
+                member['mii_status'] = mii.group(1).strip()
+            speed = re.search(r'Speed:\s*(.+)', block)
+            if speed:
+                member['speed'] = speed.group(1).strip()
+            failures = re.search(r'Link Failure Count:\s*(\d+)', block)
+            if failures:
+                member['link_failures'] = int(failures.group(1))
+            perm_mac = re.search(r'Permanent HW addr:\s*(\S+)', block)
+            if perm_mac:
+                member['mac'] = perm_mac.group(1).strip()
+            status['members'].append(member)
+
+        return jsonify(ok=True, data=status)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 

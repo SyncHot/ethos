@@ -197,3 +197,309 @@ def _apply_cpu_governor(gov):
         run_cmd("systemctl restart cpufrequtils")
     except (OSError, subprocess.SubprocessError):
         pass
+
+
+# ---------------------------------------------------------------------------
+# Thermal & Fan Control
+# ---------------------------------------------------------------------------
+
+THERMAL_CONFIG_FILE = "/opt/ethos/data/thermal_config.json"
+
+PREDEFINED_CURVES = {
+    'quiet':       [{'temp': 30, 'pwm_pct': 20}, {'temp': 50, 'pwm_pct': 30},
+                    {'temp': 65, 'pwm_pct': 50}, {'temp': 75, 'pwm_pct': 70},
+                    {'temp': 85, 'pwm_pct': 100}],
+    'balanced':    [{'temp': 30, 'pwm_pct': 25}, {'temp': 45, 'pwm_pct': 40},
+                    {'temp': 55, 'pwm_pct': 60}, {'temp': 70, 'pwm_pct': 80},
+                    {'temp': 80, 'pwm_pct': 100}],
+    'performance': [{'temp': 30, 'pwm_pct': 40}, {'temp': 40, 'pwm_pct': 60},
+                    {'temp': 50, 'pwm_pct': 80}, {'temp': 60, 'pwm_pct': 100}],
+}
+
+
+def _load_thermal_config():
+    if os.path.exists(THERMAL_CONFIG_FILE):
+        try:
+            with open(THERMAL_CONFIG_FILE, 'r') as f:
+                return json.load(f)
+        except (OSError, json.JSONDecodeError):
+            pass
+    return {
+        'policy': 'balanced',
+        'emergency_threshold': 95,
+        'custom_curve': []
+    }
+
+
+def _save_thermal_config(config):
+    os.makedirs(os.path.dirname(THERMAL_CONFIG_FILE), exist_ok=True)
+    with open(THERMAL_CONFIG_FILE, 'w') as f:
+        json.dump(config, f, indent=2)
+
+
+def _apply_fan_curve(temp_c, curve):
+    """Return PWM value (0-255) using linear interpolation between curve points."""
+    if not curve:
+        return 0
+    curve = sorted(curve, key=lambda p: p['temp'])
+    if temp_c <= curve[0]['temp']:
+        return int(curve[0]['pwm_pct'] * 255 / 100)
+    if temp_c >= curve[-1]['temp']:
+        return int(curve[-1]['pwm_pct'] * 255 / 100)
+    for i in range(len(curve) - 1):
+        t0, p0 = curve[i]['temp'], curve[i]['pwm_pct']
+        t1, p1 = curve[i + 1]['temp'], curve[i + 1]['pwm_pct']
+        if t0 <= temp_c <= t1:
+            ratio = (temp_c - t0) / (t1 - t0) if t1 != t0 else 0
+            pct = p0 + ratio * (p1 - p0)
+            return int(pct * 255 / 100)
+    return int(curve[-1]['pwm_pct'] * 255 / 100)
+
+
+def _read_sysfs(path):
+    """Read a sysfs file, return stripped content or empty string."""
+    try:
+        with open(path, 'r') as f:
+            return f.read().strip()
+    except (OSError, IOError):
+        return ''
+
+
+def _read_thermal_zones():
+    """Read all thermal zones from /sys/class/thermal/thermal_zone*/."""
+    zones = []
+    thermal_base = '/sys/class/thermal'
+    if not os.path.isdir(thermal_base):
+        return zones
+    for entry in sorted(os.listdir(thermal_base)):
+        if not entry.startswith('thermal_zone'):
+            continue
+        zone_path = os.path.join(thermal_base, entry)
+        zone_type = _read_sysfs(os.path.join(zone_path, 'type'))
+        temp_raw = _read_sysfs(os.path.join(zone_path, 'temp'))
+        try:
+            temp_c = int(temp_raw) / 1000.0
+        except (ValueError, TypeError):
+            temp_c = None
+        trip_points = []
+        i = 0
+        while True:
+            tp_path = os.path.join(zone_path, f'trip_point_{i}_temp')
+            if not os.path.exists(tp_path):
+                break
+            tp_raw = _read_sysfs(tp_path)
+            tp_type = _read_sysfs(os.path.join(zone_path, f'trip_point_{i}_type'))
+            try:
+                tp_temp = int(tp_raw) / 1000.0
+            except (ValueError, TypeError):
+                tp_temp = None
+            trip_points.append({'temp_c': tp_temp, 'type': tp_type})
+            i += 1
+        zones.append({
+            'name': entry,
+            'type': zone_type,
+            'temp_c': temp_c,
+            'trip_points': trip_points
+        })
+    return zones
+
+
+def _read_fans():
+    """Read fan info from /sys/class/hwmon/hwmon*/."""
+    fans = []
+    hwmon_base = '/sys/class/hwmon'
+    if not os.path.isdir(hwmon_base):
+        return fans
+    for hwmon in sorted(os.listdir(hwmon_base)):
+        hwmon_path = os.path.join(hwmon_base, hwmon)
+        if not os.path.isdir(hwmon_path):
+            continue
+        fan_indices = set()
+        for fname in os.listdir(hwmon_path):
+            m = re.match(r'^fan(\d+)_input$', fname)
+            if m:
+                fan_indices.add(int(m.group(1)))
+        for idx in sorted(fan_indices):
+            rpm_raw = _read_sysfs(os.path.join(hwmon_path, f'fan{idx}_input'))
+            label = _read_sysfs(os.path.join(hwmon_path, f'fan{idx}_label'))
+            pwm_raw = _read_sysfs(os.path.join(hwmon_path, f'pwm{idx}'))
+            pwm_enable = _read_sysfs(os.path.join(hwmon_path, f'pwm{idx}_enable'))
+            try:
+                rpm = int(rpm_raw)
+            except (ValueError, TypeError):
+                rpm = None
+            try:
+                pwm = int(pwm_raw)
+            except (ValueError, TypeError):
+                pwm = None
+            try:
+                enable = int(pwm_enable)
+            except (ValueError, TypeError):
+                enable = None
+            mode_map = {0: 'disabled', 1: 'manual', 2: 'auto'}
+            fans.append({
+                'name': label or f'{hwmon}/fan{idx}',
+                'rpm': rpm,
+                'pwm': pwm,
+                'pwm_pct': round(pwm * 100 / 255, 1) if pwm is not None else None,
+                'mode': mode_map.get(enable, 'unknown'),
+                'hwmon': hwmon,
+                'index': idx
+            })
+    return fans
+
+
+def _read_sensors_fallback():
+    """Use lm-sensors JSON output as fallback."""
+    raw = run_cmd('sensors -j 2>/dev/null')
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+
+def _get_max_temp(zones, sensors_data):
+    """Get the highest current temperature from zones or sensors."""
+    temps = [z['temp_c'] for z in zones if z['temp_c'] is not None]
+    if sensors_data and isinstance(sensors_data, dict):
+        for chip in sensors_data.values():
+            if not isinstance(chip, dict):
+                continue
+            for feature in chip.values():
+                if not isinstance(feature, dict):
+                    continue
+                for key, val in feature.items():
+                    if 'input' in key:
+                        try:
+                            temps.append(float(val))
+                        except (ValueError, TypeError):
+                            pass
+    return max(temps) if temps else None
+
+
+@power_bp.route('/thermal', methods=['GET'])
+def get_thermal():
+    """Get all thermal zones, fan RPMs, and current policy."""
+    zones = _read_thermal_zones()
+    fans = _read_fans()
+    sensors_data = _read_sensors_fallback()
+    config = _load_thermal_config()
+
+    # Enrich from lm-sensors if sysfs returned no zones
+    if sensors_data and not zones:
+        for chip_name, chip_data in sensors_data.items():
+            if not isinstance(chip_data, dict):
+                continue
+            for feature_name, feature_data in chip_data.items():
+                if not isinstance(feature_data, dict):
+                    continue
+                for key, val in feature_data.items():
+                    if 'input' in key and 'temp' in feature_name.lower():
+                        try:
+                            zones.append({
+                                'name': feature_name,
+                                'type': chip_name,
+                                'temp_c': float(val),
+                                'trip_points': []
+                            })
+                        except (ValueError, TypeError):
+                            pass
+
+    return jsonify({
+        'zones': zones,
+        'fans': fans,
+        'policy': config.get('policy', 'balanced'),
+        'emergency_threshold': config.get('emergency_threshold', 95),
+        'custom_curve': config.get('custom_curve', [])
+    })
+
+
+@power_bp.route('/thermal/policy', methods=['PUT'])
+def set_thermal_policy():
+    """Set fan control policy.
+    Body: {policy: 'quiet'|'balanced'|'performance'|'custom',
+           custom_curve?: [{temp, pwm_pct}, ...]}
+    """
+    data = request.json or {}
+    policy = data.get('policy')
+    if policy not in ('quiet', 'balanced', 'performance', 'custom'):
+        return jsonify({'error': 'Invalid policy. Must be quiet, balanced, performance, or custom'}), 400
+
+    config = _load_thermal_config()
+    config['policy'] = policy
+
+    if policy == 'custom':
+        custom_curve = data.get('custom_curve')
+        if not isinstance(custom_curve, list) or len(custom_curve) < 2:
+            return jsonify({'error': 'custom_curve must be a list of at least 2 {temp, pwm_pct} points'}), 400
+        for point in custom_curve:
+            if not isinstance(point, dict) or 'temp' not in point or 'pwm_pct' not in point:
+                return jsonify({'error': 'Each curve point must have temp and pwm_pct'}), 400
+            try:
+                t = int(point['temp'])
+                p = int(point['pwm_pct'])
+            except (ValueError, TypeError):
+                return jsonify({'error': 'temp and pwm_pct must be integers'}), 400
+            if not (0 <= t <= 120):
+                return jsonify({'error': 'temp must be between 0 and 120'}), 400
+            if not (0 <= p <= 100):
+                return jsonify({'error': 'pwm_pct must be between 0 and 100'}), 400
+        config['custom_curve'] = [{'temp': int(p['temp']), 'pwm_pct': int(p['pwm_pct'])} for p in custom_curve]
+        curve = config['custom_curve']
+    else:
+        curve = PREDEFINED_CURVES[policy]
+
+    _save_thermal_config(config)
+
+    # Apply fan curve to all hwmon PWM controls
+    zones = _read_thermal_zones()
+    sensors_data = _read_sensors_fallback()
+    current_temp = _get_max_temp(zones, sensors_data)
+
+    if current_temp is not None:
+        pwm_value = _apply_fan_curve(current_temp, curve)
+        hwmon_base = '/sys/class/hwmon'
+        if os.path.isdir(hwmon_base):
+            for hwmon in sorted(os.listdir(hwmon_base)):
+                hwmon_path = os.path.join(hwmon_base, hwmon)
+                if not os.path.isdir(hwmon_path):
+                    continue
+                for fname in os.listdir(hwmon_path):
+                    m = re.match(r'^pwm(\d+)$', fname)
+                    if not m:
+                        continue
+                    idx = m.group(1)
+                    enable_path = os.path.join(hwmon_path, f'pwm{idx}_enable')
+                    pwm_path = os.path.join(hwmon_path, f'pwm{idx}')
+                    host_run(f"bash -c 'echo 1 > {shlex.quote(enable_path)}'", timeout=5)
+                    host_run(f"bash -c 'echo {pwm_value} > {shlex.quote(pwm_path)}'", timeout=5)
+
+    log('power', 'info', f'Thermal policy set to {policy}')
+    return jsonify({'ok': True, 'policy': policy})
+
+
+@power_bp.route('/thermal/emergency', methods=['PUT'])
+def set_emergency_threshold():
+    """Set emergency shutdown temperature.
+    Body: {threshold_celsius: int}
+    """
+    data = request.json or {}
+    threshold = data.get('threshold_celsius')
+
+    if threshold is None:
+        return jsonify({'error': 'threshold_celsius is required'}), 400
+    try:
+        threshold = int(threshold)
+    except (ValueError, TypeError):
+        return jsonify({'error': 'threshold_celsius must be an integer'}), 400
+    if not (50 <= threshold <= 120):
+        return jsonify({'error': 'threshold_celsius must be between 50 and 120'}), 400
+
+    config = _load_thermal_config()
+    config['emergency_threshold'] = threshold
+    _save_thermal_config(config)
+
+    log('power', 'info', f'Emergency thermal threshold set to {threshold}\u00b0C')
+    return jsonify({'ok': True, 'emergency_threshold': threshold})

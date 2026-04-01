@@ -21,6 +21,7 @@ function renderStorageApp(body) {
     <div class="storage-app">
         <div class="storage-toolbar">
             <button class="fm-toolbar-btn" id="st-refresh" title="${t('Odśwież')}"><i class="fas fa-sync-alt"></i></button>
+            <button class="fm-toolbar-btn" id="st-cache-btn" title="${t('SSD Cache')}"><i class="fas fa-bolt"></i> ${t('SSD Cache')}</button>
             <div class="fm-toolbar-sep"></div>
             <span class="storage-status" id="st-status">${t('Ładowanie...')}</span>
         </div>
@@ -55,6 +56,7 @@ function renderStorageApp(body) {
                 <button class="fm-toolbar-btn" id="st-smart-btn"><i class="fas fa-heartbeat"></i> SMART</button>
                 <button class="fm-toolbar-btn btn-purple" id="st-merge-btn"><i class="fas fa-object-group"></i> ${t('Połącz')}</button>
                 <button class="fm-toolbar-btn btn-cyan" id="st-split-btn"><i class="fas fa-columns"></i> Podziel</button>
+                <button class="fm-toolbar-btn btn-red" id="st-encrypt-btn"><i class="fas fa-lock"></i> LUKS</button>
             </div>
         </div>
 
@@ -108,7 +110,10 @@ function renderStorageApp(body) {
         smartModal.style.display = '';
         smartBody.innerHTML = '<div class="sto-center-md"><i class="fas fa-spinner fa-spin sto-spinner"></i></div>';
         try {
-            const info = await api(`/storage/smart?disk=${encodeURIComponent(diskName)}`);
+            const [info, scoreData] = await Promise.all([
+                api(`/storage/smart?disk=${encodeURIComponent(diskName)}`),
+                api(`/diskrepair/smart/${encodeURIComponent(diskName)}/score`).catch(() => null),
+            ]);
             if (!info.available) {
                 smartBody.innerHTML = `<div class="sto-info-msg"><i class="fas fa-info-circle sto-icon-lg"></i><div class="sto-mt-sm">${t('SMART niedostępny dla tego dysku')}</div></div>`;
                 return;
@@ -117,8 +122,26 @@ function renderStorageApp(body) {
             const tColor = (info.temperature || 0) > 50 ? '#ef4444' : (info.temperature || 0) > 40 ? '#eab308' : '#10b981';
             const rColor = (info.reallocated_sectors || 0) > 0 ? '#ef4444' : '#10b981';
             const poh = info.power_on_hours ? `${Math.floor(info.power_on_hours / 24)} dni (${info.power_on_hours.toLocaleString()} godz.)` : '-';
+
+            // Health score ring
+            const score = scoreData?.score ?? null;
+            const grade = scoreData?.grade || '';
+            const scoreColor = score >= 90 ? '#10b981' : score >= 70 ? '#3b82f6' : score >= 50 ? '#eab308' : '#ef4444';
+            const scoreGradient = score != null ? `conic-gradient(${scoreColor} ${score * 3.6}deg, rgba(255,255,255,0.06) 0deg)` : 'none';
+            const scoreHtml = score != null ? `
+                <div class="sto-smart-card" style="background:rgba(${score >= 70 ? '16,185,129' : score >= 50 ? '234,179,8' : '239,68,68'},.08)">
+                    <div class="sto-stat-label">${t('Zdrowie')}</div>
+                    <div style="display:flex;align-items:center;gap:10px">
+                        <div style="width:48px;height:48px;border-radius:50%;background:${scoreGradient};display:flex;align-items:center;justify-content:center">
+                            <div style="width:38px;height:38px;border-radius:50%;background:var(--bg-card,#1e293b);display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;color:${scoreColor}">${score}</div>
+                        </div>
+                        <div style="font-size:12px;color:var(--text-muted);text-transform:uppercase">${grade}</div>
+                    </div>
+                </div>` : '';
+
             smartBody.innerHTML = `
-                <div class="sto-smart-grid">
+                <div class="sto-smart-grid" style="grid-template-columns:repeat(${score != null ? 3 : 2},1fr)">
+                    ${scoreHtml}
                     <div class="sto-smart-card" style="background:rgba(${info.health === 'PASSED' ? '16,185,129' : '239,68,68'},.08)">
                         <div class="sto-stat-label">Status</div>
                         <div class="sto-stat-value" style="color:${hColor}">${info.health || '?'}</div>
@@ -136,7 +159,49 @@ function renderStorageApp(body) {
                     <tr><td class="sto-td-label">Realokowane sektory</td><td class="sto-td-right-bold" style="color:${rColor}">${info.reallocated_sectors != null ? info.reallocated_sectors : '-'}</td></tr>
                 </table>
                 ${(info.reallocated_sectors || 0) > 0 ? `<div class="sto-alert-danger"><i class="fas fa-exclamation-triangle sto-mr-xs"></i>${t('Dysk ma realokowane sektory — rozważ wymianę!')}</div>` : ''}
+                <div style="margin-top:12px;display:flex;gap:8px">
+                    <button class="fm-toolbar-btn btn-sm" id="st-smart-selftest"><i class="fas fa-vial"></i> ${t('Self-test')}</button>
+                    <button class="fm-toolbar-btn btn-sm" id="st-smart-detail"><i class="fas fa-list"></i> ${t('Atrybuty')}</button>
+                </div>
             `;
+
+            smartBody.querySelector('#st-smart-selftest')?.addEventListener('click', async () => {
+                try {
+                    const r = await api('/diskrepair/smart-test', { method: 'POST', body: { disk: diskName, type: 'short' } });
+                    if (r.error) { toast(r.error, 'error'); return; }
+                    toast(t('Self-test uruchomiony') + (r.estimated_minutes ? ` (~${r.estimated_minutes} min)` : ''), 'success');
+                } catch (e) { toast(e.message, 'error'); }
+            });
+
+            smartBody.querySelector('#st-smart-detail')?.addEventListener('click', async () => {
+                try {
+                    const detail = await api(`/diskrepair/smart/${encodeURIComponent(diskName)}`);
+                    if (detail.error) { toast(detail.error, 'error'); return; }
+                    const attrs = detail.attributes || [];
+                    if (!attrs.length) { toast(t('Brak atrybutów SMART'), 'info'); return; }
+                    showModal(t('Atrybuty SMART — ') + diskName, `
+                        <div style="max-height:400px;overflow-y:auto">
+                            <table style="width:100%;font-size:12px;border-collapse:collapse">
+                                <tr style="background:var(--bg-card);font-weight:600;text-align:left">
+                                    <th style="padding:6px">ID</th><th style="padding:6px">${t('Atrybut')}</th>
+                                    <th style="padding:6px">Val</th><th style="padding:6px">Worst</th>
+                                    <th style="padding:6px">Thresh</th><th style="padding:6px">Raw</th>
+                                    <th style="padding:6px">Status</th>
+                                </tr>
+                                ${attrs.map(a => {
+                                    const sc = a.status === 'failing' ? 'color:#ef4444;font-weight:600' : a.status === 'warn' ? 'color:#eab308' : '';
+                                    return `<tr style="border-bottom:1px solid var(--border)">
+                                        <td style="padding:4px 6px">${a.id}</td><td style="padding:4px 6px">${a.name}</td>
+                                        <td style="padding:4px 6px">${a.value}</td><td style="padding:4px 6px">${a.worst}</td>
+                                        <td style="padding:4px 6px">${a.thresh}</td><td style="padding:4px 6px;font-family:monospace">${a.raw}</td>
+                                        <td style="padding:4px 6px;${sc}">${a.status}</td>
+                                    </tr>`;
+                                }).join('')}
+                            </table>
+                        </div>
+                    `, [{ label: t('Zamknij'), class: 'secondary' }]);
+                } catch (e) { toast(e.message, 'error'); }
+            });
         } catch (e) {
             smartBody.innerHTML = `<div class="sto-error-msg">${t('Błąd:')} ${e.message}</div>`;
         }
@@ -325,6 +390,16 @@ function renderStorageApp(body) {
         $('#st-smart-btn').style.display = hasSmart ? '' : 'none';
         $('#st-merge-btn').style.display = (parentDisk && siblings.length >= 2 && !isSystem) ? '' : 'none';
         $('#st-split-btn').style.display = (parentDisk && !isSystem) ? '' : 'none';
+        // Encryption button — show for partitions that are not system
+        $('#st-encrypt-btn').style.display = (!isDisk && !isSystem) ? '' : 'none';
+        const encBtn = $('#st-encrypt-btn');
+        if (drive.fstype === 'crypto_LUKS') {
+            encBtn.innerHTML = `<i class="fas fa-lock"></i> ${drive.mountpoint ? t('Zablokuj') : t('Odblokuj')}`;
+            encBtn.className = 'fm-toolbar-btn ' + (drive.mountpoint ? 'btn-orange' : 'btn-green');
+        } else {
+            encBtn.innerHTML = `<i class="fas fa-lock"></i> ${t('Szyfruj')}`;
+            encBtn.className = 'fm-toolbar-btn btn-red';
+        }
     }
 
     $('#st-actions-close').onclick = () => {
@@ -821,6 +896,204 @@ function renderStorageApp(body) {
                 fmtFooter.querySelector('#st-split-done').onclick = () => { closeFmtModal(); loadDrives(); };
             }
         };
+    };
+
+    /* ═══════════════════════════════════════════════════════
+       LUKS Encryption
+       ═══════════════════════════════════════════════════════ */
+    $('#st-encrypt-btn').onclick = async () => {
+        if (!state.selected) return;
+        const drive = state.drives.find(d => d.name === state.selected);
+        if (!drive) return;
+        const dev = `/dev/${drive.name}`;
+
+        if (drive.fstype === 'crypto_LUKS') {
+            // Already encrypted — unlock or lock
+            const info = await api(`/encryption/status?device=${encodeURIComponent(dev)}`);
+            if (info.unlocked) {
+                if (!await confirmDialog(t('Zablokować zaszyfrowany wolumen?'))) return;
+                try {
+                    const r = await api('/encryption/lock', { method: 'POST', body: { device: dev } });
+                    if (r.error) { toast(r.error, 'error'); return; }
+                    toast(t('Wolumen zablokowany'), 'success');
+                    loadDrives();
+                } catch (e) { toast(e.message, 'error'); }
+            } else {
+                showModal(t('Odblokuj wolumen'), `
+                    <div class="usr-form">
+                        <label>${t('Hasło szyfrowania')}</label>
+                        <input type="password" id="st-luks-pw" class="modal-input" autofocus>
+                        <label style="margin-top:8px">${t('Punkt montowania (opcjonalnie)')}</label>
+                        <input type="text" id="st-luks-mp" class="modal-input" placeholder="/mnt/encrypted" value="/mnt/encrypted">
+                    </div>`, [
+                    { label: t('Anuluj'), class: 'secondary' },
+                    { label: t('Odblokuj'), class: 'primary', action: async (m) => {
+                        const pw = m.querySelector('#st-luks-pw').value;
+                        const mp = m.querySelector('#st-luks-mp').value.trim();
+                        if (!pw) { toast(t('Podaj hasło'), 'warning'); return; }
+                        try {
+                            const r = await api('/encryption/unlock', { method: 'POST', body: { device: dev, passphrase: pw, mount: mp } });
+                            if (r.error) { toast(r.error, 'error'); return; }
+                            toast(t('Wolumen odblokowany'), 'success');
+                            loadDrives();
+                        } catch (e) { toast(e.message, 'error'); }
+                    }}
+                ]);
+            }
+        } else {
+            // Not encrypted — encrypt
+            if (drive.mountpoint) { toast(t('Odmontuj dysk przed szyfrowaniem'), 'warning'); return; }
+            showModal(t('Szyfruj LUKS2 — ') + dev, `
+                <div class="usr-form">
+                    <div class="st-fmt-system-info sto-sys-info-danger" style="margin-bottom:12px">
+                        <i class="fas fa-exclamation-triangle sto-text-danger"></i>
+                        <span class="sto-text-danger"><b>${t('UWAGA:')}</b> ${t('Wszystkie dane na urządzeniu zostaną usunięte!')}</span>
+                    </div>
+                    <label>${t('Hasło szyfrowania (min 8 znaków)')}</label>
+                    <input type="password" id="st-luks-pw1" class="modal-input">
+                    <label>${t('Powtórz hasło')}</label>
+                    <input type="password" id="st-luks-pw2" class="modal-input">
+                    <label>${t('Etykieta')}</label>
+                    <input type="text" id="st-luks-label" class="modal-input" value="encrypted" maxlength="32">
+                    <label>${t('System plików')}</label>
+                    <select id="st-luks-fs" class="modal-input">
+                        <option value="btrfs">Btrfs</option>
+                        <option value="ext4">ext4</option>
+                        <option value="xfs">XFS</option>
+                    </select>
+                    <label style="margin-top:8px"><input type="checkbox" id="st-luks-auto"> ${t('Auto-odblokuj przy starcie (keyfile)')}</label>
+                </div>`, [
+                { label: t('Anuluj'), class: 'secondary' },
+                { label: t('Szyfruj'), class: 'danger', action: async (m) => {
+                    const pw1 = m.querySelector('#st-luks-pw1').value;
+                    const pw2 = m.querySelector('#st-luks-pw2').value;
+                    const label = m.querySelector('#st-luks-label').value.trim() || 'encrypted';
+                    const fs = m.querySelector('#st-luks-fs').value;
+                    const autoUnlock = m.querySelector('#st-luks-auto').checked;
+                    if (!pw1 || pw1.length < 8) { toast(t('Hasło min 8 znaków'), 'warning'); return; }
+                    if (pw1 !== pw2) { toast(t('Hasła nie pasują'), 'warning'); return; }
+                    try {
+                        const r = await api('/encryption/encrypt', { method: 'POST', body: { device: dev, passphrase: pw1, label, filesystem: fs } });
+                        if (r.error) { toast(r.error, 'error'); return; }
+                        toast(t('Wolumen zaszyfrowany!'), 'success');
+                        if (autoUnlock) {
+                            await api('/encryption/auto-unlock', { method: 'PUT', body: { device: dev, passphrase: pw1, mount: `/mnt/${label}` } });
+                        }
+                        loadDrives();
+                    } catch (e) { toast(e.message, 'error'); }
+                }}
+            ]);
+        }
+    };
+
+    /* ═══════════════════════════════════════════════════════
+       SSD Cache Manager
+       ═══════════════════════════════════════════════════════ */
+    $('#st-cache-btn').onclick = async () => {
+        const devData = await api('/cache/devices');
+        if (devData.error) { toast(devData.error, 'error'); return; }
+        const statusData = await api('/cache/status');
+        const live = (statusData && statusData.live) || [];
+        const configured = (statusData && statusData.configured) || [];
+
+        let activeHtml = '';
+        if (configured.length > 0) {
+            activeHtml = `<div style="margin-bottom:16px">
+                <h4 style="margin:0 0 8px">${t('Aktywne cache')}</h4>
+                ${configured.map(c => {
+                    const backing = live.flatMap(l => l.backing_devices || []).find(b => b.device === c.backing_device);
+                    const hitRate = backing ? (backing.hit_ratio !== null ? backing.hit_ratio + '%' : '—') : '—';
+                    const dirty = backing ? (backing.dirty_data || '0') : '0';
+                    return `<div class="st-cache-item" style="display:flex;align-items:center;gap:12px;padding:8px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px">
+                        <div style="flex:1">
+                            <b>${c.cache_device}</b> → <b>${c.backing_device}</b>
+                            <span class="sto-action-sub">${c.mode}</span>
+                            <span style="margin-left:12px">${t('Trafienia')}: ${hitRate} | ${t('Brudne dane')}: ${dirty}</span>
+                        </div>
+                        <select class="modal-input st-cache-mode-sel" data-backing="${c.backing_device}" style="width:140px">
+                            ${['writethrough','writeback','writearound'].map(m =>
+                                `<option value="${m}" ${m === c.mode ? 'selected' : ''}>${m}</option>`
+                            ).join('')}
+                        </select>
+                        <button class="fm-toolbar-btn btn-red btn-sm st-cache-detach" data-backing="${c.backing_device}"><i class="fas fa-unlink"></i> ${t('Odłącz')}</button>
+                    </div>`;
+                }).join('')}
+            </div>`;
+        }
+
+        const ssdOpts = (devData.ssds || []).map(s =>
+            `<option value="${s.device}">${s.name} — ${s.size} ${s.model}</option>`
+        ).join('');
+        const hddOpts = (devData.hdds || []).map(h =>
+            `<option value="${h.device}">${h.name} — ${h.size} ${h.model}</option>`
+        ).join('');
+
+        const hasDevices = ssdOpts && hddOpts;
+        const newCacheHtml = hasDevices ? `
+            <h4 style="margin:0 0 8px">${t('Nowy cache')}</h4>
+            <div class="usr-form">
+                <label>${t('Dysk SSD (cache)')}</label>
+                <select id="st-cache-ssd" class="modal-input">${ssdOpts}</select>
+                <label>${t('Dysk HDD (backing)')}</label>
+                <select id="st-cache-hdd" class="modal-input">${hddOpts}</select>
+                <label>${t('Tryb cache')}</label>
+                <select id="st-cache-mode" class="modal-input">
+                    <option value="writethrough">${t('Write-through (bezpieczny)')}</option>
+                    <option value="writeback">${t('Write-back (szybszy)')}</option>
+                    <option value="writearound">${t('Write-around')}</option>
+                </select>
+                <div class="st-fmt-system-info sto-sys-info-danger" style="margin-top:8px">
+                    <i class="fas fa-exclamation-triangle sto-text-danger"></i>
+                    <span class="sto-text-danger"><b>${t('UWAGA:')}</b> ${t('Dane na obu dyskach zostaną usunięte!')}</span>
+                </div>
+            </div>` : `<p style="color:var(--text-muted)">${t('Brak dostępnych dysków SSD lub HDD do konfiguracji cache.')}</p>`;
+
+        const buttons = [{ label: t('Zamknij'), class: 'secondary' }];
+        if (hasDevices) {
+            buttons.push({ label: t('Utwórz cache'), class: 'danger', action: async (m) => {
+                const ssd = m.querySelector('#st-cache-ssd').value;
+                const hdd = m.querySelector('#st-cache-hdd').value;
+                const mode = m.querySelector('#st-cache-mode').value;
+                if (!ssd || !hdd) { toast(t('Wybierz oba dyski'), 'warning'); return; }
+                if (ssd === hdd) { toast(t('SSD i HDD muszą być różnymi dyskami'), 'warning'); return; }
+                if (!await confirmDialog(t('Utworzyć SSD cache? Dane na obu dyskach zostaną usunięte!'))) return;
+                try {
+                    const r = await api('/cache/create', { method: 'POST', body: { cache_device: ssd, backing_device: hdd, mode } });
+                    if (r.error) { toast(r.error, 'error'); return; }
+                    toast(t('SSD Cache utworzony!'), 'success');
+                    loadDrives();
+                } catch (e) { toast(e.message, 'error'); }
+            }});
+        }
+
+        showModal(t('SSD Cache Manager'), activeHtml + newCacheHtml, buttons).then(() => {});
+
+        // Bind detach + mode change after modal renders
+        setTimeout(() => {
+            document.querySelectorAll('.st-cache-detach').forEach(btn => {
+                btn.onclick = async () => {
+                    const backing = btn.dataset.backing;
+                    if (!await confirmDialog(t('Odłączyć SSD cache od') + ' ' + backing + '?')) return;
+                    try {
+                        const r = await api('/cache/detach', { method: 'POST', body: { backing_device: backing } });
+                        if (r.error) { toast(r.error, 'error'); return; }
+                        toast(t('Cache odłączony'), 'success');
+                        document.querySelector('.modal-overlay')?.remove();
+                        loadDrives();
+                    } catch (e) { toast(e.message, 'error'); }
+                };
+            });
+            document.querySelectorAll('.st-cache-mode-sel').forEach(sel => {
+                sel.onchange = async () => {
+                    const backing = sel.dataset.backing;
+                    try {
+                        const r = await api('/cache/mode', { method: 'PUT', body: { backing_device: backing, mode: sel.value } });
+                        if (r.error) { toast(r.error, 'error'); return; }
+                        toast(t('Tryb zmieniony: ') + sel.value, 'success');
+                    } catch (e) { toast(e.message, 'error'); }
+                };
+            });
+        }, 100);
     };
 
     /* ═══════════════════════════════════════════════════════

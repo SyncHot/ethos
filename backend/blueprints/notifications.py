@@ -1,10 +1,18 @@
 """
 EthOS — Notification Channels Blueprint
 Send alerts via Telegram, Discord, Gotify, Ntfy, SMTP, Webhook.
+In-app notification inbox with read/unread state and SocketIO push.
+
+Inbox endpoints:
+  GET  /api/notifications           — List inbox notifications (paginated)
+  POST /api/notifications/clear     — Clear all inbox notifications
+  POST /api/notifications/read      — Mark notification(s) as read
+  POST /api/notifications/read-all  — Mark all as read
 """
 
 import json
 import os
+import sqlite3
 import time
 import smtplib
 from email.mime.text import MIMEText
@@ -23,6 +31,21 @@ except ImportError:
     _HAS_GEVENT = False
 
 notifications_bp = Blueprint('notifications', __name__, url_prefix='/api/notifications')
+
+DATA_DIR = os.environ.get('ETHOS_DATA', '/opt/ethos/data')
+CONFIG_PATH = os.path.join(DATA_DIR, 'notifications_config.json')
+HISTORY_PATH = os.path.join(DATA_DIR, 'notifications_history.json')
+MAX_HISTORY = 200
+_INBOX_DB = os.path.join(os.environ.get('ETHOS_LOG_DIR', '/opt/ethos/logs'), 'inbox.db')
+
+_socketio = None
+
+
+def init_notifications(socketio_instance):
+    """Store SocketIO reference and create inbox DB table."""
+    global _socketio
+    _socketio = socketio_instance
+    _init_inbox_db()
 
 DATA_DIR = os.environ.get('ETHOS_DATA', '/opt/ethos/data')
 CONFIG_PATH = os.path.join(DATA_DIR, 'notifications_config.json')
@@ -56,6 +79,78 @@ _DEFAULT_CONFIG = {
 SENSITIVE_KEYS = {"bot_token", "app_token", "password", "webhook_url", "url"}
 
 # ── Helpers ───────────────────────────────────────────────────────────────
+
+def _get_inbox_db():
+    os.makedirs(os.path.dirname(_INBOX_DB), exist_ok=True)
+    conn = sqlite3.connect(_INBOX_DB, timeout=5)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    return conn
+
+
+def _init_inbox_db():
+    conn = _get_inbox_db()
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS inbox (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts REAL NOT NULL,
+            title TEXT NOT NULL,
+            message TEXT NOT NULL,
+            type TEXT DEFAULT 'info',
+            category TEXT DEFAULT 'system',
+            read INTEGER DEFAULT 0,
+            action_app TEXT,
+            action_tab TEXT
+        )
+    ''')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_inbox_ts ON inbox(ts)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_inbox_read ON inbox(read)')
+    conn.commit()
+    conn.close()
+
+
+def push_inbox(title, message, msg_type='info', category='system', action_app=None, action_tab=None):
+    """Add a notification to the in-app inbox and push via SocketIO."""
+    ts = time.time()
+    try:
+        conn = _get_inbox_db()
+        conn.execute(
+            'INSERT INTO inbox (ts, title, message, type, category, action_app, action_tab) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            (ts, title, message, msg_type, category, action_app, action_tab)
+        )
+        conn.commit()
+        # Get unread count
+        row = conn.execute('SELECT COUNT(*) FROM inbox WHERE read = 0').fetchone()
+        unread = row[0] if row else 0
+        conn.close()
+    except Exception:
+        unread = 0
+
+    notif = {
+        'title': title,
+        'message': message,
+        'type': msg_type,
+        'category': category,
+        'time': ts,
+        'action': {'app': action_app, 'tab': action_tab} if action_app else None,
+    }
+
+    if _socketio:
+        try:
+            _socketio.emit('notification_new', notif)
+            _socketio.emit('notification_count', {'count': unread})
+        except Exception:
+            pass
+
+
+# ── Type mapping from event levels ────────────────────────────────────────
+
+_LEVEL_TO_TYPE = {
+    'debug': 'info',
+    'info': 'info',
+    'warning': 'warning',
+    'error': 'error',
+}
 
 def _load_config():
     if os.path.exists(CONFIG_PATH):
@@ -277,7 +372,13 @@ def send_notification(title, message, category='system', level='info'):
 
 
 def notify_event(category, level, message):
-    """Hook callable from eventlog — maps event to trigger and sends."""
+    """Hook callable from eventlog — maps event to trigger, sends to channels + inbox."""
+    # Always push to inbox for warning/error events
+    if level in ('warning', 'error'):
+        msg_type = _LEVEL_TO_TYPE.get(level, 'info')
+        title = f'{category.title()}: {level.title()}'
+        push_inbox(title, message, msg_type=msg_type, category=category)
+
     trigger_key = _EVENT_TRIGGER_MAP.get((category, level))
     if not trigger_key:
         return
@@ -285,6 +386,11 @@ def notify_event(category, level, message):
     if not cfg['triggers'].get(trigger_key, False):
         return
     title = f'EthOS: {trigger_key.replace("_", " ").title()}'
+
+    # Push to inbox for triggered events too (if not already pushed above)
+    if level not in ('warning', 'error'):
+        push_inbox(title, message, msg_type=_LEVEL_TO_TYPE.get(level, 'info'), category=category)
+
     send_notification(title, message, category, level)
 
 # ── Routes ────────────────────────────────────────────────────────────────
@@ -348,3 +454,118 @@ def get_history():
     history = _load_history()
     history.reverse()
     return jsonify(history[:50])
+
+
+# ── Inbox routes (in-app notification center) ────────────────────────────
+
+@notifications_bp.route('', methods=['GET'])
+@notifications_bp.route('/', methods=['GET'])
+def get_inbox():
+    """Return inbox notifications for the bell dropdown. Most recent first."""
+    limit = min(int(request.args.get('limit', 50)), 200)
+    try:
+        conn = _get_inbox_db()
+        rows = conn.execute(
+            'SELECT id, ts, title, message, type, category, read, action_app, action_tab '
+            'FROM inbox ORDER BY ts DESC LIMIT ?', (limit,)
+        ).fetchall()
+        conn.close()
+    except Exception:
+        return jsonify([])
+
+    result = []
+    for r in rows:
+        item = {
+            'id': r['id'],
+            'title': r['title'],
+            'message': r['message'],
+            'type': r['type'],
+            'category': r['category'],
+            'time': r['ts'],
+            'read': bool(r['read']),
+        }
+        if r['action_app']:
+            item['action'] = {'app': r['action_app'], 'tab': r['action_tab'] or ''}
+        result.append(item)
+    return jsonify(result)
+
+
+@notifications_bp.route('/clear', methods=['POST'])
+def clear_inbox():
+    """Delete all inbox notifications."""
+    try:
+        conn = _get_inbox_db()
+        conn.execute('DELETE FROM inbox')
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+    if _socketio:
+        try:
+            _socketio.emit('notification_count', {'count': 0})
+        except Exception:
+            pass
+
+    return jsonify({'ok': True})
+
+
+@notifications_bp.route('/read', methods=['POST'])
+def mark_read():
+    """Mark specific notification(s) as read. Body: {ids: [1,2,3]}"""
+    data = request.get_json(silent=True) or {}
+    ids = data.get('ids', [])
+    if not ids or not isinstance(ids, list):
+        return jsonify({'error': 'ids array required'}), 400
+
+    try:
+        conn = _get_inbox_db()
+        placeholders = ','.join('?' for _ in ids)
+        conn.execute(f'UPDATE inbox SET read = 1 WHERE id IN ({placeholders})', ids)
+        conn.commit()
+        row = conn.execute('SELECT COUNT(*) FROM inbox WHERE read = 0').fetchone()
+        unread = row[0] if row else 0
+        conn.close()
+    except Exception:
+        unread = 0
+
+    if _socketio:
+        try:
+            _socketio.emit('notification_count', {'count': unread})
+        except Exception:
+            pass
+
+    return jsonify({'ok': True, 'unread': unread})
+
+
+@notifications_bp.route('/read-all', methods=['POST'])
+def mark_all_read():
+    """Mark all inbox notifications as read."""
+    try:
+        conn = _get_inbox_db()
+        conn.execute('UPDATE inbox SET read = 1')
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+    if _socketio:
+        try:
+            _socketio.emit('notification_count', {'count': 0})
+        except Exception:
+            pass
+
+    return jsonify({'ok': True, 'unread': 0})
+
+
+@notifications_bp.route('/unread-count', methods=['GET'])
+def unread_count():
+    """Return unread notification count."""
+    try:
+        conn = _get_inbox_db()
+        row = conn.execute('SELECT COUNT(*) FROM inbox WHERE read = 0').fetchone()
+        count = row[0] if row else 0
+        conn.close()
+    except Exception:
+        count = 0
+    return jsonify({'count': count})

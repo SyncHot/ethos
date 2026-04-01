@@ -2084,6 +2084,17 @@ function connectSocket() {
                 window._onTicketsEvent(data);
             }
         });
+
+        NAS.socket.on('notification_new', (data) => {
+            NAS._notifCount = (NAS._notifCount || 0) + 1;
+            _updateNotifBadge();
+            if (notifPanelOpen) loadNotifications();
+        });
+
+        NAS.socket.on('notification_count', (data) => {
+            NAS._notifCount = data.count || 0;
+            _updateNotifBadge();
+        });
     } catch {
         // Reconnect later
         setTimeout(connectSocket, 5000);
