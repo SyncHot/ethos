@@ -148,6 +148,8 @@ _REGEX_PATTERNS = [
     (re.compile(r'(?<!\d)\d{3}[\s-]\d{3}[\s-]\d{3}(?!\d)'), 'TELEFON'),
     # Phone: landline (2-digit area + 7 digits, e.g. "22 620 00 00")
     (re.compile(r'(?<!\d)\d{2}\s\d{3}\s\d{2}\s\d{2}(?!\d)'), 'TELEFON'),
+    # Phone: landline with dash separators (e.g. "12-654-33-21", "71-344-89-01")
+    (re.compile(r'(?<!\d)\d{2}-\d{3}-\d{2}-\d{2}(?!\d)'), 'TELEFON'),
     # Email
     (re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'), 'EMAIL'),
     # Polish postal code + city (e.g. "00-001 Warszawa")
@@ -156,11 +158,159 @@ _REGEX_PATTERNS = [
     (re.compile(r'(?:ul\.|al\.|os\.|pl\.|Al\.)\s+[A-ZĄ-Ż][a-ząćęłńóśźż]+'
                 r'(?:\s[A-ZĄ-Ż]?[a-ząćęłńóśźż]+)*'
                 r'(?:\s+\d+[a-zA-Z]?(?:/\d+[a-zA-Z]?)?)'), 'ADRES'),
+    # NIP: 10 digits with optional dashes (e.g. "525-12-34-567")
+    (re.compile(r'\b\d{3}-\d{2}-\d{2}-\d{3}\b'), 'NR_DOKUMENTU'),
+    # PWZ number (e.g. "nr PWZ 4478123" or "PWZ: 1234567")
+    (re.compile(r'(?:nr\s+)?PWZ[\s:]*\d{7}'), 'NR_DOKUMENTU'),
     # Dates: DD.MM.YYYY, DD-MM-YYYY, DD/MM/YYYY
     (re.compile(r'(?<!\d)\d{1,2}[./-]\d{1,2}[./-]\d{4}(?!\d)'), 'DATA'),
     # Written dates: "31 marca 2026" / "1 stycznia 2025 r."
     (re.compile(r'\d{1,2}\s+(?:' + _MONTHS_PL + r')\s+\d{4}(?:\s+r\.)?', re.I), 'DATA'),
 ]
+
+# -- Name detection (regex-based, high recall for Polish documents) ---------
+
+# Common Polish first names used as anchors for detecting name patterns
+_PL_FIRST_NAMES = frozenset({
+    'Adam', 'Adrian', 'Agata', 'Agnieszka', 'Aleksander', 'Aleksandra',
+    'Andrzej', 'Anna', 'Antoni', 'Barbara', 'Bartosz', 'Beata', 'Bogdan',
+    'Bozena', 'Celina', 'Cezary', 'Dariusz', 'Danuta', 'Dawid', 'Dorota',
+    'Edward', 'Elzbieta', 'Ewa', 'Filip', 'Franciszek', 'Grazyna',
+    'Grzegorz', 'Halina', 'Henryk', 'Henryka', 'Hubert', 'Irena',
+    'Iwona', 'Jacek', 'Jadwiga', 'Jakub', 'Jan', 'Janina', 'Jaroslaw',
+    'Jerzy', 'Joanna', 'Jolanta', 'Jozef', 'Julia', 'Justyna',
+    'Kamil', 'Karol', 'Katarzyna', 'Kazimierz', 'Konrad', 'Krystyna',
+    'Krzysztof', 'Leszek', 'Lukasz', 'Maciej', 'Magdalena', 'Malgorzata',
+    'Marcin', 'Marek', 'Maria', 'Mariusz', 'Marta', 'Michal', 'Miroslawa',
+    'Monika', 'Natalia', 'Norbert', 'Olga', 'Patryk', 'Pawel', 'Piotr',
+    'Przemyslaw', 'Rafal', 'Renata', 'Robert', 'Roman', 'Ryszard',
+    'Sebastian', 'Stanislaw', 'Stefan', 'Sylwia', 'Szymon', 'Tadeusz',
+    'Teresa', 'Tomasz', 'Wanda', 'Weronika', 'Wieslaw', 'Wiktoria',
+    'Witold', 'Wladyslaw', 'Wojciech', 'Zbigniew', 'Zofia', 'Zygmunt',
+})
+
+# Title prefixes that signal a person name follows
+_TITLE_PREFIXES = (
+    r'dr\s+n\.\s*med\.\s*',
+    r'dr\s+hab\.\s*n\.\s*med\.\s*',
+    r'prof\.\s*dr\s+hab\.\s*n\.\s*med\.\s*',
+    r'prof\.\s*dr\s+hab\.\s*',
+    r'prof\.\s*',
+    r'dr\s+hab\.\s*',
+    r'dr\s+',
+    r'lek\.\s*med\.\s*',
+    r'lek\.\s*',
+    r'mgr\s+',
+    r'inz\.\s*',
+)
+
+# Capitalized Polish surname (including compound): e.g. "Kowalski", "Kowalska-Nowak"
+_SURNAME_RE = r'[A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]{2,}(?:-[A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]{2,})?'
+
+# Polish name stopwords: words that look like names but aren't
+_NAME_STOPWORDS = frozenset({
+    'Pacjent', 'Pacjentka', 'Pacjenta', 'Lekarz', 'Konsultanci', 'Klinika',
+    'Szpital', 'Centrum', 'Instytut', 'Poradnia', 'Oddzial', 'Pani', 'Pan',
+    'Placowka', 'Adres', 'Telefon', 'Email', 'Podpis', 'Data', 'Numer',
+    'Rozpoznanie', 'Badanie', 'Wyniki', 'Epikryza', 'Wnioski', 'Opinia',
+    'Przebieg', 'Zalecenia', 'Kontrola', 'Osoba', 'Siostra', 'Brat',
+    'Matka', 'Ojciec', 'Zona', 'Maz',
+})
+
+
+def _detect_names(text):
+    """Detect Polish person names using pattern matching."""
+    entities = []
+    seen = set()
+
+    # 1) Title + name patterns (dr, prof., lek. etc.) — search full text
+    for prefix in _TITLE_PREFIXES:
+        # title + FirstName [MiddleName|Initial] Surname[-Compound]
+        pat = re.compile(
+            r'(?:' + prefix + r')'
+            r'([A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]+'            # first name
+            r'(?:[ \t]+[A-ZĄĆĘŁŃÓŚŹŻ]\.?[a-ząćęłńóśźż]*)?' # optional middle/initial
+            r'[ \t]+' + _SURNAME_RE + r')'                    # surname
+        )
+        for m in pat.finditer(text):
+            name = m.group(1).strip()
+            full = m.group(0).strip()
+            if name not in seen and name.split()[0] not in _NAME_STOPWORDS:
+                seen.add(name)
+                seen.add(full)
+                entities.append({'text': full, 'category': 'LEKARZ'})
+
+    # 2) Known first name + surname(s) — search line-by-line to avoid
+    #    cross-line false positives
+    name_pat = re.compile(
+        r'\b([A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]+)'
+        r'(?:[ \t]+([A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]+))?'
+        r'[ \t]+(' + _SURNAME_RE + r')\b'
+    )
+    for line in text.split('\n'):
+        for m in name_pat.finditer(line):
+            first = m.group(1)
+            middle = m.group(2) or ''
+            surname = m.group(3)
+            full_match = m.group(0).strip()
+
+            if first not in _PL_FIRST_NAMES and middle not in _PL_FIRST_NAMES:
+                continue
+            if first in _NAME_STOPWORDS:
+                continue
+            if len(surname) < 3:
+                continue
+            if full_match not in seen:
+                seen.add(full_match)
+                entities.append({'text': full_match, 'category': 'IMIE_NAZWISKO'})
+
+    # 3) "K. Surname" abbreviation patterns
+    abbrev_pat = re.compile(
+        r'\b([A-ZĄĆĘŁŃÓŚŹŻ]\.)[ \t]+(' + _SURNAME_RE + r')\b'
+    )
+    for m in abbrev_pat.finditer(text):
+        abbrev = m.group(0).strip()
+        surname = m.group(2)
+        if len(surname) >= 4 and abbrev not in seen:
+            seen.add(abbrev)
+            entities.append({'text': abbrev, 'category': 'IMIE_NAZWISKO'})
+
+    return entities
+
+
+def _detect_facilities(text):
+    """Detect Polish medical facility names using pattern matching."""
+    entities = []
+    seen = set()
+
+    # Use [^\n]* to stay within single lines
+    facility_patterns = [
+        re.compile(r'Szpital(?:u|em)?[ \t]+[A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]+'
+                   r'(?:[ \t]+(?:im\.\s+)?[a-ząćęłńóśźżA-ZĄĆĘŁŃÓŚŹŻ.]+)*'),
+        re.compile(r'Klinik[aięy][ \t]+[A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]+'
+                   r'(?:[ \t]+[a-ząćęłńóśźżA-ZĄĆĘŁŃÓŚŹŻ]+){0,5}'),
+        re.compile(r'Centrum[ \t]+(?:Medyczn[a-z]*|Zdrowia)[ \t]+[A-Za-ząćęłńóśźż]+'
+                   r'(?:[ \t]+[A-Za-ząćęłńóśźż.]+)*'),
+        re.compile(r'Poradni[aęy][ \t]+[A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]+'
+                   r'(?:[ \t]+[a-ząćęłńóśźżA-ZĄĆĘŁŃÓŚŹŻ]+){0,4}'),
+        re.compile(r'Instytut(?:u)?[ \t]+[A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]+'
+                   r'(?:[ \t]+[a-ząćęłńóśźżA-ZĄĆĘŁŃÓŚŹŻ]+){0,5}'),
+        re.compile(r'(?:Osrodek|Ośrodek)[ \t]+[A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]+'
+                   r'(?:[ \t]+[a-ząćęłńóśźżA-ZĄĆĘŁŃÓŚŹŻ]+){0,3}'),
+        re.compile(r'(?:NZOZ|SPZOZ|ZOZ)[ \t]+[A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]+'
+                   r'(?:[ \t]+[a-ząćęłńóśźżA-ZĄĆĘŁŃÓŚŹŻ]+){0,3}'),
+    ]
+
+    for pat in facility_patterns:
+        for m in pat.finditer(text):
+            name = m.group(0).strip()
+            # Trim trailing prepositions, articles, and title prefixes
+            name = re.sub(r'[ \t]+(?:w|we|z|ze|na|przy|do|i|lub|oraz|dr|prof|lek|mgr)\.?[ \t]*$', '', name)
+            if name not in seen and len(name) > 8:
+                seen.add(name)
+                entities.append({'text': name, 'category': 'NAZWA_PLACOWKI'})
+
+    return entities
 
 
 def _regex_detect(text):
@@ -199,7 +349,11 @@ def _regex_detect(text):
 
 
 def _call_llm(text_chunk):
-    """Send text to the local LLM in a subprocess to avoid blocking gevent."""
+    """Send text to the local LLM in a subprocess to avoid blocking gevent.
+
+    Uses a result file instead of stdout because llama.cpp's C runtime
+    writes CUDA/GGML init messages to stdout, polluting the JSON output.
+    """
     import subprocess as _sp
     import tempfile
 
@@ -209,81 +363,114 @@ def _call_llm(text_chunk):
         tf.write(text_chunk[:3000])
         text_path = tf.name
 
+    result_path = text_path + '.result.json'
+
     script = r'''
-import sys, json, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__) if '__file__' in dir() else '.', '..'))
+import sys, json, os, re
 sys.path.insert(0, '/opt/ethos/backend')
 sys.path.insert(0, '/opt/ethos/backend/blueprints')
 
 text_path = sys.argv[1]
+result_path = sys.argv[2]
+
 with open(text_path) as f:
     text = f.read()
-os.unlink(text_path)
 
 from model_library import get_library
 lib = get_library()
 llm, err = lib.load_model()
 if err:
-    print(json.dumps([]))
+    with open(result_path, 'w') as rf:
+        json.dump([], rf)
     sys.exit(0)
 lib.touch_model()
 
 system_prompt = (
-    "Jestes ekspertem od anonimizacji dokumentow medycznych.\n"
-    "Znajdz WSZYSTKIE imiona i nazwiska osob w tekscie.\n"
-    "Szukaj: imion pacjentow, nazwisk, imion lekarzy (po 'dr', 'lek.', 'prof.').\n\n"
-    "Zwroc TYLKO tablice JSON:\n"
-    '[{"text": "Jan Kowalski", "category": "IMIE_NAZWISKO"}, '
-    '{"text": "Anna Nowak", "category": "LEKARZ"}]\n\n'
-    "Kategorie: IMIE_NAZWISKO (pacjent), LEKARZ (lekarz/personel), "
-    "NAZWA_PLACOWKI (szpital/przychodnia).\n"
-    "Jesli brak, zwroc: []\n"
-    "Odpowiedz TYLKO JSON, bez komentarzy."
+    "Wypisz imiona i nazwiska osob oraz nazwy placowek medycznych z tekstu.\n"
+    "Ignoruj daty, adresy, numery, telefony, email.\n"
+    "Format odpowiedzi - TYLKO JSON tablica:\n"
+    '[{"text":"Katarzyna Nowak","category":"IMIE_NAZWISKO"},'
+    '{"text":"dr Jan Kowalski","category":"LEKARZ"},'
+    '{"text":"Szpital Miejski","category":"NAZWA_PLACOWKI"}]\n'
+    "Kategorie: IMIE_NAZWISKO, LEKARZ, NAZWA_PLACOWKI.\n"
+    "Bez komentarzy, bez markdown."
 )
-user_prompt = "Znajdz imiona, nazwiska i nazwy placowek w tekscie:\n\n---\n" + text + "\n---\n\nJSON:"
+user_prompt = "Tekst:\n" + text + "\n\nJSON:"
 
 resp = llm.create_chat_completion(
     messages=[
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ],
-    max_tokens=2048,
+    max_tokens=1024,
     temperature=0.1,
 )
-import re
 content = resp["choices"][0]["message"]["content"].strip()
 if "```" in content:
     m = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', content, re.DOTALL)
     if m:
         content = m.group(1).strip()
-try:
-    entities = json.loads(content)
-    if not isinstance(entities, list):
-        entities = []
-except Exception:
-    m = re.search(r'\[.*\]', content, re.DOTALL)
-    if m:
+
+# Try to salvage truncated JSON arrays by closing them
+def _try_parse_json_array(s):
+    try:
+        arr = json.loads(s)
+        if isinstance(arr, dict) and "text" in arr:
+            return [arr]
+        if isinstance(arr, list):
+            return arr
+        return []
+    except json.JSONDecodeError:
+        pass
+    # Truncated array: try closing the last complete element
+    # Find last complete }, then close the array
+    idx = s.rfind('}')
+    if idx > 0:
+        candidate = s[:idx+1] + ']'
         try:
-            entities = json.loads(m.group(0))
-        except Exception:
-            entities = []
-    else:
-        entities = []
+            arr = json.loads(candidate)
+            if isinstance(arr, list):
+                return arr
+        except json.JSONDecodeError:
+            pass
+    # Find embedded array
+    m2 = re.search(r'\[.*\}', s, re.DOTALL)
+    if m2:
+        try:
+            return json.loads(m2.group(0) + ']')
+        except json.JSONDecodeError:
+            pass
+    return []
+
+entities = _try_parse_json_array(content)
 result = [e for e in entities if isinstance(e, dict) and "text" in e and "category" in e]
-print(json.dumps(result, ensure_ascii=False))
+with open(result_path, 'w') as rf:
+    json.dump(result, rf, ensure_ascii=False)
 '''
 
     try:
+        log.info('[doc_anonymizer] Starting LLM subprocess (text=%d chars)', len(text_chunk))
         proc = _sp.run(
-            [sys.executable, '-c', script, text_path],
+            [sys.executable, '-c', script, text_path, result_path],
             capture_output=True, text=True,
             timeout=600,  # 10 min max
             cwd='/opt/ethos/backend',
         )
+        log.info('[doc_anonymizer] LLM subprocess finished (rc=%s, stdout=%d, stderr=%d)',
+                 proc.returncode, len(proc.stdout), len(proc.stderr))
+        if proc.stderr:
+            log.debug('[doc_anonymizer] LLM stderr: %s', proc.stderr[:300])
         if proc.returncode != 0:
-            log.warning('[doc_anonymizer] LLM subprocess error: %s', proc.stderr[:500])
+            log.warning('[doc_anonymizer] LLM subprocess failed (rc=%s): %s',
+                        proc.returncode, proc.stderr[:500])
             return []
-        result = json.loads(proc.stdout.strip())
+        if not os.path.exists(result_path):
+            log.warning('[doc_anonymizer] LLM result file not created. stdout=%s',
+                        proc.stdout[:300])
+            return []
+        with open(result_path) as rf:
+            result = json.load(rf)
+        log.info('[doc_anonymizer] LLM returned %d entities', len(result))
         return result
     except _sp.TimeoutExpired:
         log.warning('[doc_anonymizer] LLM subprocess timed out (600s)')
@@ -292,8 +479,9 @@ print(json.dumps(result, ensure_ascii=False))
         log.warning('[doc_anonymizer] LLM subprocess error: %s', e)
         return []
     finally:
-        if os.path.exists(text_path):
-            os.unlink(text_path)
+        for p in (text_path, result_path):
+            if os.path.exists(p):
+                os.unlink(p)
 
 
 def _normalize_category(cat):
@@ -549,13 +737,25 @@ def _run_anonymization(job_id, src_path, filename, file_ext, username):
         regex_hits = _regex_detect(full_text)
         all_entities.extend(regex_hits)
 
-        # Phase 2: LLM-based detection (names, doctor names, facilities)
-        # Send full text to LLM in one chunk (more context = better results)
-        _emit_progress(job_id, 'analyzing', 30,
-                       'Analiza LLM (imiona/nazwiska)...')
+        # Phase 2: Name & facility detection (regex-based, high recall)
+        _emit_progress(job_id, 'analyzing', 40,
+                       'Wykrywanie imion, nazwisk i placowek...')
+        name_hits = _detect_names(full_text)
+        facility_hits = _detect_facilities(full_text)
+        all_entities.extend(name_hits)
+        all_entities.extend(facility_hits)
+
+        # Phase 3: LLM-based detection (supplementary, catches unusual names)
+        _emit_progress(job_id, 'analyzing', 55,
+                       'Analiza LLM (dodatkowe imiona/nazwiska)...')
         try:
-            entities = _call_llm(full_text)
-            all_entities.extend(entities)
+            llm_entities = _call_llm(full_text)
+            # Only add LLM entities not already found by regex/name detection
+            existing_texts = {e['text'].lower() for e in all_entities}
+            for le in llm_entities:
+                if le.get('text', '').lower() not in existing_texts:
+                    all_entities.append(le)
+                    existing_texts.add(le['text'].lower())
         except Exception as e:
             log.warning('[doc_anonymizer] LLM error: %s', e)
 
