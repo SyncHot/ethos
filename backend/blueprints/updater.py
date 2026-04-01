@@ -739,6 +739,56 @@ def _do_apply_from_file(pkg_path):
                 else:
                     _emit('update_log', {'message': f'pip install warning: {pip_result.stderr[-200:]}'})
 
+        # Ensure core system packages are installed (older images may lack them)
+        _CORE_SYSTEM_PKGS = ['ufw', 'fail2ban', 'rsync', 'cron', 'avahi-daemon', 'gnupg', 'age']
+        try:
+            _st = _read_status()
+            _st['progress'] = 90
+            _st['message'] = 'Checking core system packages…'
+            _write_status(_st)
+            _emit('update_status', _st)
+
+            check = subprocess.run(
+                ['dpkg', '-s'] + _CORE_SYSTEM_PKGS,
+                capture_output=True, text=True, timeout=15
+            )
+            missing = []
+            if check.returncode != 0:
+                for line in check.stderr.splitlines():
+                    if 'is not installed' in line:
+                        # format: "dpkg-query: package 'xxx' is not installed..."
+                        parts = line.split("'")
+                        if len(parts) >= 2:
+                            missing.append(parts[1])
+            if missing:
+                _emit('update_log', {'message': f'Installing missing packages: {", ".join(missing)}'})
+                apt_result = subprocess.run(
+                    ['bash', '-c',
+                     'DEBIAN_FRONTEND=noninteractive apt-get update -y -qq 2>/dev/null; '
+                     'DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ' + ' '.join(missing)],
+                    capture_output=True, text=True, timeout=180
+                )
+                if apt_result.returncode == 0:
+                    _emit('update_log', {'message': 'Core packages installed'})
+                else:
+                    _emit('update_log', {'message': f'apt warning: {apt_result.stderr[-200:]}'})
+
+                # Enable and start services that need to be always-on
+                for svc in ['ufw', 'fail2ban']:
+                    if svc in missing:
+                        subprocess.run(['systemctl', 'enable', '--now', svc],
+                                       capture_output=True, timeout=30)
+                # Enable UFW firewall with default deny + allow SSH & EthOS
+                if 'ufw' in missing:
+                    subprocess.run(['ufw', '--force', 'enable'], capture_output=True, timeout=15)
+                    subprocess.run(['ufw', 'allow', '22/tcp'], capture_output=True, timeout=10)
+                    subprocess.run(['ufw', 'allow', '9000/tcp'], capture_output=True, timeout=10)
+                    _emit('update_log', {'message': 'Firewall enabled (SSH + EthOS allowed)'})
+            else:
+                _emit('update_log', {'message': 'Core packages OK'})
+        except Exception as e:
+            _emit('update_log', {'message': f'Core packages check note: {e}'})
+
         # Fix service file if still using gunicorn (pre-1.0.30 installs)
         svc_path = '/etc/systemd/system/ethos.service'
         try:
