@@ -262,9 +262,17 @@ def install(os_disk, data_disk, progress_cb=None):
         elif os.path.isfile(compressed_img):
             # Fast dd path — write compressed block image directly to partition
             _p("cloning", 35, "Writing system image (fast block copy)...")
-            _dd_clone(compressed_img, _part(os_dev, 2), _p)
-            _p("cloning", 65, "Mounting target filesystem...")
-            _run(f"mount {_part(os_dev, 2)} {mount_dir}", timeout=30)
+            try:
+                _dd_clone(compressed_img, _part(os_dev, 2), _p)
+                _p("cloning", 65, "Mounting target filesystem...")
+                _run(f"mount {_part(os_dev, 2)} {mount_dir}", timeout=30)
+            except RuntimeError as e:
+                log.warning("dd clone failed: %s — falling back to rsync", e)
+                # Re-format partition (dd may have left it corrupt)
+                _run(f"mkfs.ext4 -F -L EthOS-Root-A {_part(os_dev, 2)}", timeout=120)
+                _run(f"mount {_part(os_dev, 2)} {mount_dir}", timeout=30)
+                _p("cloning", 35, "Copying system files (this may take a while)...")
+                _clone_root(mount_dir, _p)
             os.makedirs(f"{mount_dir}/boot/efi", exist_ok=True)
             _run(f"mount {_part(os_dev, 1)} {mount_dir}/boot/efi", timeout=15)
         else:
@@ -464,24 +472,69 @@ def _dd_clone(compressed_img, target_part, progress_cb):
     """Write compressed root image to target partition using dd+zstd (block-level)."""
     log.info("Fast clone: %s → %s", compressed_img, target_part)
 
-    # Decompress and write block-by-block
-    cmd = f"zstdcat {shlex.quote(compressed_img)} | dd of={target_part} bs=4M status=progress 2>&1"
+    # Pre-flight checks
+    if not os.path.isfile(compressed_img):
+        raise RuntimeError(f"Compressed image not found: {compressed_img}")
+
+    img_size = os.path.getsize(compressed_img)
+    if img_size < 1024:
+        raise RuntimeError(f"Compressed image too small ({img_size} bytes) — likely corrupt")
+    log.info("Compressed image size: %d MB", img_size // (1024 * 1024))
+
+    # Check zstdcat is available
+    out, err, rc = _run("which zstdcat", timeout=5)
+    if rc != 0:
+        # Try zstd -d as fallback
+        out2, _, rc2 = _run("which zstd", timeout=5)
+        if rc2 != 0:
+            raise RuntimeError("Neither zstdcat nor zstd found — cannot decompress image")
+        decompress_cmd = f"zstd -dc {shlex.quote(compressed_img)}"
+        log.info("zstdcat not found, using zstd -dc")
+    else:
+        decompress_cmd = f"zstdcat {shlex.quote(compressed_img)}"
+
+    # Validate compressed image integrity
+    log.info("Validating compressed image...")
+    _, verr, vrc = _run(f"zstd -t {shlex.quote(compressed_img)}", timeout=120)
+    if vrc != 0:
+        raise RuntimeError(f"Compressed image failed integrity check: {verr}")
+
+    # Check target partition exists
+    if not os.path.exists(target_part):
+        _run("partprobe 2>/dev/null && sleep 2", timeout=10)
+        if not os.path.exists(target_part):
+            raise RuntimeError(f"Target partition {target_part} does not exist")
+
+    # Decompress and write block-by-block, with pipefail to catch zstd errors
+    cmd = f"bash -o pipefail -c '{decompress_cmd} | dd of={target_part} bs=4M conv=fsync status=progress 2>&1'"
+    log.info("Running: %s", cmd)
     proc = subprocess.Popen(
         cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, start_new_session=True,
     )
 
+    last_line = ""
     while True:
         line = proc.stdout.readline()
         if not line and proc.poll() is not None:
             break
         line = line.strip()
         if line:
+            last_line = line
             log.info("dd: %s", line[:200])
 
     rc = proc.wait()
     if rc != 0:
-        raise RuntimeError(f"dd clone failed with code {rc}")
+        # Collect diagnostics
+        diag_parts = [f"dd clone failed with code {rc}"]
+        if last_line:
+            diag_parts.append(f"last output: {last_line[:200]}")
+        # Check disk space
+        out, _, _ = _run(f"blockdev --getsize64 {target_part}", timeout=5)
+        if out.strip():
+            diag_parts.append(f"partition size: {int(out.strip()) // (1024*1024)} MB")
+        diag_parts.append(f"image size: {img_size // (1024*1024)} MB")
+        raise RuntimeError(" | ".join(diag_parts))
 
     progress_cb("cloning", 55, "Verifying filesystem...")
     out, err, rc = _run(f"e2fsck -f -y {target_part}", timeout=120)
