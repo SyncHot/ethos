@@ -10,14 +10,30 @@ log = logging.getLogger("ethos-installer")
 
 
 def _run(cmd, timeout=30):
+    proc = None
     try:
-        r = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=timeout
+        proc = subprocess.Popen(
+            cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, start_new_session=True,
         )
-        return r.stdout.strip(), r.stderr.strip(), r.returncode
+        stdout, stderr = proc.communicate(timeout=timeout)
+        return stdout.strip(), stderr.strip(), proc.returncode
     except subprocess.TimeoutExpired:
+        if proc is not None:
+            try:
+                os.killpg(proc.pid, 9)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+            proc.wait()
+        log.warning("Command timed out after %ds: %s", timeout, cmd[:120])
         return "", "timeout", 1
     except Exception as e:
+        if proc is not None:
+            try:
+                os.killpg(proc.pid, 9)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+            proc.wait()
         return "", str(e), 1
 
 
@@ -182,16 +198,35 @@ def configure_services(root_dir="/"):
         _run("bash -c 'echo y | ufw enable' 2>/dev/null")
         _run("systemctl enable ufw 2>/dev/null")
     else:
-        _run(f"chroot {root_dir} systemctl enable ethos.service 2>/dev/null")
-        _run(
-            f"chroot {root_dir} systemctl disable ethos-preboot.service 2>/dev/null"
-        )
-        _run(
-            f"chroot {root_dir} systemctl disable ethos-firstboot.service 2>/dev/null"
-        )
-        # Enable UFW on target (rules were pre-configured by the builder)
-        _run(f"chroot {root_dir} bash -c 'echo y | ufw enable' 2>/dev/null")
-        _run(f"chroot {root_dir} systemctl enable ufw 2>/dev/null")
+        # In chroot: use symlinks directly — chroot systemctl/ufw can hang
+        wants = os.path.join(root_dir, "etc/systemd/system/multi-user.target.wants")
+        os.makedirs(wants, exist_ok=True)
+
+        # Enable ethos.service
+        link = os.path.join(wants, "ethos.service")
+        if not os.path.exists(link):
+            try:
+                os.symlink("/etc/systemd/system/ethos.service", link)
+            except OSError:
+                pass
+
+        # Disable preboot + firstboot
+        for svc in ("ethos-preboot.service", "ethos-firstboot.service"):
+            svc_link = os.path.join(wants, svc)
+            if os.path.exists(svc_link):
+                os.remove(svc_link)
+
+        # Enable UFW via symlink (rules pre-configured by builder, activated on first real boot)
+        ufw_link = os.path.join(wants, "ufw.service")
+        if not os.path.exists(ufw_link):
+            ufw_svc = "/lib/systemd/system/ufw.service"
+            ufw_svc_alt = os.path.join(root_dir, "lib/systemd/system/ufw.service")
+            target = ufw_svc if os.path.exists(ufw_svc_alt) else ufw_svc
+            try:
+                os.symlink(target, ufw_link)
+            except OSError:
+                pass
+
     log.info("Services configured (root=%s)", root_dir)
 
 
@@ -203,7 +238,10 @@ def regenerate_ssh_keys(root_dir="/"):
         if root_dir == "/":
             _run("ssh-keygen -A 2>/dev/null")
         else:
-            _run(f"chroot {root_dir} ssh-keygen -A 2>/dev/null")
+            # Generate keys directly into target — avoids chroot hangs
+            for ktype in ("rsa", "ecdsa", "ed25519"):
+                kfile = os.path.join(ssh_dir, f"ssh_host_{ktype}_key")
+                _run(f'ssh-keygen -t {ktype} -f {kfile} -N "" -q', timeout=30)
         log.info("SSH keys regenerated")
 
 

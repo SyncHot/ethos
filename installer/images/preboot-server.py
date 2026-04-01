@@ -49,12 +49,29 @@ def has_network():
 
 
 def run(cmd, timeout=15):
+    proc = None
     try:
-        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
-        return r.stdout.strip(), r.returncode
+        proc = subprocess.Popen(
+            cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, start_new_session=True,
+        )
+        stdout, _ = proc.communicate(timeout=timeout)
+        return stdout.strip(), proc.returncode
     except subprocess.TimeoutExpired:
+        if proc is not None:
+            try:
+                os.killpg(proc.pid, 9)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+            proc.wait()
         return "", 1
     except Exception:
+        if proc is not None:
+            try:
+                os.killpg(proc.pid, 9)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+            proc.wait()
         return "", 1
 
 
@@ -210,7 +227,31 @@ def has_wifi_device():
 
 
 def _sp_run(cmd, timeout=30):
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    proc = None
+    try:
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, start_new_session=True,
+        )
+        stdout, stderr = proc.communicate(timeout=timeout)
+        # Return object matching subprocess.CompletedProcess interface
+        return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+    except subprocess.TimeoutExpired:
+        if proc is not None:
+            try:
+                os.killpg(proc.pid, 9)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+            proc.wait()
+        return subprocess.CompletedProcess(cmd, 1, "", f"timeout after {timeout}s")
+    except Exception as e:
+        if proc is not None:
+            try:
+                os.killpg(proc.pid, 9)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+            proc.wait()
+        return subprocess.CompletedProcess(cmd, 1, "", str(e))
 
 
 def _get_smart_status(dev_path):
@@ -443,7 +484,7 @@ def install_worker(os_disk, data_disk):
             proc = subprocess.Popen(
                 rsync_cmd,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1)
+                text=True, bufsize=1, start_new_session=True)
 
             while True:
                 line = proc.stdout.readline()

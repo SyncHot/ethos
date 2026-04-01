@@ -29,6 +29,7 @@ const Installer = {
     networkOk: false,
     pollTimer: null,
     installNewIP: null,
+    logSince: 0,
 
     async init() {
         this.buildStepDots();
@@ -274,13 +275,34 @@ const Installer = {
 
     pollProgress() {
         if (this.pollTimer) clearInterval(this.pollTimer);
+        this.logSince = 0;
+        document.getElementById('install-log').innerHTML = '';
         this.pollTimer = setInterval(async () => {
             try {
-                const r = await fetch('/api/install/progress');
-                const data = await r.json();
+                const [data, logData] = await Promise.all([
+                    fetch('/api/install/progress').then(r => r.json()),
+                    fetch(`/api/install/logs?since=${this.logSince}`).then(r => r.json()),
+                ]);
+
                 document.getElementById('progress-bar').style.width = data.percent + '%';
                 document.getElementById('progress-pct').textContent = data.percent + '%';
                 document.getElementById('progress-msg').textContent = this.t(data.message || '');
+
+                // Append new log entries
+                if (logData.logs && logData.logs.length) {
+                    const logEl = document.getElementById('install-log');
+                    for (const entry of logData.logs) {
+                        const d = new Date(entry.ts * 1000);
+                        const ts = d.toLocaleTimeString('pl', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                        const isErr = /error|fatal|fail/i.test(entry.msg);
+                        const div = document.createElement('div');
+                        div.className = 'log-line' + (isErr ? ' log-err' : '');
+                        div.innerHTML = `<span class="log-ts">${this._esc(ts)}</span>${this._esc(entry.msg)}`;
+                        logEl.appendChild(div);
+                    }
+                    logEl.scrollTop = logEl.scrollHeight;
+                    this.logSince = logData.total;
+                }
 
                 if (data.done) {
                     clearInterval(this.pollTimer);
@@ -297,7 +319,7 @@ const Installer = {
             } catch (e) {
                 // Server might be rebooting
             }
-        }, 2000);
+        }, 1500);
     },
 
     // ── Step 5: Network (post-install) ──

@@ -9846,6 +9846,46 @@ def _watchdog_monitor():
 
 # ─────────────────────────── Main ───────────────────────────
 
+
+def _mark_boot_success():
+    """Mark boot as successful in GRUB environment (A/B boot counter).
+
+    Called after EthOS starts successfully. Sets boot_success=1 in grubenv
+    so GRUB won't increment the failure counter on next reboot.
+    Also detects current A/B slot from kernel cmdline.
+    """
+    try:
+        # Detect current slot from kernel cmdline
+        slot = 'a'
+        try:
+            with open('/proc/cmdline') as f:
+                cmdline = f.read()
+            for param in cmdline.split():
+                if param.startswith('ethos.slot='):
+                    slot = param.split('=', 1)[1].strip()
+                    break
+        except Exception:
+            pass
+
+        # Try both grubenv locations
+        for grubenv in ('/boot/efi/boot/grub/grubenv', '/boot/grub/grubenv'):
+            if os.path.exists(grubenv):
+                os.system(f'grub-editenv {grubenv} set boot_success=1')
+                logging.getLogger('boot').info(
+                    'Marked boot_success=1 in %s (slot=%s)', grubenv, slot)
+
+        # Store slot info for updater/UI access
+        _slot_file = os.path.join(ETHOS_ROOT, 'data', 'active_slot')
+        try:
+            with open(_slot_file, 'w') as f:
+                f.write(slot)
+        except Exception:
+            pass
+
+    except Exception as e:
+        logging.getLogger('boot').warning('Failed to mark boot success: %s', e)
+
+
 @app.route('/api/cache-test')
 @cache.cached(timeout=60)
 def cache_test():
@@ -9948,6 +9988,9 @@ if __name__ == '__main__':
     socketio.start_background_task(_watchdog_ticker)
     _wd_thread = _threading.Thread(target=_watchdog_monitor, daemon=True)
     _wd_thread.start()
+
+    # Mark boot as successful for A/B boot counter (after all init is done)
+    gevent.spawn_later(20, _mark_boot_success)
 
     # ── SSL configuration ──
     ssl_enabled = os.environ.get('SSL_ENABLED', '0') == '1'

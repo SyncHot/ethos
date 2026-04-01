@@ -24,12 +24,19 @@ _state = {
     "new_ip": None,
     "os_disk": None,
 }
+_logs = []          # list of {"ts": float, "msg": str}
 _lock = threading.Lock()
 
 
 def _set_state(**kwargs):
     with _lock:
         _state.update(kwargs)
+
+
+def _add_log(msg):
+    """Append a timestamped log entry visible via /api/install/logs."""
+    with _lock:
+        _logs.append({"ts": time.time(), "msg": msg})
 
 
 @install_bp.route("/start", methods=["POST"])
@@ -71,21 +78,28 @@ def start_install():
         message="Starting installation...", done=False, error=None, new_ip=None,
         os_disk=os_disk,
     )
+    with _lock:
+        _logs.clear()
+    _add_log("Installation started")
 
     def worker():
+        mount_dir = "/mnt/ethos-target"
+        bind_mounted = False
         try:
-            mount_dir = "/mnt/ethos-target"
-
             def progress_cb(phase, pct, msg):
                 _set_state(phase=phase, percent=pct, message=msg)
+                _add_log(f"[{pct}%] {msg}")
 
             # Step 1: Disk install (partition + clone + GRUB)
             ok, err = disk_ops.install(os_disk, data_disk, progress_cb)
             if not ok:
+                _add_log(f"ERROR: Disk install failed: {err}")
                 _set_state(running=False, error=f"Disk install failed: {err}")
                 return
 
             # Step 2: Mount target for post-config
+            _add_log("[85%] Mounting target for post-install configuration...")
+            _set_state(phase="postconfig", percent=85, message="Mounting target for configuration...")
             from disk_ops import _run, _part
             _run(f"mount {_part('/dev/' + os_disk, 2)} {mount_dir}", timeout=30)
             # Bind-mount /dev for chroot operations (chpasswd, ssh-keygen, systemctl)
@@ -93,17 +107,19 @@ def start_install():
             _run(f"mount --bind /dev/pts {mount_dir}/dev/pts 2>/dev/null")
             _run(f"mount -t proc proc {mount_dir}/proc 2>/dev/null")
             _run(f"mount -t sysfs sysfs {mount_dir}/sys 2>/dev/null")
+            bind_mounted = True
 
             # Step 3: Create user
-            _set_state(phase="user", percent=85, message="Creating user account...")
+            _set_state(phase="user", percent=88, message="Creating user account...")
+            _add_log("[88%] Creating user account...")
             system_ops.create_user(username, password, root_dir=mount_dir)
 
             # Step 4: Set hostname
-            _set_state(phase="hostname", percent=88, message="Setting hostname...")
+            _set_state(phase="hostname", percent=90, message="Setting hostname...")
             system_ops.set_hostname(hostname, root_dir=mount_dir)
 
             # Step 5: Write config
-            _set_state(phase="config", percent=90, message="Writing configuration...")
+            _set_state(phase="config", percent=92, message="Writing configuration...")
             system_ops.write_install_conf(username, hostname, root_dir=mount_dir)
 
             # Write ETHOS_USER to ethos.env
@@ -119,16 +135,15 @@ def start_install():
             system_ops.write_setup_done(username, hostname, root_dir=mount_dir)
 
             # Step 6: Configure services
-            _set_state(phase="services", percent=92, message="Configuring services...")
+            _set_state(phase="services", percent=94, message="Configuring services...")
+            _add_log("[94%] Configuring services...")
             system_ops.configure_services(root_dir=mount_dir)
+            _add_log("Regenerating SSH keys...")
             system_ops.regenerate_ssh_keys(root_dir=mount_dir)
 
             # Step 7: Mark installed
-            _set_state(phase="marker", percent=95, message="Finalizing...")
+            _set_state(phase="marker", percent=97, message="Finalizing...")
             system_ops.mark_installed(root_dir=mount_dir)
-
-            # Unmount
-            _run(f"umount -R {mount_dir} 2>/dev/null", timeout=30)
 
             # Get expected IP after reboot
             import wifi_ops
@@ -148,7 +163,16 @@ def start_install():
 
         except Exception as e:
             log.error("Install worker crashed: %s", e, exc_info=True)
+            _add_log(f"FATAL: {e}")
             _set_state(running=False, error=str(e))
+
+        finally:
+            # Always unmount to prevent stale bind-mounts
+            from disk_ops import _run as _drun
+            if bind_mounted:
+                for fs in ("sys", "proc", "dev/pts", "dev"):
+                    _drun(f"umount -l {mount_dir}/{fs} 2>/dev/null", timeout=10)
+            _drun(f"umount -R {mount_dir} 2>/dev/null", timeout=30)
 
     threading.Thread(target=worker, daemon=True, name="installer").start()
     return jsonify({"ok": True}), 202
@@ -159,6 +183,16 @@ def progress():
     """Poll installation progress."""
     with _lock:
         return jsonify(dict(_state))
+
+
+@install_bp.route("/logs", methods=["GET"])
+def install_logs():
+    """Return install log entries since a given index."""
+    since = request.args.get("since", 0, type=int)
+    with _lock:
+        entries = _logs[since:]
+        total = len(_logs)
+    return jsonify({"logs": entries, "total": total})
 
 
 @install_bp.route("/reboot", methods=["POST"])

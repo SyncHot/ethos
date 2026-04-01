@@ -5,9 +5,11 @@ Disk operations — discovery, partitioning, cloning, GRUB.
 import json
 import logging
 import os
+import shutil
 import subprocess
 import shlex
 import time
+from datetime import datetime
 
 log = logging.getLogger("ethos-installer")
 
@@ -21,14 +23,30 @@ def _part(dev, n):
 
 
 def _run(cmd, timeout=30):
+    proc = None
     try:
-        r = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=timeout
+        proc = subprocess.Popen(
+            cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, start_new_session=True,
         )
-        return r.stdout.strip(), r.stderr.strip(), r.returncode
+        stdout, stderr = proc.communicate(timeout=timeout)
+        return stdout.strip(), stderr.strip(), proc.returncode
     except subprocess.TimeoutExpired:
+        if proc is not None:
+            try:
+                os.killpg(proc.pid, 9)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+            proc.wait()
+        log.warning("Command timed out after %ds: %s", timeout, cmd[:120])
         return "", "timeout", 1
     except Exception as e:
+        if proc is not None:
+            try:
+                os.killpg(proc.pid, 9)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+            proc.wait()
         return "", str(e), 1
 
 
@@ -229,40 +247,84 @@ def install(os_disk, data_disk, progress_cb=None):
         _p("cloning", 30, "Mounting target...")
         mount_dir = "/mnt/ethos-target"
         os.makedirs(mount_dir, exist_ok=True)
-        _run(f"mount {_part(os_dev, 2)} {mount_dir}", timeout=30)
-        os.makedirs(f"{mount_dir}/boot/efi", exist_ok=True)
-        _run(f"mount {_part(os_dev, 1)} {mount_dir}/boot/efi", timeout=15)
 
-        _p("cloning", 35, "Copying system files (this may take a while)...")
-        _clone_root(mount_dir, _p)
+        squashfs_img = "/opt/ethos/installer/images/ethos-root.sqsh"
+        compressed_img = "/opt/ethos/installer/images/ethos-root.img.zst"
+        squashfs_mode = False
 
-        # Phase 3b: Fix cloned system for installed-mode operation
-        _p("configuring", 73, "Configuring installed system...")
-        _fixup_installed_system(mount_dir)
+        if os.path.isfile(squashfs_img):
+            # SquashFS immutable root install (preferred)
+            squashfs_mode = True
+            _p("cloning", 35, "Installing SquashFS immutable root...")
+            _squashfs_install(squashfs_img, _part(os_dev, 2), mount_dir, _p)
+            os.makedirs(f"{mount_dir}/boot/efi", exist_ok=True)
+            _run(f"mount {_part(os_dev, 1)} {mount_dir}/boot/efi", timeout=15)
+        elif os.path.isfile(compressed_img):
+            # Fast dd path — write compressed block image directly to partition
+            _p("cloning", 35, "Writing system image (fast block copy)...")
+            _dd_clone(compressed_img, _part(os_dev, 2), _p)
+            _p("cloning", 65, "Mounting target filesystem...")
+            _run(f"mount {_part(os_dev, 2)} {mount_dir}", timeout=30)
+            os.makedirs(f"{mount_dir}/boot/efi", exist_ok=True)
+            _run(f"mount {_part(os_dev, 1)} {mount_dir}/boot/efi", timeout=15)
+        else:
+            # Legacy rsync path — file-by-file copy from running USB
+            log.info("No compressed image found, falling back to rsync")
+            _run(f"mount {_part(os_dev, 2)} {mount_dir}", timeout=30)
+            os.makedirs(f"{mount_dir}/boot/efi", exist_ok=True)
+            _run(f"mount {_part(os_dev, 1)} {mount_dir}/boot/efi", timeout=15)
+            _p("cloning", 35, "Copying system files (this may take a while)...")
+            _clone_root(mount_dir, _p)
+
+        if not squashfs_mode:
+            # Traditional install: fixup + data separation on ext4 root
+            _p("configuring", 73, "Configuring installed system...")
+            _fixup_installed_system(mount_dir)
+            if same_disk:
+                _p("configuring", 74, "Setting up data partition symlinks...")
+                _setup_data_separation(mount_dir, _part(os_dev, 4))
+        else:
+            # SquashFS: data dirs are already symlinks in squashfs image —
+            # just create target directories on the data partition
+            if same_disk:
+                _p("configuring", 74, "Preparing data partition...")
+                _prepare_data_dirs(_part(os_dev, 4))
 
         # Phase 4: GRUB
         _p("bootloader", 75, "Installing GRUB bootloader...")
-        _install_grub(os_dev, mount_dir)
+        _install_grub(os_dev, mount_dir, _p, squashfs_mode=squashfs_mode)
 
         # Phase 5: fstab
-        _p("bootloader", 80, "Configuring fstab...")
-        _generate_fstab(os_dev, mount_dir, same_disk)
+        if squashfs_mode:
+            _p("configuring", 80, "Writing fstab to overlay...")
+            _write_overlay_fstab(os_dev, mount_dir, same_disk)
+        else:
+            _p("bootloader", 80, "Configuring fstab...")
+            _generate_fstab(os_dev, mount_dir, same_disk)
 
         # Phase 6: Data disk (if separate)
         if not same_disk and data_dev:
-            _p("data", 85, f"Partitioning data disk {data_dev}...")
+            _p("data", 81, f"Partitioning data disk {data_dev}...")
             _wipe_disk(data_dev)
             _run(f"parted -s {data_dev} mklabel gpt", timeout=30)
-            _run(f"parted -s {data_dev} mkpart primary ext4 1MiB 100%", timeout=30)
+            _run(f"parted -s {data_dev} mkpart primary btrfs 1MiB 100%", timeout=30)
             _run("partprobe 2>/dev/null && sleep 2", timeout=10)
-            _p("data", 90, "Formatting data disk...")
-            _run(f"mkfs.ext4 -F -L EthOS-Data {_part(data_dev, 1)}", timeout=120)
+            _p("data", 82, "Formatting data disk (Btrfs)...")
+            _run(f"mkfs.btrfs -f -L EthOS-Data {_part(data_dev, 1)}", timeout=120)
+            _create_btrfs_subvolumes(_part(data_dev, 1))
+            if squashfs_mode:
+                _prepare_data_dirs(_part(data_dev, 1))
+                _write_overlay_fstab(os_dev, mount_dir, same_disk, data_dev=data_dev)
+            else:
+                _p("configuring", 82, "Setting up data partition symlinks...")
+                _setup_data_separation(mount_dir, _part(data_dev, 1))
+                _generate_fstab(os_dev, mount_dir, same_disk, data_dev=data_dev)
 
         # Phase 7: Cleanup
-        _p("finalizing", 95, "Unmounting...")
+        _p("finalizing", 83, "Unmounting...")
         _run(f"umount -R {mount_dir} 2>/dev/null", timeout=30)
 
-        _p("done", 100, "Installation complete!")
+        _p("done", 84, "Disk operations complete")
         return True, ""
 
     except Exception as e:
@@ -298,18 +360,23 @@ def _wipe_disk(dev):
 
 
 def _create_gpt(dev, include_data_part):
-    """Create GPT with: ESP (512M) + root (rest or split with data)."""
+    """Create GPT with A/B root scheme: ESP (512M) + Root-A (4G) + Root-B (4G) [+ Data].
+
+    Partition layout:
+      p1 = ESP    (FAT32, 512MB)   → /boot/efi
+      p2 = Root-A (ext4,  4GB)     → / (active after install)
+      p3 = Root-B (ext4,  4GB)     → / (used by OTA updates, empty initially)
+      p4 = Data   (btrfs, rest)    → /mnt/data (only if same-disk mode)
+    """
     cmds = [
         f"parted -s {dev} mklabel gpt",
         f"parted -s {dev} mkpart ESP fat32 1MiB 513MiB",
         f"parted -s {dev} set 1 esp on",
+        f"parted -s {dev} mkpart primary ext4 513MiB 4609MiB",   # Root-A: 4096MB
+        f"parted -s {dev} mkpart primary ext4 4609MiB 8705MiB",  # Root-B: 4096MB
     ]
     if include_data_part:
-        # Same disk: root gets 30% or 30GB (whichever is smaller), rest for data
-        cmds.append(f"parted -s {dev} mkpart primary ext4 513MiB 50%")
-        cmds.append(f"parted -s {dev} mkpart primary ext4 50% 100%")
-    else:
-        cmds.append(f"parted -s {dev} mkpart primary ext4 513MiB 100%")
+        cmds.append(f"parted -s {dev} mkpart primary ext4 8705MiB 100%")  # Data: rest
 
     for cmd in cmds:
         out, err, rc = _run(cmd, timeout=30)
@@ -320,19 +387,37 @@ def _create_gpt(dev, include_data_part):
 
 
 def _format_partitions(dev, same_disk):
-    """Format created partitions."""
+    """Format A/B partitions: Root-A + Root-B (empty), optionally Data."""
     _, err, rc = _run(f"mkfs.vfat -F32 -n EFI {_part(dev, 1)}", timeout=60)
     if rc != 0:
         raise RuntimeError(f"mkfs.vfat failed: {err}")
 
-    _, err, rc = _run(f"mkfs.ext4 -F -L EthOS-Root {_part(dev, 2)}", timeout=120)
+    _, err, rc = _run(f"mkfs.ext4 -F -L EthOS-Root-A {_part(dev, 2)}", timeout=120)
     if rc != 0:
-        raise RuntimeError(f"mkfs.ext4 root failed: {err}")
+        raise RuntimeError(f"mkfs.ext4 Root-A failed: {err}")
+
+    _, err, rc = _run(f"mkfs.ext4 -F -L EthOS-Root-B {_part(dev, 3)}", timeout=120)
+    if rc != 0:
+        raise RuntimeError(f"mkfs.ext4 Root-B failed: {err}")
 
     if same_disk:
-        _, err, rc = _run(f"mkfs.ext4 -F -L EthOS-Data {_part(dev, 3)}", timeout=120)
+        _, err, rc = _run(f"mkfs.btrfs -f -L EthOS-Data {_part(dev, 4)}", timeout=120)
         if rc != 0:
-            raise RuntimeError(f"mkfs.ext4 data failed: {err}")
+            raise RuntimeError(f"mkfs.btrfs data failed: {err}")
+        _create_btrfs_subvolumes(_part(dev, 4))
+
+
+def _create_btrfs_subvolumes(data_part):
+    """Create @data and @snapshots subvolumes on a btrfs partition."""
+    tmp_mount = "/tmp/btrfs-setup"
+    os.makedirs(tmp_mount, exist_ok=True)
+    try:
+        _run(f"mount {data_part} {tmp_mount}", timeout=30)
+        _run(f"btrfs subvolume create {tmp_mount}/@data", timeout=30)
+        _run(f"btrfs subvolume create {tmp_mount}/@snapshots", timeout=30)
+        log.info("Created btrfs subvolumes: @data, @snapshots")
+    finally:
+        _run(f"umount {tmp_mount} 2>/dev/null", timeout=15)
 
 
 def _clone_root(mount_dir, progress_cb):
@@ -342,6 +427,8 @@ def _clone_root(mount_dir, progress_cb):
         "--exclude=/run --exclude=/tmp --exclude=/mnt "
         "--exclude=/media --exclude=/lost+found "
         "--exclude=/opt/ethos/installer/images/ethos-x86.img "
+        "--exclude=/opt/ethos/installer/images/ethos-root.img.zst "
+        "--exclude=/opt/ethos/installer/images/ethos-root.sqsh "
         "--exclude=/swapfile --exclude=/var/swap "
         "--exclude=/opt/ethos/data/visual_qa "
         "--exclude=/opt/ethos/logs/copilot_tickets "
@@ -350,7 +437,8 @@ def _clone_root(mount_dir, progress_cb):
     log.info("Cloning: %s", cmd)
 
     proc = subprocess.Popen(
-        cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+        cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, start_new_session=True,
     )
 
     lines = 0
@@ -370,6 +458,196 @@ def _clone_root(mount_dir, progress_cb):
     # Create required mount points
     for d in ("proc", "sys", "dev", "run", "tmp", "mnt", "media"):
         os.makedirs(f"{mount_dir}/{d}", exist_ok=True)
+
+
+def _dd_clone(compressed_img, target_part, progress_cb):
+    """Write compressed root image to target partition using dd+zstd (block-level)."""
+    log.info("Fast clone: %s → %s", compressed_img, target_part)
+
+    # Decompress and write block-by-block
+    cmd = f"zstdcat {shlex.quote(compressed_img)} | dd of={target_part} bs=4M status=progress 2>&1"
+    proc = subprocess.Popen(
+        cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, start_new_session=True,
+    )
+
+    while True:
+        line = proc.stdout.readline()
+        if not line and proc.poll() is not None:
+            break
+        line = line.strip()
+        if line:
+            log.info("dd: %s", line[:200])
+
+    rc = proc.wait()
+    if rc != 0:
+        raise RuntimeError(f"dd clone failed with code {rc}")
+
+    progress_cb("cloning", 55, "Verifying filesystem...")
+    out, err, rc = _run(f"e2fsck -f -y {target_part}", timeout=120)
+    if rc not in (0, 1):  # 1 = corrected errors (ok)
+        log.warning("e2fsck returned %d: %s", rc, err)
+
+    progress_cb("cloning", 60, "Expanding filesystem to full partition...")
+    out, err, rc = _run(f"resize2fs {target_part}", timeout=120)
+    if rc != 0:
+        raise RuntimeError(f"resize2fs failed: {err}")
+
+    # Set unique label and UUID for this partition
+    _run(f"tune2fs -L EthOS-Root-A {target_part}", timeout=15)
+    _run(f"tune2fs -U random {target_part}", timeout=15)
+    log.info("dd clone complete — filesystem expanded and UUID randomized")
+
+
+def _squashfs_install(sqsh_img, target_part, mount_dir, progress_cb):
+    """Install system using SquashFS immutable root.
+
+    Copies root.sqsh to the ext4 root partition, extracts kernel + initrd
+    for GRUB, and creates the overlay directory structure.
+    """
+    import shutil
+    import glob as _glob
+
+    log.info("SquashFS install: %s → %s", sqsh_img, target_part)
+
+    # Mount the target ext4 partition
+    os.makedirs(mount_dir, exist_ok=True)
+    _run(f"mount {target_part} {mount_dir}", timeout=30)
+
+    # Copy squashfs image to root of ext4 partition
+    progress_cb("cloning", 40, "Copying SquashFS image...")
+    dst_sqsh = os.path.join(mount_dir, "root.sqsh")
+    shutil.copy2(sqsh_img, dst_sqsh)
+    sqsh_mb = os.path.getsize(sqsh_img) // (1024 * 1024)
+    log.info("Copied root.sqsh (%d MB)", sqsh_mb)
+
+    # Copy dm-verity data if available
+    verity_src = sqsh_img + ".verity"
+    roothash_src = sqsh_img + ".roothash"
+    if os.path.isfile(verity_src) and os.path.isfile(roothash_src):
+        shutil.copy2(verity_src, os.path.join(mount_dir, "root.sqsh.verity"))
+        shutil.copy2(roothash_src, os.path.join(mount_dir, "root.sqsh.roothash"))
+        log.info("dm-verity data copied alongside root.sqsh")
+    else:
+        log.info("No dm-verity data found — unverified boot")
+
+    # Mount squashfs to extract kernel + initrd (GRUB needs them on ext4)
+    progress_cb("cloning", 50, "Extracting kernel and initrd...")
+    sqsh_mount = "/tmp/sqsh-extract"
+    os.makedirs(sqsh_mount, exist_ok=True)
+    out, err, rc = _run(
+        f"mount -t squashfs -o ro,loop {dst_sqsh} {sqsh_mount}", timeout=30
+    )
+    if rc != 0:
+        raise RuntimeError(f"Cannot mount squashfs: {err}")
+
+    try:
+        boot_dir = os.path.join(mount_dir, "boot")
+        os.makedirs(boot_dir, exist_ok=True)
+
+        for pattern in ("vmlinuz-*", "initrd.img-*"):
+            files = sorted(_glob.glob(os.path.join(sqsh_mount, "boot", pattern)))
+            if files:
+                src = files[-1]
+                dst = os.path.join(boot_dir, os.path.basename(src))
+                shutil.copy2(src, dst)
+                log.info("Extracted %s", os.path.basename(src))
+
+        # Copy GRUB modules from squashfs (needed for grub-install)
+        sqsh_grub = os.path.join(sqsh_mount, "usr/lib/grub")
+        dst_grub = os.path.join(mount_dir, "usr/lib/grub")
+        if os.path.isdir(sqsh_grub):
+            os.makedirs(os.path.dirname(dst_grub), exist_ok=True)
+            shutil.copytree(sqsh_grub, dst_grub, dirs_exist_ok=True)
+    finally:
+        _run(f"umount {sqsh_mount} 2>/dev/null", timeout=15)
+
+    # Create overlay directory structure
+    progress_cb("cloning", 55, "Creating overlay structure...")
+    overlay_dir = os.path.join(mount_dir, "overlay")
+    os.makedirs(os.path.join(overlay_dir, "upper"), exist_ok=True)
+    os.makedirs(os.path.join(overlay_dir, "work"), exist_ok=True)
+
+    progress_cb("cloning", 60, "SquashFS image installed")
+    log.info("SquashFS install complete: root.sqsh + kernel/initrd + overlay dirs")
+
+
+def _prepare_data_dirs(data_part):
+    """Create directory structure on data partition for SquashFS mode.
+
+    The squashfs image has symlinks: /opt/ethos/{data,logs,...} → /mnt/data/ethos/{dir}.
+    This function creates those target directories on the btrfs data partition.
+    """
+    tmp_mount = "/tmp/data-prep"
+    os.makedirs(tmp_mount, exist_ok=True)
+    try:
+        out, err, rc = _run(f"mount -o subvol=@data {data_part} {tmp_mount}", timeout=30)
+        if rc != 0:
+            log.warning("Could not mount data partition for prep: %s", err)
+            return
+        for dirname in ("data", "logs", "backups", "uploads"):
+            os.makedirs(os.path.join(tmp_mount, "ethos", dirname), exist_ok=True)
+        log.info("Created data partition directories for squashfs mode")
+    finally:
+        _run(f"umount {tmp_mount} 2>/dev/null", timeout=15)
+
+
+def _setup_data_separation(mount_dir, data_part):
+    """Move persistent dirs from root to btrfs data partition via symlinks.
+
+    Creates /mnt/data/ethos/{data,logs,backups,uploads} on the data partition,
+    moves any existing content from root, and replaces with symlinks.
+    This ensures all persistent data survives root A/B updates and factory resets.
+    """
+    import shutil
+
+    ethos_root = os.path.join(mount_dir, "opt/ethos")
+    data_mount = "/tmp/data-setup"
+    os.makedirs(data_mount, exist_ok=True)
+
+    try:
+        # Mount the @data subvolume
+        out, err, rc = _run(f"mount -o subvol=@data {data_part} {data_mount}", timeout=30)
+        if rc != 0:
+            log.warning("Could not mount data partition for separation: %s", err)
+            return
+
+        # Create persistent directory structure on data partition
+        ethos_data_root = os.path.join(data_mount, "ethos")
+        for dirname in ("data", "logs", "backups", "uploads"):
+            target_dir = os.path.join(ethos_data_root, dirname)
+            os.makedirs(target_dir, exist_ok=True)
+
+            src_dir = os.path.join(ethos_root, dirname)
+            if os.path.isdir(src_dir) and not os.path.islink(src_dir):
+                # Move existing content to data partition
+                for item in os.listdir(src_dir):
+                    s = os.path.join(src_dir, item)
+                    d = os.path.join(target_dir, item)
+                    if os.path.isdir(s):
+                        if os.path.exists(d):
+                            shutil.rmtree(d)
+                        shutil.copytree(s, d, symlinks=True)
+                    else:
+                        shutil.copy2(s, d)
+                shutil.rmtree(src_dir)
+            elif os.path.islink(src_dir):
+                os.remove(src_dir)
+            elif os.path.exists(src_dir):
+                os.remove(src_dir)
+
+            # Create symlink: /opt/ethos/{dir} → /mnt/data/ethos/{dir}
+            os.symlink(f"/mnt/data/ethos/{dirname}", src_dir)
+            log.info("Symlinked %s → /mnt/data/ethos/%s", dirname, dirname)
+
+        # Create /mnt/data and /mnt/snapshots mount points in target
+        os.makedirs(os.path.join(mount_dir, "mnt/data"), exist_ok=True)
+        os.makedirs(os.path.join(mount_dir, "mnt/snapshots"), exist_ok=True)
+
+    finally:
+        _run(f"umount {data_mount} 2>/dev/null", timeout=15)
+
+    log.info("Data separation complete — persistent dirs on btrfs data partition")
 
 
 def _fixup_installed_system(mount_dir):
@@ -411,15 +689,16 @@ def _fixup_installed_system(mount_dir):
     svc_path = os.path.join(mount_dir, "etc/systemd/system/ethos.service")
     svc_content = f"""[Unit]
 Description=EthOS NAS
-After=network.target ethos-firstboot.service
+After=network.target ethos-firstboot.service local-fs.target
 Wants=network.target
+RequiresMountsFor=/mnt/data
 
 [Service]
 Type=notify
 NotifyAccess=all
 WorkingDirectory=/opt/ethos
 EnvironmentFile=/opt/ethos/ethos.env
-ExecStartPre=/bin/mkdir -p /opt/ethos/data /opt/ethos/logs /opt/ethos/backups /opt/ethos/uploads
+ExecStartPre=/bin/bash -c 'for d in data logs backups uploads; do p="/opt/ethos/$d"; [ -L "$p" ] && mkdir -p "$(readlink "$p")" || mkdir -p "$p"; done'
 Environment=PYTHONPATH=/opt/ethos/backend
 ExecStart=/opt/ethos/venv/bin/python /opt/ethos/backend/app.py
 Restart=on-failure
@@ -510,77 +789,108 @@ WantedBy=multi-user.target
         log.info("Created setup_done + .password_changed (wizard=%s)", setup_wizard)
 
 
-def _install_grub(dev, mount_dir):
-    """Install GRUB bootloader."""
+def _install_grub(dev, mount_dir, progress_cb=None, squashfs_mode=False):
+    """Install UEFI GRUB bootloader with sub-step progress reporting."""
     import platform
     arch = platform.machine()
 
+    def _p(pct, msg):
+        log.info("GRUB [%d%%] %s", pct, msg)
+        if progress_cb:
+            progress_cb("bootloader", pct, msg)
+
     if arch == "x86_64":
         # Bind-mount required filesystems for chroot
+        _p(75, "Mounting filesystems for chroot...")
         for fs in ("dev", "proc", "sys"):
-            _run(f"mount --bind /{fs} {mount_dir}/{fs}", timeout=10)
+            _, err, rc = _run(f"mount --bind /{fs} {mount_dir}/{fs}", timeout=10)
+            if rc != 0:
+                log.warning("mount --bind /%s failed: %s", fs, err)
         _run(f"mount --bind /dev/pts {mount_dir}/dev/pts", timeout=10)
 
-        # Install GRUB EFI
+        # Install GRUB UEFI
+        _p(76, "Installing GRUB UEFI (x86_64-efi)...")
         _, err, rc = _run(
             f"chroot {mount_dir} grub-install --target=x86_64-efi "
-            f"--efi-directory=/boot/efi --bootloader-id=EthOS "
-            f"--recheck {dev} 2>&1",
-            timeout=60,
+            f"--efi-directory=/boot/efi --boot-directory=/boot "
+            f"--removable --no-nvram {dev} 2>&1",
+            timeout=120,
         )
         if rc != 0:
-            # Try legacy BIOS fallback
-            log.warning("GRUB EFI failed (%s), trying BIOS...", err)
-            _run(
-                f"chroot {mount_dir} grub-install --target=i386-pc {dev} 2>&1",
-                timeout=60,
-            )
+            log.error("GRUB UEFI failed (rc=%d): %s", rc, err)
+            _p(77, f"GRUB UEFI failed (rc={rc}): {err}")
+        else:
+            _p(77, "GRUB UEFI installed successfully")
 
-        _run(f"chroot {mount_dir} update-grub 2>&1", timeout=60)
+        _p(78, "Generating GRUB configuration (update-grub)...")
+        _, uerr, urc = _run(f"chroot {mount_dir} update-grub 2>&1", timeout=120)
+        if urc != 0:
+            log.warning("update-grub failed (rc=%d): %s", urc, uerr)
+            _p(78, f"update-grub warning (rc={urc})")
 
         # Unbind
+        _p(79, "Unmounting chroot filesystems...")
         for fs in ("dev/pts", "sys", "proc", "dev"):
             _run(f"umount {mount_dir}/{fs} 2>/dev/null")
 
         # Build a standalone BOOTX64.EFI that finds the root by UUID.
-        # This ensures correct booting regardless of partition numbering,
-        # which may differ from the source image layout.
-        _write_esp_grub(dev, mount_dir)
+        _p(79, "Building standalone EFI bootloader...")
+        _write_esp_grub(dev, mount_dir, progress_cb, squashfs_mode=squashfs_mode)
 
     else:
         log.info("Non-x86 arch (%s): skipping GRUB (assuming U-Boot/other)", arch)
 
 
-def _write_esp_grub(dev, mount_dir):
-    """Create a standalone BOOTX64.EFI + ESP grub.cfg for the target disk.
+def _write_esp_grub(dev, mount_dir, progress_cb=None, squashfs_mode=False):
+    """Create a standalone BOOTX64.EFI + ESP grub.cfg with A/B boot counter.
 
-    The source image may have BOOTX64.EFI with a hardcoded partition prefix
-    (e.g. (,gpt3)) that doesn't match the target layout (root on gpt2).
-    We rebuild it with grub-mkstandalone so GRUB uses search --fs-uuid
-    to find the root partition dynamically.
+    Partition layout (target disk):
+      p2 = Root-A (active after install)
+      p3 = Root-B (empty, used by OTA updates)
+
+    GRUB uses grubenv to track:
+      boot_slot    = a | b   (which root to boot)
+      boot_counter = 0..3    (incremented on failed boot)
+      boot_success = 0 | 1   (set to 1 by EthOS app on successful start)
+
+    Boot counter logic:
+      If boot_success != 1 → increment boot_counter
+      If boot_counter >= 3 → flip boot_slot (automatic rollback)
+      Always set boot_success = 0 before booting (app must set it to 1)
     """
     import glob as _glob
     import tempfile
 
-    root_part = _part(dev, 2)
-    root_uuid, _, rc = _run(f"blkid -s UUID -o value {root_part}")
-    if rc != 0 or not root_uuid:
-        log.warning("Cannot determine root UUID for %s, skipping ESP GRUB rebuild", root_part)
-        return
+    def _p(pct, msg):
+        log.info("ESP GRUB [%d%%] %s", pct, msg)
+        if progress_cb:
+            progress_cb("bootloader", pct, msg)
 
-    # Find kernel + initrd on the target
+    # Get UUIDs for both root slots and ESP
+    root_a_part = _part(dev, 2)
+    root_b_part = _part(dev, 3)
+    root_a_uuid, _, rc = _run(f"blkid -s UUID -o value {root_a_part}")
+    root_b_uuid, _, _ = _run(f"blkid -s UUID -o value {root_b_part}")
+    esp_uuid, _, _ = _run(f"blkid -s UUID -o value {_part(dev, 1)}")
+    if rc != 0 or not root_a_uuid:
+        log.warning("Cannot determine Root-A UUID for %s, skipping ESP GRUB", root_a_part)
+        return
+    if not root_b_uuid:
+        log.warning("Cannot determine Root-B UUID for %s", root_b_part)
+
+    # Find kernel + initrd on the target (Root-A)
     boot_dir = os.path.join(mount_dir, "boot")
     kernels = sorted(_glob.glob(os.path.join(boot_dir, "vmlinuz-*")))
     initrds = sorted(_glob.glob(os.path.join(boot_dir, "initrd.img-*")))
     if not kernels or not initrds:
-        log.warning("No kernel/initrd found in %s, skipping ESP GRUB rebuild", boot_dir)
+        log.warning("No kernel/initrd found in %s, skipping ESP GRUB", boot_dir)
         return
 
     kern_name = os.path.basename(kernels[-1])
     initrd_name = os.path.basename(initrds[-1])
     kver = kern_name.replace("vmlinuz-", "")
 
-    # Read the EthOS version from the target
+    # Read the EthOS version
     version = "EthOS"
     ver_file = os.path.join(mount_dir, "opt/ethos/backend/version.json")
     if os.path.exists(ver_file):
@@ -591,42 +901,152 @@ def _write_esp_grub(dev, mount_dir):
         except Exception:
             pass
 
-    # 1) Write ESP grub.cfg with boot menu entries
+    # ── 1) Write ESP grub.cfg with A/B boot counter logic ──
     esp_grub_dir = os.path.join(mount_dir, "boot/efi/EFI/BOOT")
     os.makedirs(esp_grub_dir, exist_ok=True)
+    # Also create /boot/grub/ on ESP for grubenv
+    boot_grub_dir = os.path.join(mount_dir, "boot/efi/boot/grub")
+    os.makedirs(boot_grub_dir, exist_ok=True)
+
+    cmdline = "ro quiet console=tty0 console=ttyS0,115200 net.ifnames=0 biosdevname=0 fsck.repair=preen"
+    if squashfs_mode:
+        cmdline += " ethos.rootfs=squashfs"
+
     esp_grub_cfg = os.path.join(esp_grub_dir, "grub.cfg")
     with open(esp_grub_cfg, "w") as f:
-        f.write(f"""set timeout=3
+        f.write(f"""\
+# EthOS A/B boot configuration with automatic failover
+set timeout=3
 set default=0
 insmod part_gpt
 insmod ext2
+insmod fat
 insmod gzio
-menuentry "{version}" {{
-    search --no-floppy --fs-uuid --set=root {root_uuid}
-    linux /boot/{kern_name} root=UUID={root_uuid} ro quiet console=tty0 console=ttyS0,115200 net.ifnames=0 biosdevname=0 fsck.repair=preen
+insmod loadenv
+
+# Load persistent boot state from grubenv
+if [ -s $prefix/grubenv ]; then
+    load_env
+fi
+
+# Defaults for fresh install
+if [ -z "$boot_slot" ]; then
+    set boot_slot=a
+fi
+if [ -z "$boot_counter" ]; then
+    set boot_counter=0
+fi
+if [ -z "$boot_success" ]; then
+    set boot_success=1
+fi
+
+# Boot counter logic: if previous boot didn't mark success, count failure
+if [ "$boot_success" != "1" ]; then
+    # Increment counter (GRUB math)
+    if [ "$boot_counter" = "0" ]; then set boot_counter=1;
+    elif [ "$boot_counter" = "1" ]; then set boot_counter=2;
+    elif [ "$boot_counter" = "2" ]; then set boot_counter=3;
+    else set boot_counter=3;
+    fi
+
+    # After 3 failed boots, flip to other slot (automatic rollback)
+    if [ "$boot_counter" = "3" ]; then
+        if [ "$boot_slot" = "a" ]; then
+            set boot_slot=b
+        else
+            set boot_slot=a
+        fi
+        set boot_counter=0
+    fi
+fi
+
+# Clear boot_success — EthOS app must set it to 1 on successful start
+set boot_success=0
+save_env boot_slot boot_counter boot_success
+
+# Boot the selected slot
+if [ "$boot_slot" = "b" ]; then
+    search --no-floppy --fs-uuid --set=root {root_b_uuid}
+    linux /boot/{kern_name} root=UUID={root_b_uuid} {cmdline} ethos.slot=b
+    initrd /boot/{initrd_name}
+else
+    search --no-floppy --fs-uuid --set=root {root_a_uuid}
+    linux /boot/{kern_name} root=UUID={root_a_uuid} {cmdline} ethos.slot=a
+    initrd /boot/{initrd_name}
+fi
+
+# Manual boot entries (accessible via GRUB menu / Esc)
+menuentry "{version} — Slot A" {{
+    search --no-floppy --fs-uuid --set=root {root_a_uuid}
+    linux /boot/{kern_name} root=UUID={root_a_uuid} {cmdline} ethos.slot=a
+    initrd /boot/{initrd_name}
+}}
+menuentry "{version} — Slot B" {{
+    search --no-floppy --fs-uuid --set=root {root_b_uuid}
+    linux /boot/{kern_name} root=UUID={root_b_uuid} {cmdline} ethos.slot=b
     initrd /boot/{initrd_name}
 }}
 menuentry "{version} (recovery)" {{
-    search --no-floppy --fs-uuid --set=root {root_uuid}
-    linux /boot/{kern_name} root=UUID={root_uuid} ro single nomodeset fsck.repair=preen
+    search --no-floppy --fs-uuid --set=root {root_a_uuid}
+    linux /boot/{kern_name} root=UUID={root_a_uuid} ro single nomodeset fsck.repair=preen ethos.slot=a
     initrd /boot/{initrd_name}
 }}
+menuentry "EthOS Recovery Shell (ESP)" {{
+    search --no-floppy --fs-uuid --set=esp {esp_uuid}
+    linux ($esp)/EFI/recovery/vmlinuz ro init=/bin/bash nomodeset
+    initrd ($esp)/EFI/recovery/initrd.img
+}}
 """)
-    log.info("Wrote ESP grub.cfg: kernel=%s uuid=%s", kver, root_uuid)
+    log.info("Wrote A/B ESP grub.cfg: kernel=%s root_a=%s root_b=%s", kver, root_a_uuid, root_b_uuid)
 
-    # 2) Build standalone BOOTX64.EFI with embedded early config
+    # ── 2) Initialize grubenv with default boot state ──
+    grubenv_path = os.path.join(boot_grub_dir, "grubenv")
+    # grub-editenv creates a 1024-byte grubenv file
+    _run(f"grub-editenv {grubenv_path} create", timeout=10)
+    _run(f"grub-editenv {grubenv_path} set boot_slot=a", timeout=10)
+    _run(f"grub-editenv {grubenv_path} set boot_counter=0", timeout=10)
+    _run(f"grub-editenv {grubenv_path} set boot_success=1", timeout=10)
+    log.info("Initialized grubenv: boot_slot=a, boot_counter=0, boot_success=1")
+
+    # Also write grubenv to /boot/grub/ on root partition (GRUB may look there)
+    root_grub_dir = os.path.join(mount_dir, "boot/grub")
+    os.makedirs(root_grub_dir, exist_ok=True)
+    root_grubenv = os.path.join(root_grub_dir, "grubenv")
+    _run(f"grub-editenv {root_grubenv} create", timeout=10)
+    _run(f"grub-editenv {root_grubenv} set boot_slot=a", timeout=10)
+    _run(f"grub-editenv {root_grubenv} set boot_counter=0", timeout=10)
+    _run(f"grub-editenv {root_grubenv} set boot_success=1", timeout=10)
+
+    # ── 3) Write A/B slot metadata for the updater ──
+    slot_meta_dir = os.path.join(mount_dir, "opt/ethos/data")
+    os.makedirs(slot_meta_dir, exist_ok=True)
+    slot_meta = os.path.join(slot_meta_dir, "ab_slots.json")
+    import json as _json
+    with open(slot_meta, "w") as f:
+        _json.dump({
+            "slot_a": {"partition": root_a_part, "uuid": root_a_uuid, "label": "EthOS-Root-A"},
+            "slot_b": {"partition": root_b_part, "uuid": root_b_uuid, "label": "EthOS-Root-B"},
+            "active": "a",
+            "grubenv_esp": "/boot/efi/boot/grub/grubenv",
+            "grubenv_root": "/boot/grub/grubenv",
+        }, f, indent=2)
+    log.info("Wrote A/B slot metadata to %s", slot_meta)
+
+    # ── 4) Build standalone BOOTX64.EFI ──
+    _p(79, "Building standalone BOOTX64.EFI...")
     grub_mod_dir = "/usr/lib/grub/x86_64-efi"
     if not os.path.isdir(grub_mod_dir):
-        # Try inside chroot
         grub_mod_dir = os.path.join(mount_dir, "usr/lib/grub/x86_64-efi")
     if not os.path.isdir(grub_mod_dir):
         log.warning("GRUB x86_64-efi modules not found, skipping standalone EFI rebuild")
         return
 
+    # Early config: find ESP by its UUID, then load main grub.cfg
+    # esp_uuid already computed above
     with tempfile.NamedTemporaryFile(mode='w', suffix='.cfg', delete=False) as tmp:
-        tmp.write(f"search --no-floppy --fs-uuid --set=root {root_uuid}\n")
+        tmp.write(f"search --no-floppy --fs-uuid --set=root {esp_uuid}\n")
         tmp.write("set prefix=($root)/boot/grub\n")
-        tmp.write("configfile $prefix/grub.cfg\n")
+        tmp.write("configfile ($root)/EFI/BOOT/grub.cfg\n")
         early_cfg = tmp.name
 
     efi_out = os.path.join(esp_grub_dir, "BOOTX64.EFI")
@@ -634,33 +1054,94 @@ menuentry "{version} (recovery)" {{
         f"grub-mkstandalone --format=x86_64-efi "
         f"--output={efi_out} --locales='' --fonts='' "
         f"--modules='part_gpt ext2 fat search search_fs_uuid normal "
-        f"linux boot configfile gzio' "
+        f"linux boot configfile gzio loadenv' "
         f"'boot/grub/grub.cfg={early_cfg}'",
-        timeout=60,
+        timeout=120,
     )
     os.unlink(early_cfg)
 
     if rc != 0:
         log.warning("grub-mkstandalone failed: %s", err)
     else:
-        log.info("Built standalone BOOTX64.EFI for UUID %s", root_uuid)
+        log.info("Built standalone BOOTX64.EFI (A/B aware, ESP UUID %s)", esp_uuid)
+
+    # ── 5) Copy kernel + initrd to ESP for recovery ──
+    _setup_recovery_on_esp(mount_dir, esp_grub_dir, kern_name, initrd_name)
+
+    # ── 6) Copy dm-verity roothash to ESP ──
+    roothash_src = os.path.join(mount_dir, "root.sqsh.roothash")
+    if os.path.isfile(roothash_src):
+        esp_base = os.path.dirname(os.path.dirname(esp_grub_dir))
+        ethos_dir = os.path.join(esp_base, "EFI", "ethos")
+        os.makedirs(ethos_dir, exist_ok=True)
+        shutil.copy2(roothash_src, os.path.join(ethos_dir, "roothash"))
+        log.info("dm-verity roothash copied to ESP")
 
 
-def _generate_fstab(dev, mount_dir, same_disk):
-    """Write /etc/fstab for the new system."""
+def _setup_recovery_on_esp(mount_dir, esp_grub_dir, kern_name, initrd_name):
+    """Copy kernel + initrd to ESP recovery directory.
+
+    This provides a last-resort recovery boot when both A/B root slots are
+    damaged. GRUB's 'EthOS Recovery Shell' entry boots this kernel with
+    'init=/bin/bash' for manual repair.
+    """
+    esp_base = os.path.dirname(os.path.dirname(esp_grub_dir))  # …/boot/efi
+    recovery_dir = os.path.join(esp_base, "EFI", "recovery")
+    os.makedirs(recovery_dir, exist_ok=True)
+
+    boot_dir = os.path.join(mount_dir, "boot")
+    kern_src = os.path.join(boot_dir, kern_name)
+    initrd_src = os.path.join(boot_dir, initrd_name)
+
+    if os.path.isfile(kern_src):
+        shutil.copy2(kern_src, os.path.join(recovery_dir, "vmlinuz"))
+        log.info("Recovery kernel copied to ESP: %s", kern_name)
+    else:
+        log.warning("Recovery: kernel %s not found", kern_src)
+        return
+
+    if os.path.isfile(initrd_src):
+        shutil.copy2(initrd_src, os.path.join(recovery_dir, "initrd.img"))
+        log.info("Recovery initrd copied to ESP: %s", initrd_name)
+
+    # Write a small recovery info file
+    import json as _json
+    with open(os.path.join(recovery_dir, "recovery.json"), "w") as f:
+        _json.dump({
+            "kernel": kern_name,
+            "initrd": initrd_name,
+            "created": datetime.now().isoformat() if 'datetime' in dir() else "unknown",
+        }, f, indent=2)
+
+    log.info("Recovery system installed on ESP at EFI/recovery/")
+
+
+def _generate_fstab(dev, mount_dir, same_disk, data_dev=None):
+    """Write /etc/fstab for the new system (A/B layout: root on p2)."""
     root_uuid, _, _ = _run(f"blkid -s UUID -o value {_part(dev, 2)}")
     esp_uuid, _, _ = _run(f"blkid -s UUID -o value {_part(dev, 1)}")
 
     lines = [
-        "# EthOS fstab — generated by installer",
-        f"UUID={root_uuid}  /          ext4  defaults,noatime  0  1",
-        f"UUID={esp_uuid}   /boot/efi  vfat  defaults          0  2",
+        "# EthOS fstab — generated by installer (A/B partition scheme)",
+        f"UUID={root_uuid}  /          ext4   defaults,noatime  0  1",
+        f"UUID={esp_uuid}   /boot/efi  vfat   defaults          0  2",
     ]
+
+    # Data partition — same disk (p4) or separate disk (p1)
+    data_part = None
     if same_disk:
-        data_uuid, _, _ = _run(f"blkid -s UUID -o value {_part(dev, 3)}")
+        data_part = _part(dev, 4)
+    elif data_dev:
+        data_part = _part(data_dev, 1)
+
+    if data_part:
+        data_uuid, _, _ = _run(f"blkid -s UUID -o value {data_part}")
         if data_uuid:
             lines.append(
-                f"UUID={data_uuid}  /mnt/data  ext4  defaults,noatime  0  2"
+                f"UUID={data_uuid}  /mnt/data  btrfs  subvol=@data,defaults,noatime,compress=zstd:3,space_cache=v2  0  0"
+            )
+            lines.append(
+                f"UUID={data_uuid}  /mnt/snapshots  btrfs  subvol=@snapshots,defaults,noatime,compress=zstd:3  0  0"
             )
 
     fstab = "\n".join(lines) + "\n"
@@ -669,3 +1150,45 @@ def _generate_fstab(dev, mount_dir, same_disk):
     with open(fstab_path, "w") as f:
         f.write(fstab)
     log.info("Wrote fstab: %s", fstab_path)
+
+
+def _write_overlay_fstab(dev, mount_dir, same_disk, data_dev=None):
+    """Write fstab to overlay upper dir (for SquashFS mode).
+
+    In squashfs mode, the root is overlayfs (managed by initramfs).
+    Only ESP and data partition entries are needed in fstab.
+    The fstab goes into the overlay upper so it overrides the squashfs version.
+    """
+    esp_uuid, _, _ = _run(f"blkid -s UUID -o value {_part(dev, 1)}")
+
+    lines = [
+        "# EthOS fstab — SquashFS immutable root mode",
+        "# Root: overlayfs (squashfs lower + ext4 overlay upper, managed by initramfs)",
+        f"UUID={esp_uuid}   /boot/efi  vfat   defaults  0  2",
+    ]
+
+    data_part = None
+    if same_disk:
+        data_part = _part(dev, 4)
+    elif data_dev:
+        data_part = _part(data_dev, 1)
+
+    if data_part:
+        data_uuid, _, _ = _run(f"blkid -s UUID -o value {data_part}")
+        if data_uuid:
+            lines.append(
+                f"UUID={data_uuid}  /mnt/data  btrfs  subvol=@data,defaults,noatime,compress=zstd:3,space_cache=v2  0  0"
+            )
+            lines.append(
+                f"UUID={data_uuid}  /mnt/snapshots  btrfs  subvol=@snapshots,defaults,noatime,compress=zstd:3  0  0"
+            )
+
+    fstab = "\n".join(lines) + "\n"
+
+    # Write to overlay upper directory (overrides squashfs fstab on boot)
+    overlay_etc = os.path.join(mount_dir, "overlay/upper/etc")
+    os.makedirs(overlay_etc, exist_ok=True)
+    fstab_path = os.path.join(overlay_etc, "fstab")
+    with open(fstab_path, "w") as f:
+        f.write(fstab)
+    log.info("Wrote overlay fstab: %s", fstab_path)
