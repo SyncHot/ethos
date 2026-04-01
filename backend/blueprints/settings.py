@@ -212,10 +212,11 @@ def change_password():
 
     if not current_pw or not new_pw:
         return jsonify({'error': 'Both password fields are required'}), 400
-    if len(new_pw) < 4:
-        return jsonify({'error': 'New password must be at least 4 characters'}), 400
-    if new_pw == 'ethos':
-        return jsonify({'error': 'Password cannot be the default ("ethos")'}), 400
+
+    from blueprints.users import validate_password_strength
+    pw_ok, pw_errors = validate_password_strength(new_pw, g.username)
+    if not pw_ok:
+        return jsonify({'error': pw_errors[0], 'password_errors': pw_errors}), 400
 
     username = g.username
     if not username:

@@ -971,6 +971,12 @@ select.fm-input {
     margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px;
     align-items: center;
 }
+
+/* ─── Quota bar on user cards ─── */
+.usr-quota { margin-top: 6px; display: flex; align-items: center; gap: 8px; }
+.usr-quota-bar { flex: 0 0 120px; height: 6px; background: var(--bg-tertiary); border-radius: 3px; overflow: hidden; }
+.usr-quota-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+.usr-quota-text { font-size: 11px; color: var(--text-muted); }
 .usr-card-privs {
     margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
 }

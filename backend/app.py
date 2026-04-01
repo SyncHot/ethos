@@ -1864,10 +1864,11 @@ def setup_complete():
 
     if not username or len(username) < 2:
         return jsonify({'error': 'Username is required (min. 2 characters)'}), 400
-    if not password or len(password) < 4:
-        return jsonify({'error': 'Password is required (min. 4 characters)'}), 400
-    if password == 'ethos':
-        return jsonify({'error': 'Password cannot be the default ("ethos")'}), 400
+
+    from blueprints.users import validate_password_strength
+    pw_ok, pw_errors = validate_password_strength(password, username)
+    if not pw_ok:
+        return jsonify({'error': pw_errors[0], 'password_errors': pw_errors}), 400
 
     import shlex
     errors = []

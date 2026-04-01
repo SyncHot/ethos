@@ -1376,6 +1376,243 @@ def samba_pkg_status():
 
 
 # ═══════════════════════════════════════════════════════════
+#  Share ACLs (per-user/group access control on Samba shares)
+# ═══════════════════════════════════════════════════════════
+
+_SHARE_ACLS_FILE = data_path('share_acls.json')
+
+
+def _load_share_acls():
+    """Load share ACL map: { share_name: { users: {user: perm}, groups: {group: perm} } }."""
+    if os.path.isfile(_SHARE_ACLS_FILE):
+        try:
+            with open(_SHARE_ACLS_FILE) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def _save_share_acls(acls):
+    os.makedirs(os.path.dirname(_SHARE_ACLS_FILE), exist_ok=True)
+    with open(_SHARE_ACLS_FILE, 'w') as f:
+        json.dump(acls, f, indent=2)
+
+
+def _apply_share_acl(share_name):
+    """Rewrite the Samba share config and apply POSIX ACLs for a single share."""
+    acls = _load_share_acls()
+    share_acl = acls.get(share_name, {})
+    users_acl = share_acl.get('users', {})
+    groups_acl = share_acl.get('groups', {})
+
+    # Build Samba directive lists
+    valid_users = []
+    write_list = []
+    read_list = []
+    for user, perm in users_acl.items():
+        if perm in ('rw', 'ro'):
+            valid_users.append(user)
+        if perm == 'rw':
+            write_list.append(user)
+        elif perm == 'ro':
+            read_list.append(user)
+    for group, perm in groups_acl.items():
+        g = f'@{group}'
+        if perm in ('rw', 'ro'):
+            valid_users.append(g)
+        if perm == 'rw':
+            write_list.append(g)
+        elif perm == 'ro':
+            read_list.append(g)
+
+    # If no ACLs defined, skip (share remains open to all authenticated users)
+    if not valid_users:
+        return
+
+    acl_params = {
+        'name': share_name,
+        'valid_users': ' '.join(valid_users),
+        'write_list': ' '.join(write_list),
+        'read_list': ' '.join(read_list),
+    }
+
+    # Inject ACL directives into smb.conf for this share
+    script = """import json, re
+NL = chr(10)
+params = json.loads(open('/tmp/_samba_acl_params.json').read())
+name = params['name']
+try:
+    conf = open('/etc/samba/smb.conf').read()
+except FileNotFoundError:
+    exit(0)
+
+# Find the share block
+pattern = r'\\[' + re.escape(name) + r'\\]([^\\[]*)'
+m = re.search(pattern, conf, flags=re.IGNORECASE)
+if not m:
+    exit(0)
+
+block = m.group(0)
+# Remove old ACL directives
+for directive in ('valid users', 'write list', 'read list', 'force user', 'force group'):
+    block = re.sub(r'\\n\\s*' + directive + r'\\s*=.*', '', block, flags=re.IGNORECASE)
+
+# Add new ACL directives
+if params['valid_users']:
+    block = block.rstrip() + NL + '    valid users = ' + params['valid_users'] + NL
+if params['write_list']:
+    block = block.rstrip() + NL + '    write list = ' + params['write_list'] + NL
+if params['read_list']:
+    block = block.rstrip() + NL + '    read list = ' + params['read_list'] + NL
+
+conf = re.sub(pattern, block, conf, count=1, flags=re.IGNORECASE)
+open('/etc/samba/smb.conf', 'w').write(conf)
+"""
+    _host_write_json('/tmp/_samba_acl_params.json', acl_params)
+    _host_write_script('/tmp/_samba_acl.py', script)
+    host_run("python3 /tmp/_samba_acl.py")
+    host_run("rm -f /tmp/_samba_acl.py /tmp/_samba_acl_params.json 2>/dev/null")
+
+    # Apply POSIX ACLs on the directory
+    share_path = _get_share_path(share_name)
+    if share_path:
+        _apply_posix_acls(share_path, users_acl, groups_acl)
+
+    host_run("systemctl restart smbd 2>/dev/null || true")
+
+
+def _get_share_path(share_name):
+    """Read the path for a share from smb.conf."""
+    r = host_run(f"grep -A5 '\\[{_q_imported(share_name)}\\]' /etc/samba/smb.conf 2>/dev/null | grep 'path =' | head -1")
+    if r.returncode == 0 and r.stdout.strip():
+        return r.stdout.strip().split('=', 1)[-1].strip()
+    return None
+
+
+def _apply_posix_acls(path, users_acl, groups_acl):
+    """Apply POSIX ACLs on the share directory using setfacl."""
+    # Check if setfacl is available
+    r = host_run("command -v setfacl")
+    if r.returncode != 0:
+        return
+
+    # Reset ACLs
+    host_run(f"setfacl -b {_q_imported(path)} 2>/dev/null")
+
+    # Apply user ACLs
+    for user, perm in users_acl.items():
+        if perm == 'rw':
+            host_run(f"setfacl -m u:{_q_imported(user)}:rwx {_q_imported(path)}")
+        elif perm == 'ro':
+            host_run(f"setfacl -m u:{_q_imported(user)}:r-x {_q_imported(path)}")
+        elif perm == 'none':
+            host_run(f"setfacl -m u:{_q_imported(user)}:--- {_q_imported(path)}")
+
+    # Apply group ACLs
+    for group, perm in groups_acl.items():
+        if perm == 'rw':
+            host_run(f"setfacl -m g:{_q_imported(group)}:rwx {_q_imported(path)}")
+        elif perm == 'ro':
+            host_run(f"setfacl -m g:{_q_imported(group)}:r-x {_q_imported(path)}")
+        elif perm == 'none':
+            host_run(f"setfacl -m g:{_q_imported(group)}:--- {_q_imported(path)}")
+
+    # Set default ACLs (for new files/dirs)
+    for user, perm in users_acl.items():
+        if perm == 'rw':
+            host_run(f"setfacl -dm u:{_q_imported(user)}:rwx {_q_imported(path)}")
+        elif perm == 'ro':
+            host_run(f"setfacl -dm u:{_q_imported(user)}:r-x {_q_imported(path)}")
+
+    for group, perm in groups_acl.items():
+        if perm == 'rw':
+            host_run(f"setfacl -dm g:{_q_imported(group)}:rwx {_q_imported(path)}")
+        elif perm == 'ro':
+            host_run(f"setfacl -dm g:{_q_imported(group)}:r-x {_q_imported(path)}")
+
+
+@storage_bp.route('/samba/share/acl', methods=['GET'])
+@admin_required
+def get_share_acl():
+    """Get ACLs for a specific share."""
+    share_name = request.args.get('name', '').strip()
+    if not share_name:
+        return jsonify({'error': 'name parameter required'}), 400
+    acls = _load_share_acls()
+    share_acl = acls.get(share_name, {'users': {}, 'groups': {}})
+    return jsonify({'ok': True, 'share': share_name, 'acl': share_acl})
+
+
+@storage_bp.route('/samba/share/acl', methods=['PUT'])
+@admin_required
+def set_share_acl():
+    """Set ACLs for a specific share.
+
+    Body: { name: "share_name", users: { "user1": "rw", "user2": "ro" },
+            groups: { "group1": "rw" } }
+    Permission values: "rw" (read-write), "ro" (read-only), "none" (no access)
+    """
+    data = request.json or {}
+    share_name = data.get('name', '').strip()
+    if not share_name:
+        return jsonify({'error': 'name required'}), 400
+
+    users_acl = data.get('users', {})
+    groups_acl = data.get('groups', {})
+
+    # Validate permission values
+    valid_perms = {'rw', 'ro', 'none'}
+    for perm in list(users_acl.values()) + list(groups_acl.values()):
+        if perm not in valid_perms:
+            return jsonify({'error': f'Invalid permission "{perm}". Use: rw, ro, none'}), 400
+
+    # Remove 'none' entries (deny handled by exclusion from valid users)
+    clean_users = {u: p for u, p in users_acl.items() if p != 'none'}
+    clean_groups = {g: p for g, p in groups_acl.items() if p != 'none'}
+
+    acls = _load_share_acls()
+    acls[share_name] = {'users': users_acl, 'groups': groups_acl}
+    _save_share_acls(acls)
+
+    # Apply to Samba + filesystem
+    _apply_share_acl(share_name)
+
+    return jsonify({'ok': True, 'acl': acls[share_name]})
+
+
+@storage_bp.route('/samba/share/acl', methods=['DELETE'])
+@admin_required
+def delete_share_acl():
+    """Remove all ACLs for a share (revert to open access)."""
+    data = request.json or {}
+    share_name = data.get('name', '').strip()
+    if not share_name:
+        return jsonify({'error': 'name required'}), 400
+
+    acls = _load_share_acls()
+    if share_name in acls:
+        del acls[share_name]
+        _save_share_acls(acls)
+
+    # Remove POSIX ACLs
+    share_path = _get_share_path(share_name)
+    if share_path:
+        host_run(f"setfacl -b {_q_imported(share_path)} 2>/dev/null")
+
+    # Remove ACL directives from smb.conf (restore default force user/group)
+    host_run("systemctl restart smbd 2>/dev/null || true")
+    return jsonify({'ok': True})
+
+
+@storage_bp.route('/samba/shares/acls', methods=['GET'])
+@admin_required
+def get_all_share_acls():
+    """Get ACLs for all shares."""
+    return jsonify({'ok': True, 'acls': _load_share_acls()})
+
+
+# ═══════════════════════════════════════════════════════════
 #  NFS Sharing
 # ═══════════════════════════════════════════════════════════
 

@@ -155,9 +155,11 @@ async function renderSharingApp(body) {
                     <td class="shr-td-center">${s.guest_ok ? '<i class="fas fa-check shr-check-ok"></i>' : '<i class="fas fa-times shr-check-no"></i>'}</td>
                     <td class="shr-td-center">${s.writable ? '<i class="fas fa-check shr-check-ok"></i>' : '<i class="fas fa-times shr-check-no"></i>'}</td>
                     <td class="shr-td-actions">
+                        <button class="fm-toolbar-btn btn-sm sh-sma" data-name="${_shEscAttr(s.name)}" title="${t('Uprawnienia')}"><i class="fas fa-shield-alt"></i></button>
                         <button class="fm-toolbar-btn btn-sm sh-sme" data-name="${_shEscAttr(s.name)}" data-path="${_shEscAttr(s.path)}" data-guest="${s.guest_ok}" data-writable="${s.writable}"><i class="fas fa-pen"></i></button>
                         <button class="fm-toolbar-btn btn-sm btn-red sh-smd" data-name="${_shEscAttr(s.name)}"><i class="fas fa-trash"></i></button>
                     </td></tr>`).join('')}</tbody></table>`;
+            w.querySelectorAll('.sh-sma').forEach(b => b.onclick = () => showAclEditor(b.dataset.name));
             w.querySelectorAll('.sh-sme').forEach(b => b.onclick = () => showForm({ name: b.dataset.name, path: b.dataset.path, guest_ok: b.dataset.guest === 'true', writable: b.dataset.writable === 'true' }));
             w.querySelectorAll('.sh-smd').forEach(b => b.onclick = async () => { if (!await confirmDialog(t('Usunąć udział'), t('Usunąć') + ` "${b.dataset.name}"?`)) return; await api('/storage/samba/share', { method: 'DELETE', body: { name: b.dataset.name } }); toast(t('Usunięto'), 'success'); load(); });
         }
@@ -186,6 +188,54 @@ async function renderSharingApp(body) {
                 } catch (e) { toast(t('Błąd zapisu: ') + (e.message || 'nieznany'), 'error'); }
             };
             panel.querySelector('#sh-sf-x').onclick = () => { f.style.display = 'none'; };
+        }
+
+        async function showAclEditor(shareName) {
+            let acl, users, groups;
+            try {
+                const [aclRes, usersRes, groupsRes] = await Promise.all([
+                    api('/storage/samba/share/acl?name=' + encodeURIComponent(shareName)),
+                    api('/users/list'),
+                    api('/users/groups'),
+                ]);
+                acl = aclRes.acl || { users: {}, groups: {} };
+                users = (Array.isArray(usersRes) ? usersRes : []).map(u => u.username);
+                groups = (groupsRes.groups || []).map(g => g.name);
+            } catch (e) { toast(t('Błąd ładowania ACL'), 'error'); return; }
+
+            const permOpts = (current) => ['rw', 'ro', 'none'].map(p =>
+                `<option value="${p}" ${current === p ? 'selected' : ''}>${p === 'rw' ? t('Odczyt/Zapis') : p === 'ro' ? t('Tylko odczyt') : t('Brak dostępu')}</option>`
+            ).join('');
+
+            let userRows = users.map(u => `<tr><td style="padding:4px 8px">${_shEsc(u)}</td><td style="padding:4px"><select class="fm-input acl-u" data-name="${_shEscAttr(u)}" style="width:160px">${permOpts(acl.users[u] || '')}<option value="" ${!acl.users[u] ? 'selected' : ''}>—</option></select></td></tr>`).join('');
+            let groupRows = groups.map(g => `<tr><td style="padding:4px 8px">@${_shEsc(g)}</td><td style="padding:4px"><select class="fm-input acl-g" data-name="${_shEscAttr(g)}" style="width:160px">${permOpts(acl.groups[g] || '')}<option value="" ${!acl.groups[g] ? 'selected' : ''}>—</option></select></td></tr>`).join('');
+
+            showModal(t('Uprawnienia — ') + shareName, `
+                <div style="max-height:400px;overflow-y:auto">
+                    <h4 style="margin:0 0 8px;font-size:13px;color:var(--text-secondary)"><i class="fas fa-user"></i> ${t('Użytkownicy')}</h4>
+                    <table style="width:100%;margin-bottom:12px">${userRows || '<tr><td style="color:var(--text-muted);padding:8px">' + t('Brak użytkowników') + '</td></tr>'}</table>
+                    <h4 style="margin:0 0 8px;font-size:13px;color:var(--text-secondary)"><i class="fas fa-users"></i> ${t('Grupy')}</h4>
+                    <table style="width:100%">${groupRows || '<tr><td style="color:var(--text-muted);padding:8px">' + t('Brak grup') + '</td></tr>'}</table>
+                    <p style="font-size:11px;color:var(--text-muted);margin-top:8px"><i class="fas fa-info-circle"></i> ${t('Puste = domyślnie (wszyscy mogą). Ustaw jawnie aby ograniczyć.')}</p>
+                </div>
+            `, [
+                { label: t('Anuluj'), class: 'secondary' },
+                { label: t('Resetuj ACL'), class: 'warning', action: async () => {
+                    if (!await confirmDialog(t('Usunąć wszystkie uprawnienia dla tego udziału?'))) return;
+                    await api('/storage/samba/share/acl', { method: 'DELETE', body: { name: shareName } });
+                    toast(t('ACL usunięte'), 'success');
+                }},
+                { label: t('Zapisz'), class: 'primary', action: async (modal) => {
+                    const newAcl = { users: {}, groups: {} };
+                    modal.querySelectorAll('.acl-u').forEach(sel => { if (sel.value) newAcl.users[sel.dataset.name] = sel.value; });
+                    modal.querySelectorAll('.acl-g').forEach(sel => { if (sel.value) newAcl.groups[sel.dataset.name] = sel.value; });
+                    try {
+                        const r = await api('/storage/samba/share/acl', { method: 'PUT', body: { name: shareName, ...newAcl } });
+                        if (r.error) { toast(r.error, 'error'); return; }
+                        toast(t('Uprawnienia zapisane'), 'success');
+                    } catch (e) { toast(e.message, 'error'); }
+                }}
+            ]);
         }
 
         panel.querySelector('#sh-smb-add').onclick = () => showForm(null);

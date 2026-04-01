@@ -143,6 +143,110 @@ def _save_privileges(data):
 
 
 # ---------------------------------------------------------------------------
+# Password Policy
+# ---------------------------------------------------------------------------
+
+_DEFAULT_PASSWORD_POLICY = {
+    'min_length': 8,
+    'require_uppercase': True,
+    'require_lowercase': True,
+    'require_digit': True,
+    'require_special': False,
+    'max_length': 128,
+    'blacklist': ['ethos', 'password', '12345678', 'qwerty123'],
+}
+_PASSWORD_POLICY_FILE = data_path('password_policy.json')
+
+
+def _load_password_policy():
+    """Load password policy from file, or return defaults."""
+    if os.path.exists(_PASSWORD_POLICY_FILE):
+        try:
+            with open(_PASSWORD_POLICY_FILE) as f:
+                saved = json.load(f)
+            policy = dict(_DEFAULT_PASSWORD_POLICY)
+            policy.update(saved)
+            return policy
+        except Exception:
+            pass
+    return dict(_DEFAULT_PASSWORD_POLICY)
+
+
+def _save_password_policy(policy):
+    os.makedirs(os.path.dirname(_PASSWORD_POLICY_FILE), exist_ok=True)
+    with open(_PASSWORD_POLICY_FILE, 'w') as f:
+        json.dump(policy, f, indent=2)
+
+
+def validate_password_strength(password, username=None):
+    """Validate password against the configured policy.
+
+    Returns (ok: bool, errors: list[str]).
+    """
+    policy = _load_password_policy()
+    errors = []
+
+    if not password:
+        return False, ['Password is required']
+
+    if len(password) < policy.get('min_length', 8):
+        errors.append(f'Minimum {policy["min_length"]} characters required')
+
+    if len(password) > policy.get('max_length', 128):
+        errors.append(f'Maximum {policy["max_length"]} characters allowed')
+
+    if policy.get('require_uppercase') and not re.search(r'[A-Z]', password):
+        errors.append('At least one uppercase letter required')
+
+    if policy.get('require_lowercase') and not re.search(r'[a-z]', password):
+        errors.append('At least one lowercase letter required')
+
+    if policy.get('require_digit') and not re.search(r'[0-9]', password):
+        errors.append('At least one digit required')
+
+    if policy.get('require_special') and not re.search(r'[^A-Za-z0-9]', password):
+        errors.append('At least one special character required')
+
+    blacklist = [w.lower() for w in policy.get('blacklist', [])]
+    if password.lower() in blacklist:
+        errors.append('This password is not allowed (blacklisted)')
+
+    if username and password.lower() == username.lower():
+        errors.append('Password cannot be the same as username')
+
+    return len(errors) == 0, errors
+
+
+@users_bp.route('/password-policy', methods=['GET'])
+def get_password_policy():
+    """Return the current password policy."""
+    policy = _load_password_policy()
+    return jsonify({'ok': True, 'policy': policy})
+
+
+@users_bp.route('/password-policy', methods=['PUT'])
+def update_password_policy():
+    """Update password policy settings."""
+    data = request.json or {}
+    policy = _load_password_policy()
+
+    allowed_keys = {'min_length', 'require_uppercase', 'require_lowercase',
+                    'require_digit', 'require_special', 'max_length', 'blacklist'}
+    for key in allowed_keys:
+        if key in data:
+            policy[key] = data[key]
+
+    # Sanity checks
+    if policy.get('min_length', 8) < 4:
+        policy['min_length'] = 4
+    if policy.get('max_length', 128) < policy['min_length']:
+        policy['max_length'] = policy['min_length'] + 10
+
+    _save_password_policy(policy)
+    return jsonify({'ok': True, 'policy': policy})
+
+
+# ---------------------------------------------------------------------------
 # Users
 # ---------------------------------------------------------------------------
 
@@ -215,8 +319,9 @@ def create_user():
 
     if not username or len(username) < 2:
         return jsonify({'error': 'Username is required (min. 2 characters)'}), 400
-    if not password or len(password) < 4:
-        return jsonify({'error': 'Password is required (min. 4 characters)'}), 400
+    pw_ok, pw_errors = validate_password_strength(password, username)
+    if not pw_ok:
+        return jsonify({'error': pw_errors[0], 'password_errors': pw_errors}), 400
 
     # Check if exists
     r = host_run(f"id {_sq(username)} 2>/dev/null")
@@ -623,3 +728,140 @@ def validate_user():
         except Exception:
             pass
         return jsonify({'valid': False, 'error': 'Invalid username or password'}), 401
+
+
+# ---------------------------------------------------------------------------
+# User Storage Quotas (btrfs qgroups)
+# ---------------------------------------------------------------------------
+
+_QUOTAS_FILE = data_path('user_quotas.json')
+
+
+def _load_quotas():
+    """Load user quota config: { username: { limit_gb: N } }."""
+    if os.path.isfile(_QUOTAS_FILE):
+        try:
+            with open(_QUOTAS_FILE) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def _save_quotas(quotas):
+    os.makedirs(os.path.dirname(_QUOTAS_FILE), exist_ok=True)
+    with open(_QUOTAS_FILE, 'w') as f:
+        json.dump(quotas, f, indent=2)
+
+
+def _btrfs_quota_available():
+    """Check if /mnt/data is btrfs and quotas can work."""
+    r = host_run("stat -f -c '%T' /mnt/data 2>/dev/null")
+    return r.returncode == 0 and 'btrfs' in r.stdout.strip().lower()
+
+
+def _ensure_btrfs_quotas():
+    """Enable btrfs quota on data partition if not already."""
+    r = host_run("btrfs quota status /mnt/data 2>/dev/null")
+    if 'Quota disabled' in r.stdout or r.returncode != 0:
+        host_run("btrfs quota enable /mnt/data 2>/dev/null")
+
+
+def _get_qgroup_for_user(username):
+    """Find or create a qgroup for a user's home directory."""
+    home = get_user_home(username)
+    if not home or not os.path.isdir(home):
+        return None
+
+    # Check if the home dir is a btrfs subvolume
+    r = host_run(f"btrfs subvolume show {_sq(home)} 2>/dev/null")
+    if r.returncode != 0:
+        return None
+
+    # Parse subvolume ID
+    for line in r.stdout.splitlines():
+        if 'Subvolume ID' in line:
+            subvol_id = line.split(':')[-1].strip()
+            return f'0/{subvol_id}'
+    return None
+
+
+@users_bp.route('/quotas', methods=['GET'])
+def get_quotas():
+    """Get quota configuration and usage for all users."""
+    if not _btrfs_quota_available():
+        return jsonify({'ok': True, 'available': False, 'message': 'Btrfs quotas not available (data partition is not btrfs)'})
+
+    _ensure_btrfs_quotas()
+    quotas = _load_quotas()
+
+    # Get actual usage from btrfs
+    r = host_run("btrfs qgroup show -reF /mnt/data 2>/dev/null")
+    qgroup_usage = {}
+    if r.returncode == 0:
+        for line in r.stdout.strip().splitlines()[2:]:
+            parts = line.split()
+            if len(parts) >= 3:
+                qgroup_usage[parts[0]] = {
+                    'used_bytes': int(parts[1]) if parts[1].isdigit() else 0,
+                    'exclusive_bytes': int(parts[2]) if parts[2].isdigit() else 0,
+                }
+
+    # Build per-user quota info
+    users_quota = {}
+    for username, cfg in quotas.items():
+        qg = _get_qgroup_for_user(username)
+        usage = qgroup_usage.get(qg, {}) if qg else {}
+        limit_bytes = int(cfg.get('limit_gb', 0) * 1073741824) if cfg.get('limit_gb') else 0
+        used = usage.get('used_bytes', 0)
+        users_quota[username] = {
+            'limit_gb': cfg.get('limit_gb', 0),
+            'limit_bytes': limit_bytes,
+            'used_bytes': used,
+            'used_gb': round(used / 1073741824, 2) if used else 0,
+            'percent': round((used / limit_bytes * 100), 1) if limit_bytes > 0 else 0,
+            'qgroup': qg,
+        }
+
+    return jsonify({'ok': True, 'available': True, 'quotas': users_quota})
+
+
+@users_bp.route('/quotas', methods=['PUT'])
+def set_quota():
+    """Set storage quota for a user.
+
+    Body: { username: "user", limit_gb: 50 }
+    Set limit_gb to 0 or null to remove quota.
+    """
+    data = request.json or {}
+    username = _safe_name(data.get('username', ''))
+    limit_gb = data.get('limit_gb', 0)
+
+    if not username:
+        return jsonify({'error': 'username required'}), 400
+    if not _btrfs_quota_available():
+        return jsonify({'error': 'Btrfs quotas not available'}), 400
+
+    _ensure_btrfs_quotas()
+
+    quotas = _load_quotas()
+
+    if limit_gb and float(limit_gb) > 0:
+        limit_gb = float(limit_gb)
+        quotas[username] = {'limit_gb': limit_gb}
+
+        # Apply btrfs qgroup limit
+        qg = _get_qgroup_for_user(username)
+        if qg:
+            limit_bytes = int(limit_gb * 1073741824)
+            host_run(f"btrfs qgroup limit {limit_bytes} {_sq(qg)} /mnt/data 2>/dev/null")
+    else:
+        # Remove quota
+        quotas.pop(username, None)
+        qg = _get_qgroup_for_user(username)
+        if qg:
+            host_run(f"btrfs qgroup limit none {_sq(qg)} /mnt/data 2>/dev/null")
+
+    _save_quotas(quotas)
+    audit_log('user.quota.change', f'Quota for "{username}" set to {limit_gb} GB')
+    return jsonify({'ok': True, 'username': username, 'limit_gb': limit_gb})
