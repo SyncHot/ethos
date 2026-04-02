@@ -512,8 +512,7 @@ def _dd_clone(compressed_img, target_part, progress_cb):
         if not os.path.exists(target_part):
             raise RuntimeError(f"Target partition {target_part} does not exist")
 
-    # Get target partition size — limit dd to this so we never get ENOSPC
-    # (the builder's image may be larger than the installer's A/B root partition)
+    # Get target partition size
     part_out, _, _ = _run(f"blockdev --getsize64 {target_part}", timeout=5)
     part_bytes = int(part_out.strip()) if part_out.strip() else 0
     bs = 4 * 1024 * 1024  # 4M
@@ -524,9 +523,53 @@ def _dd_clone(compressed_img, target_part, progress_cb):
 
     log.info("Target partition: %d MB (%d x 4M blocks)", part_bytes // (1024 * 1024), dd_count)
 
+    # Pre-flight: read ext4 superblock from compressed image to verify it fits
+    sb_tmp = "/tmp/ethos-dd-sb-check"
+    try:
+        proc_sb = subprocess.Popen(
+            f"bash -c '{decompress_cmd} | dd of={sb_tmp} bs=4096 count=1 2>/dev/null'",
+            shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        proc_sb.communicate(timeout=30)
+
+        import struct
+        with open(sb_tmp, 'rb') as f:
+            f.seek(1024)  # ext4 superblock offset
+            sb = f.read(340)
+
+        magic = struct.unpack_from('<H', sb, 56)[0]
+        if magic != 0xEF53:
+            raise RuntimeError("Compressed image does not contain a valid ext4 filesystem")
+
+        blocks_lo = struct.unpack_from('<I', sb, 4)[0]
+        log_blk_sz = struct.unpack_from('<I', sb, 24)[0]
+        blk_sz = 1024 << log_blk_sz
+
+        # 64-bit block count if EXT4_FEATURE_INCOMPAT_64BIT is set
+        incompat = struct.unpack_from('<I', sb, 96)[0]
+        blocks_hi = struct.unpack_from('<I', sb, 336)[0] if (incompat & 0x80) else 0
+        fs_bytes = (blocks_lo + (blocks_hi << 32)) * blk_sz
+
+        log.info("Image filesystem size: %d MB (partition: %d MB)",
+                 fs_bytes // (1024 * 1024), part_bytes // (1024 * 1024))
+
+        if fs_bytes > part_bytes:
+            raise RuntimeError(
+                f"Image filesystem ({fs_bytes // (1024*1024)} MB) exceeds target "
+                f"partition ({part_bytes // (1024*1024)} MB) — dd clone not possible"
+            )
+    except RuntimeError:
+        raise
+    except Exception as e:
+        log.warning("Could not read ext4 superblock from image: %s — proceeding with dd", e)
+    finally:
+        if os.path.exists(sb_tmp):
+            os.unlink(sb_tmp)
+
     # Decompress and write block-by-block, capped at partition size.
-    # We intentionally avoid pipefail here: if the decompressed image is larger
-    # than the partition, zstdcat gets SIGPIPE after dd reads enough — that's OK.
+    # We avoid pipefail: if the decompressed image is slightly larger than the
+    # partition, zstdcat gets SIGPIPE after dd reads enough — that's OK.
     # dd's own exit code is captured separately via a wrapper.
     cmd = (
         f"bash -c '"
@@ -721,18 +764,15 @@ def _setup_data_separation(mount_dir, data_part):
             elif os.path.exists(src_dir):
                 os.remove(src_dir)
 
-            # Safety: force-remove anything still at src_dir (stale mounts, etc.)
+            # Nuclear cleanup: ensure src_dir does NOT exist before creating symlink.
+            # Use rm -rf (handles dirs, symlinks, mount remnants os.remove can't).
             if os.path.lexists(src_dir):
                 log.warning("Path still exists after cleanup: %s — force removing", src_dir)
-                if os.path.isdir(src_dir) and not os.path.islink(src_dir):
-                    shutil.rmtree(src_dir, ignore_errors=True)
-                if os.path.lexists(src_dir):
-                    # os.remove fails on dirs — use rm -rf as nuclear option
-                    _run(f"rm -rf {shlex.quote(src_dir)}", timeout=10)
-                if os.path.lexists(src_dir):
-                    raise RuntimeError(
-                        f"Cannot create data symlink: {src_dir} still exists after forced removal"
-                    )
+                _run(f"rm -rf {shlex.quote(src_dir)}", timeout=10)
+            if os.path.lexists(src_dir):
+                raise RuntimeError(
+                    f"Cannot create data symlink: {src_dir} still exists after forced removal"
+                )
 
             # Create symlink: /opt/ethos/{dir} → /mnt/data/ethos/{dir}
             os.symlink(f"/mnt/data/ethos/{dirname}", src_dir)

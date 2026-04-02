@@ -1978,6 +1978,7 @@ else
         SAFE_BYTES=$(( (USED_BYTES * 105 / 100 + 4194303) / 4194304 * 4194304 ))
         DD_COUNT=$((SAFE_BYTES / 4194304))
         echo "LOG:Root partition minimized: ${{BLOCK_COUNT}} blocks x ${{BLOCK_SIZE}}B = $((USED_BYTES / 1048576))MB, dd count=$DD_COUNT"
+        DECOMPRESSED_BYTES=$((DD_COUNT * 4194304))
         set -o pipefail
         dd if="$ROOT_PART" bs=4M count=$DD_COUNT status=none | zstd -3 -T0 -o "$COMPRESSED_IMG" 2>&1
         DD_RC=$?
@@ -1987,7 +1988,7 @@ else
         fi
         if [ -f "$COMPRESSED_IMG" ]; then
             COMP_SIZE=$(stat -c%s "$COMPRESSED_IMG" 2>/dev/null || echo 0)
-            echo "LOG:Compressed root image: $((COMP_SIZE / 1048576))MB"
+            echo "LOG:Compressed root image: $((COMP_SIZE / 1048576))MB (decompressed: $((DECOMPRESSED_BYTES / 1048576))MB)"
             # Validate the compressed image
             if ! zstd -t "$COMPRESSED_IMG" 2>/dev/null; then
                 echo "LOG:WARNING: Compressed image failed integrity check — removing"
