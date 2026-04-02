@@ -101,7 +101,9 @@ def start_install():
             _add_log("[85%] Mounting target for post-install configuration...")
             _set_state(phase="postconfig", percent=85, message="Mounting target for configuration...")
             from disk_ops import _run, _part
-            _run(f"mount {_part('/dev/' + os_disk, 2)} {mount_dir}", timeout=30)
+            _, _, mrc = _run(f"mount {_part('/dev/' + os_disk, 2)} {mount_dir}", timeout=30)
+            if mrc != 0:
+                raise RuntimeError(f"Cannot mount root partition at {mount_dir}")
             # Mount btrfs data partition at /mnt/data so that absolute
             # symlinks created by data separation resolve correctly
             # (e.g. /opt/ethos/data → /mnt/data/ethos/data).
@@ -111,7 +113,14 @@ def start_install():
                 data_part = _part('/dev/' + os_disk, 4)
             else:
                 data_part = _part('/dev/' + data_disk, 1)
-            _run(f"mount -o subvol=@data {data_part} /mnt/data", timeout=30)
+            _, merr, mrc = _run(f"mount -o subvol=@data {data_part} /mnt/data", timeout=30)
+            if mrc != 0:
+                log.warning("Data partition mount failed (%s), creating dirs directly", merr)
+                # Broken symlinks from data separation would cause EEXIST
+                # in later makedirs calls.  Resolve by creating the target dirs.
+                for d in ("data", "logs", "backups", "uploads"):
+                    tgt = f"/mnt/data/ethos/{d}"
+                    os.makedirs(tgt, exist_ok=True)
             # Bind-mount /dev for chroot operations (chpasswd, ssh-keygen, systemctl)
             _run(f"mount --bind /dev {mount_dir}/dev")
             _run(f"mount --bind /dev/pts {mount_dir}/dev/pts 2>/dev/null")

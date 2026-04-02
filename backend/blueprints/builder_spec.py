@@ -51,7 +51,6 @@ DEFAULT_SPEC = {
         'debootstrap': [
             'systemd', 'systemd-sysv', 'dbus',
             'linux-image-amd64',
-            'grub-efi-amd64-bin', 'grub-efi-amd64', 'grub-common', 'grub2-common',
             'efibootmgr',
             'sudo', 'openssh-server', 'curl', 'ca-certificates', 'gnupg',
             'lsb-release', 'fail2ban',

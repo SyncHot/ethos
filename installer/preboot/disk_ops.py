@@ -971,8 +971,10 @@ def _install_grub(dev, mount_dir, progress_cb=None, squashfs_mode=False):
         for fs in ("dev/pts", "sys", "proc", "dev"):
             _run(f"umount {mount_dir}/{fs} 2>/dev/null")
 
-        # Build a standalone BOOTX64.EFI that finds the root by UUID.
-        _p(79, "Building standalone EFI bootloader...")
+        # Write A/B boot config to ESP and root /boot/grub/.
+        # grub-install --removable already created BOOTX64.EFI from the
+        # target's GRUB packages; we only need to write our A/B config.
+        _p(79, "Writing A/B boot configuration...")
         _write_esp_grub(dev, mount_dir, progress_cb, squashfs_mode=squashfs_mode)
 
     else:
@@ -980,7 +982,7 @@ def _install_grub(dev, mount_dir, progress_cb=None, squashfs_mode=False):
 
 
 def _write_esp_grub(dev, mount_dir, progress_cb=None, squashfs_mode=False):
-    """Create a standalone BOOTX64.EFI + ESP grub.cfg with A/B boot counter.
+    """Write ESP grub.cfg with A/B boot counter.
 
     Partition layout (target disk):
       p2 = Root-A (active after install)
@@ -1054,6 +1056,13 @@ def _write_esp_grub(dev, mount_dir, progress_cb=None, squashfs_mode=False):
     with open(esp_grub_cfg, "w") as f:
         f.write(f"""\
 # EthOS A/B boot configuration with automatic failover
+#
+# IMPORTANT: Kernel loading (linux/initrd) MUST only happen inside menuentry
+# blocks, not at the top level.  GRUB 2.12 on UEFI cannot re-load a kernel
+# inside a menuentry if one was already loaded at the top level — the second
+# linux command silently fails, causing "you need to load the kernel first"
+# from initrd.  We use set default=N to select the correct slot.
+
 set timeout=3
 set default=0
 insmod part_gpt
@@ -1080,7 +1089,6 @@ fi
 
 # Boot counter logic: if previous boot didn't mark success, count failure
 if [ "$boot_success" != "1" ]; then
-    # Increment counter (GRUB math)
     if [ "$boot_counter" = "0" ]; then set boot_counter=1;
     elif [ "$boot_counter" = "1" ]; then set boot_counter=2;
     elif [ "$boot_counter" = "2" ]; then set boot_counter=3;
@@ -1102,34 +1110,36 @@ fi
 set boot_success=0
 save_env boot_slot boot_counter boot_success
 
-# Boot the selected slot
+# Select default menu entry based on active slot
 if [ "$boot_slot" = "b" ]; then
-    search --no-floppy --fs-uuid --set=root {root_b_uuid}
-    linux /boot/{kern_name} root=UUID={root_b_uuid} {cmdline} ethos.slot=b
-    initrd /boot/{initrd_name}
+    set default=1
 else
-    search --no-floppy --fs-uuid --set=root {root_a_uuid}
-    linux /boot/{kern_name} root=UUID={root_a_uuid} {cmdline} ethos.slot=a
-    initrd /boot/{initrd_name}
+    set default=0
 fi
 
-# Manual boot entries (accessible via GRUB menu / Esc)
-menuentry "{version} — Slot A" {{
+menuentry "{version} - Slot A" {{
+    insmod part_gpt
+    insmod ext2
     search --no-floppy --fs-uuid --set=root {root_a_uuid}
     linux /boot/{kern_name} root=UUID={root_a_uuid} {cmdline} ethos.slot=a
     initrd /boot/{initrd_name}
 }}
-menuentry "{version} — Slot B" {{
+menuentry "{version} - Slot B" {{
+    insmod part_gpt
+    insmod ext2
     search --no-floppy --fs-uuid --set=root {root_b_uuid}
     linux /boot/{kern_name} root=UUID={root_b_uuid} {cmdline} ethos.slot=b
     initrd /boot/{initrd_name}
 }}
 menuentry "{version} (recovery)" {{
+    insmod part_gpt
+    insmod ext2
     search --no-floppy --fs-uuid --set=root {root_a_uuid}
     linux /boot/{kern_name} root=UUID={root_a_uuid} ro single nomodeset fsck.repair=preen ethos.slot=a
     initrd /boot/{initrd_name}
 }}
 menuentry "EthOS Recovery Shell (ESP)" {{
+    insmod fat
     search --no-floppy --fs-uuid --set=esp {esp_uuid}
     linux ($esp)/EFI/recovery/vmlinuz ro init=/bin/bash nomodeset
     initrd ($esp)/EFI/recovery/initrd.img
@@ -1138,13 +1148,21 @@ menuentry "EthOS Recovery Shell (ESP)" {{
     log.info("Wrote A/B ESP grub.cfg: kernel=%s root_a=%s root_b=%s", kver, root_a_uuid, root_b_uuid)
 
     # ── 2) Initialize grubenv with default boot state ──
-    grubenv_path = os.path.join(boot_grub_dir, "grubenv")
-    # grub-editenv creates a 1024-byte grubenv file
-    _run(f"grub-editenv {grubenv_path} create", timeout=10)
-    _run(f"grub-editenv {grubenv_path} set boot_slot=a", timeout=10)
-    _run(f"grub-editenv {grubenv_path} set boot_counter=0", timeout=10)
-    _run(f"grub-editenv {grubenv_path} set boot_success=1", timeout=10)
-    log.info("Initialized grubenv: boot_slot=a, boot_counter=0, boot_success=1")
+    # GRUB 2.12 (Debian backports) uses $prefix = (hd0,gpt1)/EFI/debian
+    # so save_env writes to /EFI/debian/grubenv on the ESP.  We create
+    # grubenv at ALL locations GRUB might look for it.
+    grubenv_locations = [
+        os.path.join(boot_grub_dir, "grubenv"),                              # /boot/grub/grubenv on ESP
+        os.path.join(mount_dir, "boot/efi/EFI/debian", "grubenv"),           # /EFI/debian/grubenv (GRUB 2.12 prefix)
+        os.path.join(mount_dir, "boot/efi/EFI/BOOT", "grubenv"),            # /EFI/BOOT/grubenv (removable fallback)
+    ]
+    for gpath in grubenv_locations:
+        os.makedirs(os.path.dirname(gpath), exist_ok=True)
+        _run(f"grub-editenv {gpath} create", timeout=10)
+        _run(f"grub-editenv {gpath} set boot_slot=a", timeout=10)
+        _run(f"grub-editenv {gpath} set boot_counter=0", timeout=10)
+        _run(f"grub-editenv {gpath} set boot_success=1", timeout=10)
+    log.info("Initialized grubenv at %d locations", len(grubenv_locations))
 
     # Also write grubenv to /boot/grub/ on root partition (GRUB may look there)
     root_grub_dir = os.path.join(mount_dir, "boot/grub")
@@ -1196,38 +1214,16 @@ menuentry "EthOS Recovery Shell (ESP)" {{
         if _data_tmp_mount:
             _run(f"umount {_data_tmp_mount} 2>/dev/null", timeout=15)
 
-    # ── 4) Build standalone BOOTX64.EFI ──
-    _p(79, "Building standalone BOOTX64.EFI...")
-    grub_mod_dir = "/usr/lib/grub/x86_64-efi"
-    if not os.path.isdir(grub_mod_dir):
-        grub_mod_dir = os.path.join(mount_dir, "usr/lib/grub/x86_64-efi")
-    if not os.path.isdir(grub_mod_dir):
-        log.warning("GRUB x86_64-efi modules not found, skipping standalone EFI rebuild")
-        return
-
-    # Early config: find ESP by its UUID, then load main grub.cfg
-    # esp_uuid already computed above
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.cfg', delete=False) as tmp:
-        tmp.write(f"search --no-floppy --fs-uuid --set=root {esp_uuid}\n")
-        tmp.write("set prefix=($root)/boot/grub\n")
-        tmp.write("configfile ($root)/EFI/BOOT/grub.cfg\n")
-        early_cfg = tmp.name
-
-    efi_out = os.path.join(esp_grub_dir, "BOOTX64.EFI")
-    _, err, rc = _run(
-        f"grub-mkstandalone --format=x86_64-efi "
-        f"--output={efi_out} --locales='' --fonts='' "
-        f"--modules='part_gpt ext2 fat search search_fs_uuid normal "
-        f"linux boot configfile gzio loadenv' "
-        f"'boot/grub/grub.cfg={early_cfg}'",
-        timeout=120,
-    )
-    os.unlink(early_cfg)
-
-    if rc != 0:
-        log.warning("grub-mkstandalone failed: %s", err)
-    else:
-        log.info("Built standalone BOOTX64.EFI (A/B aware, ESP UUID %s)", esp_uuid)
+    # ── 4) Write A/B grub.cfg to root /boot/grub/ ──
+    # grub-install --removable already created a working BOOTX64.EFI from the
+    # target system's GRUB packages.  That binary loads its config from
+    # /boot/grub/grub.cfg on the root partition.  Write our A/B config there
+    # so it takes precedence over update-grub's auto-generated config.
+    root_grub_cfg = os.path.join(mount_dir, "boot/grub/grub.cfg")
+    os.makedirs(os.path.dirname(root_grub_cfg), exist_ok=True)
+    import shutil as _shutil
+    _shutil.copy2(esp_grub_cfg, root_grub_cfg)
+    log.info("Wrote A/B grub.cfg to root /boot/grub/grub.cfg")
 
     # ── 5) Copy kernel + initrd to ESP for recovery ──
     _setup_recovery_on_esp(mount_dir, esp_grub_dir, kern_name, initrd_name)

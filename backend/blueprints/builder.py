@@ -1284,8 +1284,9 @@ echo "STEP:53:Installing GRUB (UEFI)..."
 
 echo "LOG:apt-get update in chroot..."
 chroot "$ROOT" apt-get update -qq 2>&1 | tail -3 || true
-echo "LOG:Installing GRUB packages..."
-chroot "$ROOT" bash -c 'DEBIAN_FRONTEND=noninteractive apt-get install -y -qq grub-efi-amd64 grub-common efibootmgr' 2>&1 | tail -5 || true
+echo "LOG:Installing GRUB packages (from backports for UEFI compatibility)..."
+DEBIAN_FRONTEND=noninteractive chroot "$ROOT" apt-get install -y -qq -t ${{DEBIAN_RELEASE}}-backports grub-efi-amd64 grub-efi-amd64-bin grub-common grub2-common 2>&1 | tail -5 || true
+DEBIAN_FRONTEND=noninteractive chroot "$ROOT" apt-get install -y -qq efibootmgr 2>&1 | tail -5 || true
 
 mkdir -p "$ROOT/boot/efi/EFI/BOOT"
 echo "LOG:GRUB UEFI install..."
@@ -1380,6 +1381,36 @@ if [[ -n "$OLD_KERN" && -n "$NEW_KERN" && "$OLD_KERN" != "$NEW_KERN" ]]; then
     rm -rf "$ROOT/lib/modules/$OLD_KERN" 2>/dev/null
     echo "LOG:Old kernel removed"
 fi
+
+# Refresh grub.cfg + BOOTX64.EFI now that the backports kernel is active
+KERN=$(ls "$ROOT/boot/vmlinuz-"* 2>/dev/null | sort -V | tail -1 | sed "s|$ROOT||")
+INITRD=$(ls "$ROOT/boot/initrd.img-"* 2>/dev/null | sort -V | tail -1 | sed "s|$ROOT||")
+echo "LOG:Refreshing GRUB config for kernel: $KERN"
+cat > "$ROOT/boot/grub/grub.cfg" <<GRUBCFG
+set timeout=3
+set default=0
+insmod part_gpt
+insmod ext2
+insmod gzio
+menuentry "EthOS v${{VERSION}}" {{
+    search --no-floppy --fs-uuid --set=root ${{ROOT_UUID}}
+    linux ${{KERN}} root=UUID=${{ROOT_UUID}} ro quiet net.ifnames=0 biosdevname=0 fsck.repair=preen
+    initrd ${{INITRD}}
+}}
+menuentry "EthOS v${{VERSION}} (recovery)" {{
+    search --no-floppy --fs-uuid --set=root ${{ROOT_UUID}}
+    linux ${{KERN}} root=UUID=${{ROOT_UUID}} ro single nomodeset fsck.repair=preen
+    initrd ${{INITRD}}
+}}
+GRUBCFG
+cp "$ROOT/boot/grub/grub.cfg" "$ROOT/boot/efi/EFI/BOOT/grub.cfg"
+# Update recovery kernel on ESP
+cp "$ROOT/boot/${{KERN##*/}}" "$ROOT/boot/efi/EFI/recovery/vmlinuz" 2>/dev/null || true
+cp "$ROOT/boot/${{INITRD##*/}}" "$ROOT/boot/efi/EFI/recovery/initrd.img" 2>/dev/null || true
+# Re-run grub-install to refresh BOOTX64.EFI modules
+chroot "$ROOT" grub-install --target=x86_64-efi --efi-directory=/boot/efi \
+    --boot-directory=/boot --removable --no-nvram 2>/dev/null || echo "LOG:grub-install refresh skipped"
+echo "LOG:GRUB refreshed for backports kernel"
 
 echo "LOG:Installing firmware-iwlwifi from backports..."
 chroot "$ROOT" apt-get install -y -qq -t ${{DEBIAN_RELEASE}}-backports firmware-iwlwifi 2>&1 | tail -5 || echo "LOG:Backports iwlwifi skipped"
