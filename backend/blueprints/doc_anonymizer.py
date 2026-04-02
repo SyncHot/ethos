@@ -47,7 +47,7 @@ def _ensure_jobs_dir():
 
 
 def _ensure_deps():
-    """Install PyMuPDF, PyPDF2, Pillow and poppler-utils if missing."""
+    """Install PyMuPDF, PyPDF2, Pillow, poppler-utils, and Tesseract OCR if missing."""
     missing_pip = []
     try:
         import fitz  # noqa: F401
@@ -61,6 +61,10 @@ def _ensure_deps():
         from PIL import Image  # noqa: F401
     except ImportError:
         missing_pip.append('Pillow')
+    try:
+        import pytesseract  # noqa: F401
+    except ImportError:
+        missing_pip.append('pytesseract')
 
     if missing_pip:
         pkgs = ' '.join(missing_pip)
@@ -71,6 +75,10 @@ def _ensure_deps():
     if not shutil.which('pdftotext'):
         log.info('[doc_anonymizer] Installing poppler-utils')
         host_run('apt-get install -y -qq poppler-utils', timeout=60)
+
+    if not shutil.which('tesseract'):
+        log.info('[doc_anonymizer] Installing Tesseract OCR + Polish language pack')
+        host_run('apt-get install -y -qq tesseract-ocr tesseract-ocr-pol', timeout=120)
 
 
 def _job_dir(job_id):
@@ -84,7 +92,7 @@ def _get_username():
 # -- Text extraction --------------------------------------------------------
 
 def _extract_text_pdf(filepath):
-    """Extract text from a PDF using pdftotext (poppler), fallback to PyPDF2."""
+    """Extract text from a PDF using pdftotext (poppler), fallback to PyPDF2, then OCR."""
     import subprocess
     try:
         result = subprocess.run(
@@ -93,7 +101,6 @@ def _extract_text_pdf(filepath):
         )
         if result.returncode == 0 and result.stdout.strip():
             raw = result.stdout
-            # Split by form-feed (page separator) if present
             pages = raw.split('\x0c')
             pages = [p for p in pages if p.strip()]
             if pages:
@@ -108,7 +115,92 @@ def _extract_text_pdf(filepath):
         for page in reader.pages:
             text = page.extract_text() or ''
             pages.append(_cleanup_pdf_text(text))
+
+    # If no text extracted (scanned PDF), try OCR
+    has_text = any(p.strip() for p in pages)
+    if not has_text:
+        log.info('[doc_anonymizer] No text extracted, attempting OCR for %s', filepath)
+        ocr_pages = _ocr_pdf(filepath)
+        if ocr_pages:
+            return ocr_pages
+
     return pages
+
+
+def _ocr_pdf(filepath):
+    """Extract text from a scanned PDF using Tesseract OCR."""
+    try:
+        import fitz
+        import pytesseract
+        from PIL import Image
+        import io
+    except ImportError as e:
+        log.warning('[doc_anonymizer] OCR dependencies not available: %s', e)
+        return None
+
+    pages = []
+    try:
+        doc = fitz.open(filepath)
+        for page_num, page in enumerate(doc):
+            # Render page at 300 DPI for good OCR quality
+            mat = fitz.Matrix(300 / 72, 300 / 72)
+            pix = page.get_pixmap(matrix=mat)
+            img_data = pix.tobytes('png')
+            img = Image.open(io.BytesIO(img_data))
+
+            # OCR with Polish + English language support
+            text = pytesseract.image_to_string(img, lang='pol+eng', config='--psm 6')
+            text = _normalize_ocr_text(text)
+            pages.append(_cleanup_pdf_text(text))
+            log.debug('[doc_anonymizer] OCR page %d: %d chars', page_num + 1, len(text))
+
+        doc.close()
+    except Exception as e:
+        log.error('[doc_anonymizer] OCR failed: %s', e)
+        return None
+
+    has_text = any(p.strip() for p in pages)
+    if not has_text:
+        return None
+
+    log.info('[doc_anonymizer] OCR extracted %d pages', len(pages))
+    return pages
+
+
+# Words that should stay ALL CAPS (abbreviations, headers)
+_OCR_KEEP_UPPER = frozenset({
+    'PESEL', 'NIP', 'REGON', 'KRS', 'PWZ', 'NFZ', 'ZUS', 'PIT', 'VAT',
+    'KARTA', 'INFORMACYJNA', 'MR', 'CT', 'EKG', 'USG', 'RTG', 'MRI',
+    'DNA', 'RNA', 'HIV', 'HCV', 'HBS', 'CRP', 'HDL', 'LDL', 'TSH',
+    'BMI', 'EWUS', 'NZOZ', 'SP', 'ZOZ', 'II', 'III', 'IV', 'VI',
+})
+
+
+def _normalize_ocr_text(text):
+    """Normalize OCR text: convert ALL CAPS person names to Title Case.
+
+    OCR often outputs names in ALL CAPS (e.g. "ALICJA KOWALSKA").
+    Regex patterns expect Title Case, so we normalize words that look
+    like names while preserving known abbreviations.
+    """
+    lines = text.split('\n')
+    normalized = []
+    for line in lines:
+        words = line.split()
+        new_words = []
+        for word in words:
+            # Skip non-alpha, short words, known abbreviations
+            stripped = word.strip('.,;:!?()[]/-')
+            if (len(stripped) >= 3
+                    and stripped.isupper()
+                    and stripped.isalpha()
+                    and stripped not in _OCR_KEEP_UPPER):
+                # Convert to title case, preserve surrounding punctuation
+                new_words.append(word.replace(stripped, stripped.title()))
+            else:
+                new_words.append(word)
+        normalized.append(' '.join(new_words))
+    return '\n'.join(normalized)
 
 
 def _cleanup_pdf_text(text):
@@ -181,9 +273,9 @@ _REGEX_PATTERNS = [
     (re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'), 'EMAIL'),
     # Polish postal code + city (e.g. "00-001 Warszawa")
     (re.compile(r'\d{2}-\d{3}\s+[A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]+'), 'ADRES'),
-    # Street address (ul./al./os./pl. + name + optional number) — single line only
+    # Street address (ul./al./os./pl. + name + optional number) — limit to max 4 words
     (re.compile(r'(?:ul\.|al\.|os\.|pl\.|Al\.)\s+[A-ZĄ-Ż][a-ząćęłńóśźż]+'
-                r'(?:\s[A-ZĄ-Ż]?[a-ząćęłńóśźż]+)*'
+                r'(?:\s[A-ZĄ-Ż][a-ząćęłńóśźż]+){0,3}'
                 r'(?:\s+\d+[a-zA-Z]?(?:/\d+[a-zA-Z]?)?)'), 'ADRES'),
     # NIP: 10 digits with dashes (e.g. "525-12-34-567" or "NIP: 5251234567")
     (re.compile(r'\b\d{3}-\d{2}-\d{2}-\d{3}\b'), 'NIP'),
@@ -205,21 +297,77 @@ _REGEX_PATTERNS = [
 # Common Polish first names used as anchors for detecting name patterns
 _PL_FIRST_NAMES = frozenset({
     'Adam', 'Adrian', 'Agata', 'Agnieszka', 'Aleksander', 'Aleksandra',
-    'Andrzej', 'Anna', 'Antoni', 'Barbara', 'Bartosz', 'Beata', 'Bogdan',
-    'Bozena', 'Celina', 'Cezary', 'Dariusz', 'Danuta', 'Dawid', 'Dorota',
-    'Edward', 'Elzbieta', 'Ewa', 'Filip', 'Franciszek', 'Grazyna',
-    'Grzegorz', 'Halina', 'Henryk', 'Henryka', 'Hubert', 'Irena',
-    'Iwona', 'Jacek', 'Jadwiga', 'Jakub', 'Jan', 'Janina', 'Jaroslaw',
-    'Jerzy', 'Joanna', 'Jolanta', 'Jozef', 'Julia', 'Justyna',
-    'Kamil', 'Karol', 'Katarzyna', 'Kazimierz', 'Konrad', 'Krystyna',
-    'Krzysztof', 'Leszek', 'Lukasz', 'Maciej', 'Magdalena', 'Malgorzata',
-    'Marcin', 'Marek', 'Maria', 'Mariusz', 'Marta', 'Michal', 'Miroslawa',
-    'Monika', 'Natalia', 'Norbert', 'Olga', 'Patryk', 'Pawel', 'Piotr',
-    'Przemyslaw', 'Rafal', 'Renata', 'Robert', 'Roman', 'Ryszard',
-    'Sebastian', 'Stanislaw', 'Stefan', 'Sylwia', 'Szymon', 'Tadeusz',
-    'Teresa', 'Tomasz', 'Wanda', 'Weronika', 'Wieslaw', 'Wiktoria',
-    'Witold', 'Wladyslaw', 'Wojciech', 'Zbigniew', 'Zofia', 'Zygmunt',
+    'Alfred', 'Alicja', 'Alina', 'Amelia', 'Anastazja', 'Andrzej', 'Anna',
+    'Antoni', 'Antonina', 'Arkadiusz', 'Artur',
+    'Barbara', 'Bartlomiej', 'Bartosz', 'Beata', 'Benedykt', 'Bernadeta',
+    'Blanka', 'Bogdan', 'Bogdana', 'Bogumil', 'Bogumila', 'Boguslaw',
+    'Boguslawa', 'Boleslawa', 'Bozena', 'Bronislaw', 'Bronislawa',
+    'Celina', 'Cezary', 'Czeslaw', 'Czeslaw',
+    'Damian', 'Daniel', 'Daniela', 'Danuta', 'Dariusz', 'Dawid', 'Dominik',
+    'Dominika', 'Dorota',
+    'Edmund', 'Edward', 'Eleonora', 'Elzbieta', 'Emil', 'Emilia', 'Eugenia',
+    'Eugeniusz', 'Ewa', 'Ewelina',
+    'Fabian', 'Filip', 'Franciszek', 'Fryderyk',
+    'Gabriel', 'Gabriela', 'Genowefa', 'Gertruda', 'Grazyna', 'Grzegorz',
+    'Gustaw',
+    'Halina', 'Hanna', 'Helena', 'Henryk', 'Henryka', 'Hubert',
+    'Ignacy', 'Igor', 'Ilona', 'Irena', 'Ireneusz', 'Iwona', 'Izabela',
+    'Jacek', 'Jadwiga', 'Jakub', 'Jan', 'Janina', 'Janusz', 'Jaroslaw',
+    'Jerzy', 'Joanna', 'Jolanta', 'Jozef', 'Jozefa', 'Julia', 'Julian',
+    'Juliusz', 'Justyna',
+    'Kamil', 'Kamila', 'Karol', 'Karolina', 'Katarzyna', 'Kazimiera',
+    'Kazimierz', 'Klaudia', 'Konrad', 'Kornelia', 'Krystian', 'Krystyna',
+    'Krzysztof',
+    'Laura', 'Leon', 'Leonard', 'Leszek', 'Lidia', 'Lilian', 'Lucjan',
+    'Lucyna', 'Ludmila', 'Ludwik', 'Luiza', 'Lukasz',
+    'Maciej', 'Magdalena', 'Maja', 'Maksymilian', 'Malgorzata', 'Marcel',
+    'Marcin', 'Marek', 'Maria', 'Marian', 'Marianna', 'Mariusz', 'Marlena',
+    'Marta', 'Mateusz', 'Michal', 'Michalina', 'Mieczyslaw', 'Milena',
+    'Miroslaw', 'Miroslawa', 'Monika',
+    'Natalia', 'Natasza', 'Nikola', 'Nikolaj', 'Nina', 'Norbert',
+    'Olga', 'Oliwia', 'Oskar',
+    'Patrycja', 'Patryk', 'Paulina', 'Pawel', 'Piotr', 'Przemyslaw',
+    'Radoslaw', 'Rafal', 'Regina', 'Renata', 'Robert', 'Roman', 'Rozalia',
+    'Rudolf', 'Ryszard',
+    'Sabina', 'Sandra', 'Sebastian', 'Stanislaw', 'Stanislawa', 'Stefan',
+    'Stefania', 'Sylwester', 'Sylwia', 'Szymon',
+    'Tadeusz', 'Tatiana', 'Teresa', 'Tomasz', 'Tymoteusz',
+    'Urszula',
+    'Waldemar', 'Walentyna', 'Wanda', 'Weronika', 'Wieslaw', 'Wieslawa',
+    'Wiktoria', 'Wiktor', 'Witold', 'Wladyslaw', 'Wladyslawa',
+    'Wojciech',
+    'Zbigniew', 'Zdzislaw', 'Zenon', 'Zofia', 'Zygmunt', 'Zyta',
 })
+
+# Declined (accusative/genitive) forms of common Polish first names
+# Mapping: declined form -> base form (for matching)
+_PL_FIRST_NAMES_DECLINED = {}
+for _name in _PL_FIRST_NAMES:
+    if _name.endswith('a') and len(_name) > 3:
+        # feminine -a -> -e (acc), -y/-i (gen)
+        _stem = _name[:-1]
+        for _suf in ('e', 'y', 'i'):
+            _PL_FIRST_NAMES_DECLINED[_stem + _suf] = _name
+    elif not _name.endswith('a') and len(_name) > 3:
+        # masculine consonant endings: +a (gen), +owi (dat), +em (inst)
+        _PL_FIRST_NAMES_DECLINED[_name + 'a'] = _name
+        _PL_FIRST_NAMES_DECLINED[_name + 'owi'] = _name
+        _PL_FIRST_NAMES_DECLINED[_name + 'em'] = _name
+        # special cases: names ending in -ek drop e: Marek->Marka
+        if _name.endswith('ek'):
+            _stem = _name[:-2] + 'k'
+            _PL_FIRST_NAMES_DECLINED[_stem + 'a'] = _name
+            _PL_FIRST_NAMES_DECLINED[_stem + 'owi'] = _name
+            _PL_FIRST_NAMES_DECLINED[_stem + 'iem'] = _name
+        # names ending in -sz: Tomasz->Tomasza, -usz: Tadeusz->Tadeusza
+        if _name.endswith('sz') or _name.endswith('rz'):
+            _PL_FIRST_NAMES_DECLINED[_name + 'a'] = _name
+
+# Also handle declined surname patterns: -skiego/-skim/-skiemu, -ckiego/-ckim
+_SURNAME_RE_DECLINED = (
+    r'[A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]{2,}'
+    r'(?:-[A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]{2,})?'
+)
 
 # Title prefixes that signal a person name follows
 _TITLE_PREFIXES = (
@@ -250,19 +398,70 @@ _NAME_STOPWORDS = frozenset({
 })
 
 
+def _is_known_first_name(name):
+    """Check if name is a known Polish first name (including declined forms)."""
+    return name in _PL_FIRST_NAMES or name in _PL_FIRST_NAMES_DECLINED
+
+
+def _surname_variants(surname):
+    """Generate nominative + common declined forms of a Polish surname."""
+    forms = {surname}
+    # Normalize to nominative
+    base = surname
+    if surname.endswith('skiego'):
+        base = surname[:-3] + ''  # -skiego -> -ski
+        base = surname[:-4] + 'i'  # -skiego -> -ski
+    elif surname.endswith('ckiego'):
+        base = surname[:-4] + 'i'  # -ckiego -> -cki
+    elif surname.endswith('skiej'):
+        base = surname[:-2] + 'a'  # -skiej -> -ska
+    elif surname.endswith('ckiej'):
+        base = surname[:-2] + 'a'  # -ckiej -> -cka
+    elif surname.endswith('skiego'):
+        base = surname[:-4] + 'i'
+    elif surname.endswith('skiemu') or surname.endswith('ckiemu'):
+        base = surname[:-3] + ''
+    elif surname.endswith('skim') or surname.endswith('ckim'):
+        base = surname[:-1] + ''
+
+    forms.add(base)
+
+    # Generate declined forms from base
+    if base.endswith('ski'):
+        stem = base[:-1]  # -ski -> -sk
+        forms.update([stem + 'iego', stem + 'iemu', stem + 'im', stem + 'i'])
+    elif base.endswith('cki'):
+        stem = base[:-1]  # -cki -> -ck
+        forms.update([stem + 'iego', stem + 'iemu', stem + 'im', stem + 'i'])
+    if base.endswith('ska'):
+        stem = base[:-1]  # -ska -> -sk
+        forms.update([stem + 'iej', stem + 'ą'])
+    elif base.endswith('cka'):
+        stem = base[:-1]  # -cka -> -ck
+        forms.update([stem + 'iej', stem + 'ą'])
+    elif base.endswith('a') and not base.endswith('ska') and not base.endswith('cka'):
+        # generic feminine: -a -> -ej, -ą
+        forms.update([base[:-1] + 'ej', base[:-1] + 'ą'])
+    elif not base.endswith('a'):
+        # generic masculine consonant: +a (gen), +owi, +em
+        forms.update([base + 'a', base + 'owi', base + 'em'])
+
+    return forms
+
+
 def _detect_names(text):
     """Detect Polish person names using pattern matching."""
     entities = []
     seen = set()
+    known_surnames = set()  # collect detected surnames for cross-referencing
 
     # 1) Title + name patterns (dr, prof., lek. etc.) — search full text
     for prefix in _TITLE_PREFIXES:
-        # title + FirstName [MiddleName|Initial] Surname[-Compound]
         pat = re.compile(
             r'(?:' + prefix + r')'
-            r'([A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]+'            # first name
-            r'(?:[ \t]+[A-ZĄĆĘŁŃÓŚŹŻ]\.?[a-ząćęłńóśźż]*)?' # optional middle/initial
-            r'[ \t]+' + _SURNAME_RE + r')'                    # surname
+            r'([A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]+'
+            r'(?:[ \t]+[A-ZĄĆĘŁŃÓŚŹŻ]\.?[a-ząćęłńóśźż]*)?'
+            r'[ \t]+' + _SURNAME_RE + r')'
         )
         for m in pat.finditer(text):
             name = m.group(1).strip()
@@ -271,9 +470,14 @@ def _detect_names(text):
                 seen.add(name)
                 seen.add(full)
                 entities.append({'text': full, 'category': 'LEKARZ'})
+                # extract surname for cross-ref
+                parts = name.split()
+                if parts:
+                    for sp in parts[-1].split('-'):
+                        if len(sp) >= 4:
+                            known_surnames.add(sp)
 
-    # 2) Known first name + surname(s) — search line-by-line to avoid
-    #    cross-line false positives
+    # 2) Known first name + surname(s) — search line-by-line
     name_pat = re.compile(
         r'\b([A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]+)'
         r'(?:[ \t]+([A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]+))?'
@@ -286,7 +490,7 @@ def _detect_names(text):
             surname = m.group(3)
             full_match = m.group(0).strip()
 
-            if first not in _PL_FIRST_NAMES and middle not in _PL_FIRST_NAMES:
+            if not _is_known_first_name(first) and not _is_known_first_name(middle):
                 continue
             if first in _NAME_STOPWORDS:
                 continue
@@ -295,8 +499,60 @@ def _detect_names(text):
             if full_match not in seen:
                 seen.add(full_match)
                 entities.append({'text': full_match, 'category': 'IMIE_NAZWISKO'})
+                for sp in surname.split('-'):
+                    if len(sp) >= 4:
+                        known_surnames.add(sp)
 
-    # 3) "K. Surname" abbreviation patterns
+    # 3) Contextual label patterns — "Imię i nazwisko: NAME", "Syn: NAME" etc.
+    _LABEL_PATTERNS = [
+        r'[Ii]mi[eę]\s+i\s+nazwisko\s*:\s*',
+        r'[Nn]azwisko\s+panie[nń]skie\s*:\s*',
+        r'[Nn]azwisko\s*:\s*',
+        r'[Ss]yn\s*:\s*',
+        r'[Cc][oó]rka\s*:\s*',
+        r'[Mm][aą][zż]\s*:\s*',
+        r'[Żż]ona\s*:\s*',
+        r'[Oo]jciec\s*:\s*',
+        r'[Mm]atka\s*:\s*',
+        r'[Oo]piekun(?:\s+prawny)?\s*:\s*',
+        r'[Pp]rzedstawiciel(?:\s+ustawowy)?\s*(?:\([^)]*\))?\s*:\s*',
+        r'[Oo]soba\s+upowa[zż]niona[^:]*:\s*',
+        r'[Pp]e[lł]nomocnik[^:]*:\s*',
+        r'[Bb]abcia\s+(?:macierzysta|ojczysta)\s*:\s*',
+        r'[Dd]ziadek\s+(?:macierzysty|ojczysty)\s*:\s*',
+    ]
+    for label_re in _LABEL_PATTERNS:
+        label_pat = re.compile(
+            label_re + r'(' + _SURNAME_RE
+            + r'(?:[ \t]+[A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]+)*'
+            + r'(?:[ \t]+' + _SURNAME_RE + r')?'
+            + r')'
+        )
+        for m in label_pat.finditer(text):
+            val = m.group(1).strip()
+            if val and len(val) >= 3 and val not in seen:
+                seen.add(val)
+                entities.append({'text': val, 'category': 'IMIE_NAZWISKO'})
+                for part in val.split():
+                    for sp in part.split('-'):
+                        if len(sp) >= 4 and sp[0].isupper():
+                            known_surnames.add(sp)
+
+    # 4) "z d." (z domu = maiden name) pattern
+    maiden_pat = re.compile(
+        r'z\s+d(?:omu)?\.\s+(' + _SURNAME_RE + r')'
+    )
+    for m in maiden_pat.finditer(text):
+        maiden = m.group(0).strip()
+        surname = m.group(1)
+        if maiden not in seen:
+            seen.add(maiden)
+            entities.append({'text': maiden, 'category': 'IMIE_NAZWISKO'})
+            for sp in surname.split('-'):
+                if len(sp) >= 4:
+                    known_surnames.add(sp)
+
+    # 5) "K. Surname" abbreviation patterns
     abbrev_pat = re.compile(
         r'\b([A-ZĄĆĘŁŃÓŚŹŻ]\.)[ \t]+(' + _SURNAME_RE + r')\b'
     )
@@ -306,6 +562,28 @@ def _detect_names(text):
         if len(surname) >= 4 and abbrev not in seen:
             seen.add(abbrev)
             entities.append({'text': abbrev, 'category': 'IMIE_NAZWISKO'})
+            for sp in surname.split('-'):
+                if len(sp) >= 4:
+                    known_surnames.add(sp)
+
+    # 6) Surname cross-referencing: find standalone mentions of known surnames
+    #    Expand each known surname into all declined forms
+    if known_surnames:
+        all_variants = set()
+        for sn in known_surnames:
+            all_variants.update(_surname_variants(sn))
+        # filter out very short forms that could cause false positives
+        all_variants = {v for v in all_variants if len(v) >= 4}
+        surname_alt = '|'.join(re.escape(s) for s in sorted(all_variants, key=len, reverse=True))
+        crossref_pat = re.compile(r'\b(' + surname_alt + r')\b')
+        for m in crossref_pat.finditer(text):
+            sname = m.group(1)
+            if sname not in seen:
+                start = m.start()
+                if start > 0 and text[start-1].isalpha():
+                    continue
+                seen.add(sname)
+                entities.append({'text': sname, 'category': 'IMIE_NAZWISKO'})
 
     return entities
 
@@ -764,6 +1042,186 @@ def _redact_pdf(src_path, output_path, entities):
     return list(seen.values())
 
 
+def _is_scanned_pdf(filepath):
+    """Check if a PDF is scanned (image-only, no text layer)."""
+    try:
+        import fitz
+        doc = fitz.open(filepath)
+        for page in doc:
+            if page.get_text().strip():
+                doc.close()
+                return False
+        doc.close()
+        return True
+    except Exception:
+        return False
+
+
+def _redact_scanned_pdf(src_path, output_path, entities):
+    """Redact PII in a scanned PDF using OCR bounding boxes + blur."""
+    import fitz
+    from io import BytesIO
+    try:
+        import pytesseract
+        from PIL import Image, ImageFilter
+    except ImportError:
+        log.error('[doc_anonymizer] OCR redaction requires pytesseract + Pillow')
+        return []
+
+    # Build lookup of texts to redact
+    seen_texts = {}
+    for e in entities:
+        cat = _normalize_category(e.get('category', 'INNE_PII'))
+        txt = e.get('text', '').strip()
+        if txt and txt not in seen_texts:
+            seen_texts[txt] = cat
+
+    if not seen_texts:
+        # Nothing to redact, just copy
+        import shutil
+        shutil.copy2(src_path, output_path)
+        return []
+
+    # Normalize entity texts for fuzzy matching against OCR output
+    entity_words = {}  # word -> list of (full_entity, category)
+    for txt, cat in seen_texts.items():
+        for word in txt.split():
+            word_clean = word.strip('.,;:!?()[]/-').lower()
+            if len(word_clean) >= 3:
+                if word_clean not in entity_words:
+                    entity_words[word_clean] = []
+                entity_words[word_clean].append((txt, cat))
+
+    doc = fitz.open(src_path)
+    total_redactions = []
+    blur_radius = 12
+
+    for page_idx, page in enumerate(doc):
+        # Render page at 300 DPI
+        dpi = 300
+        scale = dpi / 72
+        mat = fitz.Matrix(scale, scale)
+        pix = page.get_pixmap(matrix=mat)
+        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+
+        # OCR with bounding boxes
+        ocr_data = pytesseract.image_to_data(
+            img, lang='pol+eng', config='--psm 6',
+            output_type=pytesseract.Output.DICT
+        )
+
+        # Find words that match entity text
+        blur_rects = []  # (x0, y0, x1, y1) in image coords
+        matched_entities = set()
+
+        n_words = len(ocr_data['text'])
+        for i in range(n_words):
+            word = ocr_data['text'][i].strip()
+            if not word:
+                continue
+            word_lower = word.strip('.,;:!?()[]/-').lower()
+
+            if word_lower in entity_words:
+                x = ocr_data['left'][i]
+                y = ocr_data['top'][i]
+                w = ocr_data['width'][i]
+                h = ocr_data['height'][i]
+                # Add padding
+                pad = 4
+                blur_rects.append((
+                    max(0, x - pad), max(0, y - pad),
+                    min(img.width, x + w + pad), min(img.height, y + h + pad)
+                ))
+                for ent_txt, ent_cat in entity_words[word_lower]:
+                    matched_entities.add((ent_txt, ent_cat))
+
+        # Also try matching multi-word sequences
+        for seq_len in range(2, 6):
+            for i in range(n_words - seq_len + 1):
+                phrase_words = [ocr_data['text'][i + j].strip() for j in range(seq_len)]
+                phrase = ' '.join(phrase_words)
+                phrase_lower = phrase.strip('.,;:!?()[]/-').lower()
+                for ent_txt, ent_cat in seen_texts.items():
+                    if ent_txt.lower() in phrase_lower or phrase_lower in ent_txt.lower():
+                        # Get bounding box spanning all words
+                        x0 = min(ocr_data['left'][i + j] for j in range(seq_len))
+                        y0 = min(ocr_data['top'][i + j] for j in range(seq_len))
+                        x1 = max(ocr_data['left'][i + j] + ocr_data['width'][i + j]
+                                 for j in range(seq_len))
+                        y1 = max(ocr_data['top'][i + j] + ocr_data['height'][i + j]
+                                 for j in range(seq_len))
+                        pad = 4
+                        blur_rects.append((
+                            max(0, x0 - pad), max(0, y0 - pad),
+                            min(img.width, x1 + pad), min(img.height, y1 + pad)
+                        ))
+                        matched_entities.add((ent_txt, ent_cat))
+
+        # Also blur digit sequences that look like PESEL, phone, NIP, account
+        for i in range(n_words):
+            word = ocr_data['text'][i].strip()
+            digits_only = re.sub(r'[^\d]', '', word)
+            if len(digits_only) >= 7:  # phone, PESEL, NIP, etc.
+                x = ocr_data['left'][i]
+                y = ocr_data['top'][i]
+                w = ocr_data['width'][i]
+                h = ocr_data['height'][i]
+                pad = 4
+                blur_rects.append((
+                    max(0, x - pad), max(0, y - pad),
+                    min(img.width, x + w + pad), min(img.height, y + h + pad)
+                ))
+
+        if not blur_rects:
+            continue
+
+        # Apply blur to all matched rectangles
+        for (x0, y0, x1, y1) in blur_rects:
+            if x1 <= x0 or y1 <= y0:
+                continue
+            crop = img.crop((x0, y0, x1, y1))
+            blurred = crop.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+            img.paste(blurred, (x0, y0))
+
+        for ent_txt, ent_cat in matched_entities:
+            total_redactions.append({
+                'original': ent_txt,
+                'placeholder': _PLACEHOLDER_MAP.get(ent_cat, '[DANE]'),
+                'category': ent_cat,
+                'occurrences': 1,
+            })
+
+        # Replace page image with blurred version
+        buf = BytesIO()
+        img.save(buf, format='PNG', optimize=True)
+        buf.seek(0)
+
+        # Clear page and insert full blurred image
+        page.clean_contents()
+        page.insert_image(page.rect, stream=buf.getvalue())
+
+    # Add watermark on first page
+    first = doc[0]
+    first.insert_text(
+        (first.rect.width - 180, 20),
+        'DOKUMENT ZANONIMIZOWANY',
+        fontsize=8, color=(0.5, 0.5, 0.5),
+    )
+
+    doc.save(output_path, garbage=4, deflate=True)
+    doc.close()
+
+    # Merge redaction counts
+    seen = {}
+    for r in total_redactions:
+        key = r['original']
+        if key not in seen:
+            seen[key] = r
+        else:
+            seen[key]['occurrences'] += 1
+    return list(seen.values())
+
+
 def _anonymize_docx_inplace(src_path, output_path, all_entities):
     """Anonymize a DOCX preserving original formatting."""
     import docx
@@ -880,7 +1338,7 @@ def _run_anonymization(job_id, src_path, filename, file_ext, username):
         if not text_parts or all(not t.strip() for t in text_parts):
             raise ValueError(
                 'Nie udalo sie wyodrebnic tekstu z dokumentu. '
-                'Plik moze byc zeskanowany (obraz) - wymagane OCR.')
+                'Plik moze byc zeskanowany — OCR nie rozpoznal tekstu.')
 
         total_parts = len(text_parts)
         all_entities = []
@@ -935,7 +1393,11 @@ def _run_anonymization(job_id, src_path, filename, file_ext, username):
         out_path = os.path.join(job, out_filename)
 
         if file_ext == '.pdf':
-            redact_repls = _redact_pdf(src_path, out_path, all_entities)
+            if _is_scanned_pdf(src_path):
+                log.info('[doc_anonymizer] Scanned PDF detected, using OCR redaction')
+                redact_repls = _redact_scanned_pdf(src_path, out_path, all_entities)
+            else:
+                redact_repls = _redact_pdf(src_path, out_path, all_entities)
             seen_repls = {}
             for r in redact_repls:
                 key = r['original']
@@ -1192,6 +1654,13 @@ def anon_app_status():
     except ImportError:
         has_pillow = False
 
+    has_tesseract = bool(shutil.which('tesseract'))
+    has_pytesseract = True
+    try:
+        import pytesseract  # noqa: F401
+    except ImportError:
+        has_pytesseract = False
+
     result = {
         'installed': True,
         'ai_chat_available': False,
@@ -1203,6 +1672,9 @@ def anon_app_status():
         'has_pypdf2': has_pypdf2,
         'has_pillow': has_pillow,
         'has_pdftotext': bool(shutil.which('pdftotext')),
+        'has_ocr': has_tesseract and has_pytesseract,
+        'has_tesseract': has_tesseract,
+        'has_pytesseract': has_pytesseract,
     }
 
     try:

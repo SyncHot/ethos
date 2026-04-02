@@ -178,10 +178,11 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/aichat/status',
     },
     {
-        'id': 'doc-anonymizer', 'name': 'Document Anonymizer', 'version': '1.0.0',
+        'id': 'doc-anonymizer', 'name': 'Document Anonymizer', 'version': '1.1.0',
         'icon': 'fa-user-shield', 'color': '#0ea5e9', 'category': 'Tools', 'admin_only': False,
         'description': 'Anonimizacja dokumentow medycznych PDF/DOCX przy uzyciu polskiego modelu Bielik LLM.',
-        'apt_deps': [], 'pip_deps': ['PyPDF2', 'python-docx', 'reportlab'],
+        'apt_deps': ['poppler-utils', 'tesseract-ocr', 'tesseract-ocr-pol'],
+        'pip_deps': ['PyMuPDF', 'PyPDF2', 'Pillow', 'pytesseract', 'python-docx', 'reportlab'],
         'depends_on': ['ai-chat'],
         'install_endpoint': '/api/doc-anonymizer/install',
         'uninstall_endpoint': '/api/doc-anonymizer/uninstall',
