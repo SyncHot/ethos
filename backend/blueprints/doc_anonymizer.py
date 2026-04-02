@@ -47,7 +47,7 @@ def _ensure_jobs_dir():
 
 
 def _ensure_deps():
-    """Install PyMuPDF, PyPDF2 and poppler-utils if missing."""
+    """Install PyMuPDF, PyPDF2, Pillow and poppler-utils if missing."""
     missing_pip = []
     try:
         import fitz  # noqa: F401
@@ -57,6 +57,10 @@ def _ensure_deps():
         import PyPDF2  # noqa: F401
     except ImportError:
         missing_pip.append('PyPDF2')
+    try:
+        from PIL import Image  # noqa: F401
+    except ImportError:
+        missing_pip.append('Pillow')
 
     if missing_pip:
         pkgs = ' '.join(missing_pip)
@@ -181,8 +185,13 @@ _REGEX_PATTERNS = [
     (re.compile(r'(?:ul\.|al\.|os\.|pl\.|Al\.)\s+[A-ZĄ-Ż][a-ząćęłńóśźż]+'
                 r'(?:\s[A-ZĄ-Ż]?[a-ząćęłńóśźż]+)*'
                 r'(?:\s+\d+[a-zA-Z]?(?:/\d+[a-zA-Z]?)?)'), 'ADRES'),
-    # NIP: 10 digits with optional dashes (e.g. "525-12-34-567")
-    (re.compile(r'\b\d{3}-\d{2}-\d{2}-\d{3}\b'), 'NR_DOKUMENTU'),
+    # NIP: 10 digits with dashes (e.g. "525-12-34-567" or "NIP: 5251234567")
+    (re.compile(r'\b\d{3}-\d{2}-\d{2}-\d{3}\b'), 'NIP'),
+    (re.compile(r'NIP[\s:]*\d{10}\b'), 'NIP'),
+    # REGON: 9 or 14 digits (e.g. "REGON: 123456789")
+    (re.compile(r'REGON[\s:]*\d{9}(?:\d{5})?\b'), 'REGON'),
+    # KRS: 10 digits (e.g. "KRS: 0000234567" or "KRS 0000234567")
+    (re.compile(r'KRS[\s:]*\d{10}\b'), 'KRS'),
     # PWZ number (e.g. "nr PWZ 4478123" or "PWZ: 1234567")
     (re.compile(r'(?:nr\s+)?PWZ[\s:]*\d{7}'), 'NR_DOKUMENTU'),
     # Dates: DD.MM.YYYY, DD-MM-YYYY, DD/MM/YYYY
@@ -401,7 +410,22 @@ with open(text_path) as f:
 
 from model_library import get_library
 lib = get_library()
-llm, err = lib.load_model()
+
+# Prefer the best available Bielik model (Q8 > Q4) for Polish PII detection
+bielik_preference = ['bielik-7b-q8', 'bielik-7b-q4']
+best_bielik = None
+downloaded = lib._config.get('downloaded', {})
+for bid in bielik_preference:
+    dl = downloaded.get(bid)
+    if dl and os.path.isfile(dl.get('path', '')):
+        best_bielik = bid
+        break
+
+if best_bielik:
+    llm, err = lib.load_model(best_bielik)
+else:
+    llm, err = lib.load_model()
+
 if err:
     with open(result_path, 'w') as rf:
         json.dump([], rf)
@@ -409,13 +433,16 @@ if err:
 lib.touch_model()
 
 system_prompt = (
-    "Wypisz imiona i nazwiska osob oraz nazwy placowek medycznych z tekstu.\n"
-    "Ignoruj daty, adresy, numery, telefony, email.\n"
+    "Wypisz TYLKO imiona i nazwiska osob oraz nazwy placowek medycznych z tekstu.\n"
+    "NIE wypisuj: rozpoznan (ICD-10), lekow, dawek, zalecen, dat, adresow, "
+    "numerow PESEL/telefon/konta, email, wynikow badan.\n"
+    "Kazda pozycja to KROTKI tekst (imie+nazwisko lub nazwa placowki) - "
+    "max kilka slow, nigdy cale zdanie.\n"
     "Format odpowiedzi - TYLKO JSON tablica:\n"
     '[{"text":"Katarzyna Nowak","category":"IMIE_NAZWISKO"},'
     '{"text":"dr Jan Kowalski","category":"LEKARZ"},'
     '{"text":"Szpital Miejski","category":"NAZWA_PLACOWKI"}]\n'
-    "Kategorie: IMIE_NAZWISKO, LEKARZ, NAZWA_PLACOWKI.\n"
+    "Dozwolone kategorie: IMIE_NAZWISKO, LEKARZ, NAZWA_PLACOWKI.\n"
     "Bez komentarzy, bez markdown."
 )
 user_prompt = "Tekst:\n" + text + "\n\nJSON:"
@@ -514,6 +541,67 @@ def _normalize_category(cat):
     return ascii_str.upper().strip()
 
 
+# Valid categories that the LLM is allowed to return
+_VALID_LLM_CATEGORIES = frozenset({
+    'IMIE_NAZWISKO', 'LEKARZ', 'NAZWA_PLACOWKI',
+})
+
+# ICD-10 code pattern (e.g. "I10", "E11.9", "M54.5", "J18.0")
+_ICD_CODE_RE = re.compile(r'\b[A-Z]\d{2}(?:\.\d{1,2})?\b')
+
+# Medical terms that should NEVER be anonymized
+_MEDICAL_STOPWORDS = frozenset({
+    'rozpoznanie', 'epikryza', 'zalecenia', 'leczenie', 'badanie', 'wyniki',
+    'dawkowanie', 'kontrola', 'skierowanie', 'zaswiadczenie', 'zaświadczenie',
+    'pacjent', 'pacjentka', 'choroba', 'zapalenie', 'niedokrwienna',
+    'nadcisnienie', 'cukrzyca', 'hipercholesterolemia', 'diagnostyka',
+    'rehabilitacja', 'operacja', 'zabieg', 'terapia', 'recepta',
+    'amlodypina', 'metformina', 'atorwastatyna', 'ramipril', 'bisoprolol',
+})
+
+
+def _validate_llm_entities(entities):
+    """Filter LLM output to remove garbage, diagnoses, and too-long entries."""
+    valid = []
+    for e in entities:
+        text = e.get('text', '').strip()
+        cat = _normalize_category(e.get('category', ''))
+
+        # Reject empty or very short
+        if len(text) < 3:
+            continue
+
+        # Reject entities that are too long (real names are short)
+        if len(text) > 80:
+            log.debug('[doc_anonymizer] LLM entity too long (%d chars), skipping: %s...', len(text), text[:50])
+            continue
+
+        # Reject invalid categories — LLM may hallucinate RZPOZNANIE, LECZKA etc.
+        if cat not in _VALID_LLM_CATEGORIES:
+            log.debug('[doc_anonymizer] LLM invalid category %s, skipping: %s', cat, text[:50])
+            continue
+
+        # Reject if it contains ICD codes (diagnoses)
+        if _ICD_CODE_RE.search(text):
+            log.debug('[doc_anonymizer] LLM entity contains ICD code, skipping: %s', text[:50])
+            continue
+
+        # Reject if it contains medical stopwords
+        text_lower = text.lower()
+        if any(sw in text_lower for sw in _MEDICAL_STOPWORDS):
+            log.debug('[doc_anonymizer] LLM entity contains medical term, skipping: %s', text[:50])
+            continue
+
+        # Reject entities that look like full sentences (contain verbs/punctuation patterns)
+        if text.count(' ') > 8:
+            log.debug('[doc_anonymizer] LLM entity has too many words, skipping: %s', text[:50])
+            continue
+
+        valid.append({'text': text, 'category': cat})
+
+    return valid
+
+
 # -- Replacement logic ------------------------------------------------------
 
 _PLACEHOLDER_MAP = {
@@ -529,6 +617,9 @@ _PLACEHOLDER_MAP = {
     'NR_PACJENTA': '[NR_PACJENTA]',
     'NR_DOKUMENTU': '[NR_DOKUMENTU]',
     'NR_KONTA': '[NR_KONTA]',
+    'NIP': '[NIP]',
+    'REGON': '[REGON]',
+    'KRS': '[KRS]',
     'NAZWA_PLACOWKI': '[PLACOWKA]',
     'LEKARZ': '[LEKARZ]',
     'INNE_PII': '[DANE_OSOBOWE]',
@@ -569,44 +660,89 @@ def _replace_entities_in_text(text, entities):
 # -- Document generation ----------------------------------------------------
 
 def _redact_pdf(src_path, output_path, entities):
-    """Redact PII in a PDF using PyMuPDF — preserves original layout."""
+    """Redact PII in a PDF using blur overlay — preserves layout, hides text."""
     import fitz
+    from io import BytesIO
 
     seen_texts = {}
     for e in entities:
         cat = _normalize_category(e.get('category', 'INNE_PII'))
         txt = e.get('text', '').strip()
         if txt and txt not in seen_texts:
-            seen_texts[txt] = _PLACEHOLDER_MAP.get(cat, '[DANE]')
+            seen_texts[txt] = (_PLACEHOLDER_MAP.get(cat, '[DANE]'), cat)
 
-    # Sort by length descending so longer matches take priority
     sorted_items = sorted(seen_texts.items(), key=lambda x: len(x[0]), reverse=True)
 
     doc = fitz.open(src_path)
     total_redactions = []
 
-    for page in doc:
-        for original, placeholder in sorted_items:
+    # Blur parameters
+    blur_radius = 8
+    try:
+        from PIL import Image, ImageFilter
+        has_pil = True
+    except ImportError:
+        has_pil = False
+        log.warning('[doc_anonymizer] Pillow not installed, using solid redaction')
+
+    for page_idx, page in enumerate(doc):
+        page_rects = []  # (rect, placeholder, category)
+        for original, (placeholder, category) in sorted_items:
             instances = page.search_for(original)
             for inst in instances:
-                page.add_redact_annot(
-                    inst, text=placeholder, fontsize=0,
-                    fill=(0, 0, 0), text_color=(1, 1, 1),
-                )
+                page_rects.append((inst, placeholder, category, original))
                 total_redactions.append({
                     'original': original,
                     'placeholder': placeholder,
-                    'category': next(
-                        (_normalize_category(e['category'])
-                         for e in entities if e.get('text', '').strip() == original),
-                        'INNE_PII'),
+                    'category': category,
                     'occurrences': 1,
                 })
 
-    for page in doc:
-        page.apply_redactions()
+        if not page_rects:
+            continue
 
-    # Add a small "ZANONIMIZOWANO" watermark on first page
+        if has_pil:
+            # Capture page pixmap BEFORE redaction for blur source
+            zoom = 2  # 2x for quality
+            mat = fitz.Matrix(zoom, zoom)
+            pix = page.get_pixmap(matrix=mat)
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+
+            # Apply redactions with white fill to remove original text
+            for rect, placeholder, category, original in page_rects:
+                page.add_redact_annot(rect, text='', fill=(1, 1, 1))
+            page.apply_redactions()
+
+            # Insert blurred image patches and placeholder text
+            for rect, placeholder, category, original in page_rects:
+                # Scale rect coords to pixmap coords
+                x0 = max(0, int(rect.x0 * zoom) - 2)
+                y0 = max(0, int(rect.y0 * zoom) - 2)
+                x1 = min(img.width, int(rect.x1 * zoom) + 2)
+                y1 = min(img.height, int(rect.y1 * zoom) + 2)
+
+                if x1 <= x0 or y1 <= y0:
+                    continue
+
+                # Crop, blur, save as PNG
+                crop = img.crop((x0, y0, x1, y1))
+                blurred = crop.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+                buf = BytesIO()
+                blurred.save(buf, format='PNG')
+                buf.seek(0)
+
+                # Insert blurred image at original position
+                page.insert_image(rect, stream=buf.getvalue())
+        else:
+            # Fallback: solid redaction (black fill, white text)
+            for rect, placeholder, category, original in page_rects:
+                page.add_redact_annot(
+                    rect, text=placeholder, fontsize=0,
+                    fill=(0, 0, 0), text_color=(1, 1, 1),
+                )
+            page.apply_redactions()
+
+    # Add watermark on first page
     first = doc[0]
     first.insert_text(
         (first.rect.width - 180, 20),
@@ -680,6 +816,11 @@ def _anonymize_docx_inplace(src_path, output_path, all_entities):
 
 _active_jobs = {}
 _jobs_lock = threading.Lock()
+
+# Sequential job queue — process one document at a time to save resources
+_job_queue = []       # list of (job_id, src_path, filename, ext, username)
+_queue_lock = threading.Lock()
+_worker_running = False
 
 
 def _cleanup_stuck_jobs():
@@ -773,6 +914,8 @@ def _run_anonymization(job_id, src_path, filename, file_ext, username):
                        'Analiza LLM (dodatkowe imiona/nazwiska)...')
         try:
             llm_entities = _call_llm(full_text)
+            # Validate and filter LLM output (reject garbage, diagnoses, long text)
+            llm_entities = _validate_llm_entities(llm_entities)
             # Only add LLM entities not already found by regex/name detection
             existing_texts = {e['text'].lower() for e in all_entities}
             for le in llm_entities:
@@ -855,6 +998,35 @@ def _run_anonymization(job_id, src_path, filename, file_ext, username):
                 _active_jobs[job_id]['status'] = 'error'
 
 
+def _queue_worker():
+    """Process queued jobs one at a time."""
+    global _worker_running
+    while True:
+        with _queue_lock:
+            if not _job_queue:
+                _worker_running = False
+                return
+            job_args = _job_queue.pop(0)
+
+        job_id = job_args[0]
+        with _jobs_lock:
+            if job_id in _active_jobs:
+                _active_jobs[job_id]['status'] = 'processing'
+
+        _run_anonymization(*job_args)
+
+
+def _enqueue_job(job_id, src_path, filename, ext, username):
+    """Add a job to the sequential queue and start worker if needed."""
+    global _worker_running
+    with _queue_lock:
+        _job_queue.append((job_id, src_path, filename, ext, username))
+        if not _worker_running:
+            _worker_running = True
+            t = threading.Thread(target=_queue_worker, daemon=True)
+            t.start()
+
+
 # -- Routes -----------------------------------------------------------------
 
 @doc_anonymizer_bp.route('/upload', methods=['POST'])
@@ -875,15 +1047,20 @@ def anon_upload():
     if ext not in ('.pdf', '.docx', '.doc'):
         return jsonify({'error': 'Obslugiwane formaty: PDF, DOCX'}), 400
 
-    # Check AI Chat dependency
+    # Check AI Chat dependency — prefer Bielik for Polish PII
     try:
         from model_library import get_library
         lib = get_library()
+        downloaded = lib._config.get('downloaded', {})
+        has_bielik = any(
+            downloaded.get(bid) and os.path.isfile(downloaded[bid].get('path', ''))
+            for bid in ('bielik-7b-q8', 'bielik-7b-q4')
+        )
         active = lib.get_active_model()
-        if not active:
+        if not has_bielik and not active:
             return jsonify({
-                'error': 'Brak aktywnego modelu LLM. '
-                         'Otworz AI Assistant i pobierz model Bielik 7B.'
+                'error': 'Brak modelu LLM. '
+                         'Otwórz AI Assistant i pobierz model Bielik 7B.'
             }), 400
     except ImportError:
         return jsonify({
@@ -909,24 +1086,21 @@ def anon_upload():
         json.dump(meta, mf, ensure_ascii=False)
 
     with _jobs_lock:
-        _active_jobs[job_id] = {'status': 'processing', 'progress': 0}
+        _active_jobs[job_id] = {'status': 'queued', 'progress': 0}
 
-    t = threading.Thread(target=_run_anonymization,
-                         args=(job_id, src_path, filename, ext, username),
-                         daemon=True)
-    t.start()
+    _enqueue_job(job_id, src_path, filename, ext, username)
 
     return jsonify({'ok': True, 'job_id': job_id, 'filename': filename})
 
 
 @doc_anonymizer_bp.route('/jobs', methods=['GET'])
 def anon_jobs():
-    """List all anonymization jobs for the current user."""
+    """List all anonymization jobs for the current user, newest first."""
     _ensure_jobs_dir()
     username = _get_username()
     jobs = []
 
-    for entry in sorted(os.listdir(_JOBS_DIR), reverse=True):
+    for entry in os.listdir(_JOBS_DIR):
         meta_path = os.path.join(_JOBS_DIR, entry, 'meta.json')
         if not os.path.isfile(meta_path):
             continue
@@ -936,12 +1110,20 @@ def anon_jobs():
             if meta.get('username') == username or getattr(g, 'role', None) == 'admin':
                 with _jobs_lock:
                     live = _active_jobs.get(entry, {})
-                if live and meta.get('status') == 'processing':
-                    meta['progress'] = live.get('progress', 0)
-                    meta['message'] = live.get('message', '')
+                if live:
+                    live_status = live.get('status', '')
+                    if live_status == 'queued' and meta.get('status') == 'processing':
+                        meta['status'] = 'queued'
+                        meta['message'] = 'W kolejce...'
+                    elif meta.get('status') == 'processing':
+                        meta['progress'] = live.get('progress', 0)
+                        meta['message'] = live.get('message', '')
                 jobs.append(meta)
         except Exception:
             continue
+
+    # Sort by created_at descending (newest first)
+    jobs.sort(key=lambda j: j.get('created_at', 0), reverse=True)
 
     return jsonify({'items': jobs})
 
@@ -1004,15 +1186,22 @@ def anon_app_status():
     except ImportError:
         has_pypdf2 = False
 
+    has_pillow = True
+    try:
+        from PIL import Image  # noqa: F401
+    except ImportError:
+        has_pillow = False
+
     result = {
         'installed': True,
         'ai_chat_available': False,
         'model_loaded': False,
         'active_model': None,
         'recommended_model': 'bielik-7b-q4',
-        'deps_ok': has_fitz and has_pypdf2 and bool(shutil.which('pdftotext')),
+        'deps_ok': has_fitz and has_pypdf2 and has_pillow and bool(shutil.which('pdftotext')),
         'has_fitz': has_fitz,
         'has_pypdf2': has_pypdf2,
+        'has_pillow': has_pillow,
         'has_pdftotext': bool(shutil.which('pdftotext')),
     }
 
@@ -1025,6 +1214,14 @@ def anon_app_status():
             result['active_model'] = active.get('name', active.get('id'))
         loaded_llm, loaded_id = lib.get_loaded_model()
         result['model_loaded'] = loaded_llm is not None
+
+        # Check for downloaded Bielik models (preferred for anonymization)
+        downloaded = lib._config.get('downloaded', {})
+        for bid in ('bielik-7b-q8', 'bielik-7b-q4'):
+            dl = downloaded.get(bid)
+            if dl and os.path.isfile(dl.get('path', '')):
+                result['bielik_model'] = bid
+                break
     except ImportError:
         pass
 
