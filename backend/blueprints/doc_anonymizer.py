@@ -1082,95 +1082,152 @@ def _redact_scanned_pdf(src_path, output_path, entities):
         shutil.copy2(src_path, output_path)
         return []
 
-    # Normalize entity texts for fuzzy matching against OCR output
-    entity_words = {}  # word -> list of (full_entity, category)
+    # --- Categorize entities for targeted matching ---
+    # Person-related categories: individual word matching is safe (names are unique)
+    _PERSON_CATS = {'IMIE_NAZWISKO', 'LEKARZ', 'OSOBA'}
+    # Numeric categories: match digit portions only
+    _NUMERIC_CATS = {'PESEL', 'NIP', 'REGON', 'TELEFON', 'NUMER_KONTA'}
+    # Date category: match exact string
+    _DATE_CATS = {'DATA'}
+    # Remaining (addresses, institutions, etc.): phrase-level matching only
+
+    _SKIP_WORDS = {
+        'lek', 'dr', 'med', 'prof', 'mgr', 'inz', 'hab', 'doc',
+        'im', 'ul', 'al', 'os', 'pl', 'str', 'nr', 'tel', 'fax',
+        'sp', 'zoo', 'nip', 'regon', 'krs', 'www', 'com',
+    }
+
+    # Build targeted lookups
+    name_words = {}      # word -> [(entity_text, category)]
+    numeric_patterns = []  # (digits_str, entity_text, category)
+    date_strings = []    # (date_str, entity_text, category)
+    phrase_entities = []  # (words_list, entity_text, category)
+
     for txt, cat in seen_texts.items():
-        for word in txt.split():
-            word_clean = word.strip('.,;:!?()[]/-').lower()
-            if len(word_clean) >= 3:
-                if word_clean not in entity_words:
-                    entity_words[word_clean] = []
-                entity_words[word_clean].append((txt, cat))
+        if cat in _PERSON_CATS:
+            for word in txt.split():
+                w = word.strip('.,;:!?()[]/-').lower()
+                if len(w) >= 3 and w not in _SKIP_WORDS:
+                    if w not in name_words:
+                        name_words[w] = []
+                    name_words[w].append((txt, cat))
+        elif cat in _NUMERIC_CATS:
+            digits = re.sub(r'[^\d]', '', txt)
+            if len(digits) >= 7:
+                numeric_patterns.append((digits, txt, cat))
+        elif cat in _DATE_CATS:
+            date_strings.append((txt.strip(), txt, cat))
+        else:
+            # Addresses, institutions — phrase matching
+            words = [w.strip('.,;:!?()[]/-').lower()
+                     for w in txt.split() if len(w.strip('.,;:!?()[]/-')) >= 3]
+            words = [w for w in words if w not in _SKIP_WORDS]
+            if words:
+                phrase_entities.append((words, txt, cat))
 
     doc = fitz.open(src_path)
     total_redactions = []
     blur_radius = 12
 
     for page_idx, page in enumerate(doc):
-        # Render page at 300 DPI
         dpi = 300
         scale = dpi / 72
         mat = fitz.Matrix(scale, scale)
         pix = page.get_pixmap(matrix=mat)
         img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
 
-        # OCR with bounding boxes
         ocr_data = pytesseract.image_to_data(
             img, lang='pol+eng', config='--psm 6',
             output_type=pytesseract.Output.DICT
         )
 
-        # Find words that match entity text
-        blur_rects = []  # (x0, y0, x1, y1) in image coords
+        blur_rects = []
         matched_entities = set()
-
         n_words = len(ocr_data['text'])
+
+        def _bbox(idx):
+            return (ocr_data['left'][idx], ocr_data['top'][idx],
+                    ocr_data['width'][idx], ocr_data['height'][idx])
+
+        def _add_rect(idx, pad=4):
+            x, y, w, h = _bbox(idx)
+            blur_rects.append((
+                max(0, x - pad), max(0, y - pad),
+                min(img.width, x + w + pad), min(img.height, y + h + pad)
+            ))
+
+        def _add_span(start, count, pad=4):
+            x0 = min(ocr_data['left'][start + j] for j in range(count))
+            y0 = min(ocr_data['top'][start + j] for j in range(count))
+            x1 = max(ocr_data['left'][start + j] + ocr_data['width'][start + j]
+                     for j in range(count))
+            y1 = max(ocr_data['top'][start + j] + ocr_data['height'][start + j]
+                     for j in range(count))
+            blur_rects.append((
+                max(0, x0 - pad), max(0, y0 - pad),
+                min(img.width, x1 + pad), min(img.height, y1 + pad)
+            ))
+
+        # 1) Person name words — match individual words
         for i in range(n_words):
             word = ocr_data['text'][i].strip()
             if not word:
                 continue
             word_lower = word.strip('.,;:!?()[]/-').lower()
-
-            if word_lower in entity_words:
-                x = ocr_data['left'][i]
-                y = ocr_data['top'][i]
-                w = ocr_data['width'][i]
-                h = ocr_data['height'][i]
-                # Add padding
-                pad = 4
-                blur_rects.append((
-                    max(0, x - pad), max(0, y - pad),
-                    min(img.width, x + w + pad), min(img.height, y + h + pad)
-                ))
-                for ent_txt, ent_cat in entity_words[word_lower]:
+            if word_lower in name_words:
+                _add_rect(i)
+                for ent_txt, ent_cat in name_words[word_lower]:
                     matched_entities.add((ent_txt, ent_cat))
 
-        # Also try matching multi-word sequences
-        for seq_len in range(2, 6):
-            for i in range(n_words - seq_len + 1):
-                phrase_words = [ocr_data['text'][i + j].strip() for j in range(seq_len)]
-                phrase = ' '.join(phrase_words)
-                phrase_lower = phrase.strip('.,;:!?()[]/-').lower()
-                for ent_txt, ent_cat in seen_texts.items():
-                    if ent_txt.lower() in phrase_lower or phrase_lower in ent_txt.lower():
-                        # Get bounding box spanning all words
-                        x0 = min(ocr_data['left'][i + j] for j in range(seq_len))
-                        y0 = min(ocr_data['top'][i + j] for j in range(seq_len))
-                        x1 = max(ocr_data['left'][i + j] + ocr_data['width'][i + j]
-                                 for j in range(seq_len))
-                        y1 = max(ocr_data['top'][i + j] + ocr_data['height'][i + j]
-                                 for j in range(seq_len))
-                        pad = 4
-                        blur_rects.append((
-                            max(0, x0 - pad), max(0, y0 - pad),
-                            min(img.width, x1 + pad), min(img.height, y1 + pad)
-                        ))
-                        matched_entities.add((ent_txt, ent_cat))
-
-        # Also blur digit sequences that look like PESEL, phone, NIP, account
+        # 2) Numeric IDs — match digit sequences against known IDs
         for i in range(n_words):
             word = ocr_data['text'][i].strip()
-            digits_only = re.sub(r'[^\d]', '', word)
-            if len(digits_only) >= 7:  # phone, PESEL, NIP, etc.
-                x = ocr_data['left'][i]
-                y = ocr_data['top'][i]
-                w = ocr_data['width'][i]
-                h = ocr_data['height'][i]
-                pad = 4
-                blur_rects.append((
-                    max(0, x - pad), max(0, y - pad),
-                    min(img.width, x + w + pad), min(img.height, y + h + pad)
-                ))
+            if not word:
+                continue
+            word_digits = re.sub(r'[^\d]', '', word)
+            if len(word_digits) < 7:
+                continue
+            for digits, ent_txt, ent_cat in numeric_patterns:
+                if digits in word_digits or word_digits in digits:
+                    _add_rect(i)
+                    matched_entities.add((ent_txt, ent_cat))
+                    break
+
+        # 3) Dates — match exact date strings in OCR
+        ocr_texts_lower = [ocr_data['text'][i].strip().lower() for i in range(n_words)]
+        for date_str, ent_txt, ent_cat in date_strings:
+            # Try single-word match (e.g. "10.10.2025")
+            date_lower = date_str.lower()
+            for i in range(n_words):
+                if ocr_texts_lower[i] == date_lower:
+                    _add_rect(i)
+                    matched_entities.add((ent_txt, ent_cat))
+            # Try two-word match (e.g. "10-10-" "2025")
+            for i in range(n_words - 1):
+                pair = ocr_texts_lower[i] + ocr_texts_lower[i + 1]
+                pair_sp = ocr_texts_lower[i] + ' ' + ocr_texts_lower[i + 1]
+                if date_lower == pair or date_lower == pair_sp:
+                    _add_span(i, 2)
+                    matched_entities.add((ent_txt, ent_cat))
+
+        # 4) Phrases (addresses, institutions) — require majority of words to match
+        # in a contiguous OCR window
+        for phrase_words, ent_txt, ent_cat in phrase_entities:
+            needed = max(2, len(phrase_words) * 2 // 3)  # at least 2/3 match
+            pw_set = set(phrase_words)
+            win = len(phrase_words) + 2  # allow a bit of slack
+            for i in range(n_words - needed + 1):
+                end = min(i + win, n_words)
+                window_words = set()
+                for j in range(i, end):
+                    w = ocr_data['text'][j].strip('.,;:!?()[]/-').lower()
+                    if w:
+                        window_words.add(w)
+                hits = pw_set & window_words
+                if len(hits) >= needed:
+                    _add_span(i, end - i)
+                    matched_entities.add((ent_txt, ent_cat))
+                    break
 
         if not blur_rects:
             continue
@@ -1191,9 +1248,9 @@ def _redact_scanned_pdf(src_path, output_path, entities):
                 'occurrences': 1,
             })
 
-        # Replace page image with blurred version
+        # Replace page image with blurred version (JPEG for smaller output)
         buf = BytesIO()
-        img.save(buf, format='PNG', optimize=True)
+        img.save(buf, format='JPEG', quality=85, optimize=True)
         buf.seek(0)
 
         # Clear page and insert full blurred image
