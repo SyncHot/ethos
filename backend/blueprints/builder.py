@@ -862,7 +862,7 @@ echo "LOG:Loop device: $LOOP_DEV"
 parted -s "$LOOP_DEV" mklabel gpt
 parted -s "$LOOP_DEV" mkpart ESP fat32 1MiB ${{ESP_SIZE_MB}}MiB
 parted -s "$LOOP_DEV" set 1 esp on
-parted -s "$LOOP_DEV" mkpart primary ext4 ${{ESP_SIZE_MB}}MiB 100%
+parted -s "$LOOP_DEV" mkpart primary ext4 ${{ESP_SIZE_MB}}MiB $((${{ESP_SIZE_MB}} + ${{ROOT_SIZE_MB}}))MiB
 partprobe "$LOOP_DEV"; sleep 1
 
 mkfs.vfat -F32 "${{LOOP_DEV}}p1"
@@ -965,16 +965,13 @@ fi
 cat > "$ROOT/etc/fstab" <<FSTAB
 UUID=$ROOT_UUID  /          ext4  noatime,errors=remount-ro  0 1
 UUID=$EFI_UUID   /boot/efi  vfat  umask=0077         0 1
-/swapfile        none       swap  sw                 0 0
 FSTAB
 
 echo "$DEFAULT_HOSTNAME" > "$ROOT/etc/hostname"
 
-# ── Swap file (4 GB) ──
-echo "LOG:Creating swap file..."
-fallocate -l 4G "$ROOT/swapfile"
-chmod 600 "$ROOT/swapfile"
-mkswap "$ROOT/swapfile" >/dev/null
+# NOTE: Swap is intentionally NOT created in the build image.
+# The installer generates its own fstab with swap on the data partition.
+# Keeping the root partition small allows dd-based fast cloning.
 
 # ── I/O tuning for low-power NAS hardware ──
 echo "LOG:Konfiguracja I/O tuning..."

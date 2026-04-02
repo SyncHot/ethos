@@ -41,6 +41,7 @@ DEFAULT_SPEC = {
     },
     'partitions': {
         'esp_mb': 256,
+        'root_mb': 4096,
         'root_type': 'ext4',
         'data_type': 'btrfs',
         'squashfs': True,
@@ -183,6 +184,7 @@ def spec_to_shell_vars(spec):
         f'NAS_PORT="{identity.get("nas_port", 9000)}"',
         f'BRAND_NAME="{identity.get("brand_name", "EthOS")}"',
         f'ESP_SIZE_MB={partitions.get("esp_mb", 256)}',
+        f'ROOT_SIZE_MB={partitions.get("root_mb", 4096)}',
         f'TMPFS_MIN_RAM_MB={build_cfg.get("tmpfs_min_ram_mb", 10000)}',
         f'SQSH_COMPRESSION_LEVEL={build_cfg.get("compression_level", 3)}',
     ]
