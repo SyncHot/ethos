@@ -1156,19 +1156,45 @@ menuentry "EthOS Recovery Shell (ESP)" {{
     _run(f"grub-editenv {root_grubenv} set boot_success=1", timeout=10)
 
     # ── 3) Write A/B slot metadata for the updater ──
+    # After data separation, /opt/ethos/data may be a dangling symlink
+    # (→ /mnt/data/ethos/data, but data partition isn't mounted in target).
+    # Mount the data partition temporarily so we can write ab_slots.json.
     slot_meta_dir = os.path.join(mount_dir, "opt/ethos/data")
-    os.makedirs(slot_meta_dir, exist_ok=True)
-    slot_meta = os.path.join(slot_meta_dir, "ab_slots.json")
-    import json as _json
-    with open(slot_meta, "w") as f:
-        _json.dump({
-            "slot_a": {"partition": root_a_part, "uuid": root_a_uuid, "label": "EthOS-Root-A"},
-            "slot_b": {"partition": root_b_part, "uuid": root_b_uuid, "label": "EthOS-Root-B"},
-            "active": "a",
-            "grubenv_esp": "/boot/efi/boot/grub/grubenv",
-            "grubenv_root": "/boot/grub/grubenv",
-        }, f, indent=2)
-    log.info("Wrote A/B slot metadata to %s", slot_meta)
+    _data_tmp_mount = None
+    try:
+        if os.path.islink(slot_meta_dir) and not os.path.exists(slot_meta_dir):
+            _data_tmp_mount = "/tmp/data-slot-meta"
+            os.makedirs(_data_tmp_mount, exist_ok=True)
+            _, _, drc = _run(
+                f"mount -o subvol=@data {_part(dev, 4)} {_data_tmp_mount}", timeout=30
+            )
+            if drc == 0:
+                real_dir = os.path.join(_data_tmp_mount, "ethos/data")
+                os.makedirs(real_dir, exist_ok=True)
+                slot_meta_dir = real_dir
+            else:
+                log.warning("Cannot mount data partition for ab_slots.json — "
+                            "removing dangling symlink and using real dir")
+                os.remove(slot_meta_dir)
+                os.makedirs(slot_meta_dir, exist_ok=True)
+                _data_tmp_mount = None
+        else:
+            os.makedirs(slot_meta_dir, exist_ok=True)
+
+        slot_meta = os.path.join(slot_meta_dir, "ab_slots.json")
+        import json as _json
+        with open(slot_meta, "w") as f:
+            _json.dump({
+                "slot_a": {"partition": root_a_part, "uuid": root_a_uuid, "label": "EthOS-Root-A"},
+                "slot_b": {"partition": root_b_part, "uuid": root_b_uuid, "label": "EthOS-Root-B"},
+                "active": "a",
+                "grubenv_esp": "/boot/efi/boot/grub/grubenv",
+                "grubenv_root": "/boot/grub/grubenv",
+            }, f, indent=2)
+        log.info("Wrote A/B slot metadata to %s", slot_meta)
+    finally:
+        if _data_tmp_mount:
+            _run(f"umount {_data_tmp_mount} 2>/dev/null", timeout=15)
 
     # ── 4) Build standalone BOOTX64.EFI ──
     _p(79, "Building standalone BOOTX64.EFI...")

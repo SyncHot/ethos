@@ -102,6 +102,11 @@ def start_install():
             _set_state(phase="postconfig", percent=85, message="Mounting target for configuration...")
             from disk_ops import _run, _part
             _run(f"mount {_part('/dev/' + os_disk, 2)} {mount_dir}", timeout=30)
+            # Mount btrfs data partition at /mnt/data so that absolute
+            # symlinks created by data separation resolve correctly
+            # (e.g. /opt/ethos/data → /mnt/data/ethos/data).
+            _run("mkdir -p /mnt/data", timeout=5)
+            _run(f"mount -o subvol=@data {_part('/dev/' + os_disk, 4)} /mnt/data", timeout=30)
             # Bind-mount /dev for chroot operations (chpasswd, ssh-keygen, systemctl)
             _run(f"mount --bind /dev {mount_dir}/dev")
             _run(f"mount --bind /dev/pts {mount_dir}/dev/pts 2>/dev/null")
@@ -172,6 +177,7 @@ def start_install():
             if bind_mounted:
                 for fs in ("sys", "proc", "dev/pts", "dev"):
                     _drun(f"umount -l {mount_dir}/{fs} 2>/dev/null", timeout=10)
+            _drun(f"umount /mnt/data 2>/dev/null", timeout=15)
             _drun(f"umount -R {mount_dir} 2>/dev/null", timeout=30)
 
     threading.Thread(target=worker, daemon=True, name="installer").start()
