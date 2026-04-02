@@ -47,7 +47,7 @@ def _ensure_jobs_dir():
 
 
 def _ensure_deps():
-    """Install PyMuPDF, PyPDF2, Pillow, poppler-utils, and Tesseract OCR if missing."""
+    """Install all required pip packages and system tools if missing."""
     missing_pip = []
     try:
         import fitz  # noqa: F401
@@ -65,6 +65,14 @@ def _ensure_deps():
         import pytesseract  # noqa: F401
     except ImportError:
         missing_pip.append('pytesseract')
+    try:
+        import docx  # noqa: F401
+    except ImportError:
+        missing_pip.append('python-docx')
+    try:
+        import reportlab  # noqa: F401
+    except ImportError:
+        missing_pip.append('reportlab')
 
     if missing_pip:
         pkgs = ' '.join(missing_pip)
