@@ -1151,37 +1151,90 @@ function renderVMManager(body) {
         });
     }
 
-    // Disk panel
+    // Disk panel — multi-disk table
     async function renderDiskPanel(dc) {
         const vm = S.selectedVM;
-        dc.innerHTML = `<div class="vm-loading"><i class="fas fa-spinner fa-spin"></i> ${t('Ładowanie info o dysku...')}</div>`;
+        dc.innerHTML = `<div class="vm-loading"><i class="fas fa-spinner fa-spin"></i> ${t('Ładowanie dysków...')}</div>`;
+        let disks;
         try {
-            S.diskInfo = await api(`/vm/machines/${vm.id}/disk-info`);
+            const r = await api(`/vm/machines/${vm.id}/disks`);
+            disks = r.disks || r.items || [];
         } catch (e) {
-            dc.innerHTML = `<div class="vm-empty">${esc(e.message || 'Brak danych o dysku')}</div>`;
+            dc.innerHTML = `<div class="vm-empty">${esc(e.message || t('Brak danych o dyskach'))}</div>`;
             return;
         }
-        const d = S.diskInfo;
+        if (!disks.length) {
+            dc.innerHTML = `<div class="vm-empty">${t('Brak dysków')}</div>`;
+            return;
+        }
 
-        dc.innerHTML = `
-            <div class="vm-info-card app-modal-lg">
-                <h4><i class="fas fa-hdd"></i> Informacje o dysku</h4>
-                <div class="vm-info-row"><span>Format:</span><span>${esc(d.format)}</span></div>
-                <div class="vm-info-row"><span>Rozmiar wirtualny:</span><span>${esc(d.virtual_size_human)}</span></div>
-                <div class="vm-info-row"><span>Rozmiar na dysku:</span><span>${esc(d.actual_size_human)}</span></div>
-                <div class="vm-info-row"><span>Plik:</span><span class="vm-mono app-text-xs">${esc(d.filename)}</span></div>
-            </div>
+        let html = `
+            <div class="vm-table-wrap">
+                <table class="vm-table">
+                    <thead><tr>
+                        <th>${t('ID')}</th>
+                        <th>${t('Format')}</th>
+                        <th>${t('Rozmiar wirtualny')}</th>
+                        <th>${t('Rozmiar na dysku')}</th>
+                        <th>${t('Plik')}</th>
+                        <th style="text-align:right">${t('Akcje')}</th>
+                    </tr></thead><tbody>`;
+
+        for (const d of disks) {
+            const isBoot = d.id === 'disk0';
+            html += `<tr>
+                <td>${esc(d.id)}${isBoot ? ' <i class="fas fa-boot" title="Boot"></i>' : ''}</td>
+                <td>${esc(d.format || '-')}</td>
+                <td>${esc(d.virtual_size_human || '-')}</td>
+                <td>${esc(d.actual_size_human || '-')}</td>
+                <td class="vm-mono" style="font-size:11px">${esc(d.filename || '-')}</td>
+                <td style="text-align:right;white-space:nowrap">
+                    <button class="vm-btn vm-btn-primary vm-btn-xs vm-disk-resize" data-id="${esc(d.id)}"><i class="fas fa-expand-arrows-alt"></i> ${t('Powiększ')}</button>
+                    ${!isBoot ? `<button class="vm-btn vm-btn-danger vm-btn-xs vm-disk-remove" data-id="${esc(d.id)}"><i class="fas fa-trash"></i></button>` : ''}
+                </td>
+            </tr>`;
+        }
+
+        html += `</tbody></table></div>
             <div class="app-mt-lg">
-                <button class="vm-btn vm-btn-primary vm-btn-sm" id="vm-disk-resize"><i class="fas fa-expand-arrows-alt"></i> ${t('Powiększ dysk')}</button>
-            </div>
-        `;
+                <button class="vm-btn vm-btn-success vm-btn-sm" id="vm-disk-add"><i class="fas fa-plus"></i> ${t('Dodaj dysk')}</button>
+            </div>`;
+        dc.innerHTML = html;
 
-        dc.querySelector('#vm-disk-resize')?.addEventListener('click', async () => {
-            const size = await promptDialog(t('Powiększ dysk'), t('Powiększ o (np. +10G, +512M):'), '+10G');
-            if (!size) return;
+        // Resize handlers
+        dc.querySelectorAll('.vm-disk-resize').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const diskId = btn.dataset.id;
+                const size = await promptDialog(t('Powiększ dysk'), t('Powiększ o (np. +10G, +512M):'), '+10G');
+                if (!size) return;
+                try {
+                    const r = await api(`/vm/machines/${vm.id}/disks/${diskId}/resize`, { method: 'POST', body: { size } });
+                    toast(r.message || t('Dysk powiększony'), 'success');
+                    renderDiskPanel(dc);
+                } catch (e) { toast(e.message || t('Błąd'), 'error'); }
+            });
+        });
+
+        // Remove handlers
+        dc.querySelectorAll('.vm-disk-remove').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const diskId = btn.dataset.id;
+                if (!await confirmDialog(t('Usuń dysk'), t('Czy na pewno usunąć dysk {id}? Dane zostaną utracone.', { id: diskId }))) return;
+                try {
+                    const r = await api(`/vm/machines/${vm.id}/disks/${diskId}`, { method: 'DELETE' });
+                    toast(r.message || t('Dysk usunięty'), 'success');
+                    renderDiskPanel(dc);
+                } catch (e) { toast(e.message || t('Błąd'), 'error'); }
+            });
+        });
+
+        // Add disk
+        dc.querySelector('#vm-disk-add')?.addEventListener('click', async () => {
+            const sizeStr = await promptDialog(t('Dodaj dysk'), t('Rozmiar nowego dysku (np. 20G, 500M):'), '20G');
+            if (!sizeStr) return;
             try {
-                const r = await api(`/vm/machines/${vm.id}/resize-disk`, { method: 'POST', body: { size } });
-                toast(r.message || t('Dysk powiększony'), 'success');
+                const r = await api(`/vm/machines/${vm.id}/disks`, { method: 'POST', body: { size: sizeStr, format: 'qcow2' } });
+                toast(r.message || t('Dysk dodany'), 'success');
                 renderDiskPanel(dc);
             } catch (e) { toast(e.message || t('Błąd'), 'error'); }
         });

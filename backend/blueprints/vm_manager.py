@@ -2,6 +2,28 @@
 EthOS — VM Manager (Virtual Machine Manager)
 Create and manage virtual machines using QEMU/KVM.
 Supports booting ISO, IMG, QCOW2 and VDI images.
+Supports multiple disks per VM (add, remove, resize).
+
+Endpoints:
+  GET    /api/vm/machines                               — list VMs
+  POST   /api/vm/machines                               — create VM
+  GET    /api/vm/machines/<id>                           — get VM
+  PUT    /api/vm/machines/<id>                           — update VM config
+  DELETE /api/vm/machines/<id>                           — delete VM
+  POST   /api/vm/machines/<id>/start                    — start VM
+  POST   /api/vm/machines/<id>/stop                     — stop VM
+  GET    /api/vm/machines/<id>/disk-info                 — boot disk info (compat)
+  POST   /api/vm/machines/<id>/resize-disk               — resize boot disk (compat)
+  GET    /api/vm/machines/<id>/disks                     — list all disks
+  POST   /api/vm/machines/<id>/disks                     — add disk
+  DELETE /api/vm/machines/<id>/disks/<disk_id>           — remove disk
+  POST   /api/vm/machines/<id>/disks/<disk_id>/resize   — resize specific disk
+  GET    /api/vm/machines/<id>/snapshots                 — list snapshots
+  POST   /api/vm/machines/<id>/snapshots                 — create snapshot
+  POST   /api/vm/machines/<id>/snapshots/<tag>           — restore snapshot
+  DELETE /api/vm/machines/<id>/snapshots/<tag>           — delete snapshot
+  POST   /api/vm/import-disk                             — import disk image
+  POST   /api/vm/convert                                 — convert disk format
 """
 
 import os
@@ -52,12 +74,26 @@ _running_vms = {}  # vm_id -> { 'proc': Popen, 'pid': int, 'started': float, 'vn
 
 
 def _load_vms():
-    """Load VM definitions from the state file."""
+    """Load VM definitions from the state file, auto-migrating legacy format."""
     try:
         with open(_STATE_FILE, 'r') as f:
-            return json.load(f)
+            vms = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
+    migrated = False
+    for vm_id, vm in vms.items():
+        if 'disks' not in vm and vm.get('disk_file'):
+            vm['disks'] = [{
+                'id': 'disk0',
+                'file': vm['disk_file'],
+                'format': vm.get('disk_format', 'qcow2'),
+                'size': vm.get('disk_size', ''),
+                'bus': 'virtio',
+            }]
+            migrated = True
+    if migrated:
+        _save_vms(vms)
+    return vms
 
 
 def _save_vms(vms):
@@ -65,6 +101,24 @@ def _save_vms(vms):
     os.makedirs(os.path.dirname(os.path.abspath(_STATE_FILE)), exist_ok=True)
     with open(_STATE_FILE, 'w') as f:
         json.dump(vms, f, indent=2)
+
+
+def _next_disk_id(vm):
+    """Return the next available disk ID (disk0, disk1, ...)."""
+    existing = {d['id'] for d in vm.get('disks', [])}
+    for i in range(100):
+        did = f'disk{i}'
+        if did not in existing:
+            return did
+    return f'disk{len(existing)}'
+
+
+def _get_disk(vm, disk_id):
+    """Find a disk entry by ID, or None."""
+    for d in vm.get('disks', []):
+        if d['id'] == disk_id:
+            return d
+    return None
 
 
 def _default_network(os_type='linux'):
@@ -675,6 +729,7 @@ def list_vms():
             'created': vm.get('created', ''),
             'description': vm.get('description', ''),
             'disk_file': vm.get('disk_file', ''),
+            'disks': vm.get('disks', []),
             'network': vm.get('network') or _default_network(vm.get('os_type', 'linux')),
             'arch': 'raspi' if _is_rpi_image(vm.get('boot_image', ''), vm.get('name', ''))
                     else 'aarch64' if _is_arm_image(vm.get('boot_image', ''), vm.get('name', ''))
@@ -731,7 +786,7 @@ def create_vm():
     os.makedirs(vm_path, exist_ok=True)
 
     # Create virtual disk
-    disk_file = os.path.join(vm_path, f'disk.{disk_format}')
+    disk_file = os.path.join(vm_path, f'disk0.{disk_format}')
     try:
         r = host_run(
             f'qemu-img create -f {disk_format} "{disk_file}" {disk_size}',
@@ -751,6 +806,13 @@ def create_vm():
         'disk_size': disk_size,
         'disk_format': disk_format,
         'disk_file': disk_file,
+        'disks': [{
+            'id': 'disk0',
+            'file': disk_file,
+            'format': disk_format,
+            'size': disk_size,
+            'bus': 'virtio',
+        }],
         'os_type': os_type,
         'boot_image': boot_image,
         'description': description,
@@ -1104,13 +1166,19 @@ def start_vm(vm_id):
         # SD card — main boot drive (RPi boots from SD)
         cmd += ['-drive', f'file={sd_copy},format=raw,if=sd']
 
-        # Additional data disk (qcow2) — attach via USB mass-storage
+        # Additional data disks — attach via USB mass-storage
         # NOTE: raspi3b USB emulation is limited; this may not work
-        disk_file = vm.get('disk_file', '')
-        if disk_file and os.path.exists(disk_file):
-            disk_format = vm.get('disk_format', 'qcow2')
-            cmd += ['-drive', f'file={disk_file},format={disk_format},if=none,id=usbdisk']
-            cmd += ['-device', 'usb-storage,drive=usbdisk']
+        disks = vm.get('disks', [])
+        if not disks and vm.get('disk_file'):
+            disks = [{'id': 'disk0', 'file': vm['disk_file'],
+                       'format': vm.get('disk_format', 'qcow2')}]
+        for disk in disks:
+            df = disk.get('file', '')
+            if df and os.path.exists(df):
+                dfmt = disk.get('format', 'qcow2')
+                did = disk.get('id', 'usbdisk')
+                cmd += ['-drive', f'file={df},format={dfmt},if=none,id={did}']
+                cmd += ['-device', f'usb-storage,drive={did}']
 
         # Serial console (more reliable than VNC for raspi3b)
         cmd += ['-serial', f'mon:tcp:127.0.0.1:{vnc_port},server=on,wait=off']
@@ -1143,11 +1211,16 @@ def start_vm(vm_id):
                 cmd += ['-bios', fw]
                 break
 
-        # Disk
-        disk_file = vm.get('disk_file', '')
-        if disk_file and os.path.exists(disk_file):
-            disk_format = vm.get('disk_format', 'qcow2')
-            cmd += ['-drive', f'file={disk_file},format={disk_format},if=virtio']
+        # Disks
+        disks = vm.get('disks', [])
+        if not disks and vm.get('disk_file'):
+            disks = [{'id': 'disk0', 'file': vm['disk_file'],
+                       'format': vm.get('disk_format', 'qcow2')}]
+        for disk in disks:
+            df = disk.get('file', '')
+            if df and os.path.exists(df):
+                dfmt = disk.get('format', 'qcow2')
+                cmd += ['-drive', f'file={df},format={dfmt},if=virtio']
 
         # Boot image — mount as second drive for generic ARM
         if boot_image and os.path.exists(boot_image):
@@ -1208,18 +1281,23 @@ def start_vm(vm_id):
                 cmd += ['-drive', f'file={boot_image},format={img_fmt},if=none,id=bootimg,snapshot=on']
                 cmd += ['-device', 'virtio-blk-pci,drive=bootimg,bootindex=0']
 
-        # Disk — the VM's own virtual hard drive (install target)
-        disk_file = vm.get('disk_file', '')
-        if disk_file and os.path.exists(disk_file):
-            disk_format = vm.get('disk_format', 'qcow2')
-            if has_disk_boot_image:
-                # Lower boot priority so the boot image is tried first
-                cmd += ['-drive', f'file={disk_file},format={disk_format},if=none,id=maindisk']
-                cmd += ['-device', 'virtio-blk-pci,drive=maindisk,bootindex=1']
+        # Disks — loop over all VM disks
+        disks = vm.get('disks', [])
+        if not disks and vm.get('disk_file'):
+            disks = [{'id': 'disk0', 'file': vm['disk_file'],
+                       'format': vm.get('disk_format', 'qcow2')}]
+        for i, disk in enumerate(disks):
+            df = disk.get('file', '')
+            if not df or not os.path.exists(df):
+                continue
+            dfmt = disk.get('format', 'qcow2')
+            did = disk.get('id', f'disk{i}')
+            cmd += ['-drive', f'file={df},format={dfmt},if=none,id={did}']
+            if i == 0:
+                boot_idx = 1 if has_disk_boot_image else 0
+                cmd += ['-device', f'virtio-blk-pci,drive={did},bootindex={boot_idx}']
             else:
-                # Sole disk — explicit bootindex so UEFI/BIOS picks it up
-                cmd += ['-drive', f'file={disk_file},format={disk_format},if=none,id=maindisk']
-                cmd += ['-device', 'virtio-blk-pci,drive=maindisk,bootindex=0']
+                cmd += ['-device', f'virtio-blk-pci,drive={did}']
 
         # ISO boot image (CD-ROM)
         if boot_image and os.path.exists(boot_image):
@@ -1600,6 +1678,9 @@ def import_disk():
             'disk_size':   disk_size,
             'disk_format': disk_format,
             'disk_file':   disk_file,
+            'disks':       [{'id': 'disk0', 'file': disk_file,
+                             'format': disk_format, 'size': disk_size,
+                             'bus': 'virtio'}],
             'os_type':     os_type,
             'boot_image':  '',
             'description': desc,
@@ -1678,6 +1759,163 @@ def resize_disk(vm_id):
         new_size = '+' + new_size
 
     disk_file = vm.get('disk_file', '')
+    if not disk_file or not os.path.exists(disk_file):
+        return jsonify({'error': 'Disk file not found'}), 404
+
+    try:
+        r = host_run(f'qemu-img resize "{disk_file}" {new_size}', timeout=30)
+        if r.returncode == 0:
+            return jsonify({'status': 'ok', 'new_size': new_size})
+        return jsonify({'error': r.stderr}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+def _disk_info_dict(disk_file):
+    """Return qemu-img info as a dict for a single disk file."""
+    r = host_run(f'qemu-img info --output=json "{disk_file}"', timeout=10)
+    if r.returncode != 0:
+        return None
+    info = json.loads(r.stdout)
+    return {
+        'filename': info.get('filename', ''),
+        'format': info.get('format', ''),
+        'virtual_size': info.get('virtual-size', 0),
+        'virtual_size_human': _human_size(info.get('virtual-size', 0)),
+        'actual_size': info.get('actual-size', 0),
+        'actual_size_human': _human_size(info.get('actual-size', 0)),
+    }
+
+
+@vm_bp.route('/machines/<vm_id>/disks')
+@admin_required
+@_require_qemu
+def list_disks(vm_id):
+    """List all disks attached to a VM with size info."""
+    err = require_tools('qemu-img')
+    if err:
+        return err
+    vms = _load_vms()
+    vm = vms.get(vm_id)
+    if not vm:
+        return jsonify({'error': 'VM not found'}), 404
+
+    result = []
+    for disk in vm.get('disks', []):
+        entry = {
+            'id': disk.get('id', ''),
+            'format': disk.get('format', 'qcow2'),
+            'size': disk.get('size', ''),
+            'bus': disk.get('bus', 'virtio'),
+            'bootable': disk.get('id') == 'disk0',
+        }
+        df = disk.get('file', '')
+        if df and os.path.exists(df):
+            info = _disk_info_dict(df)
+            if info:
+                entry.update(info)
+        result.append(entry)
+    return jsonify({'disks': result})
+
+
+@vm_bp.route('/machines/<vm_id>/disks', methods=['POST'])
+@admin_required
+@_require_qemu
+def add_disk(vm_id):
+    """Add a new disk to a VM (VM must be stopped)."""
+    err = require_tools('qemu-img')
+    if err:
+        return err
+    if _check_vm_process(vm_id):
+        return jsonify({'error': 'Stop VM before adding a disk'}), 409
+
+    vms = _load_vms()
+    vm = vms.get(vm_id)
+    if not vm:
+        return jsonify({'error': 'VM not found'}), 404
+
+    data = request.get_json(force=True) if request.data else {}
+    size = data.get('size', '20G')
+    fmt = data.get('format', 'qcow2')
+    if fmt not in ('qcow2', 'raw'):
+        return jsonify({'error': 'Format must be qcow2 or raw'}), 400
+    if not re.match(r'^\d+[GMK]$', size):
+        return jsonify({'error': 'Invalid size (e.g. 20G, 512M)'}), 400
+
+    disk_id = _next_disk_id(vm)
+    disk_file = os.path.join(_vm_dir(vm_id), f'{disk_id}.{fmt}')
+
+    try:
+        r = host_run(f'qemu-img create -f {fmt} "{disk_file}" {size}', timeout=60)
+        if r.returncode != 0:
+            return jsonify({'error': f'Disk creation failed: {r.stderr}'}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+    new_disk = {'id': disk_id, 'file': disk_file, 'format': fmt,
+                'size': size, 'bus': 'virtio'}
+    vm.setdefault('disks', []).append(new_disk)
+    _save_vms(vms)
+    return jsonify({'status': 'ok', 'disk': new_disk})
+
+
+@vm_bp.route('/machines/<vm_id>/disks/<disk_id>', methods=['DELETE'])
+@admin_required
+@_require_qemu
+def remove_disk(vm_id, disk_id):
+    """Remove a disk from a VM (VM must be stopped, cannot remove disk0)."""
+    if _check_vm_process(vm_id):
+        return jsonify({'error': 'Stop VM before removing a disk'}), 409
+
+    vms = _load_vms()
+    vm = vms.get(vm_id)
+    if not vm:
+        return jsonify({'error': 'VM not found'}), 404
+
+    if disk_id == 'disk0':
+        return jsonify({'error': 'Cannot remove the boot disk'}), 400
+
+    disk = _get_disk(vm, disk_id)
+    if not disk:
+        return jsonify({'error': f'Disk {disk_id} not found'}), 404
+
+    disk_file = disk.get('file', '')
+    if disk_file and os.path.isfile(disk_file):
+        os.remove(disk_file)
+
+    vm['disks'] = [d for d in vm['disks'] if d['id'] != disk_id]
+    _save_vms(vms)
+    return jsonify({'status': 'ok'})
+
+
+@vm_bp.route('/machines/<vm_id>/disks/<disk_id>/resize', methods=['POST'])
+@admin_required
+@_require_qemu
+def resize_specific_disk(vm_id, disk_id):
+    """Resize a specific disk (expand only, VM must be stopped)."""
+    err = require_tools('qemu-img')
+    if err:
+        return err
+    if _check_vm_process(vm_id):
+        return jsonify({'error': 'Stop VM before resizing disk'}), 409
+
+    vms = _load_vms()
+    vm = vms.get(vm_id)
+    if not vm:
+        return jsonify({'error': 'VM not found'}), 404
+
+    disk = _get_disk(vm, disk_id)
+    if not disk:
+        return jsonify({'error': f'Disk {disk_id} not found'}), 404
+
+    data = request.get_json(force=True) if request.data else {}
+    new_size = data.get('size', '')
+    if not re.match(r'^\+?\d+[GMK]$', new_size):
+        return jsonify({'error': 'Invalid size (e.g. +10G, +512M)'}), 400
+    if not new_size.startswith('+'):
+        new_size = '+' + new_size
+
+    disk_file = disk.get('file', '')
     if not disk_file or not os.path.exists(disk_file):
         return jsonify({'error': 'Disk file not found'}), 404
 
