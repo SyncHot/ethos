@@ -121,6 +121,7 @@ def start_install():
                 for d in ("data", "logs", "backups", "uploads"):
                     tgt = f"/mnt/data/ethos/{d}"
                     os.makedirs(tgt, exist_ok=True)
+                os.makedirs("/mnt/data/homes", exist_ok=True)
             # Bind-mount /dev for chroot operations (chpasswd, ssh-keygen, systemctl)
             _run(f"mount --bind /dev {mount_dir}/dev")
             _run(f"mount --bind /dev/pts {mount_dir}/dev/pts 2>/dev/null")

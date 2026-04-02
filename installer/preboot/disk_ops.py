@@ -723,9 +723,11 @@ def _prepare_data_dirs(data_part):
 def _setup_data_separation(mount_dir, data_part):
     """Move persistent dirs from root to btrfs data partition via symlinks.
 
-    Creates /mnt/data/ethos/{data,logs,backups,uploads} on the data partition,
-    moves any existing content from root, and replaces with symlinks.
-    This ensures all persistent data survives root A/B updates and factory resets.
+    Creates /mnt/data/ethos/{data,logs,backups,uploads} and /mnt/data/homes
+    on the data partition, moves any existing content from root, and replaces
+    with symlinks.  This ensures all persistent data survives root A/B updates
+    and factory resets.  Home directories live on the data volume (like
+    Synology/QNAP) so user files aren't constrained by the 4 GB root partition.
     """
     import shutil
 
@@ -740,43 +742,20 @@ def _setup_data_separation(mount_dir, data_part):
             log.warning("Could not mount data partition for separation: %s", err)
             return
 
-        # Create persistent directory structure on data partition
+        # --- EthOS app dirs: /opt/ethos/{dir} → /mnt/data/ethos/{dir} ---
         ethos_data_root = os.path.join(data_mount, "ethos")
         for dirname in ("data", "logs", "backups", "uploads"):
             target_dir = os.path.join(ethos_data_root, dirname)
             os.makedirs(target_dir, exist_ok=True)
 
             src_dir = os.path.join(ethos_root, dirname)
-            if os.path.isdir(src_dir) and not os.path.islink(src_dir):
-                # Move existing content to data partition
-                for item in os.listdir(src_dir):
-                    s = os.path.join(src_dir, item)
-                    d = os.path.join(target_dir, item)
-                    if os.path.isdir(s):
-                        if os.path.exists(d):
-                            shutil.rmtree(d)
-                        shutil.copytree(s, d, symlinks=True)
-                    else:
-                        shutil.copy2(s, d)
-                shutil.rmtree(src_dir)
-            elif os.path.islink(src_dir):
-                os.remove(src_dir)
-            elif os.path.exists(src_dir):
-                os.remove(src_dir)
+            _move_and_symlink(src_dir, target_dir, f"/mnt/data/ethos/{dirname}")
 
-            # Nuclear cleanup: ensure src_dir does NOT exist before creating symlink.
-            # Use rm -rf (handles dirs, symlinks, mount remnants os.remove can't).
-            if os.path.lexists(src_dir):
-                log.warning("Path still exists after cleanup: %s — force removing", src_dir)
-                _run(f"rm -rf {shlex.quote(src_dir)}", timeout=10)
-            if os.path.lexists(src_dir):
-                raise RuntimeError(
-                    f"Cannot create data symlink: {src_dir} still exists after forced removal"
-                )
-
-            # Create symlink: /opt/ethos/{dir} → /mnt/data/ethos/{dir}
-            os.symlink(f"/mnt/data/ethos/{dirname}", src_dir)
-            log.info("Symlinked %s → /mnt/data/ethos/%s", dirname, dirname)
+        # --- User homes: /home → /mnt/data/homes ---
+        homes_target = os.path.join(data_mount, "homes")
+        os.makedirs(homes_target, exist_ok=True)
+        home_src = os.path.join(mount_dir, "home")
+        _move_and_symlink(home_src, homes_target, "/mnt/data/homes")
 
         # Create /mnt/data and /mnt/snapshots mount points in target
         os.makedirs(os.path.join(mount_dir, "mnt/data"), exist_ok=True)
@@ -786,6 +765,40 @@ def _setup_data_separation(mount_dir, data_part):
         _run(f"umount {data_mount} 2>/dev/null", timeout=15)
 
     log.info("Data separation complete — persistent dirs on btrfs data partition")
+
+
+def _move_and_symlink(src_dir, target_dir, symlink_target):
+    """Move contents from src_dir to target_dir, then replace src_dir with
+    a symlink pointing at symlink_target (absolute path for the running OS)."""
+    import shutil
+
+    if os.path.isdir(src_dir) and not os.path.islink(src_dir):
+        for item in os.listdir(src_dir):
+            s = os.path.join(src_dir, item)
+            d = os.path.join(target_dir, item)
+            if os.path.isdir(s):
+                if os.path.exists(d):
+                    shutil.rmtree(d)
+                shutil.copytree(s, d, symlinks=True)
+            else:
+                shutil.copy2(s, d)
+        shutil.rmtree(src_dir)
+    elif os.path.islink(src_dir):
+        os.remove(src_dir)
+    elif os.path.exists(src_dir):
+        os.remove(src_dir)
+
+    # Nuclear cleanup: ensure src_dir does NOT exist before creating symlink.
+    if os.path.lexists(src_dir):
+        log.warning("Path still exists after cleanup: %s — force removing", src_dir)
+        _run(f"rm -rf {shlex.quote(src_dir)}", timeout=10)
+    if os.path.lexists(src_dir):
+        raise RuntimeError(
+            f"Cannot create data symlink: {src_dir} still exists after forced removal"
+        )
+
+    os.symlink(symlink_target, src_dir)
+    log.info("Symlinked %s → %s", src_dir, symlink_target)
 
 
 def _fixup_installed_system(mount_dir):
