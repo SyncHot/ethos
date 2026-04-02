@@ -106,7 +106,12 @@ def start_install():
             # symlinks created by data separation resolve correctly
             # (e.g. /opt/ethos/data → /mnt/data/ethos/data).
             _run("mkdir -p /mnt/data", timeout=5)
-            _run(f"mount -o subvol=@data {_part('/dev/' + os_disk, 4)} /mnt/data", timeout=30)
+            same_disk = data_disk is None or data_disk == "same" or data_disk == os_disk
+            if same_disk:
+                data_part = _part('/dev/' + os_disk, 4)
+            else:
+                data_part = _part('/dev/' + data_disk, 1)
+            _run(f"mount -o subvol=@data {data_part} /mnt/data", timeout=30)
             # Bind-mount /dev for chroot operations (chpasswd, ssh-keygen, systemctl)
             _run(f"mount --bind /dev {mount_dir}/dev")
             _run(f"mount --bind /dev/pts {mount_dir}/dev/pts 2>/dev/null")
