@@ -492,7 +492,6 @@ def _dd_clone(compressed_img, target_part, progress_cb):
     # Check zstdcat is available
     out, err, rc = _run("which zstdcat", timeout=5)
     if rc != 0:
-        # Try zstd -d as fallback
         out2, _, rc2 = _run("which zstd", timeout=5)
         if rc2 != 0:
             raise RuntimeError("Neither zstdcat nor zstd found — cannot decompress image")
@@ -513,8 +512,28 @@ def _dd_clone(compressed_img, target_part, progress_cb):
         if not os.path.exists(target_part):
             raise RuntimeError(f"Target partition {target_part} does not exist")
 
-    # Decompress and write block-by-block, with pipefail to catch zstd errors
-    cmd = f"bash -o pipefail -c '{decompress_cmd} | dd of={target_part} bs=4M conv=fsync status=progress 2>&1'"
+    # Get target partition size — limit dd to this so we never get ENOSPC
+    # (the builder's image may be larger than the installer's A/B root partition)
+    part_out, _, _ = _run(f"blockdev --getsize64 {target_part}", timeout=5)
+    part_bytes = int(part_out.strip()) if part_out.strip() else 0
+    bs = 4 * 1024 * 1024  # 4M
+    dd_count = part_bytes // bs if part_bytes else 0
+
+    if dd_count < 1:
+        raise RuntimeError(f"Target partition too small or unreadable: {part_bytes} bytes")
+
+    log.info("Target partition: %d MB (%d x 4M blocks)", part_bytes // (1024 * 1024), dd_count)
+
+    # Decompress and write block-by-block, capped at partition size.
+    # We intentionally avoid pipefail here: if the decompressed image is larger
+    # than the partition, zstdcat gets SIGPIPE after dd reads enough — that's OK.
+    # dd's own exit code is captured separately via a wrapper.
+    cmd = (
+        f"bash -c '"
+        f'{decompress_cmd} | dd of={target_part} bs=4M count={dd_count}'
+        f" iflag=fullblock conv=fsync status=progress 2>&1;"
+        f" echo DD_EXIT_CODE=$?'"
+    )
     log.info("Running: %s", cmd)
     proc = subprocess.Popen(
         cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -522,26 +541,31 @@ def _dd_clone(compressed_img, target_part, progress_cb):
     )
 
     last_line = ""
+    dd_exit = None
     while True:
         line = proc.stdout.readline()
         if not line and proc.poll() is not None:
             break
         line = line.strip()
-        if line:
+        if not line:
+            continue
+        if line.startswith("DD_EXIT_CODE="):
+            dd_exit = int(line.split("=", 1)[1])
+        else:
             last_line = line
             log.info("dd: %s", line[:200])
 
-    rc = proc.wait()
-    if rc != 0:
-        # Collect diagnostics
-        diag_parts = [f"dd clone failed with code {rc}"]
+    proc.wait()
+    if dd_exit is None:
+        dd_exit = 1  # fallback — couldn't parse
+    log.info("dd exit code: %d", dd_exit)
+
+    if dd_exit != 0:
+        diag_parts = [f"dd clone failed with code {dd_exit}"]
         if last_line:
             diag_parts.append(f"last output: {last_line[:200]}")
-        # Check disk space
-        out, _, _ = _run(f"blockdev --getsize64 {target_part}", timeout=5)
-        if out.strip():
-            diag_parts.append(f"partition size: {int(out.strip()) // (1024*1024)} MB")
-        diag_parts.append(f"image size: {img_size // (1024*1024)} MB")
+        diag_parts.append(f"partition: {part_bytes // (1024*1024)} MB")
+        diag_parts.append(f"compressed image: {img_size // (1024*1024)} MB")
         raise RuntimeError(" | ".join(diag_parts))
 
     progress_cb("cloning", 55, "Verifying filesystem...")
@@ -703,7 +727,12 @@ def _setup_data_separation(mount_dir, data_part):
                 if os.path.isdir(src_dir) and not os.path.islink(src_dir):
                     shutil.rmtree(src_dir, ignore_errors=True)
                 if os.path.lexists(src_dir):
-                    os.remove(src_dir)
+                    # os.remove fails on dirs — use rm -rf as nuclear option
+                    _run(f"rm -rf {shlex.quote(src_dir)}", timeout=10)
+                if os.path.lexists(src_dir):
+                    raise RuntimeError(
+                        f"Cannot create data symlink: {src_dir} still exists after forced removal"
+                    )
 
             # Create symlink: /opt/ethos/{dir} → /mnt/data/ethos/{dir}
             os.symlink(f"/mnt/data/ethos/{dirname}", src_dir)
