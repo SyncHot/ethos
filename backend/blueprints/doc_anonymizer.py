@@ -503,6 +503,30 @@ def _detect_names(text):
                     if len(sp) >= 4:
                         known_surnames.add(sp)
 
+    # 2b) Surname-first: SURNAME Firstname (common in Polish official forms)
+    surname_first_pat = re.compile(
+        r'\b(' + _SURNAME_RE + r')'
+        r'[ \t]+([A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]+)\b'
+    )
+    for line in text.split('\n'):
+        for m in surname_first_pat.finditer(line):
+            surname_cand = m.group(1)
+            first_cand = m.group(2)
+            full_match = m.group(0).strip()
+            if full_match in seen:
+                continue
+            if not _is_known_first_name(first_cand):
+                continue
+            if surname_cand in _NAME_STOPWORDS or first_cand in _NAME_STOPWORDS:
+                continue
+            if len(surname_cand) < 3:
+                continue
+            seen.add(full_match)
+            entities.append({'text': full_match, 'category': 'IMIE_NAZWISKO'})
+            for sp in surname_cand.split('-'):
+                if len(sp) >= 4:
+                    known_surnames.add(sp)
+
     # 3) Contextual label patterns — "Imię i nazwisko: NAME", "Syn: NAME" etc.
     _LABEL_PATTERNS = [
         r'[Ii]mi[eę]\s+i\s+nazwisko\s*:\s*',
