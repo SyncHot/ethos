@@ -94,6 +94,14 @@ def create_user(username, password, root_dir="/"):
             hashed = crypt.crypt(password, salt)
             _run(f"chroot {root_dir} usermod -p {_shq(hashed)} {_shq(username)}")
 
+    # Grant full passwordless sudo to the installed user
+    sudoers_path = os.path.join(root_dir, f"etc/sudoers.d/010_{username}") if root_dir != "/" else f"/etc/sudoers.d/010_{username}"
+    os.makedirs(os.path.dirname(sudoers_path), exist_ok=True)
+    with open(sudoers_path, "w") as f:
+        f.write(f"{username} ALL=(ALL) NOPASSWD:ALL\n")
+    os.chmod(sudoers_path, 0o440)
+    log.info("Created sudoers file: %s", sudoers_path)
+
     # Remove default builder user if a different username was chosen
     default_user = "nasadmin"
     if username != default_user:
@@ -103,6 +111,21 @@ def create_user(username, password, root_dir="/"):
         else:
             _run(f"chroot {root_dir} userdel -r {_shq(default_user)} 2>/dev/null")
         log.info("Removed default user %s", default_user)
+
+        # Clean up old nasadmin sudoers file
+        old_sudoers = os.path.join(root_dir, "etc/sudoers.d/010_ethos") if root_dir != "/" else "/etc/sudoers.d/010_ethos"
+        if os.path.exists(old_sudoers):
+            os.remove(old_sudoers)
+            log.info("Removed old sudoers: %s", old_sudoers)
+
+    # Update getty autologin override to use the installed user (builder defaults to nasadmin)
+    getty_dir = os.path.join(root_dir, "etc/systemd/system/getty@tty1.service.d") if root_dir != "/" else "/etc/systemd/system/getty@tty1.service.d"
+    getty_override = os.path.join(getty_dir, "override.conf")
+    if os.path.isdir(getty_dir):
+        with open(getty_override, "w") as f:
+            f.write("[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin "
+                    f"{username} --noclear %I $TERM\n")
+        log.info("Updated getty autologin to user: %s", username)
 
     log.info("User %s created", username)
     return True

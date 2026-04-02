@@ -1006,7 +1006,7 @@ UDEV
 cat > "$ROOT/etc/udev/rules.d/60-ethos-scheduler.rules" <<'UDEV_SCHED'
 ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{{queue/rotational}}=="1", ATTR{{queue/scheduler}}="bfq"
 ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{{queue/rotational}}=="0", ATTR{{queue/scheduler}}="none"
-ACTION=="add|change", KERNEL=="nvme*", ATTR{{queue/scheduler}}="none"
+ACTION=="add|change", KERNEL=="nvme[0-9]*n[0-9]*", TEST=="queue/scheduler", ATTR{{queue/scheduler}}="none"
 UDEV_SCHED
 
 # Logrotate policy for EthOS logs
