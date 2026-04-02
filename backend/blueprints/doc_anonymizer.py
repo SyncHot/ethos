@@ -31,7 +31,7 @@ from flask import Blueprint, request, jsonify, send_file, g
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from utils import register_pkg_routes, get_username_or
-from host import data_path
+from host import data_path, host_run
 
 log = logging.getLogger('ethos.doc_anonymizer')
 
@@ -44,6 +44,29 @@ _JOBS_DIR = data_path('doc_anonymizer_jobs')
 
 def _ensure_jobs_dir():
     os.makedirs(_JOBS_DIR, exist_ok=True)
+
+
+def _ensure_deps():
+    """Install PyMuPDF, PyPDF2 and poppler-utils if missing."""
+    missing_pip = []
+    try:
+        import fitz  # noqa: F401
+    except ImportError:
+        missing_pip.append('PyMuPDF')
+    try:
+        import PyPDF2  # noqa: F401
+    except ImportError:
+        missing_pip.append('PyPDF2')
+
+    if missing_pip:
+        pkgs = ' '.join(missing_pip)
+        log.info('[doc_anonymizer] Installing pip deps: %s', pkgs)
+        host_run(f'/opt/ethos/venv/bin/pip install --quiet {pkgs}', timeout=120)
+
+    import shutil
+    if not shutil.which('pdftotext'):
+        log.info('[doc_anonymizer] Installing poppler-utils')
+        host_run('apt-get install -y -qq poppler-utils', timeout=60)
 
 
 def _job_dir(job_id):
@@ -838,6 +861,7 @@ def _run_anonymization(job_id, src_path, filename, file_ext, username):
 def anon_upload():
     """Upload a PDF/DOCX file for anonymization."""
     _ensure_jobs_dir()
+    _ensure_deps()
 
     if 'file' not in request.files:
         return jsonify({'error': 'No file uploaded'}), 400
@@ -966,12 +990,30 @@ def anon_delete_job(job_id):
 @doc_anonymizer_bp.route('/status', methods=['GET'])
 def anon_app_status():
     """Check app status and AI Chat dependency."""
+    import shutil
+
+    has_fitz = True
+    try:
+        import fitz  # noqa: F401
+    except ImportError:
+        has_fitz = False
+
+    has_pypdf2 = True
+    try:
+        import PyPDF2  # noqa: F401
+    except ImportError:
+        has_pypdf2 = False
+
     result = {
         'installed': True,
         'ai_chat_available': False,
         'model_loaded': False,
         'active_model': None,
         'recommended_model': 'bielik-7b-q4',
+        'deps_ok': has_fitz and has_pypdf2 and bool(shutil.which('pdftotext')),
+        'has_fitz': has_fitz,
+        'has_pypdf2': has_pypdf2,
+        'has_pdftotext': bool(shutil.which('pdftotext')),
     }
 
     try:
