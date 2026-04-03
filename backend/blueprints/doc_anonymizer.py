@@ -486,8 +486,8 @@ _REGEX_PATTERNS = [
     (re.compile(r'REGON[\s:]*\d{9}(?:\d{5})?\b'), 'REGON'),
     # KRS: 10 digits (e.g. "KRS: 0000234567" or "KRS 0000234567")
     (re.compile(r'KRS[\s:]*\d{10}\b'), 'KRS'),
-    # PWZ number (e.g. "nr PWZ 4478123" or "PWZ: 1234567")
-    (re.compile(r'(?:nr\s+)?PWZ[\s:]*\d{7}'), 'NR_DOKUMENTU'),
+    # PWZ (prawo wykonywania zawodu) — NOT anonymized, it's a public
+    # professional license number for doctors, not personal data.
     # Dates: DD.MM.YYYY, DD-MM-YYYY, DD/MM/YYYY
     (re.compile(r'(?<!\d)\d{1,2}[./-]\d{1,2}[./-]\d{4}(?!\d)'), 'DATA'),
     # Written dates: "31 marca 2026" / "1 stycznia 2025 r."
@@ -1129,6 +1129,8 @@ _MEDICAL_STOPWORDS = frozenset({
     'finasteryd', 'proscar',
     # Medical abbreviations commonly misidentified as names
     'triglicerydy', 'fizjoterapeuty', 'ordynator',
+    # Professional license numbers (public, not PII)
+    'pwz', 'prawo', 'wykonywania', 'zawodu',
     # Anatomy
     'serce', 'pluca', 'watroba', 'nerki', 'trzustka', 'jelito',
     'zoladek', 'mozg', 'kregowy', 'przedsionek', 'komora',
@@ -1412,7 +1414,7 @@ def _redact_scanned_pdf(src_path, output_path, entities):
     _SKIP_WORDS = {
         'lek', 'dr', 'med', 'prof', 'mgr', 'inz', 'hab', 'doc',
         'im', 'ul', 'al', 'os', 'pl', 'str', 'nr', 'tel', 'fax',
-        'sp', 'zoo', 'nip', 'regon', 'krs', 'www', 'com',
+        'sp', 'zoo', 'nip', 'regon', 'krs', 'www', 'com', 'pwz',
     }
 
     # Build targeted lookups
@@ -1729,7 +1731,7 @@ _MEDICAL_ABBREV_STOPWORDS = frozenset({
     'tsh', 'ft3', 'ft4', 'crp', 'opl', 'oun', 'ast', 'alt',
     'bnp', 'gfr', 'hba1c', 'ldl', 'hdl', 'wbc', 'rbc', 'plt',
     'hgb', 'mch', 'mchc', 'mcv', 'inr', 'aptt', 'd.s.', 'ds',
-    'lica', 'meen', 'wall',
+    'lica', 'meen', 'wall', 'pwz',
 })
 
 
@@ -1773,6 +1775,12 @@ def _clean_entities(entities):
         title_words = {'fizjoterapeuty', 'ordynator', 'pielęgniarka', 'pielegniar',
                        'rehabilitant', 'technik', 'dietetyk', 'logopeda', 'psycholog'}
         if txt.lower() in title_words:
+            continue
+
+        # Skip PWZ (prawo wykonywania zawodu) — public professional license, not PII
+        if re.match(r'(?i)(?:nr\s+)?PWZ[\s:]*\d{5,7}', txt):
+            continue
+        if cat == 'NR_DOKUMENTU' and 'PWZ' in txt.upper():
             continue
 
         # Split multi-line/pipe entities into clean parts
