@@ -1383,6 +1383,9 @@ def _redact_scanned_pdf(src_path, output_path, entities):
         log.error('[doc_anonymizer] OCR redaction requires pytesseract + Pillow')
         return []
 
+    # Clean entities (same filter as text-based path)
+    entities = _clean_entities(entities)
+
     # Build lookup of texts to redact
     seen_texts = {}
     for e in entities:
@@ -1526,7 +1529,7 @@ def _redact_scanned_pdf(src_path, output_path, entities):
                     matched_entities.add((ent_txt, ent_cat))
 
         # 4) Phrases (addresses, institutions) — require majority of words to match
-        # in a contiguous OCR window
+        # in a contiguous OCR window, but limit span to avoid full-page blur
         for phrase_words, ent_txt, ent_cat in phrase_entities:
             needed = max(2, len(phrase_words) * 2 // 3)  # at least 2/3 match
             pw_set = set(phrase_words)
@@ -1540,16 +1543,37 @@ def _redact_scanned_pdf(src_path, output_path, entities):
                         window_words.add(w)
                 hits = pw_set & window_words
                 if len(hits) >= needed:
-                    _add_span(i, end - i)
+                    # Check span doesn't cover too much of the page
+                    x0 = min(ocr_data['left'][j] for j in range(i, end))
+                    y0 = min(ocr_data['top'][j] for j in range(i, end))
+                    x1 = max(ocr_data['left'][j]+ocr_data['width'][j] for j in range(i, end))
+                    y1 = max(ocr_data['top'][j]+ocr_data['height'][j] for j in range(i, end))
+                    span_area = (x1 - x0) * (y1 - y0)
+                    page_area = img.width * img.height
+                    if span_area > page_area * 0.10:
+                        # Span too large — blur individual matching words instead
+                        for j in range(i, end):
+                            wl = ocr_data['text'][j].strip('.,;:!?()[]/-').lower()
+                            if wl in pw_set:
+                                _add_rect(j)
+                    else:
+                        _add_span(i, end - i)
                     matched_entities.add((ent_txt, ent_cat))
                     break
 
         if not blur_rects:
             continue
 
-        # Apply blur to all matched rectangles
+        # Apply blur to all matched rectangles, skip oversized ones
+        page_area = img.width * img.height
+        max_rect_area = page_area * 0.15
         for (x0, y0, x1, y1) in blur_rects:
             if x1 <= x0 or y1 <= y0:
+                continue
+            rect_area = (x1 - x0) * (y1 - y0)
+            if rect_area > max_rect_area:
+                log.debug('[doc_anonymizer] Skipping oversized scanned rect %.1f%% on page %d',
+                          rect_area / page_area * 100, page_idx + 1)
                 continue
             crop = img.crop((x0, y0, x1, y1))
             blurred = crop.filter(ImageFilter.GaussianBlur(radius=blur_radius))
