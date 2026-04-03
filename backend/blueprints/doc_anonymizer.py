@@ -1126,6 +1126,7 @@ _MEDICAL_STOPWORDS = frozenset({
     'deksametazon', 'heparyna', 'acetylosalicylowy',
     'tikagrelol', 'lacydypina', 'kandesartan', 'liraglutyd',
     'cefaleksyna', 'teofilina', 'esomeprazol', 'alprazolam', 'diazepam',
+    'finasteryd', 'proscar',
     # Anatomy
     'serce', 'pluca', 'watroba', 'nerki', 'trzustka', 'jelito',
     'zoladek', 'mozg', 'kregowy', 'przedsionek', 'komora',
@@ -2062,6 +2063,146 @@ def anon_preview(job_id, which):
     except Exception as e:
         log.warning('[doc_anonymizer] Preview text extraction failed: %s', e)
         return jsonify({'error': 'Could not extract text: ' + str(e)}), 500
+
+
+@doc_anonymizer_bp.route('/regenerate/<job_id>', methods=['POST'])
+def anon_regenerate(job_id):
+    """Re-generate anonymized document excluding specified replacements.
+
+    Accepts JSON ``{"excluded": ["original text 1", "original text 2"]}``.
+    Items in *excluded* are treated as false positives — they will NOT be
+    redacted.  The false-positive feedback is stored for future model
+    retraining.
+    """
+    job = _job_dir(job_id)
+    meta_path = os.path.join(job, 'meta.json')
+    if not os.path.isfile(meta_path):
+        return jsonify({'error': 'Job not found'}), 404
+
+    with open(meta_path) as f:
+        meta = json.load(f)
+
+    if meta.get('status') != 'done':
+        return jsonify({'error': 'Job not finished yet'}), 400
+
+    data = request.get_json(silent=True) or {}
+    excluded = set(data.get('excluded', []))
+    if not excluded:
+        return jsonify({'error': 'Nothing to exclude'}), 400
+
+    file_ext = meta.get('file_ext', '.pdf')
+    src_path = os.path.join(job, 'original' + file_ext)
+    if not os.path.isfile(src_path):
+        return jsonify({'error': 'Original file missing'}), 404
+
+    # Save false-positive feedback for model retraining
+    fb_path = os.path.join(job, 'feedback.json')
+    feedback = []
+    if os.path.isfile(fb_path):
+        try:
+            with open(fb_path) as f:
+                feedback = json.load(f)
+        except Exception:
+            feedback = []
+    for orig in excluded:
+        matching = [r for r in meta.get('replacements', [])
+                    if r.get('original') == orig]
+        for r in matching:
+            fb_entry = {
+                'original': orig,
+                'category': r.get('category', ''),
+                'action': 'false_positive',
+                'timestamp': time.time(),
+            }
+            if fb_entry not in feedback:
+                feedback.append(fb_entry)
+    with open(fb_path, 'w') as f:
+        json.dump(feedback, f, ensure_ascii=False, indent=2)
+
+    # Also save to global feedback file for model retraining
+    global_fb_path = os.path.join(os.path.dirname(job), 'false_positives.json')
+    global_fb = []
+    if os.path.isfile(global_fb_path):
+        try:
+            with open(global_fb_path) as f:
+                global_fb = json.load(f)
+        except Exception:
+            global_fb = []
+    for orig in excluded:
+        matching = [r for r in meta.get('replacements', [])
+                    if r.get('original') == orig]
+        for r in matching:
+            global_fb.append({
+                'original': orig,
+                'category': r.get('category', ''),
+                'job_id': job_id,
+                'filename': meta.get('filename', ''),
+                'timestamp': time.time(),
+            })
+    with open(global_fb_path, 'w') as f:
+        json.dump(global_fb, f, ensure_ascii=False, indent=2)
+
+    # Rebuild entity list from original replacements, minus excluded
+    all_repls = meta.get('replacements', [])
+    kept_entities = []
+    for r in all_repls:
+        if r.get('original') not in excluded:
+            kept_entities.append({
+                'text': r['original'],
+                'category': r.get('category', 'INNE_PII'),
+            })
+
+    # Re-generate the output document
+    out_filename = meta.get('output_filename', 'anonymized_' + meta.get('filename', 'doc'))
+    out_path = os.path.join(job, out_filename)
+
+    try:
+        if file_ext == '.pdf':
+            if _is_scanned_pdf(src_path):
+                redact_repls = _redact_scanned_pdf(src_path, out_path, kept_entities)
+            else:
+                redact_repls = _redact_pdf(src_path, out_path, kept_entities)
+            seen_repls = {}
+            for r in redact_repls:
+                key = r['original']
+                if key not in seen_repls:
+                    seen_repls[key] = r
+                else:
+                    seen_repls[key]['occurrences'] += r['occurrences']
+        elif file_ext in ('.docx', '.doc'):
+            _anonymize_docx_inplace(src_path, out_path, kept_entities)
+            seen_repls = {}
+            for e in kept_entities:
+                txt = e.get('text', '').strip()
+                if not txt or txt in seen_repls:
+                    continue
+                cat = _normalize_category(e.get('category', 'INNE_PII'))
+                seen_repls[txt] = {
+                    'original': txt,
+                    'placeholder': _PLACEHOLDER_MAP.get(cat, '[DANE]'),
+                    'category': cat,
+                    'occurrences': 1,
+                }
+        else:
+            return jsonify({'error': 'Unsupported format'}), 400
+
+        # Update meta
+        meta['replacements'] = list(seen_repls.values())
+        meta['entities_found'] = len(seen_repls)
+        meta['excluded'] = list(excluded)
+        meta['regenerated_at'] = time.time()
+        with open(meta_path, 'w') as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+
+        return jsonify({
+            'ok': True,
+            'entities_found': len(seen_repls),
+            'excluded_count': len(excluded),
+            'replacements': list(seen_repls.values()),
+        })
+    except Exception as e:
+        log.error('[doc_anonymizer] Regeneration failed for %s: %s', job_id, e)
+        return jsonify({'error': 'Regeneration failed: ' + str(e)}), 500
 
 
 @doc_anonymizer_bp.route('/status', methods=['GET'])

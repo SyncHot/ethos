@@ -332,17 +332,22 @@ AppRegistry['doc-anonymizer'] = function (appDef) {
         function renderPreview(b, job, isPdf, isDone) {
             var jobId = job.job_id;
 
-            // Build replacement table HTML
+            // Build replacement table HTML with toggle switches
             var tableHtml = '';
             if (job.replacements && job.replacements.length > 0) {
                 tableHtml = '<table class="anon-detail-table"><thead><tr>' +
+                    '<th>' + t('Anonimizuj') + '</th>' +
                     '<th>' + t('Kategoria') + '</th>' +
                     '<th>' + t('Oryginal') + '</th>' +
                     '<th>' + t('Zamiennik') + '</th>' +
                     '<th>' + t('Wystapienia') + '</th>' +
                     '</tr></thead><tbody>';
-                job.replacements.forEach(function (r) {
-                    tableHtml += '<tr>' +
+                job.replacements.forEach(function (r, idx) {
+                    var rid = 'anon-toggle-' + jobId + '-' + idx;
+                    tableHtml += '<tr data-original="' + (r.original || '').replace(/"/g, '&quot;') + '">' +
+                        '<td><label class="anon-toggle"><input type="checkbox" checked id="' + rid + '" ' +
+                            'data-original="' + (r.original || '').replace(/"/g, '&quot;') + '">' +
+                            '<span class="anon-toggle-slider"></span></label></td>' +
                         '<td><span class="anon-cat anon-cat-' + (r.category || '').toLowerCase() + '">' +
                             (r.category || '') + '</span></td>' +
                         '<td>' + (r.original || '') + '</td>' +
@@ -350,7 +355,14 @@ AppRegistry['doc-anonymizer'] = function (appDef) {
                         '<td>' + (r.occurrences || 0) + '</td>' +
                         '</tr>';
                 });
-                tableHtml += '</tbody></table>';
+                tableHtml += '</tbody></table>' +
+                    '<div class="anon-regen-bar">' +
+                        '<span class="anon-regen-hint"><i class="fa fa-info-circle"></i> ' +
+                            t('Odznacz elementy ktore nie powinny byc anonimizowane (false positives)') + '</span>' +
+                        '<button class="anon-regen-btn" id="anon-regen-' + jobId + '" disabled>' +
+                            '<i class="fa fa-sync-alt"></i> ' + t('Regeneruj PDF') +
+                        '</button>' +
+                    '</div>';
             }
 
             // Meta + zoom toolbar
@@ -483,6 +495,65 @@ AppRegistry['doc-anonymizer'] = function (appDef) {
                         applyZoom(currentZoom + (e.deltaY < 0 ? 0.1 : -0.1));
                     }
                 }, { passive: false });
+            }
+
+            // Toggle switches + regenerate button
+            var regenBtn = b.querySelector('#anon-regen-' + jobId);
+            var toggles = b.querySelectorAll('.anon-toggle input[type="checkbox"]');
+            if (regenBtn && toggles.length) {
+                toggles.forEach(function (cb) {
+                    cb.addEventListener('change', function () {
+                        var row = cb.closest('tr');
+                        if (row) row.classList.toggle('anon-row-excluded', !cb.checked);
+                        var anyUnchecked = Array.from(toggles).some(function (c) { return !c.checked; });
+                        regenBtn.disabled = !anyUnchecked;
+                    });
+                });
+
+                regenBtn.addEventListener('click', async function () {
+                    var excluded = [];
+                    toggles.forEach(function (cb) {
+                        if (!cb.checked) excluded.push(cb.dataset.original);
+                    });
+                    if (!excluded.length) return;
+
+                    regenBtn.disabled = true;
+                    regenBtn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> ' + t('Regenerowanie...');
+
+                    try {
+                        var res = await api('/doc-anonymizer/regenerate/' + jobId, {
+                            method: 'POST',
+                            body: JSON.stringify({ excluded: excluded }),
+                        });
+                        if (res.error) {
+                            toast(res.error, 'error');
+                            regenBtn.disabled = false;
+                            regenBtn.innerHTML = '<i class="fa fa-sync-alt"></i> ' + t('Regeneruj PDF');
+                            return;
+                        }
+                        toast(t('PDF zregenerowany') + ' — ' + res.excluded_count + ' ' + t('elementow przywroconych'), 'success');
+                        // Reload the anonymized pane
+                        var anonPane = b.querySelector('#anon-pv-anon-' + jobId);
+                        if (anonPane) {
+                            anonPane.innerHTML = '<div class="anon-preview-loading"><i class="fa fa-spinner fa-spin"></i></div>';
+                            if (isPdf) loadPdfPreview(jobId, 'anonymized', anonPane);
+                            else loadDocxPreview(jobId, 'anonymized', anonPane);
+                        }
+                        // Update replacement table with new data
+                        if (res.replacements) {
+                            job.replacements = res.replacements;
+                            job.entities_found = res.entities_found;
+                        }
+                        regenBtn.innerHTML = '<i class="fa fa-check"></i> ' + t('Gotowe');
+                        setTimeout(function () {
+                            regenBtn.innerHTML = '<i class="fa fa-sync-alt"></i> ' + t('Regeneruj PDF');
+                        }, 2000);
+                    } catch (e) {
+                        toast(t('Blad regeneracji') + ': ' + e.message, 'error');
+                        regenBtn.disabled = false;
+                        regenBtn.innerHTML = '<i class="fa fa-sync-alt"></i> ' + t('Regeneruj PDF');
+                    }
+                });
             }
         }
 

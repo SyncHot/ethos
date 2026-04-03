@@ -180,6 +180,7 @@ MEDICATIONS = [
     'mirtazapina 30mg', 'olanzapina 5mg', 'kwetiapina 25mg',
     'lewotyroksyna 50mcg', 'prednizon 5mg', 'deksametazon 4mg',
     'heparyna 5000j', 'klindamycyna 300mg', 'amlorel 5mg',
+    'finasteryd 5mg', 'Proscar 5mg', 'proscar 5mg',
 ]
 
 MEDICAL_TERMS = [
