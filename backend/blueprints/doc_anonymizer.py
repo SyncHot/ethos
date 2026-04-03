@@ -2086,6 +2086,11 @@ def anon_regenerate(job_id):
         return jsonify({'error': 'Job not finished yet'}), 400
 
     data = request.get_json(silent=True) or {}
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except Exception:
+            data = {}
     excluded = set(data.get('excluded', []))
     if not excluded:
         return jsonify({'error': 'Nothing to exclude'}), 400

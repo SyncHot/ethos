@@ -523,7 +523,7 @@ AppRegistry['doc-anonymizer'] = function (appDef) {
                     try {
                         var res = await api('/doc-anonymizer/regenerate/' + jobId, {
                             method: 'POST',
-                            body: JSON.stringify({ excluded: excluded }),
+                            body: { excluded: excluded },
                         });
                         if (res.error) {
                             toast(res.error, 'error');
