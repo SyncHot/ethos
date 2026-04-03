@@ -123,9 +123,22 @@ def _db_info():
 
 # ─── Crontab helpers ──────────────────────────────────────────────────────────
 
-def _read_crontab():
+def _ensure_cron():
+    """Install cron daemon if not present."""
+    if shutil.which('crontab'):
+        return True
     try:
-        r = host_run('sudo -n crontab -l', timeout=10)
+        r = apt_install('cron', timeout=120)
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+def _read_crontab():
+    if not _ensure_cron():
+        return []
+    try:
+        r = host_run('crontab -l', timeout=10)
         if r.returncode != 0:
             return []
         return r.stdout.splitlines()
@@ -134,12 +147,14 @@ def _read_crontab():
 
 
 def _write_crontab(lines):
+    if not _ensure_cron():
+        return False, 'cron not available'
     content = '\n'.join(lines)
     if content and not content.endswith('\n'):
         content += '\n'
     try:
         r = subprocess.run(
-            ['sudo', '-n', 'crontab', '-'],
+            ['crontab', '-'],
             input=content, capture_output=True, text=True, timeout=10,
         )
         return r.returncode == 0, r.stderr.strip()
@@ -520,16 +535,16 @@ def update_db():
 
         _emit('start', 10, 'Stopping freshclam service...')
         try:
-            host_run('sudo -n systemctl stop clamav-freshclam', timeout=15)
+            host_run('systemctl stop clamav-freshclam', timeout=15)
             _emit('start', 30, 'Downloading virus database updates...')
-            r = host_run('sudo -n freshclam --stdout --no-warnings', timeout=300)
-            host_run('sudo -n systemctl start clamav-freshclam', timeout=15)
+            r = host_run('freshclam --stdout --no-warnings', timeout=300)
+            host_run('systemctl start clamav-freshclam', timeout=15)
             if r.returncode not in (0, 1):
                 _emit('error', 0, ((r.stderr or r.stdout or 'Update error')[:300]))
                 return
             _emit('done', 100, 'Virus database updated!')
         except Exception as e:
-            host_run('sudo -n systemctl start clamav-freshclam', timeout=15)
+            host_run('systemctl start clamav-freshclam', timeout=15)
             _emit('error', 0, str(e))
 
     threading.Thread(target=_bg, daemon=True).start()
@@ -556,9 +571,9 @@ def install():
                 _emit('error', 0, 'Install error: ' + (r.stderr or '')[:300])
                 return
             _emit('progress', 70, 'Downloading virus database...')
-            host_run('sudo -n systemctl stop clamav-freshclam', timeout=15)
-            host_run('sudo -n freshclam --stdout --no-warnings', timeout=300)
-            host_run('sudo -n systemctl start clamav-freshclam', timeout=15)
+            host_run('systemctl stop clamav-freshclam', timeout=15)
+            host_run('freshclam --stdout --no-warnings', timeout=300)
+            host_run('systemctl enable --now clamav-freshclam', timeout=15)
             _emit('done', 100, 'ClamAV installed!')
         except Exception as e:
             _emit('error', 0, str(e))
