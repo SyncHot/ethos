@@ -5153,6 +5153,39 @@ textarea.app-input { resize: vertical; line-height: 1.5; }
 .anon-cat-nazwa_placowki { background:rgba(16,185,129,.15); color:#10b981; }
 .anon-error-msg { color:#ef4444; font-size:12px; margin-top:8px; padding:8px; background:rgba(239,68,68,.08); border-radius:6px; }
 
+/* Batch toolbar & checkboxes */
+.anon-jobs-toolbar { display:flex; align-items:center; justify-content:space-between; gap:8px; padding-bottom:6px; border-bottom:1px solid var(--border-subtle, var(--border)); }
+.anon-jobs-toolbar .anon-jobs-header { border-bottom:none; padding-bottom:0; }
+.anon-batch-bar { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--text-muted); }
+.anon-batch-count { font-weight:600; color:var(--text); }
+.anon-btn-batch-del { display:inline-flex; align-items:center; gap:4px; background:none; border:1px solid #ef4444; border-radius:6px; padding:4px 10px; cursor:pointer; color:#ef4444; font-size:12px; transition:background .15s, color .15s; }
+.anon-btn-batch-del:hover { background:#ef4444; color:#fff; }
+.anon-job-cb-label { display:flex; align-items:center; flex-shrink:0; padding-right:4px; }
+.anon-job-cb { accent-color:#0ea5e9; width:15px; height:15px; cursor:pointer; }
+
+/* Split-pane preview */
+.anon-preview { display:flex; flex-direction:column; height:100%; overflow:hidden; }
+.anon-preview-meta { display:flex; align-items:center; gap:16px; padding:10px 16px; border-bottom:1px solid var(--border); font-size:12px; color:var(--text-muted); flex-shrink:0; }
+.anon-preview-meta span { display:flex; align-items:center; gap:4px; }
+.anon-preview-meta i { font-size:12px; color:#0ea5e9; }
+.anon-preview-pending { display:flex; align-items:center; justify-content:center; gap:8px; padding:40px; color:var(--text-muted); font-size:14px; }
+.anon-preview-split { display:flex; flex:1; min-height:0; overflow:hidden; }
+.anon-preview-pane { flex:1; display:flex; flex-direction:column; min-width:0; overflow:hidden; }
+.anon-preview-pane-title { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:var(--text-muted); padding:8px 12px; border-bottom:1px solid var(--border); flex-shrink:0; display:flex; align-items:center; gap:6px; }
+.anon-preview-pane-title i { font-size:12px; }
+.anon-preview-pane-title-anon { color:#22c55e; }
+.anon-preview-pane-title-anon i { color:#22c55e; }
+.anon-preview-divider { width:1px; background:var(--border); flex-shrink:0; }
+.anon-preview-content { flex:1; overflow:auto; position:relative; }
+.anon-preview-iframe { width:100%; height:100%; border:none; background:#fff; }
+.anon-preview-text { padding:12px 16px; font-size:13px; line-height:1.7; color:var(--text); white-space:pre-wrap; word-wrap:break-word; font-family:var(--font-family); }
+.anon-preview-loading { display:flex; align-items:center; justify-content:center; padding:40px; color:var(--text-muted); }
+.anon-preview-error { display:flex; align-items:center; justify-content:center; padding:40px; color:#ef4444; font-size:13px; }
+.anon-preview-table-wrap { flex-shrink:0; max-height:200px; overflow:auto; border-top:1px solid var(--border); padding:8px 12px; }
+.anon-preview-table-title { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:var(--text-muted); padding-bottom:6px; display:flex; align-items:center; gap:6px; }
+.anon-preview-table-title i { color:#0ea5e9; font-size:11px; }
+.anon-preview-table-count { font-weight:400; opacity:.7; }
+
 /* == Medical Assistant (med-*) == */
 .med-app { display:flex; flex-direction:column; height:100%; font-family:var(--font-family); }
 .med-header { display:flex; align-items:center; gap:10px; padding:12px 16px; border-bottom:1px solid var(--border-color); font-size:16px; font-weight:600; }

@@ -7,7 +7,9 @@ Endpoints:
   POST /api/doc-anonymizer/upload           -- upload and anonymize a file
   GET  /api/doc-anonymizer/jobs             -- list anonymization jobs
   GET  /api/doc-anonymizer/download/<job_id> -- download anonymized file
+  GET  /api/doc-anonymizer/preview/<job_id>/<which> -- inline preview (original|anonymized)
   DELETE /api/doc-anonymizer/job/<job_id>   -- delete a job
+  POST /api/doc-anonymizer/jobs/delete-batch -- batch-delete multiple jobs
   GET  /api/doc-anonymizer/status           -- app + AI dependency status
   POST /api/doc-anonymizer/install          -- install (via register_pkg_routes)
   POST /api/doc-anonymizer/uninstall        -- uninstall
@@ -1960,6 +1962,70 @@ def anon_delete_job(job_id):
     with _jobs_lock:
         _active_jobs.pop(job_id, None)
     return jsonify({'ok': True})
+
+
+@doc_anonymizer_bp.route('/jobs/delete-batch', methods=['POST'])
+def anon_delete_batch():
+    """Delete multiple anonymization jobs at once."""
+    import shutil
+    data = request.get_json(silent=True) or {}
+    job_ids = data.get('job_ids', [])
+    if not isinstance(job_ids, list) or not job_ids:
+        return jsonify({'error': 'job_ids list required'}), 400
+    deleted = 0
+    for jid in job_ids:
+        if not isinstance(jid, str) or not jid:
+            continue
+        job = _job_dir(jid)
+        if os.path.isdir(job):
+            shutil.rmtree(job, ignore_errors=True)
+            deleted += 1
+        with _jobs_lock:
+            _active_jobs.pop(jid, None)
+    return jsonify({'ok': True, 'deleted': deleted})
+
+
+@doc_anonymizer_bp.route('/preview/<job_id>/<which>', methods=['GET'])
+def anon_preview(job_id, which):
+    """Serve original or anonymized file inline for preview.
+
+    ``which`` must be 'original' or 'anonymized'.
+    PDFs are served inline; DOCX text is extracted and returned as JSON.
+    """
+    if which not in ('original', 'anonymized'):
+        return jsonify({'error': 'Invalid preview type'}), 400
+
+    job = _job_dir(job_id)
+    meta_path = os.path.join(job, 'meta.json')
+    if not os.path.isfile(meta_path):
+        return jsonify({'error': 'Job not found'}), 404
+
+    with open(meta_path) as f:
+        meta = json.load(f)
+
+    file_ext = meta.get('file_ext', '.pdf')
+
+    if which == 'original':
+        file_path = os.path.join(job, 'original' + file_ext)
+    else:
+        if meta.get('status') != 'done':
+            return jsonify({'error': 'Anonymization not complete'}), 400
+        file_path = os.path.join(job, meta.get('output_filename', ''))
+
+    if not os.path.isfile(file_path):
+        return jsonify({'error': 'File not found'}), 404
+
+    if file_ext == '.pdf':
+        return send_file(file_path, mimetype='application/pdf',
+                         as_attachment=False)
+
+    # DOCX: extract text and return as JSON for the frontend viewer
+    try:
+        paragraphs = _extract_text_docx(file_path)
+        return jsonify({'ok': True, 'text': '\n\n'.join(paragraphs)})
+    except Exception as e:
+        log.warning('[doc_anonymizer] Preview text extraction failed: %s', e)
+        return jsonify({'error': 'Could not extract text: ' + str(e)}), 500
 
 
 @doc_anonymizer_bp.route('/status', methods=['GET'])

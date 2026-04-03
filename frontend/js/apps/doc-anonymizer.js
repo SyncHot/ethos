@@ -57,7 +57,6 @@ AppRegistry['doc-anonymizer'] = function (appDef) {
             ringEl.style.strokeDashoffset = circumference;
         }
 
-        // Check dependency status
         checkDeps();
         loadJobs();
 
@@ -93,6 +92,12 @@ AppRegistry['doc-anonymizer'] = function (appDef) {
         fileInput.addEventListener('change', function () {
             if (fileInput.files.length) uploadFile(fileInput.files[0]);
         });
+
+        function resetProgress() {
+            pctEl.textContent = '0%';
+            msgEl.textContent = '';
+            if (ringEl) ringEl.style.strokeDashoffset = circumference;
+        }
 
         function setProgress(pct, msg) {
             statusDiv.style.display = '';
@@ -134,6 +139,7 @@ AppRegistry['doc-anonymizer'] = function (appDef) {
             }
 
             dropZone.style.display = 'none';
+            resetProgress();
             setProgress(5, t('Wysylanie pliku...'));
 
             var fd = new FormData();
@@ -167,6 +173,39 @@ AppRegistry['doc-anonymizer'] = function (appDef) {
             }
         }
 
+        /* ── Multi-select helpers ── */
+
+        function getSelectedIds() {
+            var checked = jobsDiv.querySelectorAll('.anon-job-cb:checked');
+            return Array.from(checked).map(function (cb) { return cb.value; });
+        }
+
+        function updateBatchBar() {
+            var bar = jobsDiv.querySelector('.anon-batch-bar');
+            var ids = getSelectedIds();
+            if (bar) bar.style.display = ids.length ? '' : 'none';
+            var countEl = bar && bar.querySelector('.anon-batch-count');
+            if (countEl) countEl.textContent = ids.length;
+        }
+
+        async function deleteBatch() {
+            var ids = getSelectedIds();
+            if (!ids.length) return;
+            confirmDialog(
+                t('Usunac zaznaczone dokumenty?') + ' (' + ids.length + ')',
+                async function () {
+                    await api('/doc-anonymizer/jobs/delete-batch', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ job_ids: ids }),
+                    });
+                    loadJobs();
+                }
+            );
+        }
+
+        /* ── Jobs list ── */
+
         async function loadJobs() {
             var data = await api('/doc-anonymizer/jobs');
             if (!data || !data.items) { jobsDiv.innerHTML = ''; return; }
@@ -176,7 +215,16 @@ AppRegistry['doc-anonymizer'] = function (appDef) {
                 return;
             }
 
-            var html = '<div class="anon-jobs-header">' + t('Historia') + '</div>';
+            var html = '<div class="anon-jobs-toolbar">' +
+                '<div class="anon-jobs-header">' + t('Historia') + '</div>' +
+                '<div class="anon-batch-bar" style="display:none">' +
+                    '<span class="anon-batch-count">0</span> ' + t('zaznaczonych') +
+                    '<button class="anon-btn anon-btn-batch-del" id="anon-batch-del">' +
+                        '<i class="fa fa-trash"></i> ' + t('Usun zaznaczone') +
+                    '</button>' +
+                '</div>' +
+            '</div>';
+
             data.items.forEach(function (job) {
                 var dateStr = job.created_at ? new Date(job.created_at * 1000).toLocaleString() : '';
                 var statusIcon = '';
@@ -193,6 +241,9 @@ AppRegistry['doc-anonymizer'] = function (appDef) {
                 }
 
                 html += '<div class="anon-job-row ' + statusClass + '" data-job="' + job.job_id + '">' +
+                    '<label class="anon-job-cb-label" onclick="event.stopPropagation()">' +
+                        '<input type="checkbox" class="anon-job-cb" value="' + job.job_id + '">' +
+                    '</label>' +
                     '<div class="anon-job-info">' +
                         statusIcon + ' ' +
                         '<span class="anon-job-name">' + (job.filename || '') + '</span>' +
@@ -216,6 +267,15 @@ AppRegistry['doc-anonymizer'] = function (appDef) {
             });
 
             jobsDiv.innerHTML = html;
+
+            // Checkbox change → update batch bar
+            jobsDiv.querySelectorAll('.anon-job-cb').forEach(function (cb) {
+                cb.addEventListener('change', updateBatchBar);
+            });
+
+            // Batch delete button
+            var batchBtn = jobsDiv.querySelector('#anon-batch-del');
+            if (batchBtn) batchBtn.addEventListener('click', deleteBatch);
 
             // Download buttons
             jobsDiv.querySelectorAll('[data-dl]').forEach(function (btn) {
@@ -241,35 +301,49 @@ AppRegistry['doc-anonymizer'] = function (appDef) {
                 });
             });
 
-            // Click row to show details
+            // Click row to show preview
             jobsDiv.querySelectorAll('.anon-job-row[data-job]').forEach(function (row) {
                 row.addEventListener('click', function () {
-                    showJobDetails(row.getAttribute('data-job'));
+                    showJobPreview(row.getAttribute('data-job'));
                 });
             });
         }
 
-        async function showJobDetails(jobId) {
+        /* ── Split-pane preview window ── */
+
+        async function showJobPreview(jobId) {
             var data = await api('/doc-anonymizer/jobs');
             if (!data || !data.items) return;
             var job = data.items.find(function (j) { return j.job_id === jobId; });
             if (!job) return;
 
-            var content = '<div class="anon-detail">';
-            content += '<h3>' + (job.filename || '') + '</h3>';
-            content += '<p>' + t('Status') + ': <b>' + (job.status || '') + '</b></p>';
-            content += '<p>' + t('Stron') + ': ' + (job.pages_analyzed || 0) + '</p>';
-            content += '<p>' + t('Znalezione PII') + ': ' + (job.entities_found || 0) + '</p>';
+            var isPdf = (job.file_ext === '.pdf');
+            var isDone = (job.status === 'done');
 
+            createWindow('anon-preview-' + jobId, {
+                title: (job.filename || '') + ' — ' + t('Porownanie'),
+                icon: 'fa-columns',
+                iconColor: '#0ea5e9',
+                width: 1100, height: 700,
+                onRender: function (b) { renderPreview(b, job, isPdf, isDone); },
+            });
+        }
+
+        function renderPreview(b, job, isPdf, isDone) {
+            var jobId = job.job_id;
+            var tokenQs = '?token=' + encodeURIComponent(NAS.token);
+
+            // Build replacement table HTML
+            var tableHtml = '';
             if (job.replacements && job.replacements.length > 0) {
-                content += '<table class="anon-detail-table"><thead><tr>' +
+                tableHtml = '<table class="anon-detail-table"><thead><tr>' +
                     '<th>' + t('Kategoria') + '</th>' +
                     '<th>' + t('Oryginał') + '</th>' +
                     '<th>' + t('Zamiennik') + '</th>' +
                     '<th>' + t('Wystąpienia') + '</th>' +
                     '</tr></thead><tbody>';
                 job.replacements.forEach(function (r) {
-                    content += '<tr>' +
+                    tableHtml += '<tr>' +
                         '<td><span class="anon-cat anon-cat-' + (r.category || '').toLowerCase() + '">' +
                             (r.category || '') + '</span></td>' +
                         '<td>' + (r.original || '') + '</td>' +
@@ -277,22 +351,113 @@ AppRegistry['doc-anonymizer'] = function (appDef) {
                         '<td>' + (r.occurrences || 0) + '</td>' +
                         '</tr>';
                 });
-                content += '</tbody></table>';
+                tableHtml += '</tbody></table>';
             }
 
-            if (job.error) {
-                content += '<p class="anon-error-msg">' + job.error + '</p>';
+            // Build meta summary
+            var metaHtml = '<div class="anon-preview-meta">' +
+                '<span><i class="fa fa-file"></i> ' + (job.filename || '') + '</span>' +
+                '<span><i class="fa fa-copy"></i> ' + (job.pages_analyzed || 0) + ' ' + t('stron') + '</span>' +
+                '<span><i class="fa fa-shield-alt"></i> ' + (job.entities_found || 0) + ' ' + t('PII') + '</span>' +
+                '</div>';
+
+            var content = '<div class="anon-preview">' + metaHtml;
+
+            if (!isDone) {
+                content += '<div class="anon-preview-pending">' +
+                    '<i class="fa fa-spinner fa-spin"></i> ' +
+                    t('Anonimizacja jeszcze nie zakonczona') +
+                    '</div>';
+                if (job.error) {
+                    content += '<p class="anon-error-msg">' + job.error + '</p>';
+                }
+                content += '</div>';
+                b.innerHTML = content;
+                return;
+            }
+
+            // Split pane
+            content += '<div class="anon-preview-split">' +
+                '<div class="anon-preview-pane">' +
+                    '<div class="anon-preview-pane-title">' +
+                        '<i class="fa fa-file-alt"></i> ' + t('Oryginał') +
+                    '</div>' +
+                    '<div class="anon-preview-content" id="anon-pv-orig-' + jobId + '"></div>' +
+                '</div>' +
+                '<div class="anon-preview-divider"></div>' +
+                '<div class="anon-preview-pane">' +
+                    '<div class="anon-preview-pane-title anon-preview-pane-title-anon">' +
+                        '<i class="fa fa-user-shield"></i> ' + t('Zanonimizowany') +
+                    '</div>' +
+                    '<div class="anon-preview-content" id="anon-pv-anon-' + jobId + '"></div>' +
+                '</div>' +
+            '</div>';
+
+            // Replacements table
+            if (tableHtml) {
+                content += '<div class="anon-preview-table-wrap">' +
+                    '<div class="anon-preview-table-title">' +
+                        '<i class="fa fa-exchange-alt"></i> ' + t('Zamienniki') +
+                        ' <span class="anon-preview-table-count">(' + (job.replacements || []).length + ')</span>' +
+                    '</div>' +
+                    tableHtml +
+                '</div>';
             }
 
             content += '</div>';
+            b.innerHTML = content;
 
-            createWindow('anon-detail-' + jobId, {
-                title: t('Szczegoly anonimizacji'),
-                icon: 'fa-shield-alt',
-                iconColor: '#0ea5e9',
-                width: 600, height: 450,
-                onRender: function (b) { b.innerHTML = content; },
+            var origEl = b.querySelector('#anon-pv-orig-' + jobId);
+            var anonEl = b.querySelector('#anon-pv-anon-' + jobId);
+
+            if (isPdf) {
+                origEl.innerHTML = '<iframe class="anon-preview-iframe" src="/api/doc-anonymizer/preview/' +
+                    jobId + '/original' + tokenQs + '"></iframe>';
+                anonEl.innerHTML = '<iframe class="anon-preview-iframe" src="/api/doc-anonymizer/preview/' +
+                    jobId + '/anonymized' + tokenQs + '"></iframe>';
+            } else {
+                origEl.innerHTML = '<div class="anon-preview-loading"><i class="fa fa-spinner fa-spin"></i></div>';
+                anonEl.innerHTML = '<div class="anon-preview-loading"><i class="fa fa-spinner fa-spin"></i></div>';
+                loadDocxPreview(jobId, 'original', origEl);
+                loadDocxPreview(jobId, 'anonymized', anonEl);
+            }
+
+            // Sync scrolling between the two panes
+            var origContent = origEl;
+            var anonContent = anonEl;
+            var syncing = false;
+            origContent.addEventListener('scroll', function () {
+                if (syncing) return;
+                syncing = true;
+                anonContent.scrollTop = origContent.scrollTop;
+                syncing = false;
             });
+            anonContent.addEventListener('scroll', function () {
+                if (syncing) return;
+                syncing = true;
+                origContent.scrollTop = anonContent.scrollTop;
+                syncing = false;
+            });
+        }
+
+        async function loadDocxPreview(jobId, which, container) {
+            try {
+                var data = await api('/doc-anonymizer/preview/' + jobId + '/' + which);
+                if (data && data.text) {
+                    var escaped = data.text
+                        .replace(/&/g, '&amp;')
+                        .replace(/</g, '&lt;')
+                        .replace(/>/g, '&gt;')
+                        .replace(/\n/g, '<br>');
+                    container.innerHTML = '<div class="anon-preview-text">' + escaped + '</div>';
+                } else {
+                    container.innerHTML = '<div class="anon-preview-error">' +
+                        (data && data.error ? data.error : t('Nie udalo sie zaladowac podgladu')) +
+                        '</div>';
+                }
+            } catch (e) {
+                container.innerHTML = '<div class="anon-preview-error">' + e.message + '</div>';
+            }
         }
     }
 };
