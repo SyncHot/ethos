@@ -8,6 +8,7 @@ Inbox endpoints:
   POST /api/notifications/clear     — Clear all inbox notifications
   POST /api/notifications/read      — Mark notification(s) as read
   POST /api/notifications/read-all  — Mark all as read
+  POST /api/notifications/subscribe — Accept Web Push subscription (stub)
 """
 
 import json
@@ -569,3 +570,13 @@ def unread_count():
     except Exception:
         count = 0
     return jsonify({'count': count})
+
+
+@notifications_bp.route('/subscribe', methods=['POST'])
+def subscribe_push():
+    """Accept Web Push subscription from browser (stub).
+
+    Stores the subscription JSON for potential future use with Web Push
+    notifications.  Currently a no-op — notifications use SocketIO.
+    """
+    return jsonify({'ok': True})

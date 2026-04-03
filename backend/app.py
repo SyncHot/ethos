@@ -307,7 +307,7 @@ def add_security_headers(response):
         "font-src 'self' data: https://cdnjs.cloudflare.com https://fonts.gstatic.com; "
         "img-src 'self' data: blob:; "
         "media-src 'self' blob:; "
-        "connect-src 'self' ws: wss:; "
+        "connect-src 'self' ws: wss: https:; "
         "worker-src 'self' blob:; "
         "frame-src 'self'; "
         f"{csp_frame_ancestors} "
@@ -9585,10 +9585,21 @@ def serve_index():
 def serve_static(path):
     # PWA files must be served from root scope
     if path in ['manifest.json', 'sw.js', 'offline.html']:
-        return send_from_directory(app.static_folder, path)
+        resp = send_from_directory(app.static_folder, path)
+        if path == 'manifest.json':
+            resp.headers['Content-Type'] = 'application/manifest+json'
+        return resp
 
     if os.path.isfile(os.path.join(app.static_folder, path)):
         return send_from_directory(app.static_folder, path)
+
+    # Static assets that don't exist → 404 (not index.html fallback)
+    _ext = os.path.splitext(path)[1].lower()
+    if _ext in ('.js', '.css', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico',
+                '.woff', '.woff2', '.ttf', '.eot', '.map', '.json', '.webp'):
+        return '', 404
+
+    # SPA fallback: return index.html for navigation routes
     return send_from_directory(app.static_folder, 'index.html')
 
 

@@ -296,9 +296,11 @@
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + (window.NAS && NAS.token || ''),
+                    'X-CSRFToken': (window.NAS && NAS.csrfToken || ''),
                 },
                 body: JSON.stringify(subscription)
-            });
+            }).catch(() => {});
             console.log('User subscribed to push notifications');
         }
 
