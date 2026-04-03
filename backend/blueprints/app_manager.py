@@ -696,6 +696,47 @@ def _download_file(url, dest_path):
         return False
 
 
+_MIN_FREE_MB = 200  # minimum free space on root before apt/pip install
+
+
+def _ensure_root_space(emit_fn):
+    """Check root partition free space; auto-clean caches if low."""
+    try:
+        st = os.statvfs('/')
+        free_mb = (st.f_bavail * st.f_frsize) / (1024 * 1024)
+        if free_mb >= _MIN_FREE_MB:
+            return True
+
+        log.warning('[app_manager] Low root space: %.0f MB free, cleaning caches...', free_mb)
+        emit_fn({'stage': 'cleanup', 'percent': 23,
+                 'message': f'Mało miejsca ({free_mb:.0f} MB) — czyszczenie cache...',
+                 'status': 'running'})
+
+        host_run('apt-get clean 2>/dev/null', timeout=30)
+        host_run('rm -rf /root/.cache/pip 2>/dev/null', timeout=10)
+        # Remove stale __pycache__ from venv (safe, regenerated on import)
+        venv_dir = os.path.join(os.environ.get('ETHOS_ROOT', '/opt/ethos'), 'venv')
+        host_run(f'find {q(venv_dir)} -name __pycache__ -type d -exec rm -rf {{}} + 2>/dev/null',
+                 timeout=30)
+
+        st = os.statvfs('/')
+        free_mb = (st.f_bavail * st.f_frsize) / (1024 * 1024)
+        log.info('[app_manager] After cleanup: %.0f MB free', free_mb)
+
+        if free_mb < _MIN_FREE_MB:
+            emit_fn({'stage': 'error', 'percent': 0,
+                     'message': f'Brak miejsca na dysku ({free_mb:.0f} MB wolne, potrzeba {_MIN_FREE_MB} MB). '
+                                'Zwolnij miejsce na partycji root.',
+                     'status': 'error'})
+            return False
+        emit_fn({'stage': 'cleanup', 'percent': 24,
+                 'message': f'Zwolniono miejsce ({free_mb:.0f} MB wolne)',
+                 'status': 'running'})
+    except Exception as e:
+        log.warning('[app_manager] Space check error: %s', e)
+    return True
+
+
 def _install_apt_deps(deps, emit_fn):
     """Install APT dependencies with streaming progress updates."""
     if not deps:
@@ -962,10 +1003,14 @@ def _bg_install(app_id, app_def, task_id):
 
         # Instalacja zaleznosci (apt: 25-42%, pip: 45-57%)
         apt_deps = app_def.get('apt_deps', [])
+        pip_deps = app_def.get('pip_deps', [])
+
+        if (apt_deps or pip_deps) and not _ensure_root_space(emit):
+            return
+
         if apt_deps and not _install_apt_deps(apt_deps, emit):
             return
 
-        pip_deps = app_def.get('pip_deps', [])
         if pip_deps and not _install_pip_deps(pip_deps, emit):
             return
 
