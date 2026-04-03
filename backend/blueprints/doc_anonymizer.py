@@ -2024,8 +2024,8 @@ def anon_preview(job_id, which):
     """Serve original or anonymized file inline for preview.
 
     ``which`` must be 'original' or 'anonymized'.
-    Always returns extracted text as JSON for the split-pane comparison viewer.
-    Use ``?raw=1`` to get the raw PDF file instead (for download).
+    PDFs are served as raw files (for PDF.js rendering in the frontend).
+    DOCX text is extracted and returned as JSON.
     """
     if which not in ('original', 'anonymized'):
         return jsonify({'error': 'Invalid preview type'}), 400
@@ -2050,20 +2050,15 @@ def anon_preview(job_id, which):
     if not os.path.isfile(file_path):
         return jsonify({'error': 'File not found'}), 404
 
-    # Raw file mode (for download links)
-    if request.args.get('raw') == '1':
-        mime = 'application/pdf' if file_ext == '.pdf' else 'application/octet-stream'
-        return send_file(file_path, mimetype=mime, as_attachment=False)
+    # PDF: serve raw file for PDF.js rendering
+    if file_ext == '.pdf':
+        return send_file(file_path, mimetype='application/pdf',
+                         as_attachment=False)
 
-    # Always extract text for the comparison viewer
+    # DOCX: extract text and return as JSON
     try:
-        if file_ext == '.pdf':
-            pages = _extract_text_pdf(file_path)
-            text = '\n\n'.join(pages)
-        else:
-            paragraphs = _extract_text_docx(file_path)
-            text = '\n\n'.join(paragraphs)
-        return jsonify({'ok': True, 'text': text})
+        paragraphs = _extract_text_docx(file_path)
+        return jsonify({'ok': True, 'text': '\n\n'.join(paragraphs)})
     except Exception as e:
         log.warning('[doc_anonymizer] Preview text extraction failed: %s', e)
         return jsonify({'error': 'Could not extract text: ' + str(e)}), 500

@@ -5182,9 +5182,11 @@ textarea.app-input { resize: vertical; line-height: 1.5; }
 .anon-preview-pane-title-anon { color:#22c55e; }
 .anon-preview-pane-title-anon i { color:#22c55e; }
 .anon-preview-divider { width:1px; background:var(--border); flex-shrink:0; }
-.anon-preview-content { flex:1; overflow:auto; position:relative; }
+.anon-preview-content { flex:1; overflow:auto; position:relative; background:#e5e7eb; }
 .anon-preview-iframe { width:100%; height:100%; border:none; background:#fff; }
-.anon-preview-text { padding:16px 20px; font-size:14px; line-height:1.8; color:var(--text); white-space:pre-wrap; word-wrap:break-word; font-family:var(--font-family); transition:transform 0.15s ease; }
+.anon-preview-text { padding:16px 20px; font-size:14px; line-height:1.8; color:var(--text); white-space:pre-wrap; word-wrap:break-word; font-family:var(--font-family); transition:transform 0.15s ease; background:var(--card-bg); }
+.anon-pdf-pages { display:flex; flex-direction:column; align-items:center; gap:8px; padding:8px; }
+.anon-pdf-canvas { background:#fff; box-shadow:0 1px 4px rgba(0,0,0,.25); max-width:100%; }
 .anon-preview-loading { display:flex; align-items:center; justify-content:center; padding:40px; color:var(--text-muted); }
 .anon-preview-error { display:flex; align-items:center; justify-content:center; padding:40px; color:#ef4444; font-size:13px; }
 .anon-zoom-bar { display:flex; align-items:center; gap:4px; margin-left:auto; }

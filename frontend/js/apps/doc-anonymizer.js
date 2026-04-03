@@ -381,7 +381,7 @@ AppRegistry['doc-anonymizer'] = function (appDef) {
                 return;
             }
 
-            // Split pane — always text-based for synced scroll/zoom
+            // Split pane
             content += '<div class="anon-preview-split">' +
                 '<div class="anon-preview-pane">' +
                     '<div class="anon-preview-pane-title">' +
@@ -418,9 +418,14 @@ AppRegistry['doc-anonymizer'] = function (appDef) {
             var origEl = b.querySelector('#anon-pv-orig-' + jobId);
             var anonEl = b.querySelector('#anon-pv-anon-' + jobId);
 
-            // Load text for both panes (text extraction for PDF and DOCX)
-            loadDocxPreview(jobId, 'original', origEl);
-            loadDocxPreview(jobId, 'anonymized', anonEl);
+            // Load content into both panes
+            if (isPdf) {
+                loadPdfPreview(jobId, 'original', origEl);
+                loadPdfPreview(jobId, 'anonymized', anonEl);
+            } else {
+                loadDocxPreview(jobId, 'original', origEl);
+                loadDocxPreview(jobId, 'anonymized', anonEl);
+            }
 
             // Synchronized scrolling
             var syncing = false;
@@ -439,25 +444,26 @@ AppRegistry['doc-anonymizer'] = function (appDef) {
                 syncing = false;
             });
 
-            // Zoom controls
+            // Zoom controls — re-render PDF pages at new scale
             var currentZoom = 1.0;
             var zoomLabel = b.querySelector('#anon-zoom-lbl-' + jobId);
 
             function applyZoom(level) {
                 currentZoom = Math.max(0.25, Math.min(3.0, level));
-                var origText = origEl.querySelector('.anon-preview-text');
-                var anonText = anonEl.querySelector('.anon-preview-text');
-                if (origText) {
-                    origText.style.transform = 'scale(' + currentZoom + ')';
-                    origText.style.transformOrigin = 'top left';
-                    origText.style.width = (100 / currentZoom) + '%';
-                }
-                if (anonText) {
-                    anonText.style.transform = 'scale(' + currentZoom + ')';
-                    anonText.style.transformOrigin = 'top left';
-                    anonText.style.width = (100 / currentZoom) + '%';
-                }
                 if (zoomLabel) zoomLabel.textContent = Math.round(currentZoom * 100) + '%';
+                if (isPdf) {
+                    renderAllPdfCanvases(origEl, currentZoom);
+                    renderAllPdfCanvases(anonEl, currentZoom);
+                } else {
+                    [origEl, anonEl].forEach(function (el) {
+                        var txt = el.querySelector('.anon-preview-text');
+                        if (txt) {
+                            txt.style.transform = 'scale(' + currentZoom + ')';
+                            txt.style.transformOrigin = 'top left';
+                            txt.style.width = (100 / currentZoom) + '%';
+                        }
+                    });
+                }
             }
 
             b.querySelectorAll('.anon-zoom-btn').forEach(function (btn) {
@@ -469,7 +475,6 @@ AppRegistry['doc-anonymizer'] = function (appDef) {
                 });
             });
 
-            // Ctrl+wheel to zoom both panes
             var splitEl = b.querySelector('.anon-preview-split');
             if (splitEl) {
                 splitEl.addEventListener('wheel', function (e) {
@@ -481,7 +486,65 @@ AppRegistry['doc-anonymizer'] = function (appDef) {
             }
         }
 
-                async function loadDocxPreview(jobId, which, container) {
+        /* Re-render all PDF canvases in a container at the given zoom */
+        function renderAllPdfCanvases(container, zoom) {
+            container.querySelectorAll('canvas[data-page-idx]').forEach(function (canvas) {
+                var page = canvas._pdfPage;
+                if (!page) return;
+                var vp = page.getViewport({ scale: zoom * 1.5 });
+                canvas.width = vp.width;
+                canvas.height = vp.height;
+                canvas.style.width = vp.width / 1.5 + 'px';
+                canvas.style.height = vp.height / 1.5 + 'px';
+                page.render({ canvasContext: canvas.getContext('2d'), viewport: vp });
+            });
+        }
+
+        /* Load and render a PDF using PDF.js */
+        async function loadPdfPreview(jobId, which, container) {
+            try {
+                // Lazy-load PDF.js
+                if (!window.pdfjsLib) {
+                    await new Promise(function (resolve, reject) {
+                        var s = document.createElement('script');
+                        s.src = '/lib/pdf.min.js';
+                        s.onload = resolve;
+                        s.onerror = reject;
+                        document.head.appendChild(s);
+                    });
+                    pdfjsLib.GlobalWorkerOptions.workerSrc = '/lib/pdf.worker.min.js';
+                }
+
+                var url = '/api/doc-anonymizer/preview/' + jobId + '/' + which +
+                    '?token=' + encodeURIComponent(NAS.token);
+                var pdf = await pdfjsLib.getDocument(url).promise;
+
+                container.innerHTML = '';
+                var wrapper = document.createElement('div');
+                wrapper.className = 'anon-pdf-pages';
+                container.appendChild(wrapper);
+
+                for (var i = 1; i <= pdf.numPages; i++) {
+                    var page = await pdf.getPage(i);
+                    var vp = page.getViewport({ scale: 1.5 });
+                    var canvas = document.createElement('canvas');
+                    canvas.className = 'anon-pdf-canvas';
+                    canvas.dataset.pageIdx = i;
+                    canvas.width = vp.width;
+                    canvas.height = vp.height;
+                    canvas.style.width = vp.width / 1.5 + 'px';
+                    canvas.style.height = vp.height / 1.5 + 'px';
+                    canvas._pdfPage = page;
+                    wrapper.appendChild(canvas);
+                    page.render({ canvasContext: canvas.getContext('2d'), viewport: vp });
+                }
+            } catch (e) {
+                container.innerHTML = '<div class="anon-preview-error">' +
+                    t('Nie udalo sie zaladowac PDF') + ': ' + e.message + '</div>';
+            }
+        }
+
+        async function loadDocxPreview(jobId, which, container) {
             try {
                 var data = await api('/doc-anonymizer/preview/' + jobId + '/' + which);
                 if (data && data.text) {
