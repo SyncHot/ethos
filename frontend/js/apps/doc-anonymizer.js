@@ -331,16 +331,15 @@ AppRegistry['doc-anonymizer'] = function (appDef) {
 
         function renderPreview(b, job, isPdf, isDone) {
             var jobId = job.job_id;
-            var tokenQs = '?token=' + encodeURIComponent(NAS.token);
 
             // Build replacement table HTML
             var tableHtml = '';
             if (job.replacements && job.replacements.length > 0) {
                 tableHtml = '<table class="anon-detail-table"><thead><tr>' +
                     '<th>' + t('Kategoria') + '</th>' +
-                    '<th>' + t('Oryginał') + '</th>' +
+                    '<th>' + t('Oryginal') + '</th>' +
                     '<th>' + t('Zamiennik') + '</th>' +
-                    '<th>' + t('Wystąpienia') + '</th>' +
+                    '<th>' + t('Wystapienia') + '</th>' +
                     '</tr></thead><tbody>';
                 job.replacements.forEach(function (r) {
                     tableHtml += '<tr>' +
@@ -354,11 +353,17 @@ AppRegistry['doc-anonymizer'] = function (appDef) {
                 tableHtml += '</tbody></table>';
             }
 
-            // Build meta summary
+            // Meta + zoom toolbar
             var metaHtml = '<div class="anon-preview-meta">' +
                 '<span><i class="fa fa-file"></i> ' + (job.filename || '') + '</span>' +
                 '<span><i class="fa fa-copy"></i> ' + (job.pages_analyzed || 0) + ' ' + t('stron') + '</span>' +
-                '<span><i class="fa fa-shield-alt"></i> ' + (job.entities_found || 0) + ' ' + t('PII') + '</span>' +
+                '<span><i class="fa fa-shield-alt"></i> ' + (job.entities_found || 0) + ' PII</span>' +
+                '<span class="anon-zoom-bar">' +
+                    '<button class="anon-zoom-btn" data-action="out" title="Zoom -"><i class="fa fa-search-minus"></i></button>' +
+                    '<span class="anon-zoom-level" id="anon-zoom-lbl-' + jobId + '">100%</span>' +
+                    '<button class="anon-zoom-btn" data-action="in" title="Zoom +"><i class="fa fa-search-plus"></i></button>' +
+                    '<button class="anon-zoom-btn" data-action="reset" title="Reset"><i class="fa fa-undo"></i></button>' +
+                '</span>' +
                 '</div>';
 
             var content = '<div class="anon-preview">' + metaHtml;
@@ -376,24 +381,27 @@ AppRegistry['doc-anonymizer'] = function (appDef) {
                 return;
             }
 
-            // Split pane
+            // Split pane — always text-based for synced scroll/zoom
             content += '<div class="anon-preview-split">' +
                 '<div class="anon-preview-pane">' +
                     '<div class="anon-preview-pane-title">' +
-                        '<i class="fa fa-file-alt"></i> ' + t('Oryginał') +
+                        '<i class="fa fa-file-alt"></i> ' + t('Oryginal') +
                     '</div>' +
-                    '<div class="anon-preview-content" id="anon-pv-orig-' + jobId + '"></div>' +
+                    '<div class="anon-preview-content" id="anon-pv-orig-' + jobId + '">' +
+                        '<div class="anon-preview-loading"><i class="fa fa-spinner fa-spin"></i></div>' +
+                    '</div>' +
                 '</div>' +
                 '<div class="anon-preview-divider"></div>' +
                 '<div class="anon-preview-pane">' +
                     '<div class="anon-preview-pane-title anon-preview-pane-title-anon">' +
                         '<i class="fa fa-user-shield"></i> ' + t('Zanonimizowany') +
                     '</div>' +
-                    '<div class="anon-preview-content" id="anon-pv-anon-' + jobId + '"></div>' +
+                    '<div class="anon-preview-content" id="anon-pv-anon-' + jobId + '">' +
+                        '<div class="anon-preview-loading"><i class="fa fa-spinner fa-spin"></i></div>' +
+                    '</div>' +
                 '</div>' +
             '</div>';
 
-            // Replacements table
             if (tableHtml) {
                 content += '<div class="anon-preview-table-wrap">' +
                     '<div class="anon-preview-table-title">' +
@@ -410,37 +418,70 @@ AppRegistry['doc-anonymizer'] = function (appDef) {
             var origEl = b.querySelector('#anon-pv-orig-' + jobId);
             var anonEl = b.querySelector('#anon-pv-anon-' + jobId);
 
-            if (isPdf) {
-                origEl.innerHTML = '<iframe class="anon-preview-iframe" src="/api/doc-anonymizer/preview/' +
-                    jobId + '/original' + tokenQs + '"></iframe>';
-                anonEl.innerHTML = '<iframe class="anon-preview-iframe" src="/api/doc-anonymizer/preview/' +
-                    jobId + '/anonymized' + tokenQs + '"></iframe>';
-            } else {
-                origEl.innerHTML = '<div class="anon-preview-loading"><i class="fa fa-spinner fa-spin"></i></div>';
-                anonEl.innerHTML = '<div class="anon-preview-loading"><i class="fa fa-spinner fa-spin"></i></div>';
-                loadDocxPreview(jobId, 'original', origEl);
-                loadDocxPreview(jobId, 'anonymized', anonEl);
+            // Load text for both panes (text extraction for PDF and DOCX)
+            loadDocxPreview(jobId, 'original', origEl);
+            loadDocxPreview(jobId, 'anonymized', anonEl);
+
+            // Synchronized scrolling
+            var syncing = false;
+            origEl.addEventListener('scroll', function () {
+                if (syncing) return;
+                syncing = true;
+                anonEl.scrollTop = origEl.scrollTop;
+                anonEl.scrollLeft = origEl.scrollLeft;
+                syncing = false;
+            });
+            anonEl.addEventListener('scroll', function () {
+                if (syncing) return;
+                syncing = true;
+                origEl.scrollTop = anonEl.scrollTop;
+                origEl.scrollLeft = anonEl.scrollLeft;
+                syncing = false;
+            });
+
+            // Zoom controls
+            var currentZoom = 1.0;
+            var zoomLabel = b.querySelector('#anon-zoom-lbl-' + jobId);
+
+            function applyZoom(level) {
+                currentZoom = Math.max(0.25, Math.min(3.0, level));
+                var origText = origEl.querySelector('.anon-preview-text');
+                var anonText = anonEl.querySelector('.anon-preview-text');
+                if (origText) {
+                    origText.style.transform = 'scale(' + currentZoom + ')';
+                    origText.style.transformOrigin = 'top left';
+                    origText.style.width = (100 / currentZoom) + '%';
+                }
+                if (anonText) {
+                    anonText.style.transform = 'scale(' + currentZoom + ')';
+                    anonText.style.transformOrigin = 'top left';
+                    anonText.style.width = (100 / currentZoom) + '%';
+                }
+                if (zoomLabel) zoomLabel.textContent = Math.round(currentZoom * 100) + '%';
             }
 
-            // Sync scrolling between the two panes
-            var origContent = origEl;
-            var anonContent = anonEl;
-            var syncing = false;
-            origContent.addEventListener('scroll', function () {
-                if (syncing) return;
-                syncing = true;
-                anonContent.scrollTop = origContent.scrollTop;
-                syncing = false;
+            b.querySelectorAll('.anon-zoom-btn').forEach(function (btn) {
+                btn.addEventListener('click', function () {
+                    var action = btn.dataset.action;
+                    if (action === 'in') applyZoom(currentZoom + 0.15);
+                    else if (action === 'out') applyZoom(currentZoom - 0.15);
+                    else applyZoom(1.0);
+                });
             });
-            anonContent.addEventListener('scroll', function () {
-                if (syncing) return;
-                syncing = true;
-                origContent.scrollTop = anonContent.scrollTop;
-                syncing = false;
-            });
+
+            // Ctrl+wheel to zoom both panes
+            var splitEl = b.querySelector('.anon-preview-split');
+            if (splitEl) {
+                splitEl.addEventListener('wheel', function (e) {
+                    if (e.ctrlKey || e.metaKey) {
+                        e.preventDefault();
+                        applyZoom(currentZoom + (e.deltaY < 0 ? 0.1 : -0.1));
+                    }
+                }, { passive: false });
+            }
         }
 
-        async function loadDocxPreview(jobId, which, container) {
+                async function loadDocxPreview(jobId, which, container) {
             try {
                 var data = await api('/doc-anonymizer/preview/' + jobId + '/' + which);
                 if (data && data.text) {

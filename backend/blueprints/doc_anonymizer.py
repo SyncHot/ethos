@@ -1090,12 +1090,46 @@ _ICD_CODE_RE = re.compile(r'\b[A-Z]\d{2}(?:\.\d{1,2})?\b')
 
 # Medical terms that should NEVER be anonymized
 _MEDICAL_STOPWORDS = frozenset({
+    # General medical terms
     'rozpoznanie', 'epikryza', 'zalecenia', 'leczenie', 'badanie', 'wyniki',
     'dawkowanie', 'kontrola', 'skierowanie', 'zaswiadczenie', 'zaświadczenie',
     'pacjent', 'pacjentka', 'choroba', 'zapalenie', 'niedokrwienna',
     'nadcisnienie', 'cukrzyca', 'hipercholesterolemia', 'diagnostyka',
     'rehabilitacja', 'operacja', 'zabieg', 'terapia', 'recepta',
+    'objaw', 'zespol', 'skala', 'test', 'wynik', 'morfologia',
+    'hemoglobina', 'leukocyty', 'trombocyty', 'erytrocyty', 'kreatynina',
+    'bilirubina', 'glukoza', 'cholesterol', 'triglicerydy',
+    # Diseases and conditions
+    'niewydolnosc', 'migotanie', 'zatorowosc', 'zawal', 'udar',
+    'padaczka', 'epilepsja', 'miazdzyca', 'nowotwor', 'bialaczka',
+    'marskosc', 'niedokrwienie', 'zwezenie', 'torbiel', 'polip',
+    'remisja', 'nawrot', 'przerzut', 'arytmia', 'bradykardia',
+    'tachykardia', 'osteoporoza', 'reumatoidalne',
+    # Procedures
+    'gastroskopia', 'kolonoskopia', 'ultrasonografia', 'tomografia',
+    'rezonans', 'echokardiografia', 'koronarografia', 'endoskopia',
+    'biopsja', 'laparoskopia', 'hemodializa', 'chemioterapia',
+    'radioterapia', 'ablacja', 'angioplastyka', 'holter',
+    # Common medications (most frequent in Polish medical docs)
     'amlodypina', 'metformina', 'atorwastatyna', 'ramipril', 'bisoprolol',
+    'enalapryl', 'peryndopryl', 'walsartan', 'telmisartan', 'losartan',
+    'indapamid', 'torasemid', 'furosemid', 'spironolakton',
+    'hydrochlorotiazyd', 'klopidogrel', 'warfaryna', 'dabigatran',
+    'rywaroksaban', 'apiksaban', 'digoksyna', 'amiodaron',
+    'gliklazyd', 'empagliflozyna', 'dapagliflozyna', 'semaglutyd',
+    'insulina', 'ibuprofen', 'diklofenak', 'ketoprofen', 'paracetamol',
+    'tramadol', 'metamizol', 'amoksycylina', 'azytromycyna',
+    'ciprofloksacyna', 'doksycyklina', 'salbutamol', 'budezonid',
+    'montelukast', 'omeprazol', 'pantoprazol', 'lansoprazol',
+    'escytalopram', 'sertralina', 'wenlafaksyna', 'mirtazapina',
+    'olanzapina', 'kwetiapina', 'lewotyroksyna', 'prednizon',
+    'deksametazon', 'heparyna', 'acetylosalicylowy',
+    'tikagrelol', 'lacydypina', 'kandesartan', 'liraglutyd',
+    'cefaleksyna', 'teofilina', 'esomeprazol', 'alprazolam', 'diazepam',
+    # Anatomy
+    'serce', 'pluca', 'watroba', 'nerki', 'trzustka', 'jelito',
+    'zoladek', 'mozg', 'kregowy', 'przedsionek', 'komora',
+    'zastawka', 'aorta', 'tetnica', 'zyla',
 })
 
 
@@ -1990,7 +2024,8 @@ def anon_preview(job_id, which):
     """Serve original or anonymized file inline for preview.
 
     ``which`` must be 'original' or 'anonymized'.
-    PDFs are served inline; DOCX text is extracted and returned as JSON.
+    Always returns extracted text as JSON for the split-pane comparison viewer.
+    Use ``?raw=1`` to get the raw PDF file instead (for download).
     """
     if which not in ('original', 'anonymized'):
         return jsonify({'error': 'Invalid preview type'}), 400
@@ -2015,14 +2050,20 @@ def anon_preview(job_id, which):
     if not os.path.isfile(file_path):
         return jsonify({'error': 'File not found'}), 404
 
-    if file_ext == '.pdf':
-        return send_file(file_path, mimetype='application/pdf',
-                         as_attachment=False)
+    # Raw file mode (for download links)
+    if request.args.get('raw') == '1':
+        mime = 'application/pdf' if file_ext == '.pdf' else 'application/octet-stream'
+        return send_file(file_path, mimetype=mime, as_attachment=False)
 
-    # DOCX: extract text and return as JSON for the frontend viewer
+    # Always extract text for the comparison viewer
     try:
-        paragraphs = _extract_text_docx(file_path)
-        return jsonify({'ok': True, 'text': '\n\n'.join(paragraphs)})
+        if file_ext == '.pdf':
+            pages = _extract_text_pdf(file_path)
+            text = '\n\n'.join(pages)
+        else:
+            paragraphs = _extract_text_docx(file_path)
+            text = '\n\n'.join(paragraphs)
+        return jsonify({'ok': True, 'text': text})
     except Exception as e:
         log.warning('[doc_anonymizer] Preview text extraction failed: %s', e)
         return jsonify({'error': 'Could not extract text: ' + str(e)}), 500

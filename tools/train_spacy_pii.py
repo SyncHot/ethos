@@ -161,6 +161,69 @@ DIAGNOSES = [
 MEDICATIONS = [
     'amlodypina 5mg', 'metformina 850mg', 'atorwastatyna 20mg',
     'ramipril 5mg', 'bisoprolol 5mg', 'kwas acetylosalicylowy 75mg',
+    'enalapryl 10mg', 'peryndopryl 5mg', 'walsartan 80mg', 'telmisartan 40mg',
+    'losartan 50mg', 'kandesartan 8mg', 'lacydypina 4mg',
+    'indapamid 1.5mg', 'torasemid 5mg', 'furosemid 40mg',
+    'spironolakton 25mg', 'hydrochlorotiazyd 12.5mg',
+    'klopidogrel 75mg', 'tikagrelol 90mg', 'warfaryna 3mg',
+    'dabigatran 110mg', 'rywaroksaban 20mg', 'apiksaban 5mg',
+    'digoksyna 0.25mg', 'amiodaron 200mg',
+    'gliklazyd 30mg', 'empagliflozyna 10mg', 'dapagliflozyna 10mg',
+    'semaglutyd 0.5mg', 'liraglutyd 1.2mg', 'insulina 20j',
+    'ibuprofen 400mg', 'diklofenak 75mg', 'ketoprofen 100mg',
+    'paracetamol 500mg', 'tramadol 50mg', 'metamizol 500mg',
+    'amoksycylina 1g', 'azytromycyna 500mg', 'ciprofloksacyna 500mg',
+    'doksycyklina 100mg', 'cefaleksyna 500mg',
+    'salbutamol 100mcg', 'budezonid 200mcg', 'montelukast 10mg', 'teofilina 300mg',
+    'omeprazol 20mg', 'pantoprazol 40mg', 'lansoprazol 30mg', 'esomeprazol 20mg',
+    'escytalopram 10mg', 'sertralina 50mg', 'wenlafaksyna 75mg',
+    'mirtazapina 30mg', 'olanzapina 5mg', 'kwetiapina 25mg',
+    'lewotyroksyna 50mcg', 'prednizon 5mg', 'deksametazon 4mg',
+    'heparyna 5000j', 'klindamycyna 300mg', 'amlorel 5mg',
+]
+
+MEDICAL_TERMS = [
+    'nadcisnienie tetnicze', 'cukrzyca typu 2', 'migotanie przedsionkow',
+    'niewydolnosc serca', 'choroba wiencowa', 'hipercholesterolemia',
+    'astma oskrzelowa', 'przewlekla obturacyjna choroba pluc',
+    'choroba Parkinsona', 'zespol Aspergera', 'choroba Hashimoto',
+    'zatorowosc plucna', 'zawal miokardium', 'udar mozgu',
+    'padaczka', 'stwardnienie rozsiane', 'miazdzyca',
+    'zapalenie pluc', 'marskosc watroby', 'kamica nerkowa',
+    'niedoczynnosc tarczycy', 'nadczynnosc tarczycy',
+    'choroba Lesniowskiego-Crohna', 'wrzodziejace zapalenie jelita grubego',
+    'reumatoidalne zapalenie stawow', 'osteoporoza',
+    'przewlekla choroba nerek', 'zwezenie zastawki aortalnej',
+    'kardiomiopatia rozstrzeniowa', 'tetniak aorty brzusznej',
+    'zakrzepica zyl glebokich', 'niedokrwistosc z niedoboru zelaza',
+    'hiperkaliemia', 'hiponatremia', 'kwasica metaboliczna',
+    'zespol metaboliczny', 'obrzek pluc', 'odma oplucnowa',
+]
+
+PROCEDURES = [
+    'gastroskopia', 'kolonoskopia', 'ultrasonografia jamy brzusznej',
+    'tomografia komputerowa', 'rezonans magnetyczny', 'echokardiografia',
+    'koronarografia', 'endoskopia', 'biopsja', 'laparoskopia',
+    'artroskopia', 'hemodializa', 'chemioterapia', 'radioterapia',
+    'ablacja', 'angioplastyka', 'Holter EKG', 'EKG spoczynkowe',
+    'RTG klatki piersiowej', 'spirometria', 'cystoskopia',
+    'badanie histopatologiczne', 'punkcja ledzwiowa',
+    'USG Doppler', 'ECHO serca', 'proktoskopia',
+    'test wysilkowy', 'scyntygrafia', 'bronchoskopia',
+    'dializoterapia', 'fizykoterapia', 'rehabilitacja kardiologiczna',
+]
+
+LAB_TESTS = [
+    'morfologia krwi', 'CRP', 'OB', 'TSH', 'fT3', 'fT4',
+    'glukoza na czczo', 'HbA1c', 'kreatynina', 'mocznik',
+    'ALT', 'AST', 'GGTP', 'bilirubina calkowita', 'bilirubina bezposrednia',
+    'hemoglobina', 'hematokryt', 'leukocyty', 'trombocyty', 'erytrocyty',
+    'cholesterol calkowity', 'cholesterol LDL', 'cholesterol HDL',
+    'triglicerydy', 'kwas moczowy', 'sod', 'potas', 'wapn',
+    'albuminy', 'bialko calkowite', 'INR', 'APTT', 'D-dimery',
+    'prokalcytonina', 'ferrytyna', 'zelazo', 'witamina D3',
+    'witamina B12', 'kwas foliowy', 'PSA', 'CEA', 'AFP',
+    'gazometria', 'badanie ogolne moczu', 'posiew krwi',
 ]
 
 
@@ -428,7 +491,6 @@ def gen_negative_medical():
         "Skala Barthel: 85 punktow. Skala Glasgow: 15.",
         "Objaw Chvostka dodatni. Objaw Trousseau ujemny.",
         "W badaniu echokardiograficznym zastawka aortalna prawidlowa.",
-        "Dawkowanie: amlodypina 5mg raz dziennie, atorwastatyna 20mg wieczorem.",
         "Wyniki badan laboratoryjnych: morfologia w normie, CRP ponizej normy.",
         "Zalecenia: dieta niskosodowa, aktywnosc fizyczna 30 min dziennie.",
         "EKG: rytm zatokowy miarowy, 72/min, bez cech niedokrwienia.",
@@ -437,6 +499,80 @@ def gen_negative_medical():
         "Rozpoznanie: choroba Lesniowskiego-Crohna w remisji klinicznej.",
     ]
     return rn(templates), []
+
+
+def gen_negative_drugs():
+    """Drug-heavy text — NO entities at all."""
+    med1, med2, med3 = random.sample(MEDICATIONS, 3)
+    templates = [
+        f"Dawkowanie: {med1} raz dziennie, {med2} wieczorem, {med3} po posilek.",
+        f"Zalecenia farmakologiczne: 1) {med1} 2) {med2} 3) {med3}.",
+        f"Kontynuowac leczenie: {med1}, {med2}. Odstawic {med3}.",
+        f"Recepta: {med1}, {med2}, {med3}. Kontrola za 3 miesiace.",
+        f"Leki stale: {med1} rano, {med2} w poludnie, {med3} wieczorem.",
+        f"Zmieniono dawke {med1} na {med2}. Dolaczono {med3}.",
+        f"Farmakoterapia: {med1} 1x dz., {med2} 2x dz., {med3} w razie potrzeby.",
+        f"Stosowac {med1} pod kontrola cisnienia. {med2} pod kontrola glikemii.",
+    ]
+    return rn(templates), []
+
+
+def gen_negative_lab():
+    """Lab results — NO entities at all."""
+    tests = random.sample(LAB_TESTS, min(5, len(LAB_TESTS)))
+    val = lambda: f"{random.uniform(0.5, 200):.1f}"
+    templates = [
+        f"Wyniki badan: {tests[0]} {val()}, {tests[1]} {val()}, {tests[2]} {val()}.",
+        f"Badania laboratoryjne: {tests[0]} - norma, {tests[1]} - podwyzszone, {tests[2]} - w normie.",
+        f"Kontrolne badania krwi: {tests[0]} {val()} (N: 4.0-10.0), {tests[1]} {val()}.",
+        f"{tests[0]}: {val()}, {tests[1]}: {val()}, {tests[2]}: {val()}, {tests[3]}: {val()}.",
+        f"Morfologia: WBC {val()} tys/uL, RBC {val()} mln/uL, Hgb {val()} g/dL, PLT {val()} tys/uL.",
+        f"Panel lipidowy: cholesterol calkowity {val()}, LDL {val()}, HDL {val()}, TG {val()}.",
+        f"Biochemia: {tests[0]} {val()}, {tests[1]} {val()}. Gazometria: pH 7.{random.randint(30,45)}.",
+    ]
+    return rn(templates), []
+
+
+def gen_negative_diagnosis():
+    """Diagnosis text with ICD codes — NO entities at all."""
+    diag1, diag2 = random.sample(MEDICAL_TERMS, 2)
+    proc = rn(PROCEDURES)
+    icd1 = f"{rn('IEJKMN')}{random.randint(10,99)}.{random.randint(0,9)}"
+    icd2 = f"{rn('IEJKMN')}{random.randint(10,99)}"
+    templates = [
+        f"Rozpoznanie: {icd1} {diag1}, {icd2} {diag2}.",
+        f"Rozpoznanie glowne: {diag1}. Wspolistniejace: {diag2}.",
+        f"Wykonano {proc}. Wynik: {diag1} w fazie remisji.",
+        f"Skierowanie na {proc} z powodu {diag1}.",
+        f"Epikryza: Pacjent z {diag1} i {diag2}. Wykonano {proc}.",
+        f"Rozpoznanie wg ICD-10: {icd1} - {diag1}. Powiklania: brak.",
+        f"W trakcie hospitalizacji leczono {diag1}. Wypisano w stanie stabilnym.",
+        f"Wywiad: {diag1} od 5 lat, {diag2} od 2 lat. Leczony ambulatoryjnie.",
+    ]
+    return rn(templates), []
+
+
+def gen_discharge_summary():
+    """Discharge-style text mixing entities with medical terms."""
+    first, surname = make_name()
+    patient = f"{first} {surname}"
+    facility = rn(FACILITIES)
+    diag = rn(MEDICAL_TERMS)
+    med1, med2 = random.sample(MEDICATIONS, 2)
+    proc = rn(PROCEDURES)
+    templates = [
+        ("Pacjent {P} wypisany z {F}. Rozpoznanie: {DG}. Wykonano {PR}. Zalecenia: {M1}, {M2}.",
+         [("{P}", patient, "persName"), ("{F}", facility, "orgName"),
+          ("{DG}", diag, None), ("{PR}", proc, None), ("{M1}", med1, None), ("{M2}", med2, None)]),
+        ("Karta informacyjna leczenia szpitalnego. Pacjent: {P}. Oddział: {F}. Rozpoznanie: {DG}. Leki: {M1}, {M2}.",
+         [("{P}", patient, "persName"), ("{F}", facility, "orgName"),
+          ("{DG}", diag, None), ("{M1}", med1, None), ("{M2}", med2, None)]),
+        ("{P} hospitalizowany w {F}. {PR} bez powiklan. {DG} w remisji. Leczenie: {M1}, {M2}.",
+         [("{P}", patient, "persName"), ("{F}", facility, "orgName"),
+          ("{PR}", proc, None), ("{DG}", diag, None), ("{M1}", med1, None), ("{M2}", med2, None)]),
+    ]
+    tpl, reps = rn(templates)
+    return _fill(tpl, reps)
 
 
 def gen_maiden_name():
@@ -498,7 +634,11 @@ GENERATORS = [
     (gen_surname_first, 30),
     (gen_family_mention, 30),
     (gen_complex_sentence, 60),
-    (gen_negative_medical, 40),
+    (gen_negative_medical, 100),
+    (gen_negative_drugs, 120),
+    (gen_negative_lab, 80),
+    (gen_negative_diagnosis, 80),
+    (gen_discharge_summary, 60),
     (gen_maiden_name, 20),
     (gen_abbreviation_name, 20),
     (gen_address_context, 30),
@@ -645,11 +785,11 @@ def run_demo(model_path):
 
 def main():
     parser = argparse.ArgumentParser(description='Fine-tune spaCy NER for Polish PII')
-    parser.add_argument('--iterations', type=int, default=30)
+    parser.add_argument('--iterations', type=int, default=50)
     parser.add_argument('--output', default='/opt/ethos/data/models/spacy_pii_pl')
     parser.add_argument('--base-model', default='pl_core_news_lg')
-    parser.add_argument('--train-size', type=int, default=500)
-    parser.add_argument('--dev-size', type=int, default=100)
+    parser.add_argument('--train-size', type=int, default=1500)
+    parser.add_argument('--dev-size', type=int, default=300)
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--demo-only', action='store_true')
     args = parser.parse_args()
