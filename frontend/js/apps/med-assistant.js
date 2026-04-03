@@ -1,6 +1,49 @@
 /* == EthOS Medical Assistant == */
 /* globals AppRegistry, createWindow, NAS, api, t, confirmDialog */
 
+function _medMd(text) {
+    var s = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    // tables
+    s = s.replace(/((?:^\|.+\|$\n?)+)/gm, function (block) {
+        var rows = block.trim().split('\n').filter(function (r) { return r.trim(); });
+        if (rows.length < 2) return block;
+        var html = '<table class="med-md-table">';
+        rows.forEach(function (row, i) {
+            if (/^\|[\s:-]+\|$/.test(row.replace(/[:-]/g, function (c) { return c; }))) return; // skip separator
+            if (/^\|\s*[-:]+/.test(row) && !/[a-zA-Z0-9]/.test(row.replace(/[|:\-\s]/g, ''))) return;
+            var cells = row.split('|').filter(function (c, j, a) { return j > 0 && j < a.length - 1; });
+            var tag = i === 0 ? 'th' : 'td';
+            html += '<tr>' + cells.map(function (c) {
+                return '<' + tag + '>' + c.trim() + '</' + tag + '>';
+            }).join('') + '</tr>';
+        });
+        html += '</table>';
+        return html;
+    });
+    // headers
+    s = s.replace(/^### (.+)$/gm, '<h4 class="med-md-h">$1</h4>');
+    s = s.replace(/^## (.+)$/gm, '<h3 class="med-md-h">$1</h3>');
+    s = s.replace(/^# (.+)$/gm, '<h2 class="med-md-h">$1</h2>');
+    // horizontal rule
+    s = s.replace(/^---+$/gm, '<hr class="med-md-hr">');
+    // bold + italic
+    s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/\*(.+?)\*/g, '<em>$1</em>');
+    // inline code
+    s = s.replace(/`([^`]+)`/g, '<code class="med-md-code">$1</code>');
+    // unordered lists
+    s = s.replace(/^- (.+)$/gm, '<li>$1</li>');
+    s = s.replace(/((?:<li>.+<\/li>\n?)+)/g, '<ul class="med-md-list">$1</ul>');
+    // alert emoji
+    s = s.replace(/⚠️/g, '<span class="med-alert-icon">⚠️</span>');
+    // newlines (preserve spacing outside tables/lists)
+    s = s.replace(/\n/g, '<br>');
+    // clean up extra <br> around block elements
+    s = s.replace(/<br>(<h[234]|<table|<ul|<hr)/g, '$1');
+    s = s.replace(/(<\/h[234]>|<\/table>|<\/ul>|<hr[^>]*>)<br>/g, '$1');
+    return s;
+}
+
 AppRegistry['med-assistant'] = function (appDef) {
     createWindow('med-assistant', {
         title: t('Medical Assistant'),
@@ -385,12 +428,7 @@ AppRegistry['med-assistant'] = function (appDef) {
             resultHtml += '</div>';
 
             if (data.result) {
-                var formatted = data.result
-                    .replace(/&/g, '&amp;')
-                    .replace(/</g, '&lt;')
-                    .replace(/>/g, '&gt;')
-                    .replace(/\n/g, '<br>');
-                resultHtml += '<div class="med-result-text">' + formatted + '</div>';
+                resultHtml += '<div class="med-result-text">' + _medMd(data.result) + '</div>';
             } else if (data.error) {
                 resultHtml += '<div class="med-result-error">' + data.error + '</div>';
             }
