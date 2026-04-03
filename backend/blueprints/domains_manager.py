@@ -667,6 +667,7 @@ def _generate_nginx_conf(entry):
     lines.append('')
     lines.append('    # Proxy settings')
     lines.append('    location / {')
+    lines.append('        client_max_body_size 0;')
     lines.append(f'        proxy_pass {target};')
     lines.append('        proxy_set_header Host $host;')
     lines.append('        proxy_set_header X-Real-IP $remote_addr;')
