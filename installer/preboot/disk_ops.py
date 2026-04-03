@@ -22,6 +22,14 @@ def _part(dev, n):
     return f"{dev}{n}"
 
 
+def _disk_size_bytes(dev):
+    """Return disk size in bytes via blockdev, or 0 on failure."""
+    out, _, rc = _run(f"blockdev --getsize64 {dev}", timeout=10)
+    if rc == 0 and out.strip().isdigit():
+        return int(out.strip())
+    return 0
+
+
 def _run(cmd, timeout=30):
     proc = None
     try:
@@ -319,6 +327,7 @@ def install(os_disk, data_disk, progress_cb=None):
             _generate_fstab(os_dev, mount_dir, same_disk)
 
         # Phase 6: Data disk (if separate)
+        nvme_pool_part = None
         if not same_disk and data_dev:
             _p("data", 81, f"Partitioning data disk {data_dev}...")
             _wipe_disk(data_dev)
@@ -335,6 +344,16 @@ def install(os_disk, data_disk, progress_cb=None):
                 _p("configuring", 82, "Setting up data partition symlinks...")
                 _setup_data_separation(mount_dir, _part(data_dev, 1))
                 _generate_fstab(os_dev, mount_dir, same_disk, data_dev=data_dev)
+
+            # Check if OS disk has NVMe fast-storage partition (p4)
+            p4 = _part(os_dev, 4)
+            if os.path.exists(p4):
+                nvme_pool_part = p4
+
+        # Phase 6b: NVMe fast-storage pool (separate-data mode, remaining OS disk space)
+        if nvme_pool_part:
+            _p("data", 83, "Configuring NVMe fast-storage pool...")
+            _setup_nvme_pool(nvme_pool_part, mount_dir, squashfs_mode)
 
         # Phase 7: Cleanup
         _p("finalizing", 83, "Unmounting...")
@@ -382,7 +401,8 @@ def _create_gpt(dev, include_data_part):
       p1 = ESP    (FAT32, 512MB)   → /boot/efi
       p2 = Root-A (ext4,  4GB)     → / (active after install)
       p3 = Root-B (ext4,  4GB)     → / (used by OTA updates, empty initially)
-      p4 = Data   (btrfs, rest)    → /mnt/data (only if same-disk mode)
+      p4 = Data   (btrfs, rest)    → /mnt/data (same-disk) or /mnt/fast-storage (separate-disk)
+    If the OS disk has <2GB remaining after A/B, p4 is skipped in separate-disk mode.
     """
     cmds = [
         f"parted -s {dev} mklabel gpt",
@@ -391,8 +411,17 @@ def _create_gpt(dev, include_data_part):
         f"parted -s {dev} mkpart primary ext4 513MiB 4609MiB",   # Root-A: 4096MB
         f"parted -s {dev} mkpart primary ext4 4609MiB 8705MiB",  # Root-B: 4096MB
     ]
+
     if include_data_part:
         cmds.append(f"parted -s {dev} mkpart primary ext4 8705MiB 100%")  # Data: rest
+    else:
+        # Separate-data mode: check if OS disk has enough remaining space
+        # for a useful NVMe fast-storage partition (>= 2GB after A/B)
+        disk_bytes = _disk_size_bytes(dev)
+        remaining_mb = (disk_bytes // (1024 * 1024)) - 8705 if disk_bytes else 0
+        if remaining_mb >= 2048:
+            cmds.append(f"parted -s {dev} mkpart primary btrfs 8705MiB 100%")
+            log.info("Creating p4 NVMe fast-storage partition (%d MB) on %s", remaining_mb, dev)
 
     for cmd in cmds:
         out, err, rc = _run(cmd, timeout=30)
@@ -403,7 +432,7 @@ def _create_gpt(dev, include_data_part):
 
 
 def _format_partitions(dev, same_disk):
-    """Format A/B partitions: Root-A + Root-B (empty), optionally Data."""
+    """Format A/B partitions: Root-A + Root-B (empty), optionally Data/NVMe-Pool."""
     _, err, rc = _run(f"mkfs.vfat -F32 -n EFI {_part(dev, 1)}", timeout=60)
     if rc != 0:
         raise RuntimeError(f"mkfs.vfat failed: {err}")
@@ -416,11 +445,20 @@ def _format_partitions(dev, same_disk):
     if rc != 0:
         raise RuntimeError(f"mkfs.ext4 Root-B failed: {err}")
 
+    p4 = _part(dev, 4)
     if same_disk:
-        _, err, rc = _run(f"mkfs.btrfs -f -L EthOS-Data {_part(dev, 4)}", timeout=120)
+        _, err, rc = _run(f"mkfs.btrfs -f -L EthOS-Data {p4}", timeout=120)
         if rc != 0:
             raise RuntimeError(f"mkfs.btrfs data failed: {err}")
-        _create_btrfs_subvolumes(_part(dev, 4))
+        _create_btrfs_subvolumes(p4)
+    elif os.path.exists(p4):
+        # Separate-data mode but p4 created for NVMe fast-storage
+        _, err, rc = _run(f"mkfs.btrfs -f -L NVMe-Pool {p4}", timeout=120)
+        if rc != 0:
+            log.warning("mkfs.btrfs NVMe-Pool failed (non-fatal): %s", err)
+        else:
+            _create_btrfs_subvolumes(p4)
+            log.info("Formatted NVMe fast-storage partition: %s", p4)
 
 
 def _create_btrfs_subvolumes(data_part):
@@ -799,6 +837,50 @@ def _move_and_symlink(src_dir, target_dir, symlink_target):
 
     os.symlink(symlink_target, src_dir)
     log.info("Symlinked %s → %s", src_dir, symlink_target)
+
+
+_NVME_POOL_MOUNT = "/mnt/fast-storage"
+
+
+def _setup_nvme_pool(nvme_part, mount_dir, squashfs_mode):
+    """Add NVMe fast-storage partition (OS disk p4) to fstab.
+
+    In separate-data-disk mode, the remaining space on the NVMe/SSD OS disk
+    is formatted as btrfs and mounted at /mnt/fast-storage.  This gives users
+    a fast NVMe storage pool for Docker, databases, caches, etc.
+    """
+    uuid_out, _, rc = _run(f"blkid -s UUID -o value {nvme_part}", timeout=10)
+    if rc != 0 or not uuid_out.strip():
+        log.warning("Could not get UUID for NVMe pool %s", nvme_part)
+        return
+
+    nvme_uuid = uuid_out.strip()
+    fstab_line = (
+        f"UUID={nvme_uuid}  {_NVME_POOL_MOUNT}  btrfs  "
+        f"subvol=@data,defaults,noatime,compress=zstd:3,space_cache=v2  0  0"
+    )
+
+    # Determine fstab path
+    if squashfs_mode:
+        fstab_path = os.path.join(mount_dir, "overlay/upper/etc/fstab")
+    else:
+        fstab_path = os.path.join(mount_dir, "etc/fstab")
+
+    # Append NVMe pool entry
+    if os.path.isfile(fstab_path):
+        with open(fstab_path, "a") as f:
+            f.write(f"\n# NVMe fast-storage pool (remaining OS disk space)\n")
+            f.write(fstab_line + "\n")
+    else:
+        log.warning("fstab not found at %s — cannot add NVMe pool entry", fstab_path)
+        return
+
+    # Create mount point in target
+    mnt_dir = os.path.join(mount_dir, _NVME_POOL_MOUNT.lstrip("/"))
+    os.makedirs(mnt_dir, exist_ok=True)
+
+    log.info("NVMe fast-storage pool configured: %s → %s (UUID=%s)",
+             nvme_part, _NVME_POOL_MOUNT, nvme_uuid)
 
 
 def _fixup_installed_system(mount_dir):
