@@ -73,11 +73,23 @@ def _ensure_deps():
         import reportlab  # noqa: F401
     except ImportError:
         missing_pip.append('reportlab')
+    try:
+        import spacy  # noqa: F401
+    except ImportError:
+        missing_pip.append('spacy')
 
     if missing_pip:
         pkgs = ' '.join(missing_pip)
         log.info('[doc_anonymizer] Installing pip deps: %s', pkgs)
         host_run(f'/opt/ethos/venv/bin/pip install --quiet {pkgs}', timeout=120)
+
+    # Download spaCy Polish model if not available
+    try:
+        import spacy
+        spacy.load('pl_core_news_lg')
+    except Exception:
+        log.info('[doc_anonymizer] Downloading spaCy Polish model (pl_core_news_lg)')
+        host_run('/opt/ethos/venv/bin/python -m spacy download pl_core_news_lg', timeout=300)
 
     import shutil
     if not shutil.which('pdftotext'):
@@ -87,6 +99,100 @@ def _ensure_deps():
     if not shutil.which('tesseract'):
         log.info('[doc_anonymizer] Installing Tesseract OCR + Polish language pack')
         host_run('apt-get install -y -qq tesseract-ocr tesseract-ocr-pol', timeout=120)
+
+
+# -- spaCy NER model (lazy-loaded singleton) --------------------------------
+
+_spacy_nlp = None
+_spacy_load_attempted = False
+
+
+def _load_spacy_model():
+    """Load the fine-tuned spaCy PII model, fallback to base pl_core_news_lg."""
+    global _spacy_nlp, _spacy_load_attempted
+    if _spacy_nlp is not None:
+        return _spacy_nlp
+    if _spacy_load_attempted:
+        return None
+    _spacy_load_attempted = True
+
+    import spacy
+
+    # Prefer fine-tuned model
+    pii_model_path = os.path.join(data_path('models'), 'spacy_pii_pl')
+    if os.path.isdir(pii_model_path) and os.path.isfile(os.path.join(pii_model_path, 'meta.json')):
+        try:
+            _spacy_nlp = spacy.load(pii_model_path)
+            log.info('[doc_anonymizer] Loaded fine-tuned spaCy PII model from %s', pii_model_path)
+            return _spacy_nlp
+        except Exception as e:
+            log.warning('[doc_anonymizer] Failed to load fine-tuned model: %s', e)
+
+    # Fallback to base Polish model
+    try:
+        _spacy_nlp = spacy.load('pl_core_news_lg')
+        log.info('[doc_anonymizer] Loaded base spaCy model pl_core_news_lg')
+        return _spacy_nlp
+    except Exception as e:
+        log.warning('[doc_anonymizer] Failed to load spaCy model: %s', e)
+
+    return None
+
+
+# Medical title prefixes for LEKARZ classification
+_DOCTOR_TITLE_PREFIXES = (
+    'dr n. med.', 'dr hab. n. med.', 'prof. dr hab. n. med.',
+    'prof. dr hab.', 'prof.', 'dr hab.', 'dr', 'lek. med.', 'lek.',
+)
+
+
+def _call_spacy_ner(text):
+    """Detect PII entities using spaCy NER. Returns list of entity dicts.
+
+    Maps spaCy labels to anonymizer categories:
+      persName → IMIE_NAZWISKO or LEKARZ (if preceded by medical title)
+      orgName  → NAZWA_PLACOWKI
+      geogName → ADRES
+      placeName → ADRES
+    """
+    nlp = _load_spacy_model()
+    if nlp is None:
+        log.warning('[doc_anonymizer] spaCy model not available')
+        return []
+
+    # Process in chunks if text is very long (spaCy default max is 1M chars)
+    max_chunk = 100000
+    entities = []
+    seen = set()
+
+    chunks = [text[i:i + max_chunk] for i in range(0, len(text), max_chunk)]
+    for chunk in chunks:
+        doc = nlp(chunk)
+        for ent in doc.ents:
+            ent_text = ent.text.strip()
+            if not ent_text or len(ent_text) < 2:
+                continue
+
+            # Map spaCy label to our category
+            if ent.label_ == 'persName':
+                # Check if entity starts with a medical title
+                ent_lower = ent_text.lower()
+                is_doctor = any(ent_lower.startswith(tp) for tp in _DOCTOR_TITLE_PREFIXES)
+                category = 'LEKARZ' if is_doctor else 'IMIE_NAZWISKO'
+            elif ent.label_ == 'orgName':
+                category = 'NAZWA_PLACOWKI'
+            elif ent.label_ in ('geogName', 'placeName'):
+                category = 'ADRES'
+            else:
+                continue  # Skip date, time, etc. (handled by regex)
+
+            key = ent_text.lower()
+            if key not in seen:
+                seen.add(key)
+                entities.append({'text': ent_text, 'category': category})
+
+    log.info('[doc_anonymizer] spaCy NER found %d entities', len(entities))
+    return entities
 
 
 def _job_dir(job_id):
@@ -412,25 +518,48 @@ def _is_known_first_name(name):
 
 
 def _surname_variants(surname):
-    """Generate nominative + common declined forms of a Polish surname."""
+    """Generate nominative + common declined forms of a Polish surname.
+
+    Handles compound surnames (e.g. Kowalska-Nowak) by declining each part.
+    """
+    # For compound surnames, decline each part separately and combine
+    if '-' in surname:
+        parts = surname.split('-')
+        all_forms = {surname}
+        part_variants = [_surname_variants(p) for p in parts]
+        # Add individual part variants
+        for pv in part_variants:
+            all_forms.update(pv)
+        # Generate compound declined forms (e.g. Kowalskiej-Nowak)
+        if len(part_variants) == 2:
+            for v1 in part_variants[0]:
+                for v2 in part_variants[1]:
+                    all_forms.add(f"{v1}-{v2}")
+        return all_forms
+
     forms = {surname}
-    # Normalize to nominative
+    # Normalize to nominative if a declined form was passed in
     base = surname
     if surname.endswith('skiego'):
-        base = surname[:-3] + ''  # -skiego -> -ski
-        base = surname[:-4] + 'i'  # -skiego -> -ski
+        base = surname[:-4] + 'i'       # Kowalskiego -> Kowalski
     elif surname.endswith('ckiego'):
-        base = surname[:-4] + 'i'  # -ckiego -> -cki
+        base = surname[:-4] + 'i'       # Nowickiego -> Nowicki
     elif surname.endswith('skiej'):
-        base = surname[:-2] + 'a'  # -skiej -> -ska
+        base = surname[:-2] + 'a'       # Kowalskiej -> Kowalska
     elif surname.endswith('ckiej'):
-        base = surname[:-2] + 'a'  # -ckiej -> -cka
-    elif surname.endswith('skiego'):
-        base = surname[:-4] + 'i'
-    elif surname.endswith('skiemu') or surname.endswith('ckiemu'):
-        base = surname[:-3] + ''
-    elif surname.endswith('skim') or surname.endswith('ckim'):
-        base = surname[:-1] + ''
+        base = surname[:-2] + 'a'       # Nowickiej -> Nowicka
+    elif surname.endswith('skiemu'):
+        base = surname[:-3]             # Kowalskiemu -> Kowalski
+    elif surname.endswith('ckiemu'):
+        base = surname[:-3]             # Nowickiemu -> Nowicki
+    elif surname.endswith('skim') and not surname.endswith('askim'):
+        base = surname[:-1] + 'i'       # Kowalskim -> Kowalski
+    elif surname.endswith('ckim'):
+        base = surname[:-1] + 'i'       # Nowickim -> Nowicki
+    elif surname.endswith('dzkiego'):
+        base = surname[:-4] + 'i'       # Łódzkiego -> Łódzki
+    elif surname.endswith('dzkim'):
+        base = surname[:-1] + 'i'       # Łódzkim -> Łódzki
 
     forms.add(base)
 
@@ -441,18 +570,30 @@ def _surname_variants(surname):
     elif base.endswith('cki'):
         stem = base[:-1]  # -cki -> -ck
         forms.update([stem + 'iego', stem + 'iemu', stem + 'im', stem + 'i'])
+    elif base.endswith('dzki'):
+        stem = base[:-1]  # -dzki -> -dzk
+        forms.update([stem + 'iego', stem + 'iemu', stem + 'im', stem + 'i'])
+
     if base.endswith('ska'):
         stem = base[:-1]  # -ska -> -sk
         forms.update([stem + 'iej', stem + 'ą'])
     elif base.endswith('cka'):
         stem = base[:-1]  # -cka -> -ck
         forms.update([stem + 'iej', stem + 'ą'])
-    elif base.endswith('a') and not base.endswith('ska') and not base.endswith('cka'):
+    elif base.endswith('a') and not base.endswith(('ska', 'cka')):
         # generic feminine: -a -> -ej, -ą
         forms.update([base[:-1] + 'ej', base[:-1] + 'ą'])
     elif not base.endswith('a'):
         # generic masculine consonant: +a (gen), +owi, +em
         forms.update([base + 'a', base + 'owi', base + 'em'])
+        # Names ending in -ek drop the e: Dudek -> Dudka
+        if base.endswith('ek'):
+            stem = base[:-2] + 'k'
+            forms.update([stem + 'a', stem + 'owi', stem + 'iem'])
+        # Names ending in -ec: Kupiec -> Kupca
+        if base.endswith('ec'):
+            stem = base[:-2] + 'c'
+            forms.update([stem + 'a', stem + 'owi', stem + 'em'])
 
     return forms
 
@@ -1456,21 +1597,34 @@ def _run_anonymization(job_id, src_path, filename, file_ext, username):
         all_entities.extend(name_hits)
         all_entities.extend(facility_hits)
 
-        # Phase 3: LLM-based detection (supplementary, catches unusual names)
+        # Phase 3: spaCy NER detection (fast, replaces LLM)
         _emit_progress(job_id, 'analyzing', 55,
-                       'Analiza LLM (dodatkowe imiona/nazwiska)...')
+                       'Analiza NER (imiona/nazwiska/placowki)...')
         try:
-            llm_entities = _call_llm(full_text)
-            # Validate and filter LLM output (reject garbage, diagnoses, long text)
-            llm_entities = _validate_llm_entities(llm_entities)
-            # Only add LLM entities not already found by regex/name detection
-            existing_texts = {e['text'].lower() for e in all_entities}
-            for le in llm_entities:
-                if le.get('text', '').lower() not in existing_texts:
-                    all_entities.append(le)
-                    existing_texts.add(le['text'].lower())
+            ner_entities = _call_spacy_ner(full_text)
+            # Only add NER entities not already found by regex/name detection
+            existing_lower = {e['text'].lower() for e in all_entities}
+            for ne in ner_entities:
+                ne_lower = ne.get('text', '').lower()
+                if ne_lower and ne_lower not in existing_lower:
+                    # Also check if it's a substring of an existing entity
+                    is_dup = any(ne_lower in ex for ex in existing_lower)
+                    if not is_dup:
+                        all_entities.append(ne)
+                        existing_lower.add(ne_lower)
         except Exception as e:
-            log.warning('[doc_anonymizer] LLM error: %s', e)
+            log.warning('[doc_anonymizer] spaCy NER error: %s', e)
+            # Fallback to LLM if spaCy fails
+            try:
+                llm_entities = _call_llm(full_text)
+                llm_entities = _validate_llm_entities(llm_entities)
+                existing_lower = {e['text'].lower() for e in all_entities}
+                for le in llm_entities:
+                    if le.get('text', '').lower() not in existing_lower:
+                        all_entities.append(le)
+                        existing_lower.add(le['text'].lower())
+            except Exception as e2:
+                log.warning('[doc_anonymizer] LLM fallback also failed: %s', e2)
 
         _emit_progress(job_id, 'replacing', 85,
                        'Zastepowanie danych osobowych...')
@@ -1598,25 +1752,27 @@ def anon_upload():
     if ext not in ('.pdf', '.docx', '.doc'):
         return jsonify({'error': 'Obslugiwane formaty: PDF, DOCX'}), 400
 
-    # Check AI Chat dependency — prefer Bielik for Polish PII
+    # Check NER/AI capability — spaCy preferred, LLM as bonus
+    has_spacy = _load_spacy_model() is not None
+    has_llm = False
     try:
         from model_library import get_library
         lib = get_library()
         downloaded = lib._config.get('downloaded', {})
-        has_bielik = any(
+        has_llm = any(
             downloaded.get(bid) and os.path.isfile(downloaded[bid].get('path', ''))
             for bid in ('bielik-7b-q8', 'bielik-7b-q4')
         )
-        active = lib.get_active_model()
-        if not has_bielik and not active:
-            return jsonify({
-                'error': 'Brak modelu LLM. '
-                         'Otwórz AI Assistant i pobierz model Bielik 7B.'
-            }), 400
+        if not has_llm:
+            active = lib.get_active_model()
+            has_llm = active is not None
     except ImportError:
+        pass
+
+    if not has_spacy and not has_llm:
         return jsonify({
-            'error': 'AI Assistant nie jest zainstalowany. '
-                     'Zainstaluj go najpierw w Package Center.'
+            'error': 'Brak modelu NER ani LLM. '
+                     'Uruchom ponownie serwer lub zainstaluj AI Assistant.'
         }), 400
 
     job_id = uuid.uuid4().hex[:12]
@@ -1750,12 +1906,28 @@ def anon_app_status():
     except ImportError:
         has_pytesseract = False
 
+    # Check spaCy model availability
+    has_spacy = False
+    spacy_model_name = None
+    pii_model_path = os.path.join(data_path('models'), 'spacy_pii_pl')
+    if os.path.isdir(pii_model_path) and os.path.isfile(os.path.join(pii_model_path, 'meta.json')):
+        has_spacy = True
+        spacy_model_name = 'spacy_pii_pl (fine-tuned)'
+    else:
+        try:
+            import spacy
+            spacy.load('pl_core_news_lg')
+            has_spacy = True
+            spacy_model_name = 'pl_core_news_lg (base)'
+        except Exception:
+            pass
+
     result = {
         'installed': True,
         'ai_chat_available': False,
         'model_loaded': False,
         'active_model': None,
-        'recommended_model': 'bielik-7b-q4',
+        'recommended_model': 'spaCy NER (wbudowany)',
         'deps_ok': has_fitz and has_pypdf2 and has_pillow and bool(shutil.which('pdftotext')),
         'has_fitz': has_fitz,
         'has_pypdf2': has_pypdf2,
@@ -1764,6 +1936,8 @@ def anon_app_status():
         'has_ocr': has_tesseract and has_pytesseract,
         'has_tesseract': has_tesseract,
         'has_pytesseract': has_pytesseract,
+        'has_spacy': has_spacy,
+        'spacy_model': spacy_model_name,
     }
 
     try:
