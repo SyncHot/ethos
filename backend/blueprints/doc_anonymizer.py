@@ -1731,7 +1731,7 @@ _MEDICAL_ABBREV_STOPWORDS = frozenset({
     'tsh', 'ft3', 'ft4', 'crp', 'opl', 'oun', 'ast', 'alt',
     'bnp', 'gfr', 'hba1c', 'ldl', 'hdl', 'wbc', 'rbc', 'plt',
     'hgb', 'mch', 'mchc', 'mcv', 'inr', 'aptt', 'd.s.', 'ds',
-    'lica', 'meen', 'wall', 'pwz',
+    'lica', 'meen', 'pwz',
 })
 
 
