@@ -713,7 +713,7 @@ def _prepare_data_dirs(data_part):
         if rc != 0:
             log.warning("Could not mount data partition for prep: %s", err)
             return
-        for dirname in ("data", "logs", "backups", "uploads"):
+        for dirname in ("data", "logs", "backups", "uploads", "venv"):
             os.makedirs(os.path.join(tmp_mount, "ethos", dirname), exist_ok=True)
         log.info("Created data partition directories for squashfs mode")
     finally:
@@ -744,7 +744,7 @@ def _setup_data_separation(mount_dir, data_part):
 
         # --- EthOS app dirs: /opt/ethos/{dir} → /mnt/data/ethos/{dir} ---
         ethos_data_root = os.path.join(data_mount, "ethos")
-        for dirname in ("data", "logs", "backups", "uploads"):
+        for dirname in ("data", "logs", "backups", "uploads", "venv"):
             target_dir = os.path.join(ethos_data_root, dirname)
             os.makedirs(target_dir, exist_ok=True)
 
@@ -849,7 +849,7 @@ Type=notify
 NotifyAccess=all
 WorkingDirectory=/opt/ethos
 EnvironmentFile=/opt/ethos/ethos.env
-ExecStartPre=/bin/bash -c 'for d in data logs backups uploads; do p="/opt/ethos/$d"; [ -L "$p" ] && mkdir -p "$(readlink "$p")" || mkdir -p "$p"; done'
+ExecStartPre=/bin/bash -c 'for d in data logs backups uploads venv; do p="/opt/ethos/$d"; [ -L "$p" ] && mkdir -p "$(readlink "$p")" || mkdir -p "$p"; done'
 Environment=PYTHONPATH=/opt/ethos/backend
 ExecStart=/opt/ethos/venv/bin/python /opt/ethos/backend/app.py
 Restart=on-failure

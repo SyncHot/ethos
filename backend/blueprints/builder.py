@@ -1796,7 +1796,7 @@ Type=notify
 NotifyAccess=all
 WorkingDirectory=/opt/ethos
 EnvironmentFile=/opt/ethos/ethos.env
-ExecStartPre=/bin/bash -c 'for d in data logs backups uploads; do p="/opt/ethos/\$d"; [ -L "\$p" ] && mkdir -p "\$(readlink "\$p")" || mkdir -p "\$p"; done'
+ExecStartPre=/bin/bash -c 'for d in data logs backups uploads venv; do p="/opt/ethos/\$d"; [ -L "\$p" ] && mkdir -p "\$(readlink "\$p")" || mkdir -p "\$p"; done'
 Environment=PYTHONPATH=/opt/ethos/backend
 ExecStart=/opt/ethos/venv/bin/python /opt/ethos/backend/app.py
 Restart=on-failure
@@ -1896,7 +1896,7 @@ if command -v mksquashfs >/dev/null 2>&1; then
 
     ETHOS_DIR_SQ="$ROOT/opt/ethos"
     # Prepare clean installed-system state (squashfs should NOT contain installer artifacts)
-    for d in data logs backups uploads; do
+    for d in data logs backups uploads venv; do
         rm -rf "$ETHOS_DIR_SQ/$d"
         ln -s "/mnt/data/ethos/$d" "$ETHOS_DIR_SQ/$d"
     done
@@ -1944,7 +1944,7 @@ if command -v mksquashfs >/dev/null 2>&1; then
     fi
 
     # Restore USB/installer state (so the USB can still boot the installer)
-    for d in data logs backups uploads; do
+    for d in data logs backups uploads venv; do
         rm -f "$ETHOS_DIR_SQ/$d"
         mkdir -p "$ETHOS_DIR_SQ/$d"
     done
