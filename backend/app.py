@@ -295,6 +295,11 @@ def add_security_headers(response):
         csp_frame_ancestors = "frame-ancestors 'self';"
         x_frame_options = 'SAMEORIGIN'
 
+    # Exception for Document Anonymizer inline preview
+    if request.path.startswith('/api/doc-anonymizer/preview/'):
+        csp_frame_ancestors = "frame-ancestors 'self';"
+        x_frame_options = 'SAMEORIGIN'
+
     csp = (
         "default-src 'self'; "
         "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; "
