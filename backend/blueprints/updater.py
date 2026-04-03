@@ -146,7 +146,7 @@ def _best_update_dir():
 def _load_config():
     """Load update configuration."""
     defaults = {
-        'update_url': '',           # e.g. http://192.168.1.100:8888
+        'update_url': 'https://nas.myserver.pl',
         'auto_check': True,         # Check automatically on boot
         'auto_check_interval': 86400,  # Check every 24h (seconds)
         'auto_apply': False,        # Auto-apply updates (dangerous)
@@ -1217,6 +1217,60 @@ def _do_ab_slot_update_squashfs(pkg_dir, new_ver, ab_slots_file):
         os.makedirs(overlay_work, exist_ok=True)
         _emit('update_log', {'message': 'Overlay cleared'})
 
+        # 2b) Restore critical system state from active (running) system
+        # Without these, the inactive slot boots into installer/hotspot mode
+        _emit('update_log', {'message': 'Restoring system config to overlay…'})
+
+        # .installed marker — prevents preboot installer from starting
+        if os.path.isfile('/opt/ethos/.installed'):
+            _d = os.path.join(overlay_upper, 'opt/ethos/.installed')
+            os.makedirs(os.path.dirname(_d), exist_ok=True)
+            shutil.copy2('/opt/ethos/.installed', _d)
+
+        # machine-id
+        if os.path.isfile('/etc/machine-id'):
+            _d = os.path.join(overlay_upper, 'etc/machine-id')
+            os.makedirs(os.path.dirname(_d), exist_ok=True)
+            shutil.copy2('/etc/machine-id', _d)
+
+        # hostname
+        if os.path.isfile('/etc/hostname'):
+            _d = os.path.join(overlay_upper, 'etc/hostname')
+            os.makedirs(os.path.dirname(_d), exist_ok=True)
+            shutil.copy2('/etc/hostname', _d)
+
+        # ethos.service + enable it (disable preboot)
+        svc_src = '/etc/systemd/system/ethos.service'
+        if os.path.isfile(svc_src):
+            svc_dir = os.path.join(overlay_upper, 'etc/systemd/system')
+            os.makedirs(svc_dir, exist_ok=True)
+            shutil.copy2(svc_src, os.path.join(svc_dir, 'ethos.service'))
+            wants = os.path.join(svc_dir, 'multi-user.target.wants')
+            os.makedirs(wants, exist_ok=True)
+            lnk = os.path.join(wants, 'ethos.service')
+            if not os.path.exists(lnk):
+                os.symlink('/etc/systemd/system/ethos.service', lnk)
+            # Ensure preboot is NOT enabled on the updated slot
+            pb = os.path.join(wants, 'ethos-preboot.service')
+            if os.path.exists(pb):
+                os.remove(pb)
+
+        # NetworkManager connections (WiFi, Ethernet, etc.)
+        nm_src = '/etc/NetworkManager/system-connections'
+        if os.path.isdir(nm_src) and os.listdir(nm_src):
+            nm_dst = os.path.join(overlay_upper, 'etc/NetworkManager/system-connections')
+            shutil.copytree(nm_src, nm_dst, dirs_exist_ok=True)
+
+        # ethos.env and install.conf
+        for fname in ('ethos.env', 'install.conf'):
+            _s = os.path.join('/opt/ethos', fname)
+            if os.path.isfile(_s):
+                _d = os.path.join(overlay_upper, 'opt/ethos', fname)
+                os.makedirs(os.path.dirname(_d), exist_ok=True)
+                shutil.copy2(_s, _d)
+
+        _emit('update_log', {'message': 'System config restored'})
+
         # 3) Apply update files to overlay upper
         _st['progress'] = 80
         _st['message'] = 'Applying update to inactive slot…'
@@ -1283,7 +1337,12 @@ def _do_ab_slot_update_squashfs(pkg_dir, new_ver, ab_slots_file):
         # 7) Copy ab_slots.json to inactive overlay
         inactive_data_dir = os.path.join(overlay_upper, 'opt/ethos/data')
         os.makedirs(inactive_data_dir, exist_ok=True)
-        shutil.copy2(ab_slots_file, os.path.join(inactive_data_dir, 'ab_slots.json'))
+        dest_ab = os.path.join(inactive_data_dir, 'ab_slots.json')
+        try:
+            if os.path.realpath(ab_slots_file) != os.path.realpath(dest_ab):
+                shutil.copy2(ab_slots_file, dest_ab)
+        except Exception:
+            pass
         with open(os.path.join(inactive_data_dir, 'active_slot'), 'w') as f:
             f.write(inactive)
 
@@ -1511,8 +1570,13 @@ def _do_ab_slot_update(pkg_dir, new_ver, ab_slots_file):
         with open(os.path.join(inactive_data, 'active_slot'), 'w') as f:
             f.write(inactive)
 
-        # Copy ab_slots.json to inactive
-        shutil.copy2(ab_slots_file, os.path.join(inactive_data, 'ab_slots.json'))
+        # Copy ab_slots.json to inactive (skip if data/ is a symlink to same location)
+        dest_ab = os.path.join(inactive_data, 'ab_slots.json')
+        try:
+            if os.path.realpath(ab_slots_file) != os.path.realpath(dest_ab):
+                shutil.copy2(ab_slots_file, dest_ab)
+        except Exception:
+            pass  # non-critical — shared data partition already has the file
 
     finally:
         # Always unmount inactive slot

@@ -144,7 +144,7 @@ function renderUpdatesApp(body) {
                     <!-- Update source URL -->
                     <div>
                         <label style="font-size:13px;font-weight:600;display:block;margin-bottom:6px;">${t('Źródło aktualizacji')}</label>
-                        <input type="text" id="upd-url" placeholder="192.168.1.100 lub ethos.local lub github:user/repo" style="width:100%;padding:9px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-secondary);color:var(--text);font-size:13px;box-sizing:border-box;">
+                        <input type="text" id="upd-url" placeholder="https://nas.myserver.pl" style="width:100%;padding:9px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-secondary);color:var(--text);font-size:13px;box-sizing:border-box;">
                         <div style="font-size:11px;color:var(--text-secondary);margin-top:4px;line-height:1.5;">
                             ${t('Podaj adres źródła aktualizacji — port nie jest wymagany:')}<br>
                             <b>${t('IP lub hostname')}</b> — ${t('np.')} <code>192.168.1.100</code> ${t('lub')} <code>ethos.local</code> (${t('łączy z portem :9000 automatycznie')})<br>
