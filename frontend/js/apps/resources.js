@@ -27,9 +27,10 @@ function renderResourcesApp(body) {
             });
     };
 
-    const sections = ['overview','cpu','ram','gpu','disks','smart','network','processes','usb'];
+    const sections = ['overview','system','cpu','ram','gpu','disks','smart','network','processes','usb'];
     const sectionLabels = {
         overview: `<i class="fas fa-tachometer-alt"></i> ${t('Przegląd')}`,
+        system: `<i class="fas fa-server"></i> ${t('System')}`,
         cpu: '<i class="fas fa-microchip"></i> CPU',
         ram: '<i class="fas fa-memory"></i> RAM',
         gpu: '<i class="fas fa-tv"></i> GPU',
@@ -58,6 +59,7 @@ function renderResourcesApp(body) {
     let cpuHistory = [];
     let ramHistory = [];
     let netHistory = [];
+    let hwProfile = null;
 
     // Nav
     body.querySelectorAll('.res-nav[data-section]').forEach(nav => {
@@ -101,7 +103,7 @@ function renderResourcesApp(body) {
         const ram = data.ram || {};
         const net = data.network || {};
         const ts = new Date().toLocaleTimeString('pl', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
-        cpuHistory.push({t:ts, v: cpu.total_percent || 0});
+        cpuHistory.push({t:ts, v: cpu.usage_percent || 0});
         ramHistory.push({t:ts, v: ram.percent || 0});
         netHistory.push({t:ts, down: net.speed_download || 0, up: net.speed_upload || 0});
         if (cpuHistory.length > 60) cpuHistory.shift();
@@ -115,6 +117,7 @@ function renderResourcesApp(body) {
         const el = $(`#res-sec-${section}`);
         switch(section) {
             case 'overview': renderOverview(el, data); break;
+            case 'system': renderSystem(el); break;
             case 'cpu': renderCPU(el, data); break;
             case 'ram': renderRAM(el, data); break;
             case 'gpu': renderGPU(el, data); break;
@@ -133,16 +136,25 @@ function renderResourcesApp(body) {
         const net = data.network || {};
         const disks = data.disks || [];
         const procs = (data.processes || []).slice(0, 5);
+        const sys = hwProfile ? (hwProfile.system || {}) : {};
+        const board = sys.baseboard || {};
+        const sysName = [sys.manufacturer, sys.product_name].filter(v => v && v !== 'Default string').join(' ');
+        const boardName = [board.manufacturer, board.product_name].filter(v => v && v !== 'Default string' && v !== 'To Be Filled By O.E.M.').join(' ');
 
         el.innerHTML = `
+        ${(sysName || boardName) ? `<div class="res-sys-summary">
+            ${sysName ? `<span><i class="fas fa-server"></i> ${sysName}</span>` : ''}
+            ${boardName && boardName !== sysName ? `<span><i class="fas fa-th"></i> ${boardName}</span>` : ''}
+        </div>` : ''}
         <div class="res-grid-4">
             <div class="res-card">
                 <div class="res-card-hdr"><i class="fas fa-microchip"></i> CPU</div>
-                <div class="res-big-val">${pct(cpu.total_percent)}</div>
-                ${bar(cpu.total_percent, '#3b82f6')}
+                <div class="res-big-val">${pct(cpu.usage_percent)}</div>
+                ${bar(cpu.usage_percent, '#3b82f6')}
                 <div class="res-card-stats">
-                    <span>Rdzenie: ${cpu.cores || '—'}</span>
-                    <span>${cpu.freq_current ? (cpu.freq_current/1000).toFixed(2)+' GHz' : ''}</span>
+                    <span>${cpu.name || '—'}</span>
+                    <span>${t('Rdzenie:')} ${cpu.physical_cores || cpu.core_count || '—'}</span>
+                    <span>${cpu.frequency_current ? (cpu.frequency_current/1000).toFixed(2)+' GHz' : ''}</span>
                     <span>${cpu.temperature != null ? cpu.temperature+'°C' : ''}</span>
                 </div>
             </div>
@@ -208,17 +220,116 @@ function renderResourcesApp(body) {
         </div>`;
     }
 
+    function renderSystem(el) {
+        if (!hwProfile) {
+            el.innerHTML = `<div class="res-empty"><i class="fas fa-spinner fa-spin"></i> ${t('Ładowanie profilu sprzętowego…')}</div>`;
+            return;
+        }
+        const sys = hwProfile.system || {};
+        const cpu = hwProfile.cpu || {};
+        const mem = hwProfile.memory || {};
+        const bios = sys.bios || {};
+        const board = sys.baseboard || {};
+        const caches = cpu.caches || {};
+        const flags = cpu.notable_flags || [];
+        const dimms = mem.dimms || [];
+
+        function infoRow(icon, label, val) {
+            if (!val || val === 'Not Specified' || val === 'To Be Filled By O.E.M.' || val === 'Default string') return '';
+            return `<div class="res-sys-row"><i class="fas ${icon} res-sys-icon"></i><span class="res-sys-label">${label}</span><span class="res-sys-val">${val}</span></div>`;
+        }
+
+        el.innerHTML = `
+        <h3><i class="fas fa-server"></i> ${t('Informacje o systemie')}</h3>
+
+        <div class="res-grid-2 res-mt-md">
+            <div class="res-card">
+                <div class="res-card-hdr"><i class="fas fa-desktop"></i> ${t('System')}</div>
+                <div class="res-sys-info">
+                    ${infoRow('fa-industry', t('Producent'), sys.manufacturer)}
+                    ${infoRow('fa-tag', t('Model'), sys.product_name)}
+                    ${infoRow('fa-code-branch', t('Wersja'), sys.version)}
+                    ${infoRow('fa-fingerprint', t('Numer seryjny'), sys.serial_number)}
+                    ${infoRow('fa-sitemap', t('Rodzina'), sys.family)}
+                </div>
+            </div>
+            <div class="res-card">
+                <div class="res-card-hdr"><i class="fas fa-th"></i> ${t('Płyta główna')}</div>
+                <div class="res-sys-info">
+                    ${infoRow('fa-industry', t('Producent'), board.manufacturer)}
+                    ${infoRow('fa-tag', t('Model'), board.product_name)}
+                    ${infoRow('fa-code-branch', t('Wersja'), board.version)}
+                    ${infoRow('fa-fingerprint', t('Numer seryjny'), board.serial_number)}
+                </div>
+            </div>
+        </div>
+
+        <div class="res-grid-2 res-mt-md">
+            <div class="res-card">
+                <div class="res-card-hdr"><i class="fas fa-microchip"></i> ${t('Procesor')}</div>
+                <div class="res-sys-info">
+                    ${infoRow('fa-tag', t('Model'), cpu.model)}
+                    ${infoRow('fa-cog', t('Architektura'), cpu.architecture)}
+                    ${infoRow('fa-th', t('Rdzenie / Wątki'), cpu.cores ? cpu.cores + ' / ' + (cpu.cores * (cpu.threads_per_core || 1)) : '')}
+                    ${infoRow('fa-plug', t('Gniazda'), cpu.sockets)}
+                    ${infoRow('fa-tachometer-alt', t('Częstotliwość max'), cpu.freq_max_mhz ? (cpu.freq_max_mhz/1000).toFixed(2)+' GHz' : '')}
+                    ${Object.entries(caches).length ? `<div class="res-sys-row"><i class="fas fa-database res-sys-icon"></i><span class="res-sys-label">Cache</span><span class="res-sys-val">${Object.entries(caches).map(([k,v]) => `${k}: ${v}`).join(' · ')}</span></div>` : ''}
+                    ${flags.length ? `<div class="res-sys-row"><i class="fas fa-flag res-sys-icon"></i><span class="res-sys-label">${t('Rozszerzenia')}</span><span class="res-sys-val res-hw-flags">${flags.map(f => `<span class="res-hw-flag">${f.toUpperCase()}</span>`).join('')}</span></div>` : ''}
+                    ${infoRow('fa-cloud', t('Wirtualizacja'), cpu.virtualization)}
+                </div>
+            </div>
+            <div class="res-card">
+                <div class="res-card-hdr"><i class="fas fa-shield-alt"></i> BIOS / UEFI</div>
+                <div class="res-sys-info">
+                    ${infoRow('fa-industry', t('Producent'), bios.vendor)}
+                    ${infoRow('fa-code-branch', t('Wersja'), bios.version)}
+                    ${infoRow('fa-calendar', t('Data'), bios.release_date)}
+                    ${infoRow('fa-hashtag', t('Rewizja'), bios.bios_revision)}
+                </div>
+            </div>
+        </div>
+
+        ${dimms.length ? `
+        <div class="res-card res-mt-md">
+            <div class="res-card-hdr"><i class="fas fa-memory"></i> ${t('Moduły pamięci')} (${mem.slots_used || dimms.length}/${mem.slots_total || '?'} ${t('slotów')})</div>
+            <table class="res-proc-table">
+                <thead><tr><th>${t('Slot')}</th><th>${t('Rozmiar')}</th><th>${t('Typ')}</th><th>${t('Prędkość')}</th><th>${t('Producent')}</th><th>Form Factor</th></tr></thead>
+                <tbody>${dimms.map(d => `
+                    <tr><td>${d.locator||'—'}</td><td>${d.size||'—'}</td><td>${d.type||'—'}</td><td>${d.speed||'—'}</td><td>${d.manufacturer||'—'}</td><td>${d.form_factor||'—'}</td></tr>
+                `).join('')}</tbody>
+            </table>
+        </div>` : ''}
+        `;
+    }
+
     function renderCPU(el, data) {
         const cpu = data.cpu || {};
         const perCore = cpu.per_core || [];
+        const hw = hwProfile ? (hwProfile.cpu || {}) : {};
+        const caches = hw.caches || {};
+        const flags = (hw.notable_flags || []).map(f => f.toUpperCase()).join(', ');
+        const arch = hw.architecture || '';
+        const virt = hw.virtualization || '';
+        const cacheStr = Object.entries(caches).map(([k,v]) => `${k}: ${v}`).join(' · ');
+
         el.innerHTML = `
-        <h3><i class="fas fa-microchip"></i> Procesor: ${cpu.brand || '—'}</h3>
+        <h3><i class="fas fa-microchip"></i> ${t('Procesor:')} ${cpu.name || '—'}</h3>
         <div class="res-info-bar">
-            <span>${t('Rdzenie:')} ${cpu.cores || '—'} (${cpu.threads || '—'} ${t('wątków')})</span>
-            <span>${t('Częstotliwość:')} ${cpu.freq_current ? (cpu.freq_current/1000).toFixed(2)+' GHz' : '—'}</span>
-            <span>Temperatura: ${cpu.temperature != null ? cpu.temperature+'°C' : '—'}</span>
-            <span>${t('Użycie:')} ${pct(cpu.total_percent)}</span>
+            <span>${t('Rdzenie:')} ${cpu.physical_cores || '—'} (${cpu.core_count || '—'} ${t('wątków')})</span>
+            <span>${t('Częstotliwość:')} ${cpu.frequency_current ? (cpu.frequency_current/1000).toFixed(2)+' GHz' : '—'}${cpu.frequency_max ? ' / '+(cpu.frequency_max/1000).toFixed(2)+' GHz max' : ''}</span>
+            <span>${t('Temperatura:')} ${cpu.temperature != null ? cpu.temperature+'°C' : '—'}</span>
+            <span>${t('Użycie:')} ${pct(cpu.usage_percent)}</span>
         </div>
+        ${(arch || cacheStr || flags || virt) ? `
+        <div class="res-card res-mt-md">
+            <div class="res-card-hdr"><i class="fas fa-info-circle"></i> ${t('Szczegóły sprzętowe')}</div>
+            <div class="res-hw-details">
+                ${arch ? `<div class="res-hw-row"><span class="res-hw-label">${t('Architektura')}</span><span class="res-hw-val">${arch}</span></div>` : ''}
+                ${cacheStr ? `<div class="res-hw-row"><span class="res-hw-label">Cache</span><span class="res-hw-val">${cacheStr}</span></div>` : ''}
+                ${flags ? `<div class="res-hw-row"><span class="res-hw-label">${t('Rozszerzenia')}</span><span class="res-hw-val res-hw-flags">${(hw.notable_flags||[]).map(f => `<span class="res-hw-flag">${f.toUpperCase()}</span>`).join('')}</span></div>` : ''}
+                ${virt ? `<div class="res-hw-row"><span class="res-hw-label">${t('Wirtualizacja')}</span><span class="res-hw-val">${virt}</span></div>` : ''}
+            </div>
+        </div>` : ''}
         <div class="res-card res-mt-md">
             <div class="res-card-hdr">${t('Użycie per rdzeń')}</div>
             <div class="res-core-grid">${perCore.map((v,i) => `
@@ -689,7 +800,11 @@ function renderResourcesApp(body) {
     // Initial load
     (async () => {
         try {
-            const d = await api('/resources/all');
+            const [d, hw] = await Promise.all([
+                api('/resources/all'),
+                api('/hardware/profile')
+            ]);
+            hwProfile = hw;
             updateAll(d);
         } catch(e) {
             $(`#res-sec-overview`).innerHTML = `<div class="res-empty"><p>${t('Błąd ładowania danych')}</p></div>`;
