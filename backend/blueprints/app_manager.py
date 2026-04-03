@@ -1467,24 +1467,33 @@ def _ensure_installed_apps():
     return installed
 
 
-def _version_tuple(v):
-    """Parse version string to tuple for comparison. e.g. '1.2.3' -> (1, 2, 3)."""
-    try:
-        return tuple(int(x) for x in v.split('.'))
-    except (ValueError, AttributeError):
-        return (0, 0, 0)
+def _git_blob_sha(filepath):
+    """Compute git blob SHA1 for a local file (matches GitHub's blob SHA)."""
+    import hashlib
+    with open(filepath, 'rb') as f:
+        content = f.read()
+    blob = b'blob ' + str(len(content)).encode() + b'\0' + content
+    return hashlib.sha1(blob).hexdigest()
 
 
 def _github_raw_base(repo):
     return f'https://raw.githubusercontent.com/{repo}/main'
 
 
-def _check_github_updates(repo):
-    """Check GitHub catalog for newer versions vs local BUILTIN_CATALOG.
-    Returns list of dicts: [{id, name, local_version, remote_version, backend_changed, frontend_changed}]."""
-    catalog_url = _github_raw_base(repo) + '/catalog.json'
-    app_base = _github_raw_base(repo) + '/apps'
+def _fetch_github_tree(repo):
+    """Fetch the full file tree from a public GitHub repo. Returns {path: sha} dict."""
+    url = f'https://api.github.com/repos/{repo}/git/trees/main?recursive=1'
+    req = urllib.request.Request(url, headers={'User-Agent': 'EthOS-AppManager/1.0'})
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        data = json.loads(resp.read().decode())
+    return {item['path']: item['sha'] for item in data.get('tree', [])}
 
+
+def _check_github_updates(repo):
+    """Check GitHub repo for app files that differ from local (git blob SHA comparison).
+    Returns list of dicts: [{id, name, local_version, remote_version, backend_changed, frontend_changed}]."""
+    # Fetch catalog for app names/versions
+    catalog_url = _github_raw_base(repo) + '/catalog.json'
     try:
         req = urllib.request.Request(catalog_url, headers={'User-Agent': 'EthOS-AppManager/1.0'})
         with urllib.request.urlopen(req, timeout=15) as resp:
@@ -1495,11 +1504,17 @@ def _check_github_updates(repo):
     remote_apps = data.get('apps', data) if isinstance(data, dict) else data
     remote_by_id = {a['id']: a for a in remote_apps if isinstance(a, dict) and 'id' in a}
 
+    # Fetch tree for SHA comparison
+    try:
+        remote_tree = _fetch_github_tree(repo)
+    except Exception as e:
+        raise RuntimeError(f'Nie udało się pobrać drzewa GitHub: {e}')
+
     local_by_id = {a['id']: a for a in BUILTIN_CATALOG}
     installed = _ensure_installed_apps()
     updates = []
 
-    for app_id, remote in remote_by_id.items():
+    for app_id in remote_by_id:
         if app_id not in installed and app_id not in _OPTIONAL_BLUEPRINTS:
             continue
 
@@ -1507,22 +1522,40 @@ def _check_github_updates(repo):
         if not bp_info:
             continue
 
+        remote = remote_by_id[app_id]
         local = local_by_id.get(app_id, {})
-        local_ver = local.get('version', '0.0.0')
-        remote_ver = remote.get('version', '0.0.0')
 
-        if _version_tuple(remote_ver) <= _version_tuple(local_ver):
-            continue
+        backend_changed = False
+        frontend_changed = False
 
-        detail = {
-            'id': app_id,
-            'name': remote.get('name', local.get('name', app_id)),
-            'local_version': local_ver,
-            'remote_version': remote_ver,
-            'backend_changed': True,
-            'frontend_changed': bool(_get_frontend_filename(app_id)),
-        }
-        updates.append(detail)
+        # Compare backend .py
+        module_name = bp_info[0]
+        local_py = os.path.join(_BLUEPRINTS_DIR, module_name + '.py')
+        remote_py_path = f'apps/{app_id}/backend.py'
+        if os.path.isfile(local_py) and remote_py_path in remote_tree:
+            local_sha = _git_blob_sha(local_py)
+            if local_sha != remote_tree[remote_py_path]:
+                backend_changed = True
+
+        # Compare frontend .js
+        fn = _get_frontend_filename(app_id)
+        if fn:
+            local_js = os.path.join(_FRONTEND_APPS_DIR, fn + '.js')
+            remote_js_path = f'apps/{app_id}/frontend.js'
+            if os.path.isfile(local_js) and remote_js_path in remote_tree:
+                local_sha = _git_blob_sha(local_js)
+                if local_sha != remote_tree[remote_js_path]:
+                    frontend_changed = True
+
+        if backend_changed or frontend_changed:
+            updates.append({
+                'id': app_id,
+                'name': remote.get('name', local.get('name', app_id)),
+                'local_version': local.get('version', '?'),
+                'remote_version': remote.get('version', '?'),
+                'backend_changed': backend_changed,
+                'frontend_changed': frontend_changed,
+            })
 
     return updates
 
