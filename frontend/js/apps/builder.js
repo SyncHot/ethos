@@ -341,7 +341,7 @@ function renderBuilderApp(body) {
             try {
                 await api('/builder/publish-config', {
                     method: 'PUT',
-                    body: JSON.stringify({ token, repo: repoEl.value.trim() }),
+                    body: { token, repo: repoEl.value.trim() },
                 });
                 toast(t('Token zapisany'), 'success');
                 loadPublishDiff();
@@ -482,7 +482,7 @@ function renderBuilderApp(body) {
                     headers: {
                         'Content-Type': 'application/json',
                         'Authorization': 'Bearer ' + NAS.token,
-                        'X-CSRF-Token': NAS.csrfToken || '',
+                        'X-CSRFToken': NAS.csrfToken || '',
                     },
                     body: JSON.stringify({ app_ids: selected }),
                 });
