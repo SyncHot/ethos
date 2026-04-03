@@ -715,6 +715,7 @@ _API_TO_APP = {
     '/api/surveillance/': 'surveillance',
     '/api/aichat/': 'ai-chat',
     '/api/doc-anonymizer/': 'doc-anonymizer',
+    '/api/med-assistant/': 'med-assistant',
     '/api/ddns/': 'domains-manager',
     '/api/domains-mgr/': 'domains-manager',
     '/api/settings/': 'system-settings',
@@ -842,7 +843,7 @@ def _blueprint_auth_guard():
                         '/api/cloud-backup/', '/api/cron/', '/api/dashboard/',
                         '/api/dlna/', '/api/notifications/', '/api/raid/',
                         '/api/rollback/', '/api/tickets/', '/api/vm/',
-                        '/api/installer/',
+                        '/api/installer/', '/api/med-assistant/',
                         '/api/encryption/', '/api/cache/', '/api/hardware/')):
         # Allow unauthenticated access to user auth validation
         if path == '/api/users/auth/validate':
@@ -8444,6 +8445,16 @@ def get_apps():
             'category': 'Tools',
             'description': 'Anonymize medical PDF/DOCX documents using Bielik LLM',
             'package': 'doc-anonymizer'
+        },
+        {
+            'id': 'med-assistant',
+            'name': 'Medical Assistant',
+            'icon': 'fa-user-md',
+            'color': '#06b6d4',
+            'type': 'builtin',
+            'category': 'Tools',
+            'description': 'Medical document analysis with Bielik LLM - timelines, drug interactions, ESC guidelines',
+            'package': 'med-assistant'
         },
         {
             'id': 'system-settings',
