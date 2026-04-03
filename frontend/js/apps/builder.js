@@ -103,6 +103,7 @@ function renderBuilderApp(body) {
         <div class="bl-sidebar">
             <div class="bl-nav active" data-tab="release"><i class="fas fa-box"></i> Release</div>
             <div class="bl-nav" data-tab="image"><i class="fas fa-hdd"></i> Obraz systemu</div>
+            <div class="bl-nav" data-tab="publish"><i class="fas fa-cloud-upload-alt"></i> Publikuj apki</div>
             <div class="bl-nav" data-tab="artifacts"><i class="fas fa-archive"></i> Artefakty</div>
             <div class="bl-nav" data-tab="spec"><i class="fas fa-file-code"></i> Build Spec</div>
         </div>
@@ -142,6 +143,7 @@ function renderBuilderApp(body) {
     function renderTab() {
         if (state.tab === 'release') renderRelease();
         else if (state.tab === 'image') renderImage();
+        else if (state.tab === 'publish') renderPublish();
         else if (state.tab === 'spec') renderSpec();
         else renderArtifacts();
     }
@@ -265,6 +267,230 @@ function renderBuilderApp(body) {
         } finally {
             clearInterval(timerIv);
             if (!_pollIv) {
+                state.building = false;
+                setDisabled(false);
+            }
+        }
+    }
+
+    /* ═══════════════════════════════════════════
+       Publish Apps Tab
+    ═══════════════════════════════════════════ */
+    function renderPublish() {
+        blBody.innerHTML = `
+            <div class="bl-section">
+                <div class="bl-section-title"><i class="fas fa-cloud-upload-alt"></i> Publikuj aplikacje do GitHub</div>
+                <div style="color:var(--text-secondary);font-size:12px;margin-bottom:12px;line-height:1.5">
+                    ${t('Porównaj lokalne pliki opcjonalnych aplikacji z repozytorium GitHub.')}
+                    ${t('Zmienione aplikacje zostaną opublikowane z automatycznym podbiciem wersji patch.')}
+                </div>
+                <div class="bl-row">
+                    <label>GitHub Token:</label>
+                    <input class="bl-input" id="bl-pub-token" type="password" placeholder="ghp_..." style="max-width:320px">
+                    <button class="bl-btn bl-btn-sm bl-btn-outline" id="bl-pub-save-token"><i class="fas fa-save"></i> Zapisz</button>
+                </div>
+                <div class="bl-row">
+                    <label>Repozytorium:</label>
+                    <input class="bl-input" id="bl-pub-repo" value="SyncHot/ethos-os-ethos-apps" style="max-width:320px" readonly>
+                </div>
+            </div>
+            <div class="bl-section" id="bl-pub-diff-section">
+                <div class="bl-section-title">
+                    <i class="fas fa-code-compare"></i> Zmiany do opublikowania
+                    <button class="bl-btn bl-btn-sm bl-btn-outline" id="bl-pub-refresh" style="margin-left:auto"><i class="fas fa-sync-alt"></i> Odśwież</button>
+                </div>
+                <div id="bl-pub-diff-body" style="font-size:12px;color:var(--text-muted)">Ładowanie...</div>
+            </div>
+            <div style="text-align:right;margin-top:6px">
+                <button class="bl-btn bl-btn-outline bl-btn-sm" id="bl-pub-select-all" style="margin-right:8px"><i class="fas fa-check-double"></i> Zaznacz zmienione</button>
+                <button class="bl-btn bl-btn-green" id="bl-pub-btn" disabled><i class="fas fa-cloud-upload-alt"></i> Opublikuj zaznaczone</button>
+            </div>
+            <div class="bl-progress-wrap" id="bl-pub-progress">
+                <div class="bl-progress-outer">
+                    <div class="bl-progress-inner" id="bl-pub-bar"></div>
+                    <div class="bl-progress-text" id="bl-pub-bar-text">0%</div>
+                </div>
+                <div class="bl-progress-detail" id="bl-pub-detail"></div>
+                <div class="bl-progress-timer" id="bl-pub-timer"></div>
+                <div class="bl-toggle-log" id="bl-pub-toggle-log">${t('Pokaż logi ▼')}</div>
+            </div>
+            <div class="bl-log" id="bl-pub-log"></div>
+            <div class="bl-result" id="bl-pub-result"></div>`;
+
+        const tokenEl = blBody.querySelector('#bl-pub-token');
+        const repoEl = blBody.querySelector('#bl-pub-repo');
+        let _pubApps = [];
+
+        // Load config
+        (async () => {
+            try {
+                const cfg = await api('/builder/publish-config');
+                if (cfg.has_token) tokenEl.value = cfg.token;
+                if (cfg.repo) repoEl.value = cfg.repo;
+            } catch {}
+            loadPublishDiff();
+        })();
+
+        // Save token
+        blBody.querySelector('#bl-pub-save-token').onclick = async () => {
+            const token = tokenEl.value.trim();
+            if (!token || token.includes('***')) {
+                toast(t('Wpisz nowy token'), 'warning');
+                return;
+            }
+            try {
+                await api('/builder/publish-config', {
+                    method: 'PUT',
+                    body: JSON.stringify({ token, repo: repoEl.value.trim() }),
+                });
+                toast(t('Token zapisany'), 'success');
+                loadPublishDiff();
+            } catch (e) {
+                toast(e.message || t('Błąd'), 'error');
+            }
+        };
+
+        // Refresh diff
+        blBody.querySelector('#bl-pub-refresh').onclick = () => loadPublishDiff();
+
+        // Select all changed
+        blBody.querySelector('#bl-pub-select-all').onclick = () => {
+            blBody.querySelectorAll('.bl-pub-check').forEach(cb => {
+                if (cb.dataset.changed === '1') cb.checked = true;
+            });
+            updatePublishBtn();
+        };
+
+        // Publish button
+        blBody.querySelector('#bl-pub-btn').onclick = startPublish;
+
+        // Toggle log
+        blBody.querySelector('#bl-pub-toggle-log').onclick = () => {
+            blBody.querySelector('#bl-pub-log').classList.toggle('visible');
+        };
+
+        function updatePublishBtn() {
+            const checked = blBody.querySelectorAll('.bl-pub-check:checked').length;
+            blBody.querySelector('#bl-pub-btn').disabled = checked === 0;
+        }
+
+        async function loadPublishDiff() {
+            const diffBody = blBody.querySelector('#bl-pub-diff-body');
+            diffBody.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Porównywanie z GitHub...';
+
+            try {
+                const data = await api('/builder/publish-diff');
+                if (!data.ok) {
+                    diffBody.innerHTML = `<span style="color:#ef4444">${data.error || 'Błąd'}</span>`;
+                    return;
+                }
+                if (!data.has_token) {
+                    diffBody.innerHTML = `<span style="color:#f59e0b"><i class="fas fa-key"></i> Skonfiguruj GitHub Token powyżej, aby porównać pliki.</span>`;
+                    return;
+                }
+                _pubApps = data.apps || [];
+                if (!_pubApps.length) {
+                    diffBody.innerHTML = '<span style="color:var(--text-muted)">Brak opcjonalnych aplikacji.</span>';
+                    return;
+                }
+                const changedCount = _pubApps.filter(a => a.changed).length;
+                let html = `<div style="margin-bottom:8px;color:var(--text-secondary)">
+                    ${changedCount > 0
+                        ? `<span style="color:#f59e0b"><i class="fas fa-exclamation-circle"></i> ${changedCount} zmienion${changedCount === 1 ? 'a' : changedCount < 5 ? 'e' : 'ych'}</span> / ${_pubApps.length} aplikacji`
+                        : `<span style="color:#10b981"><i class="fas fa-check-circle"></i> Wszystkie aplikacje aktualne</span>`}
+                </div>`;
+
+                html += `<table style="width:100%;border-collapse:collapse;font-size:12px">
+                    <thead><tr style="border-bottom:1px solid var(--border);color:var(--text-muted);text-align:left">
+                        <th style="padding:6px 4px;width:30px"></th>
+                        <th style="padding:6px 4px">Aplikacja</th>
+                        <th style="padding:6px 4px;width:80px">Lokalna</th>
+                        <th style="padding:6px 4px;width:80px">GitHub</th>
+                        <th style="padding:6px 4px;width:120px">Status</th>
+                    </tr></thead><tbody>`;
+
+                for (const app of _pubApps) {
+                    const statusBadges = app.changes.map(c => {
+                        const color = c.status === 'new' ? '#10b981' : '#f59e0b';
+                        const icon = c.status === 'new' ? 'fa-plus' : 'fa-pen';
+                        return `<span style="display:inline-flex;align-items:center;gap:3px;background:${color}22;color:${color};padding:1px 6px;border-radius:4px;font-size:11px"><i class="fas ${icon}" style="font-size:9px"></i>${c.file}</span>`;
+                    }).join(' ');
+
+                    const verStyle = app.changed ? 'color:#f59e0b;font-weight:600' : 'color:var(--text-muted)';
+                    html += `<tr style="border-bottom:1px solid var(--border)">
+                        <td style="padding:6px 4px;text-align:center">
+                            <input type="checkbox" class="bl-pub-check" data-id="${app.id}" data-changed="${app.changed ? 1 : 0}" ${app.changed ? '' : 'disabled'}>
+                        </td>
+                        <td style="padding:6px 4px">
+                            <span style="display:inline-flex;align-items:center;gap:6px">
+                                <i class="fas ${app.icon}" style="color:${app.color};width:14px;text-align:center;font-size:11px"></i>
+                                <strong>${app.name}</strong>
+                            </span>
+                        </td>
+                        <td style="padding:6px 4px;${verStyle}">${app.local_version}</td>
+                        <td style="padding:6px 4px;color:var(--text-muted)">${app.remote_version}</td>
+                        <td style="padding:6px 4px">${app.changed ? statusBadges : '<span style="color:#10b981;font-size:11px"><i class="fas fa-check"></i> OK</span>'}</td>
+                    </tr>`;
+                }
+                html += '</tbody></table>';
+                diffBody.innerHTML = html;
+
+                // Wire up checkboxes
+                blBody.querySelectorAll('.bl-pub-check').forEach(cb => {
+                    cb.onchange = updatePublishBtn;
+                });
+            } catch (e) {
+                diffBody.innerHTML = `<span style="color:#ef4444">Błąd: ${e.message || e}</span>`;
+            }
+        }
+
+        async function startPublish() {
+            const selected = [];
+            blBody.querySelectorAll('.bl-pub-check:checked').forEach(cb => selected.push(cb.dataset.id));
+            if (!selected.length) return;
+            if (!await confirmDialog(t('Opublikować ' + selected.length + ' aplikacji do GitHub?'))) return;
+
+            state.building = true;
+            setDisabled(true);
+
+            const bar = blBody.querySelector('#bl-pub-bar');
+            const barText = blBody.querySelector('#bl-pub-bar-text');
+            const detail = blBody.querySelector('#bl-pub-detail');
+            const logEl = blBody.querySelector('#bl-pub-log');
+            const resultEl = blBody.querySelector('#bl-pub-result');
+            const timerEl = blBody.querySelector('#bl-pub-timer');
+            const progress = blBody.querySelector('#bl-pub-progress');
+
+            bar.style.width = '0%';
+            barText.textContent = '0%';
+            detail.textContent = '';
+            logEl.innerHTML = '';
+            logEl.classList.remove('visible');
+            resultEl.style.display = 'none';
+            progress.classList.add('active');
+
+            const buildStart = Date.now();
+            const timerIv = setInterval(() => {
+                const s = Math.floor((Date.now() - buildStart) / 1000);
+                const m = Math.floor(s / 60);
+                timerEl.textContent = `⏱ ${m}:${String(s % 60).padStart(2, '0')}`;
+            }, 1000);
+
+            try {
+                const resp = await fetch('/api/builder/publish-apps', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + NAS.token,
+                        'X-CSRF-Token': NAS.csrfToken || '',
+                    },
+                    body: JSON.stringify({ app_ids: selected }),
+                });
+                await readSSE(resp, bar, barText, detail, logEl, resultEl);
+            } catch (e) {
+                showResult(resultEl, false, 'Błąd połączenia: ' + e.message);
+            } finally {
+                clearInterval(timerIv);
                 state.building = false;
                 setDisabled(false);
             }

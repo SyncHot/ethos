@@ -1,7 +1,29 @@
 """
 EthOS — Builder Blueprint
-Build releases and system images from the EthOS web panel.
+Build releases, system images, and publish optional apps to GitHub.
 All heavy operations run on the host and stream progress via SSE.
+
+Endpoints:
+  GET  /api/builder/info                  -> version info, existing releases
+  GET  /api/builder/status                -> current build status
+  POST /api/builder/cancel                -> cancel running build
+  POST /api/builder/dismiss               -> dismiss build notification
+  GET  /api/builder/history               -> build history
+  POST /api/builder/history/clear         -> clear history
+  GET  /api/builder/cache                 -> cache info
+  DELETE /api/builder/cache               -> clear cache
+  GET/PUT/DELETE /api/builder/spec        -> build spec CRUD
+  GET  /api/builder/spec/defaults         -> default spec
+  POST /api/builder/release               -> build release (SSE)
+  POST /api/builder/image                 -> build image (SSE)
+  GET  /api/builder/publish-config        -> GitHub publish config (token masked)
+  PUT  /api/builder/publish-config        -> save GitHub publish config
+  GET  /api/builder/publish-diff          -> compare local apps with GitHub
+  POST /api/builder/publish-apps          -> publish changed apps to GitHub (SSE)
+  GET  /api/builder/logs                  -> build log
+  POST /api/builder/logs/clear            -> clear log
+  POST /api/builder/delete                -> delete artifact
+  GET  /api/builder/download              -> download artifact
 """
 
 import json
@@ -2177,6 +2199,440 @@ def download_artifact():
 
 def _human_size(b):
     return fmt_bytes(b)
+
+
+# ═══════════════════════════════════════════════════════════
+#  Publish Apps to GitHub
+# ═══════════════════════════════════════════════════════════
+
+_PUBLISH_CONFIG_FILE = data_path('builder_github.json')
+_PUBLISH_REPO_DEFAULT = 'SyncHot/ethos-os-ethos-apps'
+
+
+def _load_publish_config():
+    try:
+        if os.path.isfile(_PUBLISH_CONFIG_FILE):
+            with open(_PUBLISH_CONFIG_FILE) as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
+def _save_publish_config(cfg):
+    tmp = _PUBLISH_CONFIG_FILE + '.tmp'
+    with open(tmp, 'w') as f:
+        json.dump(cfg, f, indent=2)
+    os.replace(tmp, _PUBLISH_CONFIG_FILE)
+
+
+def _github_api(method, path, token, body=None, timeout=30):
+    """Call GitHub REST API. Returns (status_code, parsed_json)."""
+    import urllib.request, urllib.error
+    url = f'https://api.github.com{path}'
+    data = json.dumps(body).encode() if body else None
+    req = urllib.request.Request(url, data=data, method=method)
+    req.add_header('Authorization', f'token {token}')
+    req.add_header('Accept', 'application/vnd.github+json')
+    req.add_header('User-Agent', 'EthOS-Builder/1.0')
+    if data:
+        req.add_header('Content-Type', 'application/json')
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status, json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        try:
+            body_text = e.read().decode()
+            return e.code, json.loads(body_text)
+        except Exception:
+            return e.code, {'message': str(e)}
+
+
+def _bump_version(ver):
+    """Bump patch version: 1.0.0 -> 1.0.1"""
+    parts = ver.split('.')
+    while len(parts) < 3:
+        parts.append('0')
+    parts[2] = str(int(parts[2]) + 1)
+    return '.'.join(parts)
+
+
+def _get_app_files(app_id):
+    """Get local file paths for an optional app. Returns dict with 'backend' and 'frontend' paths."""
+    import importlib
+    am = importlib.import_module('blueprints.app_manager')
+
+    files = {}
+    bp_info = am._OPTIONAL_BLUEPRINTS.get(app_id)
+    if bp_info:
+        module_name = bp_info[0]
+        bp_path = os.path.join(app_path(), 'backend', 'blueprints', module_name + '.py')
+        if os.path.isfile(bp_path):
+            files['backend'] = bp_path
+
+    fn = am._get_frontend_filename(app_id)
+    if fn:
+        js_path = os.path.join(app_path(), 'frontend', 'js', 'apps', fn + '.js')
+        if os.path.isfile(js_path):
+            files['frontend'] = js_path
+
+    return files
+
+
+@builder_bp.route('/publish-config', methods=['GET'])
+def get_publish_config():
+    """Get GitHub publish config (token masked)."""
+    cfg = _load_publish_config()
+    token = cfg.get('token', '')
+    masked = token[:4] + '***' + token[-4:] if len(token) > 8 else ('***' if token else '')
+    return jsonify({
+        'ok': True,
+        'repo': cfg.get('repo', _PUBLISH_REPO_DEFAULT),
+        'token': masked,
+        'has_token': bool(token),
+    })
+
+
+@builder_bp.route('/publish-config', methods=['PUT'])
+def set_publish_config():
+    """Save GitHub publish config."""
+    data = request.json or {}
+    cfg = _load_publish_config()
+
+    token = data.get('token', '').strip()
+    if token and '***' not in token:
+        cfg['token'] = token
+    repo = data.get('repo', '').strip()
+    if repo:
+        cfg['repo'] = repo
+
+    _save_publish_config(cfg)
+    return jsonify({'ok': True})
+
+
+@builder_bp.route('/publish-diff', methods=['GET'])
+def publish_diff():
+    """Compare local optional app files with GitHub. Returns list of changed apps."""
+    import hashlib, base64, importlib, urllib.request, urllib.error
+
+    am = importlib.import_module('blueprints.app_manager')
+    cfg = _load_publish_config()
+    token = cfg.get('token', '')
+    repo = cfg.get('repo', _PUBLISH_REPO_DEFAULT)
+
+    # Fetch remote catalog
+    remote_catalog = {}
+    try:
+        catalog_url = f'https://raw.githubusercontent.com/{repo}/main/catalog.json'
+        req = urllib.request.Request(catalog_url, headers={'User-Agent': 'EthOS-Builder/1.0'})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            cat_data = json.loads(resp.read().decode())
+        for a in (cat_data.get('apps', cat_data) if isinstance(cat_data, dict) else cat_data):
+            remote_catalog[a['id']] = a
+    except Exception:
+        pass
+
+    # Fetch remote tree to get file SHAs (for content comparison)
+    remote_tree = {}
+    if token:
+        try:
+            code, data = _github_api('GET', f'/repos/{repo}/git/trees/main?recursive=1', token)
+            if code == 200:
+                for item in data.get('tree', []):
+                    remote_tree[item['path']] = item['sha']
+        except Exception:
+            pass
+
+    results = []
+    for app_entry in am.BUILTIN_CATALOG:
+        app_id = app_entry['id']
+        if app_id in am.CORE_APPS:
+            continue
+
+        local_files = _get_app_files(app_id)
+        if not local_files:
+            continue
+
+        remote_ver = remote_catalog.get(app_id, {}).get('version', '—')
+        local_ver = app_entry.get('version', '1.0.0')
+
+        changes = []
+        for ftype, local_path in local_files.items():
+            remote_key = f'apps/{app_id}/{"backend.py" if ftype == "backend" else "frontend.js"}'
+            remote_sha = remote_tree.get(remote_key)
+
+            # Compute git blob SHA for local file
+            with open(local_path, 'rb') as f:
+                content = f.read()
+            blob_header = f'blob {len(content)}\0'.encode()
+            local_sha = hashlib.sha1(blob_header + content).hexdigest()
+
+            if remote_sha is None:
+                changes.append({'file': ftype, 'status': 'new'})
+            elif local_sha != remote_sha:
+                changes.append({'file': ftype, 'status': 'modified'})
+
+        results.append({
+            'id': app_id,
+            'name': app_entry.get('name', app_id),
+            'icon': app_entry.get('icon', 'fa-puzzle-piece'),
+            'color': app_entry.get('color', '#6366f1'),
+            'local_version': local_ver,
+            'remote_version': remote_ver,
+            'changes': changes,
+            'changed': len(changes) > 0,
+        })
+
+    results.sort(key=lambda x: (not x['changed'], x['name']))
+    return jsonify({'ok': True, 'apps': results, 'repo': repo, 'has_token': bool(token)})
+
+
+@builder_bp.route('/publish-apps', methods=['POST'])
+def publish_apps():
+    """Publish changed optional apps to GitHub. Streams progress via SSE."""
+    import hashlib, base64, importlib
+
+    cfg = _load_publish_config()
+    token = cfg.get('token', '')
+    repo = cfg.get('repo', _PUBLISH_REPO_DEFAULT)
+
+    if not token:
+        return jsonify({'error': 'GitHub token nie skonfigurowany'}), 400
+
+    data = request.json or {}
+    app_ids = data.get('app_ids', [])
+    if not app_ids:
+        return jsonify({'error': 'Brak aplikacji do opublikowania'}), 400
+
+    am = importlib.import_module('blueprints.app_manager')
+    catalog_by_id = {a['id']: a for a in am.BUILTIN_CATALOG}
+
+    def generate():
+        try:
+            yield _sse({'type': 'step', 'message': 'Pobieranie aktualnego stanu repozytorium...', 'percent': 5})
+
+            # Get current main branch ref
+            code, ref_data = _github_api('GET', f'/repos/{repo}/git/ref/heads/main', token)
+            if code != 200:
+                yield _sse({'type': 'done', 'success': False, 'message': f'Nie można pobrać ref main: {ref_data.get("message", code)}'})
+                return
+            current_sha = ref_data['object']['sha']
+
+            # Get current commit's tree
+            code, commit_data = _github_api('GET', f'/repos/{repo}/git/commits/{current_sha}', token)
+            if code != 200:
+                yield _sse({'type': 'done', 'success': False, 'message': 'Nie można pobrać commita'})
+                return
+            base_tree_sha = commit_data['tree']['sha']
+
+            # Fetch current catalog.json from repo
+            yield _sse({'type': 'step', 'message': 'Pobieranie katalogu aplikacji...', 'percent': 10})
+            import urllib.request, urllib.error
+            remote_catalog_apps = []
+            try:
+                cat_url = f'https://raw.githubusercontent.com/{repo}/main/catalog.json'
+                req = urllib.request.Request(cat_url, headers={'User-Agent': 'EthOS-Builder/1.0'})
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    cat_data = json.loads(resp.read().decode())
+                if isinstance(cat_data, dict) and 'apps' in cat_data:
+                    remote_catalog_apps = cat_data['apps']
+                elif isinstance(cat_data, list):
+                    remote_catalog_apps = cat_data
+            except Exception:
+                pass
+            remote_by_id = {a['id']: a for a in remote_catalog_apps}
+
+            # Get remote tree for SHA comparison
+            code, tree_data = _github_api('GET', f'/repos/{repo}/git/trees/main?recursive=1', token)
+            remote_tree = {}
+            if code == 200:
+                for item in tree_data.get('tree', []):
+                    remote_tree[item['path']] = item['sha']
+
+            # Build list of blobs to create
+            tree_items = []
+            changed_apps = []
+            total = len(app_ids)
+
+            for idx, app_id in enumerate(app_ids):
+                pct = 15 + int((idx / max(total, 1)) * 60)
+                app_def = catalog_by_id.get(app_id)
+                if not app_def:
+                    yield _sse({'type': 'log', 'message': f'⚠ {app_id}: nie znaleziono w katalogu, pomijam'})
+                    continue
+
+                local_files = _get_app_files(app_id)
+                if not local_files:
+                    yield _sse({'type': 'log', 'message': f'⚠ {app_id}: brak plików lokalnych, pomijam'})
+                    continue
+
+                app_changed = False
+                for ftype, local_path in local_files.items():
+                    fname = 'backend.py' if ftype == 'backend' else 'frontend.js'
+                    remote_key = f'apps/{app_id}/{fname}'
+
+                    with open(local_path, 'rb') as f:
+                        content = f.read()
+
+                    # Compute git blob SHA
+                    blob_header = f'blob {len(content)}\0'.encode()
+                    local_sha = hashlib.sha1(blob_header + content).hexdigest()
+
+                    if remote_tree.get(remote_key) == local_sha:
+                        continue  # unchanged
+
+                    app_changed = True
+                    yield _sse({'type': 'log', 'message': f'📦 {app_id}/{fname} ({len(content)} bytes)'})
+
+                    # Create blob
+                    b64_content = base64.b64encode(content).decode('ascii')
+                    code, blob_data = _github_api('POST', f'/repos/{repo}/git/blobs', token, {
+                        'content': b64_content,
+                        'encoding': 'base64',
+                    })
+                    if code != 201:
+                        yield _sse({'type': 'done', 'success': False,
+                                    'message': f'Błąd tworzenia blob {app_id}/{fname}: {blob_data.get("message", code)}'})
+                        return
+
+                    tree_items.append({
+                        'path': remote_key,
+                        'mode': '100644',
+                        'type': 'blob',
+                        'sha': blob_data['sha'],
+                    })
+
+                if app_changed:
+                    changed_apps.append(app_id)
+
+                yield _sse({'type': 'step', 'message': f'Przetwarzanie: {app_def["name"]}...', 'percent': pct})
+
+            if not changed_apps:
+                yield _sse({'type': 'done', 'success': True, 'message': 'Wszystkie aplikacje są aktualne — brak zmian do opublikowania.'})
+                return
+
+            # Update catalog.json with bumped versions for changed apps
+            yield _sse({'type': 'step', 'message': 'Aktualizacja katalogu wersji...', 'percent': 78})
+
+            updated_catalog = list(remote_catalog_apps)  # copy
+            updated_by_id = {a['id']: a for a in updated_catalog}
+
+            version_bumps = []
+            for app_id in changed_apps:
+                local_def = catalog_by_id.get(app_id, {})
+                old_ver = remote_by_id.get(app_id, {}).get('version', '0.0.0')
+                new_ver = _bump_version(old_ver)
+                version_bumps.append(f'{app_id}: {old_ver} → {new_ver}')
+
+                if app_id in updated_by_id:
+                    # Update existing entry
+                    entry = updated_by_id[app_id]
+                    for k, v in local_def.items():
+                        entry[k] = v
+                    entry['version'] = new_ver
+                else:
+                    # Add new entry
+                    new_entry = dict(local_def)
+                    new_entry['version'] = new_ver
+                    updated_catalog.append(new_entry)
+
+            catalog_json = json.dumps(
+                {'version': '1.0', 'apps': updated_catalog},
+                indent=4, ensure_ascii=False,
+            ).encode('utf-8')
+
+            # Create blob for catalog.json
+            b64_catalog = base64.b64encode(catalog_json).decode('ascii')
+            code, cat_blob = _github_api('POST', f'/repos/{repo}/git/blobs', token, {
+                'content': b64_catalog,
+                'encoding': 'base64',
+            })
+            if code != 201:
+                yield _sse({'type': 'done', 'success': False, 'message': 'Błąd tworzenia blob catalog.json'})
+                return
+
+            tree_items.append({
+                'path': 'catalog.json',
+                'mode': '100644',
+                'type': 'blob',
+                'sha': cat_blob['sha'],
+            })
+
+            # Create tree
+            yield _sse({'type': 'step', 'message': 'Tworzenie commita...', 'percent': 85})
+            code, new_tree = _github_api('POST', f'/repos/{repo}/git/trees', token, {
+                'base_tree': base_tree_sha,
+                'tree': tree_items,
+            })
+            if code != 201:
+                yield _sse({'type': 'done', 'success': False,
+                            'message': f'Błąd tworzenia drzewa: {new_tree.get("message", code)}'})
+                return
+
+            # Create commit
+            app_names = ', '.join(changed_apps)
+            commit_msg = f'chore: publish apps [{app_names}]\n\n' + '\n'.join(version_bumps)
+
+            code, new_commit = _github_api('POST', f'/repos/{repo}/git/commits', token, {
+                'message': commit_msg,
+                'tree': new_tree['sha'],
+                'parents': [current_sha],
+            })
+            if code != 201:
+                yield _sse({'type': 'done', 'success': False,
+                            'message': f'Błąd tworzenia commita: {new_commit.get("message", code)}'})
+                return
+
+            # Update ref
+            yield _sse({'type': 'step', 'message': 'Pushowanie do GitHub...', 'percent': 92})
+            code, _ = _github_api('PATCH', f'/repos/{repo}/git/refs/heads/main', token, {
+                'sha': new_commit['sha'],
+            })
+            if code != 200:
+                yield _sse({'type': 'done', 'success': False, 'message': 'Błąd aktualizacji brancha main'})
+                return
+
+            # Also update local BUILTIN_CATALOG versions in app_manager.py
+            yield _sse({'type': 'step', 'message': 'Aktualizacja lokalnych wersji...', 'percent': 96})
+            _update_local_catalog_versions(changed_apps, updated_by_id)
+
+            yield _sse({'type': 'step', 'message': 'Gotowe!', 'percent': 100})
+            summary = f'Opublikowano {len(changed_apps)} aplikacji: ' + ', '.join(version_bumps)
+            yield _sse({'type': 'done', 'success': True, 'message': summary})
+
+        except Exception as e:
+            _logger.exception('publish_apps error')
+            yield _sse({'type': 'done', 'success': False, 'message': f'Wyjątek: {e}'})
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype='text/event-stream',
+        headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'},
+    )
+
+
+def _update_local_catalog_versions(changed_app_ids, updated_by_id):
+    """Update version strings in the local app_manager.py BUILTIN_CATALOG."""
+    am_path = os.path.join(app_path(), 'backend', 'blueprints', 'app_manager.py')
+    try:
+        with open(am_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        for app_id in changed_app_ids:
+            new_ver = updated_by_id.get(app_id, {}).get('version')
+            if not new_ver:
+                continue
+            # Match: 'id': 'app-id', 'name': '...', 'version': 'X.Y.Z'
+            pattern = re.compile(
+                r"('id':\s*'" + re.escape(app_id) + r"'.*?'version':\s*')([^']+)(')",
+                re.DOTALL,
+            )
+            content = pattern.sub(r'\g<1>' + new_ver + r'\3', content)
+
+        with open(am_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+    except Exception as e:
+        _logger.warning('Failed to update local catalog versions: %s', e)
 
 
 # ── Package: install / uninstall / status ──
