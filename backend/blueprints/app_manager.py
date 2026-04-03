@@ -10,8 +10,10 @@ Endpoints:
   GET  /api/app-manager/installed          -> tylko zainstalowane apki
   GET  /api/app-manager/core               -> lista core apps
   GET  /api/app-manager/check-updates      -> sprawdz aktualizacje (catalog/GitHub)
-  POST /api/app-manager/check-app-updates  -> sprawdz aktualizacje z serwera OTA (SHA256)
-  POST /api/app-manager/update-apps        -> batch update z serwera OTA {app_ids:[...]}
+  GET  /api/app-manager/app-update-config  -> pobierz konfiguracje zrodla aktualizacji apek
+  PUT  /api/app-manager/app-update-config  -> zapisz konfiguracje (source, github_repo)
+  POST /api/app-manager/check-app-updates  -> sprawdz aktualizacje (GitHub lub OTA)
+  POST /api/app-manager/update-apps        -> batch update {app_ids:[...]}
   POST /api/app-manager/<id>/install       -> zainstaluj paczke (async)
   POST /api/app-manager/<id>/uninstall     -> odinstaluj paczke
   POST /api/app-manager/<id>/update        -> zaktualizuj do najnowszej wersji
@@ -68,11 +70,13 @@ _FRONTEND_APPS_DIR = os.path.join(_ETHOS_ROOT, 'frontend', 'js', 'apps')
 _BLUEPRINTS_DIR = os.path.join(_ETHOS_ROOT, 'backend', 'blueprints')
 
 INSTALLED_FILE = data_path('installed_apps.json')
+APP_UPDATE_CONFIG_FILE = data_path('app_update_config.json')
 CATALOG_CACHE_FILE = '/tmp/ethos_app_catalog.json'
 CATALOG_CACHE_TTL = 3600 * 6
 
-GITHUB_CATALOG_URL = 'https://raw.githubusercontent.com/SyncHot/ethos-os-ethos-apps/main/catalog.json'
-GITHUB_APP_BASE    = 'https://raw.githubusercontent.com/SyncHot/ethos-os-ethos-apps/main/apps'
+DEFAULT_GITHUB_REPO = 'SyncHot/ethos-os-ethos-apps'
+GITHUB_CATALOG_URL = f'https://raw.githubusercontent.com/{DEFAULT_GITHUB_REPO}/main/catalog.json'
+GITHUB_APP_BASE    = f'https://raw.githubusercontent.com/{DEFAULT_GITHUB_REPO}/main/apps'
 
 # ─── Core Apps (wbudowane, nieusuwalne) ──────────────────────
 
@@ -88,14 +92,14 @@ CORE_APPS = frozenset({
 
 _FRONTEND_FILENAME = {
     'ai-chat':          'aichat',
-    'disk-repair':      'diskrepair',
+    'disk-repair':      'storage',
     'doc-anonymizer':   'doc-anonymizer',
     'med-assistant':    'med-assistant',
     'doc-editor':       'editor',
     'download-manager': 'downloads',
     'domains-manager':  'domains',
     'family-hub':       'familyhub',
-    'raid-lvm':         'raid',
+    'raid-lvm':         'storage',
     'ssh-manager':      'ssh',
     'sticky-notes':     'stickynotes',
     'storage-manager':  'storage',
@@ -103,12 +107,12 @@ _FRONTEND_FILENAME = {
     'resource-monitor': 'resources',
     'cloud-backup':     'cloud-backup',
     'code-editor':      'code-editor',
-    'sharing-samba':    'sharing',
-    'sharing-nfs':      'sharing',
-    'sharing-dlna':     'dlna',
-    'sharing-webdav':   'sharing',
-    'sharing-sftp':     'sharing',
-    'sharing-ftp':      'sharing',
+    'sharing-samba':    'storage',
+    'sharing-nfs':      'storage',
+    'sharing-dlna':     'storage',
+    'sharing-webdav':   'storage',
+    'sharing-sftp':     'storage',
+    'sharing-ftp':      'storage',
     # W apps.js monolicie
     'file-manager':     None,
     'docker-manager':   'docker-manager',
@@ -164,7 +168,7 @@ OPTIONAL_BLUEPRINTS = _OPTIONAL_BLUEPRINTS
 
 BUILTIN_CATALOG = [
     {
-        'id': 'surveillance', 'name': 'Surveillance', 'version': '1.0.0',
+        'id': 'surveillance', 'name': 'Surveillance', 'version': '1.0.1',
         'icon': 'fa-video', 'color': '#dc2626', 'category': 'Security', 'admin_only': False,
         'description': 'Monitoring IP kamer z detekcja ruchu i podgladem na zywo.',
         'apt_deps': ['ffmpeg'], 'pip_deps': ['onvif-zeep'],
@@ -173,7 +177,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/surveillance/status',
     },
     {
-        'id': 'ai-chat', 'name': 'AI Assistant', 'version': '1.0.0',
+        'id': 'ai-chat', 'name': 'AI Assistant', 'version': '1.0.1',
         'icon': 'fa-robot', 'color': '#8b5cf6', 'category': 'Tools', 'admin_only': False,
         'description': 'Asystent AI z obsługą GPT, Claude i lokalnych modeli LLM.',
         'apt_deps': [], 'pip_deps': ['openai', 'anthropic', 'huggingface_hub'],
@@ -182,7 +186,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/aichat/status',
     },
     {
-        'id': 'doc-anonymizer', 'name': 'Document Anonymizer', 'version': '1.1.0',
+        'id': 'doc-anonymizer', 'name': 'Document Anonymizer', 'version': '1.1.1',
         'icon': 'fa-user-shield', 'color': '#0ea5e9', 'category': 'Tools', 'admin_only': False,
         'description': 'Anonimizacja dokumentow medycznych PDF/DOCX przy uzyciu polskiego modelu Bielik LLM.',
         'apt_deps': ['poppler-utils', 'tesseract-ocr', 'tesseract-ocr-pol'],
@@ -213,7 +217,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/gallery/pkg-status',
     },
     {
-        'id': 'download-manager', 'name': 'Download Manager', 'version': '1.0.0',
+        'id': 'download-manager', 'name': 'Download Manager', 'version': '1.0.1',
         'icon': 'fa-cloud-download-alt', 'color': '#10b981', 'category': 'Tools', 'admin_only': False,
         'description': 'Pobieranie plikow z HTTP, torrent, magnet i serwisow premium.',
         'apt_deps': [], 'pip_deps': [],
@@ -222,7 +226,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/downloads/pkg-status',
     },
     {
-        'id': 'printer', 'name': 'Print Server', 'version': '1.0.0',
+        'id': 'printer', 'name': 'Print Server', 'version': '1.0.1',
         'icon': 'fa-print', 'color': '#ef4444', 'category': 'Tools', 'admin_only': True,
         'description': 'Serwer drukowania z automatycznym wykrywaniem drukarek i konwersja PDF.',
         'apt_deps': ['cups', 'cups-browsed', 'libreoffice'], 'pip_deps': [],
@@ -231,7 +235,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/printer/pkg-status',
     },
     {
-        'id': 'docker-manager', 'name': 'Docker Manager', 'version': '1.0.0',
+        'id': 'docker-manager', 'name': 'Docker Manager', 'version': '1.0.1',
         'icon': 'fa-cubes', 'color': '#2496ed', 'category': 'System', 'admin_only': True,
         'description': 'Zarządzanie kontenerami Docker, projektami Compose, obrazami i logami.',
         'apt_deps': [], 'pip_deps': [],
@@ -240,7 +244,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/docker/pkg-status',
     },
     {
-        'id': 'vm-manager', 'name': 'VM Manager', 'version': '1.0.0',
+        'id': 'vm-manager', 'name': 'VM Manager', 'version': '1.0.1',
         'icon': 'fa-desktop', 'color': '#8b5cf6', 'category': 'System', 'admin_only': True,
         'description': 'Maszyny wirtualne QEMU/KVM z migawkami i dostepem VNC.',
         'apt_deps': ['qemu-system-x86', 'qemu-utils', 'ovmf'], 'pip_deps': [],
@@ -249,7 +253,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/vm/pkg-status',
     },
     {
-        'id': 'doc-editor', 'name': 'Documents', 'version': '1.0.0',
+        'id': 'doc-editor', 'name': 'Documents', 'version': '1.0.1',
         'icon': 'fa-file-word', 'color': '#2563eb', 'category': 'Tools', 'admin_only': False,
         'description': 'Tworzenie i edycja dokumentow Word z eksportem do PDF.',
         'apt_deps': ['libreoffice'], 'pip_deps': ['mammoth', 'python-docx'],
@@ -272,7 +276,7 @@ BUILTIN_CATALOG = [
         'simple': True,
     },
     {
-        'id': 'usb-flasher', 'name': 'USB Creator', 'version': '1.0.0',
+        'id': 'usb-flasher', 'name': 'USB Creator', 'version': '1.0.1',
         'icon': 'fa-usb', 'color': '#a855f7', 'category': 'Tools', 'admin_only': True,
         'description': 'Flashowanie obrazow ISO/IMG na pendrive z monitoringiem postepu.',
         'apt_deps': [], 'pip_deps': [],
@@ -281,7 +285,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/flasher/pkg-status',
     },
     {
-        'id': 'builder', 'name': 'Builder', 'version': '1.0.0',
+        'id': 'builder', 'name': 'Builder', 'version': '1.0.1',
         'icon': 'fa-hammer', 'color': '#f97316', 'category': 'System', 'admin_only': True,
         'description': 'Budowanie wydan EthOS i obrazow systemowych przez interfejs webowy.',
         'apt_deps': ['squashfs-tools', 'genisoimage', 'rsync'], 'pip_deps': [],
@@ -290,7 +294,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/builder/pkg-status',
     },
     {
-        'id': 'disk-repair', 'name': 'Disk Repair', 'version': '1.0.0',
+        'id': 'disk-repair', 'name': 'Disk Repair', 'version': '1.0.2',
         'icon': 'fa-wrench', 'color': '#ef4444', 'category': 'Storage', 'admin_only': True,
         'description': 'Diagnostyka SMART i sprawdzanie systemu plikow z narzedziami naprawczymi.',
         'apt_deps': ['smartmontools', 'e2fsprogs'], 'pip_deps': [],
@@ -299,7 +303,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/diskrepair/pkg-status',
     },
     {
-        'id': 'remote-log', 'name': 'Remote Logs', 'version': '1.0.0',
+        'id': 'remote-log', 'name': 'Remote Logs', 'version': '1.0.1',
         'icon': 'fa-satellite-dish', 'color': '#0891b2', 'category': 'System', 'admin_only': True,
         'description': 'Wysylanie logow diagnostycznych na centralny serwer.',
         'apt_deps': [], 'pip_deps': [],
@@ -308,7 +312,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/remote-log/pkg-status',
     },
     {
-        'id': 'sharing-samba', 'name': 'File Sharing (Samba)', 'version': '1.0.0',
+        'id': 'sharing-samba', 'name': 'File Sharing (Samba)', 'version': '1.0.2',
         'icon': 'fa-windows', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Udostepnianie plikow przez siec (Windows, Mac, Linux).',
         'apt_deps': ['samba'], 'pip_deps': [],
@@ -317,7 +321,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/storage/samba/pkg-status',
     },
     {
-        'id': 'sharing-nfs', 'name': 'NFS', 'version': '1.0.0',
+        'id': 'sharing-nfs', 'name': 'NFS', 'version': '1.0.2',
         'icon': 'fa-network-wired', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Szybkie udostepnianie plikow dla Linux/Unix przez NFS.',
         'apt_deps': ['nfs-kernel-server'], 'pip_deps': [],
@@ -326,7 +330,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/storage/nfs/pkg-status',
     },
     {
-        'id': 'sharing-dlna', 'name': 'DLNA (MiniDLNA)', 'version': '1.0.0',
+        'id': 'sharing-dlna', 'name': 'DLNA (MiniDLNA)', 'version': '1.0.2',
         'icon': 'fa-photo-video', 'color': '#6366f1', 'category': 'Media', 'admin_only': True,
         'description': 'Serwer DLNA do strumieniowania multimediow na TV i odtwarzacze.',
         'apt_deps': ['minidlna'], 'pip_deps': [],
@@ -335,7 +339,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/storage/dlna/pkg-status',
     },
     {
-        'id': 'sharing-webdav', 'name': 'WebDAV', 'version': '1.0.0',
+        'id': 'sharing-webdav', 'name': 'WebDAV', 'version': '1.0.2',
         'icon': 'fa-globe', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Serwer WebDAV z dostepem do plikow przez HTTP.',
         'apt_deps': ['lighttpd'], 'pip_deps': [],
@@ -344,7 +348,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/storage/webdav/pkg-status',
     },
     {
-        'id': 'sharing-sftp', 'name': 'SFTP', 'version': '1.0.0',
+        'id': 'sharing-sftp', 'name': 'SFTP', 'version': '1.0.2',
         'icon': 'fa-lock', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Bezpieczny transfer plikow przez SSH.',
         'apt_deps': ['openssh-server'], 'pip_deps': [],
@@ -353,7 +357,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/storage/sftp/pkg-status',
     },
     {
-        'id': 'sharing-ftp', 'name': 'FTP', 'version': '1.0.0',
+        'id': 'sharing-ftp', 'name': 'FTP', 'version': '1.0.2',
         'icon': 'fa-upload', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Klasyczny serwer FTP z obsługa vsftpd.',
         'apt_deps': ['vsftpd'], 'pip_deps': [],
@@ -362,7 +366,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/storage/ftp/pkg-status',
     },
     {
-        'id': 'domains-manager', 'name': 'Domains & SSL', 'version': '1.0.0',
+        'id': 'domains-manager', 'name': 'Domains & SSL', 'version': '1.0.1',
         'icon': 'fa-globe', 'color': '#059669', 'category': 'Network', 'admin_only': True,
         'description': 'Domeny z certyfikatami SSL, reverse proxy i Dynamic DNS.',
         'apt_deps': [], 'pip_deps': [],
@@ -371,7 +375,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/ddns/pkg-status',
     },
     {
-        'id': 'websites', 'name': 'Websites', 'version': '1.0.0',
+        'id': 'websites', 'name': 'Websites', 'version': '1.0.1',
         'icon': 'fa-globe-americas', 'color': '#14b8a6', 'category': 'Tools', 'admin_only': False,
         'description': 'Kreator stron z CMS, szablonami i edytorem wizualnym.',
         'apt_deps': [], 'pip_deps': [],
@@ -380,7 +384,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/websites/pkg-status',
     },
     {
-        'id': 'cloud-backup', 'name': 'Cloud Backup', 'version': '1.0.0',
+        'id': 'cloud-backup', 'name': 'Cloud Backup', 'version': '1.0.1',
         'icon': 'fa-cloud-upload-alt', 'color': '#0ea5e9', 'category': 'Storage', 'admin_only': True,
         'description': 'Backup do S3, Backblaze, Google Drive, WebDAV i SFTP z harmonogramem.',
         'apt_deps': ['rclone'], 'pip_deps': [],
@@ -389,7 +393,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/cloud-backup/pkg-status',
     },
     {
-        'id': 'raid-lvm', 'name': 'RAID / LVM', 'version': '1.0.0',
+        'id': 'raid-lvm', 'name': 'RAID / LVM', 'version': '1.0.1',
         'icon': 'fa-layer-group', 'color': '#f59e0b', 'category': 'Storage', 'admin_only': True,
         'description': 'Macierze RAID z mdadm i wolumeny LVM.',
         'apt_deps': ['mdadm', 'lvm2'], 'pip_deps': [],
@@ -398,7 +402,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/raid/pkg-status',
     },
     {
-        'id': 'wireguard', 'name': 'VPN (WireGuard)', 'version': '1.0.0',
+        'id': 'wireguard', 'name': 'VPN (WireGuard)', 'version': '1.0.1',
         'icon': 'fa-shield-halved', 'color': '#7c3aed', 'category': 'Network', 'admin_only': True,
         'description': 'Serwer VPN WireGuard z peerami i kodami QR.',
         'apt_deps': ['wireguard', 'wireguard-tools', 'qrencode'], 'pip_deps': [],
@@ -407,7 +411,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/wireguard/pkg-status',
     },
     {
-        'id': 'antivirus', 'name': 'Antivirus (ClamAV)', 'version': '1.0.0',
+        'id': 'antivirus', 'name': 'Antivirus (ClamAV)', 'version': '1.0.1',
         'icon': 'fa-shield-virus', 'color': '#16a34a', 'category': 'Security', 'admin_only': True,
         'description': 'ClamAV antywirus — skanowanie na zadanie i zaplanowane.',
         'apt_deps': ['clamav', 'clamav-freshclam'], 'pip_deps': [],
@@ -416,7 +420,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/antivirus/pkg-status',
     },
     {
-        'id': 'rollback', 'name': 'Rollback', 'version': '1.0.0',
+        'id': 'rollback', 'name': 'Rollback', 'version': '1.0.1',
         'icon': 'fa-history', 'color': '#f97316', 'category': 'System', 'admin_only': True,
         'description': 'Migawki systemu i przywracanie poprzednich wersji.',
         'apt_deps': [], 'pip_deps': [], 'simple': True,
@@ -434,31 +438,31 @@ BUILTIN_CATALOG = [
         'apt_deps': [], 'pip_deps': [], 'simple': True, 'core': True,
     },
     {
-        'id': 'cron', 'name': 'Scheduler', 'version': '1.0.0',
+        'id': 'cron', 'name': 'Scheduler', 'version': '1.0.1',
         'icon': 'fa-clock', 'color': '#6366f1', 'category': 'System', 'admin_only': True,
         'description': 'Harmonogram zadan z zarządzaniem cron jobs.',
         'apt_deps': [], 'pip_deps': [], 'simple': True,
     },
     {
-        'id': 'ups', 'name': 'UPS', 'version': '1.0.0',
+        'id': 'ups', 'name': 'UPS', 'version': '1.0.1',
         'icon': 'fa-battery-full', 'color': '#f59e0b', 'category': 'System', 'admin_only': True,
         'description': 'Status baterii UPS i zarządzanie bezpiecznym wyłączeniem.',
         'apt_deps': [], 'pip_deps': [], 'simple': True,
     },
     {
-        'id': 'family-hub', 'name': 'Family Hub', 'version': '1.0.0',
+        'id': 'family-hub', 'name': 'Family Hub', 'version': '1.0.1',
         'icon': 'fa-house-user', 'color': '#f472b6', 'category': 'Tools', 'admin_only': False,
         'description': 'Tablica ogloszen, listy zakupow, zadania i kalendarz rodzinny.',
         'apt_deps': [], 'pip_deps': [], 'simple': True,
     },
     {
-        'id': 'sticky-notes', 'name': 'Sticky Notes', 'version': '1.0.0',
+        'id': 'sticky-notes', 'name': 'Sticky Notes', 'version': '1.0.1',
         'icon': 'fa-sticky-note', 'color': '#fbbf24', 'category': 'Tools', 'admin_only': False,
         'description': 'Szybkie notatki przyklejane do pulpitu.',
         'apt_deps': [], 'pip_deps': [], 'simple': True,
     },
     {
-        'id': 'tickets', 'name': 'Tickets', 'version': '1.0.0',
+        'id': 'tickets', 'name': 'Tickets', 'version': '1.0.1',
         'icon': 'fa-tasks', 'color': '#06b6d4', 'category': 'Tools', 'admin_only': False,
         'description': 'Kanban — zarządzanie projektami i zadaniami.',
         'apt_deps': [], 'pip_deps': [], 'simple': True,
@@ -1131,7 +1135,7 @@ def _require_admin():
 _CORE_META = {
     'dashboard':        ('Dashboard',        'fa-tachometer-alt',    '#3b82f6', 'System',  'Przeglad systemu'),
     'file-manager':     ('File Manager',     'fa-folder-open',       '#f59e0b', 'System',  'Przegladanie i zarzadzanie plikami'),
-    'storage-manager':  ('Storage Manager',  'fa-hdd',               '#10b981', 'Storage', 'Dyski, partycje, montowanie'),
+    'storage-manager':  ('Storage Manager',  'fa-database',          '#10b981', 'Storage', 'Dyski, RAID, wolumeny, udostepnianie, diagnostyka'),
     'terminal':         ('Terminal',         'fa-terminal',          '#22c55e', 'System',  'Terminal przez przegladarke'),
     'system-settings':  ('Settings',         'fa-cog',               '#6b7280', 'System',  'Ustawienia systemowe NAS'),
     'users':            ('Users',            'fa-users',             '#6366f1', 'System',  'Zarzadzanie uzytkownikami'),
@@ -1337,8 +1341,66 @@ def app_status(app_id):
 
 
 # ═══════════════════════════════════════════════════════════
-#  OTA-based app updates (from update server, not GitHub)
+#  App update source — GitHub (default) or OTA server
 # ═══════════════════════════════════════════════════════════
+
+_DEFAULT_APP_UPDATE_CONFIG = {
+    'source': 'github',
+    'github_repo': DEFAULT_GITHUB_REPO,
+}
+
+
+def _load_app_update_config():
+    try:
+        if os.path.isfile(APP_UPDATE_CONFIG_FILE):
+            with open(APP_UPDATE_CONFIG_FILE) as f:
+                cfg = json.load(f)
+            # Ensure defaults
+            if 'source' not in cfg:
+                cfg['source'] = 'github'
+            if 'github_repo' not in cfg:
+                cfg['github_repo'] = DEFAULT_GITHUB_REPO
+            return cfg
+    except Exception:
+        pass
+    return dict(_DEFAULT_APP_UPDATE_CONFIG)
+
+
+def _save_app_update_config(cfg):
+    tmp = APP_UPDATE_CONFIG_FILE + '.tmp'
+    with open(tmp, 'w') as f:
+        json.dump(cfg, f, indent=2)
+    os.replace(tmp, APP_UPDATE_CONFIG_FILE)
+
+
+@app_manager_bp.route('/app-update-config', methods=['GET'])
+def get_app_update_config():
+    err = _require_admin()
+    if err:
+        return err
+    cfg = _load_app_update_config()
+    return jsonify({'ok': True, **cfg})
+
+
+@app_manager_bp.route('/app-update-config', methods=['PUT'])
+def set_app_update_config():
+    err = _require_admin()
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    source = body.get('source', 'github')
+    if source not in ('github', 'ota'):
+        return jsonify({'error': 'source musi być "github" lub "ota"'}), 400
+    cfg = _load_app_update_config()
+    cfg['source'] = source
+    if 'github_repo' in body and body['github_repo']:
+        repo = body['github_repo'].strip()
+        if '/' not in repo:
+            return jsonify({'error': 'Format repo: owner/name'}), 400
+        cfg['github_repo'] = repo
+    _save_app_update_config(cfg)
+    return jsonify({'ok': True, **cfg})
+
 
 def _get_update_url():
     """Read update_url from updater config."""
@@ -1358,7 +1420,7 @@ def _resolve_update_base(raw):
         return ''
     raw = raw.strip().rstrip('/')
     if raw.startswith('github:'):
-        return ''  # GitHub mode not supported for app updates
+        return ''
     if raw.startswith('http://') or raw.startswith('https://'):
         from urllib.parse import urlparse
         parsed = urlparse(raw)
@@ -1378,23 +1440,120 @@ def _file_sha256(path):
     return h.hexdigest()
 
 
+def _ensure_installed_apps():
+    """Ensure installed_apps.json contains all on-disk optional apps.
+    Detects apps deployed via file copy that were never registered."""
+    from datetime import datetime
+    installed = _load_installed()
+    changed = False
+    now = datetime.utcnow().isoformat()
+
+    for app_id, bp_info in _OPTIONAL_BLUEPRINTS.items():
+        if app_id in installed:
+            continue
+        module_name = bp_info[0]
+        local_py = os.path.join(_BLUEPRINTS_DIR, module_name + '.py')
+        if os.path.isfile(local_py) and os.path.getsize(local_py) > 0:
+            installed[app_id] = {
+                'version': 'bundled',
+                'source': 'bundled',
+                'installed_at': now,
+            }
+            changed = True
+            log.info('[app_manager] Auto-registered on-disk app: %s', app_id)
+
+    if changed:
+        _save_installed(installed)
+    return installed
+
+
+def _version_tuple(v):
+    """Parse version string to tuple for comparison. e.g. '1.2.3' -> (1, 2, 3)."""
+    try:
+        return tuple(int(x) for x in v.split('.'))
+    except (ValueError, AttributeError):
+        return (0, 0, 0)
+
+
+def _github_raw_base(repo):
+    return f'https://raw.githubusercontent.com/{repo}/main'
+
+
+def _check_github_updates(repo):
+    """Check GitHub catalog for newer versions vs local BUILTIN_CATALOG.
+    Returns list of dicts: [{id, name, local_version, remote_version, backend_changed, frontend_changed}]."""
+    catalog_url = _github_raw_base(repo) + '/catalog.json'
+    app_base = _github_raw_base(repo) + '/apps'
+
+    try:
+        req = urllib.request.Request(catalog_url, headers={'User-Agent': 'EthOS-AppManager/1.0'})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode())
+    except Exception as e:
+        raise RuntimeError(f'Nie udało się pobrać katalogu GitHub: {e}')
+
+    remote_apps = data.get('apps', data) if isinstance(data, dict) else data
+    remote_by_id = {a['id']: a for a in remote_apps if isinstance(a, dict) and 'id' in a}
+
+    local_by_id = {a['id']: a for a in BUILTIN_CATALOG}
+    installed = _ensure_installed_apps()
+    updates = []
+
+    for app_id, remote in remote_by_id.items():
+        if app_id not in installed and app_id not in _OPTIONAL_BLUEPRINTS:
+            continue
+
+        bp_info = _OPTIONAL_BLUEPRINTS.get(app_id)
+        if not bp_info:
+            continue
+
+        local = local_by_id.get(app_id, {})
+        local_ver = local.get('version', '0.0.0')
+        remote_ver = remote.get('version', '0.0.0')
+
+        if _version_tuple(remote_ver) <= _version_tuple(local_ver):
+            continue
+
+        detail = {
+            'id': app_id,
+            'name': remote.get('name', local.get('name', app_id)),
+            'local_version': local_ver,
+            'remote_version': remote_ver,
+            'backend_changed': True,
+            'frontend_changed': bool(_get_frontend_filename(app_id)),
+        }
+        updates.append(detail)
+
+    return updates
+
+
 @app_manager_bp.route('/check-app-updates', methods=['POST'])
 def check_app_updates():
-    """Check update server for newer versions of installed optional apps.
-    Compares SHA256 hashes of local files against the server manifest."""
+    """Check for app updates — GitHub (version comparison) or OTA (SHA256 hash)."""
     err = _require_admin()
     if err:
         return err
 
+    cfg = _load_app_update_config()
+    source = cfg.get('source', 'github')
+
+    if source == 'github':
+        repo = cfg.get('github_repo', DEFAULT_GITHUB_REPO)
+        try:
+            updates = _check_github_updates(repo)
+        except RuntimeError as e:
+            return jsonify({'error': str(e)}), 502
+        return jsonify({'ok': True, 'updates': updates, 'source': 'github', 'repo': repo})
+
+    # OTA server mode
     raw_url = _get_update_url()
     if not raw_url:
-        return jsonify({'error': 'Serwer aktualizacji nie skonfigurowany'}), 400
+        return jsonify({'error': 'Serwer aktualizacji nie skonfigurowany. Zmień źródło na GitHub lub skonfiguruj OTA.'}), 400
 
     base_url = _resolve_update_base(raw_url)
     if not base_url:
         return jsonify({'error': 'Nieobsługiwany format URL aktualizacji'}), 400
 
-    # Fetch remote apps manifest
     manifest_url = base_url + '/apps.json'
     try:
         req = urllib.request.Request(manifest_url, headers={'User-Agent': 'EthOS-AppManager/1.0'})
@@ -1403,11 +1562,10 @@ def check_app_updates():
     except Exception as e:
         return jsonify({'error': f'Nie udało się pobrać manifestu: {e}'}), 502
 
-    installed = _load_installed()
+    installed = _ensure_installed_apps()
     updates = []
 
     for app_id, remote in remote_apps.items():
-        # Only check installed apps
         if app_id not in installed:
             continue
         bp_info = _OPTIONAL_BLUEPRINTS.get(app_id)
@@ -1417,13 +1575,11 @@ def check_app_updates():
         has_update = False
         detail = {'id': app_id, 'name': app_id}
 
-        # Find app name from catalog
         for a in BUILTIN_CATALOG:
             if a['id'] == app_id:
                 detail['name'] = a.get('name', app_id)
                 break
 
-        # Check backend hash
         module_name = bp_info[0]
         local_py = os.path.join(_BLUEPRINTS_DIR, module_name + '.py')
         if os.path.isfile(local_py) and remote.get('backend_sha256'):
@@ -1432,7 +1588,6 @@ def check_app_updates():
                 has_update = True
                 detail['backend_changed'] = True
 
-        # Check frontend hash
         fn = _get_frontend_filename(app_id)
         if fn:
             local_js = os.path.join(_FRONTEND_APPS_DIR, fn + '.js')
@@ -1445,13 +1600,13 @@ def check_app_updates():
         if has_update:
             updates.append(detail)
 
-    return jsonify({'ok': True, 'updates': updates, 'update_server': raw_url})
+    return jsonify({'ok': True, 'updates': updates, 'source': 'ota', 'update_server': raw_url})
 
 
 @app_manager_bp.route('/update-apps', methods=['POST'])
 def update_apps():
-    """Batch-update installed apps from the update server.
-    Body: { "app_ids": ["doc-anonymizer", "ai-chat", ...] }"""
+    """Batch-update apps. Body: { "app_ids": ["doc-anonymizer", ...] }
+    Downloads from GitHub or OTA depending on configured source."""
     err = _require_admin()
     if err:
         return err
@@ -1461,22 +1616,33 @@ def update_apps():
     if not app_ids or not isinstance(app_ids, list):
         return jsonify({'error': 'Podaj listę app_ids'}), 400
 
+    cfg = _load_app_update_config()
+    source = cfg.get('source', 'github')
+
+    if source == 'github':
+        repo = cfg.get('github_repo', DEFAULT_GITHUB_REPO)
+        base_url = _github_raw_base(repo) + '/apps'
+        task_id = str(uuid.uuid4())[:8]
+        from gevent import spawn
+        spawn(_bg_update_apps, app_ids, base_url, task_id, 'github')
+        return jsonify({'ok': True, 'task_id': task_id})
+
+    # OTA
     raw_url = _get_update_url()
     if not raw_url:
         return jsonify({'error': 'Serwer aktualizacji nie skonfigurowany'}), 400
-
     base_url = _resolve_update_base(raw_url)
     if not base_url:
         return jsonify({'error': 'Nieobsługiwany format URL aktualizacji'}), 400
 
     task_id = str(uuid.uuid4())[:8]
     from gevent import spawn
-    spawn(_bg_update_apps, app_ids, base_url, task_id)
+    spawn(_bg_update_apps, app_ids, base_url, task_id, 'ota')
     return jsonify({'ok': True, 'task_id': task_id})
 
 
-def _bg_update_apps(app_ids, base_url, task_id):
-    """Background: download updated files from update server and hot-reload."""
+def _bg_update_apps(app_ids, base_url, task_id, source='ota'):
+    """Background: download updated files and hot-reload."""
     def emit(extra):
         _emit({'task_id': task_id, **extra})
 
@@ -1487,7 +1653,7 @@ def _bg_update_apps(app_ids, base_url, task_id):
 
     try:
         emit({'stage': 'start', 'percent': 2, 'status': 'running',
-              'message': f'Aktualizacja {total} aplikacji...'})
+              'message': f'Aktualizacja {total} aplikacji ({source})...'})
 
         for idx, app_id in enumerate(app_ids):
             pct_base = int(5 + (idx / total) * 85)
@@ -1497,7 +1663,7 @@ def _bg_update_apps(app_ids, base_url, task_id):
 
             bp_info = _OPTIONAL_BLUEPRINTS.get(app_id)
             if not bp_info:
-                log.warning('[app_manager] Unknown app for OTA update: %s', app_id)
+                log.warning('[app_manager] Unknown app for update: %s', app_id)
                 failed.append(app_id)
                 continue
 
@@ -1505,30 +1671,28 @@ def _bg_update_apps(app_ids, base_url, task_id):
 
             # Download backend .py
             module_name = bp_info[0]
-            bp_url = base_url + f'/apps/{app_id}/backend.py'
+            bp_url = base_url + f'/{app_id}/backend.py'
             bp_dest = os.path.join(_BLUEPRINTS_DIR, module_name + '.py')
             if not _download_file(bp_url, bp_dest):
-                log.warning('[app_manager] OTA backend download failed: %s', app_id)
+                log.warning('[app_manager] Backend download failed: %s', app_id)
                 ok = False
 
             # Download frontend .js
             fn = _get_frontend_filename(app_id)
             if fn:
-                js_url = base_url + f'/apps/{app_id}/frontend.js'
+                js_url = base_url + f'/{app_id}/frontend.js'
                 js_dest = os.path.join(_FRONTEND_APPS_DIR, fn + '.js')
                 if not _download_file(js_url, js_dest):
-                    log.warning('[app_manager] OTA frontend download failed: %s', app_id)
+                    log.warning('[app_manager] Frontend download failed: %s', app_id)
                     ok = False
 
             if ok:
-                # Hot-reload the blueprint
                 _hot_load_blueprint(app_id)
-                _set_installed(app_id, 'latest', 'ota')
+                _set_installed(app_id, 'latest', source)
                 updated.append(app_id)
             else:
                 failed.append(app_id)
 
-        # Sync frontend_dist once at the end
         if updated:
             emit({'stage': 'sync', 'percent': 92, 'status': 'running',
                   'message': 'Synchronizacja frontend...'})
@@ -1541,7 +1705,7 @@ def _bg_update_apps(app_ids, base_url, task_id):
               'message': msg, 'updated': updated, 'failed': failed})
 
     except Exception as e:
-        log.exception('[app_manager] OTA app update error')
+        log.exception('[app_manager] App update error')
         emit({'stage': 'error', 'percent': 0, 'status': 'error',
               'message': f'Błąd: {e}'})
     finally:

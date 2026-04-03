@@ -5462,8 +5462,9 @@ function renderPackageCenter(body) {
     <div class="pm-toolbar">
       <div class="pm-search-wrap"><i class="fas fa-search"></i><input class="pm-search" id="pm-search" placeholder="${t('Szukaj paczki…')}" type="text"></div>
       <div class="pm-toolbar-actions">
-        <button class="pm-ota-btn" id="pm-btn-ota-check" title="${t('Sprawdź aktualizacje aplikacji z serwera')}"><i class="fas fa-satellite-dish"></i> ${t('Sprawdź OTA')}</button>
+        <button class="pm-ota-btn" id="pm-btn-ota-check" title="${t('Sprawdź aktualizacje aplikacji')}"><i class="fas fa-sync-alt"></i> ${t('Sprawdź aktualizacje')}</button>
         <button class="pm-ota-btn pm-ota-update-all" id="pm-btn-ota-update" style="display:none" title="${t('Zaktualizuj wszystkie')}"><i class="fas fa-cloud-download-alt"></i> ${t('Aktualizuj wszystkie')}</button>
+        <button class="pm-ota-btn pm-src-btn" id="pm-btn-src-config" title="${t('Źródło aktualizacji')}"><i class="fas fa-cog"></i></button>
       </div>
     </div>
     <div class="pm-content" id="pm-content">
@@ -5732,11 +5733,12 @@ function renderPackageCenter(body) {
             if (data.error) { toast(data.error, 'error'); return; }
             S.otaUpdates = data.updates || [];
             const updBtn = $('#pm-btn-ota-update');
+            const src = data.source === 'github' ? `GitHub (${data.repo || ''})` : 'OTA';
             if (S.otaUpdates.length) {
-                toast(t('{n} aktualizacji dostępnych', { n: S.otaUpdates.length }), 'info');
+                toast(t('{n} aktualizacji dostępnych', { n: S.otaUpdates.length }) + ` [${src}]`, 'info');
                 if (updBtn) updBtn.style.display = '';
             } else {
-                toast(t('Wszystkie aplikacje aktualne'), 'success');
+                toast(t('Wszystkie aplikacje aktualne') + ` [${src}]`, 'success');
                 if (updBtn) updBtn.style.display = 'none';
             }
             applyFilter();
@@ -5744,7 +5746,7 @@ function renderPackageCenter(body) {
             toast(t('Błąd sprawdzania aktualizacji'), 'error');
         } finally {
             S.otaChecking = false;
-            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-satellite-dish"></i> ' + t('Sprawdź OTA'); }
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-sync-alt"></i> ' + t('Sprawdź aktualizacje'); }
         }
     }
 
@@ -5757,7 +5759,7 @@ function renderPackageCenter(body) {
             S.progressMap[id] = { stage: 'start', percent: 2, message: t('Oczekiwanie…'), status: 'running', _started: Date.now() };
         });
         render();
-        const data = await api('/app-manager/update-apps', { method: 'POST', body: JSON.stringify({ app_ids: ids }) });
+        const data = await api('/app-manager/update-apps', { method: 'POST', body: { app_ids: ids } });
         if (data.error) {
             toast(data.error, 'error');
             ids.forEach(id => delete S.progressMap[id]);
@@ -5891,6 +5893,52 @@ function renderPackageCenter(body) {
 
     $('#pm-btn-ota-check')?.addEventListener('click', () => checkOtaUpdates());
     $('#pm-btn-ota-update')?.addEventListener('click', () => updateAllApps());
+    $('#pm-btn-src-config')?.addEventListener('click', () => showSourceConfig());
+
+    async function showSourceConfig() {
+        const cfg = await api('/app-manager/app-update-config');
+        if (cfg.error) { toast(cfg.error, 'error'); return; }
+
+        const overlay = $('#pm-detail-overlay');
+        overlay.style.display = 'flex';
+        overlay.innerHTML = `
+        <div class="pm-detail-card" style="max-width:500px">
+          <div class="pm-detail-header">
+            <span class="pm-detail-name"><i class="fas fa-cog"></i> ${t('Źródło aktualizacji aplikacji')}</span>
+            <button class="pm-detail-close" id="pm-src-close"><i class="fas fa-times"></i></button>
+          </div>
+          <div class="pm-detail-body" style="padding:20px">
+            <div style="margin-bottom:16px">
+              <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;cursor:pointer">
+                <input type="radio" name="pm-src" value="github" ${cfg.source === 'github' ? 'checked' : ''}>
+                <i class="fab fa-github" style="font-size:18px"></i>
+                <span><b>GitHub</b> — ${t('publiczny katalog aplikacji')}</span>
+              </label>
+              <div style="margin-left:30px;margin-bottom:12px">
+                <label style="font-size:12px;color:var(--text-secondary)">${t('Repozytorium (owner/repo)')}</label>
+                <input type="text" id="pm-src-repo" class="pm-search" style="width:100%;margin-top:4px"
+                  value="${cfg.github_repo || 'SyncHot/ethos-os-ethos-apps'}" placeholder="SyncHot/ethos-os-ethos-apps">
+              </div>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                <input type="radio" name="pm-src" value="ota" ${cfg.source === 'ota' ? 'checked' : ''}>
+                <i class="fas fa-satellite-dish" style="font-size:18px"></i>
+                <span><b>OTA Server</b> — ${t('serwer aktualizacji EthOS')}</span>
+              </label>
+            </div>
+            <button class="pm-install-btn" id="pm-src-save" style="width:100%"><i class="fas fa-save"></i> ${t('Zapisz')}</button>
+          </div>
+        </div>`;
+
+        overlay.querySelector('#pm-src-close').onclick = () => { overlay.style.display = 'none'; };
+        overlay.querySelector('#pm-src-save').onclick = async () => {
+            const source = overlay.querySelector('input[name="pm-src"]:checked')?.value || 'github';
+            const github_repo = overlay.querySelector('#pm-src-repo')?.value?.trim() || 'SyncHot/ethos-os-ethos-apps';
+            const res = await api('/app-manager/app-update-config', { method: 'PUT', body: { source, github_repo } });
+            if (res.error) { toast(res.error, 'error'); return; }
+            toast(t('Źródło zapisane:') + ' ' + (source === 'github' ? `GitHub (${github_repo})` : 'OTA Server'), 'success');
+            overlay.style.display = 'none';
+        };
+    }
 
     loadCatalog();
 }
