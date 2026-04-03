@@ -91,6 +91,9 @@ def _ensure_deps():
         log.info('[doc_anonymizer] Downloading spaCy Polish model (pl_core_news_lg)')
         host_run('/opt/ethos/venv/bin/python -m spacy download pl_core_news_lg', timeout=300)
 
+    # Download NER delta weights if neither full model nor delta exist
+    _ensure_ner_delta()
+
     import shutil
     if not shutil.which('pdftotext'):
         log.info('[doc_anonymizer] Installing poppler-utils')
@@ -101,6 +104,42 @@ def _ensure_deps():
         host_run('apt-get install -y -qq tesseract-ocr tesseract-ocr-pol', timeout=120)
 
 
+_NER_DELTA_URL = (
+    'https://raw.githubusercontent.com/SyncHot/ethos-os-ethos-apps/main/'
+    'apps/doc-anonymizer/models/spacy_pii_ner_delta.tar.gz'
+)
+
+
+def _ensure_ner_delta():
+    """Download NER delta model from GitHub release if not present locally."""
+    models_dir = data_path('models')
+    full_model = os.path.join(models_dir, 'spacy_pii_pl')
+    delta_dir = os.path.join(models_dir, 'spacy_pii_ner_delta')
+
+    if (os.path.isdir(full_model) and
+            os.path.isfile(os.path.join(full_model, 'meta.json'))):
+        return  # Full model already trained
+    if (os.path.isdir(delta_dir) and
+            os.path.isfile(os.path.join(delta_dir, 'meta.json'))):
+        return  # Delta already present
+
+    log.info('[doc_anonymizer] Downloading NER delta model...')
+    os.makedirs(models_dir, exist_ok=True)
+    tmp_tar = os.path.join(models_dir, '_ner_delta.tar.gz')
+    try:
+        import urllib.request
+        urllib.request.urlretrieve(_NER_DELTA_URL, tmp_tar)
+        import tarfile
+        with tarfile.open(tmp_tar, 'r:gz') as tf:
+            tf.extractall(models_dir)
+        log.info('[doc_anonymizer] NER delta model installed to %s', delta_dir)
+    except Exception as e:
+        log.warning('[doc_anonymizer] Failed to download NER delta: %s', e)
+    finally:
+        if os.path.exists(tmp_tar):
+            os.remove(tmp_tar)
+
+
 # -- spaCy NER model (lazy-loaded singleton) --------------------------------
 
 _spacy_nlp = None
@@ -108,7 +147,7 @@ _spacy_load_attempted = False
 
 
 def _load_spacy_model():
-    """Load the fine-tuned spaCy PII model, fallback to base pl_core_news_lg."""
+    """Load spaCy PII model. Priority: full fine-tuned > delta NER + base > base only."""
     global _spacy_nlp, _spacy_load_attempted
     if _spacy_nlp is not None:
         return _spacy_nlp
@@ -118,7 +157,7 @@ def _load_spacy_model():
 
     import spacy
 
-    # Prefer fine-tuned model
+    # 1) Full fine-tuned model (from training or first-run rebuild)
     pii_model_path = os.path.join(data_path('models'), 'spacy_pii_pl')
     if os.path.isdir(pii_model_path) and os.path.isfile(os.path.join(pii_model_path, 'meta.json')):
         try:
@@ -128,13 +167,60 @@ def _load_spacy_model():
         except Exception as e:
             log.warning('[doc_anonymizer] Failed to load fine-tuned model: %s', e)
 
-    # Fallback to base Polish model
+    # 2) Delta NER weights + base model (shipped with app package, ~17MB)
+    delta_path = os.path.join(data_path('models'), 'spacy_pii_ner_delta')
+    delta_ner_path = os.path.join(delta_path, 'ner')
+    if os.path.isdir(delta_ner_path) and os.path.isfile(os.path.join(delta_path, 'meta.json')):
+        try:
+            nlp = spacy.load('pl_core_news_lg')
+            # Symlink base vocab vectors into delta so from_disk works
+            delta_vocab = os.path.join(delta_ner_path, 'vocab')
+            base_vocab_dir = str(nlp.path / 'vocab')
+            _symlinks = []
+            for fname in ('vectors', 'key2row'):
+                src = os.path.join(base_vocab_dir, fname)
+                dst = os.path.join(delta_vocab, fname)
+                if os.path.exists(src) and not os.path.exists(dst):
+                    os.symlink(src, dst)
+                    _symlinks.append(dst)
+            try:
+                ner = nlp.get_pipe('ner')
+                ner.from_disk(delta_ner_path)
+                _spacy_nlp = nlp
+                log.info('[doc_anonymizer] Loaded base pl_core_news_lg + NER delta from %s', delta_path)
+                return _spacy_nlp
+            finally:
+                for lnk in _symlinks:
+                    if os.path.islink(lnk):
+                        os.remove(lnk)
+        except Exception as e:
+            log.warning('[doc_anonymizer] Failed to load NER delta: %s', e)
+
+    # 3) Base Polish model only (no fine-tuning)
     try:
         _spacy_nlp = spacy.load('pl_core_news_lg')
         log.info('[doc_anonymizer] Loaded base spaCy model pl_core_news_lg')
         return _spacy_nlp
     except Exception as e:
         log.warning('[doc_anonymizer] Failed to load spaCy model: %s', e)
+
+    # 4) Attempt to retrain if training script available
+    train_script = os.path.join(os.environ.get('ETHOS_ROOT', '/opt/ethos'),
+                                'tools', 'train_spacy_pii.py')
+    if os.path.isfile(train_script):
+        try:
+            log.info('[doc_anonymizer] Attempting to train spaCy PII model...')
+            from host import host_run
+            out = host_run(
+                f'/opt/ethos/venv/bin/python3 {train_script} --iterations 20',
+                timeout=300
+            )
+            if os.path.isdir(pii_model_path):
+                _spacy_nlp = spacy.load(pii_model_path)
+                log.info('[doc_anonymizer] Trained and loaded spaCy PII model')
+                return _spacy_nlp
+        except Exception as e:
+            log.warning('[doc_anonymizer] Training failed: %s', e)
 
     return None
 
