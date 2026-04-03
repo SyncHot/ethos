@@ -7,6 +7,13 @@ Update sources supported:
   - EthOS instance: just IP or hostname (e.g. "192.168.1.100", "ethos.local")
   - GitHub releases:  "github:user/repo"
   - Full URL:         "https://my-server.com/updates"
+
+Public endpoints (no auth):
+  GET /updates/apps.json                 -> manifest of optional apps with SHA256 hashes
+  GET /updates/apps/<app_id>/backend.py  -> serve app backend .py file
+  GET /updates/apps/<app_id>/frontend.js -> serve app frontend .js file
+  GET /updates/latest.json               -> system update manifest
+  GET /updates/<filename>                -> system update packages
 """
 
 import os
@@ -27,6 +34,8 @@ import sys as _sys
 _sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from host import ETHOS_ROOT, app_path as _app_path, data_path as _data_path, host_run as _host_run, q as _q
 from utils import sio_emit
+import logging
+log = logging.getLogger('ethos.updater')
 
 update_bp = Blueprint('update', __name__, url_prefix='/api/update')
 updates_public_bp = Blueprint('updates_public', __name__, url_prefix='/updates')
@@ -761,6 +770,99 @@ def publish_delta():
 #  Public /updates/ routes — user-friendly URLs
 # ═══════════════════════════════════════════════════════════
 
+# ═══════════════════════════════════════════════════════════
+#  App-level update serving  (public, no auth)
+# ═══════════════════════════════════════════════════════════
+
+def _build_apps_manifest():
+    """Build a manifest of all optional apps with SHA256 hashes of their files."""
+    try:
+        from blueprints.app_manager import (
+            _OPTIONAL_BLUEPRINTS, _get_frontend_filename, CORE_APPS
+        )
+    except ImportError:
+        return {}
+    bp_dir = os.path.join(ETHOS_ROOT, 'backend', 'blueprints')
+    fe_dir = os.path.join(ETHOS_ROOT, 'frontend', 'js', 'apps')
+    apps = {}
+    for app_id, (module_name, _, _, _) in _OPTIONAL_BLUEPRINTS.items():
+        if app_id in CORE_APPS:
+            continue
+        entry = {'id': app_id}
+        # Backend hash
+        py_path = os.path.join(bp_dir, module_name + '.py')
+        if os.path.isfile(py_path):
+            entry['backend'] = module_name + '.py'
+            entry['backend_sha256'] = _file_sha256(py_path)
+        # Frontend hash
+        fn = _get_frontend_filename(app_id)
+        if fn:
+            js_path = os.path.join(fe_dir, fn + '.js')
+            if os.path.isfile(js_path):
+                entry['frontend'] = fn + '.js'
+                entry['frontend_sha256'] = _file_sha256(js_path)
+        if 'backend_sha256' in entry or 'frontend_sha256' in entry:
+            apps[app_id] = entry
+    return apps
+
+
+def _file_sha256(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(65536), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+@updates_public_bp.route('/apps.json', methods=['GET'])
+def public_serve_apps_manifest():
+    """Serve manifest of all optional apps with SHA256 hashes."""
+    manifest = _build_apps_manifest()
+    return jsonify(manifest)
+
+
+@updates_public_bp.route('/apps/<app_id>/backend.py', methods=['GET'])
+def public_serve_app_backend(app_id):
+    """Serve an optional app's backend .py file."""
+    try:
+        from blueprints.app_manager import _OPTIONAL_BLUEPRINTS, CORE_APPS
+    except ImportError:
+        abort(404)
+    if app_id in CORE_APPS or app_id not in _OPTIONAL_BLUEPRINTS:
+        abort(404)
+    module_name = _OPTIONAL_BLUEPRINTS[app_id][0]
+    bp_dir = os.path.join(ETHOS_ROOT, 'backend', 'blueprints')
+    fp = os.path.join(bp_dir, module_name + '.py')
+    if not os.path.isfile(fp):
+        abort(404)
+    return send_from_directory(bp_dir, module_name + '.py', mimetype='text/x-python')
+
+
+@updates_public_bp.route('/apps/<app_id>/frontend.js', methods=['GET'])
+def public_serve_app_frontend(app_id):
+    """Serve an optional app's frontend .js file."""
+    try:
+        from blueprints.app_manager import (
+            _OPTIONAL_BLUEPRINTS, _get_frontend_filename, CORE_APPS
+        )
+    except ImportError:
+        abort(404)
+    if app_id in CORE_APPS:
+        abort(404)
+    fn = _get_frontend_filename(app_id)
+    if not fn:
+        abort(404)
+    fe_dir = os.path.join(ETHOS_ROOT, 'frontend', 'js', 'apps')
+    fp = os.path.join(fe_dir, fn + '.js')
+    if not os.path.isfile(fp):
+        abort(404)
+    return send_from_directory(fe_dir, fn + '.js', mimetype='application/javascript')
+
+
+# ═══════════════════════════════════════════════════════════
+#  System-level update serving  (public, no auth)
+# ═══════════════════════════════════════════════════════════
+
 @updates_public_bp.route('/latest.json', methods=['GET'])
 def public_serve_manifest():
     """Serve latest.json at /updates/latest.json.
@@ -1248,7 +1350,7 @@ def _auto_snapshot_before_update(new_ver):
         r = _host_run(f'btrfs subvolume snapshot -r {_q(data_mount)} {_q(snap_path)}', timeout=30)
         if r.returncode == 0:
             _emit('update_log', {'message': f'Auto-snapshot created: {snap_name}'})
-            logger.info("Pre-update btrfs snapshot: %s", snap_name)
+            log.info("Pre-update btrfs snapshot: %s", snap_name)
             # Write metadata (may fail on read-only snapshot)
             try:
                 import json as _json
@@ -1259,7 +1361,7 @@ def _auto_snapshot_before_update(new_ver):
             except OSError:
                 pass
     except Exception as e:
-        logger.warning("Auto-snapshot skipped: %s", e)
+        log.warning("Auto-snapshot skipped: %s", e)
 
 
 def _do_ab_slot_update(pkg_dir, new_ver, ab_slots_file):

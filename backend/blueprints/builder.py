@@ -591,7 +591,7 @@ cp "$NASOS/frontend/manifest.json" "$BUILD_DIR/$PKG/frontend/" 2>/dev/null || tr
 cp "$NASOS/frontend/css/"*.css "$BUILD_DIR/$PKG/frontend/css/"
 cp "$NASOS/frontend/js/"*.js "$BUILD_DIR/$PKG/frontend/js/"
 # Copy only CORE app JS files — optional apps are installed via Package Center
-OPTIONAL_JS="{' '.join(sorted(optional_js))}"
+OPTIONAL_JS="{optional_js}"
 for js in "$NASOS/frontend/js/apps/"*.js; do
   fname=$(basename "$js")
   if echo "$OPTIONAL_JS" | grep -qw "$fname"; then

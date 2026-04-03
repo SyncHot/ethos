@@ -9,7 +9,9 @@ Endpoints:
   POST /api/app-manager/catalog/refresh    -> wymusz odswiazenie z GitHub
   GET  /api/app-manager/installed          -> tylko zainstalowane apki
   GET  /api/app-manager/core               -> lista core apps
-  GET  /api/app-manager/check-updates      -> sprawdz aktualizacje
+  GET  /api/app-manager/check-updates      -> sprawdz aktualizacje (catalog/GitHub)
+  POST /api/app-manager/check-app-updates  -> sprawdz aktualizacje z serwera OTA (SHA256)
+  POST /api/app-manager/update-apps        -> batch update z serwera OTA {app_ids:[...]}
   POST /api/app-manager/<id>/install       -> zainstaluj paczke (async)
   POST /api/app-manager/<id>/uninstall     -> odinstaluj paczke
   POST /api/app-manager/<id>/update        -> zaktualizuj do najnowszej wersji
@@ -1332,3 +1334,215 @@ def app_status(app_id):
     if inst:
         return jsonify({'installed': True, **inst, 'core': app_id in CORE_APPS})
     return jsonify({'installed': False, 'core': app_id in CORE_APPS})
+
+
+# ═══════════════════════════════════════════════════════════
+#  OTA-based app updates (from update server, not GitHub)
+# ═══════════════════════════════════════════════════════════
+
+def _get_update_url():
+    """Read update_url from updater config."""
+    cfg_path = data_path('update_config.json')
+    try:
+        if os.path.isfile(cfg_path):
+            with open(cfg_path) as f:
+                return json.load(f).get('update_url', '')
+    except Exception:
+        pass
+    return ''
+
+
+def _resolve_update_base(raw):
+    """Resolve user-friendly update source to base URL (same logic as updater)."""
+    if not raw:
+        return ''
+    raw = raw.strip().rstrip('/')
+    if raw.startswith('github:'):
+        return ''  # GitHub mode not supported for app updates
+    if raw.startswith('http://') or raw.startswith('https://'):
+        from urllib.parse import urlparse
+        parsed = urlparse(raw)
+        path = parsed.path.rstrip('/')
+        if path == '' or path == '/':
+            return raw.rstrip('/') + '/updates'
+        return raw
+    return f'http://{raw}:9000/updates'
+
+
+def _file_sha256(path):
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(65536), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+@app_manager_bp.route('/check-app-updates', methods=['POST'])
+def check_app_updates():
+    """Check update server for newer versions of installed optional apps.
+    Compares SHA256 hashes of local files against the server manifest."""
+    err = _require_admin()
+    if err:
+        return err
+
+    raw_url = _get_update_url()
+    if not raw_url:
+        return jsonify({'error': 'Serwer aktualizacji nie skonfigurowany'}), 400
+
+    base_url = _resolve_update_base(raw_url)
+    if not base_url:
+        return jsonify({'error': 'Nieobsługiwany format URL aktualizacji'}), 400
+
+    # Fetch remote apps manifest
+    manifest_url = base_url + '/apps.json'
+    try:
+        req = urllib.request.Request(manifest_url, headers={'User-Agent': 'EthOS-AppManager/1.0'})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            remote_apps = json.loads(resp.read().decode())
+    except Exception as e:
+        return jsonify({'error': f'Nie udało się pobrać manifestu: {e}'}), 502
+
+    installed = _load_installed()
+    updates = []
+
+    for app_id, remote in remote_apps.items():
+        # Only check installed apps
+        if app_id not in installed:
+            continue
+        bp_info = _OPTIONAL_BLUEPRINTS.get(app_id)
+        if not bp_info:
+            continue
+
+        has_update = False
+        detail = {'id': app_id, 'name': app_id}
+
+        # Find app name from catalog
+        for a in BUILTIN_CATALOG:
+            if a['id'] == app_id:
+                detail['name'] = a.get('name', app_id)
+                break
+
+        # Check backend hash
+        module_name = bp_info[0]
+        local_py = os.path.join(_BLUEPRINTS_DIR, module_name + '.py')
+        if os.path.isfile(local_py) and remote.get('backend_sha256'):
+            local_hash = _file_sha256(local_py)
+            if local_hash != remote['backend_sha256']:
+                has_update = True
+                detail['backend_changed'] = True
+
+        # Check frontend hash
+        fn = _get_frontend_filename(app_id)
+        if fn:
+            local_js = os.path.join(_FRONTEND_APPS_DIR, fn + '.js')
+            if os.path.isfile(local_js) and remote.get('frontend_sha256'):
+                local_hash = _file_sha256(local_js)
+                if local_hash != remote['frontend_sha256']:
+                    has_update = True
+                    detail['frontend_changed'] = True
+
+        if has_update:
+            updates.append(detail)
+
+    return jsonify({'ok': True, 'updates': updates, 'update_server': raw_url})
+
+
+@app_manager_bp.route('/update-apps', methods=['POST'])
+def update_apps():
+    """Batch-update installed apps from the update server.
+    Body: { "app_ids": ["doc-anonymizer", "ai-chat", ...] }"""
+    err = _require_admin()
+    if err:
+        return err
+
+    body = request.get_json(silent=True) or {}
+    app_ids = body.get('app_ids', [])
+    if not app_ids or not isinstance(app_ids, list):
+        return jsonify({'error': 'Podaj listę app_ids'}), 400
+
+    raw_url = _get_update_url()
+    if not raw_url:
+        return jsonify({'error': 'Serwer aktualizacji nie skonfigurowany'}), 400
+
+    base_url = _resolve_update_base(raw_url)
+    if not base_url:
+        return jsonify({'error': 'Nieobsługiwany format URL aktualizacji'}), 400
+
+    task_id = str(uuid.uuid4())[:8]
+    from gevent import spawn
+    spawn(_bg_update_apps, app_ids, base_url, task_id)
+    return jsonify({'ok': True, 'task_id': task_id})
+
+
+def _bg_update_apps(app_ids, base_url, task_id):
+    """Background: download updated files from update server and hot-reload."""
+    def emit(extra):
+        _emit({'task_id': task_id, **extra})
+
+    _task_start()
+    total = len(app_ids)
+    updated = []
+    failed = []
+
+    try:
+        emit({'stage': 'start', 'percent': 2, 'status': 'running',
+              'message': f'Aktualizacja {total} aplikacji...'})
+
+        for idx, app_id in enumerate(app_ids):
+            pct_base = int(5 + (idx / total) * 85)
+            emit({'stage': 'updating', 'percent': pct_base, 'app_id': app_id,
+                  'status': 'running',
+                  'message': f'Aktualizacja {app_id} ({idx+1}/{total})...'})
+
+            bp_info = _OPTIONAL_BLUEPRINTS.get(app_id)
+            if not bp_info:
+                log.warning('[app_manager] Unknown app for OTA update: %s', app_id)
+                failed.append(app_id)
+                continue
+
+            ok = True
+
+            # Download backend .py
+            module_name = bp_info[0]
+            bp_url = base_url + f'/apps/{app_id}/backend.py'
+            bp_dest = os.path.join(_BLUEPRINTS_DIR, module_name + '.py')
+            if not _download_file(bp_url, bp_dest):
+                log.warning('[app_manager] OTA backend download failed: %s', app_id)
+                ok = False
+
+            # Download frontend .js
+            fn = _get_frontend_filename(app_id)
+            if fn:
+                js_url = base_url + f'/apps/{app_id}/frontend.js'
+                js_dest = os.path.join(_FRONTEND_APPS_DIR, fn + '.js')
+                if not _download_file(js_url, js_dest):
+                    log.warning('[app_manager] OTA frontend download failed: %s', app_id)
+                    ok = False
+
+            if ok:
+                # Hot-reload the blueprint
+                _hot_load_blueprint(app_id)
+                _set_installed(app_id, 'latest', 'ota')
+                updated.append(app_id)
+            else:
+                failed.append(app_id)
+
+        # Sync frontend_dist once at the end
+        if updated:
+            emit({'stage': 'sync', 'percent': 92, 'status': 'running',
+                  'message': 'Synchronizacja frontend...'})
+            _sync_frontend_dist()
+
+        msg = f'Zaktualizowano {len(updated)} aplikacji'
+        if failed:
+            msg += f', {len(failed)} błędów'
+        emit({'stage': 'done', 'percent': 100, 'status': 'done',
+              'message': msg, 'updated': updated, 'failed': failed})
+
+    except Exception as e:
+        log.exception('[app_manager] OTA app update error')
+        emit({'stage': 'error', 'percent': 0, 'status': 'error',
+              'message': f'Błąd: {e}'})
+    finally:
+        _task_done()

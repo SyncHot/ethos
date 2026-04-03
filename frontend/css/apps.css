@@ -4948,6 +4948,12 @@ textarea.app-input { resize: vertical; line-height: 1.5; }
 .pm-refresh-btn:hover { background:var(--hover-overlay); color:var(--text-primary); }
 .pm-main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
 .pm-toolbar { padding:10px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:10px; background:var(--bg-elevated); flex-shrink:0; }
+.pm-toolbar-actions { display:flex; gap:8px; margin-left:auto; }
+.pm-ota-btn { padding:6px 14px; border-radius:7px; border:1px solid var(--border); background:var(--bg-default); color:var(--text-primary); font-size:12px; font-weight:500; cursor:pointer; display:flex; align-items:center; gap:6px; transition:border-color .15s,background .15s; white-space:nowrap; }
+.pm-ota-btn:hover:not(:disabled) { border-color:var(--accent); background:var(--accent-bg,rgba(59,130,246,.08)); }
+.pm-ota-btn:disabled { opacity:.5; cursor:not-allowed; }
+.pm-ota-update-all { background:var(--accent); color:#fff; border-color:var(--accent); }
+.pm-ota-update-all:hover:not(:disabled) { background:var(--accent-hover,#2563eb); }
 .pm-search-wrap { position:relative; flex:1; max-width:320px; }
 .pm-search-wrap i { position:absolute; left:10px; top:50%; transform:translateY(-50%); color:var(--text-muted); font-size:12px; pointer-events:none; }
 .pm-search { width:100%; padding:7px 10px 7px 30px; background:var(--bg-default); border:1px solid var(--border); border-radius:7px; font-size:13px; color:var(--text-primary); outline:none; }

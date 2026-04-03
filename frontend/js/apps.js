@@ -5431,6 +5431,8 @@ function renderPackageCenter(body) {
         detail: null,
         installing: {},      // task_id -> app_id map
         progressMap: {},     // app_id -> {stage, percent, message, status}
+        otaUpdates: [],      // [{id, name, backend_changed, frontend_changed}, ...]
+        otaChecking: false,
     };
 
     const CATEGORIES = ['System', 'Storage', 'Network', 'Media', 'Security', 'Tools'];
@@ -5459,6 +5461,10 @@ function renderPackageCenter(body) {
   <main class="pm-main">
     <div class="pm-toolbar">
       <div class="pm-search-wrap"><i class="fas fa-search"></i><input class="pm-search" id="pm-search" placeholder="${t('Szukaj paczki…')}" type="text"></div>
+      <div class="pm-toolbar-actions">
+        <button class="pm-ota-btn" id="pm-btn-ota-check" title="${t('Sprawdź aktualizacje aplikacji z serwera')}"><i class="fas fa-satellite-dish"></i> ${t('Sprawdź OTA')}</button>
+        <button class="pm-ota-btn pm-ota-update-all" id="pm-btn-ota-update" style="display:none" title="${t('Zaktualizuj wszystkie')}"><i class="fas fa-cloud-download-alt"></i> ${t('Aktualizuj wszystkie')}</button>
+      </div>
     </div>
     <div class="pm-content" id="pm-content">
       <div class="pm-loading"><i class="fas fa-spinner fa-spin"></i> ${t('Ładowanie katalogu…')}</div>
@@ -5475,6 +5481,9 @@ function renderPackageCenter(body) {
 
     function applyFilter() {
         const all = [...S.core, ...S.catalog];
+        // Mark apps with OTA updates
+        const otaIds = new Set(S.otaUpdates.map(u => u.id));
+        all.forEach(app => { if (otaIds.has(app.id)) app.update_available = true; });
         S.filtered = all.filter(app => {
             if (S.category !== 'all' && app.category !== S.category && !(app.core && S.category === 'System')) return false;
             if (S.search) {
@@ -5713,9 +5722,91 @@ function renderPackageCenter(body) {
         if (data.error) { toast(data.error, 'error'); delete S.progressMap[appId]; render(); }
     }
 
+    async function checkOtaUpdates() {
+        if (S.otaChecking || _anyBusy()) return;
+        S.otaChecking = true;
+        const btn = $('#pm-btn-ota-check');
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Sprawdzanie…'); }
+        try {
+            const data = await api('/app-manager/check-app-updates', { method: 'POST' });
+            if (data.error) { toast(data.error, 'error'); return; }
+            S.otaUpdates = data.updates || [];
+            const updBtn = $('#pm-btn-ota-update');
+            if (S.otaUpdates.length) {
+                toast(t('{n} aktualizacji dostępnych', { n: S.otaUpdates.length }), 'info');
+                if (updBtn) updBtn.style.display = '';
+            } else {
+                toast(t('Wszystkie aplikacje aktualne'), 'success');
+                if (updBtn) updBtn.style.display = 'none';
+            }
+            applyFilter();
+        } catch (e) {
+            toast(t('Błąd sprawdzania aktualizacji'), 'error');
+        } finally {
+            S.otaChecking = false;
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-satellite-dish"></i> ' + t('Sprawdź OTA'); }
+        }
+    }
+
+    async function updateAllApps() {
+        if (_anyBusy() || !S.otaUpdates.length) return;
+        const ids = S.otaUpdates.map(u => u.id);
+        if (!await confirmDialog(t('Zaktualizować {n} aplikacji z serwera?', { n: ids.length }))) return;
+        // Set progress for each app
+        ids.forEach(id => {
+            S.progressMap[id] = { stage: 'start', percent: 2, message: t('Oczekiwanie…'), status: 'running', _started: Date.now() };
+        });
+        render();
+        const data = await api('/app-manager/update-apps', { method: 'POST', body: JSON.stringify({ app_ids: ids }) });
+        if (data.error) {
+            toast(data.error, 'error');
+            ids.forEach(id => delete S.progressMap[id]);
+            render();
+        }
+    }
+
     /* ── SocketIO progress ── */
     function onProgress(ev) {
-        const { app_id, stage, percent, message, status } = ev;
+        const { app_id, stage, percent, message, status, updated, failed } = ev;
+
+        // Batch OTA update events (update-apps endpoint): update per-app progress
+        if (!app_id && stage === 'updating') {
+            // Batch progress — no per-app action needed here
+            return;
+        }
+        if (!app_id && (status === 'done' || status === 'error') && (updated || failed)) {
+            // Batch complete — clear progress for all OTA apps
+            (updated || []).forEach(id => {
+                S.progressMap[id] = { stage: 'done', percent: 100,
+                    message: '<i class="fas fa-check"></i> ' + t('Zaktualizowano'),
+                    status: 'finishing' };
+            });
+            (failed || []).forEach(id => {
+                S.progressMap[id] = { stage: 'error', percent: 100,
+                    message: '<i class="fas fa-exclamation-triangle"></i> ' + t('Błąd'),
+                    status: 'finishing' };
+            });
+            S.otaUpdates = [];
+            const updBtn = body.querySelector('#pm-btn-ota-update');
+            if (updBtn) updBtn.style.display = 'none';
+            render();
+            setTimeout(async () => {
+                await loadCatalog();
+                (updated || []).concat(failed || []).forEach(id => delete S.progressMap[id]);
+                render();
+                try {
+                    NAS.apps = await api('/apps');
+                    renderDesktopIcons();
+                    renderMenuGrid();
+                } catch (e) {}
+            }, 1500);
+            return;
+        }
+        if (!app_id && stage === 'start') {
+            // Batch starting — nothing to do, per-app progress already set
+            return;
+        }
+
         if (!app_id) return;
 
         if (status === 'done' || status === 'error') {
@@ -5797,6 +5888,9 @@ function renderPackageCenter(body) {
         btn.disabled = false;
         btn.innerHTML = '<i class="fas fa-sync-alt"></i> ' + t('Odśwież katalog');
     });
+
+    $('#pm-btn-ota-check')?.addEventListener('click', () => checkOtaUpdates());
+    $('#pm-btn-ota-update')?.addEventListener('click', () => updateAllApps());
 
     loadCatalog();
 }
