@@ -386,13 +386,23 @@ function renderUpdatesApp(body) {
 
     async function applyUpdate() {
         addLog(t('Rozpoczynam instalację aktualizacji…'));
+        status.downloading = true;
+        status.progress = 0;
+        status.message = t('Łączenie z serwerem…');
+        refreshUI();
         try {
             const data = await api('/update/apply', { method: 'POST' });
             if (data.error) {
+                status.downloading = false;
+                status.applying = false;
+                refreshUI();
                 toast(data.error, 'error');
                 addLog(data.error, true);
             }
         } catch (e) {
+            status.downloading = false;
+            status.applying = false;
+            refreshUI();
             toast(t('Błąd: ') + e, 'error');
             addLog(t('Błąd: ') + e, true);
         }
@@ -494,24 +504,24 @@ function renderUpdatesApp(body) {
 
     /* ────────────── SocketIO events ────────────── */
     function setupSocket() {
-        if (typeof socket === 'undefined') return;
+        if (!NAS.socket) return;
 
-        socket.on('update_status', (data) => {
+        NAS.socket.on('update_status', (data) => {
             Object.assign(status, data);
             refreshUI();
         });
 
-        socket.on('update_log', (data) => {
+        NAS.socket.on('update_log', (data) => {
             addLog(data.message, data.error);
         });
 
-        socket.on('update_available', (data) => {
+        NAS.socket.on('update_available', (data) => {
             addLog(t('Dostępna aktualizacja:') + ` ${data.remote} (` + t('obecna:') + ` ${data.current})`);
             toast(`${t('Dostępna aktualizacja EthOS')} ${data.remote}`, 'info');
             loadStatus();
         });
 
-        socket.on('update_complete', (data) => {
+        NAS.socket.on('update_complete', (data) => {
             addLog(t('Aktualizacja do') + ` ${data.version} ` + t('zakończona!'));
             status.applying = false;
             status.downloading = false;
@@ -519,7 +529,6 @@ function renderUpdatesApp(body) {
             status.progress = 100;
             refreshUI();
 
-            // Show restart overlay with countdown + auto-reconnect (same as app restart)
             if (typeof showRestartOverlay === 'function') {
                 showRestartOverlay(t('Aktualizacja do') + ` ${data.version} — ` + t('restart…'));
             } else {
