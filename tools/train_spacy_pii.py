@@ -625,6 +625,36 @@ def gen_address_context():
     return _fill(tpl, reps)
 
 
+def gen_negative_pwz():
+    """PWZ (prawo wykonywania zawodu) context — NO entities. PWZ is public, not PII."""
+    pwz_num = str(random.randint(1000000, 9999999))
+    first, surname = make_name()
+    doctor = f"{first} {surname}"
+    spec = rn(['neurolog', 'kardiolog', 'ortopeda', 'internista', 'chirurg',
+               'radiolog', 'okulista', 'dermatolog', 'pediatra', 'ginekolog',
+               'urolog', 'onkolog', 'pulmonolog', 'gastroenterolog', 'endokrynolog'])
+    templates = [
+        (f"Lekarz {{N}}, nr PWZ {pwz_num}, specjalista {spec}.",
+         [('{N}', doctor, 'persName')]),
+        (f"Podpis: {{N}}, PWZ: {pwz_num}",
+         [('{N}', doctor, 'persName')]),
+        (f"{{N}} (PWZ {pwz_num}) - {spec}. Konsultacja bez uwag.",
+         [('{N}', doctor, 'persName')]),
+        (f"Lekarz prowadzacy: {{N}}, prawo wykonywania zawodu nr {pwz_num}.",
+         [('{N}', doctor, 'persName')]),
+        (f"Pieczatka: {{N}}, lek. {spec}, PWZ {pwz_num}.",
+         [('{N}', doctor, 'persName')]),
+        (f"nr PWZ: {pwz_num}. Lekarz {{N}}, specjalista {spec}.",
+         [('{N}', doctor, 'persName')]),
+        (f"Badanie wykonal {{N}}, nr prawa wykonywania zawodu: {pwz_num}.",
+         [('{N}', doctor, 'persName')]),
+        (f"Wynik autoryzowany przez {{N}} (PWZ: {pwz_num}), {spec}.",
+         [('{N}', doctor, 'persName')]),
+    ]
+    tpl, reps = rn(templates)
+    return _fill(tpl, reps)
+
+
 GENERATORS = [
     (gen_patient_header, 80),
     (gen_patient_with_facility, 60),
@@ -643,6 +673,7 @@ GENERATORS = [
     (gen_maiden_name, 20),
     (gen_abbreviation_name, 20),
     (gen_address_context, 30),
+    (gen_negative_pwz, 80),
 ]
 
 
