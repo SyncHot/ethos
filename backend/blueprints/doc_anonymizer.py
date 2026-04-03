@@ -1127,6 +1127,8 @@ _MEDICAL_STOPWORDS = frozenset({
     'tikagrelol', 'lacydypina', 'kandesartan', 'liraglutyd',
     'cefaleksyna', 'teofilina', 'esomeprazol', 'alprazolam', 'diazepam',
     'finasteryd', 'proscar',
+    # Medical abbreviations commonly misidentified as names
+    'triglicerydy', 'fizjoterapeuty', 'ordynator',
     # Anatomy
     'serce', 'pluca', 'watroba', 'nerki', 'trzustka', 'jelito',
     'zoladek', 'mozg', 'kregowy', 'przedsionek', 'komora',
@@ -1243,6 +1245,15 @@ def _redact_pdf(src_path, output_path, entities):
         cat = _normalize_category(e.get('category', 'INNE_PII'))
         txt = e.get('text', '').strip()
         if txt and txt not in seen_texts:
+            # Skip multi-line entities — they produce huge blur rects
+            if '\n' in txt or '|' in txt:
+                # Try to salvage by taking just the first meaningful segment
+                parts = re.split(r'[|\n]+', txt)
+                parts = [p.strip() for p in parts if len(p.strip()) >= 4]
+                for p in parts:
+                    if p not in seen_texts:
+                        seen_texts[p] = (_PLACEHOLDER_MAP.get(cat, '[DANE]'), cat)
+                continue
             seen_texts[txt] = (_PLACEHOLDER_MAP.get(cat, '[DANE]'), cat)
 
     sorted_items = sorted(seen_texts.items(), key=lambda x: len(x[0]), reverse=True)
@@ -1261,9 +1272,17 @@ def _redact_pdf(src_path, output_path, entities):
 
     for page_idx, page in enumerate(doc):
         page_rects = []  # (rect, placeholder, category)
+        page_area = page.rect.width * page.rect.height
+        max_rect_area = page_area * 0.25  # Skip rects > 25% of page
+
         for original, (placeholder, category) in sorted_items:
             instances = page.search_for(original)
             for inst in instances:
+                rect_area = abs(inst.width * inst.height)
+                if rect_area > max_rect_area:
+                    log.debug('[doc_anonymizer] Skipping oversized rect (%.0f%% of page) for: %s',
+                              rect_area / page_area * 100, original[:40])
+                    continue
                 page_rects.append((inst, placeholder, category, original))
                 total_redactions.append({
                     'original': original,
@@ -1672,6 +1691,81 @@ def _emit_progress(job_id, stage, percent, message):
         })
 
 
+_GARBAGE_NAME_PATTERNS = re.compile(
+    r'^(?:Oun|Opl|Nmr|LVH|RBBB|LBBB|AoVmax|AcT|PG|GLTW|D\.S\.|EF|'
+    r'Fizjoterapeuty|Ordynator|Pielegniar|Rehabilitant|Technik|Lica|'
+    r'V+i*\s*i?\s*V*l*|VII+|VIII?|Vlll|'
+    r'bz|max|min|sp\.|Sp\.|Meen)$',
+    re.IGNORECASE
+)
+
+_MEDICAL_ABBREV_STOPWORDS = frozenset({
+    'lvh', 'rbbb', 'lbbb', 'af', 'ef', 'aovmax', 'act', 'pg',
+    'gltw', 'nmr', 'mri', 'ct', 'usg', 'ekg', 'emg', 'eeg',
+    'tsh', 'ft3', 'ft4', 'crp', 'opl', 'oun', 'ast', 'alt',
+    'bnp', 'gfr', 'hba1c', 'ldl', 'hdl', 'wbc', 'rbc', 'plt',
+    'hgb', 'mch', 'mchc', 'mcv', 'inr', 'aptt', 'd.s.', 'ds',
+    'lica', 'meen', 'wall',
+})
+
+
+def _clean_entities(entities):
+    """Remove garbage entities before redaction."""
+    cleaned = []
+    for e in entities:
+        txt = e.get('text', '').strip()
+        cat = e.get('category', '')
+
+        # Strip trailing pipe/special chars from PDF extraction artifacts
+        txt = re.sub(r'[|¢©]+\s*$', '', txt).strip()
+        txt = re.sub(r'^[|¢©]+\s*', '', txt).strip()
+        if not txt:
+            continue
+        e = dict(e, text=txt)
+
+        # Skip empty or very short non-numeric entities
+        if len(txt) < 3 and cat in ('IMIE_NAZWISKO', 'IMIE', 'NAZWISKO', 'LEKARZ', 'NAZWA_PLACOWKI'):
+            continue
+
+        # Skip entities containing copyright symbols or URL patterns
+        if '©' in txt or 'www.' in txt or '.com' in txt or 'http' in txt:
+            continue
+
+        # Skip known garbage patterns
+        if _GARBAGE_NAME_PATTERNS.match(txt):
+            continue
+
+        # Skip medical abbreviations detected as names
+        if txt.lower().replace('.', '').replace(' ', '') in _MEDICAL_ABBREV_STOPWORDS:
+            continue
+
+        # Skip name entities that START with a medical stopword
+        if cat in ('IMIE_NAZWISKO', 'IMIE', 'NAZWISKO'):
+            first_word = txt.split()[0].lower() if txt.split() else ''
+            if first_word in _MEDICAL_STOPWORDS or first_word in _MEDICAL_ABBREV_STOPWORDS:
+                continue
+
+        # Skip entities that look like job titles, not names
+        title_words = {'fizjoterapeuty', 'ordynator', 'pielęgniarka', 'pielegniar',
+                       'rehabilitant', 'technik', 'dietetyk', 'logopeda', 'psycholog'}
+        if txt.lower() in title_words:
+            continue
+
+        # Split multi-line/pipe entities into clean parts
+        if '\n' in txt or '|' in txt:
+            parts = re.split(r'[|\n]+', txt)
+            good_parts = [p.strip() for p in parts
+                          if len(p.strip()) >= 4 and '©' not in p and 'www.' not in p]
+            for p in good_parts:
+                cleaned.append({'text': p, 'category': cat})
+            continue
+
+        cleaned.append(e)
+
+    log.info('[doc_anonymizer] Entity cleanup: %d -> %d entities', len(entities), len(cleaned))
+    return cleaned
+
+
 def _run_anonymization(job_id, src_path, filename, file_ext, username):
     """Background: extract text -> LLM -> replace -> generate output."""
     job = _job_dir(job_id)
@@ -1751,6 +1845,9 @@ def _run_anonymization(job_id, src_path, filename, file_ext, username):
 
         _emit_progress(job_id, 'replacing', 85,
                        'Zastepowanie danych osobowych...')
+
+        # Clean up entities — remove garbage before redaction
+        all_entities = _clean_entities(all_entities)
 
         _emit_progress(job_id, 'generating', 90,
                        'Generowanie zanonimizowanego dokumentu...')
