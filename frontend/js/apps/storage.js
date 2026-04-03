@@ -86,13 +86,16 @@ function _smRender(body) {
         activeSection = id;
         body.querySelectorAll('.sm-nav-item').forEach(n => n.classList.toggle('active', n.dataset.section === id));
         contentEl.innerHTML = '';
+        contentEl.style.cssText = '';
+
+        const setCleanup = (fn) => { if (activeSection === id) cleanupFn = fn; };
 
         switch (id) {
             case 'overview':     cleanupFn = _smOverview(contentEl); break;
             case 'disks':        cleanupFn = _smDisks(contentEl); break;
             case 'raid':         cleanupFn = _smRaid(contentEl, 'arrays'); break;
             case 'volumes':      cleanupFn = _smRaid(contentEl, 'lvm'); break;
-            case 'sharing':      cleanupFn = _smSharing(contentEl); break;
+            case 'sharing':      _smSharing(contentEl).then(fn => setCleanup(fn)); break;
             case 'diagnostics':  cleanupFn = _smDiagnostics(contentEl); break;
             case 'cache':        cleanupFn = _smCache(contentEl); break;
         }
@@ -118,15 +121,21 @@ function _smOverview(el) {
             api('/diskrepair/disks'),
         ]);
 
-        const drives = drivesRes.status === 'fulfilled' ? (drivesRes.value.drives || []) : [];
-        const arrays = raidRes.status === 'fulfilled' ? (raidRes.value.arrays || []) : [];
-        const drDisks = drRes.status === 'fulfilled' ? (drRes.value.disks || []) : [];
+        const dVal = drivesRes.status === 'fulfilled' ? drivesRes.value : {};
+        const drives = Array.isArray(dVal) ? dVal : (dVal.drives || []);
+        const rVal = raidRes.status === 'fulfilled' ? raidRes.value : [];
+        const arrays = Array.isArray(rVal) ? rVal : (rVal.arrays || []);
+        const drVal = drRes.status === 'fulfilled' ? drRes.value : [];
+        const drDisks = Array.isArray(drVal) ? drVal : (drVal.disks || []);
 
-        // Compute stats
-        const totalBytes = drives.reduce((s, d) => s + (d.size_bytes || 0), 0);
-        const usedBytes = drives.filter(d => d.mounted).reduce((s, d) => s + (d.used_bytes || 0), 0);
-        const healthyCount = drDisks.filter(d => d.smart_status === 'PASSED' || d.smart_status === 'OK').length;
-        const warnCount = drDisks.length - healthyCount;
+        // Compute stats — size comes as string "4.5T", usage.total as bytes
+        const physDisks = drives.filter(d => d.type === 'disk' && !d.name.startsWith('nbd'));
+        const parts = drives.filter(d => d.type === 'part' && d.usage);
+        const totalBytes = parts.reduce((s, d) => s + (d.usage.total || 0), 0);
+        const usedBytes = parts.reduce((s, d) => s + (d.usage.used || 0), 0);
+        const healthyCount = drDisks.filter(d => d.smart_healthy === true).length;
+        const smartAvail = drDisks.filter(d => d.smart_available).length;
+        const warnCount = smartAvail - healthyCount;
 
         function card(icon, color, title, value, sub) {
             return `<div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:10px;padding:18px 22px;min-width:180px;flex:1">
@@ -144,28 +153,35 @@ function _smOverview(el) {
         };
 
         cardsEl.innerHTML =
-            card('fa-hdd', 'var(--accent)', t('Dyski'), drives.length, `${fmt(totalBytes)} ${t('łącznie')}`) +
+            card('fa-hdd', 'var(--accent)', t('Dyski'), physDisks.length, `${fmt(totalBytes)} ${t('łącznie')}`) +
             card('fa-server', '#4ecdc4', t('Macierze RAID'), arrays.length, arrays.filter(a => a.state === 'clean' || a.state === 'active').length + ' ' + t('zdrowe')) +
-            card('fa-heartbeat', healthyCount === drDisks.length ? '#2ecc71' : '#e74c3c', 'SMART', `${healthyCount}/${drDisks.length}`, warnCount > 0 ? `${warnCount} ${t('ostrzeżeń')}` : t('Wszystko OK')) +
+            card('fa-heartbeat', warnCount > 0 ? '#e74c3c' : '#2ecc71', 'SMART', `${healthyCount}/${smartAvail}`, warnCount > 0 ? `${warnCount} ${t('ostrzeżeń')}` : t('Wszystko OK')) +
             card('fa-chart-pie', '#9b59b6', t('Użyte'), totalBytes > 0 ? Math.round(usedBytes/totalBytes*100) + '%' : '—', `${fmt(usedBytes)} / ${fmt(totalBytes)}`);
 
         // Drive table
-        if (drives.length) {
+        if (physDisks.length) {
+            // Merge diskrepair SMART data into physical disks
+            const drMap = {};
+            for (const dr of drDisks) drMap[dr.name] = dr;
+
             let tbl = `<table style="width:100%;border-collapse:collapse;font-size:13px">
                 <thead><tr style="text-align:left;border-bottom:2px solid var(--border-color)">
                     <th style="padding:8px">${t('Dysk')}</th><th style="padding:8px">${t('Model')}</th>
-                    <th style="padding:8px">${t('Pojemność')}</th><th style="padding:8px">${t('Zamontowany')}</th>
-                    <th style="padding:8px">${t('Temp')}</th>
+                    <th style="padding:8px">${t('Pojemność')}</th><th style="padding:8px">${t('Interfejs')}</th>
+                    <th style="padding:8px">${t('Temp')}</th><th style="padding:8px">SMART</th>
                 </tr></thead><tbody>`;
-            for (const d of drives) {
-                const temp = d.temperature ? d.temperature + '°C' : '—';
-                const tempColor = (d.temperature && d.temperature > 50) ? '#e74c3c' : 'var(--text-secondary)';
+            for (const d of physDisks) {
+                const dr = drMap[d.name] || {};
+                const temp = dr.temperature ? dr.temperature + '°C' : '—';
+                const tempColor = (dr.temperature && dr.temperature > 50) ? '#e74c3c' : 'var(--text-secondary)';
+                const health = dr.smart_healthy === true ? t('OK') : (dr.smart_available ? '<span style="color:#e74c3c">' + t('Uwaga') + '</span>' : '—');
                 tbl += `<tr style="border-bottom:1px solid var(--border-color)">
-                    <td style="padding:8px;font-weight:600">${d.name || d.device || '?'}</td>
+                    <td style="padding:8px;font-weight:600">${d.name || '?'}</td>
                     <td style="padding:8px;color:var(--text-secondary)">${d.model || '—'}</td>
-                    <td style="padding:8px">${fmt(d.size_bytes || 0)}</td>
-                    <td style="padding:8px">${d.mounted ? '<span style="color:#2ecc71">✓ ' + (d.mount_point || '') + '</span>' : '<span style="color:var(--text-secondary)">—</span>'}</td>
+                    <td style="padding:8px">${d.size || '—'}</td>
+                    <td style="padding:8px;color:var(--text-secondary)">${(d.tran || '—').toUpperCase()}</td>
                     <td style="padding:8px;color:${tempColor}">${temp}</td>
+                    <td style="padding:8px">${health}</td>
                 </tr>`;
             }
             tbl += '</tbody></table>';
@@ -1156,7 +1172,8 @@ function _smDisks(el) {
     /* ═══════════════════════════════════════════════════════
        SSD Cache Manager
        ═══════════════════════════════════════════════════════ */
-    $('#st-cache-btn').onclick = async () => {
+    const _cacheBtn = $('#st-cache-btn');
+    if (_cacheBtn) _cacheBtn.onclick = async () => {
         const devData = await api('/cache/devices');
         if (devData.error) { toast(devData.error, 'error'); return; }
         const statusData = await api('/cache/status');
@@ -3455,7 +3472,7 @@ function _smDiagnostics(el) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   Section: SSD Cache (extracted from storage.js cache modal)
+   Section: SSD Cache (bcache management)
    ═══════════════════════════════════════════════════════════ */
 function _smCache(el) {
     el.innerHTML = `<div style="padding:20px">
@@ -3472,58 +3489,97 @@ function _smCache(el) {
     async function loadCache() {
         contentEl.innerHTML = '<div class="sto-center-lg"><i class="fas fa-spinner fa-spin sto-spinner"></i></div>';
         try {
-            const data = await api('/storage/cache/status');
-            const caches = data.caches || [];
-            const devices = data.devices || [];
+            const [statusData, devData] = await Promise.all([
+                api('/cache/status'),
+                api('/cache/devices'),
+            ]);
+            const live = (statusData && statusData.live) || [];
+            const configured = (statusData && statusData.configured) || [];
+            const ssds = (devData && devData.ssds) || [];
+            const hdds = (devData && devData.hdds) || [];
 
             let html = '';
 
-            if (caches.length) {
+            /* Active caches */
+            if (configured.length) {
                 html += '<div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:10px;padding:16px;margin-bottom:16px">';
                 html += '<h4 style="margin:0 0 12px;font-size:14px;font-weight:600"><i class="fas fa-bolt" style="color:var(--accent);margin-right:6px"></i>' + t('Aktywne cache') + '</h4>';
-                for (const c of caches) {
-                    html += `<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border-color)">
-                        <span style="font-weight:600">${c.source || '?'}</span>
-                        <span style="color:var(--text-secondary)">→</span>
-                        <span>${c.cache_device || '?'}</span>
-                        <span style="margin-left:auto;color:var(--text-secondary)">${c.mode || '?'}</span>
-                        <button class="fm-toolbar-btn btn-sm btn-danger" onclick="(async()=>{if(await confirmDialog('${t('Odłączyć cache?')}')){const r=await api('/storage/cache/detach',{method:'POST',body:{source:'${c.source}'}});if(r.ok)loadCache();else toast(r.error||'Error','error');}})()"><i class="fas fa-unlink"></i></button>
+                for (const c of configured) {
+                    const backing = live.flatMap(l => l.backing_devices || []).find(b => b.device === c.backing_device);
+                    const hitRate = backing ? (backing.hit_ratio !== null ? backing.hit_ratio + '%' : '—') : '—';
+                    const dirty = backing ? (backing.dirty_data || '0') : '0';
+                    html += `<div style="display:flex;align-items:center;gap:12px;padding:10px;border:1px solid var(--border-color);border-radius:8px;margin-bottom:6px;flex-wrap:wrap">
+                        <div style="flex:1;min-width:200px">
+                            <b>${c.cache_device || '?'}</b> <span style="color:var(--text-secondary)">→</span> <b>${c.backing_device || '?'}</b>
+                            <span style="margin-left:8px;font-size:12px;color:var(--text-secondary)">${c.mode || '?'}</span>
+                            <span style="margin-left:12px;font-size:12px">${t('Trafienia')}: ${hitRate} | ${t('Brudne dane')}: ${dirty}</span>
+                        </div>
+                        <select class="modal-input sc-mode-sel" data-backing="${c.backing_device}" style="width:140px">
+                            ${['writethrough','writeback','writearound'].map(m =>
+                                `<option value="${m}" ${m === c.mode ? 'selected' : ''}>${m}</option>`
+                            ).join('')}
+                        </select>
+                        <button class="fm-toolbar-btn btn-sm btn-red sc-detach" data-backing="${c.backing_device}"><i class="fas fa-unlink"></i> ${t('Odłącz')}</button>
                     </div>`;
                 }
                 html += '</div>';
             }
 
-            if (devices.length) {
+            /* Create new cache */
+            const hasDevices = ssds.length > 0 && hdds.length > 0;
+            if (hasDevices) {
+                const ssdOpts = ssds.map(s => `<option value="${s.device}">${s.name} — ${s.size} ${s.model || ''}</option>`).join('');
+                const hddOpts = hdds.map(h => `<option value="${h.device}">${h.name} — ${h.size} ${h.model || ''}</option>`).join('');
                 html += '<div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:10px;padding:16px">';
-                html += '<h4 style="margin:0 0 12px;font-size:14px;font-weight:600"><i class="fas fa-plus-circle" style="color:#2ecc71;margin-right:6px"></i>' + t('Utwórz cache') + '</h4>';
-                html += '<div style="display:flex;gap:12px;align-items:end;flex-wrap:wrap">';
-                html += '<div><label style="display:block;font-size:12px;color:var(--text-secondary);margin-bottom:4px">' + t('Dysk źródłowy') + '</label>';
-                html += '<select id="sc-source" class="fm-input" style="min-width:160px">' + devices.filter(d => !d.is_ssd).map(d => `<option value="${d.device}">${d.device} (${d.model || d.device})</option>`).join('') + '</select></div>';
-                html += '<div><label style="display:block;font-size:12px;color:var(--text-secondary);margin-bottom:4px">' + t('SSD Cache') + '</label>';
-                html += '<select id="sc-cache" class="fm-input" style="min-width:160px">' + devices.filter(d => d.is_ssd).map(d => `<option value="${d.device}">${d.device} (${d.model || d.device})</option>`).join('') + '</select></div>';
-                html += '<div><label style="display:block;font-size:12px;color:var(--text-secondary);margin-bottom:4px">' + t('Tryb') + '</label>';
-                html += '<select id="sc-mode" class="fm-input"><option value="writeback">Writeback</option><option value="writethrough">Writethrough</option></select></div>';
-                html += `<button class="fm-toolbar-btn" id="sc-create"><i class="fas fa-plus"></i> ${t('Utwórz')}</button>`;
-                html += '</div></div>';
-
-                setTimeout(() => {
-                    const createBtn = el.querySelector('#sc-create');
-                    if (createBtn) createBtn.onclick = async () => {
-                        const src = el.querySelector('#sc-source')?.value;
-                        const cache = el.querySelector('#sc-cache')?.value;
-                        const mode = el.querySelector('#sc-mode')?.value;
-                        if (!src || !cache) { toast(t('Wybierz dyski'), 'error'); return; }
-                        const r = await api('/storage/cache/create', { method: 'POST', body: { source: src, cache_device: cache, mode } });
-                        if (r.ok) { toast(t('Cache utworzony'), 'success'); loadCache(); }
-                        else toast(r.error || 'Error', 'error');
-                    };
-                }, 100);
+                html += '<h4 style="margin:0 0 12px;font-size:14px;font-weight:600"><i class="fas fa-plus-circle" style="color:#2ecc71;margin-right:6px"></i>' + t('Nowy cache') + '</h4>';
+                html += `<div style="display:flex;gap:12px;align-items:end;flex-wrap:wrap">
+                    <div><label style="display:block;font-size:12px;color:var(--text-secondary);margin-bottom:4px">${t('Dysk SSD (cache)')}</label>
+                    <select id="sc-ssd" class="modal-input" style="min-width:160px">${ssdOpts}</select></div>
+                    <div><label style="display:block;font-size:12px;color:var(--text-secondary);margin-bottom:4px">${t('Dysk HDD (backing)')}</label>
+                    <select id="sc-hdd" class="modal-input" style="min-width:160px">${hddOpts}</select></div>
+                    <div><label style="display:block;font-size:12px;color:var(--text-secondary);margin-bottom:4px">${t('Tryb')}</label>
+                    <select id="sc-mode" class="modal-input"><option value="writethrough">${t('Write-through (bezpieczny)')}</option><option value="writeback">${t('Write-back (szybszy)')}</option><option value="writearound">${t('Write-around')}</option></select></div>
+                    <button class="fm-toolbar-btn" id="sc-create"><i class="fas fa-plus"></i> ${t('Utwórz')}</button>
+                </div>`;
+                html += `<div style="margin-top:10px;padding:8px;background:rgba(239,68,68,.08);border-radius:6px;font-size:12px;color:#e74c3c"><i class="fas fa-exclamation-triangle"></i> <b>${t('UWAGA:')}</b> ${t('Dane na obu dyskach zostaną usunięte!')}</div>`;
+                html += '</div>';
+            } else if (!configured.length) {
+                html = '<div style="text-align:center;padding:40px;color:var(--text-secondary)"><i class="fas fa-info-circle" style="font-size:24px;margin-bottom:8px"></i><div>' + t('Brak dostępnych dysków SSD lub HDD do konfiguracji cache.') + '</div></div>';
             }
 
-            if (!caches.length && !devices.length) {
-                html = '<div style="text-align:center;padding:40px;color:var(--text-secondary)"><i class="fas fa-info-circle" style="font-size:24px;margin-bottom:8px"></i><div>' + t('Brak urządzeń cache') + '</div></div>';
-            }
             contentEl.innerHTML = html;
+
+            /* Bind event handlers */
+            setTimeout(() => {
+                el.querySelectorAll('.sc-detach').forEach(btn => {
+                    btn.onclick = async () => {
+                        const backing = btn.dataset.backing;
+                        if (!await confirmDialog(t('Odłączyć SSD cache od') + ' ' + backing + '?')) return;
+                        const r = await api('/cache/detach', { method: 'POST', body: { backing_device: backing } });
+                        if (r.error) { toast(r.error, 'error'); return; }
+                        toast(t('Cache odłączony'), 'success'); loadCache();
+                    };
+                });
+                el.querySelectorAll('.sc-mode-sel').forEach(sel => {
+                    sel.onchange = async () => {
+                        const r = await api('/cache/mode', { method: 'PUT', body: { backing_device: sel.dataset.backing, mode: sel.value } });
+                        if (r.error) { toast(r.error, 'error'); return; }
+                        toast(t('Tryb zmieniony: ') + sel.value, 'success');
+                    };
+                });
+                const createBtn = el.querySelector('#sc-create');
+                if (createBtn) createBtn.onclick = async () => {
+                    const ssd = el.querySelector('#sc-ssd')?.value;
+                    const hdd = el.querySelector('#sc-hdd')?.value;
+                    const mode = el.querySelector('#sc-mode')?.value;
+                    if (!ssd || !hdd) { toast(t('Wybierz oba dyski'), 'warning'); return; }
+                    if (ssd === hdd) { toast(t('SSD i HDD muszą być różnymi dyskami'), 'warning'); return; }
+                    if (!await confirmDialog(t('Utworzyć SSD cache? Dane na obu dyskach zostaną usunięte!'))) return;
+                    const r = await api('/cache/create', { method: 'POST', body: { cache_device: ssd, backing_device: hdd, mode } });
+                    if (r.error) { toast(r.error, 'error'); return; }
+                    toast(t('SSD Cache utworzony!'), 'success'); loadCache();
+                };
+            }, 50);
         } catch (e) {
             contentEl.innerHTML = '<div style="color:#e74c3c;padding:20px"><i class="fas fa-exclamation-triangle"></i> ' + (e.message || t('Błąd ładowania')) + '</div>';
         }
