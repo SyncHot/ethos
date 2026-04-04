@@ -49,6 +49,7 @@ AppRegistry['storage-manager'] = function (appDef) {
 function _smRender(body) {
     const sections = [
         { id: 'overview',     icon: 'fa-chart-pie',    label: t('Przegląd') },
+        { id: 'wizard',       icon: 'fa-magic',        label: t('Kreator') },
         { id: 'disks',        icon: 'fa-hdd',          label: t('Dyski') },
         { id: 'raid',         icon: 'fa-server',       label: t('Pule / RAID') },
         { id: 'volumes',      icon: 'fa-cubes',        label: t('Wolumeny') },
@@ -92,6 +93,7 @@ function _smRender(body) {
 
         switch (id) {
             case 'overview':     cleanupFn = _smOverview(contentEl); break;
+            case 'wizard':       cleanupFn = _smWizard(contentEl, switchSection); break;
             case 'disks':        cleanupFn = _smDisks(contentEl); break;
             case 'raid':         cleanupFn = _smRaid(contentEl, 'arrays'); break;
             case 'volumes':      cleanupFn = _smRaid(contentEl, 'lvm'); break;
@@ -3585,5 +3587,484 @@ function _smCache(el) {
         }
     }
     loadCache();
+    return null;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Section: Storage Pool Wizard
+   ═══════════════════════════════════════════════════════════ */
+function _smWizard(el, switchSectionFn) {
+    const state = {
+        step: 0,
+        disks: [],
+        selectedDisks: [],
+        raidLevel: null,
+        poolName: 'Storage-1',
+        fstype: 'ext4',
+        mountPath: '/mnt/Storage-1',
+        samba: true,
+        sambaName: 'Storage-1',
+        creating: false,
+    };
+
+    const STEPS = [
+        { icon: 'fa-hdd',          label: t('Dyski') },
+        { icon: 'fa-shield-alt',   label: t('Ochrona') },
+        { icon: 'fa-cog',          label: t('Ustawienia') },
+        { icon: 'fa-check-circle', label: t('Potwierdzenie') },
+        { icon: 'fa-rocket',       label: t('Tworzenie') },
+    ];
+
+    const RAID_INFO = {
+        '0':  { label: 'RAID 0 — Stripe',           desc: t('Maksymalna szybkość, brak ochrony. Awaria 1 dysku = utrata wszystkich danych.'), min: 2, icon: 'fa-bolt',       color: '#ef4444' },
+        '1':  { label: 'RAID 1 — Mirror',            desc: t('Pełna kopia na każdym dysku. Najlepsza ochrona, ale pojemność = 1 dysk.'), min: 2, icon: 'fa-clone',      color: '#10b981' },
+        '5':  { label: 'RAID 5 — Parzystość',        desc: t('Dobry balans: szybkość + ochrona. Wytrzymuje awarię 1 dysku.'), min: 3, icon: 'fa-shield-alt', color: '#3b82f6' },
+        '6':  { label: 'RAID 6 — Podwójna parzystość', desc: t('Jak RAID 5, ale wytrzymuje awarię 2 dysków jednocześnie.'), min: 4, icon: 'fa-shield-alt', color: '#8b5cf6' },
+        '10': { label: 'RAID 10 — Mirror + Stripe',  desc: t('Najszybszy z ochroną. Mirror + stripe. Wytrzymuje awarię 1 dysku w każdej parze.'), min: 4, icon: 'fa-server',     color: '#f59e0b' },
+    };
+
+    function calcCapacity(diskCount, raidLevel, minSizeBytes) {
+        if (!raidLevel) return minSizeBytes;
+        switch (raidLevel) {
+            case '0': return minSizeBytes * diskCount;
+            case '1': return minSizeBytes;
+            case '5': return minSizeBytes * (diskCount - 1);
+            case '6': return minSizeBytes * (diskCount - 2);
+            case '10': return minSizeBytes * Math.floor(diskCount / 2);
+            default: return minSizeBytes;
+        }
+    }
+
+    function fmtBytes(b) {
+        if (b <= 0) return '0 B';
+        const u = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+        const i = Math.min(Math.floor(Math.log(b) / Math.log(1024)), u.length - 1);
+        return (b / Math.pow(1024, i)).toFixed(i > 1 ? 1 : 0) + ' ' + u[i];
+    }
+
+    function renderSteps() {
+        return '<div class="spw-steps">' +
+            STEPS.map((s, i) => {
+                const cls = i < state.step ? 'spw-step-done' : (i === state.step ? 'spw-step-active' : 'spw-step-pending');
+                const icon = i < state.step ? 'fa-check' : s.icon;
+                return `<div class="spw-step ${cls}"><i class="fas ${icon}"></i><span>${s.label}</span></div>` +
+                    (i < STEPS.length - 1 ? '<div class="spw-connector"></div>' : '');
+            }).join('') +
+        '</div>';
+    }
+
+    function render() {
+        let bodyHtml = '';
+        switch (state.step) {
+            case 0: bodyHtml = renderStep0(); break;
+            case 1: bodyHtml = renderStep1(); break;
+            case 2: bodyHtml = renderStep2(); break;
+            case 3: bodyHtml = renderStep3(); break;
+            case 4: bodyHtml = renderStep4(); break;
+        }
+
+        el.innerHTML =
+            '<div class="spw-wizard">' +
+                '<div class="spw-header"><i class="fas fa-magic"></i> ' + t('Kreator puli storage') + '</div>' +
+                renderSteps() +
+                '<div class="spw-body">' + bodyHtml + '</div>' +
+            '</div>';
+
+        attachHandlers();
+    }
+
+    // ── Step 0: Select disks ──
+    function renderStep0() {
+        if (!state.disks.length && !state._loadingDisks) {
+            state._loadingDisks = true;
+            api('/storage/pool/available-disks').then(data => {
+                state._loadingDisks = false;
+                if (data.error) { toast(data.error, 'error'); return; }
+                state.disks = data.disks || [];
+                render();
+            });
+            return '<div class="spw-loading"><i class="fas fa-spinner fa-spin fa-2x"></i><div>' + t('Szukam dostępnych dysków...') + '</div></div>';
+        }
+
+        if (!state.disks.length) {
+            return '<div class="spw-empty"><i class="fas fa-exclamation-circle fa-2x" style="color:var(--text-muted)"></i>' +
+                '<div style="margin-top:12px">' + t('Brak wolnych dysków do użycia.') + '</div>' +
+                '<div style="font-size:12px;color:var(--text-muted);margin-top:4px">' + t('Odmontuj dyski lub dodaj nowe, aby kontynuować.') + '</div></div>';
+        }
+
+        let html = '<h3><i class="fas fa-hdd"></i> ' + t('Wybierz dyski') + '</h3>' +
+            '<p class="spw-hint">' + t('Zaznacz dyski, które chcesz połączyć w pulę storage. Dane na wybranych dyskach zostaną usunięte.') + '</p>' +
+            '<div class="spw-disk-list">';
+
+        state.disks.forEach(d => {
+            const selected = state.selectedDisks.includes(d.name);
+            const tranIcon = d.tran === 'usb' ? 'fa-usb' : (d.tran === 'nvme' ? 'fa-bolt' : 'fa-hdd');
+            html += `<div class="spw-disk-card ${selected ? 'spw-disk-selected' : ''}" data-disk="${d.name}">` +
+                `<div class="spw-disk-check"><i class="fas ${selected ? 'fa-check-square' : 'fa-square'}"></i></div>` +
+                `<div class="spw-disk-info">` +
+                    `<div class="spw-disk-name"><i class="fas ${tranIcon}"></i> /dev/${d.name}</div>` +
+                    `<div class="spw-disk-detail">${d.model || t('Nieznany model')} · ${d.size}` +
+                    `${d.tran ? ' · ' + d.tran.toUpperCase() : ''}` +
+                    `${d.fstype ? ' · ' + d.fstype : ''}` +
+                    `${d.label ? ' · "' + d.label + '"' : ''}</div>` +
+                `</div>` +
+                `<div class="spw-disk-size">${d.size}</div>` +
+            `</div>`;
+        });
+
+        html += '</div>';
+
+        html += '<div class="spw-actions">' +
+            `<button class="spw-btn spw-btn-primary" id="spw-next" ${state.selectedDisks.length === 0 ? 'disabled' : ''}>` +
+                t('Dalej') + ' <i class="fas fa-arrow-right"></i></button>' +
+            '</div>';
+
+        return html;
+    }
+
+    // ── Step 1: RAID level ──
+    function renderStep1() {
+        if (state.selectedDisks.length === 1) {
+            // Skip RAID selection for single disk — jump to step 2
+            state.raidLevel = null;
+            state.step = 2;
+            return renderStep2();
+        }
+
+        const n = state.selectedDisks.length;
+        const minSize = Math.min(...state.selectedDisks.map(name => {
+            const d = state.disks.find(x => x.name === name);
+            return d ? d.size_bytes : 0;
+        }));
+
+        let html = '<h3><i class="fas fa-shield-alt"></i> ' + t('Typ ochrony danych') + '</h3>' +
+            '<p class="spw-hint">' + t('Wybierz poziom RAID dla') + ' ' + n + ' ' + t('dysków') + '. ' +
+            t('RAID używa pojemności najmniejszego dysku') + ' (' + fmtBytes(minSize) + ').</p>' +
+            '<div class="spw-raid-list">';
+
+        Object.entries(RAID_INFO).forEach(([level, info]) => {
+            const disabled = n < info.min;
+            const selected = state.raidLevel === level;
+            const capacity = calcCapacity(n, level, minSize);
+
+            html += `<div class="spw-raid-card ${selected ? 'spw-raid-selected' : ''} ${disabled ? 'spw-raid-disabled' : ''}" ` +
+                `data-level="${level}" ${disabled ? '' : ''}>` +
+                `<div class="spw-raid-icon" style="color:${disabled ? 'var(--text-muted)' : info.color}"><i class="fas ${info.icon}"></i></div>` +
+                `<div class="spw-raid-info">` +
+                    `<div class="spw-raid-label">${info.label}</div>` +
+                    `<div class="spw-raid-desc">${info.desc}</div>` +
+                    `${disabled ? '<div class="spw-raid-warn"><i class="fas fa-exclamation-triangle"></i> ' + t('Min.') + ' ' + info.min + ' ' + t('dysków') + '</div>' : ''}` +
+                `</div>` +
+                `<div class="spw-raid-cap">${disabled ? '—' : fmtBytes(capacity)}</div>` +
+            `</div>`;
+        });
+
+        html += '</div>';
+
+        html += '<div class="spw-actions">' +
+            `<button class="spw-btn spw-btn-secondary" id="spw-back"><i class="fas fa-arrow-left"></i> ` + t('Wstecz') + '</button>' +
+            `<button class="spw-btn spw-btn-primary" id="spw-next" ${!state.raidLevel ? 'disabled' : ''}>` +
+                t('Dalej') + ' <i class="fas fa-arrow-right"></i></button>' +
+            '</div>';
+
+        return html;
+    }
+
+    // ── Step 2: Configuration ──
+    function renderStep2() {
+        let html = '<h3><i class="fas fa-cog"></i> ' + t('Konfiguracja puli') + '</h3>' +
+
+        '<div class="spw-form">' +
+            '<div class="spw-field">' +
+                '<label>' + t('Nazwa puli') + '</label>' +
+                `<input type="text" id="spw-pool-name" class="spw-input" value="${state.poolName}" placeholder="Storage-1">` +
+            '</div>' +
+
+            '<div class="spw-field">' +
+                '<label>' + t('System plików') + '</label>' +
+                '<div class="spw-radio-group">' +
+                    `<label class="spw-radio ${state.fstype === 'ext4' ? 'spw-radio-active' : ''}">` +
+                        `<input type="radio" name="spw-fs" value="ext4" ${state.fstype === 'ext4' ? 'checked' : ''}> ` +
+                        '<strong>ext4</strong> <span class="spw-radio-desc">' + t('Stabilny, szybki, sprawdzony') + '</span></label>' +
+                    `<label class="spw-radio ${state.fstype === 'btrfs' ? 'spw-radio-active' : ''}">` +
+                        `<input type="radio" name="spw-fs" value="btrfs" ${state.fstype === 'btrfs' ? 'checked' : ''}> ` +
+                        '<strong>btrfs</strong> <span class="spw-radio-desc">' + t('Snapshoty, kompresja, nowoczesny') + '</span></label>' +
+                '</div>' +
+            '</div>' +
+
+            '<div class="spw-field">' +
+                '<label>' + t('Punkt montowania') + '</label>' +
+                `<input type="text" id="spw-mount" class="spw-input" value="${state.mountPath}" placeholder="/mnt/Storage-1">` +
+            '</div>' +
+
+            '<div class="spw-field">' +
+                '<label class="spw-checkbox-label">' +
+                    `<input type="checkbox" id="spw-samba" ${state.samba ? 'checked' : ''}> ` +
+                    '<i class="fab fa-windows" style="margin:0 4px"></i> ' +
+                    t('Utwórz udział Samba (sieciowy)') +
+                '</label>' +
+                `<input type="text" id="spw-samba-name" class="spw-input spw-input-indent" value="${state.sambaName}" ` +
+                    `placeholder="${t('Nazwa udziału')}" ${state.samba ? '' : 'disabled'}>` +
+            '</div>' +
+        '</div>';
+
+        html += '<div class="spw-actions">' +
+            `<button class="spw-btn spw-btn-secondary" id="spw-back"><i class="fas fa-arrow-left"></i> ` + t('Wstecz') + '</button>' +
+            `<button class="spw-btn spw-btn-primary" id="spw-next">` +
+                t('Dalej') + ' <i class="fas fa-arrow-right"></i></button>' +
+            '</div>';
+
+        return html;
+    }
+
+    // ── Step 3: Confirmation ──
+    function renderStep3() {
+        const n = state.selectedDisks.length;
+        const minSize = Math.min(...state.selectedDisks.map(name => {
+            const d = state.disks.find(x => x.name === name);
+            return d ? d.size_bytes : 0;
+        }));
+        const capacity = state.raidLevel ? calcCapacity(n, state.raidLevel, minSize) : minSize;
+
+        let html = '<h3><i class="fas fa-check-circle"></i> ' + t('Podsumowanie') + '</h3>' +
+
+        '<div class="spw-summary">' +
+            '<div class="spw-summary-row"><span>' + t('Nazwa puli') + '</span><strong>' + state.poolName + '</strong></div>' +
+            '<div class="spw-summary-row"><span>' + t('Dyski') + '</span><strong>' + state.selectedDisks.map(d => '/dev/' + d).join(', ') + '</strong></div>' +
+            (state.raidLevel
+                ? '<div class="spw-summary-row"><span>' + t('RAID') + '</span><strong>' + RAID_INFO[state.raidLevel].label + '</strong></div>'
+                : '<div class="spw-summary-row"><span>' + t('RAID') + '</span><strong>' + t('Brak (1 dysk)') + '</strong></div>') +
+            '<div class="spw-summary-row"><span>' + t('System plików') + '</span><strong>' + state.fstype + '</strong></div>' +
+            '<div class="spw-summary-row"><span>' + t('Pojemność') + '</span><strong>' + fmtBytes(capacity) + '</strong></div>' +
+            '<div class="spw-summary-row"><span>' + t('Punkt montowania') + '</span><strong>' + state.mountPath + '</strong></div>' +
+            (state.samba
+                ? '<div class="spw-summary-row"><span>' + t('Samba share') + '</span><strong>' + state.sambaName + '</strong></div>'
+                : '') +
+        '</div>' +
+
+        '<div class="spw-warning"><i class="fas fa-exclamation-triangle"></i> ' +
+            t('WSZYSTKIE DANE na wybranych dyskach zostaną bezpowrotnie usunięte!') + '</div>';
+
+        html += '<div class="spw-actions">' +
+            `<button class="spw-btn spw-btn-secondary" id="spw-back"><i class="fas fa-arrow-left"></i> ` + t('Wstecz') + '</button>' +
+            `<button class="spw-btn spw-btn-danger" id="spw-create"><i class="fas fa-rocket"></i> ` + t('Utwórz pulę') + '</button>' +
+            '</div>';
+
+        return html;
+    }
+
+    // ── Step 4: Progress ──
+    function renderStep4() {
+        return '<h3><i class="fas fa-rocket"></i> ' + t('Tworzenie puli...') + '</h3>' +
+            '<div class="spw-progress-log" id="spw-log"></div>' +
+            '<div id="spw-done-area"></div>';
+    }
+
+    function startCreation() {
+        state.creating = true;
+        state.step = 4;
+        render();
+
+        const logEl = el.querySelector('#spw-log');
+        const doneEl = el.querySelector('#spw-done-area');
+
+        const payload = {
+            disks: state.selectedDisks,
+            raid_level: state.selectedDisks.length > 1 ? state.raidLevel : null,
+            fstype: state.fstype,
+            name: state.poolName,
+            mount_path: state.mountPath,
+            samba: state.samba,
+            samba_name: state.samba ? state.sambaName : '',
+        };
+
+        const token = NAS.token || '';
+        const url = '/api/storage/pool/create';
+        fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + token,
+                'X-CSRFToken': NAS.csrfToken || '',
+            },
+            body: JSON.stringify(payload),
+        }).then(response => {
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            function readChunk() {
+                reader.read().then(({ done, value }) => {
+                    if (done) {
+                        state.creating = false;
+                        return;
+                    }
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop();
+
+                    lines.forEach(line => {
+                        if (!line.startsWith('data: ')) return;
+                        try {
+                            const msg = JSON.parse(line.slice(6));
+                            const entry = document.createElement('div');
+
+                            if (msg.type === 'step') {
+                                entry.className = 'spw-log-step';
+                                entry.innerHTML = '<i class="fas fa-check-circle"></i> ' + msg.message;
+                            } else if (msg.type === 'error') {
+                                entry.className = 'spw-log-error';
+                                entry.innerHTML = '<i class="fas fa-times-circle"></i> ' + msg.message;
+                            } else if (msg.type === 'log') {
+                                entry.className = 'spw-log-line';
+                                entry.textContent = msg.message;
+                            } else if (msg.type === 'done') {
+                                state.creating = false;
+                                if (msg.success) {
+                                    doneEl.innerHTML =
+                                        '<div class="spw-done-success">' +
+                                            '<i class="fas fa-check-circle fa-3x"></i>' +
+                                            '<div class="spw-done-title">' + t('Pula gotowa!') + '</div>' +
+                                            '<div class="spw-done-subtitle">"' + state.poolName + '" ' + t('została utworzona i jest dostępna.') + '</div>' +
+                                            '<div class="spw-actions" style="justify-content:center">' +
+                                                '<button class="spw-btn spw-btn-primary" id="spw-go-disks"><i class="fas fa-hdd"></i> ' + t('Przejdź do Dysków') + '</button>' +
+                                                '<button class="spw-btn spw-btn-secondary" id="spw-new-pool"><i class="fas fa-plus"></i> ' + t('Utwórz kolejną') + '</button>' +
+                                            '</div>' +
+                                        '</div>';
+                                    el.querySelector('#spw-go-disks')?.addEventListener('click', () => switchSectionFn('disks'));
+                                    el.querySelector('#spw-new-pool')?.addEventListener('click', () => {
+                                        state.step = 0; state.selectedDisks = []; state.disks = [];
+                                        state.raidLevel = null; state.creating = false;
+                                        render();
+                                    });
+                                } else {
+                                    doneEl.innerHTML =
+                                        '<div class="spw-done-error">' +
+                                            '<i class="fas fa-times-circle fa-3x"></i>' +
+                                            '<div class="spw-done-title">' + t('Tworzenie nie powiodło się') + '</div>' +
+                                            '<div class="spw-actions" style="justify-content:center">' +
+                                                '<button class="spw-btn spw-btn-secondary" id="spw-retry"><i class="fas fa-redo"></i> ' + t('Spróbuj ponownie') + '</button>' +
+                                            '</div>' +
+                                        '</div>';
+                                    el.querySelector('#spw-retry')?.addEventListener('click', () => {
+                                        state.step = 3; state.creating = false; render();
+                                    });
+                                }
+                                return;
+                            }
+
+                            if (logEl) {
+                                logEl.appendChild(entry);
+                                logEl.scrollTop = logEl.scrollHeight;
+                            }
+                        } catch (_) {}
+                    });
+
+                    readChunk();
+                });
+            }
+            readChunk();
+        }).catch(err => {
+            state.creating = false;
+            if (logEl) {
+                const entry = document.createElement('div');
+                entry.className = 'spw-log-error';
+                entry.textContent = t('Błąd połączenia: ') + err.message;
+                logEl.appendChild(entry);
+            }
+        });
+    }
+
+    function attachHandlers() {
+        // Disk selection
+        el.querySelectorAll('.spw-disk-card').forEach(card => {
+            card.addEventListener('click', () => {
+                const name = card.dataset.disk;
+                const idx = state.selectedDisks.indexOf(name);
+                if (idx >= 0) state.selectedDisks.splice(idx, 1);
+                else state.selectedDisks.push(name);
+                render();
+            });
+        });
+
+        // RAID level selection
+        el.querySelectorAll('.spw-raid-card:not(.spw-raid-disabled)').forEach(card => {
+            card.addEventListener('click', () => {
+                state.raidLevel = card.dataset.level;
+                render();
+            });
+        });
+
+        // Navigation
+        const nextBtn = el.querySelector('#spw-next');
+        const backBtn = el.querySelector('#spw-back');
+        const createBtn = el.querySelector('#spw-create');
+
+        if (nextBtn) nextBtn.addEventListener('click', () => {
+            // Read form values on step 2
+            if (state.step === 2) {
+                const nameEl = el.querySelector('#spw-pool-name');
+                const mountEl = el.querySelector('#spw-mount');
+                const sambaEl = el.querySelector('#spw-samba');
+                const sambaNameEl = el.querySelector('#spw-samba-name');
+                if (nameEl) state.poolName = nameEl.value.trim() || 'Storage-1';
+                if (mountEl) state.mountPath = mountEl.value.trim() || '/mnt/Storage-1';
+                if (sambaEl) state.samba = sambaEl.checked;
+                if (sambaNameEl) state.sambaName = sambaNameEl.value.trim() || state.poolName;
+
+                if (!state.poolName) { toast(t('Podaj nazwę puli'), 'error'); return; }
+                if (!state.mountPath.startsWith('/')) { toast(t('Ścieżka musi zaczynać się od /'), 'error'); return; }
+            }
+            state.step++;
+            render();
+        });
+
+        if (backBtn) backBtn.addEventListener('click', () => {
+            if (state.step === 2 && state.selectedDisks.length === 1) {
+                state.step = 0;
+            } else {
+                state.step--;
+            }
+            render();
+        });
+
+        if (createBtn) createBtn.addEventListener('click', () => startCreation());
+
+        // Pool name → auto-update mount path and samba name
+        const poolNameInput = el.querySelector('#spw-pool-name');
+        if (poolNameInput) {
+            poolNameInput.addEventListener('input', () => {
+                const name = poolNameInput.value.trim();
+                const safeName = name.replace(/[^a-zA-Z0-9_\-]/g, '_') || 'Storage-1';
+                const mountEl = el.querySelector('#spw-mount');
+                const sambaNameEl = el.querySelector('#spw-samba-name');
+                if (mountEl) mountEl.value = '/mnt/' + safeName;
+                if (sambaNameEl) sambaNameEl.value = name || 'Storage-1';
+                state.poolName = name;
+                state.mountPath = '/mnt/' + safeName;
+                state.sambaName = name || 'Storage-1';
+            });
+        }
+
+        // Samba checkbox toggle
+        const sambaCheck = el.querySelector('#spw-samba');
+        if (sambaCheck) {
+            sambaCheck.addEventListener('change', () => {
+                const nameInput = el.querySelector('#spw-samba-name');
+                if (nameInput) nameInput.disabled = !sambaCheck.checked;
+                state.samba = sambaCheck.checked;
+            });
+        }
+
+        // Filesystem radio
+        el.querySelectorAll('input[name="spw-fs"]').forEach(radio => {
+            radio.addEventListener('change', () => {
+                state.fstype = radio.value;
+                el.querySelectorAll('.spw-radio').forEach(r => r.classList.toggle('spw-radio-active', r.querySelector('input').value === state.fstype));
+            });
+        });
+    }
+
+    render();
     return null;
 }
