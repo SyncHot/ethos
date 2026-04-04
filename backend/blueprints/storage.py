@@ -3449,5 +3449,168 @@ os.makedirs(path, mode=0o775, exist_ok=True)
 
 @storage_bp.route('/pool/list')
 def pool_list():
-    """List saved storage pools."""
-    return jsonify({'pools': _load_pools()})
+    """List saved storage pools with live usage, RAID health, and shares."""
+    pools = _load_pools()
+    if not pools:
+        return jsonify({'pools': []})
+
+    # Gather live df data for all mountpoints
+    df_map = {}
+    dfr = host_run("df -B1 --output=target,size,used,avail,pcent 2>/dev/null")
+    if dfr.returncode == 0:
+        for line in dfr.stdout.strip().split('\n')[1:]:
+            parts = line.split()
+            if len(parts) >= 5:
+                try:
+                    df_map[parts[0]] = {
+                        'total': int(parts[1]),
+                        'used': int(parts[2]),
+                        'free': int(parts[3]),
+                        'percent': float(parts[4].replace('%', '')),
+                    }
+                except (ValueError, IndexError):
+                    pass
+
+    # Gather RAID status for md devices
+    raid_status = {}
+    md_r = host_run("cat /proc/mdstat 2>/dev/null")
+    if md_r.returncode == 0:
+        for line in md_r.stdout.splitlines():
+            m = re.match(r'^(md\d+)\s*:\s*active\s+(\S+)\s+(.+)', line)
+            if m:
+                raid_status[f'/dev/{m.group(1)}'] = {
+                    'state': 'active',
+                    'level': m.group(2),
+                    'members_line': m.group(3),
+                }
+
+    # Gather Samba shares
+    samba_shares = {}
+    try:
+        smb_conf = host_run("cat /etc/samba/smb.conf 2>/dev/null").stdout or ""
+        current_share = None
+        for line in smb_conf.splitlines():
+            line_s = line.strip()
+            m = re.match(r'^\[(.+)\]$', line_s)
+            if m:
+                name = m.group(1)
+                if name.lower() != 'global':
+                    current_share = name
+                    samba_shares[name] = {}
+                else:
+                    current_share = None
+            elif current_share and '=' in line_s:
+                k, v = line_s.split('=', 1)
+                samba_shares[current_share][k.strip().lower()] = v.strip()
+    except Exception:
+        pass
+
+    # Enrich each pool with live data
+    for pool in pools:
+        mp = pool.get('mount_path', '')
+        pool['usage'] = df_map.get(mp)
+        pool['mounted'] = mp in df_map
+
+        # RAID health
+        rd = pool.get('raid_device')
+        if rd and rd in raid_status:
+            pool['raid_status'] = raid_status[rd]['state']
+        elif rd:
+            pool['raid_status'] = 'inactive'
+        else:
+            pool['raid_status'] = None
+
+        # Associated shares
+        share_name = pool.get('samba_share')
+        pool['shares'] = []
+        if share_name and share_name in samba_shares:
+            pool['shares'].append({
+                'name': share_name,
+                'protocol': 'samba',
+                'path': samba_shares[share_name].get('path', mp),
+            })
+        # Also find any other Samba shares pointing to this mount
+        for sname, sdata in samba_shares.items():
+            if sdata.get('path', '').startswith(mp) and sname != share_name:
+                pool['shares'].append({
+                    'name': sname,
+                    'protocol': 'samba',
+                    'path': sdata.get('path', ''),
+                })
+
+    return jsonify({'pools': pools})
+
+
+@storage_bp.route('/pool/<pool_name>/delete', methods=['POST'])
+@admin_required
+def pool_delete(pool_name):
+    """Delete a storage pool: unmount, remove fstab, optionally destroy RAID."""
+    data = request.get_json(force=True) if request.data else {}
+    wipe = data.get('wipe', False)
+
+    pools = _load_pools()
+    pool = None
+    for p in pools:
+        if p.get('name') == pool_name:
+            pool = p
+            break
+    if not pool:
+        return jsonify({"error": f"Pool '{pool_name}' not found"}), 404
+
+    mp = pool.get('mount_path', '')
+    device = pool.get('device', '')
+    raid_dev = pool.get('raid_device')
+    share_name = pool.get('samba_share')
+    steps = []
+
+    # Remove Samba share
+    if share_name:
+        try:
+            smb_conf = host_run("cat /etc/samba/smb.conf 2>/dev/null").stdout or ""
+            pattern = r'\[' + re.escape(share_name) + r'\][^\[]*'
+            new_conf = re.sub(pattern, '', smb_conf, flags=re.IGNORECASE).strip() + '\n'
+            _host_write_file('/tmp/_smb_del.conf', new_conf)
+            host_run("cp /tmp/_smb_del.conf /etc/samba/smb.conf && rm /tmp/_smb_del.conf")
+            host_run("systemctl restart smbd nmbd 2>/dev/null || true")
+            steps.append(f"Removed Samba share '{share_name}'")
+        except Exception as e:
+            steps.append(f"Warning: Samba share removal failed: {e}")
+
+    # Unmount
+    if mp:
+        host_run(f"umount -l {Q(mp)} 2>/dev/null", timeout=10)
+        steps.append(f"Unmounted {mp}")
+
+    # Remove fstab entry
+    if mp:
+        _fstab_remove(mp)
+        # Also try UUID-based removal
+        uuid_r = host_run(f"blkid -s UUID -o value {Q(device)} 2>/dev/null")
+        uuid = uuid_r.stdout.strip()
+        if uuid:
+            host_run(f"sed -i '/UUID={uuid}/d' /etc/fstab 2>/dev/null || true")
+        steps.append("Removed fstab entry")
+
+    # Stop RAID array
+    if raid_dev and wipe:
+        host_run(f"mdadm --stop {Q(raid_dev)} 2>/dev/null", timeout=30)
+        # Zero superblocks on member disks
+        for disk in pool.get('disks', []):
+            host_run(f"mdadm --zero-superblock /dev/{Q(disk)} 2>/dev/null", timeout=10)
+        steps.append(f"Stopped RAID array {raid_dev}")
+
+    # Wipe filesystem signatures
+    if wipe and device:
+        host_run(f"wipefs -a {Q(device)} 2>/dev/null", timeout=10)
+        steps.append(f"Wiped filesystem on {device}")
+
+    # Remove mountpoint directory
+    if mp:
+        host_run(f"rmdir {Q(mp)} 2>/dev/null", timeout=5)
+
+    # Remove from saved pools
+    pools = [p for p in pools if p.get('name') != pool_name]
+    _save_pools(pools)
+    steps.append("Pool removed from configuration")
+
+    return jsonify({"ok": True, "steps": steps})

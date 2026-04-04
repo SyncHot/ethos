@@ -49,10 +49,10 @@ AppRegistry['storage-manager'] = function (appDef) {
 function _smRender(body) {
     const sections = [
         { id: 'overview',     icon: 'fa-chart-pie',    label: t('Przegląd') },
+        { id: 'pools',        icon: 'fa-layer-group',  label: t('Pule storage') },
         { id: 'wizard',       icon: 'fa-magic',        label: t('Kreator') },
         { id: 'disks',        icon: 'fa-hdd',          label: t('Dyski') },
-        { id: 'raid',         icon: 'fa-server',       label: t('Pule / RAID') },
-        { id: 'volumes',      icon: 'fa-cubes',        label: t('Wolumeny') },
+        { id: 'raid',         icon: 'fa-server',       label: t('RAID / LVM') },
         { id: 'sharing',      icon: 'fa-share-alt',    label: t('Udostępnianie') },
         { id: 'diagnostics',  icon: 'fa-stethoscope',  label: t('Diagnostyka') },
         { id: 'cache',        icon: 'fa-bolt',         label: 'SSD Cache' },
@@ -92,11 +92,11 @@ function _smRender(body) {
         const setCleanup = (fn) => { if (activeSection === id) cleanupFn = fn; };
 
         switch (id) {
-            case 'overview':     cleanupFn = _smOverview(contentEl); break;
+            case 'overview':     cleanupFn = _smOverview(contentEl, switchSection); break;
+            case 'pools':        cleanupFn = _smPools(contentEl, switchSection); break;
             case 'wizard':       cleanupFn = _smWizard(contentEl, switchSection); break;
             case 'disks':        cleanupFn = _smDisks(contentEl); break;
             case 'raid':         cleanupFn = _smRaid(contentEl, 'arrays'); break;
-            case 'volumes':      cleanupFn = _smRaid(contentEl, 'lvm'); break;
             case 'sharing':      _smSharing(contentEl).then(fn => setCleanup(fn)); break;
             case 'diagnostics':  cleanupFn = _smDiagnostics(contentEl); break;
             case 'cache':        cleanupFn = _smCache(contentEl); break;
@@ -110,17 +110,16 @@ function _smRender(body) {
 /* ═══════════════════════════════════════════════════════════
    Section: Overview (new dashboard)
    ═══════════════════════════════════════════════════════════ */
-function _smOverview(el) {
-    el.innerHTML = '<div style="padding:20px"><div style="display:flex;gap:16px;flex-wrap:wrap" id="smo-cards"></div><div id="smo-detail" style="margin-top:20px"></div></div>';
-    const cardsEl = el.querySelector('#smo-cards');
-    const detailEl = el.querySelector('#smo-detail');
+function _smOverview(el, switchSection) {
+    el.innerHTML = '<div style="padding:20px" id="smo-root"><div style="color:var(--text-secondary)"><i class="fas fa-spinner fa-spin"></i> ' + t('Ładowanie...') + '</div></div>';
+    const root = el.querySelector('#smo-root');
 
     async function load() {
-        cardsEl.innerHTML = '<div style="color:var(--text-secondary)"><i class="fas fa-spinner fa-spin"></i> ' + t('Ładowanie...') + '</div>';
-        const [drivesRes, raidRes, drRes] = await Promise.allSettled([
+        const [drivesRes, raidRes, drRes, poolsRes] = await Promise.allSettled([
             api('/storage/drives'),
             api('/raid/arrays'),
             api('/diskrepair/disks'),
+            api('/storage/pool/list'),
         ]);
 
         const dVal = drivesRes.status === 'fulfilled' ? drivesRes.value : {};
@@ -129,8 +128,9 @@ function _smOverview(el) {
         const arrays = Array.isArray(rVal) ? rVal : (rVal.arrays || []);
         const drVal = drRes.status === 'fulfilled' ? drRes.value : [];
         const drDisks = Array.isArray(drVal) ? drVal : (drVal.disks || []);
+        const pVal = poolsRes.status === 'fulfilled' ? poolsRes.value : {};
+        const pools = Array.isArray(pVal) ? pVal : (pVal.pools || []);
 
-        // Compute stats — size comes as string "4.5T", usage.total as bytes
         const physDisks = drives.filter(d => d.type === 'disk' && !d.name.startsWith('nbd'));
         const parts = drives.filter(d => d.type === 'part' && d.usage);
         const totalBytes = parts.reduce((s, d) => s + (d.usage.total || 0), 0);
@@ -139,59 +139,358 @@ function _smOverview(el) {
         const smartAvail = drDisks.filter(d => d.smart_available).length;
         const warnCount = smartAvail - healthyCount;
 
-        function card(icon, color, title, value, sub) {
-            return `<div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:10px;padding:18px 22px;min-width:180px;flex:1">
-                <div style="font-size:24px;color:${color};margin-bottom:8px"><i class="fas ${icon}"></i></div>
-                <div style="font-size:22px;font-weight:700;color:var(--text-primary)">${value}</div>
-                <div style="font-size:12px;color:var(--text-secondary);margin-top:2px">${title}</div>
-                ${sub ? '<div style="font-size:11px;color:var(--text-tertiary, var(--text-secondary));margin-top:4px">' + sub + '</div>' : ''}
-            </div>`;
-        }
-
         const fmt = (b) => {
             if (b >= 1e12) return (b/1e12).toFixed(1) + ' TB';
             if (b >= 1e9) return (b/1e9).toFixed(1) + ' GB';
             return (b/1e6).toFixed(0) + ' MB';
         };
 
-        cardsEl.innerHTML =
-            card('fa-hdd', 'var(--accent)', t('Dyski'), physDisks.length, `${fmt(totalBytes)} ${t('łącznie')}`) +
-            card('fa-server', '#4ecdc4', t('Macierze RAID'), arrays.length, arrays.filter(a => a.state === 'clean' || a.state === 'active').length + ' ' + t('zdrowe')) +
-            card('fa-heartbeat', warnCount > 0 ? '#e74c3c' : '#2ecc71', 'SMART', `${healthyCount}/${smartAvail}`, warnCount > 0 ? `${warnCount} ${t('ostrzeżeń')}` : t('Wszystko OK')) +
-            card('fa-chart-pie', '#9b59b6', t('Użyte'), totalBytes > 0 ? Math.round(usedBytes/totalBytes*100) + '%' : '—', `${fmt(usedBytes)} / ${fmt(totalBytes)}`);
+        function card(icon, color, title, value, sub) {
+            return `<div class="smo-card">
+                <div class="smo-card-icon" style="color:${color}"><i class="fas ${icon}"></i></div>
+                <div class="smo-card-value">${value}</div>
+                <div class="smo-card-title">${title}</div>
+                ${sub ? '<div class="smo-card-sub">' + sub + '</div>' : ''}
+            </div>`;
+        }
 
-        // Drive table
+        let html = '<div class="smo-cards">';
+        html += card('fa-layer-group', '#3b82f6', t('Pule storage'), pools.length,
+            pools.length ? pools.filter(p => p.mounted).length + ' ' + t('aktywne') : t('Utwórz pierwszą pulę'));
+        html += card('fa-hdd', 'var(--accent)', t('Dyski'), physDisks.length, `${fmt(totalBytes)} ${t('łącznie')}`);
+        html += card('fa-heartbeat', warnCount > 0 ? '#e74c3c' : '#2ecc71', 'SMART', `${healthyCount}/${smartAvail}`,
+            warnCount > 0 ? `${warnCount} ${t('ostrzeżeń')}` : t('Wszystko OK'));
+        html += card('fa-chart-pie', '#9b59b6', t('Użyte'), totalBytes > 0 ? Math.round(usedBytes/totalBytes*100) + '%' : '—',
+            `${fmt(usedBytes)} / ${fmt(totalBytes)}`);
+        html += '</div>';
+
+        // Pool summary section
+        if (pools.length) {
+            html += `<div class="smo-section">
+                <div class="smo-section-header">
+                    <h4><i class="fas fa-layer-group"></i> ${t('Pule storage')}</h4>
+                    <button class="smo-link-btn" id="smo-go-pools">${t('Zarządzaj')} <i class="fas fa-arrow-right"></i></button>
+                </div>
+                <div class="smo-pool-grid">`;
+
+            for (const p of pools) {
+                const u = p.usage || {};
+                const pct = u.percent || 0;
+                const barColor = pct > 90 ? '#e74c3c' : pct > 70 ? '#f59e0b' : '#10b981';
+                const raidBadge = p.raid_level
+                    ? `<span class="smo-badge smo-badge-blue">RAID ${p.raid_level}</span>`
+                    : `<span class="smo-badge">${t('Pojedynczy')}</span>`;
+                const statusDot = p.mounted
+                    ? '<span class="smo-dot smo-dot-green"></span>'
+                    : '<span class="smo-dot smo-dot-red"></span>';
+
+                html += `<div class="smo-pool-card">
+                    <div class="smo-pool-header">
+                        ${statusDot}
+                        <strong>${p.name}</strong>
+                        ${raidBadge}
+                    </div>
+                    <div class="smo-pool-bar-wrap">
+                        <div class="smo-pool-bar" style="width:${pct}%;background:${barColor}"></div>
+                    </div>
+                    <div class="smo-pool-stats">
+                        <span>${u.total ? fmt(u.used || 0) + ' / ' + fmt(u.total) : t('Odmontowana')}</span>
+                        <span style="font-weight:600">${u.total ? pct + '%' : '—'}</span>
+                    </div>
+                    <div class="smo-pool-meta">
+                        <span><i class="fas fa-hdd"></i> ${(p.disks || []).length} ${t('dysków')}</span>
+                        <span><i class="fas fa-folder"></i> ${p.mount_path}</span>
+                        ${(p.shares || []).length ? '<span><i class="fas fa-share-alt"></i> ' + (p.shares || []).length + ' ' + t('udziałów') + '</span>' : ''}
+                    </div>
+                </div>`;
+            }
+
+            html += '</div></div>';
+        } else {
+            html += `<div class="smo-section smo-empty-pools">
+                <div style="text-align:center;padding:30px 20px">
+                    <i class="fas fa-layer-group" style="font-size:48px;color:var(--text-muted);margin-bottom:16px;display:block"></i>
+                    <div style="font-size:15px;font-weight:600;margin-bottom:6px">${t('Brak pul storage')}</div>
+                    <div style="font-size:13px;color:var(--text-secondary);margin-bottom:16px">${t('Utwórz pulę, aby połączyć dyski i udostępnić je w sieci.')}</div>
+                    <button class="spw-btn spw-btn-primary" id="smo-create-pool"><i class="fas fa-magic"></i> ${t('Utwórz pulę')}</button>
+                </div>
+            </div>`;
+        }
+
+        // Physical disks table
         if (physDisks.length) {
-            // Merge diskrepair SMART data into physical disks
             const drMap = {};
             for (const dr of drDisks) drMap[dr.name] = dr;
 
-            let tbl = `<table style="width:100%;border-collapse:collapse;font-size:13px">
-                <thead><tr style="text-align:left;border-bottom:2px solid var(--border-color)">
-                    <th style="padding:8px">${t('Dysk')}</th><th style="padding:8px">${t('Model')}</th>
-                    <th style="padding:8px">${t('Pojemność')}</th><th style="padding:8px">${t('Interfejs')}</th>
-                    <th style="padding:8px">${t('Temp')}</th><th style="padding:8px">SMART</th>
+            html += `<div class="smo-section">
+                <div class="smo-section-header">
+                    <h4><i class="fas fa-hdd"></i> ${t('Dyski fizyczne')}</h4>
+                    <button class="smo-link-btn" id="smo-go-disks">${t('Zarządzaj')} <i class="fas fa-arrow-right"></i></button>
+                </div>
+                <table class="smo-table">
+                <thead><tr>
+                    <th>${t('Dysk')}</th><th>${t('Model')}</th>
+                    <th>${t('Pojemność')}</th><th>${t('Interfejs')}</th>
+                    <th>${t('Temp')}</th><th>SMART</th>
                 </tr></thead><tbody>`;
             for (const d of physDisks) {
                 const dr = drMap[d.name] || {};
                 const temp = dr.temperature ? dr.temperature + '°C' : '—';
                 const tempColor = (dr.temperature && dr.temperature > 50) ? '#e74c3c' : 'var(--text-secondary)';
-                const health = dr.smart_healthy === true ? t('OK') : (dr.smart_available ? '<span style="color:#e74c3c">' + t('Uwaga') + '</span>' : '—');
-                tbl += `<tr style="border-bottom:1px solid var(--border-color)">
-                    <td style="padding:8px;font-weight:600">${d.name || '?'}</td>
-                    <td style="padding:8px;color:var(--text-secondary)">${d.model || '—'}</td>
-                    <td style="padding:8px">${d.size || '—'}</td>
-                    <td style="padding:8px;color:var(--text-secondary)">${(d.tran || '—').toUpperCase()}</td>
-                    <td style="padding:8px;color:${tempColor}">${temp}</td>
-                    <td style="padding:8px">${health}</td>
+                const health = dr.smart_healthy === true
+                    ? '<span style="color:#2ecc71">✓ ' + t('OK') + '</span>'
+                    : (dr.smart_available ? '<span style="color:#e74c3c">⚠ ' + t('Uwaga') + '</span>' : '—');
+                html += `<tr>
+                    <td style="font-weight:600">${d.name || '?'}</td>
+                    <td style="color:var(--text-secondary)">${d.model || '—'}</td>
+                    <td>${d.size || '—'}</td>
+                    <td style="color:var(--text-secondary)">${(d.tran || '—').toUpperCase()}</td>
+                    <td style="color:${tempColor}">${temp}</td>
+                    <td>${health}</td>
                 </tr>`;
             }
-            tbl += '</tbody></table>';
-            detailEl.innerHTML = `<div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:10px;padding:16px">
-                <h4 style="margin:0 0 12px;font-size:14px;font-weight:600">${t('Wszystkie dyski')}</h4>${tbl}</div>`;
+            html += '</tbody></table></div>';
         }
+
+        root.innerHTML = html;
+
+        // Attach navigation
+        root.querySelector('#smo-go-pools')?.addEventListener('click', () => switchSection('pools'));
+        root.querySelector('#smo-go-disks')?.addEventListener('click', () => switchSection('disks'));
+        root.querySelector('#smo-create-pool')?.addEventListener('click', () => switchSection('wizard'));
     }
     load();
+    return null;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Section: Pools (Synology-style pool management)
+   ═══════════════════════════════════════════════════════════ */
+function _smPools(el, switchSection) {
+    const state = { pools: [], selected: null, loading: true };
+
+    const fmt = (b) => {
+        if (!b || b <= 0) return '0 B';
+        if (b >= 1e12) return (b/1e12).toFixed(1) + ' TB';
+        if (b >= 1e9) return (b/1e9).toFixed(1) + ' GB';
+        return (b/1e6).toFixed(0) + ' MB';
+    };
+
+    async function loadPools() {
+        state.loading = true;
+        render();
+        const data = await api('/storage/pool/list');
+        state.pools = (data.pools || []);
+        state.loading = false;
+        if (state.selected && !state.pools.find(p => p.name === state.selected)) {
+            state.selected = null;
+        }
+        render();
+    }
+
+    function render() {
+        if (state.loading) {
+            el.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-secondary)"><i class="fas fa-spinner fa-spin fa-2x"></i><div style="margin-top:12px">' + t('Ładowanie pul...') + '</div></div>';
+            return;
+        }
+
+        if (!state.pools.length) {
+            el.innerHTML = `<div style="padding:60px 20px;text-align:center">
+                <i class="fas fa-layer-group" style="font-size:64px;color:var(--text-muted);margin-bottom:20px;display:block"></i>
+                <div style="font-size:18px;font-weight:700;margin-bottom:8px">${t('Brak pul storage')}</div>
+                <div style="font-size:14px;color:var(--text-secondary);margin-bottom:24px;max-width:400px;margin-left:auto;margin-right:auto">
+                    ${t('Pule storage łączą dyski fizyczne w jedną przestrzeń z ochroną danych (RAID) i udostępnianiem sieciowym.')}
+                </div>
+                <button class="spw-btn spw-btn-primary" id="smp-create"><i class="fas fa-magic"></i> ${t('Utwórz pierwszą pulę')}</button>
+            </div>`;
+            el.querySelector('#smp-create')?.addEventListener('click', () => switchSection('wizard'));
+            return;
+        }
+
+        let html = `<div class="smp-layout">
+            <div class="smp-list">
+                <div class="smp-toolbar">
+                    <h3 style="margin:0;font-size:15px"><i class="fas fa-layer-group"></i> ${t('Pule storage')} <span style="color:var(--text-secondary);font-weight:400">(${state.pools.length})</span></h3>
+                    <div style="display:flex;gap:8px">
+                        <button class="smp-btn" id="smp-refresh" title="${t('Odśwież')}"><i class="fas fa-sync-alt"></i></button>
+                        <button class="smp-btn smp-btn-accent" id="smp-create"><i class="fas fa-plus"></i> ${t('Nowa pula')}</button>
+                    </div>
+                </div>`;
+
+        for (const p of state.pools) {
+            const u = p.usage || {};
+            const pct = u.percent || 0;
+            const barColor = pct > 90 ? '#e74c3c' : pct > 70 ? '#f59e0b' : '#10b981';
+            const isActive = state.selected === p.name;
+            const raidLabel = p.raid_level ? 'RAID ' + p.raid_level : t('Pojedynczy dysk');
+            const statusColor = p.mounted ? '#2ecc71' : '#95a5a6';
+            const statusLabel = p.mounted ? t('Aktywna') : t('Odmontowana');
+            const diskCount = (p.disks || []).length;
+            const shareCount = (p.shares || []).length;
+
+            html += `<div class="smp-card ${isActive ? 'smp-card-active' : ''}" data-pool="${p.name}">
+                <div class="smp-card-top">
+                    <div class="smp-card-name">
+                        <i class="fas fa-database" style="color:#3b82f6;margin-right:8px"></i>
+                        <strong>${p.name}</strong>
+                    </div>
+                    <div class="smp-card-status" style="color:${statusColor}">
+                        <span class="smo-dot" style="background:${statusColor}"></span> ${statusLabel}
+                    </div>
+                </div>
+                <div class="smp-card-badges">
+                    <span class="smo-badge smo-badge-blue">${raidLabel}</span>
+                    <span class="smo-badge">${p.fstype || 'ext4'}</span>
+                    <span class="smo-badge"><i class="fas fa-hdd"></i> ${diskCount}</span>
+                    ${shareCount ? '<span class="smo-badge"><i class="fas fa-share-alt"></i> ' + shareCount + '</span>' : ''}
+                </div>
+                <div class="smo-pool-bar-wrap" style="margin:10px 0 6px">
+                    <div class="smo-pool-bar" style="width:${pct}%;background:${barColor}"></div>
+                </div>
+                <div class="smp-card-usage">
+                    ${u.total ? fmt(u.used || 0) + ' / ' + fmt(u.total) : t('Niedostępna')}
+                    <span style="font-weight:600">${u.total ? pct + '%' : ''}</span>
+                </div>
+            </div>`;
+        }
+
+        html += '</div>';
+
+        // Detail panel
+        html += '<div class="smp-detail" id="smp-detail">';
+        if (state.selected) {
+            html += renderDetail(state.pools.find(p => p.name === state.selected));
+        } else {
+            html += `<div class="smp-detail-empty">
+                <i class="fas fa-arrow-left" style="font-size:32px;color:var(--text-muted);margin-bottom:12px"></i>
+                <div>${t('Wybierz pulę, aby zobaczyć szczegóły')}</div>
+            </div>`;
+        }
+        html += '</div></div>';
+
+        el.innerHTML = html;
+        attachHandlers();
+    }
+
+    function renderDetail(pool) {
+        if (!pool) return '';
+        const u = pool.usage || {};
+        const pct = u.percent || 0;
+        const barColor = pct > 90 ? '#e74c3c' : pct > 70 ? '#f59e0b' : '#10b981';
+        const raidLabel = pool.raid_level ? 'RAID ' + pool.raid_level : t('Brak (pojedynczy dysk)');
+        const statusColor = pool.mounted ? '#2ecc71' : '#95a5a6';
+        const statusLabel = pool.mounted ? t('Aktywna') : t('Odmontowana');
+
+        let html = `<div class="smp-detail-header">
+            <h3><i class="fas fa-database" style="color:#3b82f6;margin-right:8px"></i>${pool.name}</h3>
+            <span class="smp-card-status" style="color:${statusColor}"><span class="smo-dot" style="background:${statusColor}"></span> ${statusLabel}</span>
+        </div>`;
+
+        // Capacity section
+        html += `<div class="smp-detail-section">
+            <h4>${t('Pojemność')}</h4>
+            <div class="smo-pool-bar-wrap" style="height:12px;border-radius:6px;margin:8px 0">
+                <div class="smo-pool-bar" style="width:${pct}%;background:${barColor};border-radius:6px"></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--text-secondary)">
+                <span>${t('Użyte')}: <strong style="color:var(--text-primary)">${fmt(u.used || 0)}</strong></span>
+                <span>${t('Wolne')}: <strong style="color:var(--text-primary)">${fmt(u.free || 0)}</strong></span>
+                <span>${t('Razem')}: <strong style="color:var(--text-primary)">${fmt(u.total || 0)}</strong></span>
+            </div>
+        </div>`;
+
+        // Configuration
+        html += `<div class="smp-detail-section">
+            <h4>${t('Konfiguracja')}</h4>
+            <div class="smp-info-grid">
+                <div class="smp-info-row"><span>${t('RAID')}</span><span>${raidLabel}</span></div>
+                <div class="smp-info-row"><span>${t('System plików')}</span><span>${pool.fstype || 'ext4'}</span></div>
+                <div class="smp-info-row"><span>${t('Punkt montowania')}</span><span><code>${pool.mount_path || '—'}</code></span></div>
+                <div class="smp-info-row"><span>${t('Urządzenie')}</span><span><code>${pool.device || '—'}</code></span></div>
+                <div class="smp-info-row"><span>${t('Utworzona')}</span><span>${pool.created ? new Date(pool.created).toLocaleString() : '—'}</span></div>
+            </div>
+        </div>`;
+
+        // Member disks
+        if (pool.disks && pool.disks.length) {
+            html += `<div class="smp-detail-section">
+                <h4><i class="fas fa-hdd"></i> ${t('Dyski')} (${pool.disks.length})</h4>
+                <div class="smp-disk-chips">
+                    ${pool.disks.map(d => `<span class="smp-disk-chip"><i class="fas fa-hdd"></i> /dev/${d}</span>`).join('')}
+                </div>
+            </div>`;
+        }
+
+        // Shares
+        const shares = pool.shares || [];
+        html += `<div class="smp-detail-section">
+            <h4><i class="fas fa-share-alt"></i> ${t('Udziały sieciowe')} (${shares.length})</h4>`;
+        if (shares.length) {
+            html += '<div class="smp-shares-list">';
+            for (const sh of shares) {
+                html += `<div class="smp-share-row">
+                    <i class="fab fa-windows" style="color:#0078d4"></i>
+                    <span>${sh.name}</span>
+                    <span style="color:var(--text-secondary);font-size:12px">${sh.path || ''}</span>
+                </div>`;
+            }
+            html += '</div>';
+        } else {
+            html += `<div style="font-size:13px;color:var(--text-secondary);padding:8px 0">${t('Brak udziałów. Przejdź do Udostępnianie, aby utworzyć.')}</div>`;
+        }
+        html += '</div>';
+
+        // Actions
+        html += `<div class="smp-detail-actions">
+            <button class="smp-btn smp-btn-accent" id="smp-goto-sharing"><i class="fas fa-share-alt"></i> ${t('Udostępnij')}</button>
+            <button class="smp-btn smp-btn-danger" id="smp-delete" data-pool="${pool.name}"><i class="fas fa-trash"></i> ${t('Usuń pulę')}</button>
+        </div>`;
+
+        return html;
+    }
+
+    function attachHandlers() {
+        el.querySelectorAll('.smp-card').forEach(card => {
+            card.addEventListener('click', () => {
+                state.selected = card.dataset.pool;
+                render();
+            });
+        });
+
+        el.querySelector('#smp-refresh')?.addEventListener('click', loadPools);
+        el.querySelector('#smp-create')?.addEventListener('click', () => switchSection('wizard'));
+        el.querySelector('#smp-goto-sharing')?.addEventListener('click', () => switchSection('sharing'));
+
+        const delBtn = el.querySelector('#smp-delete');
+        if (delBtn) {
+            delBtn.addEventListener('click', async () => {
+                const name = delBtn.dataset.pool;
+                const ok = await confirmDialog(
+                    t('Usuń pulę') + ': ' + name,
+                    t('Czy na pewno chcesz usunąć tę pulę? Dane na dyskach mogą zostać utracone.')
+                );
+                if (!ok) return;
+
+                const wipe = await confirmDialog(t('Wyczyścić dyski?'),
+                    t('Czy chcesz wyczyścić sygnatury na dyskach? Wybierz TAK, jeśli chcesz ponownie użyć dysków w nowej puli.'));
+
+                delBtn.disabled = true;
+                delBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Usuwanie...');
+                const r = await api(`/storage/pool/${encodeURIComponent(name)}/delete`, {
+                    method: 'POST', body: { wipe }
+                });
+                if (r.error) {
+                    toast(r.error, 'error');
+                } else {
+                    toast(t('Pula usunięta'), 'success');
+                    state.selected = null;
+                    await loadPools();
+                }
+            });
+        }
+    }
+
+    loadPools();
     return null;
 }
 
@@ -3927,11 +4226,13 @@ function _smWizard(el, switchSectionFn) {
                                             '<div class="spw-done-title">' + t('Pula gotowa!') + '</div>' +
                                             '<div class="spw-done-subtitle">"' + state.poolName + '" ' + t('została utworzona i jest dostępna.') + '</div>' +
                                             '<div class="spw-actions" style="justify-content:center">' +
-                                                '<button class="spw-btn spw-btn-primary" id="spw-go-disks"><i class="fas fa-hdd"></i> ' + t('Przejdź do Dysków') + '</button>' +
+                                                '<button class="spw-btn spw-btn-primary" id="spw-go-pools"><i class="fas fa-layer-group"></i> ' + t('Pokaż pulę') + '</button>' +
+                                                '<button class="spw-btn spw-btn-secondary" id="spw-go-sharing"><i class="fas fa-share-alt"></i> ' + t('Udostępnij w sieci') + '</button>' +
                                                 '<button class="spw-btn spw-btn-secondary" id="spw-new-pool"><i class="fas fa-plus"></i> ' + t('Utwórz kolejną') + '</button>' +
                                             '</div>' +
                                         '</div>';
-                                    el.querySelector('#spw-go-disks')?.addEventListener('click', () => switchSectionFn('disks'));
+                                    el.querySelector('#spw-go-pools')?.addEventListener('click', () => switchSectionFn('pools'));
+                                    el.querySelector('#spw-go-sharing')?.addEventListener('click', () => switchSectionFn('sharing'));
                                     el.querySelector('#spw-new-pool')?.addEventListener('click', () => {
                                         state.step = 0; state.selectedDisks = []; state.disks = [];
                                         state.raidLevel = null; state.creating = false;
