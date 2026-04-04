@@ -426,6 +426,13 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/antivirus/pkg-status',
     },
     {
+        'id': 'security-advisor', 'name': 'Security Advisor', 'version': '1.0.0',
+        'icon': 'fa-user-shield', 'color': '#059669', 'category': 'Security', 'admin_only': True,
+        'description': 'Skaner bezpieczenstwa systemu z wynikiem 0-100 i automatycznymi poprawkami.',
+        'apt_deps': [], 'pip_deps': [], 'simple': True, 'core': True,
+        'status_endpoint': '/api/security-advisor/pkg-status',
+    },
+    {
         'id': 'rollback', 'name': 'Rollback', 'version': '1.0.1',
         'icon': 'fa-history', 'color': '#f97316', 'category': 'System', 'admin_only': True,
         'description': 'Migawki systemu i przywracanie poprzednich wersji.',

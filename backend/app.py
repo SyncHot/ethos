@@ -118,6 +118,7 @@ from blueprints.notifications import notifications_bp, init_notifications
 from blueprints.dashboard import dashboard_bp
 from blueprints.admin_required import admin_required
 from blueprints.totp import totp_bp, is_totp_enabled, verify_totp_code, verify_backup_code
+from blueprints.security_advisor import security_advisor_bp
 from blueprints.api_docs import api_docs_bp
 from blueprints.app_manager import (
     app_manager_bp, init_app_manager, migrate_from_ethos_packages,
@@ -374,6 +375,7 @@ app.register_blueprint(totp_bp)
 app.register_blueprint(dashboard_bp)
 app.register_blueprint(api_docs_bp)
 app.register_blueprint(app_manager_bp)
+app.register_blueprint(security_advisor_bp)
 init_app_manager(socketio)
 _load_optional_blueprints(app, socketio)
 migrate_from_ethos_packages()
@@ -526,6 +528,7 @@ def _no_cache_api(response):
 # ─────────────────────────── Auth ───────────────────────────
 
 TOKEN_EXPIRY = timedelta(days=7)
+SESSION_IDLE_TIMEOUT = 1800  # 30 minutes idle → expire (configurable)
 _tokens_lock = __import__('threading').Lock()
 
 
@@ -546,8 +549,13 @@ class _TokenStore:
         conn.execute('PRAGMA journal_mode=WAL')
         conn.execute(
             'CREATE TABLE IF NOT EXISTS tokens '
-            '(token TEXT PRIMARY KEY, username TEXT, role TEXT, expires REAL)'
+            '(token TEXT PRIMARY KEY, username TEXT, role TEXT, expires REAL, last_active REAL)'
         )
+        # Add last_active column if missing (migration)
+        try:
+            conn.execute('ALTER TABLE tokens ADD COLUMN last_active REAL DEFAULT 0')
+        except _sql.OperationalError:
+            pass
         conn.commit()
         conn.close()
 
@@ -558,12 +566,13 @@ class _TokenStore:
     def __setitem__(self, token, info):
         expires = info['expires']
         ts = expires.timestamp() if isinstance(expires, datetime) else float(expires)
+        la = info.get('last_active', time.time())
         conn = self._conn()
         try:
             conn.execute(
-                'INSERT OR REPLACE INTO tokens (token,username,role,expires) '
-                'VALUES (?,?,?,?)',
-                (token, info['username'], info['role'], ts),
+                'INSERT OR REPLACE INTO tokens (token,username,role,expires,last_active) '
+                'VALUES (?,?,?,?,?)',
+                (token, info['username'], info['role'], ts, la),
             )
             conn.commit()
         finally:
@@ -627,8 +636,45 @@ class _TokenStore:
         finally:
             conn.close()
 
+    def touch(self, token):
+        """Update last_active timestamp for session idle tracking."""
+        conn = self._conn()
+        try:
+            conn.execute(
+                'UPDATE tokens SET last_active=? WHERE token=?',
+                (time.time(), token),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def prune_idle(self, idle_seconds):
+        """Remove tokens that have been idle longer than idle_seconds."""
+        cutoff = time.time() - idle_seconds
+        conn = self._conn()
+        try:
+            conn.execute(
+                'DELETE FROM tokens WHERE last_active > 0 AND last_active < ?',
+                (cutoff,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
 
 tokens = _TokenStore()
+
+# Apply persisted security settings on startup
+try:
+    _sec_file = os.path.join(os.path.dirname(__file__), '..', 'data', 'security_settings.json')
+    if os.path.exists(_sec_file):
+        with open(_sec_file, 'r') as _sf:
+            _sec_cfg = json.load(_sf)
+        SESSION_IDLE_TIMEOUT = _sec_cfg.get('session_idle_timeout', SESSION_IDLE_TIMEOUT)
+        _USER_MAX_ATTEMPTS = _sec_cfg.get('user_lockout_attempts', _USER_MAX_ATTEMPTS)
+        _USER_LOCKOUT_TIME = _sec_cfg.get('user_lockout_duration', _USER_LOCKOUT_TIME)
+except Exception:
+    pass
 
 
 def generate_token(username='admin', role='admin'):
@@ -678,6 +724,8 @@ def require_auth(f):
         if not info or info['expires'] < datetime.now():
             tokens.pop(token, None)
             return jsonify({'error': 'Unauthorized'}), 401
+        # Update last activity for session idle timeout
+        tokens.touch(token)
         return f(*args, **kwargs)
     return decorated
 
@@ -750,6 +798,8 @@ _API_TO_APP = {
     '/api/encryption/': 'storage-manager',
     '/api/cache/': 'storage-manager',
     '/api/hardware/': 'system-settings',
+    '/api/security-advisor/': 'security-advisor',
+    '/api/security/': 'security-advisor',
 }
 
 # Admin-only apps — only role='admin' can access (matches admin_only: True in get_apps)
@@ -758,7 +808,7 @@ _ADMIN_ONLY_APPS = {
     'disk-repair', 'remote-log', 'surveillance',
     'system-settings', 'domains-manager', 'vm-manager', 'app-store',
     'fail2ban', 'wireguard', 'antivirus', 'power', 'ups', 'cloud-backup', 'rollback',
-    'cron',
+    'cron', 'security-advisor',
 }
 
 # ─── Role-based app access (3 roles: admin / user / family) ───
@@ -924,28 +974,97 @@ _rate_limiter = _EndpointRateLimiter()
 
 # ─── Brute-force protection ───
 _login_attempts = {}  # ip -> {'count': int, 'first': float, 'locked_until': float}
+_user_login_attempts = {}  # username -> {'count': int, 'first': float, 'locked_until': float}
 _login_lock = __import__('threading').Lock()
 _MAX_ATTEMPTS = 5
 _ATTEMPT_WINDOW = 300   # 5 minutes
 _LOCKOUT_TIME = 300     # 5 minute lockout after max attempts
+_USER_MAX_ATTEMPTS = 5
+_USER_LOCKOUT_TIME = 1800  # 30 minute lockout per account
 
 
-def _record_failed_login(client_ip):
-    """Record a failed login attempt and lock out if needed."""
+def _record_failed_login(client_ip, username=None):
+    """Record a failed login attempt and lock out IP/user if needed."""
     now = time.time()
     with _login_lock:
+        # IP-level lockout
         attempt = _login_attempts.get(client_ip, {'count': 0, 'first': now, 'locked_until': 0})
         attempt['count'] += 1
         if attempt['count'] >= _MAX_ATTEMPTS:
             attempt['locked_until'] = now + _LOCKOUT_TIME
-            attempt['count'] = 0  # reset count for next window after lockout
+            attempt['count'] = 0
         _login_attempts[client_ip] = attempt
+        # Per-user lockout (prevents distributed brute-force from rotating IPs)
+        if username:
+            ua = _user_login_attempts.get(username, {'count': 0, 'first': now, 'locked_until': 0})
+            if now - ua['first'] > _ATTEMPT_WINDOW:
+                ua = {'count': 0, 'first': now, 'locked_until': 0}
+            ua['count'] += 1
+            if ua['count'] >= _USER_MAX_ATTEMPTS:
+                ua['locked_until'] = now + _USER_LOCKOUT_TIME
+                ua['count'] = 0
+                try:
+                    from blueprints.notifications import notify_event
+                    notify_event('auth', 'warning',
+                                 f'Konto "{username}" zablokowane na {_USER_LOCKOUT_TIME // 60} min po {_USER_MAX_ATTEMPTS} nieudanych próbach logowania')
+                except Exception:
+                    pass
+            _user_login_attempts[username] = ua
+
+
+def _is_user_locked(username):
+    """Return remaining lockout seconds if user account is locked, else 0."""
+    if not username:
+        return 0
+    with _login_lock:
+        ua = _user_login_attempts.get(username)
+        if ua and time.time() < ua.get('locked_until', 0):
+            return int(ua['locked_until'] - time.time())
+    return 0
 
 
 
 def _log_auth_failure(username, ip):
     try:
         auth_logger.warning(f'Failed login attempt for user {username} from {ip}')
+    except Exception:
+        pass
+
+
+# ── Login notification (new device/IP detection) ──
+_KNOWN_IPS_FILE = os.path.join(os.path.dirname(__file__), '..', 'data', 'known_login_ips.json')
+
+
+def _check_login_notification(username, client_ip, user_agent):
+    """Send notification if login is from a previously unseen IP."""
+    try:
+        known = {}
+        if os.path.exists(_KNOWN_IPS_FILE):
+            with open(_KNOWN_IPS_FILE, 'r') as f:
+                known = json.load(f)
+
+        user_ips = known.get(username, [])
+        is_new = client_ip not in user_ips
+
+        if is_new:
+            # Record this IP
+            user_ips.append(client_ip)
+            # Keep last 50 IPs per user
+            known[username] = user_ips[-50:]
+            os.makedirs(os.path.dirname(_KNOWN_IPS_FILE), exist_ok=True)
+            with open(_KNOWN_IPS_FILE, 'w') as f:
+                json.dump(known, f, indent=2)
+
+            # Send notification
+            from blueprints.notifications import send_notification, push_inbox
+            ts = datetime.now().strftime('%Y-%m-%d %H:%M')
+            msg = f'Nowe logowanie: {username} z IP {client_ip} ({ts})'
+            if user_agent:
+                short_ua = user_agent[:80]
+                msg += f'\nPrzeglądarka: {short_ua}'
+            push_inbox(f'Nowe logowanie: {username}', msg,
+                       msg_type='warning', category='security')
+            send_notification('EthOS: Nowe logowanie', msg, 'auth', 'info')
     except Exception:
         pass
 
@@ -999,9 +1118,15 @@ def login():
 
     # User login — validate against host /etc/shadow
     safe_user = re.sub(r'[^a-zA-Z0-9_.-]', '', username)
+
+    # Check per-user account lockout (distributed brute-force protection)
+    user_locked = _is_user_locked(safe_user)
+    if user_locked:
+        return jsonify({'error': t('auth.too_many_attempts', remaining=user_locked)}), 429
+
     r = _host_run_base(f"getent shadow {shlex.quote(safe_user)}", timeout=10)
     if r.returncode != 0 or not r.stdout.strip():
-        _record_failed_login(client_ip)
+        _record_failed_login(client_ip, safe_user)
         _log_auth_failure(safe_user, client_ip)
         audit_log('auth.login.failure', f'Unknown user "{safe_user}" from {client_ip}', username=safe_user)
         return jsonify({'error': 'Invalid username or password'}), 401
@@ -1013,13 +1138,15 @@ def login():
         return jsonify({'error': 'Account locked'}), 401
 
     if not _verify_shadow_hash(password, stored_hash):
-        _record_failed_login(client_ip)
+        _record_failed_login(client_ip, safe_user)
         _log_auth_failure(safe_user, client_ip)
         audit_log('auth.login.failure', f'Bad password for "{safe_user}" from {client_ip}', username=safe_user)
         return jsonify({'error': 'Invalid username or password'}), 401
 
-    # Clear login attempts on success
+    # Clear login attempts on success (both IP and per-user)
     _login_attempts.pop(client_ip, None)
+    with _login_lock:
+        _user_login_attempts.pop(safe_user, None)
     _rate_limiter.reset(f'login:{client_ip}')
 
     # ─── TOTP / 2FA check ───
@@ -1048,6 +1175,9 @@ def login():
     _ensure_user_home_structure(safe_user)
     elog('system', 'info', f'Logowanie: {safe_user} (rola: {role})')
     audit_log('auth.login.success', f'User "{safe_user}" logged in (role: {role}) from {client_ip}', username=safe_user)
+
+    # Login notification — alert on new IP/device
+    _check_login_notification(safe_user, client_ip, request.headers.get('User-Agent', ''))
 
     pwd_change_required = _is_setup_done() and not os.path.exists(PASSWORD_CHANGED_MARKER)
 
@@ -1130,6 +1260,110 @@ def _is_sudo_mode():
 def get_sudo_status():
     """Sudo mode is always-on for admin users. Kept for API compat."""
     return jsonify({'ok': True, 'sudo_mode': _is_sudo_mode()})
+
+
+# ── Security settings API (alert thresholds, session timeout, lockout) ──
+_SECURITY_SETTINGS_FILE = os.path.join(os.path.dirname(__file__), '..', 'data', 'security_settings.json')
+
+
+def _load_security_settings():
+    defaults = {
+        'session_idle_timeout': SESSION_IDLE_TIMEOUT,
+        'user_lockout_attempts': _USER_MAX_ATTEMPTS,
+        'user_lockout_duration': _USER_LOCKOUT_TIME,
+        'login_notifications': True,
+        'alert_thresholds': {
+            'enabled': True, 'cpu': 90, 'ram': 90, 'disk': 90, 'temp': 80,
+        },
+    }
+    try:
+        if os.path.exists(_SECURITY_SETTINGS_FILE):
+            with open(_SECURITY_SETTINGS_FILE, 'r') as f:
+                defaults.update(json.load(f))
+    except Exception:
+        pass
+    return defaults
+
+
+@app.route('/api/security/settings', methods=['GET'])
+@require_auth
+def get_security_settings():
+    if not _is_sudo_mode():
+        return jsonify({'error': 'Admin only'}), 403
+    return jsonify(_load_security_settings())
+
+
+@app.route('/api/security/settings', methods=['POST'])
+@require_auth
+def set_security_settings():
+    global SESSION_IDLE_TIMEOUT, _USER_MAX_ATTEMPTS, _USER_LOCKOUT_TIME
+    if not _is_sudo_mode():
+        return jsonify({'error': 'Admin only'}), 403
+    data = request.get_json(silent=True) or {}
+    settings = _load_security_settings()
+    # Update allowed fields
+    if 'session_idle_timeout' in data:
+        val = max(300, min(86400, int(data['session_idle_timeout'])))  # 5min..24h
+        settings['session_idle_timeout'] = val
+        SESSION_IDLE_TIMEOUT = val
+    if 'user_lockout_attempts' in data:
+        settings['user_lockout_attempts'] = max(3, min(20, int(data['user_lockout_attempts'])))
+        _USER_MAX_ATTEMPTS = settings['user_lockout_attempts']
+    if 'user_lockout_duration' in data:
+        val = max(60, min(86400, int(data['user_lockout_duration'])))
+        settings['user_lockout_duration'] = val
+        _USER_LOCKOUT_TIME = val
+    if 'login_notifications' in data:
+        settings['login_notifications'] = bool(data['login_notifications'])
+    if 'alert_thresholds' in data:
+        at = data['alert_thresholds']
+        t_cfg = settings.get('alert_thresholds', {})
+        for k in ('enabled', 'cpu', 'ram', 'disk', 'temp'):
+            if k in at:
+                t_cfg[k] = at[k] if k == 'enabled' else max(50, min(99, int(at[k])))
+        settings['alert_thresholds'] = t_cfg
+    os.makedirs(os.path.dirname(_SECURITY_SETTINGS_FILE), exist_ok=True)
+    with open(_SECURITY_SETTINGS_FILE, 'w') as f:
+        json.dump(settings, f, indent=2)
+    # Also write alert thresholds to the file the resource alert loop reads
+    alert_path = os.path.join(os.path.dirname(__file__), '..', 'data', 'alert_thresholds.json')
+    with open(alert_path, 'w') as f:
+        json.dump(settings.get('alert_thresholds', {}), f, indent=2)
+    audit_log('security.settings', 'Security settings updated', username=get_current_user().get('username', 'admin'))
+    return jsonify({'ok': True})
+
+
+@app.route('/api/security/account-lockouts', methods=['GET'])
+@require_auth
+def get_account_lockouts():
+    """List currently locked out accounts (admin only)."""
+    if not _is_sudo_mode():
+        return jsonify({'error': 'Admin only'}), 403
+    now = time.time()
+    locked = []
+    with _login_lock:
+        for username, ua in _user_login_attempts.items():
+            remaining = ua.get('locked_until', 0) - now
+            if remaining > 0:
+                locked.append({'username': username, 'remaining': int(remaining)})
+    return jsonify({'locked': locked})
+
+
+@app.route('/api/security/unlock-account', methods=['POST'])
+@require_auth
+def unlock_account():
+    """Manually unlock a locked user account (admin only)."""
+    if not _is_sudo_mode():
+        return jsonify({'error': 'Admin only'}), 403
+    data = request.get_json(silent=True) or {}
+    username = data.get('username', '')
+    if not username:
+        return jsonify({'error': 'Username required'}), 400
+    with _login_lock:
+        _user_login_attempts.pop(username, None)
+    audit_log('security.unlock', f'Account "{username}" unlocked by admin',
+              username=get_current_user().get('username', 'admin'))
+    return jsonify({'ok': True})
 
 
 # ─────────────────────────── Language / i18n ───────────────────────────
@@ -10011,8 +10245,9 @@ if __name__ == '__main__':
         while True:
             _gv.sleep(3600)  # every hour
             now = datetime.now()
-            # Expired tokens
+            # Expired tokens + idle sessions
             tokens.prune_expired()
+            tokens.prune_idle(SESSION_IDLE_TIMEOUT)
             # Stale unlocked_folders entries for expired tokens
             with _uf_lock:
                 stale_uf = [t for t in _unlocked_folders if t not in tokens]
@@ -10024,6 +10259,11 @@ if __name__ == '__main__':
                 stale_la = [ip for ip, a in _login_attempts.items() if a.get('first', 0) < cutoff]
                 for ip in stale_la:
                     _login_attempts.pop(ip, None)
+                # Stale per-user lockouts
+                stale_ua = [u for u, a in _user_login_attempts.items()
+                            if a.get('first', 0) < cutoff and time.time() > a.get('locked_until', 0)]
+                for u in stale_ua:
+                    _user_login_attempts.pop(u, None)
             # Stale pending downloads (temp ZIP files older than 1 hour)
             now_ts = time.time()
             stale_dl = [did for did, info in _pending_downloads.items()
@@ -10038,6 +10278,136 @@ if __name__ == '__main__':
             # Stale upload sessions (older than session TTL)
             _upload_sessions_prune()
     socketio.start_background_task(_janitor_loop)
+
+    # ── Resource alerts — check thresholds every 60 seconds ──
+    _ALERT_THRESHOLDS_FILE = os.path.join(os.path.dirname(__file__), '..', 'data', 'alert_thresholds.json')
+    _alert_cooldowns = {}  # metric_key -> last_alert_ts
+
+    def _resource_alert_loop():
+        import gevent as _gv
+        import psutil
+        _gv.sleep(60)  # initial delay
+        while True:
+            try:
+                thresholds = {'cpu': 90, 'ram': 90, 'disk': 90, 'temp': 80, 'enabled': True}
+                if os.path.exists(_ALERT_THRESHOLDS_FILE):
+                    with open(_ALERT_THRESHOLDS_FILE, 'r') as f:
+                        thresholds.update(json.load(f))
+
+                if not thresholds.get('enabled', True):
+                    _gv.sleep(60)
+                    continue
+
+                now = time.time()
+                cooldown = 3600  # 1 hour between alerts per metric
+                alerts = []
+
+                # CPU
+                cpu_pct = psutil.cpu_percent(interval=1)
+                if cpu_pct >= thresholds.get('cpu', 90):
+                    if now - _alert_cooldowns.get('cpu', 0) > cooldown:
+                        alerts.append(('cpu', f'CPU: {cpu_pct:.0f}% (próg: {thresholds["cpu"]}%)'))
+                        _alert_cooldowns['cpu'] = now
+
+                # RAM
+                mem = psutil.virtual_memory()
+                if mem.percent >= thresholds.get('ram', 90):
+                    if now - _alert_cooldowns.get('ram', 0) > cooldown:
+                        alerts.append(('ram', f'RAM: {mem.percent:.0f}% (próg: {thresholds["ram"]}%)'))
+                        _alert_cooldowns['ram'] = now
+
+                # Disk usage
+                for part in psutil.disk_partitions():
+                    if part.mountpoint in ('/', '/mnt/data') or part.mountpoint.startswith('/mnt/pool'):
+                        try:
+                            usage = psutil.disk_usage(part.mountpoint)
+                            if usage.percent >= thresholds.get('disk', 90):
+                                key = f'disk:{part.mountpoint}'
+                                if now - _alert_cooldowns.get(key, 0) > cooldown:
+                                    alerts.append((key, f'Dysk {part.mountpoint}: {usage.percent:.0f}% (próg: {thresholds["disk"]}%)'))
+                                    _alert_cooldowns[key] = now
+                        except OSError:
+                            pass
+
+                # Temperature
+                temps = psutil.sensors_temperatures() if hasattr(psutil, 'sensors_temperatures') else {}
+                for name, entries in temps.items():
+                    for entry in entries:
+                        if entry.current and entry.current >= thresholds.get('temp', 80):
+                            key = f'temp:{name}'
+                            if now - _alert_cooldowns.get(key, 0) > cooldown:
+                                alerts.append((key, f'Temperatura {name}: {entry.current:.0f}°C (próg: {thresholds["temp"]}°C)'))
+                                _alert_cooldowns[key] = now
+                            break
+
+                # Fire alerts
+                for key, msg in alerts:
+                    try:
+                        from blueprints.notifications import send_notification, push_inbox
+                        push_inbox('Alarm zasobów', msg, msg_type='warning', category='system')
+                        send_notification('EthOS: Alarm zasobów', msg, 'storage', 'warning')
+                        elog('system', 'warning', msg)
+                    except Exception:
+                        pass
+
+            except Exception:
+                pass
+            _gv.sleep(60)
+
+    socketio.start_background_task(_resource_alert_loop)
+
+    # ── Service watchdog — monitor critical services ──
+    _WATCHDOG_RESTART_COUNT = {}  # service -> count
+    _WATCHDOG_MAX_RESTARTS = 3
+
+    def _service_watchdog_loop():
+        import gevent as _gv
+        _gv.sleep(120)  # wait for system to fully start
+        services = ['ethos']  # core service always monitored
+        while True:
+            try:
+                # Check which services are installed
+                for svc in ['nginx', 'smbd', 'docker']:
+                    r = _host_run_base(f'systemctl list-unit-files {svc}.service 2>/dev/null | grep -c {svc}', timeout=5)
+                    if r.returncode == 0 and r.stdout.strip() != '0' and svc not in services:
+                        services.append(svc)
+
+                for svc in services:
+                    if svc == 'ethos':
+                        continue  # don't restart ourselves
+                    r = _host_run_base(f'systemctl is-active {svc} 2>/dev/null', timeout=5)
+                    is_active = r.stdout.strip() == 'active'
+                    if not is_active:
+                        count = _WATCHDOG_RESTART_COUNT.get(svc, 0)
+                        if count < _WATCHDOG_MAX_RESTARTS:
+                            _host_run_base(f'systemctl restart {svc}', timeout=30)
+                            _WATCHDOG_RESTART_COUNT[svc] = count + 1
+                            elog('system', 'warning', f'Watchdog: usługa {svc} zrestartowana (próba {count + 1}/{_WATCHDOG_MAX_RESTARTS})')
+                            try:
+                                from blueprints.notifications import push_inbox
+                                push_inbox(f'Watchdog: {svc}', f'Usługa {svc} była nieaktywna i została zrestartowana.',
+                                           msg_type='warning', category='system')
+                            except Exception:
+                                pass
+                        elif count == _WATCHDOG_MAX_RESTARTS:
+                            _WATCHDOG_RESTART_COUNT[svc] = count + 1  # prevent repeated alerts
+                            msg = f'Watchdog: usługa {svc} nie odpowiada po {_WATCHDOG_MAX_RESTARTS} próbach restartu!'
+                            elog('system', 'error', msg)
+                            try:
+                                from blueprints.notifications import send_notification, push_inbox
+                                push_inbox(f'Watchdog: {svc} AWARIA', msg, msg_type='error', category='system')
+                                send_notification('EthOS: Awaria usługi', msg, 'docker', 'error')
+                            except Exception:
+                                pass
+                    else:
+                        # Service is healthy — reset restart counter
+                        _WATCHDOG_RESTART_COUNT.pop(svc, None)
+
+            except Exception:
+                pass
+            _gv.sleep(30)
+
+    socketio.start_background_task(_service_watchdog_loop)
 
     # Resume interrupted NasLink transfer (if any)
     gevent.spawn_later(5, _resume_interrupted_transfer)
