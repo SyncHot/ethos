@@ -563,27 +563,30 @@ function renderFM(body, state) {
         try {
             const data = await api('/storage/pool/list');
             const pools = data?.pools || [];
-            // Also detect USB/external drives mounted under /media
+            const isAdmin = NAS.user?.role === 'admin';
+            // USB/external drives: only shown to admins (Synology default)
             let usbDrives = [];
-            try {
-                const diskData = await api('/resources/disks');
-                const disks = diskData?.disks || diskData || [];
-                for (const d of disks) {
-                    if (d.is_usb && d.mountpoint && d.mountpoint.startsWith('/media/')) {
-                        usbDrives.push({
-                            name: d.label || d.model || d.device,
-                            mount_path: d.mountpoint,
-                            type: 'usb',
-                            device: (d.device || '').replace('/dev/', '').replace(/[0-9]+$/, ''),
-                            usage: d.total ? {
-                                total: d.total,
-                                used: d.used || 0,
-                                percent: d.percent || 0,
-                            } : null,
-                        });
+            if (isAdmin) {
+                try {
+                    const diskData = await api('/resources/disks');
+                    const disks = diskData?.disks || diskData || [];
+                    for (const d of disks) {
+                        if (d.is_usb && d.mountpoint && d.mountpoint.startsWith('/media/')) {
+                            usbDrives.push({
+                                name: d.label || d.model || d.device,
+                                mount_path: d.mountpoint,
+                                type: 'usb',
+                                device: (d.device || '').replace('/dev/', '').replace(/[0-9]+$/, ''),
+                                usage: d.total ? {
+                                    total: d.total,
+                                    used: d.used || 0,
+                                    percent: d.percent || 0,
+                                } : null,
+                            });
+                        }
                     }
-                }
-            } catch (_) {}
+                } catch (_) {}
+            }
             state.storagePools = [
                 ...pools.filter(p => p.mounted).map(p => ({ ...p, type: 'pool' })),
                 ...usbDrives,
@@ -1987,6 +1990,15 @@ function renderFM(body, state) {
                     console.log(`[FM] navigateTo: fetching API for "${path}"`);
                     data = await api(`/files/list?path=${encodeURIComponent(path)}`);
                     console.log(`[FM] navigateTo: API returned path="${data?.path}", ${data?.items?.length} items`);
+                    // Auto-retry once for sleeping USB disks
+                    if (data?.error && path.startsWith('/media/') && !state._usbRetrying) {
+                        state._usbRetrying = true;
+                        const retryList = body.querySelector('#fm-file-list');
+                        if (retryList) retryList.innerHTML = `<div class="fm-empty"><i class="fas fa-spinner fa-spin"></i><span>${t('Budzenie dysku USB…')}</span></div>`;
+                        await new Promise(r => setTimeout(r, 3000));
+                        data = await api(`/files/list?path=${encodeURIComponent(path)}`);
+                        state._usbRetrying = false;
+                    }
                     // If a newer navigation started while we were waiting, bail out
                     if (myVersion !== state._navVersion) {
                         console.log(`[FM] navigateTo: STALE v${myVersion} (current v${state._navVersion}), bailing`);

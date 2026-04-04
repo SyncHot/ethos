@@ -205,9 +205,9 @@ def try_wake_path(host_path):
         # Check if requested path is under this mountpoint
         if host_path == mp or host_path.startswith(mp + '/'):
             # First: poke the disk with a lightweight stat to wake from standby
-            host_run(f"stat {Q(mp)} >/dev/null 2>&1", timeout=5)
+            host_run(f"stat {Q(mp)} >/dev/null 2>&1", timeout=15)
             # Then check if still actually mounted
-            mnt_check = host_run(f"findmnt -n -o TARGET {Q(mp)} 2>/dev/null", timeout=5)
+            mnt_check = host_run(f"findmnt -n -o TARGET {Q(mp)} 2>/dev/null", timeout=10)
             if mnt_check.returncode == 0 and mnt_check.stdout.strip() == mp:
                 _disable_usb_autosuspend(dev_name)
                 return True

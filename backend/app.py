@@ -4299,7 +4299,7 @@ def files_list():
         wake_path = real_path
         if wake_path:
             try:
-                _fs_call(try_wake_path, wake_path, timeout=10)
+                _fs_call(try_wake_path, wake_path, timeout=25)
             except TimeoutError:
                 return jsonify({'error': 'Disk not responding — try again shortly'}), 504
 

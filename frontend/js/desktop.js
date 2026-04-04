@@ -1317,6 +1317,11 @@ function closeUsbTray() {
 
 async function loadUsbTrayDrives() {
     try {
+        // USB tray: admin-only (Synology default — non-admins don't see external devices)
+        if (NAS.user?.role !== 'admin') {
+            document.getElementById('usb-tray-btn').classList.add('hidden');
+            return;
+        }
         const data = await api('/resources/disks');
         const disks = data.disks || data || [];
         const usbDrives = disks.filter(d => d.is_usb && d.mountpoint);
