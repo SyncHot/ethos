@@ -49,6 +49,7 @@ AppRegistry['file-manager'] = function (appDef, launchOpts) {
         focusedIndex: -1,      // keyboard-focused item index
         selectMode: false,     // mobile select mode
         sambaShares: [],       // [{ name, path, ... }] loaded from backend
+        storagePools: [],      // [{ name, mount_path, usage, ... }] from pool/list
         favorites: [],         // [{ path, label }]
         photoFavorites: [],    // ['/path/to/img.jpg', ...]
         gallerySources: [],    // [{ path, label }] gallery folders
@@ -340,6 +341,26 @@ function renderFM(body, state) {
     }
 
     // ─── Sidebar ───
+    function _fmPoolIcon(pool) {
+        if (pool.type === 'usb') return 'fa-usb';
+        if (pool.raid_level) return 'fa-shield-halved';
+        return 'fa-hard-drive';
+    }
+    function _fmPoolColor(pool) {
+        if (pool.type === 'usb') return '#60a5fa';
+        if (pool.raid_level) return '#a78bfa';
+        return '#34d399';
+    }
+    function _fmUsageBar(usage) {
+        if (!usage) return '';
+        const pct = Math.round(usage.percent || 0);
+        const color = pct > 90 ? '#ef4444' : pct > 75 ? '#f59e0b' : 'var(--accent)';
+        const total = usage.total >= 1e12 ? (usage.total / 1e12).toFixed(1) + ' TB'
+                    : usage.total >= 1e9 ? (usage.total / 1e9).toFixed(1) + ' GB'
+                    : (usage.total / 1e6).toFixed(0) + ' MB';
+        return `<div class="fm-pool-usage" title="${pct}% — ${total}"><div class="fm-pool-usage-fill" style="width:${pct}%;background:${color}"></div></div>`;
+    }
+
     function renderSidebar() {
         const sidebar = body.querySelector('#fm-sidebar');
         state.sudoMode = !!(NAS.sudoMode || NAS.user?.sudo_mode);
@@ -391,6 +412,18 @@ function renderFM(body, state) {
                     <i class="fas ${r.icon}"></i> ${r.label}
                 </button>
             `).join('')}
+            ${state.storagePools.length > 0 ? `
+                <div class="fm-sidebar-divider"></div>
+                <div class="fm-sidebar-section">
+                    <div class="fm-sidebar-label"><i class="fas fa-database" style="color:#34d399"></i> ${t('Dyski')}</div>
+                    ${state.storagePools.map(p => `
+                        <button class="fm-tree-item fm-pool-item${state.path.startsWith(p.mount_path) ? ' active' : ''}" data-path="${p.mount_path}" title="${p.mount_path}${p.usage ? ' — ' + Math.round(p.usage.percent) + '% ' + t('zajęte') : ''}">
+                            <i class="fas ${_fmPoolIcon(p)}" style="color:${_fmPoolColor(p)}"></i>
+                            <span class="fm-pool-label">${p.name}${_fmUsageBar(p.usage)}</span>
+                        </button>
+                    `).join('')}
+                </div>
+            ` : ''}
             <div class="fm-sidebar-divider"></div>
             <button class="fm-tree-item fm-trash-btn${state.path === '/__trash__' ? ' active' : ''}" data-path="/__trash__">
                 <i class="fas fa-trash-alt app-icon-danger"></i> ${t('Kosz')}
@@ -523,6 +556,40 @@ function renderFM(body, state) {
             state.sambaShares = Array.isArray(data) ? data : (data.shares || []);
         } catch (e) {
             state.sambaShares = [];
+        }
+    }
+
+    async function loadStoragePools() {
+        try {
+            const data = await api('/storage/pool/list');
+            const pools = data?.pools || [];
+            // Also detect USB/external drives mounted under /media
+            let usbDrives = [];
+            try {
+                const diskData = await api('/resources/disks');
+                const disks = diskData?.disks || diskData || [];
+                for (const d of disks) {
+                    if (d.is_usb && d.mountpoint && d.mountpoint.startsWith('/media/')) {
+                        usbDrives.push({
+                            name: d.label || d.model || d.device,
+                            mount_path: d.mountpoint,
+                            type: 'usb',
+                            usage: d.total ? {
+                                total: d.total,
+                                used: d.used || 0,
+                                percent: d.percent || 0,
+                            } : null,
+                        });
+                    }
+                }
+            } catch (_) {}
+            state.storagePools = [
+                ...pools.filter(p => p.mounted).map(p => ({ ...p, type: 'pool' })),
+                ...usbDrives,
+            ];
+            renderSidebar();
+        } catch (e) {
+            state.storagePools = [];
         }
     }
 
@@ -4671,6 +4738,7 @@ function renderFM(body, state) {
     loadFavorites();
     loadPhotoFavorites();
     loadSambaShares();
+    loadStoragePools();
     _fmLoadGallerySources();
     navigateTo(state.path).then(() => {
         if (state.initialSelect) {

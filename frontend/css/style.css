@@ -1946,6 +1946,30 @@ input[type="checkbox"]:hover {
 }
 .fm-fav-remove:hover { color: var(--danger); }
 
+/* Pool sidebar items */
+.fm-pool-label {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1;
+    font-size: 12px;
+    line-height: 1.2;
+}
+.fm-pool-usage {
+    width: 100%;
+    height: 3px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 2px;
+    overflow: hidden;
+}
+.fm-pool-usage-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.3s ease;
+}
+.fm-pool-item.active .fm-pool-usage { background: rgba(255,255,255,0.15); }
+
 /* File List */
 .fm-file-list {
     flex: 1;
