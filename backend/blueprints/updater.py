@@ -485,6 +485,16 @@ def rollback_slot():
                 subprocess.run(['grub-editenv', grubenv, 'set', 'boot_counter=0'],
                                capture_output=True, timeout=10)
 
+        # Update ab_slots.json active field
+        try:
+            with open(ab_file) as f:
+                ab_data = json.load(f)
+            ab_data['active'] = target
+            with open(ab_file, 'w') as f:
+                json.dump(ab_data, f, indent=2)
+        except Exception:
+            pass
+
         _emit('update_log', {'message': f'Rollback: switching from slot {active.upper()} to {target.upper()}'})
 
         # Schedule reboot
@@ -1334,13 +1344,19 @@ def _do_ab_slot_update_squashfs(pkg_dir, new_ver, ab_slots_file):
             finally:
                 subprocess.run(['umount', sqsh_mount], capture_output=True, timeout=15)
 
-        # 7) Copy ab_slots.json to inactive overlay
+        # 7) Copy ab_slots.json to inactive overlay with updated active field
         inactive_data_dir = os.path.join(overlay_upper, 'opt/ethos/data')
         os.makedirs(inactive_data_dir, exist_ok=True)
         dest_ab = os.path.join(inactive_data_dir, 'ab_slots.json')
         try:
+            with open(ab_slots_file) as _f:
+                ab_data = json.load(_f)
+            ab_data['active'] = inactive
             if os.path.realpath(ab_slots_file) != os.path.realpath(dest_ab):
-                shutil.copy2(ab_slots_file, dest_ab)
+                with open(dest_ab, 'w') as _f:
+                    json.dump(ab_data, _f, indent=2)
+            with open(ab_slots_file, 'w') as _f:
+                json.dump(ab_data, _f, indent=2)
         except Exception:
             pass
         with open(os.path.join(inactive_data_dir, 'active_slot'), 'w') as f:
@@ -1570,11 +1586,18 @@ def _do_ab_slot_update(pkg_dir, new_ver, ab_slots_file):
         with open(os.path.join(inactive_data, 'active_slot'), 'w') as f:
             f.write(inactive)
 
-        # Copy ab_slots.json to inactive (skip if data/ is a symlink to same location)
+        # Copy ab_slots.json to inactive with updated active field
         dest_ab = os.path.join(inactive_data, 'ab_slots.json')
         try:
+            with open(ab_slots_file) as _f:
+                ab_data = json.load(_f)
+            ab_data['active'] = inactive
             if os.path.realpath(ab_slots_file) != os.path.realpath(dest_ab):
-                shutil.copy2(ab_slots_file, dest_ab)
+                with open(dest_ab, 'w') as _f:
+                    json.dump(ab_data, _f, indent=2)
+            # Update current copy so status endpoint reflects pending switch
+            with open(ab_slots_file, 'w') as _f:
+                json.dump(ab_data, _f, indent=2)
         except Exception:
             pass  # non-critical — shared data partition already has the file
 

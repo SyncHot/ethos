@@ -9888,6 +9888,21 @@ def _mark_boot_success():
         except Exception:
             pass
 
+        # Sync ab_slots.json "active" field with actual boot slot
+        _ab_file = os.path.join(ETHOS_ROOT, 'data', 'ab_slots.json')
+        try:
+            if os.path.isfile(_ab_file):
+                with open(_ab_file) as f:
+                    _ab = json.load(f)
+                if _ab.get('active') != slot:
+                    _ab['active'] = slot
+                    with open(_ab_file, 'w') as f:
+                        json.dump(_ab, f, indent=2)
+                    logging.getLogger('boot').info(
+                        'Updated ab_slots.json active=%s', slot)
+        except Exception:
+            pass
+
     except Exception as e:
         logging.getLogger('boot').warning('Failed to mark boot success: %s', e)
 
