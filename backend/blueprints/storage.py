@@ -5,6 +5,7 @@ USB hotplug monitoring.
 """
 
 import json
+import logging
 import os
 import re
 import subprocess
@@ -220,6 +221,7 @@ def init_storage(sio):
     global _socketio
     _socketio = sio
     _load_keepalive()
+    sio.start_background_task(_health_monitor_loop)
 
 
 def get_usb_notifications():
@@ -3614,3 +3616,531 @@ def pool_delete(pool_name):
     steps.append("Pool removed from configuration")
 
     return jsonify({"ok": True, "steps": steps})
+
+
+# ── Storage Health Monitor ─────────────────────────────────────────────
+
+_HEALTH_FILE = data_path('storage_health.json')
+_HEALTH_INTERVAL = 300  # 5 minutes
+
+
+def _health_monitor_loop():
+    """Periodic storage health check — SMART, RAID, disk usage."""
+    import gevent
+    gevent.sleep(60)  # Wait for system to stabilize after boot
+    logger = logging.getLogger('storage')
+
+    while True:
+        try:
+            alerts = []
+            now = time.strftime('%Y-%m-%dT%H:%M:%S')
+
+            # 1) SMART health check — all non-removable disks
+            r = _host_run_base("lsblk -dn -o NAME,TRAN,TYPE 2>/dev/null")
+            if r.returncode == 0:
+                for line in r.stdout.strip().splitlines():
+                    parts = line.split()
+                    if len(parts) < 3:
+                        continue
+                    dname, tran, dtype = parts[0], parts[1] if len(parts) > 1 else '', parts[-1]
+                    if dtype != 'disk' or tran == 'usb':
+                        continue
+                    sr = _host_run_base(f"smartctl -H /dev/{_q_imported(dname)} 2>/dev/null", timeout=15)
+                    if 'FAILED' in (sr.stdout or ''):
+                        alerts.append({'type': 'smart', 'level': 'error', 'disk': dname,
+                                       'message': f'SMART health FAILED on /dev/{dname}'})
+                    elif sr.returncode not in (0, 4) and 'PASSED' not in (sr.stdout or ''):
+                        pass  # SMART not available, skip
+
+            # 2) RAID status check
+            r = _host_run_base("cat /proc/mdstat 2>/dev/null")
+            if r.returncode == 0 and r.stdout:
+                current_md = None
+                for line in r.stdout.splitlines():
+                    m = re.match(r'^(md\d+)\s*:', line)
+                    if m:
+                        current_md = m.group(1)
+                    if current_md and '_' in line:
+                        bm = re.search(r'\[([U_]+)\]', line)
+                        if bm and '_' in bm.group(1):
+                            alerts.append({'type': 'raid', 'level': 'error', 'array': current_md,
+                                           'message': f'RAID array /dev/{current_md} is DEGRADED ({bm.group(1)})'})
+                            current_md = None
+
+            # 3) Disk usage check (>90%)
+            r = _host_run_base("df -B1 --output=target,pcent 2>/dev/null | tail -n +2")
+            if r.returncode == 0:
+                for line in r.stdout.strip().splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = line.rsplit(None, 1)
+                    if len(parts) < 2:
+                        continue
+                    mount, pct = parts[0].strip(), parts[1].replace('%', '').strip()
+                    try:
+                        pval = int(pct)
+                    except ValueError:
+                        continue
+                    if pval >= 90 and not mount.startswith(('/snap', '/run', '/sys', '/proc', '/dev')):
+                        alerts.append({'type': 'disk_usage', 'level': 'warning' if pval < 95 else 'error',
+                                       'mount': mount, 'percent': pval,
+                                       'message': f'Disk usage at {pval}% on {mount}'})
+
+            # Save health state
+            health = {'last_check': now, 'alerts': alerts, 'ok': len(alerts) == 0}
+            try:
+                with open(_HEALTH_FILE, 'w') as f:
+                    json.dump(health, f, indent=2)
+            except Exception as e:
+                logger.warning('Failed to write health file: %s', e)
+
+            # Send notifications for new alerts
+            if alerts:
+                try:
+                    from blueprints.notifications import send_notification, push_inbox
+                    for a in alerts:
+                        cat = 'smart' if a['type'] == 'smart' else 'raid' if a['type'] == 'raid' else 'storage'
+                        lvl = a.get('level', 'warning')
+                        send_notification('\u26a0\ufe0f Storage Alert', a['message'], category=cat, level=lvl)
+                        push_inbox('Storage Alert', a['message'], msg_type=lvl, category='storage',
+                                   action_app='storage-manager', action_tab='diagnostics')
+                except Exception as e:
+                    logger.warning('Failed to send health notification: %s', e)
+
+            # Emit via SocketIO for live dashboard
+            if _socketio:
+                _socketio.emit('storage_health', health)
+
+        except Exception as e:
+            logger.warning('Health monitor error: %s', e)
+
+        import gevent
+        gevent.sleep(_HEALTH_INTERVAL)
+
+
+@storage_bp.route('/health')
+@admin_required
+def storage_health():
+    """Get current storage health status."""
+    try:
+        with open(_HEALTH_FILE) as f:
+            return jsonify(json.load(f))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return jsonify({'last_check': None, 'alerts': [], 'ok': True})
+
+
+# ── SMART Test Scheduling ──────────────────────────────────────────────
+
+_SMART_SCHEDULE_FILE = data_path('smart_schedule.json')
+
+
+def _load_smart_schedule():
+    try:
+        with open(_SMART_SCHEDULE_FILE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {'tests': []}
+
+
+def _save_smart_schedule(data):
+    os.makedirs(os.path.dirname(_SMART_SCHEDULE_FILE), exist_ok=True)
+    with open(_SMART_SCHEDULE_FILE, 'w') as f:
+        json.dump(data, f, indent=2)
+
+
+@storage_bp.route('/smart/test', methods=['POST'])
+@admin_required
+def smart_test_trigger():
+    """Trigger a SMART self-test on a disk."""
+    data = request.get_json(force=True)
+    disk = data.get('disk', '').strip()
+    test_type = data.get('type', 'short')  # short, long, conveyance
+
+    if not disk or not re.match(r'^[a-zA-Z0-9]+$', disk):
+        return jsonify({'error': 'Invalid disk name'}), 400
+    if test_type not in ('short', 'long', 'conveyance'):
+        return jsonify({'error': 'Invalid test type (short/long/conveyance)'}), 400
+
+    r = _host_run_base(f"smartctl -t {_q_imported(test_type)} /dev/{_q_imported(disk)} 2>&1", timeout=15)
+
+    # Parse expected completion time from output
+    est_minutes = None
+    for line in (r.stdout or '').splitlines():
+        m = re.search(r'Please wait (\d+) minutes', line)
+        if m:
+            est_minutes = int(m.group(1))
+            break
+
+    if r.returncode in (0, 4):
+        return jsonify({'ok': True, 'message': f'{test_type} test started on /dev/{disk}',
+                        'estimated_minutes': est_minutes})
+    else:
+        return jsonify({'error': f'Failed to start test: {(r.stdout or r.stderr or "unknown error")[:200]}'}), 500
+
+
+@storage_bp.route('/smart/test/result')
+@admin_required
+def smart_test_result():
+    """Get SMART self-test log for a disk."""
+    disk = request.args.get('disk', '').strip()
+    if not disk or not re.match(r'^[a-zA-Z0-9]+$', disk):
+        return jsonify({'error': 'Invalid disk name'}), 400
+
+    r = _host_run_base(f"smartctl -l selftest /dev/{_q_imported(disk)} 2>&1", timeout=15)
+
+    tests = []
+    if r.returncode in (0, 4) and r.stdout:
+        in_table = False
+        for line in r.stdout.splitlines():
+            if 'Num' in line and 'Test_Description' in line:
+                in_table = True
+                continue
+            if in_table and line.strip():
+                parts = line.split()
+                if len(parts) >= 5 and parts[0].startswith('#'):
+                    test_entry = {
+                        'num': parts[0],
+                        'type': parts[1] if len(parts) > 1 else '',
+                        'status': ' '.join(parts[2:-2]) if len(parts) > 4 else parts[2] if len(parts) > 2 else '',
+                        'remaining': parts[-2] if len(parts) > 3 else '',
+                        'lifetime_hours': parts[-1] if len(parts) > 4 else '',
+                    }
+                    tests.append(test_entry)
+
+    # Check if a test is currently running
+    running = False
+    progress = None
+    r2 = _host_run_base(f"smartctl -c /dev/{_q_imported(disk)} 2>&1", timeout=10)
+    if r2.returncode in (0, 4) and r2.stdout:
+        for line in r2.stdout.splitlines():
+            if 'Self-test execution status' in line and 'progress' in line.lower():
+                running = True
+                m = re.search(r'(\d+)%', line)
+                if m:
+                    progress = 100 - int(m.group(1))  # smartctl shows remaining %, we want completed %
+
+    return jsonify({'tests': tests, 'running': running, 'progress': progress})
+
+
+@storage_bp.route('/smart/schedule', methods=['GET'])
+@admin_required
+def smart_schedule_list():
+    """Get all scheduled SMART tests."""
+    return jsonify(_load_smart_schedule())
+
+
+@storage_bp.route('/smart/schedule', methods=['POST'])
+@admin_required
+def smart_schedule_add():
+    """Add a scheduled SMART test."""
+    data = request.get_json(force=True)
+    disk = data.get('disk', '').strip()
+    test_type = data.get('type', 'short')
+    frequency = data.get('frequency', 'weekly')  # daily, weekly, monthly
+
+    if not disk or not re.match(r'^[a-zA-Z0-9]+$', disk):
+        return jsonify({'error': 'Invalid disk name'}), 400
+    if test_type not in ('short', 'long', 'conveyance'):
+        return jsonify({'error': 'Invalid test type'}), 400
+    if frequency not in ('daily', 'weekly', 'monthly'):
+        return jsonify({'error': 'Invalid frequency'}), 400
+
+    cron_map = {
+        'daily': {'minute': '0', 'hour': '3', 'dom': '*', 'month': '*', 'dow': '*'},
+        'weekly': {'minute': '0', 'hour': '3', 'dom': '*', 'month': '*', 'dow': '0'},
+        'monthly': {'minute': '0', 'hour': '3', 'dom': '1', 'month': '*', 'dow': '*'},
+    }
+    cron = cron_map[frequency]
+
+    schedule = _load_smart_schedule()
+
+    # Check for duplicate
+    for t in schedule.get('tests', []):
+        if t['disk'] == disk and t['type'] == test_type:
+            return jsonify({'error': f'Test already scheduled for {disk}'}), 409
+
+    entry = {
+        'id': f'{disk}_{test_type}_{int(time.time())}',
+        'disk': disk,
+        'type': test_type,
+        'frequency': frequency,
+        'cron': cron,
+        'enabled': True,
+        'created': time.strftime('%Y-%m-%dT%H:%M:%S'),
+        'last_run': None,
+        'last_result': None,
+    }
+    schedule.setdefault('tests', []).append(entry)
+    _save_smart_schedule(schedule)
+
+    # Register cron job
+    cmd = f"smartctl -t {test_type} /dev/{disk}"
+    _register_cron_job(cron, cmd, f'SMART {test_type} test on {disk}')
+
+    return jsonify({'ok': True, 'test': entry})
+
+
+@storage_bp.route('/smart/schedule/<test_id>', methods=['DELETE'])
+@admin_required
+def smart_schedule_delete(test_id):
+    """Remove a scheduled SMART test."""
+    schedule = _load_smart_schedule()
+    tests = schedule.get('tests', [])
+    target = None
+    for t in tests:
+        if t.get('id') == test_id:
+            target = t
+            break
+
+    if not target:
+        return jsonify({'error': 'Scheduled test not found'}), 404
+
+    # Remove cron job
+    cmd = f"smartctl -t {target['type']} /dev/{target['disk']}"
+    _unregister_cron_job(cmd)
+
+    schedule['tests'] = [t for t in tests if t.get('id') != test_id]
+    _save_smart_schedule(schedule)
+    return jsonify({'ok': True})
+
+
+def _register_cron_job(cron, command, description):
+    """Add a cron job to root crontab. Idempotent."""
+    r = _host_run_base("sudo -n crontab -l 2>/dev/null || true")
+    existing = r.stdout or ''
+    if command in existing:
+        return  # Already exists
+    line = f"# DESC: {description}\n{cron['minute']} {cron['hour']} {cron['dom']} {cron['month']} {cron['dow']} {command}\n"
+    new_crontab = existing.rstrip('\n') + '\n' + line
+    _host_run_base(f"echo {_q_imported(new_crontab)} | sudo -n crontab -")
+
+
+def _unregister_cron_job(command):
+    """Remove a cron job from root crontab by command match."""
+    r = _host_run_base("sudo -n crontab -l 2>/dev/null || true")
+    if not r.stdout:
+        return
+    lines = r.stdout.splitlines()
+    filtered = []
+    skip_next = False
+    for line in lines:
+        if skip_next:
+            skip_next = False
+            continue
+        if command in line:
+            continue
+        if line.startswith('# DESC:'):
+            idx = lines.index(line)
+            if idx + 1 < len(lines) and command in lines[idx + 1]:
+                skip_next = True
+                continue
+        filtered.append(line)
+    new_crontab = '\n'.join(filtered) + '\n'
+    _host_run_base(f"echo {_q_imported(new_crontab)} | sudo -n crontab -")
+
+
+# ── Storage Maintenance ────────────────────────────────────────────────
+
+_MAINT_DB = os.path.join(os.environ.get('ETHOS_LOG_DIR', '/opt/ethos/logs'), 'maintenance.db')
+_active_maintenance = {}  # {task_id: {type, target, started, pid}}
+
+
+def _init_maint_db():
+    """Initialize maintenance history SQLite database."""
+    import sqlite3
+    conn = sqlite3.connect(_MAINT_DB)
+    conn.execute('''CREATE TABLE IF NOT EXISTS maintenance_history (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        target TEXT NOT NULL,
+        started TEXT NOT NULL,
+        finished TEXT,
+        status TEXT DEFAULT 'running',
+        result TEXT,
+        duration_sec REAL
+    )''')
+    conn.commit()
+    conn.close()
+
+
+_init_maint_db()
+
+
+@storage_bp.route('/maintenance/start', methods=['POST'])
+@admin_required
+def maintenance_start():
+    """Start a maintenance task: scrub, raid-check, or trim."""
+    data = request.get_json(force=True)
+    mtype = data.get('type', '').strip()
+    target = data.get('target', '').strip()
+
+    if mtype not in ('scrub', 'raid-check', 'trim'):
+        return jsonify({'error': 'Invalid type (scrub/raid-check/trim)'}), 400
+    if not target:
+        return jsonify({'error': 'Target required'}), 400
+
+    # Validate target based on type
+    if mtype == 'scrub':
+        if not target.startswith('/') or '..' in target:
+            return jsonify({'error': 'Invalid mount path'}), 400
+        r = _host_run_base(f"stat -f -c %T {_q_imported(target)} 2>/dev/null")
+        if 'btrfs' not in (r.stdout or '').lower():
+            return jsonify({'error': f'{target} is not a btrfs filesystem'}), 400
+        cmd = f"btrfs scrub start -B {_q_imported(target)}"
+
+    elif mtype == 'raid-check':
+        if not re.match(r'^md\d+$', target):
+            return jsonify({'error': 'Invalid RAID device name'}), 400
+        cmd = f"echo check | sudo -n tee /sys/block/{_q_imported(target)}/md/sync_action"
+
+    elif mtype == 'trim':
+        if not target.startswith('/') or '..' in target:
+            return jsonify({'error': 'Invalid mount path'}), 400
+        cmd = f"fstrim -v {_q_imported(target)}"
+
+    # Check for duplicate running task
+    for tid, task in _active_maintenance.items():
+        if task['type'] == mtype and task['target'] == target and task['status'] == 'running':
+            return jsonify({'error': f'{mtype} already running on {target}'}), 409
+
+    task_id = f"{mtype}_{int(time.time())}"
+    started = time.strftime('%Y-%m-%dT%H:%M:%S')
+
+    # Record in DB
+    import sqlite3
+    conn = sqlite3.connect(_MAINT_DB)
+    conn.execute('INSERT INTO maintenance_history (id, type, target, started) VALUES (?, ?, ?, ?)',
+                 (task_id, mtype, target, started))
+    conn.commit()
+    conn.close()
+
+    _active_maintenance[task_id] = {'type': mtype, 'target': target, 'started': started, 'status': 'running'}
+
+    # Run in background
+    def _run_task():
+        logger = logging.getLogger('storage')
+        result_text = ''
+        status = 'completed'
+        try:
+            r = _host_run_base(cmd, timeout=7200)  # 2 hour timeout for scrub
+            result_text = (r.stdout or '') + (r.stderr or '')
+            if r.returncode != 0:
+                status = 'failed'
+                result_text = f'Exit code {r.returncode}: {result_text}'
+        except Exception as e:
+            status = 'failed'
+            result_text = str(e)
+
+        finished = time.strftime('%Y-%m-%dT%H:%M:%S')
+        duration = time.time() - time.mktime(time.strptime(started, '%Y-%m-%dT%H:%M:%S'))
+
+        try:
+            conn2 = sqlite3.connect(_MAINT_DB)
+            conn2.execute('UPDATE maintenance_history SET finished=?, status=?, result=?, duration_sec=? WHERE id=?',
+                          (finished, status, result_text[:2000], duration, task_id))
+            conn2.commit()
+            conn2.close()
+        except Exception as e2:
+            logger.warning('Failed to update maintenance record: %s', e2)
+
+        _active_maintenance[task_id]['status'] = status
+        _active_maintenance[task_id]['finished'] = finished
+        _active_maintenance[task_id]['result'] = result_text[:500]
+
+        # Notify on failure
+        if status == 'failed':
+            try:
+                from blueprints.notifications import send_notification, push_inbox
+                send_notification('\u26a0\ufe0f Maintenance Failed', f'{mtype} on {target} failed: {result_text[:200]}',
+                                  category='storage', level='warning')
+                push_inbox('Maintenance Failed', f'{mtype} on {target} failed', msg_type='warning', category='storage')
+            except Exception:
+                pass
+
+        if _socketio:
+            _socketio.emit('maintenance_complete', {'task_id': task_id, 'status': status, 'type': mtype, 'target': target})
+
+    if _socketio:
+        _socketio.start_background_task(_run_task)
+    else:
+        import gevent
+        gevent.spawn(_run_task)
+
+    return jsonify({'ok': True, 'task_id': task_id, 'message': f'{mtype} started on {target}'})
+
+
+@storage_bp.route('/maintenance/status')
+@admin_required
+def maintenance_status():
+    """Get status of active maintenance tasks + RAID sync progress."""
+    tasks = []
+    for tid, task in list(_active_maintenance.items()):
+        entry = {**task, 'id': tid}
+
+        # For raid-check, get sync progress from /proc/mdstat
+        if task['type'] == 'raid-check' and task['status'] == 'running':
+            r = _host_run_base(f"cat /sys/block/{_q_imported(task['target'])}/md/sync_completed 2>/dev/null")
+            if r.returncode == 0 and '/' in (r.stdout or ''):
+                parts = r.stdout.strip().split('/')
+                try:
+                    done, total = int(parts[0].strip()), int(parts[1].strip())
+                    entry['progress'] = round(done / total * 100, 1) if total > 0 else 0
+                except (ValueError, ZeroDivisionError):
+                    pass
+            # Check if still running
+            r2 = _host_run_base(f"cat /sys/block/{_q_imported(task['target'])}/md/sync_action 2>/dev/null")
+            if (r2.stdout or '').strip() == 'idle':
+                task['status'] = 'completed'
+                entry['status'] = 'completed'
+
+        tasks.append(entry)
+
+    return jsonify({'tasks': tasks})
+
+
+@storage_bp.route('/maintenance/history')
+@admin_required
+def maintenance_history():
+    """Get maintenance history from SQLite."""
+    limit = request.args.get('limit', 50, type=int)
+    import sqlite3
+    conn = sqlite3.connect(_MAINT_DB)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute('SELECT * FROM maintenance_history ORDER BY started DESC LIMIT ?', (limit,)).fetchall()
+    conn.close()
+    return jsonify({'history': [dict(r) for r in rows]})
+
+
+@storage_bp.route('/maintenance/schedule', methods=['POST'])
+@admin_required
+def maintenance_schedule():
+    """Schedule a recurring maintenance task via cron."""
+    data = request.get_json(force=True)
+    mtype = data.get('type', '').strip()
+    target = data.get('target', '').strip()
+    frequency = data.get('frequency', 'weekly')
+
+    if mtype not in ('scrub', 'raid-check', 'trim'):
+        return jsonify({'error': 'Invalid type'}), 400
+    if not target:
+        return jsonify({'error': 'Target required'}), 400
+    if frequency not in ('daily', 'weekly', 'monthly'):
+        return jsonify({'error': 'Invalid frequency'}), 400
+
+    cron_map = {
+        'daily': {'minute': '0', 'hour': '4', 'dom': '*', 'month': '*', 'dow': '*'},
+        'weekly': {'minute': '0', 'hour': '4', 'dom': '*', 'month': '*', 'dow': '0'},
+        'monthly': {'minute': '0', 'hour': '4', 'dom': '1', 'month': '*', 'dow': '*'},
+    }
+    cron = cron_map[frequency]
+
+    if mtype == 'scrub':
+        cmd = f"btrfs scrub start {target}"
+    elif mtype == 'raid-check':
+        cmd = f"echo check > /sys/block/{target}/md/sync_action"
+    elif mtype == 'trim':
+        cmd = f"fstrim {target}"
+
+    _register_cron_job(cron, cmd, f'Storage maintenance: {mtype} on {target}')
+    return jsonify({'ok': True, 'message': f'{mtype} scheduled {frequency} on {target}'})

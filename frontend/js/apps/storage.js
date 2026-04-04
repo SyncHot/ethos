@@ -55,6 +55,7 @@ function _smRender(body) {
         { id: 'raid',         icon: 'fa-server',       label: t('RAID / LVM') },
         { id: 'sharing',      icon: 'fa-share-alt',    label: t('Udostępnianie') },
         { id: 'diagnostics',  icon: 'fa-stethoscope',  label: t('Diagnostyka') },
+        { id: 'maintenance', icon: 'fa-tools',        label: t('Konserwacja') },
         { id: 'cache',        icon: 'fa-bolt',         label: 'SSD Cache' },
     ];
 
@@ -99,6 +100,7 @@ function _smRender(body) {
             case 'raid':         cleanupFn = _smRaid(contentEl, 'arrays'); break;
             case 'sharing':      _smSharing(contentEl).then(fn => setCleanup(fn)); break;
             case 'diagnostics':  cleanupFn = _smDiagnostics(contentEl); break;
+            case 'maintenance':  cleanupFn = _smMaintenance(contentEl); break;
             case 'cache':        cleanupFn = _smCache(contentEl); break;
         }
     }
@@ -115,11 +117,12 @@ function _smOverview(el, switchSection) {
     const root = el.querySelector('#smo-root');
 
     async function load() {
-        const [drivesRes, raidRes, drRes, poolsRes] = await Promise.allSettled([
+        const [drivesRes, raidRes, drRes, poolsRes, healthRes] = await Promise.allSettled([
             api('/storage/drives'),
             api('/raid/arrays'),
             api('/diskrepair/disks'),
             api('/storage/pool/list'),
+            api('/storage/health'),
         ]);
 
         const dVal = drivesRes.status === 'fulfilled' ? drivesRes.value : {};
@@ -130,6 +133,9 @@ function _smOverview(el, switchSection) {
         const drDisks = Array.isArray(drVal) ? drVal : (drVal.disks || []);
         const pVal = poolsRes.status === 'fulfilled' ? poolsRes.value : {};
         const pools = Array.isArray(pVal) ? pVal : (pVal.pools || []);
+        const hVal = healthRes.status === 'fulfilled' ? healthRes.value : {};
+        const healthAlerts = hVal.alerts || [];
+        const lastCheck = hVal.last_check || null;
 
         const physDisks = drives.filter(d => d.type === 'disk' && !d.name.startsWith('nbd'));
         const parts = drives.filter(d => d.type === 'part' && d.usage);
@@ -164,7 +170,32 @@ function _smOverview(el, switchSection) {
             `${fmt(usedBytes)} / ${fmt(totalBytes)}`);
         html += '</div>';
 
-        // Pool summary section
+        // Health alerts panel
+        if (healthAlerts.length > 0) {
+            html += `<div class="smo-section" style="border-left:3px solid #e74c3c">
+                <div class="smo-section-header">
+                    <h4><i class="fas fa-exclamation-triangle" style="color:#e74c3c"></i> ${t('Alerty storage')}</h4>
+                    <span style="font-size:11px;color:var(--text-muted)">${lastCheck ? t('Ostatnie sprawdzenie') + ': ' + new Date(lastCheck).toLocaleTimeString() : ''}</span>
+                </div>`;
+            for (const a of healthAlerts) {
+                const icon = a.type === 'smart' ? 'fa-heartbeat' : a.type === 'raid' ? 'fa-server' : 'fa-chart-pie';
+                const color = a.level === 'error' ? '#e74c3c' : '#f59e0b';
+                html += `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg-primary);border-radius:6px;margin-bottom:6px;font-size:13px">
+                    <i class="fas ${icon}" style="color:${color};width:18px;text-align:center"></i>
+                    <span style="flex:1">${a.message}</span>
+                    <span class="smo-badge" style="background:${color}20;color:${color}">${a.level === 'error' ? t('Błąd') : t('Ostrzeżenie')}</span>
+                </div>`;
+            }
+            html += '</div>';
+        } else if (lastCheck) {
+            html += `<div class="smo-section" style="border-left:3px solid #10b981">
+                <div style="display:flex;align-items:center;gap:10px;padding:4px 0;font-size:13px">
+                    <i class="fas fa-check-circle" style="color:#10b981;font-size:18px"></i>
+                    <span style="font-weight:600;color:#10b981">${t('Brak problemów')}</span>
+                    <span style="color:var(--text-muted);margin-left:auto;font-size:11px">${t('Ostatnie sprawdzenie')}: ${new Date(lastCheck).toLocaleTimeString()}</span>
+                </div>
+            </div>`;
+        }
         if (pools.length) {
             html += `<div class="smo-section">
                 <div class="smo-section-header">
@@ -3173,6 +3204,7 @@ function _smDiagnostics(el) {
             <div class="dr-tabs" id="dr-tabs">
                 <div class="dr-tab active" data-tab="info"><i class="fas fa-info-circle"></i> Info</div>
                 <div class="dr-tab" data-tab="smart"><i class="fas fa-heartbeat"></i> SMART</div>
+                <div class="dr-tab" data-tab="schedule"><i class="fas fa-calendar-alt"></i> ${t('Harmonogram')}</div>
                 <div class="dr-tab" data-tab="check"><i class="fas fa-search"></i> ${t('Sprawdź')}</div>
                 <div class="dr-tab" data-tab="repair"><i class="fas fa-wrench"></i> Naprawa</div>
                 <div class="dr-tab" data-tab="history"><i class="fas fa-clock-rotate-left"></i> Historia</div>
@@ -3293,6 +3325,7 @@ function _smDiagnostics(el) {
         switch (state.activeTab) {
             case 'info': renderInfoTab(content); break;
             case 'smart': renderSmartTab(content); break;
+            case 'schedule': renderScheduleTab(content); break;
             case 'check': renderCheckTab(content); break;
             case 'repair': renderRepairTab(content); break;
             case 'history': renderHistoryTab(content); break;
@@ -3635,6 +3668,157 @@ function _smDiagnostics(el) {
         }
     }
 
+    /* ─── Tab: Schedule (SMART tests) ─── */
+    async function renderScheduleTab(el) {
+        const d = state.selectedDisk;
+        if (!d.smart_available) {
+            el.innerHTML = '<div class="dr-nodata">SMART niedostępny dla tego dysku</div>';
+            return;
+        }
+        el.innerHTML = `<div class="dr-nodata"><i class="fas fa-spinner fa-spin"></i> ${t('Ładowanie...')}</div>`;
+
+        const [schedRes, resultRes] = await Promise.allSettled([
+            api('/storage/smart/schedule'),
+            api('/storage/smart/test/result?disk=' + encodeURIComponent(d.name)),
+        ]);
+        const sched = (schedRes.status === 'fulfilled' ? schedRes.value : {}).tests || [];
+        const diskSched = sched.filter(s => s.disk === d.name);
+        const testLog = (resultRes.status === 'fulfilled' ? resultRes.value : {});
+        const tests = testLog.tests || [];
+        const testRunning = testLog.running || false;
+        const testProgress = testLog.progress;
+
+        const freqLabel = { daily: t('Codziennie'), weekly: t('Co tydzień'), monthly: t('Co miesiąc') };
+        const typeLabel = { short: t('Krótki'), long: t('Długi'), conveyance: 'Conveyance' };
+
+        let html = '';
+
+        // Quick test trigger
+        html += `<div class="dr-card">
+            <div class="dr-card-title"><i class="fas fa-play-circle"></i> ${t('Uruchom test')}</div>
+            ${testRunning ? `<div style="display:flex;align-items:center;gap:10px;padding:8px;background:var(--bg-primary);border-radius:6px;margin-bottom:10px">
+                <i class="fas fa-spinner fa-spin" style="color:var(--accent)"></i>
+                <span style="font-size:13px">${t('Test w toku')}${testProgress != null ? ' — ' + testProgress + '%' : ''}</span>
+            </div>` : `<div style="display:flex;gap:8px;flex-wrap:wrap">
+                <button class="dr-btn" data-trigger="short"><i class="fas fa-bolt"></i> ${t('Krótki')} (~2 min)</button>
+                <button class="dr-btn" data-trigger="long"><i class="fas fa-clock"></i> ${t('Długi')} (~60 min)</button>
+                <button class="dr-btn dr-btn-outline" data-trigger="conveyance"><i class="fas fa-truck"></i> Conveyance (~5 min)</button>
+            </div>`}
+        </div>`;
+
+        // Scheduled tests for this disk
+        html += `<div class="dr-card">
+            <div class="dr-card-title"><i class="fas fa-calendar-alt"></i> ${t('Zaplanowane testy')}</div>`;
+        if (diskSched.length) {
+            html += '<table class="dr-table"><thead><tr><th>Typ</th><th>' + t('Częstotliwość') + '</th><th>Status</th><th></th></tr></thead><tbody>';
+            for (const s of diskSched) {
+                html += `<tr>
+                    <td>${typeLabel[s.type] || s.type}</td>
+                    <td>${freqLabel[s.frequency] || s.frequency}</td>
+                    <td>${s.enabled ? '<span style="color:#10b981">✓ ' + t('Aktywny') + '</span>' : '<span style="color:var(--text-muted)">' + t('Wyłączony') + '</span>'}</td>
+                    <td><button class="dr-btn dr-btn-sm dr-btn-outline" data-delete-sched="${escHtml(s.id)}"><i class="fas fa-trash"></i></button></td>
+                </tr>`;
+            }
+            html += '</tbody></table>';
+        } else {
+            html += `<div style="color:var(--text-muted);font-size:13px;padding:8px 0">${t('Brak zaplanowanych testów dla tego dysku.')}</div>`;
+        }
+        html += `<div style="margin-top:10px"><button class="dr-btn dr-btn-sm" id="dr-add-schedule"><i class="fas fa-plus"></i> ${t('Zaplanuj test')}</button></div>`;
+        html += '</div>';
+
+        // Test log
+        if (tests.length) {
+            html += `<div class="dr-card">
+                <div class="dr-card-title"><i class="fas fa-list"></i> ${t('Wyniki testów')}</div>
+                <table class="dr-table"><thead><tr><th>#</th><th>Typ</th><th>Status</th><th>${t('Czas pracy')}</th></tr></thead><tbody>`;
+            for (const t2 of tests.slice(0, 10)) {
+                const ok = (t2.status || '').includes('Completed') || (t2.status || '').includes('success');
+                const clr = ok ? '#10b981' : (t2.status || '').includes('progress') ? '#f59e0b' : '#ef4444';
+                html += `<tr>
+                    <td>${t2.num || ''}</td>
+                    <td>${t2.type || ''}</td>
+                    <td style="color:${clr}">${t2.status || '—'}</td>
+                    <td>${t2.lifetime_hours || ''}h</td>
+                </tr>`;
+            }
+            html += '</tbody></table></div>';
+        }
+
+        el.innerHTML = html;
+
+        // Test trigger buttons
+        el.querySelectorAll('[data-trigger]').forEach(btn => {
+            btn.onclick = async () => {
+                const ttype = btn.dataset.trigger;
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ...';
+                const res = await api('/storage/smart/test', { method: 'POST', body: JSON.stringify({ disk: d.name, type: ttype }) });
+                if (res.error) { toast(res.error, 'error'); }
+                else { toast(res.message || 'Test started', 'success'); }
+                setTimeout(() => renderScheduleTab(el), 2000);
+            };
+        });
+
+        // Delete schedule
+        el.querySelectorAll('[data-delete-sched]').forEach(btn => {
+            btn.onclick = async () => {
+                const sid = btn.dataset.deleteSched;
+                const ok = await confirmDialog(t('Usunąć zaplanowany test?'));
+                if (!ok) return;
+                const res = await api('/storage/smart/schedule/' + encodeURIComponent(sid), { method: 'DELETE' });
+                if (res.error) toast(res.error, 'error');
+                else toast(t('Usunięto'), 'success');
+                renderScheduleTab(el);
+            };
+        });
+
+        // Add schedule button
+        el.querySelector('#dr-add-schedule')?.addEventListener('click', () => {
+            const modal = document.createElement('div');
+            modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:10000';
+            modal.innerHTML = `<div style="background:var(--bg-secondary);border-radius:12px;padding:24px;width:340px;max-width:90vw">
+                <h3 style="margin:0 0 16px;font-size:16px">${t('Zaplanuj test SMART')}</h3>
+                <div style="margin-bottom:12px">
+                    <label style="font-size:12px;color:var(--text-secondary);display:block;margin-bottom:4px">${t('Typ testu')}</label>
+                    <select id="sched-type" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border-color);background:var(--bg-primary);color:var(--text-primary)">
+                        <option value="short">${t('Krótki')} (~2 min)</option>
+                        <option value="long">${t('Długi')} (~60 min)</option>
+                        <option value="conveyance">Conveyance (~5 min)</option>
+                    </select>
+                </div>
+                <div style="margin-bottom:16px">
+                    <label style="font-size:12px;color:var(--text-secondary);display:block;margin-bottom:4px">${t('Częstotliwość')}</label>
+                    <select id="sched-freq" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border-color);background:var(--bg-primary);color:var(--text-primary)">
+                        <option value="weekly">${t('Co tydzień')} (${t('niedziela')} 3:00)</option>
+                        <option value="daily">${t('Codziennie')} (3:00)</option>
+                        <option value="monthly">${t('Co miesiąc')} (1. ${t('dzień')} 3:00)</option>
+                    </select>
+                </div>
+                <div style="display:flex;gap:8px;justify-content:flex-end">
+                    <button class="dr-btn dr-btn-outline" id="sched-cancel">${t('Anuluj')}</button>
+                    <button class="dr-btn" id="sched-save"><i class="fas fa-check"></i> ${t('Zapisz')}</button>
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+            modal.querySelector('#sched-cancel').onclick = () => modal.remove();
+            modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+            modal.querySelector('#sched-save').onclick = async () => {
+                const res = await api('/storage/smart/schedule', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        disk: d.name,
+                        type: modal.querySelector('#sched-type').value,
+                        frequency: modal.querySelector('#sched-freq').value,
+                    }),
+                });
+                modal.remove();
+                if (res.error) toast(res.error, 'error');
+                else toast(t('Test zaplanowany'), 'success');
+                renderScheduleTab(el);
+            };
+        });
+    }
+
     /* ─── Operation banner / polling ─── */
     async function cancelOperation() {
         try {
@@ -3770,6 +3954,205 @@ function _smDiagnostics(el) {
     loadDisks();
     checkRunningOp();
     return () => { stopPolling(); };
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Section: Maintenance (scrub, RAID check, TRIM)
+   ═══════════════════════════════════════════════════════════ */
+function _smMaintenance(el) {
+    el.innerHTML = '<div style="padding:20px" id="mnt-root"><div style="color:var(--text-secondary)"><i class="fas fa-spinner fa-spin"></i> ' + t('Ładowanie...') + '</div></div>';
+    const root = el.querySelector('#mnt-root');
+    let pollTimer = null;
+
+    async function load() {
+        const [poolsRes, raidRes, statusRes, histRes] = await Promise.allSettled([
+            api('/storage/pool/list'),
+            api('/raid/arrays'),
+            api('/storage/maintenance/status'),
+            api('/storage/maintenance/history?limit=20'),
+        ]);
+
+        const pools = ((poolsRes.status === 'fulfilled' ? poolsRes.value : {}).pools || []);
+        const arrays = ((raidRes.status === 'fulfilled' ? raidRes.value : {}).arrays || (Array.isArray(raidRes.value) ? raidRes.value : []));
+        const active = ((statusRes.status === 'fulfilled' ? statusRes.value : {}).tasks || []).filter(t2 => t2.status === 'running');
+        const history = ((histRes.status === 'fulfilled' ? histRes.value : {}).history || []);
+
+        const btrfsPools = pools.filter(p => p.fstype === 'btrfs' && p.mounted);
+        const raidArrays = Array.isArray(arrays) ? arrays : [];
+
+        // Get all mounted non-system mounts for TRIM
+        const mountsForTrim = pools.filter(p => p.mounted).map(p => ({ name: p.name, path: p.mount_path }));
+
+        let html = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:20px">
+            <h3 style="margin:0;font-size:16px;font-weight:600"><i class="fas fa-tools" style="color:var(--accent);margin-right:6px"></i>${t('Konserwacja storage')}</h3>
+        </div>`;
+
+        // Active tasks
+        if (active.length) {
+            html += `<div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:10px;padding:16px;margin-bottom:16px;border-left:3px solid var(--accent)">
+                <div style="font-size:13px;font-weight:600;margin-bottom:10px"><i class="fas fa-cog fa-spin" style="color:var(--accent);margin-right:6px"></i>${t('Aktywne zadania')}</div>`;
+            for (const task of active) {
+                const pct = task.progress != null ? task.progress : null;
+                html += `<div style="display:flex;align-items:center;gap:10px;padding:8px;background:var(--bg-primary);border-radius:6px;margin-bottom:6px;font-size:13px">
+                    <i class="fas fa-spinner fa-spin" style="color:var(--accent)"></i>
+                    <span style="flex:1"><strong>${task.type}</strong> — ${escHtml(task.target)}</span>
+                    ${pct != null ? `<span style="font-weight:600;color:var(--accent)">${pct}%</span>` : ''}
+                </div>`;
+            }
+            html += '</div>';
+        }
+
+        // Btrfs Scrub section
+        html += `<div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:10px;padding:16px;margin-bottom:16px">
+            <div style="font-size:13px;font-weight:700;margin-bottom:12px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.3px">
+                <i class="fas fa-search" style="margin-right:6px"></i>Btrfs Scrub
+            </div>`;
+        if (btrfsPools.length) {
+            for (const p of btrfsPools) {
+                html += `<div style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--bg-primary);border-radius:6px;margin-bottom:6px">
+                    <i class="fas fa-layer-group" style="color:#3b82f6;width:20px;text-align:center"></i>
+                    <span style="flex:1;font-size:13px"><strong>${escHtml(p.name)}</strong> <span style="color:var(--text-muted)">${escHtml(p.mount_path)}</span></span>
+                    <button class="dr-btn dr-btn-sm" data-scrub="${escHtml(p.mount_path)}"><i class="fas fa-play"></i> ${t('Uruchom')}</button>
+                    <button class="dr-btn dr-btn-sm dr-btn-outline" data-sched-scrub="${escHtml(p.mount_path)}"><i class="fas fa-calendar"></i></button>
+                </div>`;
+            }
+        } else {
+            html += `<div style="color:var(--text-muted);font-size:13px;padding:8px 0">${t('Brak pul btrfs. Scrub dostępny tylko dla btrfs.')}</div>`;
+        }
+        html += '</div>';
+
+        // RAID Parity Check section
+        html += `<div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:10px;padding:16px;margin-bottom:16px">
+            <div style="font-size:13px;font-weight:700;margin-bottom:12px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.3px">
+                <i class="fas fa-server" style="margin-right:6px"></i>${t('Sprawdzenie RAID')}
+            </div>`;
+        if (raidArrays.length) {
+            for (const a of raidArrays) {
+                const name = a.name || a.device;
+                const mdName = (name || '').replace('/dev/', '');
+                html += `<div style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--bg-primary);border-radius:6px;margin-bottom:6px">
+                    <i class="fas fa-server" style="color:#8b5cf6;width:20px;text-align:center"></i>
+                    <span style="flex:1;font-size:13px"><strong>${escHtml(mdName)}</strong> <span style="color:var(--text-muted)">${escHtml(a.level || '')} — ${(a.members || []).length} ${t('dysków')}</span></span>
+                    <button class="dr-btn dr-btn-sm" data-raidcheck="${escHtml(mdName)}"><i class="fas fa-play"></i> ${t('Sprawdź')}</button>
+                    <button class="dr-btn dr-btn-sm dr-btn-outline" data-sched-raid="${escHtml(mdName)}"><i class="fas fa-calendar"></i></button>
+                </div>`;
+            }
+        } else {
+            html += `<div style="color:var(--text-muted);font-size:13px;padding:8px 0">${t('Brak macierzy RAID.')}</div>`;
+        }
+        html += '</div>';
+
+        // SSD TRIM section
+        html += `<div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:10px;padding:16px;margin-bottom:16px">
+            <div style="font-size:13px;font-weight:700;margin-bottom:12px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.3px">
+                <i class="fas fa-bolt" style="margin-right:6px"></i>SSD TRIM
+            </div>`;
+        if (mountsForTrim.length) {
+            for (const m of mountsForTrim) {
+                html += `<div style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--bg-primary);border-radius:6px;margin-bottom:6px">
+                    <i class="fas fa-hdd" style="color:#f59e0b;width:20px;text-align:center"></i>
+                    <span style="flex:1;font-size:13px"><strong>${escHtml(m.name)}</strong> <span style="color:var(--text-muted)">${escHtml(m.path)}</span></span>
+                    <button class="dr-btn dr-btn-sm" data-trim="${escHtml(m.path)}"><i class="fas fa-play"></i> TRIM</button>
+                    <button class="dr-btn dr-btn-sm dr-btn-outline" data-sched-trim="${escHtml(m.path)}"><i class="fas fa-calendar"></i></button>
+                </div>`;
+            }
+        } else {
+            html += `<div style="color:var(--text-muted);font-size:13px;padding:8px 0">${t('Brak zamontowanych pul.')}</div>`;
+        }
+        html += '</div>';
+
+        // History section
+        if (history.length) {
+            html += `<div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:10px;padding:16px">
+                <div style="font-size:13px;font-weight:700;margin-bottom:12px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.3px">
+                    <i class="fas fa-clock-rotate-left" style="margin-right:6px"></i>${t('Historia konserwacji')}
+                </div>
+                <table style="width:100%;border-collapse:collapse;font-size:12px">
+                <thead><tr>
+                    <th style="text-align:left;padding:6px 8px;border-bottom:2px solid var(--border-color)">${t('Typ')}</th>
+                    <th style="text-align:left;padding:6px 8px;border-bottom:2px solid var(--border-color)">${t('Cel')}</th>
+                    <th style="text-align:left;padding:6px 8px;border-bottom:2px solid var(--border-color)">Status</th>
+                    <th style="text-align:left;padding:6px 8px;border-bottom:2px solid var(--border-color)">${t('Czas')}</th>
+                    <th style="text-align:left;padding:6px 8px;border-bottom:2px solid var(--border-color)">${t('Data')}</th>
+                </tr></thead><tbody>`;
+            for (const h of history) {
+                const ok = h.status === 'completed';
+                const clr = ok ? '#10b981' : h.status === 'running' ? 'var(--accent)' : '#ef4444';
+                const dur = h.duration_sec ? (h.duration_sec < 60 ? Math.round(h.duration_sec) + 's' : Math.round(h.duration_sec / 60) + ' min') : '—';
+                html += `<tr>
+                    <td style="padding:6px 8px;border-bottom:1px solid var(--border-color)">${escHtml(h.type)}</td>
+                    <td style="padding:6px 8px;border-bottom:1px solid var(--border-color);color:var(--text-secondary)">${escHtml(h.target)}</td>
+                    <td style="padding:6px 8px;border-bottom:1px solid var(--border-color);color:${clr}">${h.status === 'completed' ? '✓' : h.status === 'running' ? '⟳' : '✗'} ${h.status}</td>
+                    <td style="padding:6px 8px;border-bottom:1px solid var(--border-color)">${dur}</td>
+                    <td style="padding:6px 8px;border-bottom:1px solid var(--border-color);color:var(--text-muted)">${h.started ? new Date(h.started).toLocaleString() : '—'}</td>
+                </tr>`;
+            }
+            html += '</tbody></table></div>';
+        }
+
+        root.innerHTML = html;
+
+        // Wire up action buttons
+        async function startMaint(type, target) {
+            const res = await api('/storage/maintenance/start', { method: 'POST', body: JSON.stringify({ type, target }) });
+            if (res.error) { toast(res.error, 'error'); return; }
+            toast(res.message || t('Zadanie uruchomione'), 'success');
+            startPoll();
+            setTimeout(load, 2000);
+        }
+
+        async function scheduleMaint(type, target) {
+            const modal = document.createElement('div');
+            modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:10000';
+            modal.innerHTML = `<div style="background:var(--bg-secondary);border-radius:12px;padding:24px;width:320px">
+                <h3 style="margin:0 0 16px;font-size:16px">${t('Zaplanuj')} ${type}</h3>
+                <div style="margin-bottom:16px">
+                    <label style="font-size:12px;color:var(--text-secondary);display:block;margin-bottom:4px">${t('Częstotliwość')}</label>
+                    <select id="mnt-freq" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border-color);background:var(--bg-primary);color:var(--text-primary)">
+                        <option value="weekly">${t('Co tydzień')}</option>
+                        <option value="daily">${t('Codziennie')}</option>
+                        <option value="monthly">${t('Co miesiąc')}</option>
+                    </select>
+                </div>
+                <div style="display:flex;gap:8px;justify-content:flex-end">
+                    <button class="dr-btn dr-btn-outline" id="mnt-cancel">${t('Anuluj')}</button>
+                    <button class="dr-btn" id="mnt-save"><i class="fas fa-check"></i> ${t('Zapisz')}</button>
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+            modal.querySelector('#mnt-cancel').onclick = () => modal.remove();
+            modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+            modal.querySelector('#mnt-save').onclick = async () => {
+                const freq = modal.querySelector('#mnt-freq').value;
+                const res = await api('/storage/maintenance/schedule', {
+                    method: 'POST', body: JSON.stringify({ type, target, frequency: freq }),
+                });
+                modal.remove();
+                if (res.error) toast(res.error, 'error');
+                else toast(res.message || t('Zaplanowano'), 'success');
+            };
+        }
+
+        root.querySelectorAll('[data-scrub]').forEach(b => b.onclick = () => startMaint('scrub', b.dataset.scrub));
+        root.querySelectorAll('[data-raidcheck]').forEach(b => b.onclick = () => startMaint('raid-check', b.dataset.raidcheck));
+        root.querySelectorAll('[data-trim]').forEach(b => b.onclick = () => startMaint('trim', b.dataset.trim));
+        root.querySelectorAll('[data-sched-scrub]').forEach(b => b.onclick = () => scheduleMaint('scrub', b.dataset.schedScrub));
+        root.querySelectorAll('[data-sched-raid]').forEach(b => b.onclick = () => scheduleMaint('raid-check', b.dataset.schedRaid));
+        root.querySelectorAll('[data-sched-trim]').forEach(b => b.onclick = () => scheduleMaint('trim', b.dataset.schedTrim));
+    }
+
+    function startPoll() {
+        stopPoll();
+        pollTimer = setInterval(async () => {
+            const res = await api('/storage/maintenance/status');
+            const tasks = (res.tasks || []).filter(t2 => t2.status === 'running');
+            if (tasks.length === 0) { stopPoll(); load(); }
+        }, 5000);
+    }
+    function stopPoll() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
+
+    load();
+    return () => stopPoll();
 }
 
 /* ═══════════════════════════════════════════════════════════
