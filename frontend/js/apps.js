@@ -5571,9 +5571,10 @@ function renderPackageCenter(body) {
     function _ringSvg(pct, done) {
         const r = 13, c = 2 * Math.PI * r;
         const offset = c - (c * Math.min(pct, 100) / 100);
+        // Counter-rotate text 90° to cancel the SVG's -90° rotation
         const inner = done
-            ? `<text x="16" y="17" class="pm-ring-icon">✓</text>`
-            : `<text x="16" y="17" class="pm-ring-pct">${Math.round(pct)}</text>`;
+            ? `<text x="16" y="17" transform="rotate(90,16,16)" class="pm-ring-icon">✓</text>`
+            : `<text x="16" y="17" transform="rotate(90,16,16)" class="pm-ring-pct">${Math.round(pct)}</text>`;
         return `<svg class="pm-ring-svg" viewBox="0 0 32 32"><circle class="pm-ring-bg" cx="16" cy="16" r="${r}"/><circle class="pm-ring-fill${done ? ' pm-ring-fill-done' : ''}" cx="16" cy="16" r="${r}" stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${offset.toFixed(1)}"/>${inner}</svg>`;
     }
 
@@ -5822,8 +5823,8 @@ function renderPackageCenter(body) {
 
             // Enforce minimum visible time so user sees feedback
             const elapsed = Date.now() - started;
-            const minTime = 1500;
-            const delay = Math.max(minTime - elapsed, 800);
+            const minTime = 3000;
+            const delay = Math.max(minTime - elapsed, 1500);
 
             setTimeout(async () => {
                 // Reload catalog FIRST (while finishing state still visible)
