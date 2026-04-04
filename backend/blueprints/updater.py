@@ -98,6 +98,25 @@ def init_update(socketio):
     global _socketio
     _socketio = socketio
 
+    # Clean up stale status from previous boot (e.g. after reboot post-update)
+    try:
+        st = _read_status()
+        dirty = False
+        if st.get('downloading') or st.get('applying'):
+            st['downloading'] = False
+            st['applying'] = False
+            st['error'] = None
+            dirty = True
+        if st.get('progress', 0) >= 100:
+            st['progress'] = 0
+            st['message'] = ''
+            st['available'] = None
+            dirty = True
+        if dirty:
+            _write_status(st)
+    except Exception:
+        pass
+
 
 def _emit(event, data):
     sio_emit(_socketio, event, data)
