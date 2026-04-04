@@ -702,7 +702,7 @@ def _download_file(url, dest_path):
         return False
 
 
-_MIN_FREE_MB = 200  # minimum free space on root before apt/pip install
+_MIN_FREE_MB = 100  # minimum free space on root before apt/pip install
 
 
 def _ensure_root_space(emit_fn):
@@ -747,7 +747,19 @@ def _install_apt_deps(deps, emit_fn):
     """Install APT dependencies with streaming progress updates."""
     if not deps:
         return True
-    pkgs = ' '.join(q(d) for d in deps)
+
+    # Filter out already-installed packages to avoid unnecessary apt-get update
+    missing = []
+    for pkg in deps:
+        check = host_run(f'dpkg -l {q(pkg)} 2>/dev/null | grep -q "^ii"', timeout=10)
+        if check.returncode != 0:
+            missing.append(pkg)
+    if not missing:
+        log.info('[app_manager] All apt deps already installed: %s', deps)
+        emit_fn({'stage': 'deps_apt', 'message': 'Pakiety apt juz zainstalowane', 'percent': 42, 'status': 'running'})
+        return True
+
+    pkgs = ' '.join(q(d) for d in missing)
     emit_fn({'stage': 'deps_apt', 'message': 'apt-get update...', 'percent': 25, 'status': 'running'})
 
     cmd = (
@@ -791,10 +803,28 @@ def _install_pip_deps(deps, emit_fn):
     """Install pip dependencies with streaming progress updates."""
     if not deps:
         return True
-    pkgs = ' '.join(q(d) for d in deps)
+
+    # Filter out already-installed pip packages
     venv = os.path.join(_ETHOS_ROOT, 'venv')
     pip = os.path.join(venv, 'bin', 'pip') if os.path.isdir(venv) else 'pip3'
-    emit_fn({'stage': 'deps_pip', 'message': 'pip install: ' + ', '.join(deps), 'percent': 45, 'status': 'running'})
+    python = os.path.join(venv, 'bin', 'python') if os.path.isdir(venv) else 'python3'
+
+    missing = []
+    for pkg in deps:
+        pkg_name = pkg.split('==')[0].split('>=')[0].split('<=')[0].strip()
+        check = host_run(f'{q(python)} -c "import importlib; importlib.import_module({q(pkg_name.replace("-","_"))})" 2>/dev/null', timeout=10)
+        if check.returncode != 0:
+            # Also try pip show as fallback
+            check2 = host_run(f'{q(pip)} show {q(pkg_name)} 2>/dev/null | grep -q "^Name:"', timeout=10)
+            if check2.returncode != 0:
+                missing.append(pkg)
+    if not missing:
+        log.info('[app_manager] All pip deps already installed: %s', deps)
+        emit_fn({'stage': 'deps_pip', 'message': 'Pakiety pip juz zainstalowane', 'percent': 57, 'status': 'running'})
+        return True
+
+    pkgs = ' '.join(q(d) for d in missing)
+    emit_fn({'stage': 'deps_pip', 'message': 'pip install: ' + ', '.join(missing), 'percent': 45, 'status': 'running'})
 
     cmd = q(pip) + ' install --progress-bar off ' + pkgs + ' 2>&1'
 

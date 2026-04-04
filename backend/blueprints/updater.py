@@ -51,6 +51,15 @@ _STATUS_FILE = _data_path('update_status.json')
 _socketio = None
 _update_lock = threading.Lock()
 
+# All known grubenv locations — GRUB's $prefix varies by UEFI firmware
+# and boot entry (EFI/BOOT, EFI/debian, or boot/grub on ESP).
+GRUBENV_PATHS = (
+    '/boot/efi/EFI/BOOT/grubenv',
+    '/boot/efi/EFI/debian/grubenv',
+    '/boot/efi/boot/grub/grubenv',
+    '/boot/grub/grubenv',
+)
+
 _STATUS_DEFAULTS = {
     'checking': False,
     'downloading': False,
@@ -476,7 +485,7 @@ def rollback_slot():
             return jsonify({'error': f'Slot {target.upper()} has no filesystem'}), 400
 
         # Flip grubenv
-        for grubenv in ('/boot/efi/boot/grub/grubenv', '/boot/grub/grubenv'):
+        for grubenv in GRUBENV_PATHS:
             if os.path.exists(grubenv):
                 subprocess.run(['grub-editenv', grubenv, 'set', f'boot_slot={target}'],
                                capture_output=True, timeout=10)
@@ -1372,7 +1381,7 @@ def _do_ab_slot_update_squashfs(pkg_dir, new_ver, ab_slots_file):
     _write_status(_st)
     _emit('update_status', _st)
 
-    for grubenv in ('/boot/efi/boot/grub/grubenv', '/boot/grub/grubenv'):
+    for grubenv in GRUBENV_PATHS:
         if os.path.exists(grubenv):
             subprocess.run(['grub-editenv', grubenv, 'set', f'boot_slot={inactive}'],
                            capture_output=True, timeout=10)
@@ -1492,6 +1501,9 @@ def _do_ab_slot_update(pkg_dir, new_ver, ab_slots_file):
              '--exclude=/swapfile', '--exclude=/var/swap',
              '--exclude=/opt/ethos/data/visual_qa',
              '--exclude=/opt/ethos/logs/copilot_tickets',
+             '--exclude=/opt/ethos/installer/images/*.img',
+             '--exclude=/opt/ethos/installer/images/*.sqsh',
+             '--exclude=/opt/ethos/installer/images/*.zst',
              '/', _AB_MOUNT + '/'],
             capture_output=True, text=True, timeout=600
         )
@@ -1612,7 +1624,7 @@ def _do_ab_slot_update(pkg_dir, new_ver, ab_slots_file):
     _write_status(_st)
     _emit('update_status', _st)
 
-    for grubenv in ('/boot/efi/boot/grub/grubenv', '/boot/grub/grubenv'):
+    for grubenv in GRUBENV_PATHS:
         if os.path.exists(grubenv):
             subprocess.run(['grub-editenv', grubenv, 'set', f'boot_slot={inactive}'],
                            capture_output=True, timeout=10)

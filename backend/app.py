@@ -9929,8 +9929,13 @@ def _mark_boot_success():
         except Exception:
             pass
 
-        # Try both grubenv locations
-        for grubenv in ('/boot/efi/boot/grub/grubenv', '/boot/grub/grubenv'):
+        # Try all known grubenv locations — $prefix varies by UEFI firmware
+        for grubenv in (
+            '/boot/efi/EFI/BOOT/grubenv',
+            '/boot/efi/EFI/debian/grubenv',
+            '/boot/efi/boot/grub/grubenv',
+            '/boot/grub/grubenv',
+        ):
             if os.path.exists(grubenv):
                 os.system(f'grub-editenv {grubenv} set boot_success=1')
                 logging.getLogger('boot').info(
