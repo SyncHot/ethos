@@ -165,6 +165,7 @@ _OPTIONAL_BLUEPRINTS = {
     'family-hub':      ('familyhub',       'familyhub_bp',      None,                False),
     'sticky-notes':    ('stickynotes',     'notes_bp',          None,                False),
     'tickets':         ('tickets',         'tickets_bp',       'init_tickets',      True),
+    'photos-ai':       ('photos_ai',       'photos_ai_bp',      None,                True),
 }
 
 # Public alias
@@ -431,6 +432,15 @@ BUILTIN_CATALOG = [
         'description': 'Skaner bezpieczenstwa systemu z wynikiem 0-100 i automatycznymi poprawkami.',
         'apt_deps': [], 'pip_deps': [], 'simple': True, 'core': True,
         'status_endpoint': '/api/security-advisor/pkg-status',
+    },
+    {
+        'id': 'photos-ai', 'name': 'Photos AI', 'version': '1.0.0',
+        'icon': 'fa-brain', 'color': '#8b5cf6', 'category': 'Media', 'admin_only': False,
+        'description': 'Rozpoznawanie twarzy, wykrywanie obiektow i inteligentne albumy dla Galerii.',
+        'apt_deps': ['cmake', 'libopenblas-dev'], 'pip_deps': ['face_recognition', 'onnxruntime', 'scipy'],
+        'install_endpoint': '/api/photos-ai/install',
+        'uninstall_endpoint': '/api/photos-ai/uninstall',
+        'status_endpoint': '/api/photos-ai/pkg-status',
     },
     {
         'id': 'rollback', 'name': 'Rollback', 'version': '1.0.1',
