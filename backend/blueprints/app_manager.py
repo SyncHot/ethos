@@ -50,6 +50,12 @@ _flask_app = None
 def init_app_manager(sio):
     global _socketio
     _socketio = sio
+    # Auto-repair missing files for "installed" apps in background
+    try:
+        from gevent import spawn_later
+        spawn_later(15, _repair_missing_app_files)
+    except Exception:
+        pass
 
 
 @app_manager_bp.record_once
@@ -702,6 +708,63 @@ def _download_file(url, dest_path):
         return False
 
 
+def _repair_missing_app_files():
+    """Auto-repair: re-download missing frontend/backend files for installed apps."""
+    try:
+        installed = _load_installed()
+        if not installed:
+            return
+        catalog = _get_catalog()
+        catalog_map = {a['id']: a for a in catalog}
+        repaired = []
+
+        for app_id in list(installed):
+            if app_id in CORE_APPS:
+                continue
+            fn = _get_frontend_filename(app_id)
+            if fn is None:
+                continue
+            # Check frontend JS
+            js_path = os.path.join(_FRONTEND_APPS_DIR, fn + '.js')
+            if not os.path.isfile(js_path):
+                url = _get_github_app_base() + '/' + app_id + '/frontend.js'
+                if _download_file(url, js_path):
+                    repaired.append(app_id + '/frontend.js')
+                    # Also sync to frontend_dist
+                    dist_path = os.path.join(_ETHOS_ROOT, 'frontend_dist', 'js', 'apps', fn + '.js')
+                    if os.path.isdir(os.path.dirname(dist_path)):
+                        try:
+                            import shutil
+                            shutil.copy2(js_path, dist_path)
+                        except Exception:
+                            pass
+            # Check backend .py
+            bp_info = _OPTIONAL_BLUEPRINTS.get(app_id)
+            if bp_info:
+                bp_path = os.path.join(_BLUEPRINTS_DIR, bp_info[0] + '.py')
+                if not os.path.isfile(bp_path):
+                    url = _get_github_app_base() + '/' + app_id + '/backend.py'
+                    if _download_file(url, bp_path):
+                        repaired.append(app_id + '/backend.py')
+
+        if repaired:
+            log.info('[app_manager] Auto-repaired %d missing files: %s', len(repaired), ', '.join(repaired))
+        else:
+            log.debug('[app_manager] Integrity check OK — no missing files')
+    except Exception as e:
+        log.warning('[app_manager] Auto-repair error: %s', e)
+
+
+def _get_github_app_base():
+    """Get the GitHub base URL, respecting custom repo config."""
+    try:
+        cfg = json.load(open(APP_UPDATE_CONFIG_FILE))
+        repo = cfg.get('github_repo', DEFAULT_GITHUB_REPO)
+    except Exception:
+        repo = DEFAULT_GITHUB_REPO
+    return f'https://raw.githubusercontent.com/{repo}/main/apps'
+
+
 _MIN_FREE_MB = 100  # minimum free space on root before apt/pip install
 
 
@@ -1025,7 +1088,7 @@ def _bg_install(app_id, app_def, task_id):
             emit({'stage': 'download', 'percent': 10, 'message': 'Pobieranie pliku frontend...', 'status': 'running'})
             fn = _get_frontend_filename(app_id)
             if fn:
-                url = GITHUB_APP_BASE + '/' + app_id + '/frontend.js'
+                url = _get_github_app_base() + '/' + app_id + '/frontend.js'
                 dest = os.path.join(_FRONTEND_APPS_DIR, fn + '.js')
                 if not _download_file(url, dest):
                     emit({'stage': 'error', 'percent': 0, 'message': 'Bląd pobierania frontend', 'status': 'error'})
@@ -1040,7 +1103,7 @@ def _bg_install(app_id, app_def, task_id):
             module_name = bp_info[0]
             bp_dest = os.path.join(_BLUEPRINTS_DIR, module_name + '.py')
             if not os.path.isfile(bp_dest):
-                bp_url = GITHUB_APP_BASE + '/' + app_id + '/backend.py'
+                bp_url = _get_github_app_base() + '/' + app_id + '/backend.py'
                 emit({'stage': 'download_backend', 'percent': 20, 'message': 'Pobieranie backend...', 'status': 'running'})
                 if not _download_file(bp_url, bp_dest):
                     emit({'stage': 'error', 'percent': 0, 'message': 'Bład pobierania backend — sprawdz połaczenie z internetem', 'status': 'error'})
