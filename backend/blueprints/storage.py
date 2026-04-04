@@ -3451,10 +3451,12 @@ os.makedirs(path, mode=0o775, exist_ok=True)
 
 @storage_bp.route('/pool/list')
 def pool_list():
-    """List saved storage pools with live usage, RAID health, and shares."""
+    """List saved storage pools with live usage, RAID health, and shares.
+
+    Always includes the system data volume (/mnt/data) as the first pool,
+    matching Synology's model where Volume 1 is always visible.
+    """
     pools = _load_pools()
-    if not pools:
-        return jsonify({'pools': []})
 
     # Gather live df data for all mountpoints
     df_map = {}
@@ -3472,6 +3474,53 @@ def pool_list():
                     }
                 except (ValueError, IndexError):
                     pass
+
+    # ── System Volume (like Synology's Volume 1) ──
+    # Detect where EthOS data lives: /mnt/data (production) or /opt/ethos/data fs
+    sys_pool = None
+    sys_mount = None
+    if '/mnt/data' in df_map:
+        sys_mount = '/mnt/data'
+    else:
+        # Dev / legacy installs: find the filesystem holding /opt/ethos/data
+        data_dir = data_path()
+        if os.path.isdir(data_dir):
+            fmr = host_run(f"findmnt -n -o TARGET --target {Q(data_dir)} 2>/dev/null", timeout=5)
+            if fmr.returncode == 0 and fmr.stdout.strip():
+                sys_mount = fmr.stdout.strip()
+
+    if sys_mount and sys_mount in df_map:
+        sys_disks = []
+        sys_fstype = 'ext4'
+        sys_device = None
+        src_r = host_run(f"findmnt -n -o SOURCE,FSTYPE {Q(sys_mount)} 2>/dev/null", timeout=5)
+        if src_r.returncode == 0 and src_r.stdout.strip():
+            parts = src_r.stdout.strip().split()
+            src_dev = parts[0].split('[')[0]  # strip btrfs subvol suffix
+            sys_device = src_dev
+            if len(parts) > 1:
+                sys_fstype = parts[1]
+            pk_r = host_run(f"lsblk -no PKNAME {Q(src_dev)} 2>/dev/null", timeout=5)
+            if pk_r.returncode == 0 and pk_r.stdout.strip():
+                sys_disks = [pk_r.stdout.strip()]
+            else:
+                sys_disks = [src_dev.replace('/dev/', '')]
+        sys_pool = {
+            'name': 'Volume 1',
+            'system': True,
+            'created': None,
+            'disks': sys_disks,
+            'raid_level': None,
+            'raid_device': None,
+            'fstype': sys_fstype,
+            'mount_path': sys_mount,
+            'samba_share': None,
+            'device': sys_device,
+            'usage': df_map.get(sys_mount),
+            'mounted': True,
+            'raid_status': None,
+            'shares': [],
+        }
 
     # Gather RAID status for md devices
     raid_status = {}
@@ -3507,7 +3556,19 @@ def pool_list():
     except Exception:
         pass
 
-    # Enrich each pool with live data
+    # Enrich system pool with shares
+    if sys_pool:
+        smp = sys_pool['mount_path']
+        for sname, sdata in samba_shares.items():
+            sp = sdata.get('path', '')
+            if sp.startswith(smp) or sp.startswith('/home'):
+                sys_pool['shares'].append({
+                    'name': sname,
+                    'protocol': 'samba',
+                    'path': sp,
+                })
+
+    # Enrich each user-created pool with live data
     for pool in pools:
         mp = pool.get('mount_path', '')
         pool['usage'] = df_map.get(mp)
@@ -3540,7 +3601,13 @@ def pool_list():
                     'path': sdata.get('path', ''),
                 })
 
-    return jsonify({'pools': pools})
+    # System volume first, then user pools (like Synology)
+    all_pools = []
+    if sys_pool:
+        all_pools.append(sys_pool)
+    all_pools.extend(pools)
+
+    return jsonify({'pools': all_pools})
 
 
 @storage_bp.route('/pool/<pool_name>/delete', methods=['POST'])

@@ -343,11 +343,13 @@ function renderFM(body, state) {
     // ─── Sidebar ───
     function _fmPoolIcon(pool) {
         if (pool.type === 'usb') return 'fa-usb';
+        if (pool.system) return 'fa-server';
         if (pool.raid_level) return 'fa-shield-halved';
         return 'fa-hard-drive';
     }
     function _fmPoolColor(pool) {
         if (pool.type === 'usb') return '#60a5fa';
+        if (pool.system) return '#6366f1';
         if (pool.raid_level) return '#a78bfa';
         return '#34d399';
     }
@@ -588,7 +590,7 @@ function renderFM(body, state) {
                 } catch (_) {}
             }
             state.storagePools = [
-                ...pools.filter(p => p.mounted).map(p => ({ ...p, type: 'pool' })),
+                ...pools.filter(p => p.mounted && !p.system).map(p => ({ ...p, type: 'pool' })),
                 ...usbDrives,
             ];
             renderSidebar();

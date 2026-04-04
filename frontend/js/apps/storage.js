@@ -353,16 +353,18 @@ function _smPools(el, switchSection) {
             const pct = u.percent || 0;
             const barColor = pct > 90 ? '#e74c3c' : pct > 70 ? '#f59e0b' : '#10b981';
             const isActive = state.selected === p.name;
-            const raidLabel = p.raid_level ? 'RAID ' + p.raid_level : t('Pojedynczy dysk');
+            const raidLabel = p.system ? t('Dysk systemowy') : (p.raid_level ? 'RAID ' + p.raid_level : t('Pojedynczy dysk'));
             const statusColor = p.mounted ? '#2ecc71' : '#95a5a6';
             const statusLabel = p.mounted ? t('Aktywna') : t('Odmontowana');
             const diskCount = (p.disks || []).length;
             const shareCount = (p.shares || []).length;
+            const poolIcon = p.system ? 'fa-server' : 'fa-database';
+            const poolIconColor = p.system ? '#6366f1' : '#3b82f6';
 
             html += `<div class="smp-card ${isActive ? 'smp-card-active' : ''}" data-pool="${p.name}">
                 <div class="smp-card-top">
                     <div class="smp-card-name">
-                        <i class="fas fa-database" style="color:#3b82f6;margin-right:8px"></i>
+                        <i class="fas ${poolIcon}" style="color:${poolIconColor};margin-right:8px"></i>
                         <strong>${p.name}</strong>
                     </div>
                     <div class="smp-card-status" style="color:${statusColor}">
@@ -408,14 +410,23 @@ function _smPools(el, switchSection) {
         const u = pool.usage || {};
         const pct = u.percent || 0;
         const barColor = pct > 90 ? '#e74c3c' : pct > 70 ? '#f59e0b' : '#10b981';
-        const raidLabel = pool.raid_level ? 'RAID ' + pool.raid_level : t('Brak (pojedynczy dysk)');
+        const raidLabel = pool.system ? t('Dysk systemowy') : (pool.raid_level ? 'RAID ' + pool.raid_level : t('Brak (pojedynczy dysk)'));
         const statusColor = pool.mounted ? '#2ecc71' : '#95a5a6';
         const statusLabel = pool.mounted ? t('Aktywna') : t('Odmontowana');
+        const poolIcon = pool.system ? 'fa-server' : 'fa-database';
+        const poolIconColor = pool.system ? '#6366f1' : '#3b82f6';
 
         let html = `<div class="smp-detail-header">
-            <h3><i class="fas fa-database" style="color:#3b82f6;margin-right:8px"></i>${pool.name}</h3>
+            <h3><i class="fas ${poolIcon}" style="color:${poolIconColor};margin-right:8px"></i>${pool.name}</h3>
             <span class="smp-card-status" style="color:${statusColor}"><span class="smo-dot" style="background:${statusColor}"></span> ${statusLabel}</span>
         </div>`;
+
+        if (pool.system) {
+            html += `<div style="padding:8px 12px;background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.2);border-radius:8px;font-size:13px;color:var(--text-secondary);margin-bottom:12px">
+                <i class="fas fa-info-circle" style="color:#6366f1;margin-right:6px"></i>
+                ${t('Wolumen systemowy — przechowuje dane aplikacji, konfigurację i katalogi domowe użytkowników.')}
+            </div>`;
+        }
 
         // Capacity section
         html += `<div class="smp-detail-section">
@@ -438,7 +449,7 @@ function _smPools(el, switchSection) {
                 <div class="smp-info-row"><span>${t('System plików')}</span><span>${pool.fstype || 'ext4'}</span></div>
                 <div class="smp-info-row"><span>${t('Punkt montowania')}</span><span><code>${pool.mount_path || '—'}</code></span></div>
                 <div class="smp-info-row"><span>${t('Urządzenie')}</span><span><code>${pool.device || '—'}</code></span></div>
-                <div class="smp-info-row"><span>${t('Utworzona')}</span><span>${pool.created ? new Date(pool.created).toLocaleString() : '—'}</span></div>
+                <div class="smp-info-row"><span>${t('Utworzona')}</span><span>${pool.system ? t('Instalacja systemu') : (pool.created ? new Date(pool.created).toLocaleString() : '—')}</span></div>
             </div>
         </div>`;
 
@@ -471,10 +482,10 @@ function _smPools(el, switchSection) {
         }
         html += '</div>';
 
-        // Actions
+        // Actions (hide delete for system volume)
         html += `<div class="smp-detail-actions">
             <button class="smp-btn smp-btn-accent" id="smp-goto-sharing"><i class="fas fa-share-alt"></i> ${t('Udostępnij')}</button>
-            <button class="smp-btn smp-btn-danger" id="smp-delete" data-pool="${pool.name}"><i class="fas fa-trash"></i> ${t('Usuń pulę')}</button>
+            ${!pool.system ? `<button class="smp-btn smp-btn-danger" id="smp-delete" data-pool="${pool.name}"><i class="fas fa-trash"></i> ${t('Usuń pulę')}</button>` : ''}
         </div>`;
 
         return html;
