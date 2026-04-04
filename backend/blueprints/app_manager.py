@@ -987,8 +987,11 @@ def _bg_install(app_id, app_def, task_id):
     try:
         emit({'stage': 'start', 'percent': 5, 'message': 'Instalowanie ' + app_def['name'] + '...', 'status': 'running'})
 
+        # Determine source before downloading — was the app already on disk?
+        _was_bundled = _is_bundled(app_id)
+
         # Pobierz pliki z GitHub jesli nie ma na dysku
-        if not _is_bundled(app_id):
+        if not _was_bundled:
             emit({'stage': 'download', 'percent': 10, 'message': 'Pobieranie pliku frontend...', 'status': 'running'})
             fn = _get_frontend_filename(app_id)
             if fn:
@@ -1046,7 +1049,7 @@ def _bg_install(app_id, app_def, task_id):
         _sync_frontend_dist()
 
         version = app_def.get('version', 'bundled')
-        source = 'bundled' if _is_bundled(app_id) else 'github'
+        source = 'bundled' if _was_bundled else 'github'
         _set_installed(app_id, version, source)
 
         emit({'stage': 'done', 'percent': 100, 'message': app_def['name'] + ' zainstalowano pomyslnie', 'status': 'done'})
@@ -1088,31 +1091,32 @@ def _bg_uninstall(app_id, app_def, task_id, wipe_data=False):
             except Exception as e:
                 log.warning('[app_manager] uninstall_endpoint %s failed: %s', uninstall_ep, e)
 
-        # Usun pliki jesli pobrane z GitHub
-        inst = _load_installed().get(app_id, {})
-        if inst.get('source') == 'github':
-            emit({'stage': 'remove', 'percent': 60, 'message': 'Usuwanie plikow apki...', 'status': 'running'})
-            fn = _get_frontend_filename(app_id)
-            if fn:
+        # Usun pliki opcjonalnych apek
+        emit({'stage': 'remove', 'percent': 60, 'message': 'Usuwanie plikow apki...', 'status': 'running'})
+        fn = _get_frontend_filename(app_id)
+        if fn:
+            # Don't remove shared frontend files used by core apps (e.g. storage.js)
+            core_uses_same = any(
+                _get_frontend_filename(cid) == fn for cid in CORE_APPS
+            )
+            if not core_uses_same:
                 fp = os.path.join(_FRONTEND_APPS_DIR, fn + '.js')
                 if os.path.isfile(fp):
                     os.remove(fp)
-            # Remove backend blueprint
-            bp_info = _OPTIONAL_BLUEPRINTS.get(app_id)
-            if bp_info:
-                module_name = bp_info[0]
-                bp_file = os.path.join(_BLUEPRINTS_DIR, module_name + '.py')
-                # Only delete if no other installed app uses same blueprint
-                other_using_same = [
-                    aid for aid, bpi in _OPTIONAL_BLUEPRINTS.items()
-                    if bpi[0] == module_name and aid != app_id
-                    and aid in _load_installed()
-                ]
-                if not other_using_same and os.path.isfile(bp_file):
-                    os.remove(bp_file)
-                    log.info('[app_manager] Removed backend blueprint: %s', module_name)
-        else:
-            emit({'stage': 'remove', 'percent': 60, 'message': 'Apka bundled - oznaczam jako odinstalowana', 'status': 'running'})
+        # Remove backend blueprint
+        bp_info = _OPTIONAL_BLUEPRINTS.get(app_id)
+        if bp_info:
+            module_name = bp_info[0]
+            bp_file = os.path.join(_BLUEPRINTS_DIR, module_name + '.py')
+            # Only delete if no other installed app uses same blueprint
+            other_using_same = [
+                aid for aid, bpi in _OPTIONAL_BLUEPRINTS.items()
+                if bpi[0] == module_name and aid != app_id
+                and aid in _load_installed()
+            ]
+            if not other_using_same and os.path.isfile(bp_file):
+                os.remove(bp_file)
+                log.info('[app_manager] Removed backend blueprint: %s', module_name)
 
         _set_uninstalled(app_id)
 
