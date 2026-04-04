@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>EthOS</title>
-    <link rel="stylesheet" href="css/style.css?v=2">
+    <link rel="stylesheet" href="css/style.css?v=3">
     <link rel="stylesheet" href="css/apps.css?v=4">
     <link rel="stylesheet" href="vendor/fa/all.min.css">
     <link rel="stylesheet" href="vendor/fonts/inter.css">
@@ -97,6 +97,10 @@
                     <i class="fas fa-bell"></i>
                     <span class="notif-badge hidden" id="notif-badge">0</span>
                 </button>
+                <button class="taskbar-btn hidden" id="usb-tray-btn" title="USB" aria-label="USB Devices">
+                    <i class="fas fa-usb"></i>
+                    <span class="notif-badge hidden" id="usb-tray-badge">0</span>
+                </button>
                 <div class="taskbar-separator"></div>
                 <div class="taskbar-clock" id="taskbar-clock"></div>
                 <button class="taskbar-btn power-btn" id="power-btn" title="Power Manager" aria-label="Power Manager">
@@ -135,6 +139,16 @@
             </div>
             <div class="notif-list" id="notif-list">
                 <p class="notif-empty" data-i18n="Brak powiadomień">Brak powiadomień</p>
+            </div>
+        </div>
+
+        <!-- USB Tray Panel -->
+        <div class="usb-tray-panel hidden" id="usb-tray-panel" role="dialog" aria-modal="true">
+            <div class="notif-header">
+                <h3><i class="fas fa-usb" style="margin-right:8px;color:var(--accent)"></i> <span data-i18n="Urządzenia USB">Urządzenia USB</span></h3>
+            </div>
+            <div class="usb-tray-list" id="usb-tray-list">
+                <p class="notif-empty" data-i18n="Brak urządzeń USB">Brak urządzeń USB</p>
             </div>
         </div>
 
@@ -186,8 +200,8 @@
     <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
     <script src="js/installer.js?v=1"></script>
     <script src="js/setup.js?v=2"></script>
-    <script src="js/desktop.js?v=6"></script>
-    <script src="js/apps.js?v=7"></script>
+    <script src="js/desktop.js?v=7"></script>
+    <script src="js/apps.js?v=8"></script>
     <script src="js/apps/dashboard.js?v=1"></script>
     <script src="js/apps/storage.js?v=8"></script>
     <script src="js/apps/printer.js?v=3"></script>

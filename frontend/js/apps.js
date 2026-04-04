@@ -574,6 +574,7 @@ function renderFM(body, state) {
                             name: d.label || d.model || d.device,
                             mount_path: d.mountpoint,
                             type: 'usb',
+                            device: (d.device || '').replace('/dev/', '').replace(/[0-9]+$/, ''),
                             usage: d.total ? {
                                 total: d.total,
                                 used: d.used || 0,
@@ -1466,6 +1467,12 @@ function renderFM(body, state) {
             items.push({ icon: 'fa-info-circle', label: t('Właściwości'), action: 'properties' });
         }
 
+        // Eject USB — when browsing inside a USB drive
+        const _usbPool = state.storagePools.find(p => p.type === 'usb' && state.path.startsWith(p.mount_path));
+        if (_usbPool) {
+            items.push({ icon: 'fa-eject', label: t('Wysuń USB') + ` (${_usbPool.name})`, action: 'eject-usb', cls: 'danger' });
+        }
+
         // Delete
         items.push({ sep: true });
         if (selCount > 0) {
@@ -1667,6 +1674,25 @@ function renderFM(body, state) {
                     break;
                 }
                 case 'transfer-remote': transferToRemoteNAS(); break;
+                case 'eject-usb': {
+                    const usbPool = state.storagePools.find(p => p.type === 'usb' && state.path.startsWith(p.mount_path));
+                    if (!usbPool || !usbPool.device) { toast(t('Nie znaleziono dysku USB'), 'error'); break; }
+                    const doEject = await confirmDialog(t('Wysuń USB'), t('Czy na pewno chcesz wysunąć') + ` "${usbPool.name}"?`);
+                    if (!doEject) break;
+                    try {
+                        const res = await api('/storage/eject', { method: 'POST', body: { disk: usbPool.device } });
+                        if (res.success || res.ok) {
+                            toast(`${t('Bezpiecznie wysunięto')} ${usbPool.name}`, 'success');
+                            navigateTo(state.homePath || '/home/' + (NAS.user?.username || 'user'));
+                            loadStoragePools();
+                        } else {
+                            toast(res.error || t('Błąd wysuwania'), 'error');
+                        }
+                    } catch (err) {
+                        toast(t('Błąd wysuwania: ') + (err.message || err), 'error');
+                    }
+                    break;
+                }
             }
         });
 

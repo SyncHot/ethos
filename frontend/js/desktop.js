@@ -1222,6 +1222,7 @@ document.getElementById('notifications-btn').addEventListener('click', (e) => {
     document.getElementById('notifications-btn').classList.toggle('active', notifPanelOpen);
     // Close other panels
     closeUserMenu();
+    closeUsbTray();
     if (notifPanelOpen) loadNotifications();
 });
 
@@ -1304,6 +1305,105 @@ async function loadNotifications() {
 }
 
 
+// ─────────────────────────── USB Tray ───────────────────────────
+
+let usbTrayOpen = false;
+
+function closeUsbTray() {
+    usbTrayOpen = false;
+    document.getElementById('usb-tray-panel').classList.add('hidden');
+    document.getElementById('usb-tray-btn').classList.remove('active');
+}
+
+async function loadUsbTrayDrives() {
+    try {
+        const data = await api('/resources/disks');
+        const disks = data.disks || data || [];
+        const usbDrives = disks.filter(d => d.is_usb && d.mountpoint);
+        const btn = document.getElementById('usb-tray-btn');
+        const badge = document.getElementById('usb-tray-badge');
+
+        if (usbDrives.length === 0) {
+            btn.classList.add('hidden');
+            closeUsbTray();
+            return;
+        }
+        btn.classList.remove('hidden');
+        badge.textContent = usbDrives.length;
+        badge.classList.remove('hidden');
+
+        const list = document.getElementById('usb-tray-list');
+        list.innerHTML = usbDrives.map(d => {
+            const dev = (d.device || '').replace('/dev/', '').replace(/[0-9]+$/, '');
+            const pct = d.percent || 0;
+            const barColor = pct > 90 ? '#ef4444' : pct > 70 ? '#f59e0b' : 'var(--accent)';
+            const totalNum = typeof d.total === 'number' ? d.total : parseInt(d.total) || 0;
+            const usedNum = typeof d.used === 'number' ? d.used : parseInt(d.used) || 0;
+            const usedStr = totalNum ? `${formatBytes(usedNum)} / ${formatBytes(totalNum)}` : '';
+            return `<div class="usb-tray-item" data-dev="${dev}" data-mount="${d.mountpoint || ''}">
+                <div class="usb-tray-icon"><i class="fas fa-hdd"></i></div>
+                <div class="usb-tray-info">
+                    <div class="usb-tray-name">${d.label || dev}</div>
+                    <div class="usb-tray-sub">${usedStr}${usedStr && pct ? ` (${pct}%)` : ''}</div>
+                    ${usedStr ? `<div class="usb-tray-bar"><div class="usb-tray-bar-fill" style="width:${pct}%;background:${barColor}"></div></div>` : ''}
+                </div>
+                <button class="usb-tray-browse" title="${t('Przeglądaj')}" data-action="browse"><i class="fas fa-folder-open"></i></button>
+                <button class="usb-tray-eject" title="${t('Wysuń')}" data-action="eject"><i class="fas fa-eject"></i> ${t('Wysuń')}</button>
+            </div>`;
+        }).join('');
+
+        list.querySelectorAll('[data-action]').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const item = btn.closest('.usb-tray-item');
+                const dev = item.dataset.dev;
+                const mount = item.dataset.mount;
+                if (btn.dataset.action === 'browse') {
+                    closeUsbTray();
+                    const fmApp = NAS.apps?.find(a => a.id === 'filemanager');
+                    if (fmApp) openApp(fmApp, { path: mount });
+                    else openApp('filemanager', { path: mount });
+                } else if (btn.dataset.action === 'eject') {
+                    btn.disabled = true;
+                    btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${t('Wysuwanie...')}`;
+                    try {
+                        const res = await api('/storage/eject', { method: 'POST', body: { disk: dev } });
+                        if (res.success || res.ok) {
+                            toast(`${t('Bezpiecznie wysunięto')} ${item.querySelector('.usb-tray-name').textContent}`, 'success');
+                            setTimeout(() => loadUsbTrayDrives(), 1000);
+                        } else {
+                            toast(res.error || t('Błąd wysuwania'), 'error');
+                            btn.disabled = false;
+                            btn.innerHTML = `<i class="fas fa-eject"></i> ${t('Wysuń')}`;
+                        }
+                    } catch (err) {
+                        toast(t('Błąd wysuwania: ') + (err.message || err), 'error');
+                        btn.disabled = false;
+                        btn.innerHTML = `<i class="fas fa-eject"></i> ${t('Wysuń')}`;
+                    }
+                }
+            });
+        });
+    } catch {
+        // ignore
+    }
+}
+
+document.getElementById('usb-tray-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    usbTrayOpen = !usbTrayOpen;
+    document.getElementById('usb-tray-panel').classList.toggle('hidden', !usbTrayOpen);
+    document.getElementById('usb-tray-btn').classList.toggle('active', usbTrayOpen);
+    // Close other panels
+    closeUserMenu();
+    notifPanelOpen = false;
+    document.getElementById('notif-panel').classList.add('hidden');
+    document.getElementById('notifications-btn').classList.remove('active');
+    closePowerMenu();
+    if (usbTrayOpen) loadUsbTrayDrives();
+});
+
+
 // ─────────────────────────── Power Menu ───────────────────────────
 
 let powerMenuOpen = false;
@@ -1331,6 +1431,7 @@ document.getElementById('power-btn').addEventListener('click', (e) => {
     document.getElementById('power-btn').classList.toggle('active', powerMenuOpen);
     // Close other panels
     closeUserMenu();
+    closeUsbTray();
     notifPanelOpen = false;
     document.getElementById('notif-panel').classList.add('hidden');
     document.getElementById('notifications-btn').classList.remove('active');
@@ -1636,6 +1737,9 @@ document.addEventListener('click', (e) => {
         document.getElementById('notif-panel').classList.add('hidden');
         document.getElementById('notifications-btn').classList.remove('active');
     }
+    if (usbTrayOpen && !e.target.closest('.usb-tray-panel') && !e.target.closest('#usb-tray-btn')) {
+        closeUsbTray();
+    }
     if (userMenuOpen && !e.target.closest('.user-menu') && !e.target.closest('#user-btn')) {
         closeUserMenu();
     }
@@ -1657,6 +1761,7 @@ document.addEventListener('keydown', (e) => {
             document.getElementById('notif-panel').classList.add('hidden');
             document.getElementById('notifications-btn').classList.remove('active');
         }
+        if (usbTrayOpen) closeUsbTray();
         if (userMenuOpen) closeUserMenu();
         if (powerMenuOpen) closePowerMenu();
         // Close modal
@@ -1989,10 +2094,12 @@ function connectSocket() {
             const size = data.size ? ` (${data.size})` : '';
             toast(`${t('USB podłączony:')} ${label}${size}`, 'success');
             loadNotifications();
+            setTimeout(() => loadUsbTrayDrives(), 2000);
         });
         NAS.socket.on('usb_disconnected', (data) => {
             toast(`${t('USB odłączony:')} /dev/${data.dev}`, 'warning');
             loadNotifications();
+            setTimeout(() => loadUsbTrayDrives(), 1000);
         });
 
         // ── Duplicate scan events → global tracking + notifications ──
@@ -2142,6 +2249,7 @@ async function initDesktop() {
     renderMenuGrid();
     connectSocket();
     loadNotifications();
+    loadUsbTrayDrives();
     _checkActiveFileOp();
 
     // Autostart Sticky Notes if enabled
