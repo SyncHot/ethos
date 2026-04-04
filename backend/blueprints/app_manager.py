@@ -1525,6 +1525,9 @@ def _check_github_updates(repo):
     updates = []
 
     for app_id in remote_by_id:
+        # Skip core apps — they are updated via system OTA, not Package Center
+        if app_id in CORE_APPS:
+            continue
         if app_id not in installed and app_id not in _OPTIONAL_BLUEPRINTS:
             continue
 
