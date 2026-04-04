@@ -294,7 +294,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/builder/pkg-status',
     },
     {
-        'id': 'disk-repair', 'name': 'Disk Repair', 'version': '1.0.6',
+        'id': 'disk-repair', 'name': 'Disk Repair', 'version': '1.0.8',
         'icon': 'fa-wrench', 'color': '#ef4444', 'category': 'Storage', 'admin_only': True,
         'description': 'Diagnostyka SMART i sprawdzanie systemu plikow z narzedziami naprawczymi.',
         'apt_deps': ['smartmontools', 'e2fsprogs'], 'pip_deps': [],
@@ -312,7 +312,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/remote-log/pkg-status',
     },
     {
-        'id': 'sharing-samba', 'name': 'File Sharing (Samba)', 'version': '1.0.6',
+        'id': 'sharing-samba', 'name': 'File Sharing (Samba)', 'version': '1.0.8',
         'icon': 'fa-windows', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Udostepnianie plikow przez siec (Windows, Mac, Linux).',
         'apt_deps': ['samba'], 'pip_deps': [],
@@ -321,7 +321,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/storage/samba/pkg-status',
     },
     {
-        'id': 'sharing-nfs', 'name': 'NFS', 'version': '1.0.6',
+        'id': 'sharing-nfs', 'name': 'NFS', 'version': '1.0.8',
         'icon': 'fa-network-wired', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Szybkie udostepnianie plikow dla Linux/Unix przez NFS.',
         'apt_deps': ['nfs-kernel-server'], 'pip_deps': [],
@@ -330,7 +330,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/storage/nfs/pkg-status',
     },
     {
-        'id': 'sharing-dlna', 'name': 'DLNA (MiniDLNA)', 'version': '1.0.6',
+        'id': 'sharing-dlna', 'name': 'DLNA (MiniDLNA)', 'version': '1.0.8',
         'icon': 'fa-photo-video', 'color': '#6366f1', 'category': 'Media', 'admin_only': True,
         'description': 'Serwer DLNA do strumieniowania multimediow na TV i odtwarzacze.',
         'apt_deps': ['minidlna'], 'pip_deps': [],
@@ -339,7 +339,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/storage/dlna/pkg-status',
     },
     {
-        'id': 'sharing-webdav', 'name': 'WebDAV', 'version': '1.0.6',
+        'id': 'sharing-webdav', 'name': 'WebDAV', 'version': '1.0.8',
         'icon': 'fa-globe', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Serwer WebDAV z dostepem do plikow przez HTTP.',
         'apt_deps': ['lighttpd'], 'pip_deps': [],
@@ -348,7 +348,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/storage/webdav/pkg-status',
     },
     {
-        'id': 'sharing-sftp', 'name': 'SFTP', 'version': '1.0.6',
+        'id': 'sharing-sftp', 'name': 'SFTP', 'version': '1.0.8',
         'icon': 'fa-lock', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Bezpieczny transfer plikow przez SSH.',
         'apt_deps': ['openssh-server'], 'pip_deps': [],
@@ -357,7 +357,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/storage/sftp/pkg-status',
     },
     {
-        'id': 'sharing-ftp', 'name': 'FTP', 'version': '1.0.6',
+        'id': 'sharing-ftp', 'name': 'FTP', 'version': '1.0.8',
         'icon': 'fa-upload', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Klasyczny serwer FTP z obsługa vsftpd.',
         'apt_deps': ['vsftpd'], 'pip_deps': [],
@@ -393,7 +393,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/cloud-backup/pkg-status',
     },
     {
-        'id': 'raid-lvm', 'name': 'RAID / LVM', 'version': '1.0.5',
+        'id': 'raid-lvm', 'name': 'RAID / LVM', 'version': '1.0.7',
         'icon': 'fa-layer-group', 'color': '#f59e0b', 'category': 'Storage', 'admin_only': True,
         'description': 'Macierze RAID z mdadm i wolumeny LVM.',
         'apt_deps': ['mdadm', 'lvm2'], 'pip_deps': [],
@@ -832,6 +832,12 @@ def _sync_frontend_dist():
     dist = os.path.join(_ETHOS_ROOT, 'frontend_dist')
     if os.path.isdir(dist):
         host_run('rsync -av --delete ' + q(frontend + '/') + ' ' + q(dist + '/'), timeout=60)
+    # Invalidate the index.html cache so new/removed scripts are picked up
+    try:
+        from app import _INDEX_CACHE
+        _INDEX_CACHE['html'] = None
+    except Exception:
+        pass
 
 
 _active_tasks = 0

@@ -7,7 +7,7 @@ from gevent import monkey
 monkey.patch_all()
 
 from flask_compress import Compress
-from flask import Flask, request, jsonify, send_from_directory, send_file, g
+from flask import Flask, request, jsonify, send_from_directory, send_file, g, make_response
 from flask_caching import Cache
 from flask_socketio import SocketIO, emit
 import os
@@ -334,7 +334,7 @@ socketio = SocketIO(app, async_mode='gevent')  # default: same-origin only
 def _handle_404(e):
     if request.path.startswith('/api/'):
         return jsonify({'error': 'Not found'}), 404
-    return send_from_directory(app.static_folder, 'index.html')
+    return _serve_index_response()
 
 @app.errorhandler(405)
 def _handle_405(e):
@@ -9544,9 +9544,65 @@ def clear_notifications():
 
 # ─────────────────────────── Static ───────────────────────────
 
+_INDEX_CACHE = {'html': None, 'mtime': 0, 'apps_files': None}
+_APP_SCRIPT_RE = re.compile(r'\s*<script src="js/apps/([^?"]+)(?:\?[^"]*)?"[^>]*></script>')
+
+
+def _get_index_html():
+    """Return index.html with script tags filtered to only existing app JS files.
+
+    On dev machines all JS files are present so nothing is stripped.
+    On built images optional app JS is removed; the corresponding script
+    tags are silently dropped so the browser never sees a 404.
+    After installing an app via Package Center, its JS file appears on disk
+    and the next page load will include it.
+    """
+    index_path = os.path.join(app.static_folder, 'index.html')
+    apps_dir = os.path.join(app.static_folder, 'js', 'apps')
+
+    try:
+        idx_mtime = os.path.getmtime(index_path)
+    except OSError:
+        return send_from_directory(app.static_folder, 'index.html')
+
+    try:
+        existing = frozenset(f for f in os.listdir(apps_dir) if f.endswith('.js'))
+    except OSError:
+        existing = frozenset()
+
+    if (_INDEX_CACHE['html']
+            and _INDEX_CACHE['mtime'] == idx_mtime
+            and _INDEX_CACHE['apps_files'] == existing):
+        return _INDEX_CACHE['html']
+
+    with open(index_path) as f:
+        html = f.read()
+
+    def _keep_if_exists(m):
+        filename = m.group(1)
+        return m.group(0) if filename in existing else ''
+
+    html = _APP_SCRIPT_RE.sub(_keep_if_exists, html)
+
+    _INDEX_CACHE['html'] = html
+    _INDEX_CACHE['mtime'] = idx_mtime
+    _INDEX_CACHE['apps_files'] = existing
+    return html
+
+
+def _serve_index_response():
+    """Build an HTTP response for index.html."""
+    html = _get_index_html()
+    if isinstance(html, str):
+        resp = make_response(html)
+        resp.headers['Content-Type'] = 'text/html; charset=utf-8'
+        return resp
+    return html
+
+
 @app.route('/')
 def serve_index():
-    return send_from_directory(app.static_folder, 'index.html')
+    return _serve_index_response()
 
 
 @app.route('/<path:path>')
@@ -9568,7 +9624,7 @@ def serve_static(path):
         return '', 404
 
     # SPA fallback: return index.html for navigation routes
-    return send_from_directory(app.static_folder, 'index.html')
+    return _serve_index_response()
 
 
 # ─────────────────────────── WebSocket ───────────────────────────
