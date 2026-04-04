@@ -586,7 +586,7 @@ def list_drives():
     def _collect(dev, parent_info=None):
         dtype = dev.get('type', '')
         name = dev.get('name', '')
-        if dtype in _SKIP or name.startswith('loop'):
+        if dtype in _SKIP or name.startswith(('loop', 'nbd', 'zram')):
             return
 
         children = dev.get('children', [])
@@ -3017,3 +3017,437 @@ def analyze_files():
         'path': path,
         'files': files,
     })
+
+
+# ---------------------------------------------------------------------------
+# Storage Pool Wizard — endpoints
+# ---------------------------------------------------------------------------
+
+_POOLS_FILE = data_path('storage_pools.json')
+
+
+def _load_pools():
+    try:
+        with open(_POOLS_FILE, 'r') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+
+def _save_pools(pools):
+    os.makedirs(os.path.dirname(_POOLS_FILE), exist_ok=True)
+    with open(_POOLS_FILE, 'w') as f:
+        json.dump(pools, f, indent=2)
+
+
+@storage_bp.route('/pool/available-disks')
+def pool_available_disks():
+    """List disks/partitions available for pool creation.
+    Excludes: system disks, mounted, RAID members, LVM PVs."""
+
+    r = host_run(
+        "lsblk -J -b -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,LABEL,MODEL,TRAN,UUID,HOTPLUG,PKNAME"
+    )
+    if r.returncode != 0:
+        return jsonify({"error": r.stderr.strip()}), 500
+    try:
+        data = json.loads(r.stdout)
+    except json.JSONDecodeError:
+        return jsonify({"error": "Failed to parse lsblk"}), 500
+
+    # Collect RAID members
+    raid_members = set()
+    md_r = host_run("cat /proc/mdstat 2>/dev/null")
+    if md_r.returncode == 0:
+        for line in md_r.stdout.splitlines():
+            for m in re.findall(r'(\w+)\[\d+\]', line):
+                raid_members.add(m)
+
+    # Collect LVM PVs
+    lvm_pvs = set()
+    pv_r = host_run("pvs --noheadings -o pv_name 2>/dev/null")
+    if pv_r.returncode == 0:
+        for line in pv_r.stdout.strip().splitlines():
+            dev = line.strip().replace('/dev/', '')
+            if dev:
+                lvm_pvs.add(dev)
+
+    available = []
+
+    def _check(dev, parent=None):
+        name = dev.get('name', '')
+        dtype = dev.get('type', '')
+        children = dev.get('children', [])
+
+        if dtype in ('loop', 'rom') or name.startswith('loop') or name.startswith('nbd') or name.startswith('zram'):
+            return
+
+        # For whole disks with partitions — skip the disk itself,
+        # only offer whole disks without partitions
+        if dtype == 'disk' and children:
+            for c in children:
+                _check(c, parent=dev)
+            return
+
+        if dtype == 'disk' and not children:
+            # Whole disk without partitions — candidate
+            pass
+        elif dtype == 'part':
+            pass
+        else:
+            return
+
+        # Skip system disks
+        if _is_system_disk(name):
+            return
+        base = re.sub(r'p?\d+$', '', name)
+        if base != name and _is_system_disk(base):
+            return
+
+        # Skip mounted
+        if dev.get('mountpoint'):
+            return
+
+        # Skip RAID members
+        if name in raid_members:
+            return
+
+        # Skip LVM PVs
+        if name in lvm_pvs:
+            return
+
+        p = parent or dev
+        tran = p.get('tran') or dev.get('tran') or ''
+        model = (p.get('model') or dev.get('model') or '').strip()
+        size_bytes = 0
+        try:
+            size_bytes = int(dev.get('size', 0))
+        except (ValueError, TypeError):
+            pass
+
+        # Skip zero-size devices
+        if size_bytes <= 0:
+            return
+
+        available.append({
+            'name': name,
+            'device': f'/dev/{name}',
+            'size_bytes': size_bytes,
+            'size': _fmt_bytes(size_bytes) if size_bytes else dev.get('size', '?'),
+            'type': dtype,
+            'model': model or None,
+            'tran': tran,
+            'fstype': dev.get('fstype'),
+            'label': dev.get('label'),
+        })
+
+    for dev in data.get('blockdevices', []):
+        _check(dev)
+
+    return jsonify({'disks': available})
+
+
+@storage_bp.route('/pool/create', methods=['POST'])
+@admin_required
+def pool_create():
+    """Create a storage pool: [RAID] + format + mount + fstab + [Samba share].
+    Streams progress via SSE."""
+    data = request.get_json(force=True)
+
+    disks = data.get('disks', [])
+    raid_level = data.get('raid_level')  # None for single disk
+    fstype = data.get('fstype', 'ext4')
+    pool_name = data.get('name', '').strip()
+    mount_path = data.get('mount_path', '').strip()
+    samba = data.get('samba', False)
+    samba_name = data.get('samba_name', '').strip()
+
+    # --- Validation ---
+    if not disks:
+        return jsonify({"error": "No disks selected"}), 400
+    if not pool_name or not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9 _\-]{0,63}$', pool_name):
+        return jsonify({"error": "Invalid pool name"}), 400
+    if fstype not in ('ext4', 'btrfs'):
+        return jsonify({"error": "Unsupported filesystem (ext4 or btrfs)"}), 400
+    if not mount_path or not mount_path.startswith('/') or '..' in mount_path:
+        return jsonify({"error": "Invalid mount path"}), 400
+    mount_path = _sanitize_mount_path(mount_path)
+
+    for d in disks:
+        if not re.match(r'^[a-zA-Z0-9]+$', d):
+            return jsonify({"error": f"Invalid disk name: {d}"}), 400
+
+    if len(disks) > 1 and not raid_level:
+        return jsonify({"error": "RAID level required for multiple disks"}), 400
+    if raid_level and raid_level not in ('0', '1', '5', '6', '10'):
+        return jsonify({"error": f"Invalid RAID level: {raid_level}"}), 400
+
+    min_devs = {'0': 2, '1': 2, '5': 3, '6': 4, '10': 4}
+    if raid_level and len(disks) < min_devs.get(raid_level, 2):
+        return jsonify({"error": f"RAID {raid_level} requires at least {min_devs[raid_level]} disks"}), 400
+
+    def _sse(msg_type, message, **extra):
+        payload = {'type': msg_type, 'message': message}
+        payload.update(extra)
+        return f"data: {json.dumps(payload)}\n\n"
+
+    def generate():
+        target_dev = None
+
+        # ── Step 1: RAID creation (if multi-disk) ──
+        if len(disks) > 1 and raid_level:
+            yield _sse('step', f'Creating RAID {raid_level} with {len(disks)} disks...')
+
+            # Wipe existing signatures
+            for d in disks:
+                host_run(f"wipefs -a /dev/{Q(d)} 2>/dev/null", timeout=10)
+                host_run(f"mdadm --zero-superblock /dev/{Q(d)} 2>/dev/null", timeout=10)
+
+            # Find free md name
+            existing = set()
+            md_r = host_run("cat /proc/mdstat 2>/dev/null")
+            if md_r.returncode == 0:
+                for line in md_r.stdout.splitlines():
+                    m = re.match(r'^(md\d+)', line)
+                    if m:
+                        existing.add(m.group(1))
+            md_name = None
+            for i in range(128):
+                cand = f'md{i}'
+                if cand not in existing:
+                    md_name = cand
+                    break
+            if not md_name:
+                yield _sse('error', 'No free md device numbers')
+                yield _sse('done', 'Failed', success=False)
+                return
+
+            dev_args = ' '.join(f'/dev/{Q(d)}' for d in disks)
+            cmd = (
+                f'yes | mdadm --create /dev/{md_name} '
+                f'--level={Q(raid_level)} '
+                f'--raid-devices={len(disks)} '
+                f'--run --force {dev_args} 2>&1'
+            )
+            r = host_run(cmd, timeout=120)
+            if r.returncode != 0:
+                yield _sse('error', f'RAID creation failed: {r.stderr.strip() or r.stdout.strip()}')
+                yield _sse('done', 'Failed', success=False)
+                return
+
+            # Save mdadm config
+            host_run('mdadm --detail --scan >> /etc/mdadm/mdadm.conf 2>/dev/null || true')
+            host_run('update-initramfs -u 2>/dev/null || true', timeout=120)
+
+            target_dev = f'/dev/{md_name}'
+            yield _sse('step', f'RAID {raid_level} array created: {target_dev}', device=target_dev)
+
+            # Wait for RAID to become available
+            time.sleep(2)
+        else:
+            # Single disk
+            d = disks[0]
+            target_dev = f'/dev/{d}'
+            yield _sse('step', f'Using disk: {target_dev}')
+
+            # Wipe signatures on single disk too
+            host_run(f"wipefs -a {Q(target_dev)} 2>/dev/null", timeout=10)
+
+        # ── Step 2: Format ──
+        yield _sse('step', f'Formatting {target_dev} as {fstype}...')
+
+        label_safe = re.sub(r'[^a-zA-Z0-9_\-.]', '_', pool_name)[:16]
+        if fstype == 'ext4':
+            mkfs_cmd = f"mkfs.ext4 -F -L {Q(label_safe)} {Q(target_dev)} 2>&1"
+        else:
+            mkfs_cmd = f"mkfs.btrfs -f -L {Q(label_safe)} {Q(target_dev)} 2>&1"
+
+        for line in host_run_stream(mkfs_cmd):
+            line = line.rstrip('\n')
+            if line.startswith('__EXIT_CODE__:'):
+                code = int(line.split(':')[1])
+                if code != 0:
+                    yield _sse('error', f'Format failed (exit code {code})')
+                    yield _sse('done', 'Failed', success=False)
+                    return
+            else:
+                if line.strip():
+                    yield _sse('log', line)
+
+        # ext4 tuning
+        if fstype == 'ext4':
+            host_run(f'tune2fs -c 30 -i 90d {Q(target_dev)} 2>/dev/null', timeout=10)
+
+        yield _sse('step', 'Format completed')
+
+        # ── Step 3: Mount ──
+        yield _sse('step', f'Mounting to {mount_path}...')
+
+        host_run(f"mkdir -p {Q(mount_path)}")
+        if fstype == 'ext4':
+            mount_opts = 'defaults,nofail,noatime,commit=60'
+        else:
+            mount_opts = 'defaults,nofail,noatime'
+
+        r = host_run(f"mount -t {fstype} -o {mount_opts} {Q(target_dev)} {Q(mount_path)}")
+        if r.returncode != 0:
+            yield _sse('error', f'Mount failed: {r.stderr.strip()}')
+            yield _sse('done', 'Failed', success=False)
+            return
+
+        # Set permissions
+        host_run(f"chmod 0777 {Q(mount_path)}")
+        uid_r = host_run("id -u")
+        gid_r = host_run("id -g")
+        uid = uid_r.stdout.strip() or '1000'
+        gid = gid_r.stdout.strip() or '1000'
+        host_run(f"chown {uid}:{gid} {Q(mount_path)}")
+
+        yield _sse('step', f'Mounted at {mount_path}')
+
+        # ── Step 4: fstab ──
+        yield _sse('step', 'Adding to fstab for auto-mount on boot...')
+
+        uuid_r = host_run(f"blkid -s UUID -o value {Q(target_dev)}")
+        uuid = uuid_r.stdout.strip()
+        if uuid:
+            _fstab_add(uuid, mount_path, fstype, mount_opts)
+            yield _sse('step', 'Added to fstab')
+        else:
+            yield _sse('log', 'Warning: UUID not found, skipping fstab')
+
+        # ── Step 5: Samba share ──
+        if samba and samba_name:
+            yield _sse('step', f'Creating Samba share "{samba_name}"...')
+
+            smbd_check = host_run("command -v smbd")
+            if smbd_check.returncode != 0:
+                yield _sse('log', 'Samba not installed — skipping share creation')
+            else:
+                safe_samba = re.sub(r'[^a-zA-Z0-9 _\-]', '_', samba_name)[:64]
+                uid_r2 = host_run("id -un")
+                gid_r2 = host_run("id -gn")
+                user = uid_r2.stdout.strip() or "nasadmin"
+                group = gid_r2.stdout.strip() or "nasadmin"
+                if user == "root":
+                    user = "nasadmin"
+                if group == "root":
+                    group = "nasadmin"
+
+                subnet = _detect_lan_subnet()
+                share_conf = {
+                    "name": safe_samba,
+                    "path": mount_path,
+                    "guest_ok": "no",
+                    "writable": "yes",
+                    "user": user,
+                    "group": group,
+                    "subnet": subnet,
+                }
+                _host_write_json('/tmp/_samba_params.json', share_conf)
+
+                script = """import json, re
+NL = chr(10)
+params = json.loads(open('/tmp/_samba_params.json').read())
+name = params['name']
+path = params['path']
+guest = params['guest_ok']
+user = params['user']
+group = params['group']
+subnet = params['subnet']
+try:
+    conf = open('/etc/samba/smb.conf').read()
+except FileNotFoundError:
+    conf = ''
+
+GLOBAL_DEFAULTS = {
+    'workgroup': 'WORKGROUP',
+    'server string': 'EthOS NAS',
+    'security': 'user',
+    'map to guest': 'never',
+    'guest account': 'nobody',
+    'restrict anonymous': '2',
+    'server min protocol': 'SMB3',
+    'server signing': 'mandatory',
+    'smb encrypt': 'desired',
+    'dns proxy': 'no',
+    'interfaces': f'127.0.0.0/8 {subnet}',
+    'bind interfaces only': 'yes',
+    'hosts allow': f'127.0.0.1 {subnet}',
+    'hosts deny': '0.0.0.0/0',
+}
+if '[global]' not in conf:
+    header = '[global]' + NL
+    for k, v in GLOBAL_DEFAULTS.items():
+        header += f'    {k} = {v}' + NL
+    conf = header + NL + conf
+else:
+    gstart = conf.index('[global]')
+    next_bracket = conf.find(NL + '[', gstart + 8)
+    gend = next_bracket + 1 if next_bracket != -1 else len(conf)
+    global_block = conf[gstart:gend]
+    additions = ''
+    for k, v in GLOBAL_DEFAULTS.items():
+        if k not in global_block.lower():
+            additions += f'    {k} = {v}' + NL
+    if additions:
+        insert_pos = conf.index(NL, gstart) + 1
+        conf = conf[:insert_pos] + additions + conf[insert_pos:]
+
+pattern = r'\\[' + re.escape(name) + r'\\][^\\[]*'
+conf = re.sub(pattern, '', conf, flags=re.IGNORECASE)
+conf = conf.rstrip() + NL + NL
+block = f'[{name}]' + NL
+block += f'    path = {path}' + NL
+block += '    browseable = yes' + NL
+block += '    writable = yes' + NL
+block += '    read only = no' + NL
+block += f'    guest ok = {guest}' + NL
+block += f'    force user = {user}' + NL
+block += f'    force group = {group}' + NL
+block += '    create mask = 0664' + NL
+block += '    directory mask = 0775' + NL
+open('/etc/samba/smb.conf', 'w').write(conf + block)
+import os
+os.makedirs(path, mode=0o775, exist_ok=True)
+"""
+                _host_write_script('/tmp/_samba_edit.py', script)
+                r = host_run("python3 /tmp/_samba_edit.py")
+                host_run("rm -f /tmp/_samba_edit.py /tmp/_samba_params.json 2>/dev/null")
+
+                if r.returncode != 0:
+                    yield _sse('log', f'Samba share creation failed: {r.stderr.strip()}')
+                else:
+                    host_run("systemctl restart smbd nmbd 2>/dev/null || systemctl restart smb nmb 2>/dev/null || true")
+                    yield _sse('step', f'Samba share "{safe_samba}" created')
+
+        # ── Save pool config ──
+        pools = _load_pools()
+        pool_entry = {
+            'name': pool_name,
+            'created': time.strftime('%Y-%m-%dT%H:%M:%S'),
+            'disks': disks,
+            'raid_level': raid_level,
+            'raid_device': target_dev if (len(disks) > 1 and raid_level) else None,
+            'fstype': fstype,
+            'mount_path': mount_path,
+            'samba_share': samba_name if samba else None,
+            'device': target_dev,
+        }
+        pools.append(pool_entry)
+        _save_pools(pools)
+
+        yield _sse('step', 'Pool configuration saved')
+        yield _sse('done', f'Pool "{pool_name}" is ready!', success=True, pool=pool_entry)
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@storage_bp.route('/pool/list')
+def pool_list():
+    """List saved storage pools."""
+    return jsonify({'pools': _load_pools()})
