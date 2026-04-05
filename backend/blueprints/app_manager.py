@@ -436,7 +436,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/security-advisor/pkg-status',
     },
     {
-        'id': 'photos-ai', 'name': 'Photos AI', 'version': '1.0.0',
+        'id': 'photos-ai', 'name': 'Photos AI', 'version': '0.0.2',
         'icon': 'fa-brain', 'color': '#8b5cf6', 'category': 'Media', 'admin_only': False,
         'description': 'Rozpoznawanie twarzy, wykrywanie obiektow i inteligentne albumy dla Galerii.',
         'apt_deps': ['cmake', 'libopenblas-dev'], 'pip_deps': ['face_recognition', 'onnxruntime', 'scipy'],
@@ -524,14 +524,19 @@ def _save_installed(state):
         os.replace(tmp, INSTALLED_FILE)
 
 
-def _set_installed(app_id, version, source='bundled'):
+def _set_installed(app_id, version, source='bundled', apt_deps=None, pip_deps=None):
     from datetime import datetime
     state = _load_installed()
-    state[app_id] = {
+    entry = {
         'version': version,
         'source': source,
         'installed_at': datetime.utcnow().isoformat(),
     }
+    if apt_deps:
+        entry['apt_deps'] = list(apt_deps)
+    if pip_deps:
+        entry['pip_deps'] = list(pip_deps)
+    state[app_id] = entry
     _save_installed(state)
 
 
@@ -1144,25 +1149,37 @@ def _bg_install(app_id, app_def, task_id):
         # Hot-load blueprint so its routes are available immediately
         emit({'stage': 'load', 'percent': 65, 'message': 'Ładowanie modułu...', 'status': 'running'})
         hot_ok = _hot_load_blueprint(app_id)
+        emit({'stage': 'load', 'percent': 70, 'message': 'Moduł załadowany', 'status': 'running'})
 
-        # Call app's install endpoint (now works even for first install)
+        # Call app's install endpoint with timeout
         install_ep = app_def.get('install_endpoint')
         if install_ep and not app_def.get('simple') and _flask_app:
             emit({'stage': 'configure', 'percent': 75, 'message': 'Konfigurowanie apki...', 'status': 'running'})
             try:
-                with _flask_app.app_context():
-                    with _flask_app.test_client() as tc:
-                        _internal_post(tc, install_ep)
+                import gevent
+                with gevent.Timeout(60, False):
+                    with _flask_app.app_context():
+                        with _flask_app.test_client() as tc:
+                            resp = _internal_post(tc, install_ep)
+                            if resp and resp.status_code >= 400:
+                                log.warning('[app_manager] install_endpoint %s returned %s', install_ep, resp.status_code)
             except Exception as e:
                 log.warning('[app_manager] install_endpoint %s failed: %s', install_ep, e)
+            emit({'stage': 'configure', 'percent': 80, 'message': 'Konfiguracja zakonczona', 'status': 'running'})
 
         # Synchronizacja frontend_dist
         emit({'stage': 'sync', 'percent': 85, 'message': 'Synchronizacja plikow frontend...', 'status': 'running'})
-        _sync_frontend_dist()
+        try:
+            _sync_frontend_dist()
+        except Exception as e:
+            log.warning('[app_manager] frontend sync error: %s', e)
+        emit({'stage': 'sync', 'percent': 90, 'message': 'Synchronizacja zakonczona', 'status': 'running'})
 
         version = app_def.get('version', 'bundled')
         source = 'bundled' if _was_bundled else 'github'
-        _set_installed(app_id, version, source)
+        _set_installed(app_id, version, source,
+                       apt_deps=app_def.get('apt_deps', []),
+                       pip_deps=app_def.get('pip_deps', []))
 
         emit({'stage': 'done', 'percent': 100, 'message': app_def['name'] + ' zainstalowano pomyslnie', 'status': 'done'})
 
@@ -1174,12 +1191,99 @@ def _bg_install(app_id, app_def, task_id):
 
     except Exception as e:
         log.exception('[app_manager] install error for %s', app_id)
-        emit({'stage': 'error', 'percent': 0, 'message': 'Bład: ' + str(e), 'status': 'error'})
+        try:
+            emit({'stage': 'error', 'percent': 0, 'message': 'Bład: ' + str(e), 'status': 'error'})
+        except Exception:
+            pass
         _needs_restart = False
     finally:
         _task_done()
         if _needs_restart:
             _restart_server()
+
+
+def _get_orphan_deps(app_id, app_def):
+    """Return (apt_orphans, pip_orphans) — deps not needed by any other installed app."""
+    installed = _load_installed()
+    app_apt = set(app_def.get('apt_deps', []))
+    app_pip = set(app_def.get('pip_deps', []))
+    # Also check deps stored in installed_apps.json from the app being uninstalled
+    stored = installed.get(app_id, {})
+    app_apt |= set(stored.get('apt_deps', []))
+    app_pip |= set(stored.get('pip_deps', []))
+    if not app_apt and not app_pip:
+        return [], []
+
+    # Collect deps needed by other installed apps (from catalog + stored state)
+    catalog_by_id = {a['id']: a for a in BUILTIN_CATALOG}
+    needed_apt = set()
+    needed_pip = set()
+    for aid in installed:
+        if aid == app_id:
+            continue
+        cat_entry = catalog_by_id.get(aid, {})
+        stored_entry = installed.get(aid, {})
+        needed_apt |= set(cat_entry.get('apt_deps', []))
+        needed_apt |= set(stored_entry.get('apt_deps', []))
+        needed_pip |= set(cat_entry.get('pip_deps', []))
+        needed_pip |= set(stored_entry.get('pip_deps', []))
+
+    return list(app_apt - needed_apt), list(app_pip - needed_pip)
+
+
+def _remove_apt_deps(deps, emit_fn):
+    """Remove orphaned APT packages."""
+    if not deps:
+        return
+    # Only remove packages that are actually installed
+    to_remove = []
+    for pkg in deps:
+        check = host_run(f'dpkg -l {q(pkg)} 2>/dev/null | grep -q "^ii"', timeout=10)
+        if check.returncode == 0:
+            to_remove.append(pkg)
+    if not to_remove:
+        return
+    pkgs = ' '.join(q(d) for d in to_remove)
+    log.info('[app_manager] Removing orphan apt deps: %s', to_remove)
+    emit_fn({'stage': 'deps_cleanup', 'message': f'Usuwanie apt: {", ".join(to_remove)}', 'percent': 45, 'status': 'running'})
+    cmd = f'DEBIAN_FRONTEND=noninteractive apt-get remove -y {pkgs} 2>&1'
+    lock_file = '/tmp/ethos-apt.lock'
+    wrapped = f"flock -w 180 {q(lock_file)} bash -lc {q(cmd)}"
+    for line in host_run_stream(wrapped):
+        stripped = line.strip()
+        if stripped.startswith('__EXIT_CODE__:'):
+            rc = int(stripped.split(':', 1)[1])
+            if rc != 0:
+                log.warning('[app_manager] apt remove failed (rc=%s)', rc)
+            break
+
+
+def _remove_pip_deps(deps, emit_fn):
+    """Remove orphaned pip packages."""
+    if not deps:
+        return
+    venv = os.path.join(_ETHOS_ROOT, 'venv')
+    pip = os.path.join(venv, 'bin', 'pip') if os.path.isdir(venv) else 'pip3'
+    # Only remove packages that are actually installed
+    to_remove = []
+    for pkg in deps:
+        pkg_name = pkg.split('==')[0].split('>=')[0].split('<=')[0].strip()
+        check = host_run(f'{q(pip)} show {q(pkg_name)} 2>/dev/null | grep -q "^Name:"', timeout=10)
+        if check.returncode == 0:
+            to_remove.append(pkg_name)
+    if not to_remove:
+        return
+    pkgs = ' '.join(q(d) for d in to_remove)
+    log.info('[app_manager] Removing orphan pip deps: %s', to_remove)
+    emit_fn({'stage': 'deps_cleanup', 'message': f'Usuwanie pip: {", ".join(to_remove)}', 'percent': 50, 'status': 'running'})
+    cmd = f'{q(pip)} uninstall -y {pkgs} 2>&1'
+    for line in host_run_stream(cmd):
+        stripped = line.strip()
+        if stripped.startswith('__EXIT_CODE__:'):
+            rc = int(stripped.split(':', 1)[1])
+            if rc != 0:
+                log.warning('[app_manager] pip uninstall failed (rc=%s)', rc)
+            break
 
 
 def _bg_uninstall(app_id, app_def, task_id, wipe_data=False):
@@ -1195,18 +1299,33 @@ def _bg_uninstall(app_id, app_def, task_id, wipe_data=False):
         if uninstall_ep and not app_def.get('simple') and _flask_app:
             emit({'stage': 'cleanup', 'percent': 30, 'message': 'Czyszczenie danych apki...', 'status': 'running'})
             try:
-                with _flask_app.app_context():
-                    with _flask_app.test_client() as tc:
-                        resp = _internal_post(tc, uninstall_ep, json={'wipe_data': wipe_data})
-                        if resp.status_code not in (200, 204):
-                            log.warning('[app_manager] uninstall_endpoint %s returned %s', uninstall_ep, resp.status_code)
+                import gevent
+                with gevent.Timeout(60, False):
+                    with _flask_app.app_context():
+                        with _flask_app.test_client() as tc:
+                            resp = _internal_post(tc, uninstall_ep, json={'wipe_data': wipe_data})
+                            if resp and resp.status_code not in (200, 204):
+                                log.warning('[app_manager] uninstall_endpoint %s returned %s', uninstall_ep, resp.status_code)
             except Exception as e:
                 log.warning('[app_manager] uninstall_endpoint %s failed: %s', uninstall_ep, e)
 
-        # Usun pliki opcjonalnych apek
+        # Remove orphaned dependencies (apt/pip) not needed by other installed apps
+        try:
+            apt_orphans, pip_orphans = _get_orphan_deps(app_id, app_def)
+            if apt_orphans or pip_orphans:
+                emit({'stage': 'deps_cleanup', 'percent': 40, 'message': 'Usuwanie nieuzywanych zaleznosci...', 'status': 'running'})
+                _remove_apt_deps(apt_orphans, emit)
+                _remove_pip_deps(pip_orphans, emit)
+        except Exception as e:
+            log.warning('[app_manager] dep cleanup for %s failed: %s', app_id, e)
+
+        # Remove files only for externally-downloaded apps, not bundled ones
+        installed_info = _load_installed().get(app_id, {})
+        was_external = installed_info.get('source') == 'github'
+
         emit({'stage': 'remove', 'percent': 60, 'message': 'Usuwanie plikow apki...', 'status': 'running'})
         fn = _get_frontend_filename(app_id)
-        if fn:
+        if fn and was_external:
             # Don't remove shared frontend files used by core apps (e.g. storage.js)
             core_uses_same = any(
                 _get_frontend_filename(cid) == fn for cid in CORE_APPS
@@ -1215,9 +1334,9 @@ def _bg_uninstall(app_id, app_def, task_id, wipe_data=False):
                 fp = os.path.join(_FRONTEND_APPS_DIR, fn + '.js')
                 if os.path.isfile(fp):
                     os.remove(fp)
-        # Remove backend blueprint
+        # Remove backend blueprint only for external apps
         bp_info = _OPTIONAL_BLUEPRINTS.get(app_id)
-        if bp_info:
+        if bp_info and was_external:
             module_name = bp_info[0]
             bp_file = os.path.join(_BLUEPRINTS_DIR, module_name + '.py')
             # Only delete if no other installed app uses same blueprint
@@ -1239,7 +1358,10 @@ def _bg_uninstall(app_id, app_def, task_id, wipe_data=False):
 
     except Exception as e:
         log.exception('[app_manager] uninstall error for %s', app_id)
-        emit({'stage': 'error', 'percent': 0, 'message': 'Bład: ' + str(e), 'status': 'error'})
+        try:
+            emit({'stage': 'error', 'percent': 0, 'message': 'Bład: ' + str(e), 'status': 'error'})
+        except Exception:
+            pass
     finally:
         _task_done()
 

@@ -123,6 +123,7 @@ from blueprints.api_docs import api_docs_bp
 from blueprints.app_manager import (
     app_manager_bp, init_app_manager, migrate_from_ethos_packages,
     CORE_APPS as _APP_MANAGER_CORE_APPS,
+    BUILTIN_CATALOG as _BUILTIN_CATALOG,
     load_installed as _load_app_manager_installed,
     load_optional_blueprints as _load_optional_blueprints,
     OPTIONAL_BLUEPRINTS as _OPTIONAL_BLUEPRINTS,
@@ -8792,6 +8793,23 @@ def get_apps():
             or a['id'] in _APP_MANAGER_CORE_APPS
             or a['id'] in _pm_installed
             or any(pkg_state.get(pid, {}).get('installed') for pid in _pkg_by_app[a['id']])]
+
+    # Auto-discover installed catalog apps not in the hardcoded list
+    _existing_ids = {a['id'] for a in apps}
+    for _cat_app in _BUILTIN_CATALOG:
+        _cid = _cat_app['id']
+        if _cid not in _existing_ids and _cid in _pm_installed:
+            apps.append({
+                'id': _cid,
+                'name': _cat_app.get('name', _cid),
+                'icon': _cat_app.get('icon', 'fa-puzzle-piece'),
+                'color': _cat_app.get('color', '#6b7280'),
+                'type': 'builtin',
+                'category': _cat_app.get('category', 'Tools'),
+                'description': _cat_app.get('description', ''),
+                'admin_only': _cat_app.get('admin_only', False),
+                'package': _cid,
+            })
 
     # Filter by privileges
     user = get_current_user()

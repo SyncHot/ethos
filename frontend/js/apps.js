@@ -5949,15 +5949,34 @@ function renderPackageCenter(body) {
                 }
             }, delay);
         } else {
-            S.progressMap[app_id] = { stage, percent, message, status, _started: S.progressMap[app_id]?._started || Date.now() };
+            S.progressMap[app_id] = { stage, percent, message, status, _started: S.progressMap[app_id]?._started || Date.now(), _lastUpdate: Date.now() };
             render();
         }
     }
+
+    // Stale progress watchdog — auto-clear installs stuck for >120s with no update
+    const _staleTimer = setInterval(() => {
+        const now = Date.now();
+        let changed = false;
+        for (const [id, p] of Object.entries(S.progressMap)) {
+            if (p.status !== 'running') continue;
+            const lastUpdate = p._lastUpdate || p._started || now;
+            if (now - lastUpdate > 120000) {
+                S.progressMap[id] = { stage: 'error', percent: 100,
+                    message: '<i class="fas fa-exclamation-triangle"></i> ' + t('Utracono polaczenie — sprawdz status recznie'),
+                    status: 'finishing' };
+                changed = true;
+                setTimeout(() => { delete S.progressMap[id]; render(); }, 5000);
+            }
+        }
+        if (changed) render();
+    }, 10000);
 
     if (NAS.socket) {
         NAS.socket.on('app_manager_progress', onProgress);
         body.closest('.window')?.addEventListener('window-close', () => {
             NAS.socket.off('app_manager_progress', onProgress);
+            clearInterval(_staleTimer);
         });
     }
 

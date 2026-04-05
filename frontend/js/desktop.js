@@ -2207,6 +2207,21 @@ function connectSocket() {
             NAS._notifCount = data.count || 0;
             _updateNotifBadge();
         });
+
+        // Reconnect handling — auto-reconnect on disconnect
+        NAS.socket.on('disconnect', (reason) => {
+            console.warn('[socket] disconnected:', reason);
+            NAS._socketConnected = false;
+        });
+        NAS.socket.on('connect', () => {
+            if (NAS._socketConnected === false) {
+                console.log('[socket] reconnected');
+            }
+            NAS._socketConnected = true;
+        });
+        NAS.socket.on('connect_error', (err) => {
+            console.warn('[socket] connect error:', err.message);
+        });
     } catch {
         // Reconnect later
         setTimeout(connectSocket, 5000);
