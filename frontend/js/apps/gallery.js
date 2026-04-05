@@ -805,7 +805,7 @@ async function _galPersonDetail(pid, container) {
         <div class="gal-person-faces-grid">${faces.map(f => `
           <div class="gal-pf-thumb" data-face-id="${f.id}">
             <img src="/api/photos-ai/face-thumb/${f.id}" alt="">
-            <div class="gal-pf-check" style="display:none"><i class="fa-solid fa-check"></i></div>
+            <div class="gal-pf-check"><i class="fa-solid fa-check"></i></div>
           </div>
         `).join('')}</div>
       </div>
@@ -849,19 +849,19 @@ async function _galPersonDetail(pid, container) {
     selectMode = !selectMode;
     selectedFaces.clear();
     selectBtn.classList.toggle('btn-primary', selectMode);
-    container.querySelectorAll('.gal-pf-check').forEach(el => {
-      el.style.display = selectMode ? '' : 'none';
-      el.classList.remove('checked');
-    });
+    container.querySelectorAll('.gal-pf-check').forEach(el => el.classList.remove('checked'));
     container.querySelectorAll('.gal-pf-thumb').forEach(el => el.classList.remove('selected'));
     deleteBtn.style.display = 'none';
     moveBtn.style.display = 'none';
   });
 
-  // Face thumbnail click → select / open lightbox
+  // Face thumbnail click → toggle selection (auto-enters select mode)
   container.querySelectorAll('.gal-pf-thumb').forEach(el => {
     el.addEventListener('click', () => {
-      if (!selectMode) return;
+      if (!selectMode) {
+        selectMode = true;
+        selectBtn.classList.add('btn-primary');
+      }
       const fid = parseInt(el.dataset.faceId);
       if (selectedFaces.has(fid)) {
         selectedFaces.delete(fid);

@@ -422,10 +422,15 @@ def _scan_worker(folders):
     import gevent
     t0 = time.time()
     imgs = _collect_images(folders)
+    total_all = len(imgs)
     conn = _get_db()
     todo = [p for p in imgs if _needs_scan(conn, p)]
-    _scan_state.update(total=len(todo), processed=0, faces_found=0, tags_found=0, started_at=t0)
-    _persist_scan_state({'folders': folders, 'total': len(todo), 'processed': 0,
+    already_done = total_all - len(todo)
+    _scan_state.update(total=total_all, processed=already_done,
+                       faces_found=0, tags_found=0, started_at=t0,
+                       already_scanned=already_done)
+    _persist_scan_state({'folders': folders, 'total': total_all,
+                         'processed': already_done,
                          'faces_found': 0, 'tags_found': 0, 'started_at': t0})
     _emit_progress()
     if not todo:
@@ -439,6 +444,9 @@ def _scan_worker(folders):
                 'duration': 0, 'message': 'Brak nowych zdjec do skanowania.'})
         conn.close()
         return
+    if already_done:
+        log.info('Scan: skipping %d already-scanned, %d remaining of %d total',
+                 already_done, len(todo), total_all)
     yolo = None
     if os.path.isfile(_YOLO_MODEL):
         try:
@@ -451,13 +459,14 @@ def _scan_worker(folders):
         _scan_state['current_file'] = path
         gevent.sleep(0.3)  # throttle: yield CPU between images so server stays responsive
         ff, tf = _process_image(path, conn, yolo)
-        _scan_state['processed'] = i + 1
+        _scan_state['processed'] = already_done + i + 1
         _scan_state['faces_found'] += ff
         _scan_state['tags_found'] += tf
         if (i + 1) % 5 == 0 or i == 0:
             _emit_progress()
-            _persist_scan_state({'folders': folders, 'total': len(todo),
-                                 'processed': i + 1, 'faces_found': _scan_state['faces_found'],
+            _persist_scan_state({'folders': folders, 'total': total_all,
+                                 'processed': already_done + i + 1,
+                                 'faces_found': _scan_state['faces_found'],
                                  'tags_found': _scan_state['tags_found'], 'started_at': t0})
             gevent.sleep(0.1)
     np_ = 0
