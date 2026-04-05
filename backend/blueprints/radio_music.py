@@ -300,6 +300,83 @@ def radio_stream_url():
 
 # ── Podcasts: search via iTunes ──────────────────────────────
 
+# iTunes podcast genre IDs
+_PODCAST_GENRES = {
+    'all': 26,
+    'arts': 1301, 'business': 1321, 'comedy': 1303, 'education': 1304,
+    'fiction': 1483, 'health': 1512, 'history': 1487, 'kids': 1305,
+    'leisure': 1502, 'music': 1310, 'news': 1489, 'religion': 1314,
+    'science': 1533, 'society': 1324, 'sports': 1545, 'technology': 1318,
+    'truecrime': 1488, 'tv': 1309,
+}
+
+
+@radio_music_bp.route('/podcasts/top', methods=['GET'])
+def podcasts_top():
+    """Top podcasts by genre and country via iTunes RSS."""
+    country = request.args.get('country', 'pl').strip().lower()
+    genre_key = request.args.get('genre', '').strip().lower()
+    limit = min(int(request.args.get('limit', 30)), 100)
+    genre_id = _PODCAST_GENRES.get(genre_key, 0)
+
+    rss_url = f'https://itunes.apple.com/{country}/rss/toppodcasts/limit={limit}'
+    if genre_id:
+        rss_url += f'/genre={genre_id}'
+    rss_url += '/json'
+
+    try:
+        req = urllib.request.Request(rss_url, headers={'User-Agent': 'EthOS-RadioMusic/1.0'})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+    except Exception as e:
+        log.debug('iTunes RSS top podcasts error: %s', e)
+        return jsonify({'items': []})
+
+    items = []
+    for r in data.get('feed', {}).get('entry', []):
+        apple_id = r.get('id', {}).get('attributes', {}).get('im:id', '')
+        imgs = r.get('im:image', [])
+        artwork = imgs[-1].get('label', '') if imgs else ''
+        items.append({
+            'id': apple_id,
+            'name': r.get('im:name', {}).get('label', ''),
+            'artist': r.get('im:artist', {}).get('label', ''),
+            'artwork': artwork.replace('170x170', '600x600') if artwork else '',
+            'genre': r.get('category', {}).get('attributes', {}).get('label', ''),
+        })
+    return jsonify({'items': items})
+
+
+@radio_music_bp.route('/podcasts/lookup', methods=['GET'])
+def podcasts_lookup():
+    """Lookup a podcast by Apple ID to get its RSS feed URL (needed after top charts)."""
+    apple_id = request.args.get('id', '').strip()
+    if not apple_id:
+        return jsonify({'error': 'Brak ID'}), 400
+    lookup_url = f'https://itunes.apple.com/lookup?id={apple_id}&entity=podcast'
+    try:
+        req = urllib.request.Request(lookup_url, headers={'User-Agent': 'EthOS-RadioMusic/1.0'})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+    except Exception as e:
+        log.debug('iTunes lookup error: %s', e)
+        return jsonify({'error': str(e)}), 502
+
+    results = data.get('results', [])
+    if not results:
+        return jsonify({'error': 'Nie znaleziono'}), 404
+    r = results[0]
+    return jsonify({
+        'id': r.get('collectionId', 0),
+        'name': r.get('collectionName', ''),
+        'artist': r.get('artistName', ''),
+        'artwork': r.get('artworkUrl600') or r.get('artworkUrl100', ''),
+        'feed_url': r.get('feedUrl', ''),
+        'genre': r.get('primaryGenreName', ''),
+        'count': r.get('trackCount', 0),
+    })
+
+
 @radio_music_bp.route('/podcasts/search', methods=['GET'])
 def podcasts_search():
     q_str = request.args.get('q', '').strip()

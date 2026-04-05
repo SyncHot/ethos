@@ -67,6 +67,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-toolbar{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border);flex-wrap:wrap}',
 '.rm-search{flex:1;min-width:180px;padding:8px 14px;border:1px solid var(--border);border-radius:20px;background:var(--bg-primary);color:var(--text-primary);font-size:13px;outline:none}',
 '.rm-search:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(59,130,246,.15)}',
+'.rm-select{padding:8px 12px;border:1px solid var(--border);border-radius:20px;background:var(--bg-primary);color:var(--text-primary);font-size:12px;outline:none;cursor:pointer;min-width:100px}',
+'.rm-select:focus{border-color:var(--accent)}',
 '.rm-content{flex:1;overflow-y:auto;padding:16px}',
 
 /* station / podcast cards */
@@ -280,29 +282,53 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     /* ── Radio Browse ───────────────────────────────── */
 
     async function loadRadio(toolbar, content) {
-        toolbar.innerHTML = `<input class="rm-search" id="rm-radio-search" placeholder="${t('Szukaj stacji radiowych...')}" autofocus>`;
-        content.innerHTML = '<div class="rm-empty"><i class="fas fa-broadcast-tower"></i><p>' + t('Wpisz nazwę stacji lub przeglądaj Top stacje') + '</p></div>';
+        const RADIO_COUNTRIES = [{code:'',name:t('Wszystkie kraje')},{code:'PL',name:'Polska'},{code:'US',name:'USA'},{code:'GB',name:'UK'},
+            {code:'DE',name:'Niemcy'},{code:'FR',name:'Francja'},{code:'ES',name:'Hiszpania'},{code:'IT',name:'Włochy'},
+            {code:'BR',name:'Brazylia'},{code:'CA',name:'Kanada'},{code:'AU',name:'Australia'},{code:'JP',name:'Japonia'},
+            {code:'SE',name:'Szwecja'},{code:'NL',name:'Holandia'},{code:'CZ',name:'Czechy'},{code:'UA',name:'Ukraina'}];
+        let _radioCountry = '';
+
+        toolbar.innerHTML = `<input class="rm-search" id="rm-radio-search" placeholder="${t('Szukaj stacji radiowych...')}" autofocus>`
+            + `<select class="rm-select" id="rm-radio-country">${RADIO_COUNTRIES.map(c => '<option value="'+c.code+'">'+escH(c.name)+'</option>').join('')}</select>`;
+
+        content.innerHTML = '<div class="rm-empty"><i class="fas fa-spinner fa-spin"></i></div>';
 
         const searchInput = bodyEl.querySelector('#rm-radio-search');
         let debounce;
         searchInput.onkeyup = () => {
             clearTimeout(debounce);
-            debounce = setTimeout(() => searchRadio(searchInput.value, content), 400);
+            debounce = setTimeout(() => {
+                const q = searchInput.value.trim();
+                if (q) searchRadio(q, _radioCountry, content);
+                else loadTopRadio(_radioCountry, content);
+            }, 400);
+        };
+
+        bodyEl.querySelector('#rm-radio-country').onchange = (e) => {
+            _radioCountry = e.target.value;
+            const q = searchInput.value.trim();
+            if (q) searchRadio(q, _radioCountry, content);
+            else loadTopRadio(_radioCountry, content);
         };
 
         // Load top stations by default
-        const data = await api('/radio-music/radio/top?limit=50');
-        if (data.items && data.items.length) renderStations(data.items, content);
+        loadTopRadio('', content);
     }
 
-    async function searchRadio(q, content) {
-        if (!q.trim()) {
-            const data = await api('/radio-music/radio/top?limit=50');
-            if (data.items) renderStations(data.items, content);
-            return;
-        }
+    async function loadTopRadio(country, content) {
         content.innerHTML = '<div class="rm-empty"><i class="fas fa-spinner fa-spin"></i></div>';
-        const data = await api('/radio-music/radio/search?q=' + encodeURIComponent(q));
+        let url = '/radio-music/radio/top?limit=50';
+        if (country) url = '/radio-music/radio/search?country=' + country + '&limit=50';
+        const data = await api(url);
+        if (data.items && data.items.length) renderStations(data.items, content);
+        else content.innerHTML = '<div class="rm-empty"><i class="fas fa-broadcast-tower"></i><p>' + t('Brak stacji') + '</p></div>';
+    }
+
+    async function searchRadio(q, country, content) {
+        content.innerHTML = '<div class="rm-empty"><i class="fas fa-spinner fa-spin"></i></div>';
+        let url = '/radio-music/radio/search?q=' + encodeURIComponent(q);
+        if (country) url += '&country=' + country;
+        const data = await api(url);
         if (data.items && data.items.length) renderStations(data.items, content);
         else content.innerHTML = '<div class="rm-empty"><i class="fas fa-search"></i><p>' + t('Brak wyników') + '</p></div>';
     }
@@ -433,18 +459,104 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         });
     }
 
-    /* ── Podcasts Search ───────────────────────────── */
+    /* ── Podcasts Browse ──────────────────────────── */
+
+    const _POD_GENRES = [
+        {key:'', label:'Wszystkie'}, {key:'truecrime', label:'True Crime'}, {key:'comedy', label:'Komedia'},
+        {key:'news', label:'Wiadomości'}, {key:'society', label:'Społeczeństwo'}, {key:'education', label:'Edukacja'},
+        {key:'technology', label:'Technologia'}, {key:'business', label:'Biznes'}, {key:'health', label:'Zdrowie'},
+        {key:'history', label:'Historia'}, {key:'science', label:'Nauka'}, {key:'sports', label:'Sport'},
+        {key:'music', label:'Muzyka'}, {key:'arts', label:'Sztuka'}, {key:'fiction', label:'Fikcja'},
+        {key:'kids', label:'Dla dzieci'}, {key:'tv', label:'TV i Film'},
+    ];
+    const _POD_COUNTRIES = [
+        {code:'pl',name:'Polska'},{code:'us',name:'USA'},{code:'gb',name:'UK'},{code:'de',name:'Niemcy'},
+        {code:'fr',name:'Francja'},{code:'es',name:'Hiszpania'},{code:'it',name:'Włochy'},
+        {code:'br',name:'Brazylia'},{code:'ca',name:'Kanada'},{code:'au',name:'Australia'},
+        {code:'jp',name:'Japonia'},{code:'se',name:'Szwecja'},{code:'nl',name:'Holandia'},
+    ];
 
     async function loadPodcasts(toolbar, content) {
-        toolbar.innerHTML = `<input class="rm-search" id="rm-pod-search" placeholder="${t('Szukaj podcastów (iTunes)...')}" autofocus>`;
-        content.innerHTML = '<div class="rm-empty"><i class="fas fa-podcast"></i><p>' + t('Wpisz nazwę podcastu') + '</p></div>';
+        let _podCountry = 'pl', _podGenre = '';
 
+        toolbar.innerHTML = `
+            <input class="rm-search" id="rm-pod-search" placeholder="${t('Szukaj podcastów...')}" autofocus>
+            <select class="rm-select" id="rm-pod-country">${_POD_COUNTRIES.map(c => '<option value="'+c.code+'"'+(c.code==='pl'?' selected':'')+'>'+escH(c.name)+'</option>').join('')}</select>`;
+
+        // Genre chips + results area
+        content.innerHTML = '<div class="rm-chips" id="rm-pod-genres"></div><div id="rm-pod-results"></div>';
+        const chipsEl = content.querySelector('#rm-pod-genres');
+        _POD_GENRES.forEach(g => {
+            const chip = document.createElement('span');
+            chip.className = 'rm-chip' + (g.key === '' ? ' active' : '');
+            chip.textContent = t(g.label);
+            chip.dataset.genre = g.key;
+            chip.onclick = () => {
+                chipsEl.querySelectorAll('.rm-chip').forEach(c => c.classList.remove('active'));
+                chip.classList.add('active');
+                _podGenre = g.key;
+                loadTopPodcasts(_podCountry, _podGenre, content.querySelector('#rm-pod-results'));
+            };
+            chipsEl.appendChild(chip);
+        });
+
+        // Country selector
+        bodyEl.querySelector('#rm-pod-country').onchange = (e) => {
+            _podCountry = e.target.value;
+            loadTopPodcasts(_podCountry, _podGenre, content.querySelector('#rm-pod-results'));
+        };
+
+        // Search
         const searchInput = bodyEl.querySelector('#rm-pod-search');
         let debounce;
         searchInput.onkeyup = () => {
             clearTimeout(debounce);
-            debounce = setTimeout(() => searchPodcasts(searchInput.value, content), 500);
+            debounce = setTimeout(() => {
+                if (searchInput.value.trim()) {
+                    searchPodcasts(searchInput.value, content.querySelector('#rm-pod-results'));
+                } else {
+                    loadTopPodcasts(_podCountry, _podGenre, content.querySelector('#rm-pod-results'));
+                }
+            }, 500);
         };
+
+        // Load top by default
+        loadTopPodcasts(_podCountry, _podGenre, content.querySelector('#rm-pod-results'));
+    }
+
+    async function loadTopPodcasts(country, genre, container) {
+        container.innerHTML = '<div class="rm-empty"><i class="fas fa-spinner fa-spin"></i></div>';
+        let url = '/radio-music/podcasts/top?country=' + country + '&limit=30';
+        if (genre) url += '&genre=' + genre;
+        const data = await api(url);
+        if (!data.items || !data.items.length) {
+            container.innerHTML = '<div class="rm-empty"><i class="fas fa-podcast"></i><p>' + t('Brak podcastów') + '</p></div>';
+            return;
+        }
+        container.innerHTML = '<div class="rm-grid"></div>';
+        const grid = container.querySelector('.rm-grid');
+        data.items.forEach(p => {
+            const card = document.createElement('div');
+            card.className = 'rm-card';
+            card.innerHTML = `
+                <div class="rm-card-icon">${p.artwork ? '<img src="' + escH(p.artwork) + '">' : '<i class="fas fa-podcast"></i>'}</div>
+                <div class="rm-card-info">
+                    <div class="rm-card-name">${escH(p.name)}</div>
+                    <div class="rm-card-meta">${escH(p.artist)}${p.genre ? ' · ' + escH(p.genre) : ''}</div>
+                </div>`;
+            card.onclick = async () => {
+                // Top charts don't include feed_url — need lookup
+                if (!p.feed_url && p.id) {
+                    const lookup = await api('/radio-music/podcasts/lookup?id=' + p.id);
+                    if (lookup.feed_url) {
+                        p.feed_url = lookup.feed_url;
+                        p.count = lookup.count;
+                    }
+                }
+                openPodcast(p);
+            };
+            grid.appendChild(card);
+        });
     }
 
     async function searchPodcasts(q, content) {
