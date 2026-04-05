@@ -219,7 +219,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/med-assistant/pkg-status',
     },
     {
-        'id': 'gallery', 'name': 'Gallery', 'version': '1.0.1',
+        'id': 'gallery', 'name': 'Gallery', 'version': '1.0.2',
         'icon': 'fa-images', 'color': '#ec4899', 'category': 'Media', 'admin_only': False,
         'description': 'Galeria zdjec i filmow z EXIF, miniaturkami i haslami folderow.',
         'apt_deps': [], 'pip_deps': [],
@@ -438,7 +438,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/security-advisor/pkg-status',
     },
     {
-        'id': 'photos-ai', 'name': 'Photos AI', 'version': '0.0.3',
+        'id': 'photos-ai', 'name': 'Photos AI', 'version': '0.0.4',
         'icon': 'fa-brain', 'color': '#8b5cf6', 'category': 'Media', 'admin_only': False,
         'description': 'Rozpoznawanie twarzy, wykrywanie obiektow i inteligentne albumy dla Galerii.',
         'apt_deps': ['cmake', 'libopenblas-dev'], 'pip_deps': ['face_recognition', 'onnxruntime', 'scipy'],
@@ -1438,7 +1438,7 @@ def get_catalog_endpoint():
 
     force = request.args.get('refresh') == '1'
     catalog = _get_catalog(force_refresh=force)
-    installed = _load_installed()
+    installed = _ensure_installed_apps()
 
     result = []
     for app in catalog:
@@ -1698,18 +1698,23 @@ def _file_sha256(path):
 
 def _ensure_installed_apps():
     """Ensure installed_apps.json contains all on-disk optional apps.
-    Detects apps deployed via file copy that were never registered."""
+    Detects apps deployed via file copy that were never registered.
+    Also syncs version when local file was updated outside Package Center
+    (e.g. via git pull or OTA) so false update badges don't appear."""
     from datetime import datetime
     installed = _load_installed()
     changed = False
     now = datetime.utcnow().isoformat()
 
+    catalog_by_id = {a['id']: a for a in BUILTIN_CATALOG}
+
     for app_id, bp_info in _OPTIONAL_BLUEPRINTS.items():
-        if app_id in installed:
-            continue
         module_name = bp_info[0]
         local_py = os.path.join(_BLUEPRINTS_DIR, module_name + '.py')
-        if os.path.isfile(local_py) and os.path.getsize(local_py) > 0:
+        if not (os.path.isfile(local_py) and os.path.getsize(local_py) > 0):
+            continue
+
+        if app_id not in installed:
             installed[app_id] = {
                 'version': 'bundled',
                 'source': 'bundled',
@@ -1717,6 +1722,14 @@ def _ensure_installed_apps():
             }
             changed = True
             log.info('[app_manager] Auto-registered on-disk app: %s', app_id)
+
+        # Sync version: if installed version is behind catalog and files are
+        # on disk, the app was updated outside Package Center — bump version.
+        cat_ver = catalog_by_id.get(app_id, {}).get('version', '')
+        inst_ver = installed[app_id].get('version', '')
+        if cat_ver and inst_ver in ('bundled', 'core') or (cat_ver and inst_ver and cat_ver > inst_ver):
+            installed[app_id]['version'] = cat_ver
+            changed = True
 
     if changed:
         _save_installed(installed)
