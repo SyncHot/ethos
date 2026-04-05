@@ -93,8 +93,15 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-empty i{font-size:48px;margin-bottom:12px;display:block;opacity:.3}',
 '.rm-empty p{font-size:14px}',
 
+/* mobile nav bar */
+'.rm-mobile-nav{display:none;overflow-x:auto;white-space:nowrap;background:var(--bg-secondary);border-bottom:1px solid var(--border);padding:6px 8px;gap:4px;-webkit-overflow-scrolling:touch;scrollbar-width:none}',
+'.rm-mobile-nav::-webkit-scrollbar{display:none}',
+'.rm-mobile-nav .rm-mnav-btn{display:inline-flex;align-items:center;gap:5px;padding:7px 12px;border:1px solid var(--border);border-radius:20px;background:var(--bg-primary);color:var(--text-primary);font-size:12px;white-space:nowrap;cursor:pointer;flex-shrink:0;transition:all .12s}',
+'.rm-mobile-nav .rm-mnav-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}',
+'.rm-mobile-nav .rm-mnav-btn i{font-size:11px}',
+
 /* responsive */
-'@media(max-width:768px){.rm-sidebar{display:none}.rm-grid{grid-template-columns:1fr}.rm-pod-header{flex-direction:column;align-items:center;text-align:center}.rm-pod-art{width:100px;height:100px}}',
+'@media(max-width:768px){.rm-sidebar{display:none}.rm-mobile-nav{display:flex}.rm-grid{grid-template-columns:1fr}.rm-pod-header{flex-direction:column;align-items:center;text-align:center}.rm-pod-art{width:100px;height:100px}.rm-toolbar{padding:8px 10px}.rm-content{padding:10px}.rm-player{padding:8px 10px;gap:8px}.rm-vol-slider{width:50px}}',
     ].join('\n'); }
 
     createWindow('radio-music', {
@@ -122,6 +129,15 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     <div class="rm-sidebar-item" data-section="history"><i class="fas fa-history"></i> ${t('Historia')}</div>
   </div>
   <div class="rm-main">
+    <div class="rm-mobile-nav" id="rm-mobile-nav">
+      <button class="rm-mnav-btn active" data-section="radio"><i class="fas fa-broadcast-tower"></i> ${t('Radio')}</button>
+      <button class="rm-mnav-btn" data-section="favorites"><i class="fas fa-heart"></i> ${t('Ulubione')}</button>
+      <button class="rm-mnav-btn" data-section="countries"><i class="fas fa-globe"></i> ${t('Kraje')}</button>
+      <button class="rm-mnav-btn" data-section="tags"><i class="fas fa-tags"></i> ${t('Gatunki')}</button>
+      <button class="rm-mnav-btn" data-section="podcasts"><i class="fas fa-podcast"></i> ${t('Podcasty')}</button>
+      <button class="rm-mnav-btn" data-section="subscriptions"><i class="fas fa-rss"></i> ${t('Subskrypcje')}</button>
+      <button class="rm-mnav-btn" data-section="history"><i class="fas fa-history"></i> ${t('Historia')}</button>
+    </div>
     <div class="rm-toolbar" id="rm-toolbar"></div>
     <div class="rm-content" id="rm-content"></div>
     <div class="rm-player" id="rm-player" style="display:none">
@@ -145,7 +161,21 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 el.onclick = () => {
                     body.querySelectorAll('.rm-sidebar-item').forEach(e => e.classList.remove('active'));
                     el.classList.add('active');
+                    // sync mobile nav
+                    body.querySelectorAll('.rm-mnav-btn').forEach(b => b.classList.toggle('active', b.dataset.section === el.dataset.section));
                     activeSection = el.dataset.section;
+                    loadSection(activeSection);
+                };
+            });
+
+            // Mobile nav
+            body.querySelectorAll('.rm-mnav-btn').forEach(btn => {
+                btn.onclick = () => {
+                    body.querySelectorAll('.rm-mnav-btn').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    // sync sidebar
+                    body.querySelectorAll('.rm-sidebar-item').forEach(e => e.classList.toggle('active', e.dataset.section === btn.dataset.section));
+                    activeSection = btn.dataset.section;
                     loadSection(activeSection);
                 };
             });
