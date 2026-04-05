@@ -169,6 +169,15 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     <button class="vs-player-close" id="vs-player-close"><i class="fas fa-times"></i></button>
   </div>
   <video id="vs-player-video" controls autoplay playsinline></video>
+  <div class="vs-resume-dialog" id="vs-resume-dialog" style="display:none">
+    <div class="vs-resume-box">
+      <div class="vs-resume-text" id="vs-resume-text"></div>
+      <div class="vs-resume-btns">
+        <button class="vs-resume-btn" id="vs-resume-continue"><i class="fas fa-play"></i> ${t('Kontynuuj')}</button>
+        <button class="vs-resume-btn vs-resume-secondary" id="vs-resume-restart"><i class="fas fa-redo"></i> ${t('Od początku')}</button>
+      </div>
+    </div>
+  </div>
 </div>
 <div class="vs-info-modal" id="vs-info-modal" style="display:none">
   <div class="vs-info-content" id="vs-info-content"></div>
@@ -815,16 +824,37 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 
         const resumePos = (info.position && info.position > 0 && !info.watched) ? info.position : 0;
 
-        if (needsTranscode) {
-            await _startHls(vid, resumePos, null);
-        } else {
-            video.src = _buildStreamUrl(vid);
-            if (resumePos > 0) {
-                video.addEventListener('loadedmetadata', function onMeta() {
-                    video.currentTime = resumePos;
-                    video.removeEventListener('loadedmetadata', onMeta);
-                });
+        async function _doPlay(startSec) {
+            if (needsTranscode) {
+                await _startHls(vid, startSec, null);
+            } else {
+                video.src = _buildStreamUrl(vid);
+                if (startSec > 0) {
+                    video.addEventListener('loadedmetadata', function onMeta() {
+                        video.currentTime = startSec;
+                        video.removeEventListener('loadedmetadata', onMeta);
+                    });
+                }
             }
+        }
+
+        if (resumePos > 30) {
+            // Show Plex-like resume dialog
+            const dlg = bodyEl.querySelector('#vs-resume-dialog');
+            const txt = bodyEl.querySelector('#vs-resume-text');
+            const btnCont = bodyEl.querySelector('#vs-resume-continue');
+            const btnRestart = bodyEl.querySelector('#vs-resume-restart');
+            if (dlg && txt) {
+                video.removeAttribute('autoplay');
+                txt.textContent = t('Kontynuować od') + ' ' + formatDuration(resumePos) + '?';
+                dlg.style.display = 'flex';
+                btnCont.onclick = () => { dlg.style.display = 'none'; _doPlay(resumePos); };
+                btnRestart.onclick = () => { dlg.style.display = 'none'; _doPlay(0); };
+            } else {
+                await _doPlay(resumePos);
+            }
+        } else {
+            await _doPlay(0);
         }
 
         _loadSubtitles(vid, video);
@@ -1229,6 +1259,16 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 '.vs-pip-btn:hover{opacity:1}',
 '.vs-fs-btn{background:none;border:none;color:#fff;font-size:15px;cursor:pointer;padding:4px 8px;opacity:.7;transition:opacity .15s}',
 '.vs-fs-btn:hover{opacity:1}',
+
+/* Resume dialog */
+'.vs-resume-dialog{position:absolute;inset:0;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center;z-index:20}',
+'.vs-resume-box{background:var(--bg-elevated,#2a2a2e);border-radius:12px;padding:28px 36px;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,.6)}',
+'.vs-resume-text{color:#fff;font-size:16px;margin-bottom:20px;font-weight:500}',
+'.vs-resume-btns{display:flex;gap:12px;justify-content:center}',
+'.vs-resume-btn{display:inline-flex;align-items:center;gap:8px;padding:10px 24px;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;transition:filter .15s;background:var(--accent);color:#fff}',
+'.vs-resume-btn:hover{filter:brightness(1.15)}',
+'.vs-resume-secondary{background:rgba(255,255,255,.15);color:#fff}',
+'.vs-resume-secondary:hover{background:rgba(255,255,255,.25)}',
 
 /* Continue Watching */
 '.vs-section-header{font-size:15px;font-weight:600;color:var(--text-primary);padding:0 0 10px;display:flex;align-items:center;gap:8px}',

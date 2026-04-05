@@ -130,6 +130,7 @@ _FRONTEND_FILENAME = {
     'security-advisor': 'security_advisor',
     'photos-ai':        'photos_ai',
     'video-station':    'video_station',
+    'radio-music':      'radio_music',
 }
 
 # Maps app_id → (module_filename, blueprint_var, init_func_or_None, socketio_attr_needed)
@@ -170,6 +171,7 @@ _OPTIONAL_BLUEPRINTS = {
     'tickets':         ('tickets',         'tickets_bp',       'init_tickets',      True),
     'photos-ai':       ('photos_ai',       'photos_ai_bp',      None,                True),
     'video-station':   ('video_station',   'video_station_bp',  None,                True),
+    'radio-music':     ('radio_music',     'radio_music_bp',    None,                False),
 }
 
 # Public alias
@@ -503,6 +505,15 @@ BUILTIN_CATALOG = [
         'install_endpoint': '/api/video-station/install',
         'uninstall_endpoint': '/api/video-station/uninstall',
         'status_endpoint': '/api/video-station/pkg-status',
+    },
+    {
+        'id': 'radio-music', 'name': 'Radio & Music', 'version': '1.0.0',
+        'icon': 'fa-broadcast-tower', 'color': '#10b981', 'category': 'Media', 'admin_only': False,
+        'description': 'Radio internetowe z całego świata, podcasty i odtwarzacz muzyki.',
+        'apt_deps': [], 'pip_deps': [],
+        'install_endpoint': '/api/radio-music/install',
+        'uninstall_endpoint': '/api/radio-music/uninstall',
+        'status_endpoint': '/api/radio-music/pkg-status',
     },
 ]
 
