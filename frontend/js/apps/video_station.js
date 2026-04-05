@@ -749,7 +749,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         // keyboard shortcuts
         overlay._keyHandler = (e) => {
             if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); video.paused ? video.play() : video.pause(); }
-            else if (e.key === 'f') { toggleFullscreen(video); }
+            else if (e.key === 'f') { toggleFullscreen(_transcoding ? overlay : video); }
             else if (e.key === 'Escape') { closePlayer(); }
             else if (e.key === 'ArrowLeft') { seekPlayer(video, -10); }
             else if (e.key === 'ArrowRight') { seekPlayer(video, 10); }
@@ -816,7 +816,14 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         };
 
         // Fullscreen
-        if (fsBtn) fsBtn.onclick = () => { toggleFullscreen(video); };
+        if (fsBtn) fsBtn.onclick = () => {
+            const overlay = bodyEl.querySelector('#vs-player-overlay');
+            toggleFullscreen(overlay || video);
+        };
+        document.addEventListener('fullscreenchange', () => {
+            if (fsBtn) fsBtn.innerHTML = document.fullscreenElement
+                ? '<i class="fas fa-compress"></i>' : '<i class="fas fa-expand"></i>';
+        });
 
         // Init time display
         if (timeEl) timeEl.textContent = formatDuration(_startOffset) + ' / ' + formatDuration(_knownDuration);
@@ -1044,5 +1051,10 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 '.vs-cc-progress{flex:1;height:6px;background:rgba(255,255,255,.2);border-radius:3px;cursor:pointer;position:relative;overflow:hidden}',
 '.vs-cc-buffered{position:absolute;top:0;left:0;height:100%;background:rgba(255,255,255,.25);border-radius:3px;transition:width .3s}',
 '.vs-cc-fill{position:absolute;top:0;left:0;height:100%;background:var(--accent,#4f8cff);border-radius:3px;transition:width .3s}',
+/* overlay fullscreen: video fills screen, controls stick to bottom */
+'.vs-player-overlay:fullscreen{background:#000}',
+'.vs-player-overlay:fullscreen #vs-player-video{max-width:100vw;max-height:100vh;width:100%;height:100%;margin:0;object-fit:contain}',
+'.vs-player-overlay:fullscreen .vs-custom-controls{position:fixed;bottom:0;left:0;right:0}',
+'.vs-player-overlay:fullscreen .vs-player-top{position:fixed;top:0;left:0;right:0;z-index:103}',
     ].join('\n'); }
 };
