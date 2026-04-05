@@ -1574,14 +1574,25 @@ def update_app(app_id):
     if app_id in CORE_APPS:
         return jsonify({'error': 'Aktualizacje core apps przez OTA'}), 400
 
-    catalog = _get_catalog(force_refresh=True)
-    app_def = next((a for a in catalog if a['id'] == app_id), None)
-    if not app_def:
+    bp_info = _OPTIONAL_BLUEPRINTS.get(app_id)
+    if not bp_info:
         return jsonify({'error': 'Nieznana apka: ' + app_id}), 404
+
+    cfg = _load_app_update_config()
+    source = cfg.get('source', 'github')
+
+    if source == 'github':
+        repo = cfg.get('github_repo', DEFAULT_GITHUB_REPO)
+        base_url = _github_raw_base(repo) + '/apps'
+    else:
+        raw_url = _get_update_url()
+        base_url = _resolve_update_base(raw_url) if raw_url else ''
+        if not base_url:
+            return jsonify({'error': 'Serwer aktualizacji nie skonfigurowany'}), 400
 
     task_id = str(uuid.uuid4())[:8]
     from gevent import spawn
-    spawn(_bg_install, app_id, app_def, task_id)
+    spawn(_bg_update_apps, [app_id], base_url, task_id, source)
     return jsonify({'ok': True, 'task_id': task_id})
 
 
@@ -1993,7 +2004,10 @@ def _bg_update_apps(app_ids, base_url, task_id, source='ota'):
 
             if ok:
                 _hot_load_blueprint(app_id)
-                _set_installed(app_id, 'latest', source)
+                # Use catalog version if available, fall back to 'latest'
+                cat_entry = next((a for a in BUILTIN_CATALOG if a['id'] == app_id), {})
+                ver = cat_entry.get('version', 'latest')
+                _set_installed(app_id, ver, source)
                 updated.append(app_id)
             else:
                 failed.append(app_id)
