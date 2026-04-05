@@ -228,6 +228,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
       '<i class="fas fa-magic"></i> TMDb' +
     '</label>' +
     '<button id="vs-scan-btn" class="app-btn app-btn-sm"><i class="fas fa-sync-alt"></i> ' + t('Skanuj') + '</button>' +
+    '<button id="vs-reindex-btn" class="app-btn app-btn-sm" title="' + t('Ponownie odczytaj metadane (kodeki, czas trwania) wszystkich filmów') + '"><i class="fas fa-database"></i> ' + t('Reindeksuj') + '</button>' +
     '<button id="vs-match-all-btn" class="app-btn app-btn-sm" title="' + t('Dopasuj wszystkie nierozpoznane filmy do TMDb') + '"><i class="fas fa-wand-magic-sparkles"></i> ' + t('Dopasuj') + '</button>' +
     '<div class="vs-scan-progress" id="vs-scan-bar" style="display:none">' +
       '<div class="vs-prog-bar"><div class="vs-prog-fill" id="vs-scan-fill"></div></div>' +
@@ -249,6 +250,17 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         bodyEl.querySelector('#vs-scan-stop').onclick = stopScan;
         bodyEl.querySelector('#vs-tmdb-check').onchange = (e) => { useTmdb = e.target.checked; };
         bodyEl.querySelector('#vs-match-all-btn').onclick = matchAll;
+        bodyEl.querySelector('#vs-reindex-btn').onclick = async () => {
+            const btn = bodyEl.querySelector('#vs-reindex-btn');
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Reindeksacja...');
+            const res = await api('/video-station/rescan-metadata', { method: 'POST', body: { all: true } });
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-database"></i> ' + t('Reindeksuj');
+            if (res.error) { toast(res.error, 'error'); return; }
+            toast(t('Zreindeksowano {n} z {t} filmów', { n: res.updated || 0, t: res.total || 0 }), 'success');
+            loadLibrary();
+        };
 
         if (scanning) checkScanStatus();
     }

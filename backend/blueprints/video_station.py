@@ -945,9 +945,13 @@ def rescan_metadata():
     """Re-probe all videos with empty codec metadata (fixes broken scans)."""
     if not _all_deps_ok():
         return jsonify({"error": "Brak ffmpeg/ffprobe."}), 400
+    force_all = request.json and request.json.get("all", False)
     conn = _get_db()
-    rows = conn.execute(
-        "SELECT id, path FROM videos WHERE codec IS NULL OR codec = ''").fetchall()
+    if force_all:
+        rows = conn.execute("SELECT id, path FROM videos").fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, path FROM videos WHERE codec IS NULL OR codec = ''").fetchall()
     updated = 0
     for r in rows:
         path = r["path"]
