@@ -1411,11 +1411,16 @@ function _galLightboxNav(dir) {
   _galClearFaceOverlay();
   GAL.lightboxIdx = newIdx;
   _galRenderLightbox();
+  if (GAL.facesMode) {
+    const item = GAL.lightboxItems[GAL.lightboxIdx];
+    if (item) _galRefreshFaces(item);
+  }
 }
 
 function _galCloseLightbox() {
   _galStopSlideshow();
   _galClearFaceOverlay();
+  GAL.facesMode = false;
   _galRemoveLightbox();
 }
 
@@ -1483,6 +1488,7 @@ async function _galToggleFaces(item) {
   // Toggle off
   if (panel.style.display !== 'none') {
     panel.style.display = 'none';
+    GAL.facesMode = false;
     _galClearFaceOverlay();
     return;
   }
@@ -1490,6 +1496,7 @@ async function _galToggleFaces(item) {
   // Close EXIF if open
   if (exifPanel) exifPanel.style.display = 'none';
   panel.style.display = 'flex';
+  GAL.facesMode = true;
 
   const content = panel.querySelector('.gal-lb-faces-content');
   content.innerHTML = '<div class="gal-spinner" style="margin:20px auto"></div>';
@@ -1617,7 +1624,8 @@ function _galDrawFaceBoxes(faces) {
 
 async function _galRefreshFaces(item) {
   const panel = document.getElementById('gal-lb-faces-panel');
-  if (!panel || panel.style.display === 'none') return;
+  if (!panel) return;
+  // Force panel visible for refresh (e.g. after nav in faces mode)
   panel.style.display = 'none';
   _galClearFaceOverlay();
   await _galToggleFaces(item);
