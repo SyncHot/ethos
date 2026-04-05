@@ -609,17 +609,6 @@ def list_people():
     conn.close()
     return jsonify({'people': result})
 
-@photos_ai_bp.route('/people/<int:pid>/name', methods=['POST'])
-def rename_person(pid):
-    name = (request.json or {}).get('name', '').strip()
-    if not name:
-        return jsonify({'error': 'Podaj imie.'}), 400
-    conn = _get_db()
-    conn.execute('UPDATE people SET name=? WHERE id=?', (name, pid))
-    conn.commit()
-    conn.close()
-    return jsonify({'ok': True})
-
 @photos_ai_bp.route('/people/merge', methods=['POST'])
 @admin_required
 def merge_people():

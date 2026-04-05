@@ -1504,6 +1504,41 @@ select.fm-input {
 .gal-ai-progress-fill { height:100%; width:0; background:var(--accent-color); border-radius:2px; transition:width .3s; }
 .gal-ai-progress-text { font-size:11px; color:var(--text-secondary); margin-top:4px; }
 
+/* Tags, Search, Merge views */
+.gal-tag-chips { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:16px; }
+.gal-tag-chip {
+  padding:6px 12px; background:var(--bg-secondary); border:1px solid var(--border-color);
+  border-radius:16px; font-size:13px; cursor:pointer; transition:all .15s;
+}
+.gal-tag-chip:hover { border-color:var(--accent-color); }
+.gal-tag-chip.active { background:var(--accent-color); color:#fff; border-color:var(--accent-color); }
+.gal-tag-chip small { opacity:.6; margin-left:2px; }
+.gal-ai-search-box {
+  display:flex; align-items:center; gap:8px; padding:8px 14px;
+  background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:8px;
+  margin-bottom:16px; max-width:500px;
+}
+.gal-ai-search-input {
+  flex:1; background:none; border:none; color:var(--text-primary); font-size:14px; outline:none;
+}
+.gal-merge-list { display:flex; flex-direction:column; gap:12px; max-width:600px; }
+.gal-merge-card {
+  background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:12px;
+  padding:16px; transition:opacity .3s;
+}
+.gal-merge-pair { display:flex; align-items:center; justify-content:center; gap:16px; margin-bottom:12px; }
+.gal-merge-person { text-align:center; min-width:90px; }
+.gal-merge-avatar {
+  width:64px; height:64px; margin:0 auto 6px; border-radius:50%; overflow:hidden;
+  background:var(--bg-tertiary); display:flex; align-items:center; justify-content:center;
+  font-size:24px; color:var(--text-secondary);
+}
+.gal-merge-avatar img { width:100%; height:100%; object-fit:cover; }
+.gal-merge-name { font-size:13px; font-weight:600; }
+.gal-merge-arrow { text-align:center; color:var(--text-secondary); font-size:18px; }
+.gal-merge-conf { font-size:11px; color:var(--accent-color); margin-top:2px; font-weight:600; }
+.gal-merge-actions { display:flex; gap:8px; justify-content:center; }
+
 /* ── Face detection overlay ── */
 .gal-lb-faces-panel {
   position:absolute; right:0; top:0; bottom:0; width:320px; z-index:10;

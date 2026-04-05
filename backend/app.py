@@ -8798,7 +8798,7 @@ def get_apps():
     _existing_ids = {a['id'] for a in apps}
     for _cat_app in _BUILTIN_CATALOG:
         _cid = _cat_app['id']
-        if _cid not in _existing_ids and _cid in _pm_installed:
+        if _cid not in _existing_ids and _cid in _pm_installed and not _cat_app.get('hidden'):
             apps.append({
                 'id': _cid,
                 'name': _cat_app.get('name', _cid),

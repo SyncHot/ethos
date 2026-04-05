@@ -217,7 +217,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/med-assistant/pkg-status',
     },
     {
-        'id': 'gallery', 'name': 'Gallery', 'version': '1.0.0',
+        'id': 'gallery', 'name': 'Gallery', 'version': '1.0.1',
         'icon': 'fa-images', 'color': '#ec4899', 'category': 'Media', 'admin_only': False,
         'description': 'Galeria zdjec i filmow z EXIF, miniaturkami i haslami folderow.',
         'apt_deps': [], 'pip_deps': [],
@@ -436,13 +436,14 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/security-advisor/pkg-status',
     },
     {
-        'id': 'photos-ai', 'name': 'Photos AI', 'version': '0.0.2',
+        'id': 'photos-ai', 'name': 'Photos AI', 'version': '0.0.3',
         'icon': 'fa-brain', 'color': '#8b5cf6', 'category': 'Media', 'admin_only': False,
         'description': 'Rozpoznawanie twarzy, wykrywanie obiektow i inteligentne albumy dla Galerii.',
         'apt_deps': ['cmake', 'libopenblas-dev'], 'pip_deps': ['face_recognition', 'onnxruntime', 'scipy'],
         'install_endpoint': '/api/photos-ai/install',
         'uninstall_endpoint': '/api/photos-ai/uninstall',
         'status_endpoint': '/api/photos-ai/pkg-status',
+        'hidden': True,
     },
     {
         'id': 'rollback', 'name': 'Rollback', 'version': '1.0.1',
