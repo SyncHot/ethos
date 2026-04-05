@@ -896,9 +896,8 @@ def transcode(vid):
 
     def generate():
         try:
-            fd = proc.stdout.fileno()
             while True:
-                chunk = os.read(fd, 65536)
+                chunk = proc.stdout.read(65536)
                 if not chunk:
                     break
                 yield chunk
