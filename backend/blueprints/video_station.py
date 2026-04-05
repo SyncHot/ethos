@@ -12,8 +12,8 @@ Routes:
   GET  /api/video-station/scan-status     - scan progress
   POST /api/video-station/scan-stop       - stop running scan
   GET  /api/video-station/info/<int:vid>  - detailed video metadata
-  GET  /api/video-station/stream/<int:vid>- stream video file
-  GET  /api/video-station/transcode/<int:vid> - transcode video (re-encode audio to aac)
+  GET  /api/video-station/stream/<int:vid>- stream video file (raw)
+  GET  /api/video-station/transcode/<int:vid> - transcode video (?audio=N, ?start=S)
   GET  /api/video-station/thumb/<int:vid> - video thumbnail
   GET  /api/video-station/poster/<int:vid>- TMDb poster image
   GET  /api/video-station/recent          - recently added videos
@@ -65,6 +65,9 @@ VIDEO_EXTS = {'.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v',
 
 # Audio codecs that browsers can natively decode inside <video>
 _BROWSER_AUDIO_CODECS = {'aac', 'mp3', 'opus', 'vorbis', 'flac'}
+
+# Containers that browsers can play natively in <video>
+_BROWSER_CONTAINERS = {'.mp4', '.webm', '.m4v', '.ogg', '.ogv', '.mov'}
 
 _scan_state = {
     'running': False, 'stop_requested': False,
@@ -216,15 +219,27 @@ def _probe_video(path):
         data = json.loads(out)
         fmt = data.get('format', {})
         vstream = next((s for s in data.get('streams', []) if s.get('codec_type') == 'video'), {})
-        astream = next((s for s in data.get('streams', []) if s.get('codec_type') == 'audio'), {})
+        astreams = [s for s in data.get('streams', []) if s.get('codec_type') == 'audio']
+        first_audio = astreams[0] if astreams else {}
+        audio_tracks = []
+        for i, a in enumerate(astreams):
+            tags = a.get('tags', {})
+            audio_tracks.append({
+                'index': a.get('index', i),
+                'codec': a.get('codec_name', ''),
+                'channels': a.get('channels', 0),
+                'language': tags.get('language', ''),
+                'title': tags.get('title', ''),
+            })
         return {
             'duration': float(fmt.get('duration', 0)),
             'width': int(vstream.get('width', 0)),
             'height': int(vstream.get('height', 0)),
             'codec': vstream.get('codec_name', ''),
-            'audio_codec': astream.get('codec_name', ''),
+            'audio_codec': first_audio.get('codec_name', ''),
             'bitrate': int(fmt.get('bit_rate', 0)),
             'title': fmt.get('tags', {}).get('title', ''),
+            'audio_tracks': audio_tracks,
         }
     except Exception as e:
         log.debug('ffprobe failed for %s: %s', path, e)
@@ -714,6 +729,11 @@ def video_info(vid):
         meta = json.loads(r["metadata_json"] or "{}")
     except Exception:
         pass
+    audio_codec = (r["audio_codec"] or "").lower()
+    ext = os.path.splitext(r["path"])[1].lower()
+    needs_tc = (bool(audio_codec) and audio_codec not in _BROWSER_AUDIO_CODECS) or \
+               (ext not in _BROWSER_CONTAINERS)
+    audio_tracks = meta.get("audio_tracks", [])
     return jsonify({
         "id": r["id"], "title": r["title"], "filename": r["filename"],
         "path": r["path"], "folder": r["folder"],
@@ -731,6 +751,8 @@ def video_info(vid):
         "tmdb_genres": r["tmdb_genres"] or "",
         "watched": bool(r["watched"]), "position": r["position"] or 0,
         "added_at": r["added_at"], "metadata": meta,
+        "needs_transcode": needs_tc,
+        "audio_tracks": audio_tracks,
     })
 
 
@@ -807,8 +829,12 @@ def stream(vid):
 def transcode(vid):
     """Stream video with audio re-encoded to AAC for browser compatibility.
 
-    Uses ffmpeg to copy the video stream and transcode audio to AAC,
-    outputting fragmented MP4 suitable for progressive HTTP streaming.
+    Uses ffmpeg to copy the video stream (when h264) and transcode audio
+    to AAC, outputting fragmented MP4 suitable for progressive HTTP streaming.
+
+    Query params:
+        start  - seek to position in seconds before encoding
+        audio  - ffmpeg stream index for audio track (default: first audio)
     """
     conn = _get_db()
     r = conn.execute("SELECT path, codec, audio_codec FROM videos WHERE id=?", (vid,)).fetchone()
@@ -821,18 +847,24 @@ def transcode(vid):
     if not shutil.which("ffmpeg"):
         return jsonify({"error": "ffmpeg nie jest zainstalowany."}), 500
 
-    # Copy video if it's already browser-compatible, otherwise transcode
     vcodec = (r["codec"] or "").lower()
-    vcopy = vcodec in ("h264", "hevc", "vp8", "vp9", "av1")
+    vcopy = vcodec in ("h264", "vp8", "vp9")
     v_arg = "copy" if vcopy else "libx264"
 
     start_sec = request.args.get("start", 0, type=float)
+    audio_idx = request.args.get("audio", None, type=int)
 
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
     if start_sec > 0:
         cmd += ["-ss", str(start_sec)]
+    cmd += ["-i", fp]
+    # Explicitly map first video + chosen audio to avoid subtitle stream issues
+    cmd += ["-map", "0:v:0"]
+    if audio_idx is not None:
+        cmd += ["-map", "0:%d" % audio_idx]
+    else:
+        cmd += ["-map", "0:a:0"]
     cmd += [
-        "-i", fp,
         "-c:v", v_arg,
         "-c:a", "aac", "-b:a", "192k", "-ac", "2",
         "-movflags", "frag_keyframe+empty_moov+default_base_moof",
@@ -844,33 +876,28 @@ def transcode(vid):
 
     def generate():
         try:
+            fd = proc.stdout.fileno()
             while True:
-                chunk = proc.stdout.read(65536)
+                chunk = os.read(fd, 65536)
                 if not chunk:
                     break
                 yield chunk
+        except (OSError, GeneratorExit):
+            pass
         finally:
             proc.stdout.close()
             proc.stderr.close()
-            proc.terminate()
-            proc.wait()
+            try:
+                proc.kill()
+                proc.wait(timeout=5)
+            except Exception:
+                pass
 
     return Response(generate(), mimetype="video/mp4",
                     headers={"Cache-Control": "no-cache"})
 
 
-@video_station_bp.route("/needs-transcode/<int:vid>", methods=["GET"])
-@require_auth
-def needs_transcode(vid):
-    """Check if a video needs audio transcoding for browser playback."""
-    conn = _get_db()
-    r = conn.execute("SELECT audio_codec FROM videos WHERE id=?", (vid,)).fetchone()
-    conn.close()
-    if not r:
-        return jsonify({"error": "Nie znaleziono."}), 404
-    ac = (r["audio_codec"] or "").lower()
-    needs = bool(ac) and ac not in _BROWSER_AUDIO_CODECS
-    return jsonify({"ok": True, "needs_transcode": needs, "audio_codec": ac})
+@video_station_bp.route("/watched/<int:vid>", methods=["POST"])
 @require_auth
 def update_watched(vid):
     d = request.json or {}

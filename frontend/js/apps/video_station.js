@@ -153,6 +153,8 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 <div class="vs-player-overlay" id="vs-player-overlay" style="display:none">
   <div class="vs-player-top">
     <span class="vs-player-title" id="vs-player-title"></span>
+    <span class="vs-player-badge" id="vs-player-badge" style="display:none"><i class="fas fa-sync-alt fa-spin"></i> ${t('Transkodowanie')}</span>
+    <select class="vs-audio-select" id="vs-audio-select" style="display:none"></select>
     <button class="vs-player-close" id="vs-player-close"><i class="fas fa-times"></i></button>
   </div>
   <video id="vs-player-video" controls autoplay></video>
@@ -530,7 +532,17 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     }
 
     /* ── video player ──────────────────────────────────────── */
-    const BROWSER_AUDIO_CODECS = new Set(['aac', 'mp3', 'opus', 'vorbis', 'flac', '']);
+    let _transcoding = false;
+    let _currentVid = null;
+    let _currentAudioIdx = null;
+
+    function _buildStreamUrl(vid, transcode, startSec, audioIdx) {
+        if (!transcode) return '/api/video-station/stream/' + vid + '?token=' + NAS.token;
+        let url = '/api/video-station/transcode/' + vid + '?token=' + NAS.token;
+        if (startSec > 0) url += '&start=' + startSec;
+        if (audioIdx != null) url += '&audio=' + audioIdx;
+        return url;
+    }
 
     async function openPlayer(vid) {
         const info = await api('/video-station/info/' + vid);
@@ -539,22 +551,40 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         const overlay = bodyEl.querySelector('#vs-player-overlay');
         const video   = bodyEl.querySelector('#vs-player-video');
         const title   = bodyEl.querySelector('#vs-player-title');
+        const badge   = bodyEl.querySelector('#vs-player-badge');
+        const audioSel = bodyEl.querySelector('#vs-audio-select');
         if (!overlay || !video) return;
 
-        const audioCodec = (info.audio_codec || '').toLowerCase();
-        const needsTranscode = audioCodec && !BROWSER_AUDIO_CODECS.has(audioCodec);
+        const needsTranscode = !!info.needs_transcode;
+        _transcoding = needsTranscode;
+        _currentVid = vid;
+        _currentAudioIdx = null;
 
         title.textContent = info.title || info.filename || '';
-        const resumePos = (info.position && info.position > 0 && !info.watched) ? info.position : 0;
-        if (needsTranscode) {
-            let url = '/api/video-station/transcode/' + vid + '?token=' + NAS.token;
-            if (resumePos > 0) url += '&start=' + resumePos;
-            video.src = url;
+        badge.style.display = needsTranscode ? '' : 'none';
+
+        // Audio track selector
+        const tracks = info.audio_tracks || [];
+        if (tracks.length > 1 && needsTranscode) {
+            audioSel.innerHTML = tracks.map(t => {
+                const label = [t.language, t.title, t.codec, t.channels ? t.channels + 'ch' : ''].filter(Boolean).join(' · ') || 'Track ' + t.index;
+                return '<option value="' + t.index + '">' + escH(label) + '</option>';
+            }).join('');
+            audioSel.style.display = '';
+            audioSel.onchange = () => {
+                _currentAudioIdx = parseInt(audioSel.value);
+                const pos = video.currentTime || 0;
+                video.src = _buildStreamUrl(vid, true, pos, _currentAudioIdx);
+                video.play().catch(() => {});
+            };
         } else {
-            video.src = '/api/video-station/stream/' + vid + '?token=' + NAS.token;
+            audioSel.style.display = 'none';
         }
 
-        // resume from last position (only for non-transcoded — transcoded uses server-side seek)
+        const resumePos = (info.position && info.position > 0 && !info.watched) ? info.position : 0;
+        video.src = _buildStreamUrl(vid, needsTranscode, needsTranscode ? resumePos : 0, null);
+
+        // resume from last position (non-transcoded only — transcoded uses server-side seek)
         if (resumePos > 0 && !needsTranscode) {
             video.addEventListener('loadedmetadata', function onMeta() {
                 video.currentTime = resumePos;
@@ -586,12 +616,23 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); video.paused ? video.play() : video.pause(); }
             else if (e.key === 'f') { toggleFullscreen(video); }
             else if (e.key === 'Escape') { closePlayer(); }
-            else if (e.key === 'ArrowLeft') { video.currentTime = Math.max(0, video.currentTime - 10); }
-            else if (e.key === 'ArrowRight') { video.currentTime = Math.min(video.duration || 0, video.currentTime + 10); }
+            else if (e.key === 'ArrowLeft') { seekPlayer(video, -10); }
+            else if (e.key === 'ArrowRight') { seekPlayer(video, 10); }
         };
         document.addEventListener('keydown', overlay._keyHandler);
 
         bodyEl.querySelector('#vs-player-close').onclick = () => closePlayer();
+    }
+
+    function seekPlayer(video, delta) {
+        if (_transcoding) {
+            // Transcoded streams can't seek natively — restart ffmpeg at new offset
+            const newTime = Math.max(0, (video.currentTime || 0) + delta);
+            video.src = _buildStreamUrl(_currentVid, true, newTime, _currentAudioIdx);
+            video.play().catch(() => {});
+        } else {
+            video.currentTime = Math.max(0, Math.min(video.duration || 0, video.currentTime + delta));
+        }
     }
 
     function savePosition(vid, video) {
@@ -605,6 +646,9 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         if (!overlay) return;
 
         stopPlayer();
+        _transcoding = false;
+        _currentVid = null;
+        _currentAudioIdx = null;
         overlay.style.display = 'none';
         if (video) { video.pause(); video.removeAttribute('src'); video.load(); }
         if (overlay._keyHandler) { document.removeEventListener('keydown', overlay._keyHandler); overlay._keyHandler = null; }
@@ -748,6 +792,9 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 '.vs-player-title{color:#fff;font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
 '.vs-player-close{background:none;border:none;color:#fff;font-size:20px;cursor:pointer;padding:4px 8px;opacity:.7;transition:opacity .15s}',
 '.vs-player-close:hover{opacity:1}',
+'.vs-player-badge{display:inline-flex;align-items:center;gap:5px;background:rgba(255,165,0,.85);color:#000;font-size:11px;font-weight:600;padding:3px 10px;border-radius:12px;white-space:nowrap}',
+'.vs-audio-select{background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.3);border-radius:4px;padding:2px 6px;font-size:12px;max-width:220px;cursor:pointer}',
+'.vs-audio-select option{background:#222;color:#fff}',
 '#vs-player-video{max-width:100%;max-height:calc(100% - 48px);margin-top:24px;outline:none;border-radius:4px}',
     ].join('\n'); }
 };
