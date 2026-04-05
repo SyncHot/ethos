@@ -915,7 +915,11 @@ def transcode(vid):
                 pass
 
     return Response(generate(), mimetype="video/mp4",
-                    headers={"Cache-Control": "no-cache"})
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Accept-Ranges": "none",
+                        "X-Content-Type-Options": "nosniff",
+                    })
 
 
 @video_station_bp.route("/watched/<int:vid>", methods=["POST"])

@@ -165,7 +165,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     </select>
     <button class="vs-player-close" id="vs-player-close"><i class="fas fa-times"></i></button>
   </div>
-  <video id="vs-player-video" controls autoplay></video>
+  <video id="vs-player-video" controls autoplay playsinline></video>
   <div class="vs-custom-controls" id="vs-custom-controls" style="display:none">
     <button class="vs-cc-btn" id="vs-cc-play"><i class="fas fa-pause"></i></button>
     <span class="vs-cc-time" id="vs-cc-time">0:00 / 0:00</span>
