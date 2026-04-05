@@ -127,6 +127,8 @@ _FRONTEND_FILENAME = {
     'app-store':        None,
     'remote-log':       'remote-log',
     'system-settings':  None,
+    'security-advisor': 'security_advisor',
+    'photos-ai':        'photos_ai',
 }
 
 # Maps app_id → (module_filename, blueprint_var, init_func_or_None, socketio_attr_needed)
