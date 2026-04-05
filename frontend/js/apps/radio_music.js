@@ -645,13 +645,13 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 _setBuffering(false);
                 return;
             }
-            const src = item.type === 'radio'
-                ? '/api/radio-music/radio/proxy?url=' + encodeURIComponent(urls[idx])
-                  + '&token=' + (NAS.token || '')
-                : urls[idx];
+            // Proxy all audio through backend to avoid CORS/redirect issues
+            const src = '/api/radio-music/radio/proxy?url=' + encodeURIComponent(urls[idx])
+                  + '&token=' + (NAS.token || '');
 
             _audio.src = src;
-            _audio.play().catch(() => {
+            _audio.play().catch(err => {
+                console.warn('Radio/podcast play error:', err?.message, 'url:', urls[idx]);
                 tryUrl(idx + 1);
             });
         }

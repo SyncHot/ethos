@@ -483,26 +483,9 @@ _SSL_CTX.check_hostname = False
 _SSL_CTX.verify_mode = ssl.CERT_NONE
 
 
-def _open_stream(url, timeout=10):
-    """Open an audio stream, handling both HTTP and ICY (SHOUTcast) protocols.
-    Returns (response_object, content_type) or raises on failure."""
-    # First try standard urllib (works for HTTP/HTTPS streams)
-    try:
-        req = urllib.request.Request(url, headers={
-            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
-                          'Chrome/146.0 Safari/537.36',
-            'Icy-MetaData': '0',
-        })
-        resp = urllib.request.urlopen(req, timeout=timeout, context=_SSL_CTX)
-        ct = resp.headers.get('Content-Type', 'audio/mpeg')
-        return resp, ct
-    except http.client.BadStatusLine:
-        pass  # ICY protocol — fall through to raw socket
-    except Exception:
-        raise
-
-    # ICY protocol: server responds "ICY 200 OK" which urllib can't parse.
-    # Use a raw socket connection.
+def _open_icy_stream(url, timeout=10):
+    """Open an ICY (SHOUTcast) audio stream via raw socket.
+    Returns (stream_object, content_type) or raises on failure."""
     parsed = urllib.parse.urlparse(url)
     host = parsed.hostname
     port = parsed.port or 80
@@ -566,13 +549,42 @@ def _open_stream(url, timeout=10):
 
 @radio_music_bp.route('/radio/proxy', methods=['GET'])
 def radio_proxy():
-    """Proxy a radio stream through the server to avoid CORS/ICY issues."""
+    """Proxy audio streams/files through the server to avoid CORS/ICY issues.
+    Supports both live radio (infinite streams) and podcasts (seekable files)."""
     url = request.args.get('url', '').strip()
     if not url or not url.startswith(('http://', 'https://')):
         return jsonify({'error': 'Invalid URL'}), 400
 
+    # For podcast files (finite), forward Range headers for seeking support
+    range_header = request.headers.get('Range')
+    extra_headers = {}
+    if range_header:
+        extra_headers['Range'] = range_header
+
     try:
-        resp, ct = _open_stream(url)
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
+                          'Chrome/146.0 Safari/537.36',
+            'Icy-MetaData': '0',
+            **extra_headers,
+        })
+        resp = urllib.request.urlopen(req, timeout=15, context=_SSL_CTX)
+        ct = resp.headers.get('Content-Type', 'audio/mpeg')
+        cl = resp.headers.get('Content-Length')
+        cr = resp.headers.get('Content-Range')
+        ar = resp.headers.get('Accept-Ranges')
+        status = resp.status
+    except http.client.BadStatusLine:
+        # ICY protocol — fall through to raw socket handler (radio only)
+        try:
+            resp, ct = _open_icy_stream(url)
+        except Exception as e:
+            log.warning('Stream proxy open error for %s: %s', url, e)
+            return jsonify({'error': 'Nie udało się połączyć ze stacją'}), 502
+        cl = None
+        cr = None
+        ar = None
+        status = 200
     except Exception as e:
         log.warning('Stream proxy open error for %s: %s', url, e)
         return jsonify({'error': 'Nie udało się połączyć ze stacją'}), 502
@@ -602,12 +614,23 @@ def radio_proxy():
             except Exception:
                 pass
 
+    resp_headers = {
+        'Cache-Control': 'no-cache, no-store',
+        'Access-Control-Allow-Origin': '*',
+    }
+    # Seekable files (podcasts): forward Content-Length/Range info
+    if cl:
+        resp_headers['Content-Length'] = cl
+    if cr:
+        resp_headers['Content-Range'] = cr
+    if cl or ar:
+        resp_headers['Accept-Ranges'] = 'bytes'
+    else:
+        resp_headers['Accept-Ranges'] = 'none'
+
     return Response(
         generate(),
+        status=status,
         mimetype=ct,
-        headers={
-            'Cache-Control': 'no-cache, no-store',
-            'Accept-Ranges': 'none',
-            'Access-Control-Allow-Origin': '*',
-        },
+        headers=resp_headers,
     )
