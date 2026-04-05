@@ -672,6 +672,28 @@ def person_photos(pid):
     conn.close()
     return jsonify({'items': items, 'total': total})
 
+@photos_ai_bp.route('/people/<int:pid>/faces', methods=['GET'])
+def person_faces(pid):
+    """Return all face thumbnails for a given person (for false-positive management)."""
+    conn = _get_db()
+    rows = conn.execute(
+        'SELECT id, photo_path FROM faces WHERE person_id=? ORDER BY id', (pid,)
+    ).fetchall()
+    conn.close()
+    return jsonify({'faces': [{'id': r['id'], 'photo_path': r['photo_path']} for r in rows]})
+
+@photos_ai_bp.route('/people/<int:pid>/rename', methods=['POST'])
+def rename_person(pid):
+    d = request.json or {}
+    name = d.get('name', '').strip()
+    if not name:
+        return jsonify({'error': 'Podaj imię.'}), 400
+    conn = _get_db()
+    conn.execute('UPDATE people SET name=? WHERE id=?', (name, pid))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
 @photos_ai_bp.route('/face-thumb/<int:face_id>', methods=['GET'])
 def face_thumbnail(face_id):
     conn = _get_db()
@@ -922,11 +944,12 @@ def identify_face():
 
 @photos_ai_bp.route('/assign-face', methods=['POST'])
 def assign_face():
-    """Assign a face to an existing person or create a new one."""
+    """Assign a face to an existing person, create a new one, or unassign."""
     d = request.json or {}
     face_id = d.get('face_id')
     person_id = d.get('person_id')
     new_name = d.get('new_name', '').strip()
+    unassign = d.get('unassign', False)
     if not face_id:
         return jsonify({'error': 'Podaj face_id.'}), 400
     conn = _get_db()
@@ -934,6 +957,21 @@ def assign_face():
     if not face:
         conn.close()
         return jsonify({'error': 'Twarz nie znaleziona.'}), 404
+
+    old_pid = face['person_id']
+
+    if unassign:
+        conn.execute('UPDATE faces SET person_id=NULL WHERE id=?', (face_id,))
+        if old_pid:
+            cnt = conn.execute(
+                'SELECT COUNT(DISTINCT photo_path) FROM faces WHERE person_id=?',
+                (old_pid,)).fetchone()[0]
+            conn.execute('UPDATE people SET photo_count=? WHERE id=?', (cnt, old_pid))
+            if cnt == 0:
+                conn.execute('DELETE FROM people WHERE id=?', (old_pid,))
+        conn.commit()
+        conn.close()
+        return jsonify({'ok': True})
 
     if new_name and not person_id:
         cur = conn.execute(
@@ -944,7 +982,6 @@ def assign_face():
         conn.close()
         return jsonify({'error': 'Podaj person_id lub new_name.'}), 400
 
-    old_pid = face['person_id']
     conn.execute('UPDATE faces SET person_id=? WHERE id=?', (person_id, face_id))
     if old_pid:
         cnt = conn.execute(
