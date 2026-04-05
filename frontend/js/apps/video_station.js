@@ -94,7 +94,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     async function init(body) {
         body.innerHTML = '<div style="padding:32px;text-align:center;color:var(--text-muted)"><i class="fas fa-spinner fa-spin"></i></div>';
         const st = await api('/video-station/pkg-status');
-        if (st.error) { body.innerHTML = '<div style="padding:32px;color:var(--danger)">' + (st.error) + '</div>'; return; }
+        if (st.error) { body.innerHTML = '<div style="padding:32px;color:var(--danger)">' + escH(st.error) + '</div>'; return; }
         if (!st.installed) { showInstallUI(body, st); return; }
         scanning = !!st.scanning;
         renderApp(body, st);
@@ -155,6 +155,14 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     <span class="vs-player-title" id="vs-player-title"></span>
     <span class="vs-player-badge" id="vs-player-badge" style="display:none"><i class="fas fa-sync-alt fa-spin"></i> ${t('Transkodowanie')}</span>
     <select class="vs-audio-select" id="vs-audio-select" style="display:none"></select>
+    <select class="vs-speed-select" id="vs-speed-select">
+      <option value="0.5">0.5x</option>
+      <option value="0.75">0.75x</option>
+      <option value="1" selected>1x</option>
+      <option value="1.25">1.25x</option>
+      <option value="1.5">1.5x</option>
+      <option value="2">2x</option>
+    </select>
     <button class="vs-player-close" id="vs-player-close"><i class="fas fa-times"></i></button>
   </div>
   <video id="vs-player-video" controls autoplay></video>
@@ -255,7 +263,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             sort: currentSort, q: currentQuery, folder: currentFolder,
         });
         const data = await api('/video-station/library?' + params);
-        if (data.error) { content.innerHTML = '<div class="vs-empty">' + data.error + '</div>'; return; }
+        if (data.error) { content.innerHTML = '<div class="vs-empty">' + escH(data.error) + '</div>'; return; }
 
         libraryItems = data.items || [];
         libraryTotal = data.total || 0;
@@ -280,7 +288,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         content.innerHTML = '<div class="vs-loading"><i class="fas fa-spinner fa-spin"></i></div>';
 
         const data = await api('/video-station/recent?limit=20');
-        if (data.error) { content.innerHTML = '<div class="vs-empty">' + data.error + '</div>'; return; }
+        if (data.error) { content.innerHTML = '<div class="vs-empty">' + escH(data.error) + '</div>'; return; }
 
         const items = data.items || [];
         if (!items.length) {
@@ -298,7 +306,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         content.innerHTML = '<div class="vs-loading"><i class="fas fa-spinner fa-spin"></i></div>';
 
         const data = await api('/video-station/collections');
-        if (data.error) { content.innerHTML = '<div class="vs-empty">' + data.error + '</div>'; return; }
+        if (data.error) { content.innerHTML = '<div class="vs-empty">' + escH(data.error) + '</div>'; return; }
 
         const cols = data.collections || [];
         if (!cols.length) {
@@ -337,7 +345,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         content.innerHTML = '<div class="vs-loading"><i class="fas fa-spinner fa-spin"></i></div>';
 
         const data = await api('/video-station/folders');
-        if (data.error) { content.innerHTML = '<div class="vs-empty">' + data.error + '</div>'; return; }
+        if (data.error) { content.innerHTML = '<div class="vs-empty">' + escH(data.error) + '</div>'; return; }
 
         const folders = data.folders || [];
         let listHtml = '';
@@ -371,6 +379,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     '</div>' +
   '</div>' +
   '<div class="vs-folders-footer">' +
+    '<button id="vs-rescan-meta-btn" class="app-btn app-btn-sm"><i class="fas fa-sync-alt"></i> ' + t('Odśwież metadane') + '</button>' +
     '<button id="vs-uninstall-btn" class="app-btn app-btn-sm" style="color:var(--danger)"><i class="fas fa-trash-alt"></i> ' + t('Odinstaluj Video Station') + '</button>' +
   '</div>' +
 '</div>';
@@ -407,6 +416,17 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             if (res.error) { toast(res.error, 'error'); return; }
             toast(t('Odinstalowano'), 'success');
             init(bodyEl);
+        };
+
+        content.querySelector('#vs-rescan-meta-btn').onclick = async () => {
+            const btn = content.querySelector('#vs-rescan-meta-btn');
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Skanowanie...');
+            const res = await api('/video-station/rescan-metadata', { method: 'POST' });
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-sync-alt"></i> ' + t('Odśwież metadane');
+            if (res.error) { toast(res.error, 'error'); return; }
+            toast(t('Odświeżono metadane dla {n} filmów', { n: res.updated || 0 }), 'success');
         };
 
         // TMDb API key config
@@ -509,7 +529,65 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     function attachGridEvents(container) {
         container.querySelectorAll('.vs-card[data-id]').forEach(card => {
             card.onclick = () => openPlayer(card.dataset.id);
+            card.oncontextmenu = (e) => { e.preventDefault(); _showCardMenu(e, card.dataset.id); };
         });
+    }
+
+    function _showCardMenu(e, vid) {
+        // Remove any existing context menu
+        document.querySelectorAll('.vs-ctx-menu').forEach(m => m.remove());
+        const menu = document.createElement('div');
+        menu.className = 'vs-ctx-menu';
+        menu.innerHTML =
+            '<div class="vs-ctx-item" data-action="unwatch"><i class="fas fa-eye-slash"></i> ' + t('Oznacz jako nieobejrzane') + '</div>' +
+            '<div class="vs-ctx-item" data-action="info"><i class="fas fa-info-circle"></i> ' + t('Szczegóły') + '</div>' +
+            '<div class="vs-ctx-item vs-ctx-danger" data-action="remove"><i class="fas fa-trash-alt"></i> ' + t('Usuń z biblioteki') + '</div>';
+        menu.style.left = e.clientX + 'px';
+        menu.style.top = e.clientY + 'px';
+        document.body.appendChild(menu);
+        const dismiss = () => { menu.remove(); document.removeEventListener('click', dismiss); };
+        setTimeout(() => document.addEventListener('click', dismiss), 0);
+        menu.querySelectorAll('.vs-ctx-item').forEach(item => {
+            item.onclick = async () => {
+                dismiss();
+                const action = item.dataset.action;
+                if (action === 'unwatch') {
+                    await api('/video-station/watched/' + vid, { method: 'POST', body: { watched: false, position: 0 } });
+                    toast(t('Oznaczono jako nieobejrzane'), 'success');
+                    if (activeSection === 'library') loadLibrary();
+                    else if (activeSection === 'recent') loadRecent();
+                } else if (action === 'remove') {
+                    if (!await confirmDialog(t('Usunąć film z biblioteki? Plik nie zostanie usunięty.'))) return;
+                    const res = await api('/video-station/remove/' + vid, { method: 'POST' });
+                    if (res.error) { toast(res.error, 'error'); return; }
+                    toast(t('Usunięto z biblioteki'), 'success');
+                    if (activeSection === 'library') loadLibrary();
+                    else if (activeSection === 'recent') loadRecent();
+                    else if (activeSection === 'collections') loadCollections();
+                } else if (action === 'info') {
+                    _showInfoModal(vid);
+                }
+            };
+        });
+    }
+
+    async function _showInfoModal(vid) {
+        const info = await api('/video-station/info/' + vid);
+        if (info.error) { toast(info.error, 'error'); return; }
+        const tracks = (info.audio_tracks || []).map(t =>
+            [t.language, t.codec, t.channels ? t.channels + 'ch' : ''].filter(Boolean).join(' ')
+        ).join(', ') || '-';
+        const lines = [
+            '<b>' + t('Tytuł') + ':</b> ' + escH(info.title || info.filename),
+            '<b>' + t('Kodek wideo') + ':</b> ' + escH(info.codec || '-'),
+            '<b>' + t('Kodek audio') + ':</b> ' + escH(info.audio_codec || '-'),
+            '<b>' + t('Ścieżki audio') + ':</b> ' + escH(tracks),
+            '<b>' + t('Rozdzielczość') + ':</b> ' + (info.width || 0) + 'x' + (info.height || 0),
+            '<b>' + t('Czas trwania') + ':</b> ' + (info.duration_fmt || '-'),
+            '<b>' + t('Rozmiar') + ':</b> ' + formatBytes(info.file_size || 0),
+            '<b>' + t('Transkodowanie') + ':</b> ' + (info.needs_transcode ? t('Wymagane') : t('Nie')),
+        ];
+        toast(lines.join('<br>'), 'info', 8000);
     }
 
     /* ── pagination ────────────────────────────────────────── */
@@ -548,11 +626,12 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         const info = await api('/video-station/info/' + vid);
         if (info.error) { toast(info.error, 'error'); return; }
 
-        const overlay = bodyEl.querySelector('#vs-player-overlay');
-        const video   = bodyEl.querySelector('#vs-player-video');
-        const title   = bodyEl.querySelector('#vs-player-title');
-        const badge   = bodyEl.querySelector('#vs-player-badge');
+        const overlay  = bodyEl.querySelector('#vs-player-overlay');
+        const video    = bodyEl.querySelector('#vs-player-video');
+        const title    = bodyEl.querySelector('#vs-player-title');
+        const badge    = bodyEl.querySelector('#vs-player-badge');
         const audioSel = bodyEl.querySelector('#vs-audio-select');
+        const speedSel = bodyEl.querySelector('#vs-speed-select');
         if (!overlay || !video) return;
 
         const needsTranscode = !!info.needs_transcode;
@@ -563,11 +642,18 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         title.textContent = info.title || info.filename || '';
         badge.style.display = needsTranscode ? '' : 'none';
 
+        // Playback speed
+        if (speedSel) {
+            speedSel.value = '1';
+            video.playbackRate = 1;
+            speedSel.onchange = () => { video.playbackRate = parseFloat(speedSel.value); };
+        }
+
         // Audio track selector
         const tracks = info.audio_tracks || [];
         if (tracks.length > 1 && needsTranscode) {
             audioSel.innerHTML = tracks.map(t => {
-                const label = [t.language, t.title, t.codec, t.channels ? t.channels + 'ch' : ''].filter(Boolean).join(' · ') || 'Track ' + t.index;
+                const label = [t.language, t.title, t.codec, t.channels ? t.channels + 'ch' : ''].filter(Boolean).join(' \u00b7 ') || 'Track ' + t.index;
                 return '<option value="' + t.index + '">' + escH(label) + '</option>';
             }).join('');
             audioSel.style.display = '';
@@ -592,6 +678,9 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             });
         }
 
+        // Load subtitles
+        _loadSubtitles(vid, video);
+
         overlay.style.display = 'flex';
         video.focus();
 
@@ -611,22 +700,49 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             closePlayer();
         };
 
-        // keyboard
+        // Fallback: if raw stream fails, retry with transcode
+        video.onerror = () => {
+            if (!_transcoding && video.error) {
+                _transcoding = true;
+                badge.style.display = '';
+                video.src = _buildStreamUrl(vid, true, 0, null);
+                video.play().catch(() => {});
+            }
+        };
+
+        // keyboard shortcuts
         overlay._keyHandler = (e) => {
             if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); video.paused ? video.play() : video.pause(); }
             else if (e.key === 'f') { toggleFullscreen(video); }
             else if (e.key === 'Escape') { closePlayer(); }
             else if (e.key === 'ArrowLeft') { seekPlayer(video, -10); }
             else if (e.key === 'ArrowRight') { seekPlayer(video, 10); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); video.volume = Math.min(1, video.volume + 0.1); }
+            else if (e.key === 'ArrowDown') { e.preventDefault(); video.volume = Math.max(0, video.volume - 0.1); }
+            else if (e.key === 'm') { video.muted = !video.muted; }
         };
         document.addEventListener('keydown', overlay._keyHandler);
 
         bodyEl.querySelector('#vs-player-close').onclick = () => closePlayer();
     }
 
+    async function _loadSubtitles(vid, video) {
+        video.querySelectorAll('track').forEach(t => t.remove());
+        const data = await api('/video-station/subtitles/' + vid);
+        if (!data.ok || !data.subtitles || !data.subtitles.length) return;
+        data.subtitles.forEach((sub, i) => {
+            const track = document.createElement('track');
+            track.kind = 'subtitles';
+            track.label = sub.language || sub.filename;
+            track.srclang = sub.language || 'und';
+            track.src = '/api/video-station/subtitle-file/' + vid + '/' + encodeURIComponent(sub.filename) + '?token=' + NAS.token;
+            if (i === 0) track.default = true;
+            video.appendChild(track);
+        });
+    }
+
     function seekPlayer(video, delta) {
         if (_transcoding) {
-            // Transcoded streams can't seek natively — restart ffmpeg at new offset
             const newTime = Math.max(0, (video.currentTime || 0) + delta);
             video.src = _buildStreamUrl(_currentVid, true, newTime, _currentAudioIdx);
             video.play().catch(() => {});
@@ -795,6 +911,15 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 '.vs-player-badge{display:inline-flex;align-items:center;gap:5px;background:rgba(255,165,0,.85);color:#000;font-size:11px;font-weight:600;padding:3px 10px;border-radius:12px;white-space:nowrap}',
 '.vs-audio-select{background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.3);border-radius:4px;padding:2px 6px;font-size:12px;max-width:220px;cursor:pointer}',
 '.vs-audio-select option{background:#222;color:#fff}',
+'.vs-speed-select{background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.3);border-radius:4px;padding:2px 6px;font-size:12px;cursor:pointer}',
+'.vs-speed-select option{background:#222;color:#fff}',
+/* context menu */
+'.vs-ctx-menu{position:fixed;background:var(--bg-elevated,#2a2a2e);border:1px solid var(--border);border-radius:var(--r-md,6px);padding:4px 0;z-index:9999;min-width:180px;box-shadow:0 8px 24px rgba(0,0,0,.5)}',
+'.vs-ctx-item{padding:8px 14px;cursor:pointer;font-size:13px;color:var(--text-primary,#fff);display:flex;align-items:center;gap:8px;white-space:nowrap}',
+'.vs-ctx-item:hover{background:var(--bg-hover,rgba(255,255,255,.08))}',
+'.vs-ctx-item i{width:16px;text-align:center;opacity:.7}',
+'.vs-ctx-danger{color:var(--danger,#f87171)}',
+'.vs-ctx-danger:hover{background:rgba(248,113,113,.12)}',
 '#vs-player-video{max-width:100%;max-height:calc(100% - 48px);margin-top:24px;outline:none;border-radius:4px}',
     ].join('\n'); }
 };

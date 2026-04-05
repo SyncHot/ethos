@@ -19,6 +19,10 @@ Routes:
   GET  /api/video-station/recent          - recently added videos
   GET  /api/video-station/collections     - auto-generated collections
   POST /api/video-station/watched/<int:vid> - mark as watched / update position
+  POST /api/video-station/rescan-metadata - re-probe videos with empty codec info
+  POST /api/video-station/remove/<int:vid> - remove video from library (keeps file)
+  GET  /api/video-station/subtitles/<int:vid> - find subtitle files next to video
+  GET  /api/video-station/subtitle-file/<int:vid>/<filename> - serve subtitle (srt→vtt)
   GET  /api/video-station/tmdb-config     - get TMDb API key status
   POST /api/video-station/tmdb-config     - save TMDb API key
   POST /api/video-station/tmdb-match/<int:vid> - manually trigger TMDb match for a video
@@ -45,11 +49,7 @@ from flask import Blueprint, jsonify, request, Response, send_file
 
 from host import host_run, q, data_path, app_path
 
-try:
-    from blueprints.admin_required import admin_required, require_auth
-except ImportError:
-    def admin_required(f): return f
-    def require_auth(f): return f
+from blueprints.admin_required import admin_required
 
 log = logging.getLogger('ethos.video_station')
 
@@ -81,6 +81,7 @@ def _get_db():
     conn = sqlite3.connect(_DB_PATH, timeout=15)
     conn.row_factory = sqlite3.Row
     conn.execute('PRAGMA journal_mode=WAL')
+    conn.execute('PRAGMA foreign_keys=ON')
     return conn
 
 
@@ -115,6 +116,7 @@ def _init_db():
         );
         CREATE INDEX IF NOT EXISTS idx_videos_folder ON videos(folder);
         CREATE INDEX IF NOT EXISTS idx_videos_filename ON videos(filename);
+        CREATE INDEX IF NOT EXISTS idx_videos_added_at ON videos(added_at);
     """)
     conn.commit()
     conn.close()
@@ -186,7 +188,8 @@ def _load_folders():
     p = data_path('video_folders.json')
     if os.path.isfile(p):
         try:
-            return json.loads(open(p).read())
+            with open(p) as f:
+                return json.loads(f.read())
         except Exception:
             pass
     return []
@@ -215,8 +218,11 @@ def _collect_videos(folders):
 def _probe_video(path):
     try:
         cmd = 'ffprobe -v quiet -print_format json -show_format -show_streams ' + q(path)
-        out = host_run(cmd, timeout=30)
-        data = json.loads(out)
+        result = host_run(cmd, timeout=30)
+        if result.returncode != 0:
+            log.debug('ffprobe non-zero exit for %s: %s', path, result.stderr)
+            return {}
+        data = json.loads(result.stdout)
         fmt = data.get('format', {})
         vstream = next((s for s in data.get('streams', []) if s.get('codec_type') == 'video'), {})
         astreams = [s for s in data.get('streams', []) if s.get('codec_type') == 'audio']
@@ -252,8 +258,8 @@ def _generate_thumb(path, video_id, duration=0):
     seek = min(duration * 0.1, 30) if duration > 10 else 2
     try:
         cmd = 'ffmpeg -y -ss %.1f -i %s -vframes 1 -vf scale=320:-1 -q:v 4 %s' % (seek, q(path), q(thumb_path))
-        host_run(cmd, timeout=30)
-        return os.path.isfile(thumb_path)
+        result = host_run(cmd, timeout=30)
+        return result.returncode == 0 and os.path.isfile(thumb_path)
     except Exception:
         return False
 
@@ -311,7 +317,8 @@ def _parse_filename(filename):
 def _load_tmdb_key():
     if os.path.isfile(_TMDB_CONF):
         try:
-            return json.loads(open(_TMDB_CONF).read()).get('api_key', '')
+            with open(_TMDB_CONF) as f:
+                return json.loads(f.read()).get('api_key', '')
         except Exception:
             pass
     return ''
@@ -503,11 +510,12 @@ def _scan_worker(folders, use_tmdb=False):
 # --- Routes ---
 
 @video_station_bp.route("/pkg-status", methods=["GET"])
-@require_auth
+
 def pkg_status():
     deps = _check_deps()
     stats = {}
     if os.path.isfile(_DB_PATH):
+        c = None
         try:
             c = _get_db()
             stats = {
@@ -515,9 +523,11 @@ def pkg_status():
                 "total_size": c.execute("SELECT COALESCE(SUM(file_size),0) FROM videos").fetchone()[0],
                 "watched": c.execute("SELECT COUNT(*) FROM watch_state WHERE watched=1").fetchone()[0],
             }
-            c.close()
         except Exception:
             pass
+        finally:
+            if c:
+                c.close()
     return jsonify({"installed": deps["ffmpeg"] and deps["ffprobe"], "deps": deps, "stats": stats, "scanning": _scan_state["running"]})
 
 
@@ -559,13 +569,13 @@ def uninstall_deps():
 
 
 @video_station_bp.route("/folders", methods=["GET"])
-@require_auth
+
 def get_folders():
     return jsonify({"folders": _load_folders()})
 
 
 @video_station_bp.route("/folders", methods=["POST"])
-@require_auth
+
 def save_folders():
     folders = (request.json or {}).get("folders", [])
     valid = []
@@ -580,7 +590,7 @@ def save_folders():
 
 
 @video_station_bp.route("/scan", methods=["POST"])
-@require_auth
+
 def start_scan():
     if _scan_state["running"]:
         return jsonify({"error": "Skan juz trwa."}), 409
@@ -597,14 +607,14 @@ def start_scan():
 
 
 @video_station_bp.route("/scan-stop", methods=["POST"])
-@require_auth
+
 def stop_scan():
     _scan_state["stop_requested"] = True
     return jsonify({"ok": True})
 
 
 @video_station_bp.route("/scan-status", methods=["GET"])
-@require_auth
+
 def scan_status():
     return jsonify({
         "running": _scan_state["running"],
@@ -615,7 +625,7 @@ def scan_status():
 
 
 @video_station_bp.route("/library", methods=["GET"])
-@require_auth
+
 def library():
     conn = _get_db()
     offset = int(request.args.get("offset", 0))
@@ -668,7 +678,7 @@ def library():
 
 
 @video_station_bp.route("/recent", methods=["GET"])
-@require_auth
+
 def recent():
     conn = _get_db()
     limit = min(int(request.args.get("limit", 20)), 60)
@@ -694,28 +704,28 @@ def recent():
 
 
 @video_station_bp.route("/collections", methods=["GET"])
-@require_auth
+
 def collections():
     conn = _get_db()
     rows = conn.execute(
-        "SELECT folder, COUNT(*) as cnt, SUM(duration) as total_dur "
-        "FROM videos GROUP BY folder ORDER BY cnt DESC LIMIT 50").fetchall()
+        "SELECT folder, COUNT(*) as cnt, SUM(duration) as total_dur, "
+        "(SELECT id FROM videos v2 WHERE v2.folder=v.folder AND v2.thumb_ok=1 LIMIT 1) as cover_id "
+        "FROM videos v GROUP BY folder ORDER BY cnt DESC LIMIT 50").fetchall()
     colls = []
     for r in rows:
         folder = r["folder"]
         name = os.path.basename(folder) or folder
-        cover = conn.execute("SELECT id FROM videos WHERE folder=? AND thumb_ok=1 LIMIT 1", (folder,)).fetchone()
         colls.append({
             "folder": folder, "name": name, "count": r["cnt"],
             "total_duration": _format_duration(r["total_dur"] or 0),
-            "cover_id": cover["id"] if cover else None,
+            "cover_id": r["cover_id"],
         })
     conn.close()
     return jsonify({"collections": colls})
 
 
 @video_station_bp.route("/info/<int:vid>", methods=["GET"])
-@require_auth
+
 def video_info(vid):
     conn = _get_db()
     r = conn.execute(
@@ -757,7 +767,7 @@ def video_info(vid):
 
 
 @video_station_bp.route("/thumb/<int:vid>", methods=["GET"])
-@require_auth
+
 def thumb(vid):
     p = os.path.join(_THUMB_DIR, str(vid) + ".jpg")
     if os.path.isfile(p):
@@ -766,7 +776,7 @@ def thumb(vid):
 
 
 @video_station_bp.route("/poster/<int:vid>", methods=["GET"])
-@require_auth
+
 def poster(vid):
     p = os.path.join(_POSTER_DIR, str(vid) + ".jpg")
     if os.path.isfile(p):
@@ -775,7 +785,7 @@ def poster(vid):
 
 
 @video_station_bp.route("/stream/<int:vid>", methods=["GET"])
-@require_auth
+
 def stream(vid):
     conn = _get_db()
     r = conn.execute("SELECT path FROM videos WHERE id=?", (vid,)).fetchone()
@@ -825,7 +835,7 @@ def stream(vid):
 
 
 @video_station_bp.route("/transcode/<int:vid>", methods=["GET"])
-@require_auth
+
 def transcode(vid):
     """Stream video with audio re-encoded to AAC for browser compatibility.
 
@@ -837,7 +847,7 @@ def transcode(vid):
         audio  - ffmpeg stream index for audio track (default: first audio)
     """
     conn = _get_db()
-    r = conn.execute("SELECT path, codec, audio_codec FROM videos WHERE id=?", (vid,)).fetchone()
+    r = conn.execute("SELECT path, codec, audio_codec, metadata_json FROM videos WHERE id=?", (vid,)).fetchone()
     conn.close()
     if not r:
         return jsonify({"error": "Nie znaleziono."}), 404
@@ -851,8 +861,18 @@ def transcode(vid):
     vcopy = vcodec in ("h264", "vp8", "vp9")
     v_arg = "copy" if vcopy else "libx264"
 
-    start_sec = request.args.get("start", 0, type=float)
+    start_sec = max(0.0, request.args.get("start", 0, type=float))
     audio_idx = request.args.get("audio", None, type=int)
+
+    # Validate audio track index
+    if audio_idx is not None:
+        try:
+            tracks = json.loads(r["metadata_json"] or "{}").get("audio_tracks", [])
+        except Exception:
+            tracks = []
+        valid_indices = {t.get("index") for t in tracks} if tracks else set()
+        if valid_indices and audio_idx not in valid_indices:
+            return jsonify({"error": "Nieprawidłowy indeks ścieżki audio."}), 400
 
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
     if start_sec > 0:
@@ -872,7 +892,7 @@ def transcode(vid):
         "-"
     ]
 
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
     def generate():
         try:
@@ -886,10 +906,12 @@ def transcode(vid):
             pass
         finally:
             proc.stdout.close()
-            proc.stderr.close()
             try:
-                proc.kill()
+                proc.terminate()
                 proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
             except Exception:
                 pass
 
@@ -898,7 +920,7 @@ def transcode(vid):
 
 
 @video_station_bp.route("/watched/<int:vid>", methods=["POST"])
-@require_auth
+
 def update_watched(vid):
     d = request.json or {}
     conn = _get_db()
@@ -918,10 +940,125 @@ def update_watched(vid):
     return jsonify({"ok": True})
 
 
-# --- TMDb config & matching routes ---
+@video_station_bp.route("/rescan-metadata", methods=["POST"])
+@admin_required
+def rescan_metadata():
+    """Re-probe all videos with empty codec metadata (fixes broken scans)."""
+    if not _all_deps_ok():
+        return jsonify({"error": "Brak ffmpeg/ffprobe."}), 400
+    conn = _get_db()
+    rows = conn.execute(
+        "SELECT id, path FROM videos WHERE codec IS NULL OR codec = ''").fetchall()
+    updated = 0
+    for r in rows:
+        path = r["path"]
+        if not os.path.isfile(path):
+            continue
+        meta = _probe_video(path)
+        if meta.get("codec"):
+            conn.execute(
+                "UPDATE videos SET codec=?, audio_codec=?, duration=?, width=?, "
+                "height=?, bitrate=?, metadata_json=? WHERE id=?",
+                (meta.get("codec", ""), meta.get("audio_codec", ""),
+                 meta.get("duration", 0), meta.get("width", 0),
+                 meta.get("height", 0), meta.get("bitrate", 0),
+                 json.dumps(meta), r["id"]))
+            updated += 1
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True, "updated": updated, "total": len(rows)})
+
+
+@video_station_bp.route("/remove/<int:vid>", methods=["POST"])
+
+def remove_from_library(vid):
+    """Remove video from library without deleting the file."""
+    conn = _get_db()
+    r = conn.execute("SELECT id FROM videos WHERE id=?", (vid,)).fetchone()
+    if not r:
+        conn.close()
+        return jsonify({"error": "Nie znaleziono."}), 404
+    conn.execute("DELETE FROM watch_state WHERE video_id=?", (vid,))
+    conn.execute("DELETE FROM videos WHERE id=?", (vid,))
+    conn.commit()
+    conn.close()
+    # Remove thumbnail and poster
+    for d in (_THUMB_DIR, _POSTER_DIR):
+        p = os.path.join(d, str(vid) + '.jpg')
+        if os.path.isfile(p):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+    return jsonify({"ok": True})
+
+
+@video_station_bp.route("/subtitles/<int:vid>", methods=["GET"])
+
+def subtitles(vid):
+    """Find subtitle files (.srt, .ass, .ssa, .vtt) next to the video file."""
+    conn = _get_db()
+    r = conn.execute("SELECT path FROM videos WHERE id=?", (vid,)).fetchone()
+    conn.close()
+    if not r:
+        return jsonify({"error": "Nie znaleziono."}), 404
+    video_path = r["path"]
+    base = os.path.splitext(video_path)[0]
+    video_dir = os.path.dirname(video_path)
+    video_stem = os.path.splitext(os.path.basename(video_path))[0]
+    sub_exts = {'.srt', '.ass', '.ssa', '.vtt'}
+    subs = []
+    if os.path.isdir(video_dir):
+        for fn in os.listdir(video_dir):
+            fext = os.path.splitext(fn)[1].lower()
+            if fext in sub_exts and fn.lower().startswith(video_stem.lower()):
+                # Extract language tag from filename like "movie.en.srt"
+                parts = os.path.splitext(fn)[0].split('.')
+                lang = parts[-1] if len(parts) > 1 and len(parts[-1]) <= 3 else ''
+                subs.append({
+                    "filename": fn,
+                    "path": os.path.join(video_dir, fn),
+                    "language": lang,
+                    "format": fext[1:],
+                })
+    return jsonify({"ok": True, "subtitles": subs})
+
+
+@video_station_bp.route("/subtitle-file/<int:vid>/<path:filename>", methods=["GET"])
+
+def subtitle_file(vid, filename):
+    """Serve a subtitle file. Converts SRT to VTT for browser compatibility."""
+    conn = _get_db()
+    r = conn.execute("SELECT path FROM videos WHERE id=?", (vid,)).fetchone()
+    conn.close()
+    if not r:
+        return jsonify({"error": "Nie znaleziono."}), 404
+    video_dir = os.path.dirname(r["path"])
+    sub_path = os.path.realpath(os.path.join(video_dir, filename))
+    # Ensure path is within the video directory
+    if not sub_path.startswith(os.path.realpath(video_dir) + os.sep):
+        return jsonify({"error": "Niedozwolona ścieżka."}), 403
+    if not os.path.isfile(sub_path):
+        return jsonify({"error": "Plik napisów nie istnieje."}), 404
+
+    ext = os.path.splitext(sub_path)[1].lower()
+    if ext == '.vtt':
+        return send_file(sub_path, mimetype="text/vtt")
+
+    # Convert SRT → VTT on-the-fly
+    if ext == '.srt':
+        try:
+            with open(sub_path, 'r', encoding='utf-8', errors='replace') as f:
+                srt_content = f.read()
+            vtt = "WEBVTT\n\n" + srt_content.replace(',', '.')
+            return Response(vtt, mimetype="text/vtt")
+        except Exception:
+            return jsonify({"error": "Błąd odczytu napisów."}), 500
+
+    return send_file(sub_path, mimetype="text/plain")
 
 @video_station_bp.route("/tmdb-config", methods=["GET"])
-@require_auth
+
 def tmdb_config_get():
     key = _load_tmdb_key()
     return jsonify({
@@ -952,7 +1089,7 @@ def tmdb_config_save():
 
 
 @video_station_bp.route("/tmdb-match/<int:vid>", methods=["POST"])
-@require_auth
+
 def tmdb_match_one(vid):
     conn = _get_db()
     r = conn.execute("SELECT id, filename FROM videos WHERE id=?", (vid,)).fetchone()
@@ -971,7 +1108,7 @@ def tmdb_match_one(vid):
 
 
 @video_station_bp.route("/tmdb-match-all", methods=["POST"])
-@require_auth
+
 def tmdb_match_all():
     api_key = _load_tmdb_key()
     if not api_key:
