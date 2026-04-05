@@ -10466,6 +10466,13 @@ if __name__ == '__main__':
     # Mark boot as successful for A/B boot counter (after all init is done)
     gevent.spawn_later(20, _mark_boot_success)
 
+    # Resume interrupted Photos AI scan if any (wait for full init)
+    try:
+        from blueprints.photos_ai import resume_interrupted_scan
+        gevent.spawn_later(30, resume_interrupted_scan)
+    except Exception:
+        pass
+
     # ── SSL configuration ──
     ssl_enabled = os.environ.get('SSL_ENABLED', '0') == '1'
     ssl_cert = os.environ.get('SSL_CERT', '')

@@ -61,6 +61,42 @@ _scan_state = {'running':False,'stop_requested':False,'total':0,'processed':0,
                'faces_found':0,'tags_found':0,'current_file':'','started_at':0}
 
 
+def _persist_scan_state(state_dict):
+    """Save scan progress to DB so it survives restarts."""
+    try:
+        conn = _get_db()
+        conn.execute('INSERT OR REPLACE INTO scan_state (key, value) VALUES (?,?)',
+                     ('progress', json.dumps(state_dict)))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+def _clear_persisted_scan():
+    """Remove persisted scan state (scan finished or stopped)."""
+    try:
+        conn = _get_db()
+        conn.execute("DELETE FROM scan_state WHERE key='progress'")
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+def _load_persisted_scan():
+    """Load interrupted scan state from DB. Returns dict or None."""
+    try:
+        conn = _get_db()
+        row = conn.execute("SELECT value FROM scan_state WHERE key='progress'").fetchone()
+        conn.close()
+        if row:
+            return json.loads(row['value'])
+    except Exception:
+        pass
+    return None
+
+
 def _get_db():
     conn = sqlite3.connect(_DB_PATH, timeout=15)
     conn.row_factory = sqlite3.Row
@@ -95,6 +131,8 @@ def _init_db():
         CREATE INDEX IF NOT EXISTS idx_faces_person ON faces(person_id);
         CREATE INDEX IF NOT EXISTS idx_tags_photo ON tags(photo_path);
         CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag);
+        CREATE TABLE IF NOT EXISTS scan_state (
+            key TEXT PRIMARY KEY, value TEXT);
     """)
     conn.commit()
     conn.close()
@@ -103,6 +141,30 @@ try:
     _init_db()
 except Exception:
     pass
+
+
+def resume_interrupted_scan():
+    """Called on app startup to resume a scan that was interrupted by a restart.
+    Uses gevent.spawn_later to wait for full app init before starting."""
+    saved = _load_persisted_scan()
+    if not saved:
+        return
+    folders = saved.get('folders', [])
+    if not folders:
+        _clear_persisted_scan()
+        return
+    deps = _check_deps()
+    if not deps.get('ready'):
+        _clear_persisted_scan()
+        return
+    log.info('Resuming interrupted scan (%d processed before restart), folders: %s',
+             saved.get('processed', 0), folders)
+    with _scan_lock:
+        if _scan_state['running']:
+            return
+        _scan_state['running'] = True
+        _scan_state['stop_requested'] = False
+    _launch_scan(folders)
 
 
 def _safe_path(user_path):
@@ -350,9 +412,12 @@ def _scan_worker(folders):
     conn = _get_db()
     todo = [p for p in imgs if _needs_scan(conn, p)]
     _scan_state.update(total=len(todo), processed=0, faces_found=0, tags_found=0, started_at=t0)
+    _persist_scan_state({'folders': folders, 'total': len(todo), 'processed': 0,
+                         'faces_found': 0, 'tags_found': 0, 'started_at': t0})
     _emit_progress()
     if not todo:
         _scan_state['running'] = False
+        _clear_persisted_scan()
         _emit_progress()
         s = _sio()
         if s:
@@ -371,13 +436,16 @@ def _scan_worker(folders):
         if _scan_state.get('stop_requested'):
             break
         _scan_state['current_file'] = path
-        gevent.sleep(0)  # yield to event loop before CPU-heavy ML
+        gevent.sleep(0)
         ff, tf = _process_image(path, conn, yolo)
         _scan_state['processed'] = i + 1
         _scan_state['faces_found'] += ff
         _scan_state['tags_found'] += tf
-        if (i + 1) % 2 == 0 or i == 0:
+        if (i + 1) % 5 == 0 or i == 0:
             _emit_progress()
+            _persist_scan_state({'folders': folders, 'total': len(todo),
+                                 'processed': i + 1, 'faces_found': _scan_state['faces_found'],
+                                 'tags_found': _scan_state['tags_found'], 'started_at': t0})
             gevent.sleep(0)
     np_ = 0
     try:
@@ -387,6 +455,7 @@ def _scan_worker(folders):
     conn.close()
     dur = time.time() - t0
     _scan_state.update(running=False, stop_requested=False, current_file='')
+    _clear_persisted_scan()
     s = _sio()
     if s:
         s.emit('photos_ai_done', {
@@ -465,28 +534,35 @@ def uninstall_deps():
 @photos_ai_bp.route('/scan', methods=['POST'])
 @admin_required
 def start_scan():
-    if _scan_state['running']:
-        return jsonify({'error': 'Skanowanie juz trwa.'}), 409
-    deps = _check_deps()
-    if not deps['ready']:
-        return jsonify({'error': 'Zaleznosci nie zainstalowane.'}), 400
-    folders = _gallery_folders()
-    if not folders:
-        return jsonify({'error': 'Brak folderow zrodlowych w Galerii.'}), 400
-    _scan_state['running'] = True
-    _scan_state['stop_requested'] = False
+    with _scan_lock:
+        if _scan_state['running']:
+            return jsonify({'error': 'Skanowanie juz trwa.'}), 409
+        deps = _check_deps()
+        if not deps['ready']:
+            return jsonify({'error': 'Zaleznosci nie zainstalowane.'}), 400
+        folders = _gallery_folders()
+        if not folders:
+            return jsonify({'error': 'Brak folderow zrodlowych w Galerii.'}), 400
+        _scan_state['running'] = True
+        _scan_state['stop_requested'] = False
+    _launch_scan(folders)
+    return jsonify({'ok': True, 'message': 'Skanowanie AI rozpoczete.'})
+
+
+def _launch_scan(folders):
+    """Start scan worker in background (used by both manual scan and auto-resume)."""
     s = _sio()
     if s:
         s.start_background_task(_scan_worker, folders)
     else:
         import gevent
         gevent.spawn(_scan_worker, folders)
-    return jsonify({'ok': True, 'message': 'Skanowanie AI rozpoczete.'})
 
 @photos_ai_bp.route('/stop-scan', methods=['POST'])
 @admin_required
 def stop_scan():
     _scan_state['stop_requested'] = True
+    _clear_persisted_scan()
     return jsonify({'ok': True})
 
 @photos_ai_bp.route('/scan-status', methods=['GET'])
