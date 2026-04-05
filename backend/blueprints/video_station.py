@@ -41,7 +41,7 @@ import urllib.error
 
 from flask import Blueprint, jsonify, request, Response, send_file
 
-from host import host_run, q, safe_path, data_path, app_path
+from host import host_run, q, data_path, app_path
 
 try:
     from blueprints.admin_required import admin_required, require_auth
@@ -194,8 +194,8 @@ def _save_folders(folders):
 def _collect_videos(folders):
     vids = []
     for folder in folders:
-        fp = safe_path(folder)
-        if not fp or not os.path.isdir(fp):
+        fp = os.path.realpath(folder)
+        if not os.path.isdir(fp):
             continue
         for root, _, files in os.walk(fp):
             for fn in files:
@@ -550,9 +550,11 @@ def save_folders():
     folders = (request.json or {}).get("folders", [])
     valid = []
     for f in folders:
-        fp = safe_path(f)
-        if fp and os.path.isdir(fp):
-            valid.append(f)
+        if not isinstance(f, str) or not f.startswith("/"):
+            continue
+        rp = os.path.realpath(f)
+        if os.path.isdir(rp):
+            valid.append(rp)
     _save_folders(valid)
     return jsonify({"ok": True, "folders": valid})
 
@@ -753,8 +755,8 @@ def stream(vid):
     conn.close()
     if not r:
         return jsonify({"error": "Nie znaleziono."}), 404
-    fp = safe_path(r["path"])
-    if not fp or not os.path.isfile(fp):
+    fp = os.path.realpath(r["path"])
+    if not os.path.isfile(fp):
         return jsonify({"error": "Plik nie istnieje."}), 404
     ext = os.path.splitext(fp)[1].lower()
     mime_map = {
