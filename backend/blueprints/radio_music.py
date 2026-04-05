@@ -12,6 +12,7 @@ Routes:
   GET  /api/radio-music/radio/favorites    - user's saved stations
   POST /api/radio-music/radio/favorites    - add/remove favorite station
   GET  /api/radio-music/radio/stream-url   - resolve stream URL (?url=)
+  GET  /api/radio-music/radio/proxy        - proxy stream through server (?url=)
   GET  /api/radio-music/podcasts/search    - search podcasts via iTunes (?q=)
   GET  /api/radio-music/podcasts/feed      - parse podcast RSS feed (?url=)
   GET  /api/radio-music/podcasts/subscriptions - user's subscribed podcasts
@@ -20,16 +21,19 @@ Routes:
   POST /api/radio-music/history            - add to history
 """
 
+import http.client
 import json
 import logging
 import os
+import socket
+import ssl
 import time
 import urllib.request
 import urllib.parse
 import urllib.error
 import xml.etree.ElementTree as ET
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, Response
 
 from host import data_path
 
@@ -424,3 +428,140 @@ def history_add():
 
     _save_json(_HISTORY_FILE, hist)
     return jsonify({'ok': True})
+
+
+# ── Stream proxy (solves CORS, ICY, HLS issues) ─────────────
+
+_SSL_CTX = ssl.create_default_context()
+_SSL_CTX.check_hostname = False
+_SSL_CTX.verify_mode = ssl.CERT_NONE
+
+
+def _open_stream(url, timeout=10):
+    """Open an audio stream, handling both HTTP and ICY (SHOUTcast) protocols.
+    Returns (response_object, content_type) or raises on failure."""
+    # First try standard urllib (works for HTTP/HTTPS streams)
+    try:
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
+                          'Chrome/146.0 Safari/537.36',
+            'Icy-MetaData': '0',
+        })
+        resp = urllib.request.urlopen(req, timeout=timeout, context=_SSL_CTX)
+        ct = resp.headers.get('Content-Type', 'audio/mpeg')
+        return resp, ct
+    except http.client.BadStatusLine:
+        pass  # ICY protocol — fall through to raw socket
+    except Exception:
+        raise
+
+    # ICY protocol: server responds "ICY 200 OK" which urllib can't parse.
+    # Use a raw socket connection.
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.hostname
+    port = parsed.port or 80
+    # Reconstruct full path including params (e.g. /;.mp3) and query
+    path = parsed.path or '/'
+    if parsed.params:
+        path += ';' + parsed.params
+    if parsed.query:
+        path += '?' + parsed.query
+
+    sock = socket.create_connection((host, port), timeout=timeout)
+    req_line = (
+        f'GET {path} HTTP/1.0\r\n'
+        f'Host: {host}\r\n'
+        f'User-Agent: Mozilla/5.0\r\n'
+        f'Icy-MetaData: 0\r\n'
+        f'Connection: close\r\n'
+        f'\r\n'
+    )
+    sock.sendall(req_line.encode('utf-8'))
+
+    # Read the ICY status line + headers
+    header_data = b''
+    while b'\r\n\r\n' not in header_data:
+        chunk = sock.recv(1024)
+        if not chunk:
+            break
+        header_data += chunk
+        if len(header_data) > 16384:
+            break
+
+    header_text, _, body_start = header_data.partition(b'\r\n\r\n')
+    ct = 'audio/mpeg'
+    for line in header_text.decode('utf-8', errors='replace').splitlines():
+        if line.lower().startswith('content-type:'):
+            ct = line.split(':', 1)[1].strip()
+            break
+
+    class IcyStream:
+        """Minimal file-like wrapper over a raw socket with leftover data."""
+        def __init__(self, sock, leftover):
+            self._sock = sock
+            self._leftover = leftover
+        def read(self, size=16384):
+            if self._leftover:
+                data = self._leftover[:size]
+                self._leftover = self._leftover[size:]
+                return data
+            try:
+                return self._sock.recv(size)
+            except Exception:
+                return b''
+        def close(self):
+            try:
+                self._sock.close()
+            except Exception:
+                pass
+
+    return IcyStream(sock, body_start), ct
+
+
+@radio_music_bp.route('/radio/proxy', methods=['GET'])
+def radio_proxy():
+    """Proxy a radio stream through the server to avoid CORS/ICY issues."""
+    url = request.args.get('url', '').strip()
+    if not url or not url.startswith(('http://', 'https://')):
+        return jsonify({'error': 'Invalid URL'}), 400
+
+    try:
+        resp, ct = _open_stream(url)
+    except Exception as e:
+        log.warning('Stream proxy open error for %s: %s', url, e)
+        return jsonify({'error': 'Nie udało się połączyć ze stacją'}), 502
+
+    # Normalise common content-types
+    if 'aacp' in ct or 'aac' in ct:
+        ct = 'audio/aac'
+    elif 'ogg' in ct:
+        ct = 'audio/ogg'
+    elif 'mp3' in ct or 'mpeg' in ct:
+        ct = 'audio/mpeg'
+
+    def generate():
+        try:
+            while True:
+                chunk = resp.read(16384)
+                if not chunk:
+                    break
+                yield chunk
+        except GeneratorExit:
+            pass
+        except Exception:
+            pass
+        finally:
+            try:
+                resp.close()
+            except Exception:
+                pass
+
+    return Response(
+        generate(),
+        mimetype=ct,
+        headers={
+            'Cache-Control': 'no-cache, no-store',
+            'Accept-Ranges': 'none',
+            'Access-Control-Allow-Origin': '*',
+        },
+    )

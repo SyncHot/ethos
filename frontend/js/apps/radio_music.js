@@ -544,10 +544,17 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         if (_audio) { _audio.pause(); _audio.src = ''; }
         _audio = new Audio();
         _audio.volume = (bodyEl.querySelector('#rm-vol')?.value || 80) / 100;
-        _audio.crossOrigin = 'anonymous';
         _playing = item;
 
-        _audio.src = item.url;
+        // Radio streams go through our proxy to avoid CORS/ICY issues.
+        // Podcasts usually have proper CORS headers, so play direct.
+        let src = item.url;
+        if (item.type === 'radio') {
+            src = '/api/radio-music/radio/proxy?url=' + encodeURIComponent(item.url)
+                + '&token=' + (NAS.token || '');
+        }
+
+        _audio.src = src;
         _audio.play().catch(err => {
             toast(t('Nie udało się odtworzyć: ') + err.message, 'error');
         });
