@@ -36,6 +36,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     let currentQuery   = '';
     let currentFolder  = '';
     let scanning       = false;
+    let useTmdb        = true;
     let playerInterval = null;
     let bodyEl         = null;
 
@@ -212,7 +213,12 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 '</div>' +
 '<div class="vs-toolbar-group">' +
   '<div class="vs-scan-wrap" id="vs-scan-wrap">' +
+    '<label class="vs-tmdb-check" title="' + t('Rozpoznaj filmy przez TMDb') + '">' +
+      '<input type="checkbox" id="vs-tmdb-check"' + (useTmdb ? ' checked' : '') + '> ' +
+      '<i class="fas fa-magic"></i> TMDb' +
+    '</label>' +
     '<button id="vs-scan-btn" class="app-btn app-btn-sm"><i class="fas fa-sync-alt"></i> ' + t('Skanuj') + '</button>' +
+    '<button id="vs-match-all-btn" class="app-btn app-btn-sm" title="' + t('Dopasuj wszystkie nierozpoznane filmy do TMDb') + '"><i class="fas fa-wand-magic-sparkles"></i> ' + t('Dopasuj') + '</button>' +
     '<div class="vs-scan-progress" id="vs-scan-bar" style="display:none">' +
       '<div class="vs-prog-bar"><div class="vs-prog-fill" id="vs-scan-fill"></div></div>' +
       '<span class="vs-scan-text" id="vs-scan-text"></span>' +
@@ -231,6 +237,8 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         };
         bodyEl.querySelector('#vs-scan-btn').onclick = startScan;
         bodyEl.querySelector('#vs-scan-stop').onclick = stopScan;
+        bodyEl.querySelector('#vs-tmdb-check').onchange = (e) => { useTmdb = e.target.checked; };
+        bodyEl.querySelector('#vs-match-all-btn').onclick = matchAll;
 
         if (scanning) checkScanStatus();
     }
@@ -351,6 +359,15 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     '<button id="vs-add-folder" class="app-btn app-btn-sm app-btn-primary"><i class="fas fa-plus"></i> ' + t('Dodaj') + '</button>' +
   '</div>' +
   '<div class="vs-folders-list" id="vs-folders-list">' + listHtml + '</div>' +
+  '<div class="vs-settings-section">' +
+    '<div class="vs-folders-header"><span><i class="fas fa-magic"></i> TMDb — ' + t('rozpoznawanie filmów') + '</span></div>' +
+    '<p class="vs-settings-desc">' + t('Podaj klucz API z') + ' <a href="https://www.themoviedb.org/settings/api" target="_blank" style="color:var(--accent)">themoviedb.org</a> ' + t('aby automatycznie pobierać okładki, opisy i oceny filmów.') + '</p>' +
+    '<div class="vs-tmdb-key-row">' +
+      '<input type="text" id="vs-tmdb-key" class="vs-input" placeholder="' + t('Klucz API TMDb (v3)') + '">' +
+      '<button id="vs-tmdb-save" class="app-btn app-btn-sm app-btn-primary">' + t('Zapisz') + '</button>' +
+      '<span id="vs-tmdb-status" class="vs-tmdb-status"></span>' +
+    '</div>' +
+  '</div>' +
   '<div class="vs-folders-footer">' +
     '<button id="vs-uninstall-btn" class="app-btn app-btn-sm" style="color:var(--danger)"><i class="fas fa-trash-alt"></i> ' + t('Odinstaluj Video Station') + '</button>' +
   '</div>' +
@@ -389,13 +406,37 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             toast(t('Odinstalowano'), 'success');
             init(bodyEl);
         };
+
+        // TMDb API key config
+        const tmdbConf = await api('/video-station/tmdb-config');
+        const tmdbStatus = content.querySelector('#vs-tmdb-status');
+        if (tmdbConf && tmdbConf.has_key) {
+            tmdbStatus.innerHTML = '<i class="fas fa-check-circle" style="color:var(--success)"></i> ' + t('Klucz aktywny') + ' (' + tmdbConf.key_preview + ')';
+        }
+        content.querySelector('#vs-tmdb-save').onclick = async () => {
+            const key = content.querySelector('#vs-tmdb-key').value.trim();
+            if (!key) { toast(t('Podaj klucz API'), 'warning'); return; }
+            const res = await api('/video-station/tmdb-config', { method: 'POST', body: { api_key: key } });
+            if (res.error) { toast(res.error, 'error'); return; }
+            toast(t('Klucz TMDb zapisany!'), 'success');
+            content.querySelector('#vs-tmdb-key').value = '';
+            tmdbStatus.innerHTML = '<i class="fas fa-check-circle" style="color:var(--success)"></i> ' + t('Klucz aktywny');
+        };
     }
 
     /* ── scan ──────────────────────────────────────────────── */
     async function startScan() {
-        const res = await api('/video-station/scan', { method: 'POST' });
+        const res = await api('/video-station/scan', { method: 'POST', body: { use_tmdb: useTmdb } });
         if (res.error) { toast(res.error, 'error'); return; }
         scanning = true;
+        updateScanUI({ running: true, total: 0, processed: 0, current_file: '' });
+    }
+
+    async function matchAll() {
+        const res = await api('/video-station/tmdb-match-all', { method: 'POST' });
+        if (res.error) { toast(res.error, 'error'); return; }
+        scanning = true;
+        toast(t('Dopasowywanie filmów do TMDb...'), 'info');
         updateScanUI({ running: true, total: 0, processed: 0, current_file: '' });
     }
 
@@ -437,15 +478,21 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             const pct = v.duration && v.position ? Math.min(100, Math.round((v.position / v.duration) * 100)) : 0;
             const res = v.height ? (v.height >= 2160 ? '4K' : v.height >= 1080 ? '1080p' : v.height >= 720 ? '720p' : v.height + 'p') : '';
             const codec = v.codec || '';
-            const size = v.size ? formatBytes(v.size) : '';
+            const size = v.file_size ? formatBytes(v.file_size) : '';
             const meta = [res, codec, size].filter(Boolean).join(' \u00b7 ');
+            const hasPoster = v.poster_ok;
+            const imgSrc = hasPoster
+                ? '/api/video-station/poster/' + v.id + '?token=' + NAS.token
+                : '/api/video-station/thumb/' + v.id + '?token=' + NAS.token;
+            const rating = v.tmdb_rating ? v.tmdb_rating.toFixed(1) : '';
 
             html +=
-'<div class="vs-card" data-id="' + v.id + '">' +
-  '<div class="vs-thumb">' +
-    '<img src="/api/video-station/thumb/' + v.id + '?token=' + NAS.token + '" loading="lazy" alt="" onerror="this.style.display=\'none\'">' +
+'<div class="vs-card' + (hasPoster ? ' vs-card-poster' : '') + '" data-id="' + v.id + '">' +
+  '<div class="vs-thumb' + (hasPoster ? ' vs-thumb-poster' : '') + '">' +
+    '<img src="' + imgSrc + '" loading="lazy" alt="" onerror="this.style.display=\'none\'">' +
     '<div class="vs-thumb-placeholder"><i class="fas fa-film"></i></div>' +
     (dur ? '<span class="vs-duration">' + dur + '</span>' : '') +
+    (rating ? '<span class="vs-rating"><i class="fas fa-star"></i> ' + rating + '</span>' : '') +
     (pct > 0 && !v.watched ? '<div class="vs-progress" style="width:' + pct + '%"></div>' : '') +
     (v.watched ? '<span class="vs-watched"><i class="fas fa-check-circle"></i></span>' : '') +
   '</div>' +
@@ -640,8 +687,14 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 '.vs-thumb img{width:100%;height:100%;object-fit:cover;position:absolute;inset:0;z-index:1}',
 '.vs-thumb-placeholder{color:var(--text-muted);font-size:28px;opacity:.3}',
 '.vs-duration{position:absolute;bottom:6px;right:6px;background:rgba(0,0,0,.8);color:#fff;font-size:11px;padding:2px 6px;border-radius:3px;z-index:2;font-variant-numeric:tabular-nums}',
+'.vs-rating{position:absolute;top:6px;left:6px;background:rgba(0,0,0,.8);color:#fbbf24;font-size:11px;padding:2px 6px;border-radius:3px;z-index:2;font-weight:600}',
+'.vs-rating .fa-star{font-size:10px;margin-right:2px}',
 '.vs-progress{position:absolute;bottom:0;left:0;height:3px;background:var(--accent);z-index:3;transition:width .3s}',
 '.vs-watched{position:absolute;top:6px;right:6px;color:var(--accent-green);font-size:16px;z-index:2;text-shadow:0 1px 3px rgba(0,0,0,.6)}',
+
+/* poster mode — taller card for movie posters */
+'.vs-card-poster .vs-thumb{aspect-ratio:2/3}',
+'.vs-card-poster .vs-thumb img{object-fit:cover}',
 '.vs-title{padding:8px 10px 2px;font-size:13px;font-weight:500;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
 '.vs-meta{padding:0 10px 8px;font-size:11px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
 
@@ -664,6 +717,18 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 '.vs-folder-remove{opacity:.5;transition:opacity .15s}',
 '.vs-folder-remove:hover{opacity:1;color:var(--danger)!important}',
 '.vs-folders-footer{margin-top:24px;padding-top:16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end}',
+
+/* tmdb settings */
+'.vs-settings-section{margin-top:24px;padding-top:16px;border-top:1px solid var(--border)}',
+'.vs-settings-desc{font-size:12px;color:var(--text-muted);margin:4px 0 12px;line-height:1.5}',
+'.vs-tmdb-key-row{display:flex;align-items:center;gap:8px}',
+'.vs-tmdb-key-row .vs-input{flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--bg-secondary);color:var(--text-primary);font-size:13px}',
+'.vs-tmdb-status{font-size:12px;color:var(--text-muted);white-space:nowrap}',
+
+/* tmdb toolbar checkbox */
+'.vs-tmdb-check{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-muted);cursor:pointer;white-space:nowrap;user-select:none}',
+'.vs-tmdb-check input{margin:0;cursor:pointer}',
+'.vs-tmdb-check .fa-magic{font-size:11px;color:#fbbf24}',
 
 /* player overlay */
 '.vs-player-overlay{position:absolute;inset:0;background:rgba(0,0,0,.95);z-index:100;flex-direction:column;align-items:center;justify-content:center}',

@@ -5988,3 +5988,6 @@ textarea.app-input { resize: vertical; line-height: 1.5; }
   .vs-sidebar { width:140px; min-width:140px; }
   .vs-grid { grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); }
 }
+
+/* VS poster grid — narrower cards when posters are shown */
+.vs-grid:has(.vs-card-poster) { grid-template-columns:repeat(auto-fill, minmax(160px, 1fr)); }
