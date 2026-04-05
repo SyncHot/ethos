@@ -165,15 +165,17 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     </select>
     <button class="vs-player-close" id="vs-player-close"><i class="fas fa-times"></i></button>
   </div>
-  <video id="vs-player-video" controls autoplay playsinline></video>
-  <div class="vs-custom-controls" id="vs-custom-controls" style="display:none">
-    <button class="vs-cc-btn" id="vs-cc-play"><i class="fas fa-pause"></i></button>
-    <span class="vs-cc-time" id="vs-cc-time">0:00 / 0:00</span>
-    <div class="vs-cc-progress" id="vs-cc-progress">
-      <div class="vs-cc-buffered" id="vs-cc-buffered"></div>
-      <div class="vs-cc-fill" id="vs-cc-fill"></div>
+  <div class="vs-player-wrap" id="vs-player-wrap">
+    <video id="vs-player-video" controls autoplay playsinline></video>
+    <div class="vs-custom-controls" id="vs-custom-controls" style="display:none">
+      <button class="vs-cc-btn" id="vs-cc-play"><i class="fas fa-pause"></i></button>
+      <span class="vs-cc-time" id="vs-cc-time">0:00 / 0:00</span>
+      <div class="vs-cc-progress" id="vs-cc-progress">
+        <div class="vs-cc-buffered" id="vs-cc-buffered"></div>
+        <div class="vs-cc-fill" id="vs-cc-fill"></div>
+      </div>
+      <button class="vs-cc-btn" id="vs-cc-fs"><i class="fas fa-expand"></i></button>
     </div>
-    <button class="vs-cc-btn" id="vs-cc-fs"><i class="fas fa-expand"></i></button>
   </div>
 </div>`;
 
@@ -749,7 +751,10 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         // keyboard shortcuts
         overlay._keyHandler = (e) => {
             if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); video.paused ? video.play() : video.pause(); }
-            else if (e.key === 'f') { toggleFullscreen(_transcoding ? overlay : video); }
+            else if (e.key === 'f') {
+                const wrap = bodyEl.querySelector('#vs-player-wrap');
+                toggleFullscreen(_transcoding && wrap ? wrap : video);
+            }
             else if (e.key === 'Escape') { closePlayer(); }
             else if (e.key === 'ArrowLeft') { seekPlayer(video, -10); }
             else if (e.key === 'ArrowRight') { seekPlayer(video, 10); }
@@ -815,12 +820,14 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             video.play().catch(() => {});
         };
 
-        // Fullscreen
+        // Fullscreen — fullscreen the wrapper (video + controls together)
         if (fsBtn) fsBtn.onclick = () => {
-            const overlay = bodyEl.querySelector('#vs-player-overlay');
-            toggleFullscreen(overlay || video);
+            const wrap = bodyEl.querySelector('#vs-player-wrap');
+            toggleFullscreen(wrap || video);
         };
         document.addEventListener('fullscreenchange', () => {
+            const wrap = bodyEl.querySelector('#vs-player-wrap');
+            if (wrap) wrap.classList.toggle('vs-fs', !!document.fullscreenElement);
             if (fsBtn) fsBtn.innerHTML = document.fullscreenElement
                 ? '<i class="fas fa-compress"></i>' : '<i class="fas fa-expand"></i>';
         });
@@ -1025,8 +1032,8 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 '.vs-tmdb-check .fa-magic{font-size:11px;color:#fbbf24}',
 
 /* player overlay */
-'.vs-player-overlay{position:absolute;inset:0;background:rgba(0,0,0,.95);z-index:100;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden}',
-'.vs-player-top{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;justify-content:space-between;padding:12px 16px;z-index:101;background:linear-gradient(to bottom,rgba(0,0,0,.7),transparent)}',
+'.vs-player-overlay{position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,.95);z-index:10000;display:flex;flex-direction:column;overflow:hidden}',
+'.vs-player-top{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;z-index:101;background:linear-gradient(to bottom,rgba(0,0,0,.7),transparent);flex-shrink:0}',
 '.vs-player-title{color:#fff;font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
 '.vs-player-close{background:none;border:none;color:#fff;font-size:20px;cursor:pointer;padding:4px 8px;opacity:.7;transition:opacity .15s}',
 '.vs-player-close:hover{opacity:1}',
@@ -1042,19 +1049,19 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 '.vs-ctx-item i{width:16px;text-align:center;opacity:.7}',
 '.vs-ctx-danger{color:var(--danger,#f87171)}',
 '.vs-ctx-danger:hover{background:rgba(248,113,113,.12)}',
-'#vs-player-video{max-width:100%;max-height:calc(100% - 90px);margin-top:24px;outline:none;border-radius:4px}',
+'#vs-player-video{max-width:100%;max-height:100%;outline:none;border-radius:4px}',
+/* player wrapper — contains video + custom controls */
+'.vs-player-wrap{position:relative;display:flex;align-items:center;justify-content:center;flex:1;width:100%;max-height:calc(100% - 56px);overflow:hidden}',
 /* custom controls bar for transcoded streams */
-'.vs-custom-controls{position:absolute;bottom:0;left:0;right:0;display:flex;align-items:center;gap:10px;padding:10px 16px;background:linear-gradient(transparent,rgba(0,0,0,.85));z-index:102}',
-'.vs-cc-btn{background:none;border:none;color:#fff;font-size:16px;cursor:pointer;padding:4px 6px;opacity:.85;transition:opacity .15s}',
+'.vs-custom-controls{position:absolute;bottom:0;left:0;right:0;display:flex;align-items:center;gap:12px;padding:12px 18px;background:linear-gradient(transparent,rgba(0,0,0,.9));z-index:10}',
+'.vs-cc-btn{background:none;border:none;color:#fff;font-size:18px;cursor:pointer;padding:6px 8px;opacity:.9;transition:opacity .15s}',
 '.vs-cc-btn:hover{opacity:1}',
-'.vs-cc-time{color:rgba(255,255,255,.9);font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap;min-width:100px}',
-'.vs-cc-progress{flex:1;height:6px;background:rgba(255,255,255,.2);border-radius:3px;cursor:pointer;position:relative;overflow:hidden}',
-'.vs-cc-buffered{position:absolute;top:0;left:0;height:100%;background:rgba(255,255,255,.25);border-radius:3px;transition:width .3s}',
-'.vs-cc-fill{position:absolute;top:0;left:0;height:100%;background:var(--accent,#4f8cff);border-radius:3px;transition:width .3s}',
-/* overlay fullscreen: video fills screen, controls stick to bottom */
-'.vs-player-overlay:fullscreen{background:#000}',
-'.vs-player-overlay:fullscreen #vs-player-video{max-width:100vw;max-height:100vh;width:100%;height:100%;margin:0;object-fit:contain}',
-'.vs-player-overlay:fullscreen .vs-custom-controls{position:fixed;bottom:0;left:0;right:0}',
-'.vs-player-overlay:fullscreen .vs-player-top{position:fixed;top:0;left:0;right:0;z-index:103}',
+'.vs-cc-time{color:rgba(255,255,255,.95);font-size:13px;font-weight:500;font-variant-numeric:tabular-nums;white-space:nowrap;min-width:110px}',
+'.vs-cc-progress{flex:1;height:8px;background:rgba(255,255,255,.2);border-radius:4px;cursor:pointer;position:relative;overflow:hidden}',
+'.vs-cc-buffered{position:absolute;top:0;left:0;height:100%;background:rgba(255,255,255,.25);border-radius:4px;transition:width .3s}',
+'.vs-cc-fill{position:absolute;top:0;left:0;height:100%;background:var(--accent,#4f8cff);border-radius:4px;transition:width .3s}',
+/* fullscreen via class (reliable cross-browser) */
+'.vs-player-wrap.vs-fs{background:#000;max-height:none}',
+'.vs-player-wrap.vs-fs #vs-player-video{width:100%;height:100%;max-width:100vw;max-height:100vh;margin:0;border-radius:0;object-fit:contain}',
     ].join('\n'); }
 };
