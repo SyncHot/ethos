@@ -613,6 +613,8 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     let _transcoding = false;
     let _currentVid = null;
     let _currentAudioIdx = null;
+    let _startOffset = 0;       // server-side seek offset for transcoded streams
+    let _knownDuration = 0;     // total duration from DB (for transcoded streams)
 
     function _buildStreamUrl(vid, transcode, startSec, audioIdx) {
         if (!transcode) return '/api/video-station/stream/' + vid + '?token=' + NAS.token;
@@ -638,6 +640,8 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         _transcoding = needsTranscode;
         _currentVid = vid;
         _currentAudioIdx = null;
+        _knownDuration = info.duration || 0;
+        _startOffset = 0;
 
         title.textContent = info.title || info.filename || '';
         badge.style.display = needsTranscode ? '' : 'none';
@@ -659,7 +663,8 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             audioSel.style.display = '';
             audioSel.onchange = () => {
                 _currentAudioIdx = parseInt(audioSel.value);
-                const pos = video.currentTime || 0;
+                const pos = _startOffset + (video.currentTime || 0);
+                _startOffset = pos;
                 video.src = _buildStreamUrl(vid, true, pos, _currentAudioIdx);
                 video.play().catch(() => {});
             };
@@ -668,6 +673,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         }
 
         const resumePos = (info.position && info.position > 0 && !info.watched) ? info.position : 0;
+        if (needsTranscode) _startOffset = resumePos;
         video.src = _buildStreamUrl(vid, needsTranscode, needsTranscode ? resumePos : 0, null);
 
         // resume from last position (non-transcoded only — transcoded uses server-side seek)
@@ -687,16 +693,38 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         // save position every 10 seconds
         playerInterval = setInterval(() => savePosition(vid, video), 10000);
 
+        // For transcoded streams: intercept native seeking (progress bar clicks)
+        // and restart ffmpeg at the requested position
+        let _seekDebounce = null;
+        video.onseeking = () => {
+            if (!_transcoding || !_knownDuration) return;
+            // Browser fires seeking when user drags the progress bar.
+            // video.currentTime is already set to desired position within the buffered range.
+            // We can't actually seek in a progressive stream, so restart ffmpeg.
+            clearTimeout(_seekDebounce);
+            _seekDebounce = setTimeout(() => {
+                const target = _startOffset + video.currentTime;
+                if (target >= 0 && target < _knownDuration) {
+                    _startOffset = target;
+                    video.src = _buildStreamUrl(_currentVid, true, _startOffset, _currentAudioIdx);
+                    video.play().catch(() => {});
+                }
+            }, 300);
+        };
+
         // mark watched at >90%
         video.ontimeupdate = () => {
-            if (video.duration && video.currentTime / video.duration > 0.9) {
-                api('/video-station/watched/' + vid, { method: 'POST', body: { watched: true, position: video.currentTime } });
+            const realPos = _transcoding ? (_startOffset + (video.currentTime || 0)) : video.currentTime;
+            const totalDur = _transcoding ? _knownDuration : video.duration;
+            if (totalDur && realPos / totalDur > 0.9) {
+                api('/video-station/watched/' + vid, { method: 'POST', body: { watched: true, position: realPos } });
                 video.ontimeupdate = null;
             }
         };
 
         video.onended = () => {
-            api('/video-station/watched/' + vid, { method: 'POST', body: { watched: true, position: video.duration } });
+            const realPos = _transcoding ? _knownDuration : video.duration;
+            api('/video-station/watched/' + vid, { method: 'POST', body: { watched: true, position: realPos } });
             closePlayer();
         };
 
@@ -743,7 +771,9 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 
     function seekPlayer(video, delta) {
         if (_transcoding) {
-            const newTime = Math.max(0, (video.currentTime || 0) + delta);
+            const realPos = _startOffset + (video.currentTime || 0);
+            const newTime = Math.max(0, Math.min(_knownDuration, realPos + delta));
+            _startOffset = newTime;
             video.src = _buildStreamUrl(_currentVid, true, newTime, _currentAudioIdx);
             video.play().catch(() => {});
         } else {
@@ -753,7 +783,8 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 
     function savePosition(vid, video) {
         if (!video || video.paused) return;
-        api('/video-station/watched/' + vid, { method: 'POST', body: { watched: false, position: video.currentTime } });
+        const realPos = _transcoding ? (_startOffset + (video.currentTime || 0)) : video.currentTime;
+        api('/video-station/watched/' + vid, { method: 'POST', body: { watched: false, position: realPos } });
     }
 
     function closePlayer() {
@@ -765,8 +796,18 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         _transcoding = false;
         _currentVid = null;
         _currentAudioIdx = null;
+        _startOffset = 0;
+        _knownDuration = 0;
         overlay.style.display = 'none';
-        if (video) { video.pause(); video.removeAttribute('src'); video.load(); }
+        if (video) {
+            video.pause();
+            video.onseeking = null;
+            video.ontimeupdate = null;
+            video.onended = null;
+            video.onerror = null;
+            video.removeAttribute('src');
+            video.load();
+        }
         if (overlay._keyHandler) { document.removeEventListener('keydown', overlay._keyHandler); overlay._keyHandler = null; }
 
         // refresh current view to reflect watch state
