@@ -27,25 +27,29 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         return domain ? 'https://www.google.com/s2/favicons?domain=' + encodeURIComponent(domain) + '&sz=128' : '';
     }
 
-    // Multi-layer logo: Radio Browser favicon → Google favicon (from homepage) → letter avatar
+    // Multi-layer logo: Google favicon (128px, from homepage domain) → Radio Browser favicon → letter avatar
+    // Google service returns high-quality logos; Radio Browser favicons are often tiny/broken
     function _stationIconHtml(s) {
         const letter = _stationInitial(s.name);
         const bg = _stationColor(s.name);
-        const letterSpan = '<span class="rm-letter-icon" style="display:none;background:' + bg + '">' + escH(letter) + '</span>';
+        const letterFallback = '<span class="rm-letter-icon" style="display:none;background:' + bg + '">' + escH(letter) + '</span>';
         const domain = _domainOf(s.homepage || s.url);
         const googleSrc = _googleIcon(domain);
+        const rbFavicon = s.favicon || '';
 
-        if (s.favicon) {
-            // Try Radio Browser favicon → Google favicon → letter
-            const googleFallback = googleSrc
-                ? 'var g=document.createElement(\'img\');g.src=\'' + escH(googleSrc) + '\';g.style.cssText=this.style.cssText;g.className=this.className;g.onerror=function(){this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'};this.parentNode.insertBefore(g,this.nextElementSibling);this.remove()'
-                : 'this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'';
-            return '<img src="' + escH(s.favicon) + '" onerror="' + googleFallback + '">'
-                 + letterSpan;
+        if (googleSrc && rbFavicon) {
+            // Google → Radio Browser → letter
+            return '<img src="' + escH(googleSrc) + '" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'inline\'">'
+                 + '<img style="display:none" src="' + escH(rbFavicon) + '" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">'
+                 + letterFallback;
         }
         if (googleSrc) {
             return '<img src="' + escH(googleSrc) + '" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">'
-                 + letterSpan;
+                 + letterFallback;
+        }
+        if (rbFavicon) {
+            return '<img src="' + escH(rbFavicon) + '" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">'
+                 + letterFallback;
         }
         return '<span class="rm-letter-icon" style="background:' + bg + '">' + escH(letter) + '</span>';
     }
