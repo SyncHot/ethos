@@ -800,3 +800,137 @@ def ai_stats():
     }
     conn.close()
     return jsonify(stats)
+
+
+# ─── Face identification & merge suggestions ────────────────────
+
+@photos_ai_bp.route('/identify-face', methods=['POST'])
+def identify_face():
+    """Given a face_id, find top matching people by embedding similarity."""
+    import numpy as np
+    d = request.json or {}
+    face_id = d.get('face_id')
+    if not face_id:
+        return jsonify({'error': 'Podaj face_id.'}), 400
+    conn = _get_db()
+    row = conn.execute('SELECT embedding, person_id FROM faces WHERE id=?', (face_id,)).fetchone()
+    if not row:
+        conn.close()
+        return jsonify({'error': 'Twarz nie znaleziona.'}), 404
+    target_emb = np.array(_blob2emb(row['embedding']))
+    people_rows = conn.execute(
+        'SELECT id, name, cover_face_id, photo_count FROM people WHERE hidden=0'
+    ).fetchall()
+    results = []
+    for p in people_rows:
+        face_rows = conn.execute(
+            'SELECT embedding FROM faces WHERE person_id=? LIMIT 30', (p['id'],)
+        ).fetchall()
+        if not face_rows:
+            continue
+        embs = np.array([_blob2emb(f['embedding']) for f in face_rows])
+        centroid = embs.mean(axis=0)
+        dist = float(np.linalg.norm(target_emb - centroid))
+        results.append({
+            'person_id': p['id'],
+            'name': p['name'] or f'Osoba {p["id"]}',
+            'cover_face_id': p['cover_face_id'],
+            'photo_count': p['photo_count'],
+            'distance': round(dist, 3),
+            'confidence': round(max(0, 1.0 - dist) * 100, 1),
+        })
+    conn.close()
+    results.sort(key=lambda x: x['distance'])
+    return jsonify({'matches': results[:10], 'current_person_id': row['person_id']})
+
+
+@photos_ai_bp.route('/assign-face', methods=['POST'])
+def assign_face():
+    """Assign a face to an existing person or create a new one."""
+    d = request.json or {}
+    face_id = d.get('face_id')
+    person_id = d.get('person_id')
+    new_name = d.get('new_name', '').strip()
+    if not face_id:
+        return jsonify({'error': 'Podaj face_id.'}), 400
+    conn = _get_db()
+    face = conn.execute('SELECT id, person_id FROM faces WHERE id=?', (face_id,)).fetchone()
+    if not face:
+        conn.close()
+        return jsonify({'error': 'Twarz nie znaleziona.'}), 404
+
+    if new_name and not person_id:
+        cur = conn.execute(
+            'INSERT INTO people (name, cover_face_id, photo_count) VALUES (?,?,1)',
+            (new_name, face_id))
+        person_id = cur.lastrowid
+    elif not person_id:
+        conn.close()
+        return jsonify({'error': 'Podaj person_id lub new_name.'}), 400
+
+    old_pid = face['person_id']
+    conn.execute('UPDATE faces SET person_id=? WHERE id=?', (person_id, face_id))
+    if old_pid:
+        cnt = conn.execute(
+            'SELECT COUNT(DISTINCT photo_path) FROM faces WHERE person_id=?',
+            (old_pid,)).fetchone()[0]
+        conn.execute('UPDATE people SET photo_count=? WHERE id=?', (cnt, old_pid))
+        if cnt == 0:
+            conn.execute('DELETE FROM people WHERE id=?', (old_pid,))
+    cnt = conn.execute(
+        'SELECT COUNT(DISTINCT photo_path) FROM faces WHERE person_id=?',
+        (person_id,)).fetchone()[0]
+    conn.execute('UPDATE people SET photo_count=? WHERE id=?', (cnt, person_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'person_id': person_id})
+
+
+@photos_ai_bp.route('/merge-suggestions', methods=['GET'])
+def merge_suggestions():
+    """Find pairs of people clusters that might be duplicates."""
+    import numpy as np
+    conn = _get_db()
+    people = conn.execute('SELECT id, name FROM people WHERE hidden=0').fetchall()
+    if len(people) < 2:
+        conn.close()
+        return jsonify({'suggestions': []})
+
+    centroids = {}
+    cover_faces = {}
+    for p in people:
+        rows = conn.execute(
+            'SELECT embedding FROM faces WHERE person_id=? LIMIT 30', (p['id'],)
+        ).fetchall()
+        if not rows:
+            continue
+        embs = np.array([_blob2emb(r['embedding']) for r in rows])
+        centroids[p['id']] = embs.mean(axis=0)
+        cf = conn.execute(
+            'SELECT id FROM faces WHERE person_id=? LIMIT 1', (p['id'],)
+        ).fetchone()
+        cover_faces[p['id']] = cf['id'] if cf else None
+
+    pids = list(centroids.keys())
+    pid_to_name = {p['id']: p['name'] or f'Osoba {p["id"]}' for p in people}
+    suggestions = []
+    threshold = 0.75
+    for i in range(len(pids)):
+        for j in range(i + 1, len(pids)):
+            dist = float(np.linalg.norm(centroids[pids[i]] - centroids[pids[j]]))
+            if dist < threshold:
+                suggestions.append({
+                    'person_a': {
+                        'id': pids[i], 'name': pid_to_name[pids[i]],
+                        'cover_face_id': cover_faces.get(pids[i]),
+                    },
+                    'person_b': {
+                        'id': pids[j], 'name': pid_to_name[pids[j]],
+                        'cover_face_id': cover_faces.get(pids[j]),
+                    },
+                    'distance': round(dist, 3),
+                    'confidence': round(max(0, 1.0 - dist) * 100, 1),
+                })
+    conn.close()
+    suggestions.sort(key=lambda x: x['distance'])
+    return jsonify({'suggestions': suggestions[:20]})

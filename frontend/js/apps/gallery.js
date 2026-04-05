@@ -706,6 +706,7 @@ function _galRenderLightbox() {
         <span class="gal-lb-counter">${GAL.lightboxIdx + 1} / ${GAL.lightboxItems.length}</span>
       </div>
       <div class="gal-lb-actions">
+        <button class="gal-lb-btn gal-lb-faces-btn" title="${t('Twarze (AI)')}"><i class="fa-solid fa-face-smile"></i></button>
         <button class="gal-lb-btn gal-lb-info-btn" title="Informacje"><i class="fa-solid fa-circle-info"></i></button>
         <button class="gal-lb-btn gal-lb-fav-btn" title="Ulubione (F)"><i class="fa-regular fa-star"></i></button>
         <button class="gal-lb-btn gal-lb-show-fm-btn" title="${t('Pokaż w Menedżerze plików')}"><i class="fa-solid fa-folder-open"></i></button>
@@ -733,6 +734,9 @@ function _galRenderLightbox() {
     <div class="gal-lb-exif" id="gal-lb-exif" style="display:none">
       <div class="gal-lb-exif-content"></div>
     </div>
+    <div class="gal-lb-faces-panel" id="gal-lb-faces-panel" style="display:none">
+      <div class="gal-lb-faces-content"></div>
+    </div>
   `;
 
   document.body.appendChild(lb);
@@ -755,6 +759,9 @@ function _galRenderLightbox() {
 
   // Info panel
   lb.querySelector('.gal-lb-info-btn').addEventListener('click', () => _galToggleExif(item));
+
+  // Face detection panel
+  lb.querySelector('.gal-lb-faces-btn').addEventListener('click', () => _galToggleFaces(item));
 
   // Favorite button
   lb.querySelector('.gal-lb-fav-btn').addEventListener('click', () => _galToggleFavorite(item));
@@ -903,12 +910,14 @@ function _galRenderLightbox() {
 function _galLightboxNav(dir) {
   const newIdx = GAL.lightboxIdx + dir;
   if (newIdx < 0 || newIdx >= GAL.lightboxItems.length) return;
+  _galClearFaceOverlay();
   GAL.lightboxIdx = newIdx;
   _galRenderLightbox();
 }
 
 function _galCloseLightbox() {
   _galStopSlideshow();
+  _galClearFaceOverlay();
   _galRemoveLightbox();
 }
 
@@ -964,6 +973,248 @@ async function _galToggleExif(item) {
   } catch (err) {
     content.innerHTML = `<p style="color:#ef4444">${t('Nie udało się odczytać danych EXIF')}</p>`;
   }
+}
+
+/* ━━━━  FACE DETECTION OVERLAY  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+async function _galToggleFaces(item) {
+  const panel = document.getElementById('gal-lb-faces-panel');
+  const exifPanel = document.getElementById('gal-lb-exif');
+  if (!panel) return;
+
+  // Toggle off
+  if (panel.style.display !== 'none') {
+    panel.style.display = 'none';
+    _galClearFaceOverlay();
+    return;
+  }
+
+  // Close EXIF if open
+  if (exifPanel) exifPanel.style.display = 'none';
+  panel.style.display = 'flex';
+
+  const content = panel.querySelector('.gal-lb-faces-content');
+  content.innerHTML = '<div class="gal-spinner" style="margin:20px auto"></div>';
+
+  if (item.type !== 'image') {
+    content.innerHTML = `<p style="color:var(--text-secondary)">${t('Detekcja twarzy działa tylko na zdjęciach')}</p>`;
+    return;
+  }
+
+  try {
+    const data = await api('/photos-ai/photo-ai?path=' + encodeURIComponent(item.path));
+    const faces = data.faces || [];
+    const tags = data.tags || [];
+
+    // Draw bounding boxes on image
+    _galDrawFaceBoxes(faces);
+
+    // Build panel content
+    let html = `<h4><i class="fa-solid fa-face-smile"></i> ${t('Twarze')} (${faces.length})</h4>`;
+
+    if (!faces.length) {
+      html += `<p class="gal-faces-empty">${t('Nie wykryto twarzy na tym zdjęciu.')}</p>`;
+      if (!tags.length) html += `<p class="gal-faces-hint">${t('Uruchom skan w Photos AI, aby wykryć twarze.')}</p>`;
+    } else {
+      html += '<div class="gal-faces-list">';
+      for (const face of faces) {
+        const thumbUrl = '/api/photos-ai/face-thumb/' + face.id;
+        const name = face.person_name || t('Nieznana osoba');
+        html += `
+          <div class="gal-face-item" data-face-id="${face.id}" data-person-id="${face.person_id || ''}">
+            <img class="gal-face-thumb" src="${thumbUrl}" alt="">
+            <div class="gal-face-info">
+              <div class="gal-face-name">${_esc(name)}</div>
+              <button class="gal-face-identify-btn" data-face-id="${face.id}">
+                <i class="fa-solid fa-user-tag"></i> ${face.person_name ? t('Zmień') : t('Kto to?')}
+              </button>
+            </div>
+          </div>`;
+      }
+      html += '</div>';
+    }
+
+    // Tags section
+    if (tags.length) {
+      const yoloTags = tags.filter(t => t.source === 'yolo');
+      if (yoloTags.length) {
+        html += `<h4 style="margin-top:16px"><i class="fa-solid fa-tags"></i> ${t('Obiekty')}</h4>`;
+        html += '<div class="gal-faces-tags">';
+        for (const tag of yoloTags) {
+          html += `<span class="gal-face-tag">${_esc(tag.tag_pl || tag.tag)} <small>${Math.round(tag.confidence * 100)}%</small></span>`;
+        }
+        html += '</div>';
+      }
+    }
+
+    content.innerHTML = html;
+
+    // Wire "Who is this?" buttons
+    content.querySelectorAll('.gal-face-identify-btn').forEach(btn => {
+      btn.addEventListener('click', () => _galIdentifyFace(parseInt(btn.dataset.faceId), item));
+    });
+
+    // Wire face item hover → highlight box
+    content.querySelectorAll('.gal-face-item').forEach(el => {
+      el.addEventListener('mouseenter', () => {
+        const fid = el.dataset.faceId;
+        const box = document.querySelector('.gal-face-box[data-face-id="' + fid + '"]');
+        if (box) box.classList.add('gal-face-box-active');
+      });
+      el.addEventListener('mouseleave', () => {
+        document.querySelectorAll('.gal-face-box-active').forEach(b => b.classList.remove('gal-face-box-active'));
+      });
+    });
+  } catch (err) {
+    content.innerHTML = `<p style="color:#ef4444">${t('Błąd: ') + err.message}</p>`;
+  }
+}
+
+function _galDrawFaceBoxes(faces) {
+  _galClearFaceOverlay();
+  const img = document.querySelector('.gal-lb-img');
+  const media = document.getElementById('gal-lb-media');
+  if (!img || !media || !faces.length) return;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'gal-face-overlay';
+  overlay.style.cssText = `position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none;`;
+
+  // Calculate scale: image natural size vs displayed size
+  const rect = img.getBoundingClientRect();
+  const mediaRect = media.getBoundingClientRect();
+  const scaleX = rect.width / img.naturalWidth;
+  const scaleY = rect.height / img.naturalHeight;
+  const offsetX = rect.left - mediaRect.left;
+  const offsetY = rect.top - mediaRect.top;
+
+  for (const face of faces) {
+    const box = document.createElement('div');
+    box.className = 'gal-face-box';
+    box.dataset.faceId = face.id;
+    box.style.cssText = `
+      position:absolute; pointer-events:auto; cursor:pointer;
+      left:${offsetX + face.x * scaleX}px;
+      top:${offsetY + face.y * scaleY}px;
+      width:${face.w * scaleX}px;
+      height:${face.h * scaleY}px;
+    `;
+    // Name label
+    const label = document.createElement('span');
+    label.className = 'gal-face-label';
+    label.textContent = face.person_name || '?';
+    box.appendChild(label);
+
+    box.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const item = GAL.lightboxItems[GAL.lightboxIdx];
+      _galIdentifyFace(face.id, item);
+    });
+
+    overlay.appendChild(box);
+  }
+  media.style.position = 'relative';
+  media.appendChild(overlay);
+}
+
+async function _galRefreshFaces(item) {
+  const panel = document.getElementById('gal-lb-faces-panel');
+  if (!panel || panel.style.display === 'none') return;
+  panel.style.display = 'none';
+  _galClearFaceOverlay();
+  await _galToggleFaces(item);
+}
+
+function _galClearFaceOverlay() {
+  document.querySelectorAll('.gal-face-overlay').forEach(o => o.remove());
+}
+
+async function _galIdentifyFace(faceId, item) {
+  // Fetch matching people
+  const data = await api('/photos-ai/identify-face', {
+    method: 'POST', body: { face_id: faceId },
+  });
+  if (data.error) { toast(data.error, 'error'); return; }
+
+  const matches = data.matches || [];
+  const currentPid = data.current_person_id;
+
+  // Build a modal for selecting or naming the person
+  const modal = document.createElement('div');
+  modal.className = 'gal-face-modal';
+  modal.innerHTML = `
+    <div class="gal-face-modal-backdrop"></div>
+    <div class="gal-face-modal-content">
+      <h3><i class="fa-solid fa-user-tag"></i> ${t('Kto to jest?')}</h3>
+      <div class="gal-face-modal-thumb">
+        <img src="/api/photos-ai/face-thumb/${faceId}" alt="">
+      </div>
+      ${matches.length ? `
+        <p class="gal-face-modal-hint">${t('Wybierz osobę lub wpisz nowe imię:')}</p>
+        <div class="gal-face-matches">
+          ${matches.slice(0, 6).map(m => `
+            <div class="gal-face-match${m.person_id === currentPid ? ' gal-face-match-current' : ''}"
+                 data-person-id="${m.person_id}">
+              <img src="/api/photos-ai/face-thumb/${m.cover_face_id || 0}" alt=""
+                   onerror="this.replaceWith(document.createTextNode('👤'))">
+              <div>
+                <div class="gal-face-match-name">${_esc(m.name)}</div>
+                <div class="gal-face-match-conf">${m.confidence}% ${t('zgodności')} · ${m.photo_count} ${t('zdjęć')}</div>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      ` : `<p class="gal-face-modal-hint">${t('Brak dopasowań. Wpisz imię:')}</p>`}
+      <div class="gal-face-new-name">
+        <input type="text" class="gal-face-name-input" placeholder="${t('Nowe imię...')}" autofocus>
+        <button class="btn btn-sm btn-primary gal-face-save-btn">${t('Zapisz')}</button>
+      </div>
+      <button class="btn btn-sm gal-face-modal-close">${t('Anuluj')}</button>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  // Wire match clicks
+  modal.querySelectorAll('.gal-face-match').forEach(el => {
+    el.addEventListener('click', async () => {
+      const pid = parseInt(el.dataset.personId);
+      const r = await api('/photos-ai/assign-face', {
+        method: 'POST', body: { face_id: faceId, person_id: pid },
+      });
+      if (r.ok) {
+        toast(t('Przypisano!'), 'success');
+        modal.remove();
+        _galRefreshFaces(item);
+      } else {
+        toast(r.error || t('Błąd'), 'error');
+      }
+    });
+  });
+
+  // Wire new name save
+  const saveBtn = modal.querySelector('.gal-face-save-btn');
+  const nameInput = modal.querySelector('.gal-face-name-input');
+  const doSave = async () => {
+    const name = nameInput.value.trim();
+    if (!name) { nameInput.focus(); return; }
+    const r = await api('/photos-ai/assign-face', {
+      method: 'POST', body: { face_id: faceId, new_name: name },
+    });
+    if (r.ok) {
+      toast(t('Zapisano: ') + name, 'success');
+      modal.remove();
+      _galRefreshFaces(item);
+    } else {
+      toast(r.error || t('Błąd'), 'error');
+    }
+  };
+  saveBtn.addEventListener('click', doSave);
+  nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') doSave(); });
+
+  // Wire close
+  modal.querySelector('.gal-face-modal-close').addEventListener('click', () => modal.remove());
+  modal.querySelector('.gal-face-modal-backdrop').addEventListener('click', () => modal.remove());
 }
 
 /* ━━━━  SLIDESHOW  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */

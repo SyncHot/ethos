@@ -67,6 +67,7 @@ function _paiShowMain(body, st) {
     + '<div class="pai-nav" data-view="smart"><i class="fa-solid fa-wand-magic-sparkles"></i> ' + t('Albumy AI') + '</div>'
     + '<div class="pai-nav" data-view="tags"><i class="fa-solid fa-tags"></i> ' + t('Tagi') + '</div>'
     + '<div class="pai-nav" data-view="search"><i class="fa-solid fa-magnifying-glass"></i> ' + t('Szukaj AI') + '</div>'
+    + '<div class="pai-nav" data-view="merge"><i class="fa-solid fa-code-merge"></i> ' + t('Sugestie łączenia') + '</div>'
     + '</div>'
     + '<div class="pai-sidebar-section">'
     + '<div class="pai-sidebar-title">' + t('Skanowanie') + '</div>'
@@ -103,6 +104,7 @@ async function _paiLoadView(view) {
   else if (view === 'smart') await _paiSmartAlbums(main);
   else if (view === 'tags') await _paiTags(main);
   else if (view === 'search') _paiSearchView(main);
+  else if (view === 'merge') await _paiMergeSuggestions(main);
 }
 
 async function _paiDashboard(main) {
@@ -298,3 +300,63 @@ function _paiPollScan() {
 }
 
 function _paiEsc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
+async function _paiMergeSuggestions(main) {
+  var d = await api('/photos-ai/merge-suggestions');
+  var suggestions = d.suggestions || [];
+  if (!suggestions.length) {
+    main.innerHTML = '<div class="pai-empty"><i class="fa-solid fa-code-merge" style="font-size:40px"></i>'
+      + '<p>' + t('Brak sugestii łączenia. Wszystkie klastry wyglądają na unikalne.') + '</p></div>';
+    return;
+  }
+  main.innerHTML = '<h2 style="margin:0 0 6px;display:flex;align-items:center;gap:10px"><i class="fa-solid fa-code-merge" style="color:#8b5cf6"></i> '
+    + t('Sugestie łączenia osób') + '</h2>'
+    + '<p style="color:var(--text-secondary);margin:0 0 16px;font-size:13px">'
+    + t('Te osoby mogą być tą samą osobą. Kliknij Połącz aby scalić.') + '</p>'
+    + '<div class="pai-merge-list">' + suggestions.map(function(s, i) {
+    var aImg = s.person_a.cover_face_id ? '<img src="/api/photos-ai/face-thumb/' + s.person_a.cover_face_id + '">' : '<i class="fa-solid fa-user" style="font-size:28px;color:var(--text-secondary)"></i>';
+    var bImg = s.person_b.cover_face_id ? '<img src="/api/photos-ai/face-thumb/' + s.person_b.cover_face_id + '">' : '<i class="fa-solid fa-user" style="font-size:28px;color:var(--text-secondary)"></i>';
+    return '<div class="pai-merge-card" data-idx="' + i + '">'
+      + '<div class="pai-merge-pair">'
+      + '<div class="pai-merge-person"><div class="pai-merge-avatar">' + aImg + '</div>'
+      + '<div class="pai-merge-name">' + _paiEsc(s.person_a.name) + '</div></div>'
+      + '<div class="pai-merge-arrow"><i class="fa-solid fa-arrows-left-right"></i>'
+      + '<div class="pai-merge-conf">' + s.confidence + '%</div></div>'
+      + '<div class="pai-merge-person"><div class="pai-merge-avatar">' + bImg + '</div>'
+      + '<div class="pai-merge-name">' + _paiEsc(s.person_b.name) + '</div></div>'
+      + '</div>'
+      + '<div class="pai-merge-actions">'
+      + '<button class="btn btn-sm btn-primary pai-merge-btn" data-src="' + s.person_a.id + '" data-tgt="' + s.person_b.id + '">'
+      + '<i class="fa-solid fa-code-merge"></i> ' + t('Połącz') + '</button>'
+      + '<button class="btn btn-sm pai-merge-skip">' + t('Pomiń') + '</button>'
+      + '</div></div>';
+  }).join('') + '</div>';
+
+  main.querySelectorAll('.pai-merge-btn').forEach(function(btn) {
+    btn.addEventListener('click', async function() {
+      var card = btn.closest('.pai-merge-card');
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+      var r = await api('/photos-ai/people/merge', {
+        method: 'POST',
+        body: { source_id: parseInt(btn.dataset.src), target_id: parseInt(btn.dataset.tgt) },
+      });
+      if (r.ok) {
+        card.style.opacity = '0.3';
+        card.style.pointerEvents = 'none';
+        toast(t('Połączono!'), 'success');
+      } else {
+        toast(r.error || t('Błąd'), 'error');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-code-merge"></i> ' + t('Połącz');
+      }
+    });
+  });
+
+  main.querySelectorAll('.pai-merge-skip').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var card = btn.closest('.pai-merge-card');
+      card.style.display = 'none';
+    });
+  });
+}
