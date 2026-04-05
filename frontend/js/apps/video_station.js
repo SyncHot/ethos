@@ -35,6 +35,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     let currentSort    = 'added_desc';
     let currentQuery   = '';
     let currentFolder  = '';
+    let currentWatched = '';
     let scanning       = false;
     let useTmdb        = true;
     let playerInterval = null;
@@ -163,9 +164,14 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
       <option value="1.5">1.5x</option>
       <option value="2">2x</option>
     </select>
+    <button class="vs-pip-btn" id="vs-pip-btn" title="${t('Obraz w obrazie')}"><i class="fas fa-external-link-alt"></i></button>
+    <button class="vs-fs-btn" id="vs-fs-btn" title="${t('Pełny ekran')}"><i class="fas fa-expand"></i></button>
     <button class="vs-player-close" id="vs-player-close"><i class="fas fa-times"></i></button>
   </div>
   <video id="vs-player-video" controls autoplay playsinline></video>
+</div>
+<div class="vs-info-modal" id="vs-info-modal" style="display:none">
+  <div class="vs-info-content" id="vs-info-content"></div>
 </div>`;
 
         if (st.stats) updateSidebarStats(body, st.stats);
@@ -220,6 +226,11 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     '<option value="size_desc"' + (currentSort === 'size_desc' ? ' selected' : '') + '>' + t('Rozmiar ↓') + '</option>' +
     '<option value="duration_desc"' + (currentSort === 'duration_desc' ? ' selected' : '') + '>' + t('Czas ↓') + '</option>' +
   '</select>' +
+  '<select id="vs-watched-filter" class="vs-select">' +
+    '<option value=""' + (currentWatched === '' ? ' selected' : '') + '>' + t('Wszystkie') + '</option>' +
+    '<option value="0"' + (currentWatched === '0' ? ' selected' : '') + '>' + t('Nieobejrzane') + '</option>' +
+    '<option value="1"' + (currentWatched === '1' ? ' selected' : '') + '>' + t('Obejrzane') + '</option>' +
+  '</select>' +
 '</div>' +
 '<div class="vs-toolbar-group">' +
   '<div class="vs-scan-wrap" id="vs-scan-wrap">' +
@@ -245,6 +256,9 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         };
         bodyEl.querySelector('#vs-sort').onchange = (e) => {
             currentSort = e.target.value; libraryOffset = 0; loadLibrary();
+        };
+        bodyEl.querySelector('#vs-watched-filter').onchange = (e) => {
+            currentWatched = e.target.value; libraryOffset = 0; loadLibrary();
         };
         bodyEl.querySelector('#vs-scan-btn').onclick = startScan;
         bodyEl.querySelector('#vs-scan-stop').onclick = stopScan;
@@ -273,6 +287,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         const params = new URLSearchParams({
             offset: libraryOffset, limit: PAGE_SIZE,
             sort: currentSort, q: currentQuery, folder: currentFolder,
+            watched: currentWatched,
         });
         const data = await api('/video-station/library?' + params);
         if (data.error) { content.innerHTML = '<div class="vs-empty">' + escH(data.error) + '</div>'; return; }
@@ -280,7 +295,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         libraryItems = data.items || [];
         libraryTotal = data.total || 0;
 
-        if (!libraryItems.length) {
+        if (!libraryItems.length && !currentQuery && !currentFolder && !currentWatched) {
             content.innerHTML =
                 '<div class="vs-empty"><i class="fas fa-film"></i>' +
                 '<p>' + t('Brak filmów w bibliotece') + '</p>' +
@@ -288,9 +303,51 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             return;
         }
 
-        content.innerHTML = renderGrid(libraryItems) + renderPagination();
+        let html = '';
+
+        // Continue Watching section (only on first page with no filters)
+        if (libraryOffset === 0 && !currentQuery && !currentFolder && !currentWatched) {
+            const cw = await api('/video-station/continue-watching?limit=10');
+            const cwItems = (cw && cw.items) ? cw.items : [];
+            if (cwItems.length) {
+                html += '<div class="vs-section-header"><i class="fas fa-play-circle"></i> ' + t('Kontynuuj oglądanie') + '</div>';
+                html += '<div class="vs-horiz-scroll">';
+                cwItems.forEach(v => {
+                    const dur = formatDuration(v.duration);
+                    const pct = v.duration && v.position ? Math.min(100, Math.round((v.position / v.duration) * 100)) : 0;
+                    const imgSrc = v.poster_ok
+                        ? '/api/video-station/poster/' + v.id + '?token=' + NAS.token
+                        : '/api/video-station/thumb/' + v.id + '?token=' + NAS.token;
+                    const remaining = v.duration && v.position ? formatDuration(v.duration - v.position) : '';
+                    html +=
+                    '<div class="vs-cw-card" data-id="' + v.id + '">' +
+                      '<div class="vs-cw-thumb">' +
+                        '<img src="' + imgSrc + '" loading="lazy" alt="" onerror="this.style.display=\'none\'">' +
+                        '<div class="vs-thumb-placeholder"><i class="fas fa-film"></i></div>' +
+                        '<div class="vs-cw-play"><i class="fas fa-play"></i></div>' +
+                        (remaining ? '<span class="vs-cw-remaining">' + t('Pozostało') + ' ' + remaining + '</span>' : '') +
+                        '<div class="vs-progress" style="width:' + pct + '%"></div>' +
+                      '</div>' +
+                      '<div class="vs-title">' + escH(v.title || v.filename || '') + '</div>' +
+                    '</div>';
+                });
+                html += '</div>';
+            }
+        }
+
+        if (!libraryItems.length) {
+            html += '<div class="vs-empty"><i class="fas fa-filter"></i><p>' + t('Brak wyników') + '</p></div>';
+        } else {
+            html += renderGrid(libraryItems) + renderPagination();
+        }
+        content.innerHTML = html;
         attachGridEvents(content);
         attachPaginationEvents(content);
+
+        // Continue Watching card events
+        content.querySelectorAll('.vs-cw-card[data-id]').forEach(card => {
+            card.onclick = () => openPlayer(card.dataset.id);
+        });
     }
 
     /* ── recent ────────────────────────────────────────────── */
@@ -586,20 +643,82 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     async function _showInfoModal(vid) {
         const info = await api('/video-station/info/' + vid);
         if (info.error) { toast(info.error, 'error'); return; }
-        const tracks = (info.audio_tracks || []).map(t =>
-            [t.language, t.codec, t.channels ? t.channels + 'ch' : ''].filter(Boolean).join(' ')
-        ).join(', ') || '-';
-        const lines = [
-            '<b>' + t('Tytuł') + ':</b> ' + escH(info.title || info.filename),
-            '<b>' + t('Kodek wideo') + ':</b> ' + escH(info.codec || '-'),
-            '<b>' + t('Kodek audio') + ':</b> ' + escH(info.audio_codec || '-'),
-            '<b>' + t('Ścieżki audio') + ':</b> ' + escH(tracks),
-            '<b>' + t('Rozdzielczość') + ':</b> ' + (info.width || 0) + 'x' + (info.height || 0),
-            '<b>' + t('Czas trwania') + ':</b> ' + (info.duration_fmt || '-'),
-            '<b>' + t('Rozmiar') + ':</b> ' + formatBytes(info.file_size || 0),
-            '<b>' + t('Transkodowanie') + ':</b> ' + (info.needs_transcode ? t('Wymagane') : t('Nie')),
-        ];
-        toast(lines.join('<br>'), 'info', 8000);
+
+        const modal = bodyEl.querySelector('#vs-info-modal');
+        const content = bodyEl.querySelector('#vs-info-content');
+        if (!modal || !content) return;
+
+        const hasBackdrop = info.backdrop_ok;
+        const hasPoster = info.poster_ok;
+        const genres = (info.genre_names || []).join(', ') || '';
+        const cast = info.tmdb_cast || '';
+        const director = info.tmdb_director || '';
+        const overview = info.tmdb_overview || '';
+        const rating = info.tmdb_rating ? info.tmdb_rating.toFixed(1) : '';
+
+        const posterSrc = hasPoster ? '/api/video-station/poster/' + vid + '?token=' + NAS.token : '';
+        const backdropStyle = hasBackdrop
+            ? 'background-image:url(/api/video-station/backdrop/' + vid + '?token=' + NAS.token + ')'
+            : '';
+
+        let html = '<div class="vs-info-backdrop" style="' + backdropStyle + '">';
+        html += '<div class="vs-info-gradient"></div>';
+        html += '<button class="vs-info-close" id="vs-info-close"><i class="fas fa-times"></i></button>';
+        html += '<div class="vs-info-body">';
+
+        if (posterSrc) {
+            html += '<img class="vs-info-poster" src="' + posterSrc + '" alt="">';
+        }
+
+        html += '<div class="vs-info-details">';
+        html += '<h2 class="vs-info-title">' + escH(info.title || info.filename) + '</h2>';
+
+        // Meta row: year, duration, rating, resolution
+        const metaParts = [];
+        if (info.tmdb_year) metaParts.push(escH(info.tmdb_year));
+        if (info.duration_fmt) metaParts.push(info.duration_fmt);
+        if (rating) metaParts.push('<i class="fas fa-star" style="color:#fbbf24"></i> ' + rating);
+        const res = info.height >= 2160 ? '4K' : info.height >= 1080 ? '1080p' : info.height >= 720 ? '720p' : '';
+        if (res) metaParts.push(res);
+        if (info.file_size) metaParts.push(formatBytes(info.file_size));
+        if (metaParts.length) {
+            html += '<div class="vs-info-meta">' + metaParts.join(' <span class="vs-info-dot">·</span> ') + '</div>';
+        }
+
+        if (genres) {
+            html += '<div class="vs-info-genres">' + escH(genres) + '</div>';
+        }
+
+        if (overview) {
+            html += '<div class="vs-info-overview">' + escH(overview) + '</div>';
+        }
+
+        if (director) {
+            html += '<div class="vs-info-credit"><span class="vs-info-label">' + t('Reżyser') + ':</span> ' + escH(director) + '</div>';
+        }
+        if (cast) {
+            html += '<div class="vs-info-credit"><span class="vs-info-label">' + t('Obsada') + ':</span> ' + escH(cast) + '</div>';
+        }
+
+        // Technical details
+        html += '<div class="vs-info-tech">';
+        html += '<span>' + escH(info.codec || '-') + '</span>';
+        html += '<span>' + escH(info.audio_codec || '-') + '</span>';
+        if (info.width && info.height) html += '<span>' + info.width + '×' + info.height + '</span>';
+        if (info.needs_transcode) html += '<span class="vs-info-tc">' + t('Transkodowanie') + '</span>';
+        html += '</div>';
+
+        // Play button
+        html += '<button class="vs-info-play" id="vs-info-play"><i class="fas fa-play"></i> ' + t('Odtwórz') + '</button>';
+
+        html += '</div></div></div>';
+
+        content.innerHTML = html;
+        modal.style.display = 'flex';
+
+        modal.querySelector('#vs-info-close').onclick = () => { modal.style.display = 'none'; };
+        modal.querySelector('#vs-info-play').onclick = () => { modal.style.display = 'none'; openPlayer(vid); };
+        modal.onclick = (e) => { if (e.target === modal) modal.style.display = 'none'; };
     }
 
     /* ── pagination ────────────────────────────────────────── */
@@ -710,6 +829,10 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 
         _loadSubtitles(vid, video);
 
+        // Preload thumbstrip sprite for future use
+        const _spriteImg = new Image();
+        _spriteImg.src = '/api/video-station/thumbstrip/' + vid + '?token=' + NAS.token;
+
         overlay.style.display = 'flex';
         video.focus();
 
@@ -744,7 +867,8 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         // keyboard shortcuts
         overlay._keyHandler = (e) => {
             if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); video.paused ? video.play() : video.pause(); }
-            else if (e.key === 'f') { toggleFullscreen(video); }
+            else if (e.key === 'f') { toggleFullscreen(overlay); }
+            else if (e.key === 'p') { togglePiP(video); }
             else if (e.key === 'Escape') { closePlayer(); }
             else if (e.key === 'ArrowLeft') { seekPlayer(video, -10); }
             else if (e.key === 'ArrowRight') { seekPlayer(video, 10); }
@@ -753,6 +877,28 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             else if (e.key === 'm') { video.muted = !video.muted; }
         };
         document.addEventListener('keydown', overlay._keyHandler);
+
+        // PiP button
+        const pipBtn = bodyEl.querySelector('#vs-pip-btn');
+        if (pipBtn) {
+            pipBtn.style.display = document.pictureInPictureEnabled ? '' : 'none';
+            pipBtn.onclick = () => togglePiP(video);
+        }
+
+        // Fullscreen button — fullscreens the overlay, not the bare video
+        const fsBtn = bodyEl.querySelector('#vs-fs-btn');
+        if (fsBtn) {
+            fsBtn.onclick = () => toggleFullscreen(overlay);
+        }
+
+        // Intercept native video fullscreen: redirect to overlay fullscreen
+        video.addEventListener('fullscreenchange', function _fsRedirect() {
+            if (document.fullscreenElement === video) {
+                document.exitFullscreen().then(() => {
+                    overlay.requestFullscreen().catch(() => {});
+                }).catch(() => {});
+            }
+        });
 
         bodyEl.querySelector('#vs-player-close').onclick = () => closePlayer();
     }
@@ -930,6 +1076,15 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         else document.exitFullscreen();
     }
 
+    function togglePiP(video) {
+        if (!document.pictureInPictureEnabled) return;
+        if (document.pictureInPictureElement) {
+            document.exitPictureInPicture().catch(() => {});
+        } else {
+            video.requestPictureInPicture().catch(() => {});
+        }
+    }
+
     /* ── helpers ────────────────────────────────────────────── */
     function formatDuration(sec) {
         if (!sec || sec <= 0) return '';
@@ -1051,6 +1206,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 
 /* player overlay */
 '.vs-player-overlay{position:fixed;top:0;left:0;width:100vw;height:100vh;background:#000;z-index:10000;display:flex;flex-direction:column;overflow:hidden}',
+'.vs-player-overlay:fullscreen{width:100%;height:100%}',
 '.vs-player-top{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;z-index:10;background:linear-gradient(to bottom,rgba(0,0,0,.85),transparent);position:absolute;top:0;left:0;right:0}',
 '.vs-player-title{color:#fff;font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
 '.vs-player-close{background:none;border:none;color:#fff;font-size:20px;cursor:pointer;padding:4px 8px;opacity:.7;transition:opacity .15s}',
@@ -1067,5 +1223,48 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 '.vs-ctx-item i{width:16px;text-align:center;opacity:.7}',
 '.vs-ctx-danger{color:var(--danger,#f87171)}',
 '.vs-ctx-danger:hover{background:rgba(248,113,113,.12)}',
+
+/* PiP & fullscreen buttons */
+'.vs-pip-btn{background:none;border:none;color:#fff;font-size:15px;cursor:pointer;padding:4px 8px;opacity:.7;transition:opacity .15s}',
+'.vs-pip-btn:hover{opacity:1}',
+'.vs-fs-btn{background:none;border:none;color:#fff;font-size:15px;cursor:pointer;padding:4px 8px;opacity:.7;transition:opacity .15s}',
+'.vs-fs-btn:hover{opacity:1}',
+
+/* Continue Watching */
+'.vs-section-header{font-size:15px;font-weight:600;color:var(--text-primary);padding:0 0 10px;display:flex;align-items:center;gap:8px}',
+'.vs-section-header i{color:var(--accent);font-size:14px}',
+'.vs-horiz-scroll{display:flex;gap:12px;overflow-x:auto;padding:0 0 16px;margin-bottom:16px;scrollbar-width:thin}',
+'.vs-cw-card{min-width:200px;max-width:200px;cursor:pointer;border-radius:var(--r-md);overflow:hidden;background:var(--bg-secondary);border:1px solid var(--border);flex-shrink:0;transition:transform .15s,box-shadow .15s}',
+'.vs-cw-card:hover{transform:translateY(-2px);box-shadow:0 4px 16px rgba(0,0,0,.25)}',
+'.vs-cw-thumb{position:relative;aspect-ratio:16/9;background:#111;overflow:hidden;display:flex;align-items:center;justify-content:center}',
+'.vs-cw-thumb img{width:100%;height:100%;object-fit:cover;position:absolute;inset:0;z-index:1}',
+'.vs-cw-play{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:3;opacity:0;transition:opacity .15s;background:rgba(0,0,0,.4)}',
+'.vs-cw-card:hover .vs-cw-play{opacity:1}',
+'.vs-cw-play i{font-size:28px;color:#fff;text-shadow:0 2px 8px rgba(0,0,0,.5)}',
+'.vs-cw-remaining{position:absolute;bottom:8px;left:6px;background:rgba(0,0,0,.8);color:#fff;font-size:10px;padding:2px 6px;border-radius:3px;z-index:2}',
+
+/* Info modal */
+'.vs-info-modal{position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,.85);z-index:9500;display:flex;align-items:center;justify-content:center}',
+'.vs-info-content{width:90%;max-width:900px;max-height:85vh;overflow-y:auto;border-radius:12px;overflow:hidden;position:relative}',
+'.vs-info-backdrop{position:relative;min-height:400px;background-size:cover;background-position:center;background-color:#1a1a2e}',
+'.vs-info-gradient{position:absolute;inset:0;background:linear-gradient(to top,rgba(0,0,0,.95) 0%,rgba(0,0,0,.7) 40%,rgba(0,0,0,.4) 100%)}',
+'.vs-info-close{position:absolute;top:12px;right:12px;background:rgba(0,0,0,.5);border:none;color:#fff;font-size:18px;cursor:pointer;z-index:2;padding:6px 10px;border-radius:50%;transition:background .15s}',
+'.vs-info-close:hover{background:rgba(255,255,255,.2)}',
+'.vs-info-body{position:relative;z-index:1;display:flex;gap:24px;padding:40px 32px 32px;align-items:flex-end}',
+'.vs-info-poster{width:160px;min-width:160px;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,.5);object-fit:cover}',
+'.vs-info-details{flex:1;min-width:0}',
+'.vs-info-title{margin:0 0 8px;font-size:22px;font-weight:700;color:#fff;line-height:1.2}',
+'.vs-info-meta{display:flex;align-items:center;gap:6px;font-size:13px;color:rgba(255,255,255,.8);margin-bottom:8px;flex-wrap:wrap}',
+'.vs-info-dot{opacity:.4}',
+'.vs-info-genres{font-size:12px;color:var(--accent);margin-bottom:10px}',
+'.vs-info-overview{font-size:13px;color:rgba(255,255,255,.75);line-height:1.6;margin-bottom:12px;max-height:120px;overflow-y:auto}',
+'.vs-info-credit{font-size:12px;color:rgba(255,255,255,.6);margin-bottom:4px}',
+'.vs-info-label{color:rgba(255,255,255,.4)}',
+'.vs-info-tech{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}',
+'.vs-info-tech span{font-size:11px;background:rgba(255,255,255,.1);color:rgba(255,255,255,.6);padding:2px 8px;border-radius:4px}',
+'.vs-info-tc{background:rgba(255,165,0,.2)!important;color:rgba(255,165,0,.9)!important}',
+'.vs-info-play{display:inline-flex;align-items:center;gap:8px;background:var(--accent);color:#fff;border:none;padding:10px 24px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;margin-top:14px;transition:filter .15s}',
+'.vs-info-play:hover{filter:brightness(1.15)}',
+'.vs-info-play i{font-size:13px}',
     ].join('\n'); }
 };

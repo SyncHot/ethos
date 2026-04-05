@@ -5,13 +5,14 @@ Routes:
   GET  /api/video-station/pkg-status      - dependency & library status
   POST /api/video-station/install         - install ffmpeg
   POST /api/video-station/uninstall       - cleanup
-  GET  /api/video-station/library         - list videos
+  GET  /api/video-station/library         - list videos (?watched=0|1 filter)
+  GET  /api/video-station/continue-watching - in-progress videos (position>0, not watched)
   GET  /api/video-station/folders         - configured library folders
   POST /api/video-station/folders         - save library folders
   POST /api/video-station/scan            - start background library scan
   GET  /api/video-station/scan-status     - scan progress
   POST /api/video-station/scan-stop       - stop running scan
-  GET  /api/video-station/info/<int:vid>  - detailed video metadata
+  GET  /api/video-station/info/<int:vid>  - detailed video metadata (with TMDb credits)
   GET  /api/video-station/stream/<int:vid>- stream video file (raw)
   GET  /api/video-station/transcode/<int:vid> - transcode video (?audio=N, ?start=S)
   POST /api/video-station/hls/<int:vid>/start - start HLS transcoding session
@@ -20,6 +21,8 @@ Routes:
   POST /api/video-station/hls/<sid>/stop       - stop HLS session
   GET  /api/video-station/thumb/<int:vid> - video thumbnail
   GET  /api/video-station/poster/<int:vid>- TMDb poster image
+  GET  /api/video-station/backdrop/<int:vid> - TMDb backdrop image
+  GET  /api/video-station/thumbstrip/<int:vid> - seekbar thumbnail sprite (VTT+image)
   GET  /api/video-station/recent          - recently added videos
   GET  /api/video-station/collections     - auto-generated collections
   POST /api/video-station/watched/<int:vid> - mark as watched / update position
@@ -63,6 +66,8 @@ video_station_bp = Blueprint('video-station', __name__, url_prefix='/api/video-s
 _DB_PATH = data_path('video_station.db')
 _THUMB_DIR = data_path('video_thumbs')
 _POSTER_DIR = data_path('video_posters')
+_BACKDROP_DIR = data_path('video_backdrops')
+_THUMBSTRIP_DIR = data_path('video_thumbstrips')
 _TMDB_CONF = data_path('video_tmdb.json')
 
 VIDEO_EXTS = {'.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v',
@@ -179,6 +184,11 @@ def _migrate_db():
             ('tmdb_genres', 'TEXT'),
             ('tmdb_poster_path', 'TEXT'),
             ('poster_ok', 'INTEGER DEFAULT 0'),
+            ('tmdb_backdrop_path', 'TEXT'),
+            ('backdrop_ok', 'INTEGER DEFAULT 0'),
+            ('tmdb_cast', 'TEXT'),
+            ('tmdb_director', 'TEXT'),
+            ('tmdb_media_type', 'TEXT'),
         ]
         for col_name, col_def in migrations:
             if col_name not in cols:
@@ -316,6 +326,7 @@ def _format_duration(secs):
 
 _TMDB_BASE = 'https://api.themoviedb.org/3'
 _TMDB_IMG_BASE = 'https://image.tmdb.org/t/p/w500'
+_TMDB_BACKDROP_BASE = 'https://image.tmdb.org/t/p/w1280'
 
 # Common noise tokens stripped from filenames before TMDb search
 _NOISE_RE = re.compile(
@@ -398,6 +409,7 @@ def _tmdb_search(title, year='', api_key=''):
                     'tmdb_rating': r.get('vote_average', 0),
                     'tmdb_genres': ','.join(str(g) for g in r.get('genre_ids', [])),
                     'tmdb_poster_path': r.get('poster_path', ''),
+                    'tmdb_backdrop_path': r.get('backdrop_path', ''),
                     'media_type': 'movie' if is_movie else 'tv',
                 }
         except Exception as e:
@@ -423,20 +435,64 @@ def _download_poster(poster_path, video_id):
         return False
 
 
+def _download_backdrop(backdrop_path, video_id):
+    """Download TMDb backdrop and save locally."""
+    if not backdrop_path:
+        return False
+    os.makedirs(_BACKDROP_DIR, exist_ok=True)
+    local = os.path.join(_BACKDROP_DIR, str(video_id) + '.jpg')
+    try:
+        url = _TMDB_BACKDROP_BASE + backdrop_path
+        req = urllib.request.Request(url, headers={'User-Agent': 'EthOS/1.0'})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            with open(local, 'wb') as f:
+                f.write(resp.read())
+        return os.path.isfile(local)
+    except Exception as e:
+        log.debug('Backdrop download failed for vid %s: %s', video_id, e)
+        return False
+
+
+def _fetch_tmdb_credits(tmdb_id, media_type, api_key):
+    """Fetch cast + director from TMDb credits API."""
+    if not tmdb_id or not api_key:
+        return '', ''
+    try:
+        url = '%s/%s/%d/credits?api_key=%s' % (
+            _TMDB_BASE, media_type, tmdb_id, urllib.parse.quote(api_key))
+        req = urllib.request.Request(url, headers={'User-Agent': 'EthOS/1.0'})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+        cast_names = [c['name'] for c in (data.get('cast') or [])[:10]]
+        directors = [c['name'] for c in (data.get('crew') or [])
+                     if c.get('job') == 'Director']
+        return ', '.join(cast_names), ', '.join(directors)
+    except Exception as e:
+        log.debug('TMDb credits fetch failed for %s/%s: %s', media_type, tmdb_id, e)
+        return '', ''
+
+
 def _tmdb_match_video(conn, video_id, filename, api_key=''):
-    """Parse filename, search TMDb, update DB, download poster."""
+    """Parse filename, search TMDb, update DB, download poster & backdrop, fetch credits."""
     title, year = _parse_filename(filename)
     if not title:
         return None
     result = _tmdb_search(title, year, api_key)
     if not result:
         return None
+
+    # Fetch credits (cast + director)
+    media_type = result.get('media_type', 'movie')
+    cast, director = _fetch_tmdb_credits(result['tmdb_id'], media_type, api_key)
+
     conn.execute(
         'UPDATE videos SET tmdb_id=?, tmdb_title=?, tmdb_overview=?, '
-        'tmdb_year=?, tmdb_rating=?, tmdb_genres=?, tmdb_poster_path=? WHERE id=?',
+        'tmdb_year=?, tmdb_rating=?, tmdb_genres=?, tmdb_poster_path=?, '
+        'tmdb_backdrop_path=?, tmdb_cast=?, tmdb_director=?, tmdb_media_type=? WHERE id=?',
         (result['tmdb_id'], result['tmdb_title'], result['tmdb_overview'],
          result['tmdb_year'], result['tmdb_rating'], result['tmdb_genres'],
-         result['tmdb_poster_path'], video_id))
+         result['tmdb_poster_path'], result.get('tmdb_backdrop_path', ''),
+         cast, director, media_type, video_id))
     conn.commit()
     # Update display title to TMDb title
     if result['tmdb_title']:
@@ -450,6 +506,12 @@ def _tmdb_match_video(conn, video_id, filename, api_key=''):
         ok = _download_poster(result['tmdb_poster_path'], video_id)
         if ok:
             conn.execute('UPDATE videos SET poster_ok=1 WHERE id=?', (video_id,))
+            conn.commit()
+    # Download backdrop
+    if result.get('tmdb_backdrop_path'):
+        ok = _download_backdrop(result['tmdb_backdrop_path'], video_id)
+        if ok:
+            conn.execute('UPDATE videos SET backdrop_ok=1 WHERE id=?', (video_id,))
             conn.commit()
     return result
 
@@ -661,6 +723,34 @@ def scan_status():
     })
 
 
+@video_station_bp.route("/continue-watching", methods=["GET"])
+
+def continue_watching():
+    """Return videos with saved position > 0 that are not yet marked as watched."""
+    conn = _get_db()
+    limit = min(int(request.args.get("limit", 20)), 60)
+    rows = conn.execute(
+        "SELECT v.*, ws.watched, ws.position FROM videos v "
+        "JOIN watch_state ws ON ws.video_id=v.id "
+        "WHERE ws.position > 0 AND (ws.watched=0 OR ws.watched IS NULL) "
+        "ORDER BY ws.updated_at DESC LIMIT ?", (limit,)).fetchall()
+    items = [{
+        "id": r["id"], "title": r["title"], "filename": r["filename"],
+        "path": r["path"], "duration": r["duration"],
+        "duration_fmt": _format_duration(r["duration"]),
+        "width": r["width"], "height": r["height"],
+        "thumb_ok": bool(r["thumb_ok"]),
+        "poster_ok": bool(r["poster_ok"]),
+        "tmdb_id": r["tmdb_id"] or 0,
+        "tmdb_title": r["tmdb_title"] or "",
+        "tmdb_year": r["tmdb_year"] or "",
+        "tmdb_rating": r["tmdb_rating"] or 0,
+        "watched": False, "position": r["position"] or 0,
+    } for r in rows]
+    conn.close()
+    return jsonify({"items": items})
+
+
 @video_station_bp.route("/library", methods=["GET"])
 
 def library():
@@ -670,6 +760,7 @@ def library():
     sort = request.args.get("sort", "added_desc")
     q_search = request.args.get("q", "").strip()
     folder_filter = request.args.get("folder", "")
+    watched_filter = request.args.get("watched", "")
     order_map = {
         "added_desc": "added_at DESC", "added_asc": "added_at ASC",
         "name_asc": "title ASC", "name_desc": "title DESC",
@@ -685,8 +776,14 @@ def library():
     if folder_filter:
         where.append("folder=?")
         params.append(folder_filter)
+    if watched_filter == '1':
+        where.append("COALESCE(ws.watched, 0)=1")
+    elif watched_filter == '0':
+        where.append("COALESCE(ws.watched, 0)=0")
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
-    total = conn.execute("SELECT COUNT(*) FROM videos " + where_sql, params).fetchone()[0]
+    total = conn.execute(
+        "SELECT COUNT(*) FROM videos v LEFT JOIN watch_state ws ON ws.video_id=v.id "
+        + where_sql, params).fetchone()[0]
     rows = conn.execute(
         "SELECT v.*, ws.watched, ws.position FROM videos v "
         "LEFT JOIN watch_state ws ON ws.video_id=v.id "
@@ -781,6 +878,22 @@ def video_info(vid):
     needs_tc = (bool(audio_codec) and audio_codec not in _BROWSER_AUDIO_CODECS) or \
                (ext not in _BROWSER_CONTAINERS)
     audio_tracks = meta.get("audio_tracks", [])
+
+    # Genre ID → name mapping (TMDb standard)
+    _GENRE_MAP = {
+        28: 'Akcja', 12: 'Przygodowy', 16: 'Animacja', 35: 'Komedia', 80: 'Kryminał',
+        99: 'Dokumentalny', 18: 'Dramat', 10751: 'Familijny', 14: 'Fantasy',
+        36: 'Historyczny', 27: 'Horror', 10402: 'Muzyczny', 9648: 'Tajemnica',
+        10749: 'Romans', 878: 'Sci-Fi', 10770: 'Film TV', 53: 'Thriller',
+        10752: 'Wojenny', 37: 'Western',
+        10759: 'Akcja i Przygoda', 10762: 'Dla dzieci', 10763: 'Informacyjny',
+        10764: 'Reality', 10765: 'Sci-Fi & Fantasy', 10766: 'Telenowela',
+        10767: 'Talk-show', 10768: 'Wojenny i Polityczny',
+    }
+    genre_ids = (r["tmdb_genres"] or "").split(",")
+    genre_names = [_GENRE_MAP.get(int(g.strip()), '') for g in genre_ids if g.strip().isdigit()]
+    genre_names = [g for g in genre_names if g]
+
     return jsonify({
         "id": r["id"], "title": r["title"], "filename": r["filename"],
         "path": r["path"], "folder": r["folder"],
@@ -790,12 +903,16 @@ def video_info(vid):
         "bitrate": r["bitrate"], "file_size": r["file_size"],
         "thumb_ok": bool(r["thumb_ok"]),
         "poster_ok": bool(r["poster_ok"]),
+        "backdrop_ok": bool(r["backdrop_ok"]) if "backdrop_ok" in r.keys() else False,
         "tmdb_id": r["tmdb_id"] or 0,
         "tmdb_title": r["tmdb_title"] or "",
         "tmdb_overview": r["tmdb_overview"] or "",
         "tmdb_year": r["tmdb_year"] or "",
         "tmdb_rating": r["tmdb_rating"] or 0,
         "tmdb_genres": r["tmdb_genres"] or "",
+        "genre_names": genre_names,
+        "tmdb_cast": r["tmdb_cast"] or "" if "tmdb_cast" in r.keys() else "",
+        "tmdb_director": r["tmdb_director"] or "" if "tmdb_director" in r.keys() else "",
         "watched": bool(r["watched"]), "position": r["position"] or 0,
         "added_at": r["added_at"], "metadata": meta,
         "needs_transcode": needs_tc,
@@ -819,6 +936,113 @@ def poster(vid):
     if os.path.isfile(p):
         return send_file(p, mimetype="image/jpeg")
     return jsonify({"error": "Brak plakatu."}), 404
+
+
+@video_station_bp.route("/backdrop/<int:vid>", methods=["GET"])
+
+def backdrop(vid):
+    p = os.path.join(_BACKDROP_DIR, str(vid) + ".jpg")
+    if os.path.isfile(p):
+        return send_file(p, mimetype="image/jpeg")
+    return jsonify({"error": "Brak tła."}), 404
+
+
+_thumbstrip_generating = set()  # video IDs currently being generated
+
+
+@video_station_bp.route("/thumbstrip/<int:vid>", methods=["GET"])
+
+def thumbstrip(vid):
+    """Serve seekbar thumbnail sprite image.
+
+    Returns the sprite image (JPEG) if cached. If not cached, kicks off
+    background generation and returns 202 — client should retry later.
+    Sprite: 160x90 thumbnails every 30s, tiled 10 columns.
+    Uses fast keyframe-seek per thumbnail instead of decoding all frames.
+    """
+    conn = _get_db()
+    r = conn.execute("SELECT path, duration FROM videos WHERE id=?", (vid,)).fetchone()
+    conn.close()
+    if not r:
+        return jsonify({"error": "Nie znaleziono."}), 404
+
+    sprite_path = os.path.join(_THUMBSTRIP_DIR, str(vid) + ".jpg")
+
+    # Serve cached sprite
+    if os.path.isfile(sprite_path):
+        resp = send_file(sprite_path, mimetype="image/jpeg")
+        resp.headers["Cache-Control"] = "public, max-age=604800"
+        return resp
+
+    fp = os.path.realpath(r["path"])
+    if not os.path.isfile(fp):
+        return jsonify({"error": "Plik nie istnieje."}), 404
+
+    duration = r["duration"] or 0
+    if duration < 30:
+        return jsonify({"error": "Film za krótki."}), 400
+
+    if vid in _thumbstrip_generating:
+        return jsonify({"status": "generating"}), 202
+
+    # Start background generation
+    _thumbstrip_generating.add(vid)
+    import gevent
+    gevent.spawn(_generate_thumbstrip, vid, fp, duration, sprite_path)
+    return jsonify({"status": "generating"}), 202
+
+
+def _generate_thumbstrip(vid, fp, duration, sprite_path):
+    """Generate thumbnail sprite using fast keyframe seeks (background task)."""
+    tmpdir = None
+    try:
+        from PIL import Image
+        os.makedirs(_THUMBSTRIP_DIR, exist_ok=True)
+        interval = 30  # one thumb every 30 seconds
+        tmpdir = tempfile.mkdtemp(prefix="vs_ts_")
+        positions = list(range(0, int(duration), interval))
+        if not positions:
+            return
+
+        # Extract individual thumbnails using fast seek (-ss before -i)
+        thumb_w, thumb_h = 160, 90
+        cols = 10
+        frame_paths = []
+        for i, pos in enumerate(positions):
+            frame_path = os.path.join(tmpdir, "f%04d.jpg" % i)
+            cmd = 'ffmpeg -y -ss %d -i %s -vframes 1 -vf scale=%d:%d -q:v 6 %s' % (
+                pos, q(fp), thumb_w, thumb_h, q(frame_path))
+            result = host_run(cmd, timeout=30)
+            if result.returncode == 0 and os.path.isfile(frame_path):
+                frame_paths.append(frame_path)
+            else:
+                frame_paths.append(None)  # placeholder
+
+        valid = [p for p in frame_paths if p]
+        if not valid:
+            log.warning('Thumbstrip: no frames extracted for vid %s', vid)
+            return
+
+        # Tile into sprite using PIL (simple and reliable)
+        rows = (len(frame_paths) + cols - 1) // cols
+        sprite = Image.new('RGB', (cols * thumb_w, rows * thumb_h), (0, 0, 0))
+        for i, fpath in enumerate(frame_paths):
+            if fpath and os.path.isfile(fpath):
+                try:
+                    img = Image.open(fpath)
+                    sprite.paste(img, ((i % cols) * thumb_w, (i // cols) * thumb_h))
+                    img.close()
+                except Exception:
+                    pass  # black placeholder for failed frames
+        sprite.save(sprite_path, 'JPEG', quality=70)
+        log.info('Thumbstrip generated for vid %s: %d frames, %s',
+                 vid, len(valid), sprite_path)
+    except Exception as e:
+        log.warning('Thumbstrip generation error for vid %s: %s', vid, e)
+    finally:
+        _thumbstrip_generating.discard(vid)
+        if tmpdir and os.path.isdir(tmpdir):
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 @video_station_bp.route("/stream/<int:vid>", methods=["GET"])

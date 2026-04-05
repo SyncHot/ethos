@@ -511,10 +511,14 @@ def _no_cache_api(response):
                    request.path.endswith('/preview') and '/api/public/share/' in request.path or \
                    request.path.startswith('/api/video-station/stream/') or \
                    request.path.startswith('/api/video-station/transcode/') or \
-                   request.path.startswith('/api/video-station/hls/')
+                   request.path.startswith('/api/video-station/hls/') or \
+                   request.path.startswith('/api/video-station/thumb/') or \
+                   request.path.startswith('/api/video-station/poster/') or \
+                   request.path.startswith('/api/video-station/backdrop/') or \
+                   request.path.startswith('/api/video-station/thumbstrip/')
         if is_media and response.status_code in (200, 206):
             ct = response.content_type or ''
-            if ct.startswith(('video/', 'audio/', 'application/vnd.apple.mpegurl')):
+            if ct.startswith(('video/', 'audio/', 'image/', 'application/vnd.apple.mpegurl')):
                 # Transcode/HLS streams — don't advertise byte-range support
                 if not request.path.startswith(('/api/video-station/transcode/', '/api/video-station/hls/')):
                     response.headers['Accept-Ranges'] = 'bytes'
