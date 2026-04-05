@@ -731,11 +731,11 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 '.vs-tmdb-check .fa-magic{font-size:11px;color:#fbbf24}',
 
 /* player overlay */
-'.vs-player-overlay{position:absolute;inset:0;background:rgba(0,0,0,.95);z-index:100;flex-direction:column;align-items:center;justify-content:center}',
+'.vs-player-overlay{position:absolute;inset:0;background:rgba(0,0,0,.95);z-index:100;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden}',
 '.vs-player-top{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;justify-content:space-between;padding:12px 16px;z-index:101;background:linear-gradient(to bottom,rgba(0,0,0,.7),transparent)}',
 '.vs-player-title{color:#fff;font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
 '.vs-player-close{background:none;border:none;color:#fff;font-size:20px;cursor:pointer;padding:4px 8px;opacity:.7;transition:opacity .15s}',
 '.vs-player-close:hover{opacity:1}',
-'#vs-player-video{max-width:100%;max-height:100%;outline:none}',
+'#vs-player-video{max-width:100%;max-height:calc(100% - 48px);margin-top:24px;outline:none;border-radius:4px}',
     ].join('\n'); }
 };
