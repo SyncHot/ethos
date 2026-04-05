@@ -749,6 +749,7 @@ async function _galLoadPeople() {
     const thumbUrl = p.cover_face_id ? `/api/photos-ai/face-thumb/${p.cover_face_id}` : '';
     const name = p.name || t('Osoba') + ' ' + p.id;
     return `<div class="gal-person-card" data-pid="${p.id}">
+      <button class="gal-person-del" data-pid="${p.id}" title="${t('Usuń osobę')}"><i class="fa-solid fa-xmark"></i></button>
       <div class="gal-person-avatar">${thumbUrl
         ? `<img src="${thumbUrl}" alt="">`
         : `<i class="fa-solid fa-user"></i>`}</div>
@@ -756,6 +757,20 @@ async function _galLoadPeople() {
       <div class="gal-person-count">${p.photo_count || 0} ${t('zdjęć')}</div>
     </div>`;
   }).join('')}</div>`;
+
+  container.querySelectorAll('.gal-person-del').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const pid = parseInt(btn.dataset.pid);
+      const card = btn.closest('.gal-person-card');
+      const name = card.querySelector('.gal-person-name').textContent;
+      confirmDialog(t('Usunąć „{name}"? Twarze zostaną odłączone, zdjęcia nie zostaną usunięte.', { name }), async () => {
+        const r = await api(`/photos-ai/people/${pid}`, { method: 'DELETE' });
+        if (r.ok) { toast(t('Usunięto'), 'success'); _galLoadPeople(); }
+        else toast(r.error || t('Błąd'), 'error');
+      });
+    });
+  });
 
   container.querySelectorAll('.gal-person-card').forEach(card => {
     card.addEventListener('click', () => _galPersonDetail(parseInt(card.dataset.pid), container));

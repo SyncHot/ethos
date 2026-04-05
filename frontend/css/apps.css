@@ -1439,9 +1439,17 @@ select.fm-input {
 }
 .gal-person-card {
   text-align:center; padding:16px 8px; border-radius:12px; cursor:pointer;
-  transition:background .15s, transform .15s;
+  transition:background .15s, transform .15s; position:relative;
 }
 .gal-person-card:hover { background:var(--bg-hover); transform:translateY(-2px); }
+.gal-person-del {
+  position:absolute; top:6px; right:6px; width:24px; height:24px; border-radius:50%;
+  background:rgba(0,0,0,0.4); border:none; color:#fff; font-size:11px; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+  opacity:0; transition:opacity .15s;
+}
+.gal-person-card:hover .gal-person-del { opacity:1; }
+.gal-person-del:hover { background:#ef4444; }
 .gal-person-avatar {
   width:80px; height:80px; margin:0 auto 8px; border-radius:50%; overflow:hidden;
   background:var(--bg-tertiary); display:flex; align-items:center; justify-content:center;
