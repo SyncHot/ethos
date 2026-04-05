@@ -166,6 +166,15 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     <button class="vs-player-close" id="vs-player-close"><i class="fas fa-times"></i></button>
   </div>
   <video id="vs-player-video" controls autoplay></video>
+  <div class="vs-custom-controls" id="vs-custom-controls" style="display:none">
+    <button class="vs-cc-btn" id="vs-cc-play"><i class="fas fa-pause"></i></button>
+    <span class="vs-cc-time" id="vs-cc-time">0:00 / 0:00</span>
+    <div class="vs-cc-progress" id="vs-cc-progress">
+      <div class="vs-cc-buffered" id="vs-cc-buffered"></div>
+      <div class="vs-cc-fill" id="vs-cc-fill"></div>
+    </div>
+    <button class="vs-cc-btn" id="vs-cc-fs"><i class="fas fa-expand"></i></button>
+  </div>
 </div>`;
 
         if (st.stats) updateSidebarStats(body, st.stats);
@@ -646,6 +655,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         const badge    = bodyEl.querySelector('#vs-player-badge');
         const audioSel = bodyEl.querySelector('#vs-audio-select');
         const speedSel = bodyEl.querySelector('#vs-speed-select');
+        const ccBar    = bodyEl.querySelector('#vs-custom-controls');
         if (!overlay || !video) return;
 
         const needsTranscode = !!info.needs_transcode;
@@ -654,6 +664,11 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         _currentAudioIdx = null;
         _knownDuration = info.duration || 0;
         _startOffset = 0;
+
+        // Toggle native vs custom controls
+        video.controls = !needsTranscode;
+        if (ccBar) ccBar.style.display = needsTranscode ? 'flex' : 'none';
+        if (needsTranscode) _initCustomControls(video);
 
         title.textContent = info.title || info.filename || '';
         badge.style.display = needsTranscode ? '' : 'none';
@@ -705,25 +720,6 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         // save position every 10 seconds
         playerInterval = setInterval(() => savePosition(vid, video), 10000);
 
-        // For transcoded streams: intercept native seeking (progress bar clicks)
-        // and restart ffmpeg at the requested position
-        let _seekDebounce = null;
-        video.onseeking = () => {
-            if (!_transcoding || !_knownDuration) return;
-            // Browser fires seeking when user drags the progress bar.
-            // video.currentTime is already set to desired position within the buffered range.
-            // We can't actually seek in a progressive stream, so restart ffmpeg.
-            clearTimeout(_seekDebounce);
-            _seekDebounce = setTimeout(() => {
-                const target = _startOffset + video.currentTime;
-                if (target >= 0 && target < _knownDuration) {
-                    _startOffset = target;
-                    video.src = _buildStreamUrl(_currentVid, true, _startOffset, _currentAudioIdx);
-                    video.play().catch(() => {});
-                }
-            }, 300);
-        };
-
         // mark watched at >90%
         video.ontimeupdate = () => {
             const realPos = _transcoding ? (_startOffset + (video.currentTime || 0)) : video.currentTime;
@@ -766,6 +762,67 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         bodyEl.querySelector('#vs-player-close').onclick = () => closePlayer();
     }
 
+    function _initCustomControls(video) {
+        const playBtn  = bodyEl.querySelector('#vs-cc-play');
+        const timeEl   = bodyEl.querySelector('#vs-cc-time');
+        const progBar  = bodyEl.querySelector('#vs-cc-progress');
+        const fillEl   = bodyEl.querySelector('#vs-cc-fill');
+        const bufEl    = bodyEl.querySelector('#vs-cc-buffered');
+        const fsBtn    = bodyEl.querySelector('#vs-cc-fs');
+        if (!playBtn) return;
+
+        // Play/Pause
+        playBtn.onclick = () => { video.paused ? video.play() : video.pause(); };
+        video.onplay  = () => { playBtn.innerHTML = '<i class="fas fa-pause"></i>'; };
+        video.onpause = () => { playBtn.innerHTML = '<i class="fas fa-play"></i>'; };
+
+        // Time + progress update
+        video.ontimeupdate = () => {
+            const cur = _startOffset + (video.currentTime || 0);
+            const dur = _knownDuration || 1;
+            if (timeEl) timeEl.textContent = formatDuration(cur) + ' / ' + formatDuration(dur);
+            if (fillEl) fillEl.style.width = Math.min(100, (cur / dur) * 100) + '%';
+            // buffered indicator
+            if (bufEl && video.buffered && video.buffered.length) {
+                const bufEnd = _startOffset + video.buffered.end(video.buffered.length - 1);
+                bufEl.style.width = Math.min(100, (bufEnd / dur) * 100) + '%';
+            }
+            // watched detection at 90%
+            if (cur / dur > 0.9 && _currentVid) {
+                api('/video-station/watched/' + _currentVid, { method: 'POST', body: { watched: true, position: cur } });
+                video.ontimeupdate = _ccTimeUpdate;  // keep updating time, stop re-posting
+            }
+        };
+        // Saved ref for re-assignment after watched post
+        const _ccTimeUpdate = () => {
+            const cur = _startOffset + (video.currentTime || 0);
+            const dur = _knownDuration || 1;
+            if (timeEl) timeEl.textContent = formatDuration(cur) + ' / ' + formatDuration(dur);
+            if (fillEl) fillEl.style.width = Math.min(100, (cur / dur) * 100) + '%';
+            if (bufEl && video.buffered && video.buffered.length) {
+                const bufEnd = _startOffset + video.buffered.end(video.buffered.length - 1);
+                bufEl.style.width = Math.min(100, (bufEnd / dur) * 100) + '%';
+            }
+        };
+
+        // Click to seek on progress bar
+        if (progBar) progBar.onclick = (e) => {
+            const rect = progBar.getBoundingClientRect();
+            const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+            const target = pct * (_knownDuration || 0);
+            _startOffset = target;
+            video.src = _buildStreamUrl(_currentVid, true, target, _currentAudioIdx);
+            video.play().catch(() => {});
+        };
+
+        // Fullscreen
+        if (fsBtn) fsBtn.onclick = () => { toggleFullscreen(video); };
+
+        // Init time display
+        if (timeEl) timeEl.textContent = formatDuration(_startOffset) + ' / ' + formatDuration(_knownDuration);
+        if (fillEl) fillEl.style.width = (_knownDuration ? (_startOffset / _knownDuration) * 100 : 0) + '%';
+    }
+
     async function _loadSubtitles(vid, video) {
         video.querySelectorAll('track').forEach(t => t.remove());
         const data = await api('/video-station/subtitles/' + vid);
@@ -802,6 +859,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     function closePlayer() {
         const overlay = bodyEl.querySelector('#vs-player-overlay');
         const video   = bodyEl.querySelector('#vs-player-video');
+        const ccBar   = bodyEl.querySelector('#vs-custom-controls');
         if (!overlay) return;
 
         stopPlayer();
@@ -811,12 +869,16 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         _startOffset = 0;
         _knownDuration = 0;
         overlay.style.display = 'none';
+        if (ccBar) ccBar.style.display = 'none';
         if (video) {
             video.pause();
+            video.controls = true;
             video.onseeking = null;
             video.ontimeupdate = null;
             video.onended = null;
             video.onerror = null;
+            video.onplay = null;
+            video.onpause = null;
             video.removeAttribute('src');
             video.load();
         }
@@ -973,6 +1035,14 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 '.vs-ctx-item i{width:16px;text-align:center;opacity:.7}',
 '.vs-ctx-danger{color:var(--danger,#f87171)}',
 '.vs-ctx-danger:hover{background:rgba(248,113,113,.12)}',
-'#vs-player-video{max-width:100%;max-height:calc(100% - 48px);margin-top:24px;outline:none;border-radius:4px}',
+'#vs-player-video{max-width:100%;max-height:calc(100% - 90px);margin-top:24px;outline:none;border-radius:4px}',
+/* custom controls bar for transcoded streams */
+'.vs-custom-controls{position:absolute;bottom:0;left:0;right:0;display:flex;align-items:center;gap:10px;padding:10px 16px;background:linear-gradient(transparent,rgba(0,0,0,.85));z-index:102}',
+'.vs-cc-btn{background:none;border:none;color:#fff;font-size:16px;cursor:pointer;padding:4px 6px;opacity:.85;transition:opacity .15s}',
+'.vs-cc-btn:hover{opacity:1}',
+'.vs-cc-time{color:rgba(255,255,255,.9);font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap;min-width:100px}',
+'.vs-cc-progress{flex:1;height:6px;background:rgba(255,255,255,.2);border-radius:3px;cursor:pointer;position:relative;overflow:hidden}',
+'.vs-cc-buffered{position:absolute;top:0;left:0;height:100%;background:rgba(255,255,255,.25);border-radius:3px;transition:width .3s}',
+'.vs-cc-fill{position:absolute;top:0;left:0;height:100%;background:var(--accent,#4f8cff);border-radius:3px;transition:width .3s}',
     ].join('\n'); }
 };
