@@ -510,12 +510,13 @@ def _no_cache_api(response):
         is_media = request.path in ('/api/files/preview', '/api/files/trash/preview', '/api/gallery/stream') or \
                    request.path.endswith('/preview') and '/api/public/share/' in request.path or \
                    request.path.startswith('/api/video-station/stream/') or \
-                   request.path.startswith('/api/video-station/transcode/')
+                   request.path.startswith('/api/video-station/transcode/') or \
+                   request.path.startswith('/api/video-station/hls/')
         if is_media and response.status_code in (200, 206):
             ct = response.content_type or ''
-            if ct.startswith(('video/', 'audio/')):
-                # Transcode streams are chunked — cannot support byte-range requests
-                if not request.path.startswith('/api/video-station/transcode/'):
+            if ct.startswith(('video/', 'audio/', 'application/vnd.apple.mpegurl')):
+                # Transcode/HLS streams — don't advertise byte-range support
+                if not request.path.startswith(('/api/video-station/transcode/', '/api/video-station/hls/')):
                     response.headers['Accept-Ranges'] = 'bytes'
                 response.headers.pop('Pragma', None)
                 return response

@@ -14,6 +14,10 @@ Routes:
   GET  /api/video-station/info/<int:vid>  - detailed video metadata
   GET  /api/video-station/stream/<int:vid>- stream video file (raw)
   GET  /api/video-station/transcode/<int:vid> - transcode video (?audio=N, ?start=S)
+  POST /api/video-station/hls/<int:vid>/start - start HLS transcoding session
+  GET  /api/video-station/hls/<sid>/playlist.m3u8 - HLS playlist
+  GET  /api/video-station/hls/<sid>/<segment>  - HLS segment (.ts)
+  POST /api/video-station/hls/<sid>/stop       - stop HLS session
   GET  /api/video-station/thumb/<int:vid> - video thumbnail
   GET  /api/video-station/poster/<int:vid>- TMDb poster image
   GET  /api/video-station/recent          - recently added videos
@@ -40,6 +44,7 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import tempfile
 import time
 import urllib.request
 import urllib.parse
@@ -73,6 +78,38 @@ _scan_state = {
     'running': False, 'stop_requested': False,
     'total': 0, 'processed': 0, 'current_file': '',
 }
+
+# ── HLS transcoding sessions ──────────────────────────────────
+_hls_sessions = {}   # session_id → {proc, tmpdir, vid, created}
+_HLS_MAX_AGE = 4 * 3600   # auto-cleanup after 4 hours
+
+
+def _cleanup_hls(session_id):
+    """Stop ffmpeg and remove temp dir for an HLS session."""
+    sess = _hls_sessions.pop(session_id, None)
+    if not sess:
+        return
+    proc = sess.get('proc')
+    if proc and proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+        except Exception:
+            pass
+    tmpdir = sess.get('tmpdir')
+    if tmpdir and os.path.isdir(tmpdir):
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def _cleanup_stale_hls():
+    """Remove HLS sessions older than _HLS_MAX_AGE."""
+    now = time.time()
+    for sid in list(_hls_sessions):
+        if now - _hls_sessions[sid].get('created', 0) > _HLS_MAX_AGE:
+            _cleanup_hls(sid)
 
 
 # --- Database ---
@@ -920,6 +957,149 @@ def transcode(vid):
                         "Accept-Ranges": "none",
                         "X-Content-Type-Options": "nosniff",
                     })
+
+
+# ── HLS endpoints ─────────────────────────────────────────────
+
+@video_station_bp.route("/hls/<int:vid>/start", methods=["POST"])
+def hls_start(vid):
+    """Start an HLS transcoding session.
+
+    POST body (JSON): {start: seconds, audio: track_index}
+    Returns: {ok, session_id}
+    """
+    _cleanup_stale_hls()
+
+    conn = _get_db()
+    r = conn.execute(
+        "SELECT path, codec, audio_codec, duration, metadata_json FROM videos WHERE id=?",
+        (vid,),
+    ).fetchone()
+    conn.close()
+    if not r:
+        return jsonify(error="Nie znaleziono."), 404
+    fp = os.path.realpath(r["path"])
+    if not os.path.isfile(fp):
+        return jsonify(error="Plik nie istnieje."), 404
+    if not shutil.which("ffmpeg"):
+        return jsonify(error="ffmpeg nie jest zainstalowany."), 500
+
+    data = request.get_json(silent=True) or {}
+    start_sec = max(0.0, float(data.get("start", 0)))
+    audio_idx = data.get("audio", None)
+
+    # Stop any existing HLS session for this video
+    for sid in list(_hls_sessions):
+        if _hls_sessions[sid].get("vid") == vid:
+            _cleanup_hls(sid)
+
+    vcodec = (r["codec"] or "").lower()
+    vcopy = vcodec in ("h264", "vp8", "vp9")
+    v_arg = "copy" if vcopy else "libx264 -preset ultrafast -crf 23"
+
+    session_id = "%d_%s" % (vid, os.urandom(4).hex())
+    tmpdir = tempfile.mkdtemp(prefix="vs_hls_")
+
+    cmd = "ffmpeg -hide_banner -loglevel error"
+    if start_sec > 0:
+        cmd += " -ss %s" % start_sec
+    cmd += " -i %s" % q(fp)
+    cmd += " -map 0:v:0"
+    if audio_idx is not None:
+        cmd += " -map 0:%d" % int(audio_idx)
+    else:
+        cmd += " -map 0:a:0"
+    cmd += " -c:v %s -c:a aac -b:a 192k -ac 2" % v_arg
+    cmd += " -f hls -hls_time 4 -hls_list_size 0"
+    cmd += " -hls_segment_type mpegts"
+    cmd += " -hls_segment_filename %s" % q(os.path.join(tmpdir, "seg%05d.ts"))
+    cmd += " -hls_flags append_list"
+    cmd += " -y %s" % q(os.path.join(tmpdir, "playlist.m3u8"))
+
+    log.info("HLS start vid=%d ss=%.1f cmd=%s", vid, start_sec, cmd[:200])
+
+    proc = subprocess.Popen(
+        ["bash", "-c", cmd],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+
+    _hls_sessions[session_id] = {
+        "proc": proc,
+        "tmpdir": tmpdir,
+        "vid": vid,
+        "start_offset": start_sec,
+        "duration": r["duration"] or 0,
+        "created": time.time(),
+    }
+
+    # Wait for first segment (up to 10s)
+    playlist_path = os.path.join(tmpdir, "playlist.m3u8")
+    for _ in range(100):
+        if os.path.exists(playlist_path) and os.path.getsize(playlist_path) > 20:
+            break
+        # Check if ffmpeg crashed
+        if proc.poll() is not None:
+            stderr = proc.stderr.read().decode(errors="replace")[:500] if proc.stderr else ""
+            _cleanup_hls(session_id)
+            log.error("HLS ffmpeg crashed: %s", stderr)
+            return jsonify(error="Transkodowanie nie powiodło się: " + stderr), 500
+        time.sleep(0.1)
+
+    return jsonify(ok=True, session_id=session_id, start_offset=start_sec)
+
+
+@video_station_bp.route("/hls/<session_id>/playlist.m3u8")
+def hls_playlist(session_id):
+    """Serve the HLS playlist (M3U8)."""
+    sess = _hls_sessions.get(session_id)
+    if not sess:
+        return "", 404
+    path = os.path.join(sess["tmpdir"], "playlist.m3u8")
+    if not os.path.exists(path):
+        return "", 404
+
+    content = ""
+    with open(path, "r") as f:
+        content = f.read()
+
+    # If ffmpeg finished, ensure playlist has ENDLIST tag
+    proc = sess.get("proc")
+    finished = proc is None or proc.poll() is not None
+    if finished and "#EXT-X-ENDLIST" not in content:
+        content = content.rstrip() + "\n#EXT-X-ENDLIST\n"
+
+    resp = Response(content, mimetype="application/vnd.apple.mpegurl")
+    resp.headers["Cache-Control"] = "no-cache, no-store"
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    return resp
+
+
+@video_station_bp.route("/hls/<session_id>/<filename>")
+def hls_segment(session_id, filename):
+    """Serve an HLS segment (.ts file)."""
+    sess = _hls_sessions.get(session_id)
+    if not sess:
+        return "", 404
+
+    # Security: only .ts files, no path traversal
+    if not filename.endswith(".ts") or "/" in filename or ".." in filename:
+        return "", 400
+
+    path = os.path.join(sess["tmpdir"], filename)
+    if not os.path.exists(path):
+        return "", 404
+
+    resp = send_file(path, mimetype="video/MP2T")
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
+
+
+@video_station_bp.route("/hls/<session_id>/stop", methods=["POST"])
+def hls_stop_session(session_id):
+    """Stop an HLS transcoding session and clean up."""
+    _cleanup_hls(session_id)
+    return jsonify(ok=True)
 
 
 @video_station_bp.route("/watched/<int:vid>", methods=["POST"])
