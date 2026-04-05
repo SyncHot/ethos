@@ -810,6 +810,10 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             maxBufferLength: 60,
             maxMaxBufferLength: 120,
             startPosition: -1,
+            fragLoadingTimeOut: 120000,
+            fragLoadingMaxRetry: 6,
+            fragLoadingRetryDelay: 2000,
+            levelLoadingTimeOut: 30000,
         });
 
         _hlsInstance = hls;
@@ -823,9 +827,11 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 
         hls.on(Hls.Events.ERROR, (event, data) => {
             if (data.fatal) {
-                log.error('HLS fatal error:', data.type, data.details);
                 if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-                    hls.startLoad();
+                    // Retry — segment might not be produced yet
+                    setTimeout(() => hls.startLoad(), 2000);
+                } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+                    hls.recoverMediaError();
                 } else {
                     toast(t('Błąd odtwarzania HLS'), 'error');
                 }

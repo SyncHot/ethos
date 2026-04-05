@@ -1051,7 +1051,12 @@ def hls_start(vid):
 
 @video_station_bp.route("/hls/<session_id>/playlist.m3u8")
 def hls_playlist(session_id):
-    """Serve the HLS playlist (M3U8)."""
+    """Serve a VOD-style HLS playlist.
+
+    Reads the actual segments produced so far and appends estimated future
+    segments to fill the known total duration.  Always includes
+    #EXT-X-PLAYLIST-TYPE:VOD and #EXT-X-ENDLIST so hls.js shows a seekbar.
+    """
     sess = _hls_sessions.get(session_id)
     if not sess:
         return "", 404
@@ -1059,25 +1064,74 @@ def hls_playlist(session_id):
     if not os.path.exists(path):
         return "", 404
 
-    content = ""
     with open(path, "r") as f:
-        content = f.read()
+        raw = f.read()
 
-    # If ffmpeg finished, ensure playlist has ENDLIST tag
+    total_duration = sess.get("duration", 0)
+    start_offset = sess.get("start_offset", 0)
+    effective_dur = max(0, total_duration - start_offset)
+
+    # Parse existing segment entries (lines: #EXTINF:x.xxx, / segNNNNN.ts)
+    seg_re = re.compile(r"#EXTINF:([\d.]+),?\s*\n(\S+\.ts)")
+    actual_segs = seg_re.findall(raw)
+    actual_total = sum(float(d) for d, _ in actual_segs)
+    num_actual = len(actual_segs)
+
     proc = sess.get("proc")
     finished = proc is None or proc.poll() is not None
-    if finished and "#EXT-X-ENDLIST" not in content:
-        content = content.rstrip() + "\n#EXT-X-ENDLIST\n"
+
+    if finished and effective_dur > 0 and actual_total > 0:
+        # ffmpeg done — playlist is accurate, just ensure ENDLIST
+        if "#EXT-X-ENDLIST" not in raw:
+            raw = raw.rstrip() + "\n#EXT-X-ENDLIST\n"
+        content = raw
+    else:
+        # Build a VOD playlist: real segments + estimated future segments
+        avg_seg = actual_total / num_actual if num_actual > 0 else 10.0
+        target_dur = max(10, int(avg_seg) + 1)
+
+        lines = [
+            "#EXTM3U",
+            "#EXT-X-VERSION:3",
+            "#EXT-X-TARGETDURATION:%d" % target_dur,
+            "#EXT-X-MEDIA-SEQUENCE:0",
+            "#EXT-X-PLAYLIST-TYPE:VOD",
+        ]
+
+        # Add real segments
+        for dur, name in actual_segs:
+            lines.append("#EXTINF:%s," % dur)
+            lines.append(name)
+
+        # Add estimated future segments
+        remaining = max(0, effective_dur - actual_total)
+        if remaining > 1.0 and not finished:
+            next_idx = num_actual
+            produced = 0.0
+            while produced < remaining:
+                seg_dur = min(avg_seg, remaining - produced)
+                if seg_dur < 0.1:
+                    break
+                lines.append("#EXTINF:%.6f," % seg_dur)
+                lines.append("seg%05d.ts" % next_idx)
+                next_idx += 1
+                produced += seg_dur
+
+        lines.append("#EXT-X-ENDLIST")
+        content = "\n".join(lines) + "\n"
 
     resp = Response(content, mimetype="application/vnd.apple.mpegurl")
     resp.headers["Cache-Control"] = "no-cache, no-store"
-    resp.headers["Access-Control-Allow-Origin"] = "*"
     return resp
 
 
 @video_station_bp.route("/hls/<session_id>/<filename>")
 def hls_segment(session_id, filename):
-    """Serve an HLS segment (.ts file)."""
+    """Serve an HLS segment (.ts file).
+
+    If the segment hasn't been produced yet, wait up to 120s for ffmpeg
+    to catch up (with -c:v copy this is much faster than real-time).
+    """
     sess = _hls_sessions.get(session_id)
     if not sess:
         return "", 404
@@ -1087,8 +1141,21 @@ def hls_segment(session_id, filename):
         return "", 400
 
     path = os.path.join(sess["tmpdir"], filename)
+
+    # Wait for segment to be produced by ffmpeg
     if not os.path.exists(path):
-        return "", 404
+        proc = sess.get("proc")
+        for _ in range(1200):   # up to 120 seconds
+            if os.path.exists(path):
+                break
+            if proc and proc.poll() is not None:
+                # ffmpeg finished but segment doesn't exist
+                return "", 404
+            time.sleep(0.1)
+        else:
+            return "", 404
+        # Brief pause to let ffmpeg finish writing the segment
+        time.sleep(0.05)
 
     resp = send_file(path, mimetype="video/MP2T")
     resp.headers["Cache-Control"] = "public, max-age=86400"
