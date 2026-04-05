@@ -112,9 +112,9 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         onRender(body) {
             bodyEl = body;
             body.innerHTML = '';
-            injectCSS('radio-music-css', getCSS());
 
             body.innerHTML = `
+<style>${getCSS()}</style>
 <div class="rm-wrap">
   <div class="rm-sidebar">
     <div class="rm-sidebar-label">${t('Radio')}</div>
