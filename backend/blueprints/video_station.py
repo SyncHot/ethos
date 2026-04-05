@@ -13,6 +13,7 @@ Routes:
   POST /api/video-station/scan-stop       - stop running scan
   GET  /api/video-station/info/<int:vid>  - detailed video metadata
   GET  /api/video-station/stream/<int:vid>- stream video file
+  GET  /api/video-station/transcode/<int:vid> - transcode video (re-encode audio to aac)
   GET  /api/video-station/thumb/<int:vid> - video thumbnail
   GET  /api/video-station/poster/<int:vid>- TMDb poster image
   GET  /api/video-station/recent          - recently added videos
@@ -34,6 +35,7 @@ import os
 import re
 import shutil
 import sqlite3
+import subprocess
 import time
 import urllib.request
 import urllib.parse
@@ -60,6 +62,9 @@ _TMDB_CONF = data_path('video_tmdb.json')
 
 VIDEO_EXTS = {'.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v',
               '.mpg', '.mpeg', '.ts', '.3gp', '.ogv', '.vob'}
+
+# Audio codecs that browsers can natively decode inside <video>
+_BROWSER_AUDIO_CODECS = {'aac', 'mp3', 'opus', 'vorbis', 'flac'}
 
 _scan_state = {
     'running': False, 'stop_requested': False,
@@ -797,7 +802,75 @@ def stream(vid):
     return send_file(fp, mimetype=mime)
 
 
-@video_station_bp.route("/watched/<int:vid>", methods=["POST"])
+@video_station_bp.route("/transcode/<int:vid>", methods=["GET"])
+@require_auth
+def transcode(vid):
+    """Stream video with audio re-encoded to AAC for browser compatibility.
+
+    Uses ffmpeg to copy the video stream and transcode audio to AAC,
+    outputting fragmented MP4 suitable for progressive HTTP streaming.
+    """
+    conn = _get_db()
+    r = conn.execute("SELECT path, codec, audio_codec FROM videos WHERE id=?", (vid,)).fetchone()
+    conn.close()
+    if not r:
+        return jsonify({"error": "Nie znaleziono."}), 404
+    fp = os.path.realpath(r["path"])
+    if not os.path.isfile(fp):
+        return jsonify({"error": "Plik nie istnieje."}), 404
+    if not shutil.which("ffmpeg"):
+        return jsonify({"error": "ffmpeg nie jest zainstalowany."}), 500
+
+    # Copy video if it's already browser-compatible, otherwise transcode
+    vcodec = (r["codec"] or "").lower()
+    vcopy = vcodec in ("h264", "hevc", "vp8", "vp9", "av1")
+    v_arg = "copy" if vcopy else "libx264"
+
+    start_sec = request.args.get("start", 0, type=float)
+
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
+    if start_sec > 0:
+        cmd += ["-ss", str(start_sec)]
+    cmd += [
+        "-i", fp,
+        "-c:v", v_arg,
+        "-c:a", "aac", "-b:a", "192k", "-ac", "2",
+        "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+        "-f", "mp4",
+        "-"
+    ]
+
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    def generate():
+        try:
+            while True:
+                chunk = proc.stdout.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            proc.stdout.close()
+            proc.stderr.close()
+            proc.terminate()
+            proc.wait()
+
+    return Response(generate(), mimetype="video/mp4",
+                    headers={"Cache-Control": "no-cache"})
+
+
+@video_station_bp.route("/needs-transcode/<int:vid>", methods=["GET"])
+@require_auth
+def needs_transcode(vid):
+    """Check if a video needs audio transcoding for browser playback."""
+    conn = _get_db()
+    r = conn.execute("SELECT audio_codec FROM videos WHERE id=?", (vid,)).fetchone()
+    conn.close()
+    if not r:
+        return jsonify({"error": "Nie znaleziono."}), 404
+    ac = (r["audio_codec"] or "").lower()
+    needs = bool(ac) and ac not in _BROWSER_AUDIO_CODECS
+    return jsonify({"ok": True, "needs_transcode": needs, "audio_codec": ac})
 @require_auth
 def update_watched(vid):
     d = request.json or {}

@@ -530,6 +530,8 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     }
 
     /* ── video player ──────────────────────────────────────── */
+    const BROWSER_AUDIO_CODECS = new Set(['aac', 'mp3', 'opus', 'vorbis', 'flac', '']);
+
     async function openPlayer(vid) {
         const info = await api('/video-station/info/' + vid);
         if (info.error) { toast(info.error, 'error'); return; }
@@ -539,13 +541,23 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         const title   = bodyEl.querySelector('#vs-player-title');
         if (!overlay || !video) return;
 
-        title.textContent = info.title || info.filename || '';
-        video.src = '/api/video-station/stream/' + vid + '?token=' + NAS.token;
+        const audioCodec = (info.audio_codec || '').toLowerCase();
+        const needsTranscode = audioCodec && !BROWSER_AUDIO_CODECS.has(audioCodec);
 
-        // resume from last position
-        if (info.position && info.position > 0 && !info.watched) {
+        title.textContent = info.title || info.filename || '';
+        const resumePos = (info.position && info.position > 0 && !info.watched) ? info.position : 0;
+        if (needsTranscode) {
+            let url = '/api/video-station/transcode/' + vid + '?token=' + NAS.token;
+            if (resumePos > 0) url += '&start=' + resumePos;
+            video.src = url;
+        } else {
+            video.src = '/api/video-station/stream/' + vid + '?token=' + NAS.token;
+        }
+
+        // resume from last position (only for non-transcoded — transcoded uses server-side seek)
+        if (resumePos > 0 && !needsTranscode) {
             video.addEventListener('loadedmetadata', function onMeta() {
-                video.currentTime = info.position;
+                video.currentTime = resumePos;
                 video.removeEventListener('loadedmetadata', onMeta);
             });
         }
