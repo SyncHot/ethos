@@ -173,7 +173,7 @@ def summary():
                 'free': usage.free,
                 'percent': usage.percent,
             })
-        except PermissionError:
+        except (PermissionError, OSError):
             continue
 
     # Network interfaces with IPs
