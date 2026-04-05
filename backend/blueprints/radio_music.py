@@ -143,15 +143,16 @@ def _aggregate_stations(raw_list):
                     existing['url'] = url
                     existing['bitrate'] = picked['bitrate']
                     existing['codec'] = picked['codec']
-                    if picked['favicon'] and not existing['favicon']:
-                        existing['favicon'] = picked['favicon']
                 else:
                     existing['alt_urls'].append(url)
             # Merge votes (take max)
             if picked['votes'] > existing['votes']:
                 existing['votes'] = picked['votes']
+            # Always prefer a non-empty favicon/homepage
             if picked['favicon'] and not existing['favicon']:
                 existing['favicon'] = picked['favicon']
+            if picked['homepage'] and not existing['homepage']:
+                existing['homepage'] = picked['homepage']
     return list(groups.values())
 
 
