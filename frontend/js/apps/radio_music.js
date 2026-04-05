@@ -533,6 +533,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         playAudio({
             name: station.name,
             url: station.url,
+            alt_urls: station.alt_urls || [],
             type: 'radio',
             meta: [station.country, station.tags].filter(Boolean).join(' · '),
             image: station.favicon || '',
@@ -546,20 +547,31 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         _audio.volume = (bodyEl.querySelector('#rm-vol')?.value || 80) / 100;
         _playing = item;
 
-        // Radio streams go through our proxy to avoid CORS/ICY issues.
-        // Podcasts usually have proper CORS headers, so play direct.
-        let src = item.url;
-        if (item.type === 'radio') {
-            src = '/api/radio-music/radio/proxy?url=' + encodeURIComponent(item.url)
-                + '&token=' + (NAS.token || '');
+        // Build ordered list of URLs to try (primary + fallbacks)
+        const urls = [item.url, ...(item.alt_urls || [])];
+        let urlIdx = 0;
+        let hasPlayed = false;
+
+        function tryUrl(idx) {
+            if (idx >= urls.length) {
+                toast(t('Nie udało się odtworzyć żadnego źródła'), 'error');
+                _showEq(false);
+                return;
+            }
+            const src = item.type === 'radio'
+                ? '/api/radio-music/radio/proxy?url=' + encodeURIComponent(urls[idx])
+                  + '&token=' + (NAS.token || '')
+                : urls[idx];
+
+            _audio.src = src;
+            _audio.play().catch(() => {
+                // Silently try next fallback
+                tryUrl(idx + 1);
+            });
         }
 
-        _audio.src = src;
-        _audio.play().catch(err => {
-            toast(t('Nie udało się odtworzyć: ') + err.message, 'error');
-        });
-
         _audio.onplay = () => {
+            hasPlayed = true;
             bodyEl.querySelector('#rm-play-pause').innerHTML = '<i class="fas fa-pause"></i>';
             _showEq(true);
         };
@@ -568,8 +580,15 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             _showEq(false);
         };
         _audio.onerror = () => {
-            toast(t('Błąd odtwarzania strumienia'), 'error');
-            _showEq(false);
+            if (!hasPlayed) {
+                // Haven't successfully played yet — try next fallback
+                urlIdx++;
+                tryUrl(urlIdx);
+            } else {
+                // Was playing but stream died — show error
+                toast(t('Strumień przerwany'), 'error');
+                _showEq(false);
+            }
         };
 
         // Update player bar
@@ -586,6 +605,9 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
         // Highlight playing card
         bodyEl.querySelectorAll('.rm-card, .rm-ep-item').forEach(c => c.classList.remove('rm-playing'));
+
+        // Start playback with fallback chain
+        tryUrl(0);
     }
 
     function stopPlayback() {

@@ -112,6 +112,49 @@ def _pick_station(s):
     }
 
 
+def _aggregate_stations(raw_list):
+    """Merge duplicates by normalised name, collecting alt URLs as fallbacks.
+    Prefer the entry with the highest votes/bitrate as the primary."""
+    import re
+    groups = {}
+    for s in raw_list:
+        picked = _pick_station(s)
+        url = picked['url']
+        if not url:
+            continue
+        # Normalise: lowercase, strip whitespace, collapse spaces,
+        # remove trailing frequency-like suffixes (e.g. "102.5")
+        key = re.sub(r'\s+', ' ', picked['name'].lower().strip())
+        key = re.sub(r'\s*\d{2,3}[.,]\d.*$', '', key)  # "eska wrocław 102.5"
+        key = key.rstrip()
+        if not key:
+            continue
+        if key not in groups:
+            groups[key] = picked
+            groups[key]['alt_urls'] = []
+        else:
+            existing = groups[key]
+            # Collect unique alt URL
+            all_urls = [existing['url']] + existing.get('alt_urls', [])
+            if url not in all_urls:
+                # If new entry is better (higher bitrate), swap
+                if picked['bitrate'] > existing['bitrate']:
+                    existing['alt_urls'].append(existing['url'])
+                    existing['url'] = url
+                    existing['bitrate'] = picked['bitrate']
+                    existing['codec'] = picked['codec']
+                    if picked['favicon'] and not existing['favicon']:
+                        existing['favicon'] = picked['favicon']
+                else:
+                    existing['alt_urls'].append(url)
+            # Merge votes (take max)
+            if picked['votes'] > existing['votes']:
+                existing['votes'] = picked['votes']
+            if picked['favicon'] and not existing['favicon']:
+                existing['favicon'] = picked['favicon']
+    return list(groups.values())
+
+
 # ── Package status (trivial — no system deps needed) ─────────
 
 @radio_music_bp.route('/pkg-status', methods=['GET'])
@@ -140,7 +183,7 @@ def radio_search():
     limit = min(int(request.args.get('limit', 50)), 200)
 
     params = {
-        'limit': limit,
+        'limit': limit * 3,  # fetch extra to aggregate duplicates
         'hidebroken': 'true',
         'order': 'clickcount',
         'reverse': 'true',
@@ -154,7 +197,8 @@ def radio_search():
         params['tag'] = tag
 
     raw = _radio_api('/json/stations/search', params)
-    return jsonify({'items': [_pick_station(s) for s in raw]})
+    items = _aggregate_stations(raw)
+    return jsonify({'items': items[:limit]})
 
 
 @radio_music_bp.route('/radio/countries', methods=['GET'])
@@ -176,8 +220,9 @@ def radio_tags():
 @radio_music_bp.route('/radio/top', methods=['GET'])
 def radio_top():
     limit = min(int(request.args.get('limit', 50)), 200)
-    raw = _radio_api('/json/stations/topvote', {'limit': limit, 'hidebroken': 'true'})
-    return jsonify({'items': [_pick_station(s) for s in raw]})
+    raw = _radio_api('/json/stations/topvote', {'limit': limit * 3, 'hidebroken': 'true'})
+    items = _aggregate_stations(raw)
+    return jsonify({'items': items[:limit]})
 
 
 # ── Radio: favorites ─────────────────────────────────────────
