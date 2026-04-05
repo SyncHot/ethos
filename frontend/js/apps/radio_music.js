@@ -16,15 +16,37 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     function _stationColor(name) { let h=0; for(let i=0;i<name.length;i++) h=((h<<5)-h)+name.charCodeAt(i); return _COLORS[Math.abs(h)%_COLORS.length]; }
     function _stationInitial(name) { return (name||'?').replace(/^(radio|polskie)\s*/i,'').charAt(0).toUpperCase(); }
 
+    // Extract domain from a URL for logo services
+    function _domainOf(url) {
+        if (!url) return '';
+        try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
+    }
+
+    // Build a Google high-res favicon URL from a domain
+    function _googleIcon(domain) {
+        return domain ? 'https://www.google.com/s2/favicons?domain=' + encodeURIComponent(domain) + '&sz=128' : '';
+    }
+
+    // Multi-layer logo: Radio Browser favicon → Google favicon (from homepage) → letter avatar
     function _stationIconHtml(s) {
-        if (s.favicon) {
-            const letter = _stationInitial(s.name);
-            const bg = _stationColor(s.name);
-            return '<img src="' + escH(s.favicon) + '" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">'
-                 + '<span class="rm-letter-icon" style="display:none;background:' + bg + '">' + escH(letter) + '</span>';
-        }
         const letter = _stationInitial(s.name);
         const bg = _stationColor(s.name);
+        const letterSpan = '<span class="rm-letter-icon" style="display:none;background:' + bg + '">' + escH(letter) + '</span>';
+        const domain = _domainOf(s.homepage || s.url);
+        const googleSrc = _googleIcon(domain);
+
+        if (s.favicon) {
+            // Try Radio Browser favicon → Google favicon → letter
+            const googleFallback = googleSrc
+                ? 'var g=document.createElement(\'img\');g.src=\'' + escH(googleSrc) + '\';g.style.cssText=this.style.cssText;g.className=this.className;g.onerror=function(){this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'};this.parentNode.insertBefore(g,this.nextElementSibling);this.remove()'
+                : 'this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'';
+            return '<img src="' + escH(s.favicon) + '" onerror="' + googleFallback + '">'
+                 + letterSpan;
+        }
+        if (googleSrc) {
+            return '<img src="' + escH(googleSrc) + '" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">'
+                 + letterSpan;
+        }
         return '<span class="rm-letter-icon" style="background:' + bg + '">' + escH(letter) + '</span>';
     }
 
@@ -48,6 +70,9 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-card{display:flex;align-items:center;gap:12px;padding:10px 12px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:12px;cursor:pointer;transition:all .15s}',
 '.rm-card:hover{background:var(--bg-hover);box-shadow:0 2px 12px rgba(0,0,0,.18);transform:translateY(-1px)}',
 '.rm-card.rm-playing{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),0 2px 12px rgba(59,130,246,.2)}',
+'.rm-card.rm-buffering{border-color:var(--accent);opacity:.75}',
+'.rm-card.rm-buffering .rm-card-icon::after{content:"";position:absolute;inset:0;border-radius:10px;border:2px solid transparent;border-top-color:var(--accent);animation:rm-spin .8s linear infinite}',
+'@keyframes rm-spin{to{transform:rotate(360deg)}}',
 '.rm-card-icon{width:48px;height:48px;border-radius:10px;background:#1a1a2e;display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;position:relative}',
 '.rm-card-icon img{width:100%;height:100%;object-fit:cover;border-radius:10px}',
 '.rm-card-icon i{font-size:20px;color:var(--text-muted)}',
@@ -69,7 +94,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
 /* ── Player bar (Audials-style) ────────────────────────── */
 '.rm-player{display:flex;align-items:center;gap:14px;padding:10px 20px;background:linear-gradient(180deg,var(--bg-secondary) 0%,rgba(0,0,0,.15) 100%);border-top:1px solid var(--border);min-height:68px}',
-'.rm-player-art{width:50px;height:50px;border-radius:10px;background:#1a1a2e;display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;box-shadow:0 2px 8px rgba(0,0,0,.3)}',
+'.rm-player.rm-buffering .rm-player-art::after{content:"";position:absolute;inset:-2px;border-radius:12px;border:2px solid transparent;border-top-color:var(--accent);animation:rm-spin .8s linear infinite}',
+'.rm-player-art{width:50px;height:50px;border-radius:10px;background:#1a1a2e;display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;box-shadow:0 2px 8px rgba(0,0,0,.3);position:relative}',
 '.rm-player-art img{width:100%;height:100%;object-fit:cover}',
 '.rm-player-art .rm-letter-icon{font-size:18px}',
 '.rm-player-art i{font-size:18px;color:var(--text-muted)}',
@@ -290,6 +316,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             const fallbackTag = altCount ? ' <span class="rm-card-codec">' + (altCount+1) + ' src</span>' : '';
             const card = document.createElement('div');
             card.className = 'rm-card' + (isPlaying ? ' rm-playing' : '');
+            card._stationUuid = s.uuid;
             card.innerHTML = `
                 <div class="rm-card-icon">${_stationIconHtml(s)}</div>
                 <div class="rm-card-info">
@@ -575,6 +602,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             type: 'radio',
             meta: [station.country, station.tags].filter(Boolean).join(' · '),
             image: station.favicon || '',
+            homepage: station.homepage || '',
             uuid: station.uuid,
         });
     }
@@ -590,10 +618,27 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         let urlIdx = 0;
         let hasPlayed = false;
 
+        // ── Buffering state helpers ──
+        function _setBuffering(on) {
+            const player = bodyEl.querySelector('#rm-player');
+            if (player) player.classList.toggle('rm-buffering', on);
+            // Update card too
+            bodyEl.querySelectorAll('.rm-card').forEach(c => c.classList.remove('rm-buffering'));
+            if (on && item.uuid) {
+                bodyEl.querySelectorAll('.rm-card').forEach(c => {
+                    if (c._stationUuid === item.uuid) c.classList.add('rm-buffering');
+                });
+            }
+            // Update player meta during buffering
+            const meta = bodyEl.querySelector('#rm-player-meta');
+            if (meta) meta.textContent = on ? t('Buforowanie…') : (item.meta || '');
+        }
+
         function tryUrl(idx) {
             if (idx >= urls.length) {
                 toast(t('Nie udało się odtworzyć żadnego źródła'), 'error');
                 _showEq(false);
+                _setBuffering(false);
                 return;
             }
             const src = item.type === 'radio'
@@ -603,48 +648,43 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
             _audio.src = src;
             _audio.play().catch(() => {
-                // Silently try next fallback
                 tryUrl(idx + 1);
             });
         }
 
         _audio.onplay = () => {
             hasPlayed = true;
+            _setBuffering(false);
             bodyEl.querySelector('#rm-play-pause').innerHTML = '<i class="fas fa-pause"></i>';
             _showEq(true);
         };
+        _audio.onwaiting = () => _setBuffering(true);
+        _audio.onplaying = () => _setBuffering(false);
         _audio.onpause = () => {
             bodyEl.querySelector('#rm-play-pause').innerHTML = '<i class="fas fa-play"></i>';
             _showEq(false);
         };
         _audio.onerror = () => {
             if (!hasPlayed) {
-                // Haven't successfully played yet — try next fallback
                 urlIdx++;
                 tryUrl(urlIdx);
             } else {
-                // Was playing but stream died — show error
                 toast(t('Strumień przerwany'), 'error');
                 _showEq(false);
+                _setBuffering(false);
             }
         };
 
-        // Update player bar
+        // Update player bar — show immediately with buffering indicator
         const player = bodyEl.querySelector('#rm-player');
         player.style.display = 'flex';
         bodyEl.querySelector('#rm-player-name').textContent = item.name;
-        bodyEl.querySelector('#rm-player-meta').textContent = item.meta || '';
+        _setBuffering(true);  // show "Buforowanie…" until audio plays
+
+        // Player art — use logo with fallbacks
         const art = bodyEl.querySelector('#rm-player-art');
-        if (item.image) {
-            const letter = _stationInitial(item.name);
-            const bg = _stationColor(item.name);
-            art.innerHTML = '<img src="' + escH(item.image) + '" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">'
-                + '<span class="rm-letter-icon" style="display:none;background:' + bg + '">' + escH(letter) + '</span>';
-        } else {
-            const letter = _stationInitial(item.name);
-            const bg = _stationColor(item.name);
-            art.innerHTML = '<span class="rm-letter-icon" style="background:' + bg + '">' + escH(letter) + '</span>';
-        }
+        const _fItem = { name: item.name, favicon: item.image, homepage: item.homepage || '', url: item.url };
+        art.innerHTML = _stationIconHtml(_fItem);
 
         // Save to history
         api('/radio-music/history', { method: 'POST', body: { item } });
@@ -673,7 +713,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         }
         _playing = null;
         const player = bodyEl?.querySelector('#rm-player');
-        if (player) player.style.display = 'none';
+        if (player) { player.style.display = 'none'; player.classList.remove('rm-buffering'); }
+        bodyEl?.querySelectorAll('.rm-card.rm-buffering').forEach(c => c.classList.remove('rm-buffering'));
         _showEq(false);
     }
 
