@@ -129,6 +129,7 @@ _FRONTEND_FILENAME = {
     'system-settings':  None,
     'security-advisor': 'security_advisor',
     'photos-ai':        'photos_ai',
+    'video-station':    'video_station',
 }
 
 # Maps app_id → (module_filename, blueprint_var, init_func_or_None, socketio_attr_needed)
@@ -168,6 +169,7 @@ _OPTIONAL_BLUEPRINTS = {
     'sticky-notes':    ('stickynotes',     'notes_bp',          None,                False),
     'tickets':         ('tickets',         'tickets_bp',       'init_tickets',      True),
     'photos-ai':       ('photos_ai',       'photos_ai_bp',      None,                True),
+    'video-station':   ('video_station',   'video_station_bp',  None,                True),
 }
 
 # Public alias
@@ -492,6 +494,15 @@ BUILTIN_CATALOG = [
         'icon': 'fa-tasks', 'color': '#06b6d4', 'category': 'Tools', 'admin_only': False,
         'description': 'Kanban — zarządzanie projektami i zadaniami.',
         'apt_deps': [], 'pip_deps': [], 'simple': True,
+    },
+    {
+        'id': 'video-station', 'name': 'Video Station', 'version': '1.0.1',
+        'icon': 'fa-film', 'color': '#7c3aed', 'category': 'Media', 'admin_only': False,
+        'description': 'Biblioteka filmow z miniaturkami, streamingiem i sledzeniem postepu.',
+        'apt_deps': ['ffmpeg'], 'pip_deps': [],
+        'install_endpoint': '/api/video-station/install',
+        'uninstall_endpoint': '/api/video-station/uninstall',
+        'status_endpoint': '/api/video-station/pkg-status',
     },
 ]
 

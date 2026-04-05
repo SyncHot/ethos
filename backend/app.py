@@ -802,6 +802,7 @@ _API_TO_APP = {
     '/api/security-advisor/': 'security-advisor',
     '/api/security/': 'security-advisor',
     '/api/photos-ai/': 'photos-ai',
+    '/api/video-station/': 'video-station',
 }
 
 # Admin-only apps — only role='admin' can access (matches admin_only: True in get_apps)
@@ -903,7 +904,7 @@ def _blueprint_auth_guard():
                         '/api/installer/', '/api/med-assistant/',
                         '/api/encryption/', '/api/cache/', '/api/hardware/',
                         '/api/security-advisor/', '/api/security/',
-                        '/api/photos-ai/')):
+                        '/api/photos-ai/', '/api/video-station/')):
         # Allow unauthenticated access to user auth validation
         if path == '/api/users/auth/validate':
             return
