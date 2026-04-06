@@ -43,16 +43,19 @@ async function api(path, options = {}) {
             showPasswordChangeModal();
             throw new Error('Password change required');
         }
-        // For other 403s, we might want to throw or return data.
-        // Assuming other 403s are handled by caller or just return error json.
-        // But if we consume json here, we need to return it.
         return data;
     }
     const ct = resp.headers.get('content-type') || '';
     if (!ct.includes('application/json')) {
         return { error: 'API not available (non-JSON response)' };
     }
-    return resp.json();
+    const json = await resp.json();
+    // Auto-log backend errors (5xx) that reach the frontend
+    if (resp.status >= 500 && json.error) {
+        logClient('frontend', 'error', `API error: ${options.method || 'GET'} ${path} → ${resp.status}: ${json.error}`,
+            { path, method: options.method || 'GET', status: resp.status });
+    }
+    return json;
 }
 
 // ─────────────────────────── Toast ───────────────────────────
@@ -77,6 +80,10 @@ function toast(message, type = 'info') {
     el.innerHTML = `<i class="fas ${iconClass}"></i><span>${message}</span>`;
     document.getElementById('toast-container').appendChild(el);
     setTimeout(() => _dismissToastElement(el), 3500);
+    // Log errors/warnings to Event Log (only when logged in; 5xx already logged by backend)
+    if ((type === 'error' || type === 'warning') && NAS.token && typeof logClient === 'function') {
+        logClient('frontend', type === 'error' ? 'error' : 'warning', message, { source: 'toast' });
+    }
 }
 
 function toastWithAction(message, type = 'info', actionLabel, actionFn) {
