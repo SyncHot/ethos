@@ -33,6 +33,30 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     const _LS_KEY = 'rm_playback_state';
     let _savePending = false;
 
+    const _POD_GENRES = [
+        {key:'', label:'Wszystkie'}, {key:'truecrime', label:'True Crime'}, {key:'comedy', label:'Komedia'},
+        {key:'news', label:'Wiadomości'}, {key:'society', label:'Społeczeństwo'}, {key:'education', label:'Edukacja'},
+        {key:'technology', label:'Technologia'}, {key:'business', label:'Biznes'}, {key:'health', label:'Zdrowie'},
+        {key:'history', label:'Historia'}, {key:'science', label:'Nauka'}, {key:'sports', label:'Sport'},
+        {key:'music', label:'Muzyka'}, {key:'arts', label:'Sztuka'}, {key:'fiction', label:'Fikcja'},
+        {key:'kids', label:'Dla dzieci'}, {key:'tv', label:'TV i Film'},
+    ];
+    const _POD_COUNTRIES = [
+        {code:'pl',name:'Polska'},{code:'us',name:'USA'},{code:'gb',name:'UK'},{code:'de',name:'Niemcy'},
+        {code:'fr',name:'Francja'},{code:'es',name:'Hiszpania'},{code:'it',name:'Włochy'},
+        {code:'br',name:'Brazylia'},{code:'ca',name:'Kanada'},{code:'au',name:'Australia'},
+        {code:'jp',name:'Japonia'},{code:'se',name:'Szwecja'},{code:'nl',name:'Holandia'},
+    ];
+    const _MUSIC_GENRES = [
+        {q:'top hits 2024 2025', label:'🔥 Hity'},
+        {q:'pop music', label:'Pop'}, {q:'rock music', label:'Rock'},
+        {q:'hip hop rap', label:'Hip-Hop'}, {q:'electronic dance music', label:'Electronic'},
+        {q:'r&b soul music', label:'R&B'}, {q:'jazz music', label:'Jazz'},
+        {q:'classical music', label:'Klasyczna'}, {q:'reggae music', label:'Reggae'},
+        {q:'metal music', label:'Metal'}, {q:'indie alternative', label:'Indie'},
+        {q:'polish music polskie', label:'🇵🇱 Polskie'},
+    ];
+
     function _buildPlaybackState() {
         if (!_playing) return null;
         return {
@@ -752,8 +776,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
             loadSection('most-played');
 
-            // Initialize Google Cast SDK
-            _initCast();
+            // Initialize Google Cast SDK (wrapped so failures don't break the app)
+            try { _initCast(); } catch(e) { _cl('error', 'Cast init failed', { error: e.message }); }
 
             // Restore previous playback state (paused, showing last track)
             _restoreAndShowLastTrack(body);
@@ -1007,21 +1031,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
     /* ── Podcasts Browse ──────────────────────────── */
 
-    const _POD_GENRES = [
-        {key:'', label:'Wszystkie'}, {key:'truecrime', label:'True Crime'}, {key:'comedy', label:'Komedia'},
-        {key:'news', label:'Wiadomości'}, {key:'society', label:'Społeczeństwo'}, {key:'education', label:'Edukacja'},
-        {key:'technology', label:'Technologia'}, {key:'business', label:'Biznes'}, {key:'health', label:'Zdrowie'},
-        {key:'history', label:'Historia'}, {key:'science', label:'Nauka'}, {key:'sports', label:'Sport'},
-        {key:'music', label:'Muzyka'}, {key:'arts', label:'Sztuka'}, {key:'fiction', label:'Fikcja'},
-        {key:'kids', label:'Dla dzieci'}, {key:'tv', label:'TV i Film'},
-    ];
-    const _POD_COUNTRIES = [
-        {code:'pl',name:'Polska'},{code:'us',name:'USA'},{code:'gb',name:'UK'},{code:'de',name:'Niemcy'},
-        {code:'fr',name:'Francja'},{code:'es',name:'Hiszpania'},{code:'it',name:'Włochy'},
-        {code:'br',name:'Brazylia'},{code:'ca',name:'Kanada'},{code:'au',name:'Australia'},
-        {code:'jp',name:'Japonia'},{code:'se',name:'Szwecja'},{code:'nl',name:'Holandia'},
-    ];
-
     async function loadPodcasts(toolbar, content) {
         let _podCountry = localStorage.getItem('rm-pod-country') || 'pl', _podGenre = '';
 
@@ -1253,16 +1262,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     }
 
     /* ── Music (YouTube / yt-dlp) ─────────────────── */
-
-    const _MUSIC_GENRES = [
-        {q:'top hits 2024 2025', label:'🔥 Hity'},
-        {q:'pop music', label:'Pop'}, {q:'rock music', label:'Rock'},
-        {q:'hip hop rap', label:'Hip-Hop'}, {q:'electronic dance music', label:'Electronic'},
-        {q:'r&b soul music', label:'R&B'}, {q:'jazz music', label:'Jazz'},
-        {q:'classical music', label:'Klasyczna'}, {q:'reggae music', label:'Reggae'},
-        {q:'metal music', label:'Metal'}, {q:'indie alternative', label:'Indie'},
-        {q:'polish music polskie', label:'🇵🇱 Polskie'},
-    ];
 
     async function loadMusic(toolbar, content) {
         // Check yt-dlp dependency first
