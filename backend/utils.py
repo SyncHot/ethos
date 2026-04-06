@@ -71,7 +71,8 @@ def safe_path(user_path, *, isolate_home=True, current_user=None, sudo_mode=Fals
     """
     if not user_path:
         return None
-    clean = user_path.strip().replace('\\', '/')
+    # Only strip leading whitespace — trailing spaces can be valid filename chars on Linux
+    clean = user_path.lstrip().replace('\\', '/')
     while '//' in clean:
         clean = clean.replace('//', '/')
     clean = os.path.normpath(clean)
