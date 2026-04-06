@@ -2278,7 +2278,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     // Advance to next track in queue (used by onended, Cast media ended, and error recovery)
     function _advanceQueue() {
         if (_advanceLock) return false;
-        if (_castQueueActive) return false; // Cast queue handles advancement
         if (!_musicQueue.length || _musicQueueIdx < 0) return false;
         _advanceLock = true;
         setTimeout(() => { _advanceLock = false; }, 500);
@@ -2481,15 +2480,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         // Start playback with fallback chain
         tryUrl(0);
 
-        // If casting, send track/queue to Chromecast
-        if (_isCasting) {
-            if (_musicQueue.length > 1 && !_castQueueActive) {
-                _castLoadQueue(_musicQueueIdx);
-            } else if (!_castQueueActive) {
-                _castLoadCurrentTrack();
-            }
-            // If _castQueueActive, Cast queue already manages playback
-        }
+        // If casting, send current track to Chromecast
+        if (_isCasting) _castLoadCurrentTrack();
     }
 
     // Update player bar UI without starting playback (for Cast queue sync)
@@ -2512,28 +2504,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     }
 
     function _skipStation(dir) {
-        // Cast queue mode: use Chromecast queue controls
-        if (_isCasting && _castQueueActive) {
-            const session = cast.framework.CastContext.getInstance().getCurrentSession();
-            const media = session?.getMediaSession();
-            if (media) {
-                const ok = () => {}, fail = (e) => console.warn('Cast skip error:', e);
-                if (dir > 0) media.queueNext(ok, fail);
-                else media.queuePrev(ok, fail);
-                // Optimistic local state update
-                const nextIdx = _musicQueueIdx + dir;
-                if (nextIdx >= 0 && nextIdx < _musicQueue.length) {
-                    _musicQueueIdx = nextIdx;
-                    _playing = _musicQueue[nextIdx];
-                    _updatePlayerBar(_playing);
-                } else if (_repeatMode === 1 && _musicQueue.length > 0) {
-                    _musicQueueIdx = dir > 0 ? 0 : _musicQueue.length - 1;
-                    _playing = _musicQueue[_musicQueueIdx];
-                    _updatePlayerBar(_playing);
-                }
-                return;
-            }
-        }
         // Queue has priority (music tracks, local files, or history list items)
         if (_musicQueue.length > 0 && _musicQueueIdx >= 0) {
             let nextIdx;
@@ -2651,21 +2621,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             const session = cast.framework.CastContext.getInstance().getCurrentSession();
             const media = session?.getMediaSession();
             if (media && media.idleReason === 'FINISHED') {
-                if (_castQueueActive) {
-                    // Cast queue auto-advanced — sync local state
-                    const nextIdx = _musicQueueIdx + 1;
-                    if (nextIdx < _musicQueue.length) {
-                        _musicQueueIdx = nextIdx;
-                        _playing = _musicQueue[nextIdx];
-                        _updatePlayerBar(_playing);
-                    } else if (_repeatMode === 1 && _musicQueue.length > 0) {
-                        _musicQueueIdx = 0;
-                        _playing = _musicQueue[0];
-                        _updatePlayerBar(_playing);
-                    }
-                } else {
-                    _advanceQueue();
-                }
+                _advanceQueue();
             }
         }
     }
@@ -2678,30 +2634,14 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             _isCasting = true;
             _syncCastBtnUi(true);
             toast(t('Połączono z Chromecast'), 'success');
-            if (_musicQueue.length > 1) {
-                _castLoadQueue(_musicQueueIdx);
-            } else {
-                _castLoadCurrentTrack();
-            }
+            _castLoadCurrentTrack();
         } else if (state === cast.framework.SessionState.SESSION_ENDED) {
-            const wasCastQueue = _castQueueActive;
-            const castTime = _castPlayer?.currentTime || 0;
             _castSession = null;
             _isCasting = false;
             _castQueueActive = false;
             _syncCastBtnUi(false);
-            if (wasCastQueue && _musicQueue.length > 0 && _musicQueueIdx >= 0 && _musicQueueIdx < _musicQueue.length) {
-                // Resume local playback from Cast position
-                const cur = _musicQueue[_musicQueueIdx];
-                cur._plItem ? _playTrackFromPlaylist(cur) : playMusicTrack(cur);
-                if (castTime > 1 && _audio) {
-                    _audio.addEventListener('canplay', () => {
-                        if (_audio && castTime < _audio.duration) _audio.currentTime = castTime;
-                    }, { once: true });
-                }
-            } else if (_audio) {
-                _audio.volume = _preCastVolume;
-            }
+            // Restore local volume
+            if (_audio) _audio.volume = _preCastVolume;
         }
     }
 
