@@ -571,7 +571,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         <button class="rm-player-btn rm-btn-play" id="rm-play-pause"><i class="fas fa-play"></i></button>
         <button class="rm-player-btn" id="rm-next-btn" title="${t('Następna')}"><i class="fas fa-step-forward"></i></button>
         <button class="rm-player-btn" id="rm-repeat-btn" title="${t('Powtarzaj')}"><i class="fas fa-redo"></i></button>
-        <button class="rm-player-btn rm-cast-btn" id="rm-cast-btn" title="Chromecast" style="display:none"><i class="fab fa-chromecast"></i></button>
+        <button class="rm-player-btn rm-cast-btn" id="rm-cast-btn" title="Chromecast"><i class="fab fa-chromecast"></i></button>
       </div>
       <div class="rm-vol-wrap">
         <i class="fas fa-volume-up"></i>
@@ -2532,10 +2532,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             _castPlayer = new cast.framework.RemotePlayer();
             _castController = new cast.framework.RemotePlayerController(_castPlayer);
 
-            // Show cast button
-            const castBtn = bodyEl?.querySelector('#rm-cast-btn');
-            if (castBtn) castBtn.style.display = '';
-
             ctx.addEventListener(cast.framework.CastContextEventType.SESSION_STATE_CHANGED, (e) => {
                 const state = e.sessionState;
                 if (state === cast.framework.SessionState.SESSION_STARTED ||
@@ -2557,13 +2553,14 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
     function _toggleCast() {
         if (!_castAvailable()) {
-            toast(t('Chromecast niedostępny — użyj przeglądarki Chrome'), 'error');
+            toast('Chromecast — ' + t('wymaga przeglądarki Chrome na tym samym WiFi co Chromecast'), 'info');
             return;
         }
         const ctx = cast.framework.CastContext.getInstance();
         if (_isCasting) {
             ctx.endCurrentSession(true);
         } else {
+            if (!_playing) { toast(t('Najpierw włącz muzykę'), 'info'); return; }
             ctx.requestSession().then(() => {}).catch((err) => {
                 if (err !== 'cancel') console.warn('Cast session error:', err);
             });
@@ -2784,7 +2781,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                     <button class="rm-np-action" id="rm-np-queue-btn"><i class="fas fa-list-ol"></i> ${t('Kolejka')}</button>
                     <button class="rm-np-action" id="rm-np-lyrics"><i class="fas fa-align-left"></i> ${t('Tekst')}</button>
                     <button class="rm-np-action" id="rm-np-addpl"><i class="fas fa-plus"></i> ${t('Playlista')}</button>
-                    <button class="rm-np-action rm-np-cast-action" id="rm-np-cast" style="display:${_castAvailable() ? 'flex' : 'none'}"><i class="fab fa-chromecast"></i> Chromecast</button>
+                    <button class="rm-np-action rm-np-cast-action" id="rm-np-cast"><i class="fab fa-chromecast"></i> Chromecast</button>
                     <button class="rm-np-action" id="rm-np-lock"><i class="fas fa-lock"></i> ${t('Blokada')}</button>
                     <button class="rm-np-action" id="rm-np-close2"><i class="fas fa-times"></i> ${t('Zamknij')}</button>
                 </div>

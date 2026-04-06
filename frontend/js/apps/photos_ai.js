@@ -71,11 +71,11 @@ function _paiShowMain(body, st) {
     + '</div>'
     + '<div class="pai-sidebar-section">'
     + '<div class="pai-sidebar-title">' + t('Skanowanie') + '</div>'
-    + '<button class="btn btn-sm btn-primary pai-scan-btn" onclick="_paiStartScan()">'
-    + '<i class="fa-solid fa-satellite-dish"></i> ' + t('Skanuj') + '</button>'
+    + '<div class="pai-scan-controls" id="pai-scan-controls"></div>'
     + '<div class="pai-scan-progress" style="display:none">'
     + '<div class="pai-progress-bar"><div class="pai-progress-fill"></div></div>'
     + '<div class="pai-progress-text"></div></div>'
+    + '<div class="pai-scan-settings" id="pai-scan-settings"></div>'
     + '</div></div>'
     + '<div class="pai-main" id="pai-main"></div></div>';
 
@@ -91,7 +91,8 @@ function _paiShowMain(body, st) {
     NAS.socket.on('photos_ai_progress', _paiOnProgress);
     NAS.socket.on('photos_ai_done', _paiOnDone);
   }
-  if (st.scanning) _paiPollScan();
+  _paiRefreshScanUI(st.scanning);
+  _paiLoadSettings();
   _paiLoadView('dashboard');
 }
 
@@ -264,13 +265,88 @@ function _paiGoBack() {
   if (active) _paiLoadView(active.dataset.view);
 }
 
+async function _paiRefreshScanUI(scanning) {
+  var ctrl = document.getElementById('pai-scan-controls');
+  if (!ctrl) return;
+  // Fetch current state from server
+  var st = null;
+  try { st = await api('/photos-ai/scan-status'); } catch(e) {}
+  var running = (st && st.running) || scanning;
+  var paused = st && st.paused;
+  if (running && paused) {
+    ctrl.innerHTML =
+      '<div class="pai-scan-status"><i class="fa-solid fa-pause" style="color:var(--warning-color)"></i> ' + t('Wstrzymano') + '</div>'
+      + '<div class="pai-scan-btn-row">'
+      + '<button class="btn btn-sm btn-primary" onclick="_paiResumeScan()"><i class="fa-solid fa-play"></i> ' + t('Wznów') + '</button>'
+      + '<button class="btn btn-sm btn-danger" onclick="_paiStopScan()"><i class="fa-solid fa-stop"></i> ' + t('Zatrzymaj') + '</button>'
+      + '</div>';
+    var prog = document.querySelector('.pai-scan-progress');
+    if (prog) prog.style.display = 'block';
+  } else if (running) {
+    ctrl.innerHTML =
+      '<div class="pai-scan-status"><i class="fa-solid fa-spinner fa-spin" style="color:var(--accent-color)"></i> ' + t('Skanowanie...') + '</div>'
+      + '<div class="pai-scan-btn-row">'
+      + '<button class="btn btn-sm btn-warning" onclick="_paiPauseScan()"><i class="fa-solid fa-pause"></i> ' + t('Pauza') + '</button>'
+      + '<button class="btn btn-sm btn-danger" onclick="_paiStopScan()"><i class="fa-solid fa-stop"></i> ' + t('Zatrzymaj') + '</button>'
+      + '</div>';
+    var prog = document.querySelector('.pai-scan-progress');
+    if (prog) prog.style.display = 'block';
+  } else {
+    ctrl.innerHTML =
+      '<div class="pai-scan-btn-row">'
+      + '<button class="btn btn-sm btn-primary" onclick="_paiStartScan()"><i class="fa-solid fa-satellite-dish"></i> ' + t('Skanuj') + '</button>'
+      + '<button class="btn btn-sm" onclick="_paiRescanFresh()" title="' + t('Wyczyść historię i skanuj od nowa') + '"><i class="fa-solid fa-arrows-rotate"></i> ' + t('Od nowa') + '</button>'
+      + '</div>';
+    var prog = document.querySelector('.pai-scan-progress');
+    if (prog) prog.style.display = 'none';
+  }
+}
+
+async function _paiLoadSettings() {
+  var el = document.getElementById('pai-scan-settings');
+  if (!el) return;
+  var d = await api('/photos-ai/ai-settings');
+  var auto = d.auto_scan !== false;
+  el.innerHTML =
+    '<label class="pai-setting-row" title="' + t('Automatycznie wznawiaj skanowanie po restarcie serwera') + '">'
+    + '<input type="checkbox" id="pai-auto-scan" ' + (auto ? 'checked' : '') + '>'
+    + '<span>' + t('Auto-skan po restarcie') + '</span></label>';
+  document.getElementById('pai-auto-scan').addEventListener('change', async function() {
+    await api('/photos-ai/ai-settings', { method: 'POST', body: JSON.stringify({ auto_scan: this.checked }), headers: { 'Content-Type': 'application/json' } });
+    toast(t('Ustawienie zapisane'), 'success');
+  });
+}
+
 async function _paiStartScan() {
-  var btn = document.querySelector('.pai-scan-btn');
-  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> ' + t('Skanowanie...'); }
   var r = await api('/photos-ai/scan', { method: 'POST' });
-  if (r.error) { toast(r.error, 'error'); if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-satellite-dish"></i> ' + t('Skanuj'); } return; }
-  var prog = document.querySelector('.pai-scan-progress');
-  if (prog) prog.style.display = 'block';
+  if (r.error) { toast(r.error, 'error'); return; }
+  _paiRefreshScanUI(true);
+}
+
+async function _paiPauseScan() {
+  var r = await api('/photos-ai/pause-scan', { method: 'POST' });
+  if (r.error) { toast(r.error, 'error'); return; }
+  _paiRefreshScanUI(true);
+}
+
+async function _paiResumeScan() {
+  var r = await api('/photos-ai/resume-scan', { method: 'POST' });
+  if (r.error) { toast(r.error, 'error'); return; }
+  _paiRefreshScanUI(true);
+}
+
+async function _paiStopScan() {
+  var r = await api('/photos-ai/stop-scan', { method: 'POST' });
+  if (r.error) { toast(r.error, 'error'); return; }
+  _paiRefreshScanUI(false);
+}
+
+async function _paiRescanFresh() {
+  if (!confirm(t('Czy na pewno chcesz usunąć historię skanowania i skanować wszystkie zdjęcia od nowa?'))) return;
+  var r = await api('/photos-ai/rescan', { method: 'POST' });
+  if (r.error) { toast(r.error, 'error'); return; }
+  toast(t('Reskan od nowa rozpoczęty'), 'success');
+  _paiRefreshScanUI(true);
 }
 
 function _paiOnProgress(data) {
@@ -281,10 +357,7 @@ function _paiOnProgress(data) {
 }
 
 function _paiOnDone(data) {
-  var btn = document.querySelector('.pai-scan-btn');
-  if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-satellite-dish"></i> ' + t('Skanuj'); }
-  var prog = document.querySelector('.pai-scan-progress');
-  if (prog) prog.style.display = 'none';
+  _paiRefreshScanUI(false);
   toast(t('Skanowanie zakonczone') + ': ' + data.total_processed + ' ' + t('zdjec') + ', '
     + data.faces + ' ' + t('twarzy') + ', ' + data.tags + ' ' + t('tagow') + ', '
     + data.people + ' ' + t('osob') + ' (' + data.duration + 's)', 'success');
@@ -293,10 +366,7 @@ function _paiOnDone(data) {
 }
 
 function _paiPollScan() {
-  var prog = document.querySelector('.pai-scan-progress');
-  if (prog) prog.style.display = 'block';
-  var btn = document.querySelector('.pai-scan-btn');
-  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> ' + t('Skanowanie...'); }
+  _paiRefreshScanUI(true);
 }
 
 function _paiEsc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }

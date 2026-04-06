@@ -5721,7 +5721,13 @@ textarea.app-input { resize: vertical; line-height: 1.5; }
 .pai-nav:hover { background:var(--bg-hover); }
 .pai-nav.active { background:var(--accent-color); color:#fff; }
 .pai-nav i { width:16px; text-align:center; font-size:13px; }
-.pai-scan-btn { width:100%; margin-top:4px; }
+.pai-scan-controls { margin-top:4px; }
+.pai-scan-btn-row { display:flex; gap:6px; margin-top:6px; }
+.pai-scan-btn-row .btn { flex:1; font-size:12px; }
+.pai-scan-status { font-size:12px; display:flex; align-items:center; gap:6px; padding:4px 0; color:var(--text-secondary); }
+.pai-scan-settings { margin-top:10px; border-top:1px solid var(--border-color); padding-top:8px; }
+.pai-setting-row { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text-secondary); cursor:pointer; }
+.pai-setting-row input[type="checkbox"] { margin:0; }
 .pai-scan-progress { margin-top:8px; }
 .pai-progress-bar { height:4px; background:var(--bg-tertiary); border-radius:2px; overflow:hidden; }
 .pai-progress-fill { height:100%; width:0; background:var(--accent-color); border-radius:2px; transition:width .3s; }

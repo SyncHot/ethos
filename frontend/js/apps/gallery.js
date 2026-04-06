@@ -120,9 +120,7 @@ async function renderGallery(body, launchOpts) {
         </div>
         <div class="gal-sidebar-section gal-ai-section">
           <div class="gal-sidebar-title"><i class="fa-solid fa-brain"></i> ${t('AI')}</div>
-          <button class="btn btn-sm gal-ai-scan-btn" style="width:100%">
-            <i class="fa-solid fa-satellite-dish"></i> ${t('Skanuj twarze')}
-          </button>
+          <div class="gal-ai-controls" id="gal-ai-controls"></div>
           <div class="gal-ai-progress" style="display:none">
             <div class="gal-ai-progress-bar"><div class="gal-ai-progress-fill"></div></div>
             <div class="gal-ai-progress-text"></div>
@@ -241,13 +239,12 @@ async function renderGallery(body, launchOpts) {
     }
   });
 
-  // AI scan button + socket progress
-  body.querySelector('.gal-ai-scan-btn').addEventListener('click', _galStartAiScan);
+  // AI scan controls + socket progress
   if (NAS.socket) {
     NAS.socket.on('photos_ai_progress', _galOnAiProgress);
     NAS.socket.on('photos_ai_done', _galOnAiDone);
   }
-  _galCheckAiScanStatus();
+  _galRefreshAiControls();
 
   // Load sources then initial data
   await _galLoadSources();
@@ -976,19 +973,67 @@ function _galShowMoveModal(people, selectedFaces, currentPid, container) {
 
 /* ━━━━  AI SCAN CONTROLS  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 
-async function _galStartAiScan() {
-  const btn = GAL.root.querySelector('.gal-ai-scan-btn');
-  btn.disabled = true;
-  btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ${t('Skanowanie…')}`;
-  const r = await api('/photos-ai/scan', { method: 'POST' });
-  if (r.error) {
-    toast(r.error, 'error');
-    btn.disabled = false;
-    btn.innerHTML = `<i class="fa-solid fa-satellite-dish"></i> ${t('Skanuj twarze')}`;
-    return;
+async function _galRefreshAiControls() {
+  const ctrl = GAL.root?.querySelector('#gal-ai-controls');
+  if (!ctrl) return;
+  let st = null;
+  try { st = await api('/photos-ai/scan-status'); } catch(e) {}
+  const running = st && st.running;
+  const paused = st && st.paused;
+  if (running && paused) {
+    ctrl.innerHTML =
+      `<div style="font-size:12px;color:var(--warning-color);margin-bottom:4px"><i class="fa-solid fa-pause"></i> ${t('Wstrzymano')}</div>`
+      + `<div style="display:flex;gap:4px">`
+      + `<button class="btn btn-sm btn-primary" style="flex:1;font-size:11px" onclick="_galResumeAiScan()"><i class="fa-solid fa-play"></i> ${t('Wznów')}</button>`
+      + `<button class="btn btn-sm btn-danger" style="flex:1;font-size:11px" onclick="_galStopAiScan()"><i class="fa-solid fa-stop"></i> ${t('Stop')}</button>`
+      + `</div>`;
+    _galOnAiProgress(st);
+  } else if (running) {
+    ctrl.innerHTML =
+      `<div style="font-size:12px;color:var(--accent-color);margin-bottom:4px"><i class="fa-solid fa-spinner fa-spin"></i> ${t('Skanowanie…')}</div>`
+      + `<div style="display:flex;gap:4px">`
+      + `<button class="btn btn-sm btn-warning" style="flex:1;font-size:11px" onclick="_galPauseAiScan()"><i class="fa-solid fa-pause"></i> ${t('Pauza')}</button>`
+      + `<button class="btn btn-sm btn-danger" style="flex:1;font-size:11px" onclick="_galStopAiScan()"><i class="fa-solid fa-stop"></i> ${t('Stop')}</button>`
+      + `</div>`;
+    _galOnAiProgress(st);
+  } else {
+    ctrl.innerHTML =
+      `<div style="display:flex;gap:4px">`
+      + `<button class="btn btn-sm" style="flex:1;font-size:11px" onclick="_galStartAiScan()"><i class="fa-solid fa-satellite-dish"></i> ${t('Skanuj')}</button>`
+      + `<button class="btn btn-sm" style="flex:1;font-size:11px" onclick="_galRescanFresh()" title="${t('Od nowa')}"><i class="fa-solid fa-arrows-rotate"></i> ${t('Od nowa')}</button>`
+      + `</div>`;
+    const prog = GAL.root?.querySelector('.gal-ai-progress');
+    if (prog) prog.style.display = 'none';
   }
-  const prog = GAL.root.querySelector('.gal-ai-progress');
-  if (prog) prog.style.display = 'block';
+}
+
+async function _galStartAiScan() {
+  const r = await api('/photos-ai/scan', { method: 'POST' });
+  if (r.error) { toast(r.error, 'error'); return; }
+  _galRefreshAiControls();
+}
+
+async function _galPauseAiScan() {
+  await api('/photos-ai/pause-scan', { method: 'POST' });
+  _galRefreshAiControls();
+}
+
+async function _galResumeAiScan() {
+  await api('/photos-ai/resume-scan', { method: 'POST' });
+  _galRefreshAiControls();
+}
+
+async function _galStopAiScan() {
+  await api('/photos-ai/stop-scan', { method: 'POST' });
+  _galRefreshAiControls();
+}
+
+async function _galRescanFresh() {
+  if (!confirm(t('Usunąć historię skanowania i skanować od nowa?'))) return;
+  const r = await api('/photos-ai/rescan', { method: 'POST' });
+  if (r.error) { toast(r.error, 'error'); return; }
+  toast(t('Reskan od nowa rozpoczęty'), 'success');
+  _galRefreshAiControls();
 }
 
 function _galOnAiProgress(data) {
@@ -1003,26 +1048,9 @@ function _galOnAiProgress(data) {
 }
 
 function _galOnAiDone(data) {
-  const btn = GAL.root?.querySelector('.gal-ai-scan-btn');
-  if (btn) {
-    btn.disabled = false;
-    btn.innerHTML = `<i class="fa-solid fa-satellite-dish"></i> ${t('Skanuj twarze')}`;
-  }
-  const prog = GAL.root?.querySelector('.gal-ai-progress');
-  if (prog) prog.style.display = 'none';
+  _galRefreshAiControls();
   toast(`${t('Skan AI zakończony')}: ${data.total_processed} ${t('zdjęć')}, ${data.faces} ${t('twarzy')}, ${data.people} ${t('osób')}`, 'success');
   if (GAL.view === 'people') _galLoadPeople();
-}
-
-async function _galCheckAiScanStatus() {
-  try {
-    const st = await api('/photos-ai/scan-status');
-    if (st.running) {
-      const btn = GAL.root?.querySelector('.gal-ai-scan-btn');
-      if (btn) { btn.disabled = true; btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ${t('Skanowanie…')}`; }
-      _galOnAiProgress(st);
-    }
-  } catch(e) {}
 }
 
 /* ━━━━  TAGS VIEW  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
