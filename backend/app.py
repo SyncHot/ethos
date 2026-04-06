@@ -109,7 +109,7 @@ from blueprints.installer import installer_bp
 try:
     from blueprints.ups import _ups_status
 except ImportError:
-    _ups_status = lambda: {}
+    _ups_status = {}
 from blueprints.power import power_bp
 from blueprints.encryption import encryption_bp
 from blueprints.ssd_cache import ssd_cache_bp
