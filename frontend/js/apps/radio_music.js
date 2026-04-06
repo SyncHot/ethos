@@ -2602,27 +2602,36 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     /* ── Chromecast / Google Cast SDK ──────────────────── */
 
     function _initCast() {
-        // Define callback BEFORE loading SDK script
-        window['__onGCastApiAvailable'] = function(isAvailable) {
-            _castAvail = isAvailable;
-            if (!isAvailable) return;
+        // Full Cast SDK setup — shared by fresh load and script-already-loaded paths
+        function _setupCastFramework() {
+            _castAvail = true;
             try {
-                cast.framework.CastContext.getInstance().setOptions({
+                const ctx = cast.framework.CastContext.getInstance();
+                ctx.setOptions({
                     receiverApplicationId: chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
                     autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED,
                 });
-                cast.framework.CastContext.getInstance().addEventListener(
-                    cast.framework.CastContextEventType.SESSION_STATE_CHANGED,
-                    _onCastSessionChanged
-                );
-                // Listen for Chromecast player state (track ended → auto-advance)
+                // Remove previous listeners (from previous app open) to prevent duplicates
+                if (window._rmCastSessionCb) {
+                    try { ctx.removeEventListener(cast.framework.CastContextEventType.SESSION_STATE_CHANGED, window._rmCastSessionCb); } catch(e) {}
+                }
+                window._rmCastSessionCb = _onCastSessionChanged;
+                ctx.addEventListener(cast.framework.CastContextEventType.SESSION_STATE_CHANGED, _onCastSessionChanged);
+
                 _castPlayer = new cast.framework.RemotePlayer();
                 _castController = new cast.framework.RemotePlayerController(_castPlayer);
-                _castController.addEventListener(
-                    cast.framework.RemotePlayerEventType.PLAYER_STATE_CHANGED,
-                    _onCastPlayerStateChanged
-                );
+                if (window._rmCastPlayerCb) {
+                    try { _castController.removeEventListener(cast.framework.RemotePlayerEventType.PLAYER_STATE_CHANGED, window._rmCastPlayerCb); } catch(e) {}
+                }
+                window._rmCastPlayerCb = _onCastPlayerStateChanged;
+                _castController.addEventListener(cast.framework.RemotePlayerEventType.PLAYER_STATE_CHANGED, _onCastPlayerStateChanged);
             } catch (e) { console.warn('Cast init error:', e); }
+        }
+
+        // Define callback BEFORE loading SDK script
+        window['__onGCastApiAvailable'] = function(isAvailable) {
+            if (!isAvailable) { _castAvail = false; return; }
+            _setupCastFramework();
         };
         // Load Cast Web Sender SDK (once)
         if (!document.querySelector('script[src*="cast_sender"]')) {
@@ -2631,8 +2640,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             s.async = true;
             document.head.appendChild(s);
         } else if (window.cast && cast.framework) {
-            // SDK already loaded (app re-opened), re-read availability
-            _castAvail = true;
+            // SDK already loaded (app re-opened) — run full setup with new closure
+            _setupCastFramework();
         }
     }
 
