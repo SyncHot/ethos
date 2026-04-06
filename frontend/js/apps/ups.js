@@ -136,10 +136,20 @@ function renderUPSApp(body) {
                 api('/ups/settings')
             ]);
             config = cfg;
+            if (stat && stat.missing) {
+                body.innerHTML = `<div style="padding:40px;text-align:center;color:var(--text-muted)">
+                    <i class="fas fa-plug" style="font-size:3em;margin-bottom:16px;display:block;color:var(--danger)"></i>
+                    <div style="font-size:1.1em;font-weight:600;margin-bottom:8px">${t('Brak narzędzi NUT')}</div>
+                    <div style="font-size:0.9em;margin-bottom:16px">${t('Zainstaluj pakiet nut-client, aby korzystać z UPS.')}</div>
+                    <code style="background:var(--bg-secondary);padding:8px 16px;border-radius:4px;font-size:0.85em">apt-get install nut-client</code>
+                </div>`;
+                return;
+            }
             status = stat;
             updateUI();
         } catch (e) {
             console.error(e);
+            _cl('error', 'loadData failed', e && e.message);
         }
     }
 

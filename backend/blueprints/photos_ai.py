@@ -111,9 +111,10 @@ def _load_persisted_scan():
 
 
 def _get_db():
-    conn = sqlite3.connect(_DB_PATH, timeout=15)
+    conn = sqlite3.connect(_DB_PATH, timeout=30, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute('PRAGMA journal_mode=WAL')
+    conn.execute('PRAGMA busy_timeout=30000')
     conn.execute('PRAGMA foreign_keys=ON')
     return conn
 
@@ -578,7 +579,7 @@ def install_deps():
     def _do():
         steps = []
         try:
-            host_run('apt-get update -qq && apt-get install -y -qq cmake libopenblas-dev liblapack-dev', timeout=120)
+            host_run('apt-get update -qq && apt-get install -y -qq cmake libopenblas-dev liblapack-dev && apt-get clean', timeout=120)
             steps.append('system_deps')
             pip = os.path.join(app_path(), 'venv', 'bin', 'pip')
             host_run(f'{q(pip)} install --quiet face_recognition onnxruntime scipy', timeout=600)
@@ -759,14 +760,21 @@ def merge_people():
     if not src or not tgt or src == tgt:
         return jsonify({'error': 'Podaj source_id i target_id.'}), 400
     conn = _get_db()
-    conn.execute('UPDATE faces SET person_id=? WHERE person_id=?', (tgt, src))
-    cnt = conn.execute(
-        'SELECT COUNT(DISTINCT photo_path) FROM faces WHERE person_id=?',
-        (tgt,)).fetchone()[0]
-    conn.execute('UPDATE people SET photo_count=? WHERE id=?', (cnt, tgt))
-    conn.execute('DELETE FROM people WHERE id=?', (src,))
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute('UPDATE faces SET person_id=? WHERE person_id=?', (tgt, src))
+        cnt = conn.execute(
+            'SELECT COUNT(DISTINCT photo_path) FROM faces WHERE person_id=?',
+            (tgt,)).fetchone()[0]
+        conn.execute('UPDATE people SET photo_count=? WHERE id=?', (cnt, tgt))
+        conn.execute('DELETE FROM people WHERE id=?', (src,))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        if 'locked' in str(e).lower():
+            return jsonify({'error': 'Baza jest zajęta (trwa skanowanie). Spróbuj za chwilę.'}), 503
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
     return jsonify({'ok': True})
 
 @photos_ai_bp.route('/people/<int:pid>/hide', methods=['POST'])

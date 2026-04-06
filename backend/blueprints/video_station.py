@@ -725,7 +725,7 @@ def install_deps():
         try:
             if s:
                 s.emit("vs_install", {"stage": "start", "percent": 10, "message": "Instalowanie ffmpeg..."})
-            host_run("apt-get update -qq && apt-get install -y -qq ffmpeg", timeout=300)
+            host_run("apt-get update -qq && apt-get install -y -qq ffmpeg && apt-get clean", timeout=300)
             if s:
                 s.emit("vs_install", {"stage": "done", "percent": 100, "message": "Gotowe!"})
         except Exception as e:

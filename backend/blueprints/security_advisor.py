@@ -309,7 +309,7 @@ def _fix_enable_firewall():
     return 'Firewall wlaczony (porty 9000, 22)'
 
 def _fix_enable_fail2ban():
-    host_run("apt-get install -y fail2ban 2>/dev/null", timeout=120)
+    host_run("apt-get install -y fail2ban && apt-get clean 2>/dev/null", timeout=120)
     host_run("systemctl enable fail2ban && systemctl start fail2ban", timeout=10)
     return 'Fail2Ban zainstalowany i aktywny'
 

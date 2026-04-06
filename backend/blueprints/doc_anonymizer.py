@@ -99,11 +99,11 @@ def _ensure_deps():
     import shutil
     if not shutil.which('pdftotext'):
         log.info('[doc_anonymizer] Installing poppler-utils')
-        host_run('apt-get install -y -qq poppler-utils', timeout=60)
+        host_run('apt-get install -y -qq poppler-utils && apt-get clean', timeout=60)
 
     if not shutil.which('tesseract'):
         log.info('[doc_anonymizer] Installing Tesseract OCR + Polish language pack')
-        host_run('apt-get install -y -qq tesseract-ocr tesseract-ocr-pol', timeout=120)
+        host_run('apt-get install -y -qq tesseract-ocr tesseract-ocr-pol && apt-get clean', timeout=120)
 
 
 _NER_DELTA_URL = (

@@ -555,7 +555,7 @@ def pkg_status():
 def install_raid_tools():
     """Install mdadm and LVM tools."""
     from host import host_run
-    host_run('apt-get update -qq && apt-get install -y -qq mdadm lvm2', timeout=120)
+    host_run('apt-get update -qq && apt-get install -y -qq mdadm lvm2 && apt-get clean', timeout=120)
     import shutil
     ok = shutil.which('mdadm') is not None
     return jsonify({'ok': ok, 'message': 'mdadm + lvm2 installed' if ok else 'Install failed'})

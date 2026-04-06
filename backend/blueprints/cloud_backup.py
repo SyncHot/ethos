@@ -29,10 +29,9 @@ _lock = threading.Lock()
 
 def _ensure_rclone():
     """Install rclone if not present. Returns (ok, error_msg)."""
-    r = host_run('which rclone', timeout=5)
-    if r.returncode == 0:
+    if host_run('which rclone', timeout=5).returncode == 0:
         return True, None
-    r = host_run('curl -s https://rclone.org/install.sh | sudo bash', timeout=120)
+    r = host_run('curl -s https://rclone.org/install.sh | bash && apt-get clean 2>/dev/null', timeout=120)
     if r.returncode != 0:
         return False, f'Failed to install rclone: {r.stderr.strip()}'
     return True, None
@@ -148,7 +147,7 @@ PROVIDER_TYPES = {
 def list_providers():
     ok, err = _ensure_rclone()
     if not ok:
-        return jsonify({'error': err}), 500
+        return jsonify({'error': err, 'remotes': [], 'not_installed': True}), 503
 
     r = _rclone_cmd('listremotes', timeout=10)
     if r.returncode != 0:

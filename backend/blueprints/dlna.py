@@ -203,7 +203,7 @@ def install_minidlna():
     if _is_installed():
         return jsonify({'status': 'ok', 'installed': True})
     r = host_run(
-        "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y minidlna",
+        "DEBIAN_FRONTEND=noninteractive apt-get install -y minidlna && apt-get clean",
         timeout=120,
     )
     if r.returncode != 0:

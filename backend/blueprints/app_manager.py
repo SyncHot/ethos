@@ -181,7 +181,7 @@ OPTIONAL_BLUEPRINTS = _OPTIONAL_BLUEPRINTS
 
 BUILTIN_CATALOG = [
     {
-        'id': 'surveillance', 'name': 'Surveillance', 'version': '1.0.1',
+        'id': 'surveillance', 'name': 'Surveillance', 'version': '1.0.2',
         'icon': 'fa-video', 'color': '#dc2626', 'category': 'Security', 'admin_only': False,
         'description': 'Monitoring IP kamer z detekcja ruchu i podgladem na zywo.',
         'apt_deps': ['ffmpeg'], 'pip_deps': ['onvif-zeep'],
@@ -190,7 +190,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/surveillance/status',
     },
     {
-        'id': 'ai-chat', 'name': 'AI Assistant', 'version': '1.0.1',
+        'id': 'ai-chat', 'name': 'AI Assistant', 'version': '1.0.2',
         'icon': 'fa-robot', 'color': '#8b5cf6', 'category': 'Tools', 'admin_only': False,
         'description': 'Asystent AI z obsługą GPT, Claude i lokalnych modeli LLM.',
         'apt_deps': [], 'pip_deps': ['openai', 'anthropic', 'huggingface_hub'],
@@ -199,7 +199,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/aichat/status',
     },
     {
-        'id': 'doc-anonymizer', 'name': 'Document Anonymizer', 'version': '1.1.1',
+        'id': 'doc-anonymizer', 'name': 'Document Anonymizer', 'version': '1.1.2',
         'icon': 'fa-user-shield', 'color': '#0ea5e9', 'category': 'Tools', 'admin_only': False,
         'description': 'Anonimizacja dokumentow medycznych PDF/DOCX przy uzyciu polskiego modelu Bielik LLM.',
         'apt_deps': ['poppler-utils', 'tesseract-ocr', 'tesseract-ocr-pol'],
@@ -210,7 +210,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/doc-anonymizer/pkg-status',
     },
     {
-        'id': 'med-assistant', 'name': 'Medical Assistant', 'version': '1.0.0',
+        'id': 'med-assistant', 'name': 'Medical Assistant', 'version': '0.0.2',
         'icon': 'fa-user-md', 'color': '#06b6d4', 'category': 'Tools', 'admin_only': False,
         'description': 'Asystent medyczny -- analiza dokumentacji, interakcje lekowe, skierowania, wytyczne ESC.',
         'apt_deps': ['poppler-utils', 'tesseract-ocr', 'tesseract-ocr-pol'],
@@ -221,7 +221,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/med-assistant/pkg-status',
     },
     {
-        'id': 'gallery', 'name': 'Gallery', 'version': '1.0.2',
+        'id': 'gallery', 'name': 'Gallery', 'version': '1.0.3',
         'icon': 'fa-images', 'color': '#ec4899', 'category': 'Media', 'admin_only': False,
         'description': 'Galeria zdjec i filmow z EXIF, miniaturkami i haslami folderow.',
         'apt_deps': [], 'pip_deps': [],
@@ -230,7 +230,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/gallery/pkg-status',
     },
     {
-        'id': 'download-manager', 'name': 'Download Manager', 'version': '1.0.1',
+        'id': 'download-manager', 'name': 'Download Manager', 'version': '1.0.2',
         'icon': 'fa-cloud-download-alt', 'color': '#10b981', 'category': 'Tools', 'admin_only': False,
         'description': 'Pobieranie plikow z HTTP, torrent, magnet i serwisow premium.',
         'apt_deps': [], 'pip_deps': [],
@@ -239,7 +239,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/downloads/pkg-status',
     },
     {
-        'id': 'printer', 'name': 'Print Server', 'version': '1.0.1',
+        'id': 'printer', 'name': 'Print Server', 'version': '1.0.2',
         'icon': 'fa-print', 'color': '#ef4444', 'category': 'Tools', 'admin_only': True,
         'description': 'Serwer drukowania z automatycznym wykrywaniem drukarek i konwersja PDF.',
         'apt_deps': ['cups', 'cups-browsed', 'libreoffice'], 'pip_deps': [],
@@ -248,7 +248,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/printer/pkg-status',
     },
     {
-        'id': 'docker-manager', 'name': 'Docker Manager', 'version': '1.0.1',
+        'id': 'docker-manager', 'name': 'Docker Manager', 'version': '1.0.2',
         'icon': 'fa-cubes', 'color': '#2496ed', 'category': 'System', 'admin_only': True,
         'description': 'Zarządzanie kontenerami Docker, projektami Compose, obrazami i logami.',
         'apt_deps': [], 'pip_deps': [],
@@ -257,7 +257,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/docker/pkg-status',
     },
     {
-        'id': 'vm-manager', 'name': 'VM Manager', 'version': '1.0.1',
+        'id': 'vm-manager', 'name': 'VM Manager', 'version': '1.0.2',
         'icon': 'fa-desktop', 'color': '#8b5cf6', 'category': 'System', 'admin_only': True,
         'description': 'Maszyny wirtualne QEMU/KVM z migawkami i dostepem VNC.',
         'apt_deps': ['qemu-system-x86', 'qemu-utils', 'ovmf'], 'pip_deps': [],
@@ -266,7 +266,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/vm/pkg-status',
     },
     {
-        'id': 'doc-editor', 'name': 'Documents', 'version': '1.0.1',
+        'id': 'doc-editor', 'name': 'Documents', 'version': '1.0.2',
         'icon': 'fa-file-word', 'color': '#2563eb', 'category': 'Tools', 'admin_only': False,
         'description': 'Tworzenie i edycja dokumentow Word z eksportem do PDF.',
         'apt_deps': ['libreoffice'], 'pip_deps': ['mammoth', 'python-docx'],
@@ -275,7 +275,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/editor/pkg-status',
     },
     {
-        'id': 'code-editor', 'name': 'Code Editor', 'version': '1.0.0',
+        'id': 'code-editor', 'name': 'Code Editor', 'version': '1.0.1',
         'icon': 'fa-code', 'color': '#22d3ee', 'category': 'Tools', 'admin_only': False,
         'description': 'Edytor kodu z podswietlaniem skladni i numerami linii.',
         'apt_deps': [], 'pip_deps': [],
@@ -289,7 +289,7 @@ BUILTIN_CATALOG = [
         'simple': True,
     },
     {
-        'id': 'usb-flasher', 'name': 'USB Creator', 'version': '1.0.1',
+        'id': 'usb-flasher', 'name': 'USB Creator', 'version': '1.0.2',
         'icon': 'fa-usb', 'color': '#a855f7', 'category': 'Tools', 'admin_only': True,
         'description': 'Flashowanie obrazow ISO/IMG na pendrive z monitoringiem postepu.',
         'apt_deps': [], 'pip_deps': [],
@@ -298,7 +298,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/flasher/pkg-status',
     },
     {
-        'id': 'builder', 'name': 'Builder', 'version': '1.0.1',
+        'id': 'builder', 'name': 'Builder', 'version': '1.0.2',
         'icon': 'fa-hammer', 'color': '#f97316', 'category': 'System', 'admin_only': True,
         'description': 'Budowanie wydan EthOS i obrazow systemowych przez interfejs webowy.',
         'apt_deps': ['squashfs-tools', 'genisoimage', 'rsync'], 'pip_deps': [],
@@ -307,7 +307,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/builder/pkg-status',
     },
     {
-        'id': 'disk-repair', 'name': 'Disk Repair', 'version': '1.0.11',
+        'id': 'disk-repair', 'name': 'Disk Repair', 'version': '1.0.12',
         'icon': 'fa-wrench', 'color': '#ef4444', 'category': 'Storage', 'admin_only': True,
         'description': 'Diagnostyka SMART i sprawdzanie systemu plikow z narzedziami naprawczymi.',
         'apt_deps': ['smartmontools', 'e2fsprogs'], 'pip_deps': [],
@@ -316,7 +316,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/diskrepair/pkg-status',
     },
     {
-        'id': 'remote-log', 'name': 'Remote Logs', 'version': '1.0.1',
+        'id': 'remote-log', 'name': 'Remote Logs', 'version': '1.0.2',
         'icon': 'fa-satellite-dish', 'color': '#0891b2', 'category': 'System', 'admin_only': True,
         'description': 'Wysylanie logow diagnostycznych na centralny serwer.',
         'apt_deps': [], 'pip_deps': [],
@@ -325,7 +325,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/remote-log/pkg-status',
     },
     {
-        'id': 'sharing-samba', 'name': 'File Sharing (Samba)', 'version': '1.0.11',
+        'id': 'sharing-samba', 'name': 'File Sharing (Samba)', 'version': '1.0.12',
         'icon': 'fa-windows', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Udostepnianie plikow przez siec (Windows, Mac, Linux).',
         'apt_deps': ['samba'], 'pip_deps': [],
@@ -334,7 +334,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/storage/samba/pkg-status',
     },
     {
-        'id': 'sharing-nfs', 'name': 'NFS', 'version': '1.0.11',
+        'id': 'sharing-nfs', 'name': 'NFS', 'version': '1.0.12',
         'icon': 'fa-network-wired', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Szybkie udostepnianie plikow dla Linux/Unix przez NFS.',
         'apt_deps': ['nfs-kernel-server'], 'pip_deps': [],
@@ -343,7 +343,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/storage/nfs/pkg-status',
     },
     {
-        'id': 'sharing-dlna', 'name': 'DLNA (MiniDLNA)', 'version': '1.0.11',
+        'id': 'sharing-dlna', 'name': 'DLNA (MiniDLNA)', 'version': '1.0.12',
         'icon': 'fa-photo-video', 'color': '#6366f1', 'category': 'Media', 'admin_only': True,
         'description': 'Serwer DLNA do strumieniowania multimediow na TV i odtwarzacze.',
         'apt_deps': ['minidlna'], 'pip_deps': [],
@@ -352,7 +352,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/storage/dlna/pkg-status',
     },
     {
-        'id': 'sharing-webdav', 'name': 'WebDAV', 'version': '1.0.11',
+        'id': 'sharing-webdav', 'name': 'WebDAV', 'version': '1.0.12',
         'icon': 'fa-globe', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Serwer WebDAV z dostepem do plikow przez HTTP.',
         'apt_deps': ['lighttpd'], 'pip_deps': [],
@@ -361,7 +361,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/storage/webdav/pkg-status',
     },
     {
-        'id': 'sharing-sftp', 'name': 'SFTP', 'version': '1.0.11',
+        'id': 'sharing-sftp', 'name': 'SFTP', 'version': '1.0.12',
         'icon': 'fa-lock', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Bezpieczny transfer plikow przez SSH.',
         'apt_deps': ['openssh-server'], 'pip_deps': [],
@@ -370,7 +370,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/storage/sftp/pkg-status',
     },
     {
-        'id': 'sharing-ftp', 'name': 'FTP', 'version': '1.0.11',
+        'id': 'sharing-ftp', 'name': 'FTP', 'version': '1.0.12',
         'icon': 'fa-upload', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Klasyczny serwer FTP z obsługa vsftpd.',
         'apt_deps': ['vsftpd'], 'pip_deps': [],
@@ -379,7 +379,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/storage/ftp/pkg-status',
     },
     {
-        'id': 'domains-manager', 'name': 'Domains & SSL', 'version': '1.0.1',
+        'id': 'domains-manager', 'name': 'Domains & SSL', 'version': '1.0.2',
         'icon': 'fa-globe', 'color': '#059669', 'category': 'Network', 'admin_only': True,
         'description': 'Domeny z certyfikatami SSL, reverse proxy i Dynamic DNS.',
         'apt_deps': [], 'pip_deps': [],
@@ -388,7 +388,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/ddns/pkg-status',
     },
     {
-        'id': 'websites', 'name': 'Websites', 'version': '1.0.1',
+        'id': 'websites', 'name': 'Websites', 'version': '1.0.2',
         'icon': 'fa-globe-americas', 'color': '#14b8a6', 'category': 'Tools', 'admin_only': False,
         'description': 'Kreator stron z CMS, szablonami i edytorem wizualnym.',
         'apt_deps': [], 'pip_deps': [],
@@ -397,7 +397,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/websites/pkg-status',
     },
     {
-        'id': 'cloud-backup', 'name': 'Cloud Backup', 'version': '1.0.1',
+        'id': 'cloud-backup', 'name': 'Cloud Backup', 'version': '1.0.2',
         'icon': 'fa-cloud-upload-alt', 'color': '#0ea5e9', 'category': 'Storage', 'admin_only': True,
         'description': 'Backup do S3, Backblaze, Google Drive, WebDAV i SFTP z harmonogramem.',
         'apt_deps': ['rclone'], 'pip_deps': [],
@@ -406,7 +406,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/cloud-backup/pkg-status',
     },
     {
-        'id': 'raid-lvm', 'name': 'RAID / LVM', 'version': '1.0.10',
+        'id': 'raid-lvm', 'name': 'RAID / LVM', 'version': '1.0.11',
         'icon': 'fa-layer-group', 'color': '#f59e0b', 'category': 'Storage', 'admin_only': True,
         'description': 'Macierze RAID z mdadm i wolumeny LVM.',
         'apt_deps': ['mdadm', 'lvm2'], 'pip_deps': [],
@@ -415,7 +415,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/raid/pkg-status',
     },
     {
-        'id': 'wireguard', 'name': 'VPN (WireGuard)', 'version': '1.0.1',
+        'id': 'wireguard', 'name': 'VPN (WireGuard)', 'version': '1.0.2',
         'icon': 'fa-shield-halved', 'color': '#7c3aed', 'category': 'Network', 'admin_only': True,
         'description': 'Serwer VPN WireGuard z peerami i kodami QR.',
         'apt_deps': ['wireguard', 'wireguard-tools', 'qrencode'], 'pip_deps': [],
@@ -424,7 +424,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/wireguard/pkg-status',
     },
     {
-        'id': 'antivirus', 'name': 'Antivirus (ClamAV)', 'version': '1.0.1',
+        'id': 'antivirus', 'name': 'Antivirus (ClamAV)', 'version': '1.0.2',
         'icon': 'fa-shield-virus', 'color': '#16a34a', 'category': 'Security', 'admin_only': True,
         'description': 'ClamAV antywirus — skanowanie na zadanie i zaplanowane.',
         'apt_deps': ['clamav', 'clamav-freshclam'], 'pip_deps': [],
@@ -433,14 +433,14 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/antivirus/pkg-status',
     },
     {
-        'id': 'security-advisor', 'name': 'Security Advisor', 'version': '1.0.0',
+        'id': 'security-advisor', 'name': 'Security Advisor', 'version': '0.0.2',
         'icon': 'fa-user-shield', 'color': '#059669', 'category': 'Security', 'admin_only': True,
         'description': 'Skaner bezpieczenstwa systemu z wynikiem 0-100 i automatycznymi poprawkami.',
         'apt_deps': [], 'pip_deps': [], 'simple': True, 'core': True,
         'status_endpoint': '/api/security-advisor/pkg-status',
     },
     {
-        'id': 'photos-ai', 'name': 'Photos AI', 'version': '0.0.4',
+        'id': 'photos-ai', 'name': 'Photos AI', 'version': '0.0.5',
         'icon': 'fa-brain', 'color': '#8b5cf6', 'category': 'Media', 'admin_only': False,
         'description': 'Rozpoznawanie twarzy, wykrywanie obiektow i inteligentne albumy dla Galerii.',
         'apt_deps': ['cmake', 'libopenblas-dev'], 'pip_deps': ['face_recognition', 'onnxruntime', 'scipy'],
@@ -450,7 +450,7 @@ BUILTIN_CATALOG = [
         'hidden': True,
     },
     {
-        'id': 'rollback', 'name': 'Rollback', 'version': '1.0.1',
+        'id': 'rollback', 'name': 'Rollback', 'version': '1.0.2',
         'icon': 'fa-history', 'color': '#f97316', 'category': 'System', 'admin_only': True,
         'description': 'Migawki systemu i przywracanie poprzednich wersji.',
         'apt_deps': [], 'pip_deps': [], 'simple': True,
@@ -468,25 +468,25 @@ BUILTIN_CATALOG = [
         'apt_deps': [], 'pip_deps': [], 'simple': True, 'core': True,
     },
     {
-        'id': 'cron', 'name': 'Scheduler', 'version': '1.0.1',
+        'id': 'cron', 'name': 'Scheduler', 'version': '1.0.2',
         'icon': 'fa-clock', 'color': '#6366f1', 'category': 'System', 'admin_only': True,
         'description': 'Harmonogram zadan z zarządzaniem cron jobs.',
         'apt_deps': [], 'pip_deps': [], 'simple': True,
     },
     {
-        'id': 'ups', 'name': 'UPS', 'version': '1.0.1',
+        'id': 'ups', 'name': 'UPS', 'version': '1.0.2',
         'icon': 'fa-battery-full', 'color': '#f59e0b', 'category': 'System', 'admin_only': True,
         'description': 'Status baterii UPS i zarządzanie bezpiecznym wyłączeniem.',
         'apt_deps': [], 'pip_deps': [], 'simple': True,
     },
     {
-        'id': 'family-hub', 'name': 'Family Hub', 'version': '1.0.1',
+        'id': 'family-hub', 'name': 'Family Hub', 'version': '1.0.2',
         'icon': 'fa-house-user', 'color': '#f472b6', 'category': 'Tools', 'admin_only': False,
         'description': 'Tablica ogloszen, listy zakupow, zadania i kalendarz rodzinny.',
         'apt_deps': [], 'pip_deps': [], 'simple': True,
     },
     {
-        'id': 'sticky-notes', 'name': 'Sticky Notes', 'version': '1.0.1',
+        'id': 'sticky-notes', 'name': 'Sticky Notes', 'version': '1.0.2',
         'icon': 'fa-sticky-note', 'color': '#fbbf24', 'category': 'Tools', 'admin_only': False,
         'description': 'Szybkie notatki przyklejane do pulpitu.',
         'apt_deps': [], 'pip_deps': [], 'simple': True,
@@ -498,7 +498,7 @@ BUILTIN_CATALOG = [
         'apt_deps': [], 'pip_deps': [], 'simple': True,
     },
     {
-        'id': 'video-station', 'name': 'Video Station', 'version': '0.0.2',
+        'id': 'video-station', 'name': 'Video Station', 'version': '0.0.3',
         'icon': 'fa-film', 'color': '#7c3aed', 'category': 'Media', 'admin_only': False,
         'description': 'Biblioteka filmow z miniaturkami, streamingiem i sledzeniem postepu.',
         'apt_deps': ['ffmpeg'], 'pip_deps': [],
@@ -507,7 +507,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/video-station/pkg-status',
     },
     {
-        'id': 'radio-music', 'name': 'Radio & Music', 'version': '1.0.0',
+        'id': 'radio-music', 'name': 'Radio & Music', 'version': '0.0.2',
         'icon': 'fa-broadcast-tower', 'color': '#10b981', 'category': 'Media', 'admin_only': False,
         'description': 'Radio internetowe z całego świata, podcasty i odtwarzacz muzyki.',
         'apt_deps': ['ffmpeg'], 'pip_deps': ['yt-dlp'],
@@ -812,32 +812,36 @@ def _get_github_app_base():
     return f'https://raw.githubusercontent.com/{repo}/main/apps'
 
 
-_MIN_FREE_MB = 100  # minimum free space on root before apt/pip install
+_MIN_FREE_MB = 300  # minimum free space on root before apt/pip install
 
 
 def _ensure_root_space(emit_fn):
-    """Check root partition free space; auto-clean caches if low."""
+    """Check root partition free space; proactively clean caches before install."""
+    _PROACTIVE_CLEAN_MB = 600  # always clean caches if less than this
     try:
         st = os.statvfs('/')
         free_mb = (st.f_bavail * st.f_frsize) / (1024 * 1024)
-        if free_mb >= _MIN_FREE_MB:
-            return True
 
-        log.warning('[app_manager] Low root space: %.0f MB free, cleaning caches...', free_mb)
-        emit_fn({'stage': 'cleanup', 'percent': 23,
-                 'message': f'Mało miejsca ({free_mb:.0f} MB) — czyszczenie cache...',
-                 'status': 'running'})
+        if free_mb < _PROACTIVE_CLEAN_MB:
+            log.info('[app_manager] Root space %.0f MB < %d MB — proactive cache cleanup', free_mb, _PROACTIVE_CLEAN_MB)
+            emit_fn({'stage': 'cleanup', 'percent': 23,
+                     'message': f'Czyszczenie cache ({free_mb:.0f} MB wolne)...',
+                     'status': 'running'})
 
-        host_run('apt-get clean 2>/dev/null', timeout=30)
-        host_run('rm -rf /root/.cache/pip 2>/dev/null', timeout=10)
-        # Remove stale __pycache__ from venv (safe, regenerated on import)
-        venv_dir = os.path.join(os.environ.get('ETHOS_ROOT', '/opt/ethos'), 'venv')
-        host_run(f'find {q(venv_dir)} -name __pycache__ -type d -exec rm -rf {{}} + 2>/dev/null',
-                 timeout=30)
+            host_run('apt-get clean 2>/dev/null', timeout=30)
+            host_run('apt-get autoremove -y 2>/dev/null', timeout=60)
+            host_run('rm -rf /root/.cache/pip /tmp/pip-* 2>/dev/null', timeout=10)
+            # Remove stale __pycache__ from venv (safe, regenerated on import)
+            venv_dir = os.path.join(os.environ.get('ETHOS_ROOT', '/opt/ethos'), 'venv')
+            host_run(f'find {q(venv_dir)} -name __pycache__ -type d -exec rm -rf {{}} + 2>/dev/null',
+                     timeout=30)
 
-        st = os.statvfs('/')
-        free_mb = (st.f_bavail * st.f_frsize) / (1024 * 1024)
-        log.info('[app_manager] After cleanup: %.0f MB free', free_mb)
+            st = os.statvfs('/')
+            free_mb = (st.f_bavail * st.f_frsize) / (1024 * 1024)
+            log.info('[app_manager] After cleanup: %.0f MB free', free_mb)
+            emit_fn({'stage': 'cleanup', 'percent': 24,
+                     'message': f'Po czyszczeniu: {free_mb:.0f} MB wolne',
+                     'status': 'running'})
 
         if free_mb < _MIN_FREE_MB:
             emit_fn({'stage': 'error', 'percent': 0,
@@ -845,9 +849,7 @@ def _ensure_root_space(emit_fn):
                                 'Zwolnij miejsce na partycji root.',
                      'status': 'error'})
             return False
-        emit_fn({'stage': 'cleanup', 'percent': 24,
-                 'message': f'Zwolniono miejsce ({free_mb:.0f} MB wolne)',
-                 'status': 'running'})
+
     except Exception as e:
         log.warning('[app_manager] Space check error: %s', e)
     return True
@@ -906,6 +908,7 @@ def _install_apt_deps(deps, emit_fn):
                  'message': f'apt: {detail}', 'status': 'error'})
         return False
     emit_fn({'stage': 'deps_apt', 'message': 'Pakiety apt zainstalowane', 'percent': 42, 'status': 'running'})
+    host_run('apt-get clean 2>/dev/null && apt-get autoremove -y 2>/dev/null', timeout=60)
     return True
 
 
@@ -964,6 +967,7 @@ def _install_pip_deps(deps, emit_fn):
                  'message': f'pip: {detail}', 'status': 'error'})
         return False
     emit_fn({'stage': 'deps_pip', 'message': 'Pakiety pip zainstalowane', 'percent': 57, 'status': 'running'})
+    host_run(q(pip) + ' cache purge 2>/dev/null', timeout=30)
     return True
 
 
@@ -1457,7 +1461,7 @@ def get_catalog_endpoint():
             continue
         inst = installed.get(app['id'], {})
         item = dict(app)
-        item['installed'] = app['id'] in installed
+        item['installed'] = isinstance(inst, dict) and bool(inst)
         item['installed_version'] = inst.get('version', '')
         item['installed_source'] = inst.get('source', '')
         item['installed_at'] = inst.get('installed_at', '')
