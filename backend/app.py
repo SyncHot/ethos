@@ -9878,9 +9878,9 @@ def serve_index():
 @app.route('/<path:path>')
 def serve_static(path):
     # PWA files must be served from root scope
-    if path in ['manifest.json', 'sw.js', 'offline.html']:
+    if path in ['manifest.json', 'manifest-music.json', 'sw.js', 'offline.html']:
         resp = send_from_directory(app.static_folder, path)
-        if path == 'manifest.json':
+        if path.endswith('manifest.json') or path.endswith('manifest-music.json'):
             resp.headers['Content-Type'] = 'application/manifest+json'
         return resp
 

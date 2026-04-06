@@ -498,7 +498,7 @@ BUILTIN_CATALOG = [
         'apt_deps': [], 'pip_deps': [], 'simple': True,
     },
     {
-        'id': 'video-station', 'name': 'Video Station', 'version': '1.0.1',
+        'id': 'video-station', 'name': 'Video Station', 'version': '0.0.2',
         'icon': 'fa-film', 'color': '#7c3aed', 'category': 'Media', 'admin_only': False,
         'description': 'Biblioteka filmow z miniaturkami, streamingiem i sledzeniem postepu.',
         'apt_deps': ['ffmpeg'], 'pip_deps': [],
@@ -510,7 +510,7 @@ BUILTIN_CATALOG = [
         'id': 'radio-music', 'name': 'Radio & Music', 'version': '1.0.0',
         'icon': 'fa-broadcast-tower', 'color': '#10b981', 'category': 'Media', 'admin_only': False,
         'description': 'Radio internetowe z całego świata, podcasty i odtwarzacz muzyki.',
-        'apt_deps': [], 'pip_deps': [],
+        'apt_deps': ['ffmpeg'], 'pip_deps': ['yt-dlp'],
         'install_endpoint': '/api/radio-music/install',
         'uninstall_endpoint': '/api/radio-music/uninstall',
         'status_endpoint': '/api/radio-music/pkg-status',

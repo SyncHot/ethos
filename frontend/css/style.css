@@ -6936,6 +6936,8 @@ textarea:disabled,
     .taskbar {
         height: 44px;
         padding: 0 8px;
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+        transition: transform 0.25s ease, opacity 0.25s ease;
     }
     .taskbar-hostname {
         display: none;
@@ -6971,6 +6973,24 @@ textarea:disabled,
     }
     .fm-content {
         margin-left: 0 !important;
+    }
+    /* Fullscreen app mode — hides taskbar & window chrome */
+    body.app-fullscreen-active .taskbar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        transform: translateY(-100%);
+        opacity: 0;
+        pointer-events: none;
+    }
+    body.app-fullscreen-active .window {
+        height: 100vh !important;
+        height: 100dvh !important;
+        padding-bottom: 0;
+    }
+    body.app-fullscreen-active .window .window-header {
+        display: none;
     }
 }
 

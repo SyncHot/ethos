@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#1a1a2e">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="manifest" href="/manifest-music.json">
+    <link rel="apple-touch-icon" href="/img/icon-music-192.png">
+    <title>Radio & Music — EthOS</title>
+    <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f172a;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100dvh;padding:32px;text-align:center}
+        .icon{width:120px;height:120px;border-radius:24px;margin-bottom:24px;box-shadow:0 8px 32px rgba(29,185,84,.3)}
+        h1{font-size:24px;margin-bottom:8px}
+        p{color:rgba(255,255,255,.6);font-size:14px;line-height:1.6;max-width:300px;margin-bottom:32px}
+        .btn{padding:16px 40px;border-radius:14px;border:none;font-size:16px;font-weight:600;cursor:pointer;width:280px;margin-bottom:12px;transition:transform .1s}
+        .btn:active{transform:scale(.97)}
+        .btn-primary{background:#1DB954;color:#fff}
+        .btn-secondary{background:rgba(255,255,255,.1);color:rgba(255,255,255,.7)}
+        .step{display:none;color:rgba(255,255,255,.7);font-size:14px;line-height:2;text-align:left;max-width:300px;margin-bottom:24px;background:rgba(255,255,255,.05);border-radius:12px;padding:16px 20px}
+        .step b{color:#fff}
+        .step .or{display:block;margin:8px 0;color:rgba(255,255,255,.35);font-size:12px;text-transform:uppercase}
+        .installed{display:none}
+        .installed .check{font-size:64px;margin-bottom:16px}
+    </style>
+</head>
+<body>
+    <div id="main">
+        <img class="icon" src="/img/icon-music-512.png" alt="Radio & Music">
+        <h1>Radio & Music</h1>
+        <p>Zainstaluj jako aplikację na ekranie głównym</p>
+        <button class="btn btn-primary" id="install-btn">Zainstaluj na pulpicie</button>
+        <div class="step" id="manual-step">
+            <div>1. Kliknij <b>⋮</b> (menu) w prawym górnym rogu Chrome</div>
+            <div>2. Wybierz „<b>Dodaj do ekranu głównego</b>"</div>
+            <span class="or">— lub —</span>
+            <div>3. Kliknij poniżej „<b>Udostępnij</b>" i wybierz<br>„<b>Dodaj do ekranu głównego</b>"</div>
+        </div>
+        <button class="btn btn-secondary" id="open-btn">Otwórz bez instalacji</button>
+    </div>
+    <div class="installed" id="done">
+        <div class="check">✅</div>
+        <h1>Zainstalowano!</h1>
+        <p>Radio & Music jest teraz na Twoim ekranie głównym</p>
+    </div>
+    <script>
+        // If already in standalone mode, go straight to app
+        if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone) {
+            window.location.replace('/?app=radio-music');
+        }
+
+        let deferredPrompt = null;
+        const installBtn = document.getElementById('install-btn');
+        const manualStep = document.getElementById('manual-step');
+        const mainDiv = document.getElementById('main');
+        const doneDiv = document.getElementById('done');
+
+        window.addEventListener('beforeinstallprompt', (e) => {
+            e.preventDefault();
+            deferredPrompt = e;
+            installBtn.textContent = 'Zainstaluj na pulpicie';
+            manualStep.style.display = 'none';
+        });
+
+        // On HTTP (no secure context), beforeinstallprompt won't fire.
+        // Show manual instructions + share button after short wait.
+        setTimeout(() => {
+            if (!deferredPrompt) {
+                manualStep.style.display = 'block';
+                if (navigator.share) {
+                    installBtn.innerHTML = '<span style="margin-right:6px">📤</span> Udostępnij → Dodaj do ekranu';
+                }
+            }
+        }, 600);
+
+        installBtn.addEventListener('click', async () => {
+            if (deferredPrompt) {
+                deferredPrompt.prompt();
+                const result = await deferredPrompt.userChoice;
+                if (result.outcome === 'accepted') {
+                    mainDiv.style.display = 'none';
+                    doneDiv.style.display = 'block';
+                    setTimeout(() => window.location.replace('/?app=radio-music'), 1500);
+                }
+                deferredPrompt = null;
+            } else if (navigator.share) {
+                try {
+                    await navigator.share({
+                        title: 'Radio & Music',
+                        url: window.location.origin + '/?app=radio-music'
+                    });
+                } catch(e) { /* user cancelled */ }
+            } else {
+                manualStep.style.display = 'block';
+            }
+        });
+
+        window.addEventListener('appinstalled', () => {
+            mainDiv.style.display = 'none';
+            doneDiv.style.display = 'block';
+            setTimeout(() => window.location.replace('/?app=radio-music'), 1500);
+        });
+
+        document.getElementById('open-btn').addEventListener('click', () => {
+            window.location.href = '/?app=radio-music';
+        });
+    </script>
+</body>
+</html>

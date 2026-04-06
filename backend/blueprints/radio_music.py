@@ -38,6 +38,7 @@ Routes:
   GET  /api/radio-music/history            - recently played items
   POST /api/radio-music/history            - add to history
   GET  /api/radio-music/most-played        - most played items by count
+  GET  /api/radio-music/lyrics             - fetch song lyrics (?title=, ?artist=)
 """
 
 import http.client
@@ -46,6 +47,7 @@ import logging
 import mimetypes
 import os
 import pathlib
+import re
 import shutil
 import socket
 import ssl
@@ -205,12 +207,46 @@ def pkg_status():
 
 @radio_music_bp.route('/install', methods=['POST'])
 def install():
+    """Called by App Manager after apt_deps/pip_deps are already installed."""
+    from host import host_run
     _ensure_dirs()
+
+    # Install deno (JS runtime required by yt-dlp for YouTube) — not available via apt/pip
+    host_run('which deno >/dev/null 2>&1 || (curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh 2>/dev/null)', timeout=60)
+
+    # Configure yt-dlp to use EJS solver (required for YouTube extraction)
+    os.makedirs('/etc/yt-dlp', exist_ok=True)
+    cfg_path = '/etc/yt-dlp/config'
+    if not os.path.isfile(cfg_path):
+        with open(cfg_path, 'w') as f:
+            f.write('--remote-components ejs:github\n')
+
+    global _YTDLP_BIN
+    _YTDLP_BIN = None
     return jsonify({'ok': True})
 
 
 @radio_music_bp.route('/uninstall', methods=['POST'])
 def uninstall():
+    from host import host_run
+    ethos_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    pip_bin = os.path.join(ethos_root, 'venv', 'bin', 'pip')
+
+    # Remove yt-dlp (keep ffmpeg/deno as other apps may use them)
+    host_run(f'{shq(pip_bin)} uninstall -y yt-dlp', timeout=60)
+
+    # Clean yt-dlp config
+    cfg_path = '/etc/yt-dlp/config'
+    if os.path.isfile(cfg_path):
+        os.remove(cfg_path)
+
+    # Clean yt-dlp cache
+    cache_dir = os.path.expanduser('~/.cache/yt-dlp')
+    if os.path.isdir(cache_dir):
+        shutil.rmtree(cache_dir, ignore_errors=True)
+
+    global _YTDLP_BIN
+    _YTDLP_BIN = None
     return jsonify({'ok': True})
 
 
@@ -570,9 +606,28 @@ def podcasts_subscribe():
 
 # ── Play history ─────────────────────────────────────────────
 
+def _fix_history_types(items):
+    """Repair items whose type was incorrectly set to 'radio' by a past bug."""
+    changed = False
+    for it in items:
+        url = it.get('url', '')
+        if it.get('type') == 'radio':
+            if '/local/stream' in url:
+                it['type'] = 'local'
+                changed = True
+            elif 'youtube.com/' in url or 'youtu.be/' in url:
+                it['type'] = 'music'
+                changed = True
+    return changed
+
+
 @radio_music_bp.route('/history', methods=['GET'])
 def history():
-    return jsonify({'items': _load_json(_user_file('history.json'), [])})
+    hfile = _user_file('history.json')
+    items = _load_json(hfile, [])
+    if _fix_history_types(items):
+        _save_json(hfile, items)
+    return jsonify({'items': items})
 
 
 @radio_music_bp.route('/history', methods=['POST'])
@@ -603,9 +658,81 @@ def history_add():
 def most_played():
     """Return history items sorted by play_count descending."""
     limit = min(int(request.args.get('limit', 30)), 100)
-    hist = _load_json(_user_file('history.json'), [])
+    hfile = _user_file('history.json')
+    hist = _load_json(hfile, [])
+    if _fix_history_types(hist):
+        _save_json(hfile, hist)
     ranked = sorted(hist, key=lambda h: h.get('play_count', 1), reverse=True)
     return jsonify({'items': ranked[:limit]})
+
+
+@radio_music_bp.route('/lyrics', methods=['GET'])
+def lyrics_search():
+    """Fetch song lyrics from lrclib.net (free, no API key needed)."""
+    title = request.args.get('title', '').strip()
+    artist = request.args.get('artist', '').strip()
+    if not title:
+        return jsonify({'error': 'Brak tytułu.'}), 400
+
+    def _clean_lyrics(text):
+        lines = text.replace('\r\n', '\n').split('\n')
+        cleaned = []
+        for line in lines:
+            line = re.sub(r'\[\d{2}:\d{2}\.\d{2,3}\]', '', line)
+            if re.match(r'^\[(?:ti|ar|al|by|offset):.*\]$', line):
+                continue
+            cleaned.append(line.strip())
+        return '\n'.join(cleaned).strip()
+
+    def _search_lrclib(track, art):
+        params = urllib.parse.urlencode({
+            'track_name': track,
+            'artist_name': art,
+        })
+        url = 'https://lrclib.net/api/search?' + params
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'EthOS-RadioMusic/1.0',
+        })
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            results = json.loads(resp.read().decode('utf-8'))
+        if results and isinstance(results, list):
+            best = results[0]
+            plain = best.get('plainLyrics', '') or ''
+            synced = best.get('syncedLyrics', '') or ''
+            display = _clean_lyrics(plain) if plain else _clean_lyrics(synced)
+            if display:
+                return {
+                    'ok': True, 'lyrics': display,
+                    'title': best.get('trackName', track),
+                    'artist': best.get('artistName', art),
+                }
+        return None
+
+    try:
+        # Primary search
+        result = _search_lrclib(title, artist)
+        if result:
+            return jsonify(result)
+
+        # Fallback: try splitting "Artist - Title" from the title field
+        if ' - ' in title:
+            parts = title.split(' - ', 1)
+            fb_artist = parts[0].strip()
+            fb_title = parts[1].strip()
+            # Strip common YT suffixes
+            fb_title = re.sub(
+                r'\s*[\(\[](official\s*(video|audio|music\s*video|lyric\s*video|'
+                r'visualizer)|lyrics?|teledysk|audio|video|clip|hd|hq|4k|'
+                r'remastered|live)[\)\]]',
+                '', fb_title, flags=re.IGNORECASE).strip()
+            result = _search_lrclib(fb_title, fb_artist)
+            if result:
+                return jsonify(result)
+
+        return jsonify({'ok': True, 'lyrics': '', 'not_found': True})
+    except Exception as exc:
+        log.warning('Lyrics fetch error: %s', exc)
+        return jsonify({'ok': True, 'lyrics': '', 'not_found': True})
 
 
 # ── Music folders config (per-user) ─────────────────────────
@@ -620,6 +747,12 @@ def _default_music_dir():
     return os.path.join('/home', username, 'Music')
 
 
+def _default_audiobooks_dir():
+    """User's home Audiobooks folder."""
+    username = getattr(g, 'username', None) or 'default'
+    return os.path.join('/home', username, 'Audiobooks')
+
+
 def _get_music_folders():
     """Return list of configured music folders + user home Music (always)."""
     folders = _load_json(_music_folders_file(), [])
@@ -628,6 +761,18 @@ def _get_music_folders():
     if home_music not in folders:
         folders.insert(0, home_music)
     return folders
+
+
+def _get_audiobook_folders():
+    """Return the audiobook folder list (just the default for now)."""
+    d = _default_audiobooks_dir()
+    os.makedirs(d, exist_ok=True)
+    return [d]
+
+
+def _get_all_local_folders():
+    """All allowed local folders (music + audiobooks) for path validation."""
+    return _get_music_folders() + _get_audiobook_folders()
 
 
 @radio_music_bp.route('/local/folders', methods=['GET'])
@@ -667,10 +812,55 @@ def local_folders_update():
     return jsonify({'ok': True})
 
 
+def _probe_audio(fpath):
+    """Extract metadata + cover-art presence from an audio file via ffprobe."""
+    try:
+        r = subprocess.run(
+            ['ffprobe', '-v', 'error', '-print_format', 'json',
+             '-show_format', '-show_streams', fpath],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode != 0:
+            return {}
+        info = json.loads(r.stdout)
+    except Exception:
+        return {}
+    tags = (info.get('format') or {}).get('tags') or {}
+    # Normalize tag keys to lowercase for case-insensitive lookup
+    ltags = {k.lower(): v for k, v in tags.items()}
+    dur = 0.0
+    try:
+        dur = float(info['format'].get('duration', 0))
+    except (ValueError, TypeError, KeyError):
+        pass
+    has_art = any(
+        s.get('codec_type') == 'video' or s.get('codec_name') in ('mjpeg', 'png')
+        for s in info.get('streams', [])
+    )
+    # Extract year from date tag (yt-dlp writes YYYYMMDD, standard is YYYY or YYYY-MM-DD)
+    raw_date = ltags.get('date', '') or ltags.get('year', '')
+    year = raw_date[:4] if raw_date and raw_date[:4].isdigit() else ''
+    return {
+        'title': ltags.get('title', ''),
+        'artist': ltags.get('artist', '') or ltags.get('album_artist', ''),
+        'album': ltags.get('album', ''),
+        'genre': ltags.get('genre', ''),
+        'year': year,
+        'track': ltags.get('track', ''),
+        'duration': round(dur, 1),
+        'has_art': has_art,
+    }
+
+
 @radio_music_bp.route('/local/scan', methods=['GET'])
 def local_scan():
-    """Scan configured music folders for audio files."""
-    folders = _get_music_folders()
+    """Scan configured music/audiobook folders for audio files with metadata.
+    ?scope=audiobooks → scan Audiobooks folder; default → Music folders."""
+    scope = request.args.get('scope', 'music').strip()
+    if scope == 'audiobooks':
+        folders = _get_audiobook_folders()
+    else:
+        folders = _get_music_folders()
     items = []
     for base in folders:
         if not os.path.isdir(base):
@@ -686,8 +876,17 @@ def local_scan():
                 except OSError:
                     continue
                 rel = os.path.relpath(fpath, base)
+                meta = _probe_audio(fpath)
+                display_name = meta.get('title') or os.path.splitext(fname)[0]
                 items.append({
-                    'name': os.path.splitext(fname)[0],
+                    'name': display_name,
+                    'artist': meta.get('artist', ''),
+                    'album': meta.get('album', ''),
+                    'genre': meta.get('genre', ''),
+                    'year': meta.get('year', ''),
+                    'track': meta.get('track', ''),
+                    'duration': meta.get('duration', 0),
+                    'has_art': meta.get('has_art', False),
                     'filename': fname,
                     'path': fpath,
                     'folder': base,
@@ -696,7 +895,6 @@ def local_scan():
                     'modified': stat.st_mtime,
                     'type': 'local',
                 })
-    # Sort by modification time descending (newest first)
     items.sort(key=lambda x: x['modified'], reverse=True)
     return jsonify({'items': items, 'folders': folders})
 
@@ -708,9 +906,9 @@ def local_stream():
     if not fpath:
         return jsonify({'error': 'Brak ścieżki'}), 400
 
-    # Validate path is within one of the configured music folders
+    # Validate path is within one of the configured music or audiobook folders
     fpath = os.path.abspath(fpath)
-    folders = _get_music_folders()
+    folders = _get_all_local_folders()
     allowed = False
     for base in folders:
         try:
@@ -729,7 +927,70 @@ def local_stream():
     return send_file(fpath, mimetype=mime, conditional=True)
 
 
+@radio_music_bp.route('/local/artwork', methods=['GET'])
+def local_artwork():
+    """Extract embedded cover art from an audio file via ffmpeg."""
+    fpath = request.args.get('path', '').strip()
+    if not fpath:
+        return jsonify({'error': 'Brak ścieżki'}), 400
+
+    fpath = os.path.abspath(fpath)
+    folders = _get_all_local_folders()
+    allowed = False
+    for base in folders:
+        try:
+            if fpath.startswith(os.path.realpath(base) + os.sep):
+                allowed = True
+                break
+        except Exception:
+            continue
+    if not allowed:
+        return jsonify({'error': 'Ścieżka poza dozwolonymi folderami'}), 403
+    if not os.path.isfile(fpath):
+        return jsonify({'error': 'Plik nie istnieje'}), 404
+
+    try:
+        r = subprocess.run(
+            ['ffmpeg', '-i', fpath, '-an', '-vcodec', 'copy', '-f', 'image2pipe', '-'],
+            capture_output=True, timeout=5,
+        )
+        if r.returncode != 0 or not r.stdout:
+            return Response(b'', status=204)
+    except Exception:
+        return Response(b'', status=204)
+
+    # Detect MIME from magic bytes
+    hdr = r.stdout[:4]
+    if hdr[:2] == b'\xff\xd8':
+        mime = 'image/jpeg'
+    elif hdr[:4] == b'\x89PNG':
+        mime = 'image/png'
+    elif hdr[:4] == b'RIFF':
+        mime = 'image/webp'
+    else:
+        mime = 'image/jpeg'
+
+    return Response(r.stdout, mimetype=mime, headers={
+        'Cache-Control': 'public, max-age=86400',
+    })
+
+
 # ── Download (yt-dlp) ───────────────────────────────────────
+
+_INTERMEDIATE_EXTS = {'.webm', '.webp', '.m4a', '.ogg', '.opus', '.part', '.ytdl'}
+
+def _cleanup_intermediates(directory):
+    """Remove leftover intermediate files that yt-dlp leaves after audio extraction."""
+    import glob as _glob
+    for ext in _INTERMEDIATE_EXTS:
+        for fpath in _glob.glob(os.path.join(directory, '**', f'*{ext}'), recursive=True):
+            mp3_sibling = fpath.rsplit('.', 1)[0] + '.mp3'
+            if os.path.isfile(mp3_sibling):
+                try:
+                    os.remove(fpath)
+                except OSError:
+                    pass
+
 
 def _music_download_dir():
     """Target directory for downloaded music. Creates if missing."""
@@ -744,6 +1005,7 @@ def music_download():
     body = request.get_json(force=True, silent=True) or {}
     url = body.get('url', '').strip()
     title = body.get('title', 'Unknown')
+    folder = body.get('folder', '').strip()
     if not url:
         return jsonify({'error': 'Brak URL'}), 400
 
@@ -751,7 +1013,12 @@ def music_download():
     if not ytdlp:
         return jsonify({'error': 'yt-dlp nie jest zainstalowane'}), 503
 
-    dest = _music_download_dir()
+    if folder:
+        username = getattr(g, 'username', None) or 'default'
+        dest = os.path.join('/home', username, folder)
+    else:
+        dest = _music_download_dir()
+    os.makedirs(dest, exist_ok=True)
     job_id = str(int(time.time() * 1000))
     with _DOWNLOAD_LOCK:
         _DOWNLOAD_JOBS[job_id] = {
@@ -763,16 +1030,27 @@ def music_download():
 
     def _do_download():
         try:
+            # Organize: Artist/Album/Title.mp3
+            # YouTube always has uploader; album may be missing
+            out_tmpl = os.path.join(
+                dest,
+                '%(uploader|Unknown Artist)s',
+                '%(album|Singles)s',
+                '%(title)s.%(ext)s'
+            )
             cmd = (
-                f'{shq(ytdlp)} -x --audio-format mp3 --audio-quality 0 '
-                f'--no-playlist --no-warnings '
-                f'-o {shq(os.path.join(dest, "%(title)s.%(ext)s"))} '
+                f'{shq(ytdlp)} -f bestaudio -x --audio-format mp3 --audio-quality 0 '
+                f'--embed-thumbnail --embed-metadata --no-playlist --no-warnings '
+                f'--parse-metadata "%(uploader)s:%(meta_artist)s" '
+                f'--parse-metadata "%(upload_date>%Y)s:%(meta_date)s" '
+                f'--postprocessor-args "ffmpeg:-b:a 320k" '
+                f'-o {shq(out_tmpl)} '
                 f'{shq(url)}'
             )
             r = host_run(cmd, timeout=300)
+            _cleanup_intermediates(dest)
             with _DOWNLOAD_LOCK:
                 if r.returncode == 0:
-                    # Find the downloaded file
                     out_file = None
                     if r.stdout:
                         for line in r.stdout.splitlines():
@@ -828,10 +1106,17 @@ def music_download_playlist():
             turl = track.get('url', '').strip()
             if not turl:
                 continue
+            # Playlist downloads: PlaylistName/Artist - Title.mp3
+            out_tmpl = os.path.join(
+                dest, '%(uploader|Unknown)s - %(title)s.%(ext)s'
+            )
             cmd = (
-                f'{shq(ytdlp)} -x --audio-format mp3 --audio-quality 0 '
-                f'--no-playlist --no-warnings '
-                f'-o {shq(os.path.join(dest, "%(title)s.%(ext)s"))} '
+                f'{shq(ytdlp)} -f bestaudio -x --audio-format mp3 --audio-quality 0 '
+                f'--embed-thumbnail --embed-metadata --no-playlist --no-warnings '
+                f'--parse-metadata "%(uploader)s:%(meta_artist)s" '
+                f'--parse-metadata "%(upload_date>%Y)s:%(meta_date)s" '
+                f'--postprocessor-args "ffmpeg:-b:a 320k" '
+                f'-o {shq(out_tmpl)} '
                 f'{shq(turl)}'
             )
             r = host_run(cmd, timeout=300)
@@ -847,6 +1132,7 @@ def music_download_playlist():
             _DOWNLOAD_JOBS[job_id]['progress'] = 100
             if errors:
                 _DOWNLOAD_JOBS[job_id]['error'] = f'Błędy: {", ".join(errors[:5])}'
+        _cleanup_intermediates(dest)
 
     gevent.spawn(_do_batch)
     return jsonify({'ok': True, 'job_id': job_id})
@@ -1002,9 +1288,21 @@ def music_install_deps():
     from host import host_run
     ethos_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     pip_bin = os.path.join(ethos_root, 'venv', 'bin', 'pip')
+
     r = host_run(f'{shq(pip_bin)} install --quiet yt-dlp', timeout=120)
     if r.returncode != 0:
         return jsonify({'error': r.stderr or 'Instalacja nie powiodła się'}), 500
+
+    # Install deno if missing
+    host_run('which deno >/dev/null 2>&1 || (curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh 2>/dev/null)', timeout=60)
+
+    # Ensure yt-dlp config for EJS solver
+    os.makedirs('/etc/yt-dlp', exist_ok=True)
+    cfg_path = '/etc/yt-dlp/config'
+    if not os.path.isfile(cfg_path):
+        with open(cfg_path, 'w') as f:
+            f.write('--remote-components ejs:github\n')
+
     global _YTDLP_BIN
     _YTDLP_BIN = None
     return jsonify({'ok': True, 'ready': bool(_find_ytdlp())})

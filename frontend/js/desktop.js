@@ -14,6 +14,12 @@ const NAS = {
     toast: null,  // set after toast() is defined
 };
 
+// Capture PWA install prompt for reuse
+window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    window._ethosInstallPrompt = e;
+});
+
 // ─────────────────────────── API Helper ───────────────────────────
 
 async function api(path, options = {}) {
@@ -2279,6 +2285,17 @@ async function initDesktop() {
             if (snApp && !document.getElementById('sn-panel')) openApp(snApp);
         }, 500);
     }
+
+    // Auto-launch app from URL parameter (?app=radio-music etc.)
+    try {
+        const urlApp = new URLSearchParams(window.location.search).get('app');
+        if (urlApp) {
+            setTimeout(() => {
+                const appDef = NAS.apps.find(a => a.id === urlApp);
+                if (appDef) openApp(appDef);
+            }, 600);
+        }
+    } catch {}
 
     // Periodic notification check
     let _notifInterval = setInterval(loadNotifications, 60000);

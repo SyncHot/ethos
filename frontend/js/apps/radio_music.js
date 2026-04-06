@@ -10,9 +10,127 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     let _recentStations = [];  // for prev/next navigation
     let _musicQueue = [];      // music track queue
     let _musicQueueIdx = -1;   // index of currently playing track in queue
+    let _repeatMode = 0;       // 0=off, 1=repeat all, 2=repeat one
+    let _shuffle = false;
     let _ytdlpReady = null;    // null = unknown, true/false
     let _seekInterval = null;  // interval for updating seekbar
     let _playlists = [];       // user's playlists
+    let _saveStateInterval = null;
+
+    // ── Chromecast state ──
+    let _castSession = null;
+    let _castPlayer = null;
+    let _castController = null;
+    let _isCasting = false;
+    let _castPollInterval = null;
+
+    const _LS_KEY = 'rm_playback_state';
+
+    function _savePlaybackState() {
+        if (!_playing) { localStorage.removeItem(_LS_KEY); return; }
+        try {
+            const state = {
+                playing: _playing,
+                queue: _musicQueue.slice(0, 200),
+                queueIdx: _musicQueueIdx,
+                repeatMode: _repeatMode,
+                shuffle: _shuffle,
+                currentTime: _audio ? _audio.currentTime : 0,
+                duration: _audio && isFinite(_audio.duration) ? _audio.duration : 0,
+                ts: Date.now(),
+            };
+            localStorage.setItem(_LS_KEY, JSON.stringify(state));
+        } catch (e) { /* quota exceeded — ignore */ }
+    }
+
+    function _restorePlaybackState() {
+        try {
+            const raw = localStorage.getItem(_LS_KEY);
+            if (!raw) return null;
+            const state = JSON.parse(raw);
+            if (!state || !state.playing) return null;
+            // Discard if older than 7 days
+            if (Date.now() - (state.ts || 0) > 7 * 86400000) { localStorage.removeItem(_LS_KEY); return null; }
+            return state;
+        } catch (e) { return null; }
+    }
+
+    function _restoreAndShowLastTrack(body) {
+        const state = _restorePlaybackState();
+        if (!state) return;
+        const item = state.playing;
+
+        // Restore queue and mode settings
+        _musicQueue = state.queue || [];
+        _musicQueueIdx = state.queueIdx ?? -1;
+        _repeatMode = state.repeatMode || 0;
+        _shuffle = !!state.shuffle;
+        _playing = item;
+
+        // Show player bar in paused state
+        const player = body.querySelector('#rm-player');
+        player.style.display = 'flex';
+        body.querySelector('#rm-player-name').textContent = item.name;
+        body.querySelector('#rm-player-meta').textContent = item.meta || '';
+        body.querySelector('#rm-play-pause').innerHTML = '<i class="fas fa-play"></i>';
+
+        // Player art
+        const art = body.querySelector('#rm-player-art');
+        const isMusic = item.type === 'music' || item.type === 'local';
+        if (isMusic && item.image) {
+            art.innerHTML = '<img src="' + escH(item.image) + '" onerror="this.outerHTML=\'<i class=\\\'fas fa-music\\\'></i>\'">';
+        } else if (item.image || item.favicon) {
+            art.innerHTML = '<img src="' + escH(item.image || item.favicon) + '" onerror="this.outerHTML=\'<i class=\\\'fas fa-music\\\'></i>\'">';
+        }
+
+        // Show seekbar with saved position
+        const savedTime = state.currentTime || 0;
+        const savedDur = state.duration || 0;
+        if (savedDur > 0) {
+            const seekbar = body.querySelector('#rm-seekbar');
+            if (seekbar) {
+                seekbar.classList.add('visible');
+                const pct = (savedTime / savedDur) * 100;
+                const fill = seekbar.querySelector('#rm-seek-fill');
+                const thumb = seekbar.querySelector('#rm-seek-thumb');
+                if (fill) fill.style.width = pct + '%';
+                if (thumb) thumb.style.left = pct + '%';
+                const curEl = seekbar.querySelector('#rm-seek-cur');
+                const durEl = seekbar.querySelector('#rm-seek-dur');
+                if (curEl) curEl.textContent = _fmtTime(savedTime);
+                if (durEl) durEl.textContent = _fmtTime(savedDur);
+            }
+        }
+
+        // Override play/pause to resume from saved position on first click
+        const playPauseBtn = body.querySelector('#rm-play-pause');
+        const _origHandler = playPauseBtn.onclick;
+        playPauseBtn.onclick = () => {
+            playPauseBtn.onclick = _origHandler;
+            // Start playback from saved position
+            playAudio(item);
+            // Seek to saved position once audio is ready
+            if (savedTime > 1) {
+                const _onReady = () => {
+                    if (_audio && isFinite(_audio.duration) && savedTime < _audio.duration) {
+                        _audio.currentTime = savedTime;
+                    }
+                    if (_audio) _audio.removeEventListener('canplay', _onReady);
+                };
+                if (_audio) _audio.addEventListener('canplay', _onReady, { once: true });
+            }
+        };
+
+        // Sync repeat/shuffle button states
+        const repeatBtn = body.querySelector('#rm-repeat-btn');
+        if (repeatBtn) {
+            repeatBtn.classList.toggle('rm-mode-active', _repeatMode > 0);
+            repeatBtn.innerHTML = _repeatMode === 2 ? '<i class="fas fa-redo"></i><span style="font-size:9px;position:absolute;font-weight:700">1</span>' : '<i class="fas fa-redo"></i>';
+            repeatBtn.style.position = _repeatMode === 2 ? 'relative' : '';
+        }
+        const shuffleBtn = body.querySelector('#rm-shuffle-btn');
+        if (shuffleBtn) shuffleBtn.classList.toggle('rm-mode-active', _shuffle);
+    }
 
     const escH = s => s ? s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : '';
 
@@ -30,6 +148,35 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     // Build a Google high-res favicon URL from a domain
     function _googleIcon(domain) {
         return domain ? 'https://www.google.com/s2/favicons?domain=' + encodeURIComponent(domain) + '&sz=128' : '';
+    }
+
+    // Format seconds to M:SS or H:MM:SS
+    function _fmtSecs(s) {
+        if (!s) return '';
+        s = Math.round(s);
+        if (s >= 3600) return Math.floor(s / 3600) + ':' + String(Math.floor((s % 3600) / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+        return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+    }
+
+    // Build playlist cover art: 2×2 mosaic from first 4 track thumbnails, or fallback icon
+    function _playlistCoverHtml(pl, size) {
+        const imgs = (pl.tracks || []).map(t => t.image || t.thumbnail || t.favicon || '').filter(Boolean);
+        const unique = [...new Set(imgs)].slice(0, 4);
+        if (!unique.length) {
+            return '<div class="rm-pl-icon" style="width:' + size + 'px;height:' + size + 'px"><i class="fas fa-music"></i></div>';
+        }
+        if (unique.length === 1) {
+            return '<img src="' + escH(unique[0]) + '" style="width:' + size + 'px;height:' + size + 'px;border-radius:8px;object-fit:cover" onerror="this.outerHTML=\'<div class=\\\'rm-pl-icon\\\' style=\\\'width:' + size + 'px;height:' + size + 'px\\\'><i class=\\\'fas fa-music\\\'></i></div>\'">';
+        }
+        // 2×2 grid mosaic
+        const half = Math.floor(size / 2);
+        let h = '<div style="width:' + size + 'px;height:' + size + 'px;border-radius:8px;overflow:hidden;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;flex-shrink:0">';
+        for (let i = 0; i < 4; i++) {
+            const src = unique[i % unique.length];
+            h += '<img src="' + escH(src) + '" style="width:100%;height:100%;object-fit:cover" loading="lazy" onerror="this.style.background=\'#282828\';this.removeAttribute(\'src\')">';
+        }
+        h += '</div>';
+        return h;
     }
 
     // Multi-layer logo: Google favicon (128px, from homepage domain) → Radio Browser favicon → letter avatar
@@ -118,8 +265,12 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-player-controls{display:flex;align-items:center;gap:4px}',
 '.rm-player-btn{background:none;border:none;color:rgba(255,255,255,.8);font-size:16px;cursor:pointer;padding:8px;border-radius:50%;transition:all .12s;line-height:1}',
 '.rm-player-btn:hover{color:#fff;transform:scale(1.08)}',
+'.rm-player-btn.rm-mode-active{color:#1DB954}',
 '.rm-player-btn.rm-btn-play{font-size:20px;width:40px;height:40px;display:flex;align-items:center;justify-content:center;background:#1DB954;color:#000;border-radius:50%;box-shadow:0 2px 8px rgba(29,185,84,.3)}',
 '.rm-player-btn.rm-btn-play:hover{background:#1ed760;transform:scale(1.06)}',
+'.rm-cast-btn{font-size:15px;transition:color .2s}',
+'.rm-cast-btn.rm-casting{color:#1DB954;animation:rm-cast-pulse 2s ease-in-out infinite}',
+'@keyframes rm-cast-pulse{0%,100%{opacity:1}50%{opacity:.5}}',
 '.rm-vol-wrap{display:flex;align-items:center;gap:6px}',
 '.rm-vol-wrap i{font-size:13px;color:rgba(255,255,255,.5)}',
 '.rm-vol-slider{width:80px;accent-color:#1DB954;height:4px}',
@@ -204,7 +355,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-pl-create button:hover{filter:brightness(1.1)}',
 '.rm-pl-card{display:flex;align-items:center;gap:12px;padding:12px;background:rgba(255,255,255,.04);border:none;border-radius:8px;cursor:pointer;transition:all .2s}',
 '.rm-pl-card:hover{background:rgba(255,255,255,.08)}',
-'.rm-pl-icon{width:48px;height:48px;border-radius:8px;background:linear-gradient(135deg,#1DB954,#1a8f42);display:flex;align-items:center;justify-content:center;color:#000;font-size:18px;flex-shrink:0}',
+'.rm-pl-icon{width:48px;height:48px;border-radius:8px;background:linear-gradient(135deg,#1DB954,#1a8f42);display:flex;align-items:center;justify-content:center;color:#000;font-size:18px;flex-shrink:0;overflow:hidden}',
 '.rm-pl-info{flex:1;min-width:0}',
 '.rm-pl-name{font-weight:600;color:#fff;font-size:14px}',
 '.rm-pl-meta{font-size:11px;color:rgba(255,255,255,.4);margin-top:2px}',
@@ -248,7 +399,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-add-folder-btn:hover{border-color:#1DB954;color:#1DB954}',
 
 /* ── Now Playing overlay ───────────────────────── */
-'.rm-np-overlay{position:absolute;inset:0;z-index:100;display:flex;flex-direction:column;overflow:hidden}',
+'.rm-np-overlay{position:absolute;inset:0;z-index:100;display:flex;flex-direction:column;overflow:hidden;background:#0a0a0a}',
 '.rm-np-bg{position:absolute;inset:-40px;background-size:cover;background-position:center;filter:blur(40px) brightness(.25) saturate(1.4);z-index:0}',
 '.rm-np-inner{position:relative;z-index:1;flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;gap:16px;overflow-y:auto}',
 '.rm-np-close{position:absolute;top:12px;left:12px;background:rgba(255,255,255,.08);border:none;color:#fff;font-size:18px;cursor:pointer;padding:8px 12px;border-radius:50%;z-index:2;backdrop-filter:blur(8px);transition:background .15s}',
@@ -267,13 +418,46 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-np-seek .rm-seek-thumb{width:14px;height:14px;border-radius:50%;background:#fff;position:absolute;top:50%;transform:translate(-50%,-50%);cursor:pointer}',
 '.rm-np-controls{display:flex;align-items:center;gap:20px}',
 '.rm-np-btn{background:none;border:none;color:rgba(255,255,255,.7);font-size:22px;cursor:pointer;padding:10px;border-radius:50%;transition:all .12s}',
+'.rm-np-btn.rm-mode-active{color:#1DB954}',
 '.rm-np-btn:hover{color:#fff;transform:scale(1.1)}',
 '.rm-np-btn.rm-np-play{width:64px;height:64px;font-size:26px;background:#1DB954;color:#000;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 20px rgba(29,185,84,.3)}',
 '.rm-np-btn.rm-np-play:hover{background:#1ed760;transform:scale(1.06)}',
-'.rm-np-actions{display:flex;gap:10px;margin-top:4px}',
+'.rm-np-actions{display:flex;gap:10px;margin-top:4px;flex-wrap:wrap;justify-content:center}',
 '.rm-np-action{background:rgba(255,255,255,.06);border:none;color:rgba(255,255,255,.5);font-size:13px;cursor:pointer;padding:8px 16px;border-radius:20px;transition:all .12s;display:flex;align-items:center;gap:6px}',
 '.rm-np-action:hover{background:rgba(255,255,255,.12);color:#fff}',
+'.rm-np-action.rm-lyrics-active{background:rgba(29,185,84,.15);color:#1DB954}',
 '.rm-np-count{font-size:11px;color:rgba(255,255,255,.3);margin-top:2px}',
+
+/* ── Lyrics panel ── */
+'.rm-lyrics-panel{display:none;width:100%;max-height:40vh;overflow-y:auto;padding:16px 8px;text-align:center;font-size:15px;line-height:1.8;color:rgba(255,255,255,.75);white-space:pre-line;-webkit-overflow-scrolling:touch;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.15) transparent}',
+'.rm-lyrics-panel.rm-lyrics-visible{display:block}',
+'.rm-lyrics-panel .rm-lyrics-loading{color:rgba(255,255,255,.3);font-style:italic}',
+'.rm-lyrics-panel .rm-lyrics-empty{color:rgba(255,255,255,.3);font-style:italic}',
+/* now-playing queue panel */
+'.rm-np-queue{display:none;width:100%;max-height:40vh;overflow-y:auto;padding:8px 0;-webkit-overflow-scrolling:touch;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.15) transparent}',
+'.rm-np-queue.rm-np-queue-visible{display:block}',
+'.rm-np-queue-header{display:flex;align-items:center;justify-content:space-between;padding:0 8px 8px;font-size:13px;color:rgba(255,255,255,.5);font-weight:600}',
+'.rm-np-q-item{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer;transition:background .12s;min-height:44px}',
+'.rm-np-q-item:active{background:rgba(255,255,255,.08)}',
+'.rm-np-q-item.rm-q-current{background:rgba(29,185,84,.12)}',
+'.rm-np-q-item-idx{width:22px;text-align:center;color:rgba(255,255,255,.3);font-size:12px;flex-shrink:0}',
+'.rm-np-q-item.rm-q-current .rm-np-q-item-idx{color:#1DB954}',
+'.rm-np-q-item-art{width:36px;height:36px;border-radius:4px;object-fit:cover;flex-shrink:0;background:#282828}',
+'.rm-np-q-item-info{flex:1;min-width:0;overflow:hidden}',
+'.rm-np-q-item-title{font-size:13px;color:rgba(255,255,255,.85);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+'.rm-np-q-item.rm-q-current .rm-np-q-item-title{color:#1DB954;font-weight:600}',
+'.rm-np-q-item-meta{font-size:11px;color:rgba(255,255,255,.35);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+
+/* ── Lock screen ── */
+'.rm-lock-overlay{position:fixed;top:0;left:0;right:0;bottom:0;z-index:99999;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;touch-action:none;user-select:none;-webkit-user-select:none}',
+'.rm-lock-art{width:180px;height:180px;border-radius:16px;overflow:hidden;background:rgba(255,255,255,.06);display:flex;align-items:center;justify-content:center;font-size:64px;color:rgba(255,255,255,.15);margin-bottom:24px}',
+'.rm-lock-art img{width:100%;height:100%;object-fit:cover}',
+'.rm-lock-title{font-size:18px;font-weight:700;color:#fff;text-align:center;max-width:80vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+'.rm-lock-meta{font-size:13px;color:rgba(255,255,255,.4);margin-top:4px;text-align:center}',
+'.rm-lock-icon{font-size:40px;color:rgba(255,255,255,.1);margin-bottom:40px}',
+'.rm-lock-hint{position:absolute;bottom:60px;left:0;right:0;text-align:center;color:rgba(255,255,255,.2);font-size:13px;animation:rm-lock-pulse 2s ease-in-out infinite}',
+'.rm-lock-hint i{margin-right:6px;font-size:16px}',
+'@keyframes rm-lock-pulse{0%,100%{opacity:.2}50%{opacity:.5}}',
 
 /* ── Horizontal scroll section (Most Played, etc.) ── */
 '.rm-section-title{font-size:18px;font-weight:700;color:#fff;margin:20px 0 12px;display:flex;align-items:center;gap:10px}',
@@ -290,15 +474,26 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-hcard-title{font-size:13px;font-weight:600;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
 '.rm-hcard-meta{font-size:11px;color:rgba(255,255,255,.4);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px}',
 
-/* mobile nav bar */
-'.rm-mobile-nav{display:none;overflow-x:auto;white-space:nowrap;background:#000;border-bottom:1px solid rgba(255,255,255,.06);padding:6px 8px;gap:4px;-webkit-overflow-scrolling:touch;scrollbar-width:none}',
-'.rm-mobile-nav::-webkit-scrollbar{display:none}',
-'.rm-mobile-nav .rm-mnav-btn{display:inline-flex;align-items:center;gap:5px;padding:7px 12px;border:none;border-radius:20px;background:rgba(255,255,255,.06);color:rgba(255,255,255,.7);font-size:12px;white-space:nowrap;cursor:pointer;flex-shrink:0;transition:all .12s}',
-'.rm-mobile-nav .rm-mnav-btn.active{background:#1DB954;color:#000;font-weight:600}',
-'.rm-mobile-nav .rm-mnav-btn i{font-size:11px}',
+/* mobile bottom tab bar */
+'.rm-mobile-nav{display:none;background:#000;border-top:1px solid rgba(255,255,255,.08);padding:0 0 44px;gap:0;position:relative;z-index:45}',
+'.rm-mobile-nav .rm-mnav-btn{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;flex:1;padding:10px 4px 8px;border:none;border-radius:0;background:none;color:rgba(255,255,255,.45);font-size:11px;white-space:nowrap;cursor:pointer;transition:color .15s;min-width:0;line-height:1}',
+'.rm-mobile-nav .rm-mnav-btn.active{color:#1DB954;font-weight:600}',
+'.rm-mobile-nav .rm-mnav-btn i{font-size:24px;display:block;margin-bottom:2px}',
+'.rm-more-sheet{display:none;position:absolute;bottom:100%;left:0;right:0;background:#1a1a1a;border-top:1px solid rgba(255,255,255,.1);border-radius:16px 16px 0 0;padding:16px 12px 12px;z-index:50;box-shadow:0 -8px 30px rgba(0,0,0,.6)}',
+'.rm-more-sheet.open{display:block}',
+'.rm-more-sheet-handle{width:36px;height:4px;background:rgba(255,255,255,.2);border-radius:2px;margin:0 auto 14px}',
+'.rm-more-sheet-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}',
+'.rm-more-btn{display:flex;flex-direction:column;align-items:center;gap:6px;padding:16px 4px;border:none;border-radius:12px;background:rgba(255,255,255,.05);color:rgba(255,255,255,.7);font-size:11px;cursor:pointer;transition:all .15s;line-height:1.2}',
+'.rm-more-btn:active{background:rgba(29,185,84,.15);color:#1DB954;transform:scale(.95)}',
+'.rm-more-btn i{font-size:22px;color:rgba(255,255,255,.5);transition:color .15s}',
+'.rm-more-btn:active i{color:#1DB954}',
 
-/* responsive */
-'@media(max-width:768px){.rm-wrap{height:100%;max-height:100%}.rm-sidebar{display:none}.rm-mobile-nav{display:flex}.rm-main{min-height:0}.rm-grid{grid-template-columns:1fr}.rm-pod-header{flex-direction:column;align-items:center;text-align:center}.rm-pod-art{width:100px;height:100px}.rm-toolbar{padding:8px 10px;flex-shrink:0}.rm-content{padding:10px;min-height:0}.rm-seekbar{padding:0 10px;height:16px}.rm-seek-time{font-size:9px;min-width:30px}.rm-player{padding:6px 8px;gap:6px;min-height:auto;flex-shrink:0;cursor:pointer}.rm-vol-wrap{display:none}.rm-player-art{width:32px;height:32px;min-width:32px}.rm-player-info{min-width:0;flex:1}.rm-player-name{font-size:12px}.rm-player-meta{font-size:10px}.rm-player-controls{gap:0;flex-shrink:0}.rm-player-btn{padding:4px;font-size:13px}.rm-player-btn.rm-btn-play{width:30px;height:30px;font-size:15px;min-width:30px}.rm-player-eq{display:none}.rm-track-thumb{width:40px;height:40px}.rm-np-art{width:200px;height:200px}.rm-np-title{font-size:18px}.rm-hcard{min-width:130px;padding:8px}.rm-hcard-art{width:114px;height:114px}.rm-section-title{font-size:16px}}',
+/* exit fullscreen toggle (mobile only) */
+'.rm-exit-fs{display:none;position:absolute;top:8px;right:8px;z-index:200;width:40px;height:40px;border-radius:50%;background:rgba(0,0,0,.55);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.12);color:rgba(255,255,255,.7);font-size:15px;cursor:pointer;align-items:center;justify-content:center;transition:all .2s}',
+'.rm-exit-fs:active{transform:scale(.9);background:rgba(0,0,0,.8)}',
+
+/* responsive — mobile-first touch-friendly overrides */
+'@media(max-width:768px){.rm-wrap{height:100%;max-height:100%}.rm-sidebar{display:none}.rm-mobile-nav{display:flex;order:10}.rm-exit-fs{display:flex}.rm-main{min-height:0}.rm-toolbar{padding:10px 12px;flex-shrink:0}.rm-content{padding:12px;min-height:0;flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}.rm-grid{grid-template-columns:1fr}.rm-search{padding:12px 16px;font-size:14px;border-radius:12px}.rm-select{padding:10px 14px;font-size:13px;min-height:44px}.rm-card{padding:12px;gap:12px;min-height:60px}.rm-card-btn{padding:10px;font-size:16px;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center}.rm-chip{padding:10px 16px;font-size:13px;min-height:40px;display:inline-flex;align-items:center}.rm-track{padding:10px 12px;min-height:56px}.rm-track-thumb{width:44px;height:44px}.rm-track-btn{padding:10px;min-width:44px;min-height:44px;font-size:15px;display:flex;align-items:center;justify-content:center}.rm-dl-btn{padding:10px;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center}.rm-player{padding:8px 12px;gap:10px;min-height:56px;flex-shrink:0;cursor:pointer}.rm-vol-wrap{display:none}.rm-player-art{width:44px;height:44px;min-width:44px}.rm-player-info{min-width:0;flex:1}.rm-player-name{font-size:13px}.rm-player-meta{font-size:11px}.rm-player-controls{gap:2px;flex-shrink:0}#rm-shuffle-btn{display:none}#rm-repeat-btn{display:none}.rm-player-btn{padding:8px;font-size:16px;min-width:40px;min-height:40px;display:flex;align-items:center;justify-content:center}.rm-player-btn.rm-btn-play{width:40px;height:40px;font-size:18px;min-width:40px}.rm-player-eq{display:none}.rm-seekbar{padding:0 12px;height:20px}.rm-seek-time{font-size:10px;min-width:32px}.rm-seek-track{height:6px}.rm-seek-thumb{width:16px;height:16px;opacity:1}.rm-pod-header{flex-direction:column;align-items:center;text-align:center;gap:16px}.rm-pod-art{width:120px;height:120px}.rm-pod-sub-btn{padding:10px 24px;font-size:14px;min-height:44px}.rm-ep-item{padding:14px 12px;min-height:56px}.rm-ep-play{font-size:20px;width:44px}.rm-hcard{min-width:140px;padding:10px}.rm-hcard-art{width:120px;height:120px}.rm-section-title{font-size:16px;margin:16px 0 10px}.rm-np-art{width:min(260px,65vw);height:min(260px,65vw)}.rm-np-title{font-size:20px}.rm-np-meta{font-size:14px}.rm-np-btn{font-size:24px;padding:12px;min-width:48px;min-height:48px;display:flex;align-items:center;justify-content:center}.rm-np-btn.rm-np-play{width:72px;height:72px;font-size:28px}.rm-np-close{padding:12px 16px;min-width:48px;min-height:48px}.rm-np-action{padding:10px 18px;font-size:13px;min-height:44px}.rm-np-seek .rm-seek-track{height:6px}.rm-np-seek .rm-seek-thumb{width:16px;height:16px;opacity:1}.rm-pl-card{padding:12px;min-height:56px}.rm-pl-btn{padding:10px;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center}.rm-pl-create input{padding:10px 14px;font-size:14px;min-height:44px}.rm-pl-create button{padding:10px 18px;font-size:13px;min-height:44px}.rm-queue-item{padding:10px 12px;min-height:48px;font-size:13px}.rm-queue-item-rm{padding:10px;min-width:44px;min-height:44px;font-size:14px;display:flex;align-items:center;justify-content:center}.rm-folder-chip{padding:8px 12px;font-size:12px;min-height:36px}.rm-add-folder-btn{padding:8px 14px;font-size:12px;min-height:36px}.rm-modal{min-width:min(320px,90vw);padding:20px}.rm-modal-item{padding:12px;min-height:48px;font-size:14px}.rm-modal-close{padding:12px;font-size:14px;min-height:48px}.rm-install-btn{padding:14px 28px;font-size:15px;min-height:48px}}',
     ].join('\n'); }
 
     createWindow('radio-music', {
@@ -317,6 +512,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     <div class="rm-sidebar-label">${t('Muzyka')}</div>
     <div class="rm-sidebar-item" data-section="music"><i class="fab fa-youtube"></i> ${t('Szukaj')}</div>
     <div class="rm-sidebar-item" data-section="local"><i class="fas fa-folder-open"></i> ${t('Lokalna muzyka')}</div>
+    <div class="rm-sidebar-item" data-section="local-audiobooks"><i class="fas fa-book-reader"></i> ${t('Lokalne audiobooki')}</div>
     <div class="rm-sidebar-item" data-section="playlists"><i class="fas fa-list"></i> ${t('Playlisty')}</div>
     <div class="rm-sidebar-item" data-section="queue"><i class="fas fa-list-ol"></i> ${t('Kolejka')}</div>
     <div class="rm-sidebar-label">${t('Radio')}</div>
@@ -329,22 +525,28 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     <div class="rm-sidebar-item" data-section="subscriptions"><i class="fas fa-rss"></i> ${t('Subskrypcje')}</div>
     <div class="rm-sidebar-label">${t('Inne')}</div>
     <div class="rm-sidebar-item active" data-section="most-played"><i class="fas fa-fire"></i> ${t('Najczęściej grane')}</div>
+    <div class="rm-sidebar-item" data-section="audiobooks"><i class="fas fa-book-open"></i> ${t('Audiobooki')}</div>
     <div class="rm-sidebar-item" data-section="history"><i class="fas fa-history"></i> ${t('Historia')}</div>
   </div>
   <div class="rm-main">
     <div class="rm-mobile-nav" id="rm-mobile-nav">
-      <button class="rm-mnav-btn" data-section="music"><i class="fab fa-youtube"></i> ${t('Muzyka')}</button>
-      <button class="rm-mnav-btn" data-section="local"><i class="fas fa-folder-open"></i> ${t('Lokalne')}</button>
-      <button class="rm-mnav-btn" data-section="playlists"><i class="fas fa-list"></i> ${t('Playlisty')}</button>
-      <button class="rm-mnav-btn" data-section="queue"><i class="fas fa-list-ol"></i> ${t('Kolejka')}</button>
-      <button class="rm-mnav-btn" data-section="radio"><i class="fas fa-broadcast-tower"></i> ${t('Radio')}</button>
-      <button class="rm-mnav-btn" data-section="favorites"><i class="fas fa-heart"></i> ${t('Ulubione')}</button>
-      <button class="rm-mnav-btn" data-section="countries"><i class="fas fa-globe"></i> ${t('Kraje')}</button>
-      <button class="rm-mnav-btn" data-section="tags"><i class="fas fa-tags"></i> ${t('Gatunki')}</button>
-      <button class="rm-mnav-btn" data-section="podcasts"><i class="fas fa-podcast"></i> ${t('Podcasty')}</button>
-      <button class="rm-mnav-btn" data-section="subscriptions"><i class="fas fa-rss"></i> ${t('Subskrypcje')}</button>
-      <button class="rm-mnav-btn active" data-section="most-played"><i class="fas fa-fire"></i> ${t('Top')}</button>
-      <button class="rm-mnav-btn" data-section="history"><i class="fas fa-history"></i> ${t('Historia')}</button>
+      <button class="rm-mnav-btn active" data-section="most-played"><i class="fas fa-fire"></i><span>${t('Home')}</span></button>
+      <button class="rm-mnav-btn" data-section="music"><i class="fab fa-youtube"></i><span>${t('Muzyka')}</span></button>
+      <button class="rm-mnav-btn" data-section="radio"><i class="fas fa-broadcast-tower"></i><span>${t('Radio')}</span></button>
+      <button class="rm-mnav-btn" data-section="podcasts"><i class="fas fa-podcast"></i><span>${t('Podcasty')}</span></button>
+      <button class="rm-mnav-btn" data-section="more"><i class="fas fa-ellipsis-h"></i><span>${t('Więcej')}</span></button>
+      <div class="rm-more-sheet" id="rm-more-sheet">
+        <div class="rm-more-sheet-handle"></div>
+        <div class="rm-more-sheet-grid">
+          <button class="rm-more-btn" data-section="local"><i class="fas fa-folder-open"></i><span>${t('Lokalne')}</span></button>
+          <button class="rm-more-btn" data-section="local-audiobooks"><i class="fas fa-book-reader"></i><span>${t('Audiobooki lok.')}</span></button>
+          <button class="rm-more-btn" data-section="playlists"><i class="fas fa-list"></i><span>${t('Playlisty')}</span></button>
+          <button class="rm-more-btn" data-section="queue"><i class="fas fa-list-ol"></i><span>${t('Kolejka')}</span></button>
+          <button class="rm-more-btn" data-section="history"><i class="fas fa-history"></i><span>${t('Historia')}</span></button>
+          <button class="rm-more-btn" data-section="audiobooks"><i class="fas fa-book-open"></i><span>${t('Audiobooki')}</span></button>
+          <button class="rm-more-btn" id="rm-add-homescreen"><i class="fas fa-plus-square"></i><span>${t('Skrót')}</span></button>
+        </div>
+      </div>
     </div>
     <div class="rm-toolbar" id="rm-toolbar"></div>
     <div class="rm-content" id="rm-content"></div>
@@ -364,10 +566,12 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
       </div>
       <div class="rm-player-eq" id="rm-player-eq" style="display:none"><span></span><span></span><span></span><span></span><span></span></div>
       <div class="rm-player-controls">
+        <button class="rm-player-btn" id="rm-shuffle-btn" title="${t('Losowo')}"><i class="fas fa-random"></i></button>
         <button class="rm-player-btn" id="rm-prev-btn" title="${t('Poprzednia')}"><i class="fas fa-step-backward"></i></button>
         <button class="rm-player-btn rm-btn-play" id="rm-play-pause"><i class="fas fa-play"></i></button>
         <button class="rm-player-btn" id="rm-next-btn" title="${t('Następna')}"><i class="fas fa-step-forward"></i></button>
-        <button class="rm-player-btn" id="rm-stop-btn" title="${t('Stop')}"><i class="fas fa-stop"></i></button>
+        <button class="rm-player-btn" id="rm-repeat-btn" title="${t('Powtarzaj')}"><i class="fas fa-redo"></i></button>
+        <button class="rm-player-btn rm-cast-btn" id="rm-cast-btn" title="Chromecast" style="display:none"><i class="fab fa-chromecast"></i></button>
       </div>
       <div class="rm-vol-wrap">
         <i class="fas fa-volume-up"></i>
@@ -375,42 +579,142 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
       </div>
     </div>
   </div>
-</div>`;
+</div>
+<button class="rm-exit-fs" id="rm-exit-fs" title="${t('Tryb okienkowy')}"><i class="fas fa-compress"></i></button>`;
 
-            // Sidebar navigation
+            // Fullscreen mode on mobile — hides window chrome & taskbar
+            const _isMobile = window.matchMedia('(max-width: 768px)').matches;
+            let _isFullscreen = false;
+            function _enterFullscreen() {
+                document.body.classList.add('app-fullscreen-active');
+                _isFullscreen = true;
+                const btn = body.querySelector('#rm-exit-fs');
+                if (btn) { btn.innerHTML = '<i class="fas fa-compress"></i>'; btn.title = t('Tryb okienkowy'); }
+            }
+            function _exitFullscreen() {
+                document.body.classList.remove('app-fullscreen-active');
+                _isFullscreen = false;
+                const btn = body.querySelector('#rm-exit-fs');
+                if (btn) { btn.innerHTML = '<i class="fas fa-expand"></i>'; btn.title = t('Pełny ekran'); }
+            }
+            body.querySelector('#rm-exit-fs').onclick = () => {
+                if (_isFullscreen) _exitFullscreen();
+                else _enterFullscreen();
+            };
+            if (_isMobile) _enterFullscreen();
+
+            // Sections accessible via the "More" bottom sheet on mobile
+            const _MORE_SECTIONS = ['local','local-audiobooks','playlists','queue','history'];
+            function _syncMobileNav(section) {
+                body.querySelectorAll('#rm-mobile-nav > .rm-mnav-btn').forEach(b => {
+                    if (b.dataset.section === 'more') {
+                        b.classList.toggle('active', _MORE_SECTIONS.includes(section));
+                    } else {
+                        b.classList.toggle('active', b.dataset.section === section);
+                    }
+                });
+                const sheet = body.querySelector('#rm-more-sheet');
+                if (sheet) sheet.classList.remove('open');
+            }
+
+            // Sidebar navigation (desktop)
             body.querySelectorAll('.rm-sidebar-item').forEach(el => {
                 el.onclick = () => {
                     body.querySelectorAll('.rm-sidebar-item').forEach(e => e.classList.remove('active'));
                     el.classList.add('active');
-                    // sync mobile nav
-                    body.querySelectorAll('.rm-mnav-btn').forEach(b => b.classList.toggle('active', b.dataset.section === el.dataset.section));
+                    _syncMobileNav(el.dataset.section);
                     activeSection = el.dataset.section;
                     loadSection(activeSection);
                 };
             });
 
-            // Mobile nav
-            body.querySelectorAll('.rm-mnav-btn').forEach(btn => {
+            // Mobile bottom tab bar
+            body.querySelectorAll('#rm-mobile-nav > .rm-mnav-btn').forEach(btn => {
                 btn.onclick = () => {
-                    body.querySelectorAll('.rm-mnav-btn').forEach(b => b.classList.remove('active'));
-                    btn.classList.add('active');
-                    // sync sidebar
+                    if (btn.dataset.section === 'more') {
+                        const sheet = body.querySelector('#rm-more-sheet');
+                        if (sheet) sheet.classList.toggle('open');
+                        return;
+                    }
+                    _syncMobileNav(btn.dataset.section);
                     body.querySelectorAll('.rm-sidebar-item').forEach(e => e.classList.toggle('active', e.dataset.section === btn.dataset.section));
                     activeSection = btn.dataset.section;
                     loadSection(activeSection);
                 };
             });
 
+            // "More" sheet section buttons
+            body.querySelectorAll('.rm-more-btn[data-section]').forEach(btn => {
+                btn.onclick = () => {
+                    const section = btn.dataset.section;
+                    _syncMobileNav(section);
+                    body.querySelectorAll('.rm-sidebar-item').forEach(e => e.classList.toggle('active', e.dataset.section === section));
+                    activeSection = section;
+                    loadSection(section);
+                };
+            });
+
+            // "Add to Home Screen" shortcut button
+            const addHsBtn = body.querySelector('#rm-add-homescreen');
+            if (addHsBtn) addHsBtn.onclick = () => {
+                const sheet = body.querySelector('#rm-more-sheet');
+                if (sheet) sheet.classList.remove('open');
+                _showAddToHomescreenPrompt();
+            };
+
+            // Close "More" sheet on outside tap
+            document.addEventListener('mousedown', (e) => {
+                const sheet = body.querySelector('#rm-more-sheet');
+                const moreBtn = body.querySelector('#rm-mobile-nav > .rm-mnav-btn[data-section="more"]');
+                if (sheet && sheet.classList.contains('open') && !sheet.contains(e.target) && (!moreBtn || !moreBtn.contains(e.target))) {
+                    sheet.classList.remove('open');
+                }
+            });
+            document.addEventListener('touchstart', (e) => {
+                const sheet = body.querySelector('#rm-more-sheet');
+                const moreBtn = body.querySelector('#rm-mobile-nav > .rm-mnav-btn[data-section="more"]');
+                if (sheet && sheet.classList.contains('open') && !sheet.contains(e.target) && (!moreBtn || !moreBtn.contains(e.target))) {
+                    sheet.classList.remove('open');
+                }
+            }, { passive: true });
+
             // Player controls
             const playPauseBtn = body.querySelector('#rm-play-pause');
             playPauseBtn.onclick = () => {
+                if (_isCasting && _castController) {
+                    _castController.playOrPause();
+                    return;
+                }
                 if (!_audio) return;
                 if (_audio.paused) { _audio.play(); playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>'; _showEq(true); }
                 else { _audio.pause(); playPauseBtn.innerHTML = '<i class="fas fa-play"></i>'; _showEq(false); }
             };
-            body.querySelector('#rm-stop-btn').onclick = () => stopPlayback();
             body.querySelector('#rm-prev-btn').onclick = () => _skipStation(-1);
             body.querySelector('#rm-next-btn').onclick = () => _skipStation(1);
+
+            // Cast button
+            body.querySelector('#rm-cast-btn').onclick = () => _toggleCast();
+
+            // Repeat: off → repeat all → repeat one → off
+            function _syncRepeatBtn() {
+                const btn = body.querySelector('#rm-repeat-btn');
+                if (!btn) return;
+                btn.classList.toggle('rm-mode-active', _repeatMode > 0);
+                btn.innerHTML = _repeatMode === 2 ? '<i class="fas fa-redo"></i><span style="font-size:9px;position:absolute;font-weight:700">1</span>' : '<i class="fas fa-redo"></i>';
+                btn.style.position = _repeatMode === 2 ? 'relative' : '';
+                btn.title = [t('Powtarzaj'), t('Powtarzaj wszystko'), t('Powtarzaj jeden')][_repeatMode];
+            }
+            body.querySelector('#rm-repeat-btn').onclick = () => { _repeatMode = (_repeatMode + 1) % 3; _syncRepeatBtn(); };
+            _syncRepeatBtn();
+
+            // Shuffle
+            function _syncShuffleBtn() {
+                const btn = body.querySelector('#rm-shuffle-btn');
+                if (btn) btn.classList.toggle('rm-mode-active', _shuffle);
+            }
+            body.querySelector('#rm-shuffle-btn').onclick = () => { _shuffle = !_shuffle; _syncShuffleBtn(); };
+            _syncShuffleBtn();
+
             body.querySelector('#rm-vol').oninput = (e) => { if (_audio) _audio.volume = e.target.value / 100; };
 
             // Click player bar to open Now Playing overlay
@@ -420,16 +724,29 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             // Seekbar interaction
             const seekTrack = body.querySelector('#rm-seek-track');
             seekTrack.onclick = (e) => {
-                if (!_audio || !isFinite(_audio.duration)) return;
                 const rect = seekTrack.getBoundingClientRect();
                 const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-                _audio.currentTime = pct * _audio.duration;
+                if (_isCasting && _castPlayer && _castPlayer.duration > 0) {
+                    _castPlayer.currentTime = pct * _castPlayer.duration;
+                    _castController.seek();
+                } else if (_audio && isFinite(_audio.duration)) {
+                    _audio.currentTime = pct * _audio.duration;
+                }
             };
 
             loadSection('most-played');
+
+            // Restore previous playback state (paused, showing last track)
+            _restoreAndShowLastTrack(body);
+
+            // Initialize Chromecast SDK
+            _initCast();
         },
         onClose() {
+            _savePlaybackState();
             stopPlayback();
+            _hideLockScreen();
+            document.body.classList.remove('app-fullscreen-active');
         },
     });
     setTimeout(() => { if (typeof toggleMaximize === 'function') toggleMaximize('radio-music'); }, 50);
@@ -449,10 +766,12 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             case 'subscriptions': loadSubscriptions(content); break;
             case 'music': loadMusic(toolbar, content); break;
             case 'local': loadLocal(toolbar, content); break;
+            case 'local-audiobooks': loadLocalAudiobooks(toolbar, content); break;
             case 'playlists': loadPlaylists(toolbar, content); break;
             case 'most-played': loadMostPlayed(content); break;
             case 'queue': loadQueue(content); break;
             case 'history': loadHistory(content); break;
+            case 'audiobooks': loadAudiobooks(toolbar, content); break;
         }
     }
 
@@ -463,48 +782,82 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             {code:'DE',name:'Niemcy'},{code:'FR',name:'Francja'},{code:'ES',name:'Hiszpania'},{code:'IT',name:'Włochy'},
             {code:'BR',name:'Brazylia'},{code:'CA',name:'Kanada'},{code:'AU',name:'Australia'},{code:'JP',name:'Japonia'},
             {code:'SE',name:'Szwecja'},{code:'NL',name:'Holandia'},{code:'CZ',name:'Czechy'},{code:'UA',name:'Ukraina'}];
-        let _radioCountry = '';
+        const RADIO_TAGS = [
+            {tag:'',label:t('Wszystkie gatunki')},{tag:'pop',label:'Pop'},{tag:'rock',label:'Rock'},{tag:'news',label:'News'},
+            {tag:'classical',label:'Classical'},{tag:'jazz',label:'Jazz'},{tag:'electronic',label:'Electronic'},
+            {tag:'hip hop',label:'Hip-Hop'},{tag:'ambient',label:'Ambient'},{tag:'metal',label:'Metal'},
+            {tag:'country',label:'Country'},{tag:'dance',label:'Dance'},{tag:'talk',label:'Talk'},
+            {tag:'80s',label:'80s'},{tag:'90s',label:'90s'},{tag:'oldies',label:'Oldies'},
+            {tag:'chillout',label:'Chillout'},{tag:'reggae',label:'Reggae'},{tag:'latin',label:'Latin'},
+        ];
+        let _radioCountry = localStorage.getItem('rm-radio-country') || '', _radioTag = localStorage.getItem('rm-radio-tag') || '';
 
         toolbar.innerHTML = `<input class="rm-search" id="rm-radio-search" placeholder="${t('Szukaj stacji radiowych...')}" autofocus>`
-            + `<select class="rm-select" id="rm-radio-country">${RADIO_COUNTRIES.map(c => '<option value="'+c.code+'">'+escH(c.name)+'</option>').join('')}</select>`;
+            + `<div style="display:flex;gap:6px;flex-wrap:wrap">`
+            + `<select class="rm-select" id="rm-radio-country" style="flex:1;min-width:120px">${RADIO_COUNTRIES.map(c => '<option value="'+c.code+'"'+(c.code===_radioCountry?' selected':'')+'>'+escH(c.name)+'</option>').join('')}</select>`
+            + `<select class="rm-select" id="rm-radio-tag" style="flex:1;min-width:120px">${RADIO_TAGS.map(t => '<option value="'+t.tag+'"'+(t.tag===_radioTag?' selected':'')+'>'+escH(t.label)+'</option>').join('')}</select>`
+            + `</div>`;
 
-        content.innerHTML = '<div class="rm-empty"><i class="fas fa-spinner fa-spin"></i></div>';
+        content.innerHTML = '<div id="rm-radio-favs"></div><div id="rm-radio-results"><div class="rm-empty"><i class="fas fa-spinner fa-spin"></i></div></div>';
+
+        // Load favorites inline at top
+        const favsContainer = content.querySelector('#rm-radio-favs');
+        const favData = await api('/radio-music/radio/favorites');
+        _favorites = favData.items || [];
+        if (_favorites.length) {
+            favsContainer.innerHTML = '<div class="rm-section-title"><i class="fas fa-heart"></i> ' + t('Ulubione') + '</div><div class="rm-hscroll" id="rm-radio-favs-scroll"></div>';
+            const scroll = favsContainer.querySelector('#rm-radio-favs-scroll');
+            _favorites.forEach((s, i) => {
+                const artHtml = s.favicon ? '<img src="' + escH(s.favicon) + '" onerror="this.outerHTML=\'<i class=\\\'fas fa-broadcast-tower\\\'></i>\'">' : '<i class="fas fa-broadcast-tower"></i>';
+                const card = document.createElement('div');
+                card.className = 'rm-hcard';
+                card.innerHTML = '<div class="rm-hcard-art">' + artHtml + '</div>'
+                    + '<div class="rm-hcard-title">' + escH(s.name) + '</div>'
+                    + '<div class="rm-hcard-meta">' + escH([s.country, s.tags].filter(Boolean).join(' · ').substring(0, 30)) + '</div>';
+                card.onclick = () => playStation(s);
+                scroll.appendChild(card);
+            });
+        }
+
+        const resultsContainer = content.querySelector('#rm-radio-results');
+
+        function _doSearch() {
+            const q = bodyEl.querySelector('#rm-radio-search').value.trim();
+            if (q) { favsContainer.style.display = 'none'; searchRadio(q, _radioCountry, _radioTag, resultsContainer); }
+            else { favsContainer.style.display = ''; loadTopRadio(_radioCountry, _radioTag, resultsContainer); }
+        }
 
         const searchInput = bodyEl.querySelector('#rm-radio-search');
         let debounce;
-        searchInput.onkeyup = () => {
-            clearTimeout(debounce);
-            debounce = setTimeout(() => {
-                const q = searchInput.value.trim();
-                if (q) searchRadio(q, _radioCountry, content);
-                else loadTopRadio(_radioCountry, content);
-            }, 400);
-        };
+        searchInput.onkeyup = () => { clearTimeout(debounce); debounce = setTimeout(_doSearch, 400); };
 
-        bodyEl.querySelector('#rm-radio-country').onchange = (e) => {
-            _radioCountry = e.target.value;
-            const q = searchInput.value.trim();
-            if (q) searchRadio(q, _radioCountry, content);
-            else loadTopRadio(_radioCountry, content);
-        };
+        bodyEl.querySelector('#rm-radio-country').onchange = (e) => { _radioCountry = e.target.value; localStorage.setItem('rm-radio-country', _radioCountry); _doSearch(); };
+        bodyEl.querySelector('#rm-radio-tag').onchange = (e) => { _radioTag = e.target.value; localStorage.setItem('rm-radio-tag', _radioTag); _doSearch(); };
 
-        // Load top stations by default
-        loadTopRadio('', content);
+        loadTopRadio(_radioCountry, _radioTag, resultsContainer);
     }
 
-    async function loadTopRadio(country, content) {
+    async function loadTopRadio(country, tag, content) {
         content.innerHTML = '<div class="rm-empty"><i class="fas fa-spinner fa-spin"></i></div>';
-        let url = '/radio-music/radio/top?limit=50';
-        if (country) url = '/radio-music/radio/search?country=' + country + '&limit=50';
-        const data = await api(url);
-        if (data.items && data.items.length) renderStations(data.items, content);
-        else content.innerHTML = '<div class="rm-empty"><i class="fas fa-broadcast-tower"></i><p>' + t('Brak stacji') + '</p></div>';
+        if (!country && !tag) {
+            const data = await api('/radio-music/radio/top?limit=50');
+            if (data.items && data.items.length) renderStations(data.items, content);
+            else content.innerHTML = '<div class="rm-empty"><i class="fas fa-broadcast-tower"></i><p>' + t('Brak stacji') + '</p></div>';
+        } else {
+            let url = '/radio-music/radio/search?limit=50';
+            if (country) url += '&country=' + country;
+            if (tag) url += '&tag=' + encodeURIComponent(tag);
+            const data = await api(url);
+            if (data.items && data.items.length) renderStations(data.items, content);
+            else content.innerHTML = '<div class="rm-empty"><i class="fas fa-broadcast-tower"></i><p>' + t('Brak stacji') + '</p></div>';
+        }
     }
 
-    async function searchRadio(q, country, content) {
+    async function searchRadio(q, country, tag, content) {
         content.innerHTML = '<div class="rm-empty"><i class="fas fa-spinner fa-spin"></i></div>';
         let url = '/radio-music/radio/search?q=' + encodeURIComponent(q);
         if (country) url += '&country=' + country;
+        if (tag) url += '&tag=' + encodeURIComponent(tag);
         const data = await api(url);
         if (data.items && data.items.length) renderStations(data.items, content);
         else content.innerHTML = '<div class="rm-empty"><i class="fas fa-search"></i><p>' + t('Brak wyników') + '</p></div>';
@@ -654,14 +1007,36 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     ];
 
     async function loadPodcasts(toolbar, content) {
-        let _podCountry = 'pl', _podGenre = '';
+        let _podCountry = localStorage.getItem('rm-pod-country') || 'pl', _podGenre = '';
 
         toolbar.innerHTML = `
             <input class="rm-search" id="rm-pod-search" placeholder="${t('Szukaj podcastów...')}" autofocus>
-            <select class="rm-select" id="rm-pod-country">${_POD_COUNTRIES.map(c => '<option value="'+c.code+'"'+(c.code==='pl'?' selected':'')+'>'+escH(c.name)+'</option>').join('')}</select>`;
+            <select class="rm-select" id="rm-pod-country">${_POD_COUNTRIES.map(c => '<option value="'+c.code+'"'+(c.code===_podCountry?' selected':'')+'>'+escH(c.name)+'</option>').join('')}</select>`;
 
-        // Genre chips + results area
-        content.innerHTML = '<div class="rm-chips" id="rm-pod-genres"></div><div id="rm-pod-results"></div>';
+        content.innerHTML = '<div id="rm-pod-subs"></div><div class="rm-chips" id="rm-pod-genres"></div><div id="rm-pod-results"></div>';
+
+        // Load subscriptions inline at top
+        const subsContainer = content.querySelector('#rm-pod-subs');
+        const subData = await api('/radio-music/podcasts/subscriptions');
+        _subscriptions = subData.items || [];
+        if (_subscriptions.length) {
+            subsContainer.innerHTML = '<div class="rm-section-title"><i class="fas fa-rss"></i> ' + t('Moje subskrypcje') + '</div><div class="rm-hscroll" id="rm-pod-subs-scroll"></div>';
+            const scroll = subsContainer.querySelector('#rm-pod-subs-scroll');
+            _subscriptions.forEach(p => {
+                const artHtml = (p.artwork || p.image)
+                    ? '<img src="' + escH(p.artwork || p.image) + '" onerror="this.outerHTML=\'<i class=\\\'fas fa-podcast\\\'></i>\'">'
+                    : '<i class="fas fa-podcast"></i>';
+                const card = document.createElement('div');
+                card.className = 'rm-hcard';
+                card.innerHTML = '<div class="rm-hcard-art">' + artHtml + '</div>'
+                    + '<div class="rm-hcard-title">' + escH(p.name || p.title) + '</div>'
+                    + '<div class="rm-hcard-meta">' + escH(p.artist || p.author || '') + '</div>';
+                card.onclick = () => openPodcast(p);
+                scroll.appendChild(card);
+            });
+        }
+
+        // Genre chips
         const chipsEl = content.querySelector('#rm-pod-genres');
         _POD_GENRES.forEach(g => {
             const chip = document.createElement('span');
@@ -680,6 +1055,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         // Country selector
         bodyEl.querySelector('#rm-pod-country').onchange = (e) => {
             _podCountry = e.target.value;
+            localStorage.setItem('rm-pod-country', _podCountry);
             loadTopPodcasts(_podCountry, _podGenre, content.querySelector('#rm-pod-results'));
         };
 
@@ -690,8 +1066,12 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             clearTimeout(debounce);
             debounce = setTimeout(() => {
                 if (searchInput.value.trim()) {
+                    subsContainer.style.display = 'none';
+                    chipsEl.style.display = 'none';
                     searchPodcasts(searchInput.value, content.querySelector('#rm-pod-results'));
                 } else {
+                    subsContainer.style.display = '';
+                    chipsEl.style.display = '';
                     loadTopPodcasts(_podCountry, _podGenre, content.querySelector('#rm-pod-results'));
                 }
             }, 500);
@@ -949,7 +1329,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         renderMusicResults(data.items, container);
     }
 
-    function renderMusicResults(tracks, container) {
+    function renderMusicResults(tracks, container, dlFolder) {
         container.innerHTML = '<div style="display:flex;flex-direction:column;gap:6px" id="rm-tracks-list"></div>';
         const list = container.querySelector('#rm-tracks-list');
         tracks.forEach((tr, idx) => {
@@ -981,7 +1361,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             };
             el.querySelector('.rm-dl-btn').onclick = (e) => {
                 e.stopPropagation();
-                _downloadTrack(tr, e.currentTarget);
+                _downloadTrack(tr, e.currentTarget, dlFolder);
             };
             el.querySelector('.rm-track-btn[title="' + t('Playlista') + '"]').onclick = (e) => {
                 e.stopPropagation();
@@ -995,6 +1375,16 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     }
 
     function playMusicTrack(tr) {
+        // Queue entry from history list — route via original item
+        if (tr._histItem) {
+            const it = tr._histItem;
+            if (it.type === 'local' || it.type === 'music' || it.type === 'podcast') {
+                playAudio(it);
+            } else {
+                playStation(it);
+            }
+            return;
+        }
         if (tr.source === 'local') {
             playAudio({
                 name: tr.title, type: 'local', path: tr.url,
@@ -1017,11 +1407,13 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
     /* ── Download ───────────────────────────────────── */
 
-    async function _downloadTrack(track, btnEl) {
+    async function _downloadTrack(track, btnEl, folder) {
         if (btnEl) { btnEl.classList.add('rm-downloading'); btnEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i>'; }
+        const body = { url: track.url, title: track.title || track.name };
+        if (folder) body.folder = folder;
         const data = await api('/radio-music/music/download', {
             method: 'POST',
-            body: { url: track.url, title: track.title || track.name },
+            body: body,
         });
         if (data.error) {
             toast(data.error, 'error');
@@ -1142,10 +1534,21 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             html += '<div style="display:flex;flex-direction:column;gap:4px;margin-bottom:16px">';
             files.forEach((file, i) => {
                 const sizeMB = (file.size / 1048576).toFixed(1);
+                const artUrl = file.has_art ? '/api/radio-music/local/artwork?path=' + encodeURIComponent(file.path) + '&token=' + (NAS.token || '') : '';
+                const metaParts = [];
+                if (file.artist) metaParts.push(file.artist);
+                if (file.album) metaParts.push(file.album);
+                if (file.year) metaParts.push(file.year);
+                if (file.genre) metaParts.push(file.genre);
+                if (!metaParts.length) metaParts.push(file.filename);
+                const durStr = file.duration ? _fmtSecs(file.duration) : '';
                 html += '<div class="rm-track rm-local-track" data-folder="' + escH(folder) + '" data-idx="' + i + '">'
-                    + '<div class="rm-track-thumb" style="display:flex;align-items:center;justify-content:center;background:#1a1a2e"><i class="fas fa-music" style="color:var(--text-muted)"></i></div>'
+                    + (artUrl
+                        ? '<img class="rm-track-thumb" src="' + escH(artUrl) + '" loading="lazy" onerror="this.outerHTML=\'<div class=\\\'rm-track-thumb\\\' style=\\\'display:flex;align-items:center;justify-content:center;background:#1a1a2e\\\'><i class=\\\'fas fa-music\\\' style=\\\'color:var(--text-muted)\\\'></i></div>\'">'
+                        : '<div class="rm-track-thumb" style="display:flex;align-items:center;justify-content:center;background:#1a1a2e"><i class="fas fa-music" style="color:var(--text-muted)"></i></div>')
                     + '<div class="rm-track-info"><div class="rm-track-title">' + escH(file.name) + '</div>'
-                    + '<div class="rm-track-meta">' + escH(file.filename) + ' · ' + sizeMB + ' MB</div></div>'
+                    + '<div class="rm-track-meta">' + escH(metaParts.join(' · ')) + '</div></div>'
+                    + (durStr ? '<span class="rm-track-dur">' + durStr + '</span>' : '')
                     + '<div class="rm-track-actions">'
                     + '<button class="rm-track-btn" title="' + t('Playlista') + '"><i class="fas fa-list-ul"></i></button>'
                     + '<button class="rm-track-btn rm-add-queue-btn" title="' + t('Kolejka') + '"><i class="fas fa-plus"></i></button>'
@@ -1169,19 +1572,29 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 if (e.target.closest('.rm-track-btn')) return;
                 // Play and set rest of folder as queue
                 const folderFiles = byFolder[folder];
-                _musicQueue = folderFiles.slice(idx).map(f => ({
-                    id: f.path, title: f.name, channel: f.filename,
-                    url: f.path, thumbnail: '', duration: 0, duration_fmt: '',
-                    source: 'local',
-                }));
+                _musicQueue = folderFiles.slice(idx).map(f => {
+                    const fArt = f.has_art ? '/api/radio-music/local/artwork?path=' + encodeURIComponent(f.path) + '&token=' + (NAS.token || '') : '';
+                    return {
+                        id: f.path, title: f.name, channel: [f.artist, f.album, f.year].filter(Boolean).join(' · ') || f.filename,
+                        url: f.path, thumbnail: fArt, duration: f.duration || 0, duration_fmt: f.duration ? _fmtSecs(f.duration) : '',
+                        source: 'local',
+                    };
+                });
                 _musicQueueIdx = 0;
-                playAudio(localItem);
+                const fileArt = file.has_art ? '/api/radio-music/local/artwork?path=' + encodeURIComponent(file.path) + '&token=' + (NAS.token || '') : '';
+                playAudio({
+                    name: file.name, type: 'local', path: file.path,
+                    url: '/api/radio-music/local/stream?path=' + encodeURIComponent(file.path) + '&token=' + (NAS.token || ''),
+                    meta: [file.artist, file.album, file.year].filter(Boolean).join(' · ') || file.filename,
+                    image: fileArt,
+                });
             };
             el.querySelector('.rm-add-queue-btn').onclick = (e) => {
                 e.stopPropagation();
+                const fArt = file.has_art ? '/api/radio-music/local/artwork?path=' + encodeURIComponent(file.path) + '&token=' + (NAS.token || '') : '';
                 _musicQueue.push({
-                    id: file.path, title: file.name, channel: file.filename,
-                    url: file.path, thumbnail: '', duration: 0, duration_fmt: '',
+                    id: file.path, title: file.name, channel: [file.artist, file.album, file.year].filter(Boolean).join(' · ') || file.filename,
+                    url: file.path, thumbnail: fArt, duration: file.duration || 0, duration_fmt: file.duration ? _fmtSecs(file.duration) : '',
                     source: 'local',
                 });
                 toast(t('Dodano do kolejki: ') + file.name, 'success');
@@ -1190,6 +1603,97 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             if (plBtn) plBtn.onclick = (e) => {
                 e.stopPropagation();
                 _showAddToPlaylistModal(localItem);
+            };
+        });
+    }
+
+    /* ── Local Audiobooks ──────────────────────────────── */
+
+    async function loadLocalAudiobooks(toolbar, content) {
+        toolbar.innerHTML = '';
+        content.innerHTML = '<div class="rm-empty"><i class="fas fa-spinner fa-spin"></i></div>';
+
+        const scanData = await api('/radio-music/local/scan?scope=audiobooks');
+        const items = scanData.items || [];
+
+        if (!items.length) {
+            content.innerHTML = '<div class="rm-empty"><i class="fas fa-book-reader"></i><p>'
+                + t('Brak pobranych audiobooków') + '</p><p style="font-size:12px;color:var(--text-muted)">'
+                + t('Pobierz audiobooki z sekcji Audiobooki (YouTube)') + '</p></div>';
+            return;
+        }
+
+        // Group by folder (artist/uploader)
+        const byFolder = {};
+        items.forEach(it => {
+            const rel = it.relative || it.filename;
+            const parts = rel.split('/');
+            const group = parts.length > 1 ? parts[0] : it.folder.split('/').pop() || 'Audiobooki';
+            if (!byFolder[group]) byFolder[group] = [];
+            byFolder[group].push(it);
+        });
+
+        let html = '';
+        for (const [folder, files] of Object.entries(byFolder)) {
+            html += '<div class="rm-section-title"><i class="fas fa-book-open"></i> ' + escH(folder)
+                + ' <span style="font-size:11px;color:var(--text-muted);font-weight:400">(' + files.length + ')</span></div>';
+            html += '<div style="display:flex;flex-direction:column;gap:4px;margin-bottom:16px">';
+            files.forEach((file, i) => {
+                const artUrl = file.has_art ? '/api/radio-music/local/artwork?path=' + encodeURIComponent(file.path) + '&token=' + (NAS.token || '') : '';
+                const metaParts = [];
+                if (file.artist) metaParts.push(file.artist);
+                if (file.album) metaParts.push(file.album);
+                if (!metaParts.length) metaParts.push(file.filename);
+                const durStr = file.duration ? _fmtSecs(file.duration) : '';
+                html += '<div class="rm-track rm-lab-track" data-group="' + escH(folder) + '" data-idx="' + i + '">'
+                    + (artUrl
+                        ? '<img class="rm-track-thumb" src="' + escH(artUrl) + '" loading="lazy" onerror="this.outerHTML=\'<div class=\\\'rm-track-thumb\\\' style=\\\'display:flex;align-items:center;justify-content:center;background:#1a1a2e\\\'><i class=\\\'fas fa-book\\\' style=\\\'color:var(--text-muted)\\\'></i></div>\'">'
+                        : '<div class="rm-track-thumb" style="display:flex;align-items:center;justify-content:center;background:#1a1a2e"><i class="fas fa-book" style="color:var(--text-muted)"></i></div>')
+                    + '<div class="rm-track-info"><div class="rm-track-title">' + escH(file.name) + '</div>'
+                    + '<div class="rm-track-meta">' + escH(metaParts.join(' · ')) + '</div></div>'
+                    + (durStr ? '<span class="rm-track-dur">' + durStr + '</span>' : '')
+                    + '<div class="rm-track-actions">'
+                    + '<button class="rm-track-btn rm-add-queue-btn" title="' + t('Kolejka') + '"><i class="fas fa-plus"></i></button>'
+                    + '</div></div>';
+            });
+            html += '</div>';
+        }
+        content.innerHTML = html;
+
+        // Wire clicks
+        content.querySelectorAll('.rm-lab-track').forEach(el => {
+            const group = el.dataset.group;
+            const idx = parseInt(el.dataset.idx);
+            const file = byFolder[group][idx];
+            el.onclick = (e) => {
+                if (e.target.closest('.rm-track-btn')) return;
+                const groupFiles = byFolder[group];
+                _musicQueue = groupFiles.slice(idx).map(f => {
+                    const fArt = f.has_art ? '/api/radio-music/local/artwork?path=' + encodeURIComponent(f.path) + '&token=' + (NAS.token || '') : '';
+                    return {
+                        id: f.path, title: f.name, channel: [f.artist, f.album].filter(Boolean).join(' · ') || f.filename,
+                        url: f.path, thumbnail: fArt, duration: f.duration || 0, duration_fmt: f.duration ? _fmtSecs(f.duration) : '',
+                        source: 'local',
+                    };
+                });
+                _musicQueueIdx = 0;
+                const fileArt = file.has_art ? '/api/radio-music/local/artwork?path=' + encodeURIComponent(file.path) + '&token=' + (NAS.token || '') : '';
+                playAudio({
+                    name: file.name, type: 'local', path: file.path,
+                    url: '/api/radio-music/local/stream?path=' + encodeURIComponent(file.path) + '&token=' + (NAS.token || ''),
+                    meta: [file.artist, file.album].filter(Boolean).join(' · ') || file.filename,
+                    image: fileArt,
+                });
+            };
+            el.querySelector('.rm-add-queue-btn').onclick = (e) => {
+                e.stopPropagation();
+                const fArt = file.has_art ? '/api/radio-music/local/artwork?path=' + encodeURIComponent(file.path) + '&token=' + (NAS.token || '') : '';
+                _musicQueue.push({
+                    id: file.path, title: file.name, channel: [file.artist, file.album].filter(Boolean).join(' · ') || file.filename,
+                    url: file.path, thumbnail: fArt, duration: file.duration || 0, duration_fmt: file.duration ? _fmtSecs(file.duration) : '',
+                    source: 'local',
+                });
+                toast(t('Dodano do kolejki: ') + file.name, 'success');
             };
         });
     }
@@ -1215,8 +1719,9 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         } else {
             html += '<div style="display:flex;flex-direction:column;gap:8px">';
             _playlists.forEach(pl => {
+                const coverHtml = _playlistCoverHtml(pl, 48);
                 html += `<div class="rm-pl-card" data-plid="${escH(pl.id)}">
-                    <div class="rm-pl-icon"><i class="fas fa-music"></i></div>
+                    ${coverHtml}
                     <div class="rm-pl-info">
                         <div class="rm-pl-name">${escH(pl.name)}</div>
                         <div class="rm-pl-meta">${pl.tracks.length} ${t('utworów')}</div>
@@ -1254,7 +1759,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 e.stopPropagation();
                 const pl = _playlists.find(p => p.id === plId);
                 if (pl && pl.tracks.length) {
-                    _musicQueue = pl.tracks.slice();
+                    _musicQueue = pl.tracks.map(t => ({...t, _plItem: true}));
                     _musicQueueIdx = 0;
                     _playTrackFromPlaylist(pl.tracks[0]);
                     toast(t('Odtwarzam: ') + pl.name, 'success');
@@ -1310,7 +1815,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         const playAllBtn = content.querySelector('.rm-pl-play-all');
         if (playAllBtn) playAllBtn.onclick = () => {
             if (pl.tracks.length) {
-                _musicQueue = pl.tracks.slice();
+                _musicQueue = pl.tracks.map(t => ({...t, _plItem: true}));
                 _musicQueueIdx = 0;
                 _playTrackFromPlaylist(pl.tracks[0]);
             }
@@ -1332,7 +1837,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             const idx = parseInt(el.dataset.idx);
             el.onclick = (e) => {
                 if (e.target.closest('.rm-pl-trk-rm')) return;
-                _musicQueue = pl.tracks.slice(idx);
+                _musicQueue = pl.tracks.slice(idx).map(t => ({...t, _plItem: true}));
                 _musicQueueIdx = 0;
                 _playTrackFromPlaylist(pl.tracks[idx]);
             };
@@ -1347,11 +1852,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     function _playTrackFromPlaylist(tr) {
         if (tr.type === 'radio') {
             playStation(tr);
-        } else if (tr.type === 'music') {
-            playMusicTrack(tr);
-        } else if (tr.type === 'local') {
-            playAudio(tr);
         } else {
+            // Playlist items already have {name, url, type, meta, image} — playAudio format
             playAudio(tr);
         }
     }
@@ -1426,59 +1928,158 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
     async function loadMostPlayed(content) {
         content.innerHTML = '<div class="rm-empty"><i class="fas fa-spinner fa-spin"></i></div>';
-        const data = await api('/radio-music/most-played?limit=30');
-        const items = data.items || [];
-        if (!items.length) {
+        const data = await api('/radio-music/most-played?limit=60');
+        const allItems = data.items || [];
+        // Music/local only for "Najczęściej grane"
+        const items = allItems.filter(it => it.type === 'music' || it.type === 'local');
+        if (!items.length && !allItems.length) {
             content.innerHTML = '<div class="rm-empty"><i class="fas fa-fire"></i><p>' + t('Zacznij słuchać, aby zobaczyć najczęściej grane') + '</p></div>';
             return;
         }
-        let html = '<div class="rm-section-title"><i class="fas fa-fire"></i> ' + t('Najczęściej grane') + '</div>';
-        html += '<div class="rm-hscroll">';
-        items.forEach((item, i) => {
-            const artHtml = (item.image || item.favicon)
-                ? '<img src="' + escH(item.image || item.favicon) + '" onerror="this.outerHTML=\'<i class=\\\'fas fa-music\\\'></i>\'">'
-                : '<i class="fas ' + (item.type === 'podcast' ? 'fa-podcast' : item.type === 'music' ? 'fa-music' : 'fa-broadcast-tower') + '"></i>';
-            const badge = item.play_count > 1 ? '<span class="rm-hcard-badge">' + item.play_count + '×</span>' : '';
-            html += '<div class="rm-hcard" data-idx="' + i + '">'
-                + '<div class="rm-hcard-art">' + artHtml + badge + '</div>'
-                + '<div class="rm-hcard-title">' + escH(item.name) + '</div>'
-                + '<div class="rm-hcard-meta">' + escH(item.meta || item.country || '') + '</div>'
-                + '</div>';
-        });
-        html += '</div>';
+        let html = '';
+        if (items.length) {
+            html += '<div class="rm-section-title"><i class="fas fa-fire"></i> ' + t('Najczęściej grane') + '</div>';
+            html += '<div class="rm-hscroll">';
+            items.slice(0, 30).forEach((item, i) => {
+                const artHtml = (item.image || item.favicon)
+                    ? '<img src="' + escH(item.image || item.favicon) + '" onerror="this.outerHTML=\'<i class=\\\'fas fa-music\\\'></i>\'">'
+                    : '<i class="fas fa-music"></i>';
+                const badge = item.play_count > 1 ? '<span class="rm-hcard-badge">' + item.play_count + '×</span>' : '';
+                html += '<div class="rm-hcard" data-idx="' + i + '">'
+                    + '<div class="rm-hcard-art">' + artHtml + badge + '</div>'
+                    + '<div class="rm-hcard-title">' + escH(item.name) + '</div>'
+                    + '<div class="rm-hcard-meta">' + escH(item.meta || item.country || '') + '</div>'
+                    + '</div>';
+            });
+            html += '</div>';
+        }
 
-        // Also show recent grid below
-        html += '<div class="rm-section-title" style="margin-top:20px"><i class="fas fa-history"></i> ' + t('Ostatnio grane') + '</div>';
-        html += '<div class="rm-hscroll">';
-        const recent = (await api('/radio-music/history')).items || [];
-        recent.slice(0, 20).forEach((item, i) => {
-            const artHtml = (item.image || item.favicon)
-                ? '<img src="' + escH(item.image || item.favicon) + '" onerror="this.outerHTML=\'<i class=\\\'fas fa-music\\\'></i>\'">'
-                : '<i class="fas ' + (item.type === 'podcast' ? 'fa-podcast' : item.type === 'music' ? 'fa-music' : 'fa-broadcast-tower') + '"></i>';
-            html += '<div class="rm-hcard rm-hcard-recent" data-ridx="' + i + '">'
-                + '<div class="rm-hcard-art">' + artHtml + '</div>'
-                + '<div class="rm-hcard-title">' + escH(item.name) + '</div>'
-                + '<div class="rm-hcard-meta">' + escH(item.meta || item.country || '') + '</div>'
-                + '</div>';
-        });
-        html += '</div>';
-        content.innerHTML = html;
+        // "Ostatnio grane" — music/local only
+        const allRecent = (await api('/radio-music/history')).items || [];
+        const recent = allRecent.filter(it => it.type === 'music' || it.type === 'local');
+        if (recent.length) {
+            html += '<div class="rm-section-title" style="margin-top:20px"><i class="fas fa-history"></i> ' + t('Ostatnio grane') + '</div>';
+            html += '<div class="rm-hscroll">';
+            recent.slice(0, 20).forEach((item, i) => {
+                const artHtml = (item.image || item.favicon)
+                    ? '<img src="' + escH(item.image || item.favicon) + '" onerror="this.outerHTML=\'<i class=\\\'fas fa-music\\\'></i>\'">'
+                    : '<i class="fas fa-music"></i>';
+                html += '<div class="rm-hcard rm-hcard-recent" data-ridx="' + i + '">'
+                    + '<div class="rm-hcard-art">' + artHtml + '</div>'
+                    + '<div class="rm-hcard-title">' + escH(item.name) + '</div>'
+                    + '<div class="rm-hcard-meta">' + escH(item.meta || item.country || '') + '</div>'
+                    + '</div>';
+            });
+            html += '</div>';
+        }
 
-        // Wire up clicks
+        // Recently played radios
+        const recentRadios = allRecent.filter(it => it.type === 'radio' || (!it.type && it.uuid));
+        if (recentRadios.length) {
+            html += '<div class="rm-section-title" style="margin-top:20px"><i class="fas fa-broadcast-tower"></i> ' + t('Ostatnio słuchane radia') + '</div>';
+            html += '<div class="rm-hscroll">';
+            recentRadios.slice(0, 20).forEach((item, i) => {
+                const artHtml = (item.image || item.favicon)
+                    ? '<img src="' + escH(item.image || item.favicon) + '" onerror="this.outerHTML=\'<i class=\\\'fas fa-broadcast-tower\\\'></i>\'">'
+                    : '<i class="fas fa-broadcast-tower"></i>';
+                html += '<div class="rm-hcard rm-hcard-radio" data-radidx="' + i + '">'
+                    + '<div class="rm-hcard-art">' + artHtml + '</div>'
+                    + '<div class="rm-hcard-title">' + escH(item.name) + '</div>'
+                    + '<div class="rm-hcard-meta">' + escH(item.country || item.meta || '') + '</div>'
+                    + '</div>';
+            });
+            html += '</div>';
+        }
+
+        // Recently played podcasts
+        const recentPods = allRecent.filter(it => it.type === 'podcast');
+        if (recentPods.length) {
+            html += '<div class="rm-section-title" style="margin-top:20px"><i class="fas fa-podcast"></i> ' + t('Ostatnie podcasty') + '</div>';
+            html += '<div class="rm-hscroll">';
+            recentPods.slice(0, 20).forEach((item, i) => {
+                const artHtml = (item.image || item.favicon)
+                    ? '<img src="' + escH(item.image || item.favicon) + '" onerror="this.outerHTML=\'<i class=\\\'fas fa-podcast\\\'></i>\'">'
+                    : '<i class="fas fa-podcast"></i>';
+                html += '<div class="rm-hcard rm-hcard-pod" data-podidx="' + i + '">'
+                    + '<div class="rm-hcard-art">' + artHtml + '</div>'
+                    + '<div class="rm-hcard-title">' + escH(item.name) + '</div>'
+                    + '<div class="rm-hcard-meta">' + escH(item.meta || '') + '</div>'
+                    + '</div>';
+            });
+            html += '</div>';
+        }
+
+        // Playlists
+        await _loadPlaylists();
+        if (_playlists.length) {
+            html += '<div class="rm-section-title" style="margin-top:20px"><i class="fas fa-list"></i> ' + t('Playlisty') + '</div>';
+            html += '<div class="rm-hscroll">';
+            _playlists.forEach((pl, i) => {
+                const coverHtml = _playlistCoverHtml(pl, 120);
+                html += '<div class="rm-hcard rm-hcard-pl" data-plidx="' + i + '">'
+                    + '<div class="rm-hcard-art">' + coverHtml + '</div>'
+                    + '<div class="rm-hcard-title">' + escH(pl.name) + '</div>'
+                    + '<div class="rm-hcard-meta">' + pl.tracks.length + ' ' + t('utworów') + '</div>'
+                    + '</div>';
+            });
+            html += '</div>';
+        }
+
+        content.innerHTML = html || '<div class="rm-empty"><i class="fas fa-fire"></i><p>' + t('Zacznij słuchać, aby zobaczyć najczęściej grane') + '</p></div>';
+
+        // Wire up clicks — pass full list so next/prev navigates the list
         content.querySelectorAll('.rm-hcard[data-idx]').forEach(card => {
-            card.onclick = () => {
-                const it = items[parseInt(card.dataset.idx)];
-                if (it.type === 'music') playMusicTrack(it);
-                else if (it.type === 'podcast') playAudio(it);
-                else playStation(it);
-            };
+            const idx = parseInt(card.dataset.idx);
+            card.onclick = () => _playHistoryItem(items[idx], items, idx);
         });
         content.querySelectorAll('.rm-hcard-recent[data-ridx]').forEach(card => {
+            const idx = parseInt(card.dataset.ridx);
+            card.onclick = () => _playHistoryItem(recent[idx], recent, idx);
+        });
+        content.querySelectorAll('.rm-hcard-radio[data-radidx]').forEach(card => {
+            const idx = parseInt(card.dataset.radidx);
+            card.onclick = () => _playHistoryItem(recentRadios[idx], recentRadios, idx);
+        });
+        content.querySelectorAll('.rm-hcard-pod[data-podidx]').forEach(card => {
+            const idx = parseInt(card.dataset.podidx);
+            card.onclick = async () => {
+                const item = recentPods[idx];
+                const podName = item.meta || item.name || '';
+                // Switch to podcasts section
+                bodyEl.querySelectorAll('.rm-sidebar-item, .rm-mnav-btn').forEach(b => b.classList.remove('active'));
+                activeSection = 'podcasts';
+                loadSection('podcasts');
+                // Try subscriptions first (has feed_url)
+                const sub = _subscriptions.find(s => s.name === podName || s.title === podName);
+                if (sub && sub.feed_url) {
+                    openPodcast(sub);
+                    return;
+                }
+                // Search iTunes for the podcast
+                const res = await api('/radio-music/podcasts/search?q=' + encodeURIComponent(podName));
+                const found = (res.items || [])[0];
+                if (found && found.feed_url) {
+                    openPodcast(found);
+                } else {
+                    toast(t('Nie znaleziono podcastu'), 'error');
+                }
+            };
+        });
+        content.querySelectorAll('.rm-hcard-pl[data-plidx]').forEach(card => {
+            const idx = parseInt(card.dataset.plidx);
             card.onclick = () => {
-                const it = recent[parseInt(card.dataset.ridx)];
-                if (it.type === 'music') playMusicTrack(it);
-                else if (it.type === 'podcast') playAudio(it);
-                else playStation(it);
+                const pl = _playlists[idx];
+                if (pl && pl.tracks.length) {
+                    _musicQueue = pl.tracks.map(t => ({...t, _plItem: true}));
+                    _musicQueueIdx = 0;
+                    _playTrackFromPlaylist(pl.tracks[0]);
+                    toast(t('Odtwarzam: ') + pl.name, 'success');
+                } else {
+                    // Open playlists section to show this playlist
+                    bodyEl.querySelectorAll('.rm-sidebar-item, .rm-mnav-btn').forEach(b => b.classList.remove('active'));
+                    activeSection = 'playlists';
+                    loadSection('playlists');
+                }
             };
         });
     }
@@ -1494,7 +2095,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         }
         content.innerHTML = '<div class="rm-grid"></div>';
         const grid = content.querySelector('.rm-grid');
-        items.forEach(item => {
+        items.forEach((item, idx) => {
             const card = document.createElement('div');
             card.className = 'rm-card';
             const icon = item.type === 'podcast' ? 'fa-podcast' : 'fa-broadcast-tower';
@@ -1504,12 +2105,106 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                     <div class="rm-card-name">${escH(item.name)}</div>
                     <div class="rm-card-meta">${escH(item.meta || item.country || '')}</div>
                 </div>`;
-            card.onclick = () => {
-                if (item.type === 'podcast') playAudio(item);
-                else playStation(item);
-            };
+            card.onclick = () => _playHistoryItem(item, items, idx);
             grid.appendChild(card);
         });
+    }
+
+    /* ── Audiobooks for Kids ───────────────────────── */
+
+    const _AUDIOBOOK_CATEGORIES = [
+        {q: 'najlepsze audiobooki dla dzieci po polsku 2024 2025', label: '🏆 Top bajki'},
+        {q: 'bajki dla dzieci audiobook po polsku', label: '🇵🇱 Bajki po polsku'},
+        {q: 'bajki na dobranoc dla dzieci audiobook', label: '🌙 Na dobranoc'},
+        {q: 'baśnie braci grimm audiobook dla dzieci', label: '📖 Baśnie Grimm'},
+        {q: 'baśnie andersena audiobook dla dzieci', label: '👑 Andersen'},
+        {q: 'harry potter audiobook po polsku', label: '⚡ Harry Potter'},
+        {q: 'władca pierścieni audiobook po polsku', label: '💍 Władca Pierścieni'},
+        {q: 'narnia audiobook po polsku', label: '🦁 Opowieści z Narnii'},
+        {q: 'mały książę audiobook po polsku', label: '🌹 Mały Książę'},
+        {q: 'pippi langstrumpf audiobook po polsku', label: '🧦 Pippi'},
+        {q: 'muminki audiobook po polsku', label: '🏔️ Muminki'},
+        {q: 'kubuś puchatek audiobook', label: '🍯 Kubuś Puchatek'},
+        {q: 'smerfy audiobook bajka po polsku', label: '🔵 Smerfy'},
+        {q: 'masza i niedźwiedź bajka audiobook po polsku', label: '🐻 Masza'},
+        {q: 'franklin żółw audiobook bajka po polsku', label: '🐢 Franklin'},
+        {q: 'bolek i lolek audiobook bajka', label: '👦 Bolek i Lolek'},
+        {q: 'reksio audiobook bajka po polsku', label: '🐕 Reksio'},
+        {q: 'przygody audiobook dla dzieci po polsku', label: '🏴‍☠️ Przygody'},
+        {q: 'bajki zwierzęta audiobook dla dzieci', label: '🦊 Zwierzęta'},
+        {q: 'audiobook dla dzieci edukacyjny', label: '🎓 Edukacyjne'},
+        {q: 'pan tadeusz audiobook lektura', label: '📚 Lektury'},
+        {q: 'audiobook children english fairy tales', label: '🇬🇧 English'},
+    ];
+
+    async function loadAudiobooks(toolbar, content) {
+        if (_ytdlpReady === null) {
+            const deps = await api('/radio-music/music/check-deps');
+            _ytdlpReady = deps.ready || false;
+        }
+        if (!_ytdlpReady) {
+            content.innerHTML = `<div class="rm-install-banner">
+                <i class="fas fa-book-open"></i>
+                <p>${t('Do audiobooków wymagany jest yt-dlp.')}</p>
+                <button class="rm-install-btn" id="rm-install-ytdlp-ab"><i class="fas fa-download"></i> ${t('Zainstaluj yt-dlp')}</button>
+            </div>`;
+            content.querySelector('#rm-install-ytdlp-ab').onclick = async (e) => {
+                const btn = e.currentTarget;
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Instalowanie...');
+                const res = await api('/radio-music/music/install-deps', { method: 'POST' });
+                if (res.ready) { _ytdlpReady = true; toast(t('Gotowe!'), 'success'); loadAudiobooks(toolbar, content); }
+                else { btn.disabled = false; btn.innerHTML = '<i class="fas fa-download"></i> ' + t('Zainstaluj yt-dlp'); toast(res.error || t('Błąd'), 'error'); }
+            };
+            return;
+        }
+
+        toolbar.innerHTML = `<input class="rm-search" id="rm-ab-search" placeholder="${t('Szukaj audiobooków...')}" autofocus>`;
+        content.innerHTML = '<div class="rm-chips" id="rm-ab-cats"></div><div id="rm-ab-results"></div>';
+
+        const chipsEl = content.querySelector('#rm-ab-cats');
+        _AUDIOBOOK_CATEGORIES.forEach(cat => {
+            const chip = document.createElement('span');
+            chip.className = 'rm-chip';
+            chip.textContent = t(cat.label);
+            chip.onclick = () => {
+                chipsEl.querySelectorAll('.rm-chip').forEach(c => c.classList.remove('active'));
+                chip.classList.add('active');
+                searchAudiobooks(cat.q, content.querySelector('#rm-ab-results'));
+            };
+            chipsEl.appendChild(chip);
+        });
+
+        const searchInput = toolbar.querySelector('#rm-ab-search');
+        let debounce;
+        searchInput.onkeyup = () => {
+            clearTimeout(debounce);
+            debounce = setTimeout(() => {
+                const q = searchInput.value.trim();
+                if (q) {
+                    chipsEl.querySelectorAll('.rm-chip').forEach(c => c.classList.remove('active'));
+                    searchAudiobooks(q + ' audiobook', content.querySelector('#rm-ab-results'));
+                }
+            }, 500);
+        };
+
+        // Show first category by default
+        const first = chipsEl.querySelector('.rm-chip');
+        if (first) first.click();
+    }
+
+    async function searchAudiobooks(q, container) {
+        container.innerHTML = '<div class="rm-empty"><i class="fas fa-spinner fa-spin"></i><p>' + t('Szukam...') + '</p></div>';
+        const data = await api('/radio-music/music/search?q=' + encodeURIComponent(q) + '&limit=20');
+        if (data.error) {
+            container.innerHTML = '<div class="rm-empty"><i class="fas fa-exclamation-triangle"></i><p>' + escH(data.error) + '</p></div>';
+            return;
+        }
+        if (!data.items || !data.items.length) {
+            container.innerHTML = '<div class="rm-empty"><i class="fas fa-book-open"></i><p>' + t('Brak wyników') + '</p></div>';
+            return;
+        }
+        renderMusicResults(data.items, container, 'Audiobooks');
     }
 
     /* ── Playback Engine ───────────────────────────── */
@@ -1527,6 +2222,46 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         });
     }
 
+    // Route a history/most-played item to the correct playback function.
+    // If listItems & listIdx provided, build a queue from the list so next/prev works.
+    function _playHistoryItem(item, listItems, listIdx) {
+        // Fix type from URL pattern (corrupted history entries)
+        if (!item.type || item.type === 'radio') {
+            if (item.url && item.url.includes('/local/stream')) item.type = 'local';
+            else if (item.url && (item.url.includes('youtube.com/') || item.url.includes('youtu.be/'))) item.type = 'music';
+        }
+
+        // Build queue from list context so prev/next navigates the list
+        if (listItems && listItems.length > 1) {
+            _musicQueue = listItems.map(it => _historyItemToQueueEntry(it));
+            _musicQueueIdx = typeof listIdx === 'number' ? listIdx : 0;
+        } else {
+            _musicQueue = [_historyItemToQueueEntry(item)];
+            _musicQueueIdx = 0;
+        }
+
+        if (item.type === 'local' || item.type === 'music' || item.type === 'podcast') {
+            playAudio(item);
+        } else {
+            playStation(item);
+        }
+    }
+
+    // Convert a history item into a queue-compatible entry for playMusicTrack
+    function _historyItemToQueueEntry(it) {
+        // Fix type
+        if (!it.type || it.type === 'radio') {
+            if (it.url && it.url.includes('/local/stream')) it.type = 'local';
+            else if (it.url && (it.url.includes('youtube.com/') || it.url.includes('youtu.be/'))) it.type = 'music';
+        }
+        return {
+            title: it.name || it.title || '', channel: it.meta || it.channel || '',
+            url: it.url || '', thumbnail: it.image || it.favicon || '',
+            source: it.type === 'local' ? 'local' : undefined,
+            _histItem: it,  // keep original for playback routing
+        };
+    }
+
     function playAudio(item) {
         if (_audio) { _audio.pause(); _audio.src = ''; }
         _clearSeek();
@@ -1537,6 +2272,15 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         // Build ordered list of URLs to try (primary + fallbacks)
         const isMusic = item.type === 'music';
         const isLocal = item.type === 'local';
+
+        // For local files, always refresh the token (stored URL may have stale token)
+        if (isLocal && item.path) {
+            item.url = '/api/radio-music/local/stream?path=' + encodeURIComponent(item.path) + '&token=' + (NAS.token || '');
+        } else if (isLocal && item.url && item.url.includes('/local/stream')) {
+            const m = item.url.match(/[?&]path=([^&]+)/);
+            if (m) item.url = '/api/radio-music/local/stream?path=' + m[1] + '&token=' + (NAS.token || '');
+        }
+
         const urls = isMusic ? [item.url] : [item.url, ...(item.alt_urls || [])];
         let urlIdx = 0;
         let hasPlayed = false;
@@ -1587,12 +2331,14 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             bodyEl.querySelector('#rm-play-pause').innerHTML = '<i class="fas fa-pause"></i>';
             _showEq(!isMusic && !isLocal);
             _updateSeekbar();
+            _savePlaybackState();
         };
         _audio.onwaiting = () => _setBuffering(true);
         _audio.onplaying = () => _setBuffering(false);
         _audio.onpause = () => {
             bodyEl.querySelector('#rm-play-pause').innerHTML = '<i class="fas fa-play"></i>';
             _showEq(false);
+            _savePlaybackState();
         };
         _audio.onerror = () => {
             if (!hasPlayed) {
@@ -1607,18 +2353,47 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         _audio.onended = () => {
             _showEq(false);
             _clearSeek();
-            // Auto-play next in queue
+
+            // Repeat one — replay current track
+            if (_repeatMode === 2) {
+                _audio.currentTime = 0;
+                _audio.play().then(() => _showEq(true)).catch(() => {});
+                return;
+            }
+
+            // Auto-play next in queue (music/local)
             if (_musicQueue.length && _musicQueueIdx >= 0) {
-                _musicQueueIdx++;
-                if (_musicQueueIdx < _musicQueue.length) {
-                    playMusicTrack(_musicQueue[_musicQueueIdx]);
+                let nextIdx;
+                if (_shuffle) {
+                    if (_musicQueue.length === 1) { nextIdx = 0; }
+                    else {
+                        do { nextIdx = Math.floor(Math.random() * _musicQueue.length); } while (nextIdx === _musicQueueIdx);
+                    }
+                } else {
+                    nextIdx = _musicQueueIdx + 1;
+                }
+                if (nextIdx < _musicQueue.length) {
+                    _musicQueueIdx = nextIdx;
+                    const nxt = _musicQueue[nextIdx];
+                    nxt._plItem ? _playTrackFromPlaylist(nxt) : playMusicTrack(nxt);
+                    return;
+                }
+                // End of queue — repeat all wraps around
+                if (_repeatMode === 1 && _musicQueue.length > 0) {
+                    _musicQueueIdx = _shuffle ? Math.floor(Math.random() * _musicQueue.length) : 0;
+                    const nxt = _musicQueue[_musicQueueIdx];
+                    nxt._plItem ? _playTrackFromPlaylist(nxt) : playMusicTrack(nxt);
                     return;
                 }
             }
             bodyEl.querySelector('#rm-play-pause').innerHTML = '<i class="fas fa-play"></i>';
         };
         _audio.ontimeupdate = () => _updateSeekbar();
-        _audio.onloadedmetadata = () => _updateSeekbar();
+        _audio.onloadedmetadata = () => { _updateSeekbar(); _savePlaybackState(); };
+
+        // Periodic save of playback position
+        if (_saveStateInterval) clearInterval(_saveStateInterval);
+        _saveStateInterval = setInterval(_savePlaybackState, 5000);
 
         // Update player bar — show immediately with buffering indicator
         const player = bodyEl.querySelector('#rm-player');
@@ -1648,28 +2423,64 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         bodyEl.querySelectorAll('.rm-card, .rm-ep-item, .rm-track').forEach(c => c.classList.remove('rm-playing'));
 
         // Start playback with fallback chain
-        tryUrl(0);
+        if (_isCasting) {
+            // During casting, also start local audio (muted) for position tracking,
+            // then send the track to Chromecast
+            tryUrl(0);
+            if (_audio) _audio.volume = 0;
+            setTimeout(() => _castCurrentTrack(), 200);
+        } else {
+            tryUrl(0);
+        }
     }
 
     function _skipStation(dir) {
-        // Music queue has priority
-        if (_playing && _playing.type === 'music' && _musicQueue.length > 0) {
-            const nextIdx = _musicQueueIdx + dir;
+        // Queue has priority (music tracks, local files, or history list items)
+        if (_musicQueue.length > 0 && _musicQueueIdx >= 0) {
+            let nextIdx;
+            if (_shuffle) {
+                if (_musicQueue.length === 1) { nextIdx = 0; }
+                else {
+                    do { nextIdx = Math.floor(Math.random() * _musicQueue.length); } while (nextIdx === _musicQueueIdx);
+                }
+            } else {
+                nextIdx = _musicQueueIdx + dir;
+            }
             if (nextIdx >= 0 && nextIdx < _musicQueue.length) {
                 _musicQueueIdx = nextIdx;
-                playMusicTrack(_musicQueue[nextIdx]);
+                const nxt = _musicQueue[nextIdx];
+                nxt._plItem ? _playTrackFromPlaylist(nxt) : playMusicTrack(nxt);
+            } else if (_repeatMode === 1 && _musicQueue.length > 0) {
+                _musicQueueIdx = dir > 0 ? 0 : _musicQueue.length - 1;
+                const nxt = _musicQueue[_musicQueueIdx];
+                nxt._plItem ? _playTrackFromPlaylist(nxt) : playMusicTrack(nxt);
             }
             return;
         }
         if (!_playing || !_recentStations.length) return;
         const idx = _recentStations.findIndex(s => s.uuid === _playing.uuid || s.name === _playing.name);
-        let next = idx + dir;
-        if (next < 0) next = _recentStations.length - 1;
-        if (next >= _recentStations.length) next = 0;
+        let next;
+        if (_shuffle) {
+            if (_recentStations.length === 1) { next = 0; }
+            else {
+                do { next = Math.floor(Math.random() * _recentStations.length); } while (next === idx);
+            }
+        } else {
+            next = idx + dir;
+            if (next < 0) next = _recentStations.length - 1;
+            if (next >= _recentStations.length) next = 0;
+        }
         playStation(_recentStations[next]);
     }
 
     function stopPlayback() {
+        _savePlaybackState();
+        if (_saveStateInterval) { clearInterval(_saveStateInterval); _saveStateInterval = null; }
+        // Stop Chromecast if active
+        if (_isCasting) {
+            try { cast.framework.CastContext.getInstance().endCurrentSession(true); } catch (e) {}
+        }
+        _stopCastPoll();
         if (_audio) {
             _audio.pause();
             _audio.src = '';
@@ -1687,6 +2498,210 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     function _showEq(show) {
         const eq = bodyEl?.querySelector('#rm-player-eq');
         if (eq) eq.style.display = show ? 'flex' : 'none';
+    }
+
+    /* ── Chromecast Integration ──────────────────────── */
+
+    function _castAvailable() {
+        return !!(window.chrome && chrome.cast && chrome.cast.isAvailable);
+    }
+
+    function _initCast() {
+        if (window.__castSdkLoaded) { _onCastApiReady(); return; }
+        window['__onGCastApiAvailable'] = (isAvailable) => {
+            window.__castSdkLoaded = true;
+            if (isAvailable) _onCastApiReady();
+        };
+        if (!document.querySelector('script[src*="cast_sender"]')) {
+            const s = document.createElement('script');
+            s.src = 'https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1';
+            s.async = true;
+            document.head.appendChild(s);
+        } else if (_castAvailable()) {
+            _onCastApiReady();
+        }
+    }
+
+    function _onCastApiReady() {
+        try {
+            const ctx = cast.framework.CastContext.getInstance();
+            ctx.setOptions({
+                receiverApplicationId: chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
+                autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED,
+            });
+            _castPlayer = new cast.framework.RemotePlayer();
+            _castController = new cast.framework.RemotePlayerController(_castPlayer);
+
+            // Show cast button
+            const castBtn = bodyEl?.querySelector('#rm-cast-btn');
+            if (castBtn) castBtn.style.display = '';
+
+            ctx.addEventListener(cast.framework.CastContextEventType.SESSION_STATE_CHANGED, (e) => {
+                const state = e.sessionState;
+                if (state === cast.framework.SessionState.SESSION_STARTED ||
+                    state === cast.framework.SessionState.SESSION_RESUMED) {
+                    _castSession = ctx.getCurrentSession();
+                    _isCasting = true;
+                    _onCastConnected();
+                } else if (state === cast.framework.SessionState.SESSION_ENDED) {
+                    _onCastDisconnected();
+                }
+            });
+
+            _castController.addEventListener(cast.framework.RemotePlayerEventType.IS_PAUSED_CHANGED, _syncCastUi);
+            _castController.addEventListener(cast.framework.RemotePlayerEventType.CURRENT_TIME_CHANGED, _syncCastSeekbar);
+        } catch (e) {
+            console.warn('Cast init error:', e);
+        }
+    }
+
+    function _toggleCast() {
+        if (!_castAvailable()) {
+            toast(t('Chromecast niedostępny — użyj przeglądarki Chrome'), 'error');
+            return;
+        }
+        const ctx = cast.framework.CastContext.getInstance();
+        if (_isCasting) {
+            ctx.endCurrentSession(true);
+        } else {
+            ctx.requestSession().then(() => {}).catch((err) => {
+                if (err !== 'cancel') console.warn('Cast session error:', err);
+            });
+        }
+    }
+
+    function _buildCastUrl() {
+        if (!_playing) return null;
+        const item = _playing;
+        const origin = window.location.origin;
+        if (item.type === 'local' && item.path) {
+            return origin + '/api/radio-music/local/stream?path=' + encodeURIComponent(item.path) + '&token=' + (NAS.token || '');
+        } else if (item.type === 'music') {
+            return origin + '/api/radio-music/music/stream?url=' + encodeURIComponent(item.url) + '&token=' + (NAS.token || '');
+        } else {
+            // Radio — Chromecast can reach internet streams directly
+            return item.url || null;
+        }
+    }
+
+    function _onCastConnected() {
+        _syncCastBtnUi(true);
+        if (!_playing) return;
+
+        const url = _buildCastUrl();
+        if (!url) return;
+
+        if (_audio && !_audio.paused) _audio.pause();
+
+        const mediaInfo = new chrome.cast.media.MediaInfo(url, 'audio/mpeg');
+        mediaInfo.metadata = new chrome.cast.media.MusicTrackMediaMetadata();
+        mediaInfo.metadata.title = _playing.name || '';
+        mediaInfo.metadata.artist = _playing.meta || '';
+        if (_playing.image) {
+            mediaInfo.metadata.images = [new chrome.cast.Image(_playing.image)];
+        }
+
+        const request = new chrome.cast.media.LoadRequest(mediaInfo);
+        if (_audio && isFinite(_audio.currentTime) && _audio.currentTime > 1) {
+            request.currentTime = _audio.currentTime;
+        }
+        request.autoplay = true;
+
+        _castSession.loadMedia(request).then(() => {
+            toast(t('Odtwarzanie na Chromecast'), 'success');
+            _startCastPoll();
+        }).catch((err) => {
+            console.warn('Cast load error:', err);
+            toast(t('Błąd przesyłania na Chromecast'), 'error');
+        });
+    }
+
+    function _onCastDisconnected() {
+        const castTime = (_castPlayer && isFinite(_castPlayer.currentTime)) ? _castPlayer.currentTime : 0;
+        _isCasting = false;
+        _castSession = null;
+        _syncCastBtnUi(false);
+        _stopCastPoll();
+        if (_playing && _audio) {
+            if (castTime > 1) _audio.currentTime = castTime;
+            _audio.play().catch(() => {});
+        }
+    }
+
+    function _syncCastBtnUi(casting) {
+        const btn = bodyEl?.querySelector('#rm-cast-btn');
+        if (btn) btn.classList.toggle('rm-casting', casting);
+        const npBtn = _npOverlay?.querySelector('#rm-np-cast');
+        if (npBtn) npBtn.classList.toggle('rm-lyrics-active', casting);
+    }
+
+    function _syncCastUi() {
+        if (!_isCasting || !_castPlayer) return;
+        const paused = _castPlayer.isPaused;
+        const ppBtn = bodyEl?.querySelector('#rm-play-pause');
+        if (ppBtn) ppBtn.innerHTML = paused ? '<i class="fas fa-play"></i>' : '<i class="fas fa-pause"></i>';
+        const npPp = _npOverlay?.querySelector('#rm-np-playpause');
+        if (npPp) npPp.innerHTML = paused ? '<i class="fas fa-play"></i>' : '<i class="fas fa-pause"></i>';
+        _showEq(!paused && _playing && _playing.type !== 'music' && _playing.type !== 'local');
+    }
+
+    function _syncCastSeekbar() {
+        if (!_isCasting || !_castPlayer) return;
+        const dur = _castPlayer.duration || 0;
+        const cur = _castPlayer.currentTime || 0;
+        if (!isFinite(dur) || dur <= 0) return;
+
+        const pct = (cur / dur) * 100;
+        const seekbar = bodyEl?.querySelector('#rm-seekbar');
+        if (seekbar) {
+            seekbar.classList.add('visible');
+            const fill = seekbar.querySelector('#rm-seek-fill');
+            const thumb = seekbar.querySelector('#rm-seek-thumb');
+            if (fill) fill.style.width = pct + '%';
+            if (thumb) thumb.style.left = pct + '%';
+            const curEl = seekbar.querySelector('#rm-seek-cur');
+            const durEl = seekbar.querySelector('#rm-seek-dur');
+            if (curEl) curEl.textContent = _fmtTime(cur);
+            if (durEl) durEl.textContent = _fmtTime(dur);
+        }
+        if (_npOverlay) {
+            const fill = _npOverlay.querySelector('#rm-np-fill');
+            const thumb = _npOverlay.querySelector('#rm-np-thumb');
+            if (fill) fill.style.width = pct + '%';
+            if (thumb) thumb.style.left = pct + '%';
+            const curEl = _npOverlay.querySelector('#rm-np-cur');
+            const durEl = _npOverlay.querySelector('#rm-np-dur');
+            if (curEl) curEl.textContent = _fmtTime(cur);
+            if (durEl) durEl.textContent = _fmtTime(dur);
+        }
+    }
+
+    function _startCastPoll() {
+        _stopCastPoll();
+        _castPollInterval = setInterval(() => {
+            if (_isCasting && _castPlayer) _syncCastSeekbar();
+        }, 1000);
+    }
+
+    function _stopCastPoll() {
+        if (_castPollInterval) { clearInterval(_castPollInterval); _castPollInterval = null; }
+    }
+
+    function _castCurrentTrack() {
+        if (!_isCasting || !_castSession || !_playing) return;
+        const url = _buildCastUrl();
+        if (!url) return;
+
+        const mediaInfo = new chrome.cast.media.MediaInfo(url, 'audio/mpeg');
+        mediaInfo.metadata = new chrome.cast.media.MusicTrackMediaMetadata();
+        mediaInfo.metadata.title = _playing.name || '';
+        mediaInfo.metadata.artist = _playing.meta || '';
+        if (_playing.image) {
+            mediaInfo.metadata.images = [new chrome.cast.Image(_playing.image)];
+        }
+        const request = new chrome.cast.media.LoadRequest(mediaInfo);
+        request.autoplay = true;
+        _castSession.loadMedia(request).catch((err) => console.warn('Cast track load error:', err));
     }
 
     function _updateSeekbar() {
@@ -1759,15 +2774,22 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                     <span class="rm-seek-time right" id="rm-np-dur">0:00</span>
                 </div>` : '<div class="rm-np-count"><i class="fas fa-signal"></i> ' + t('Transmisja na żywo') + '</div>'}
                 <div class="rm-np-controls">
+                    <button class="rm-np-btn" id="rm-np-shuffle" title="${t('Losowo')}"><i class="fas fa-random"></i></button>
                     <button class="rm-np-btn" id="rm-np-prev"><i class="fas fa-step-backward"></i></button>
                     <button class="rm-np-btn rm-np-play" id="rm-np-playpause"><i class="fas ${_audio && !_audio.paused ? 'fa-pause' : 'fa-play'}"></i></button>
                     <button class="rm-np-btn" id="rm-np-next"><i class="fas fa-step-forward"></i></button>
+                    <button class="rm-np-btn" id="rm-np-repeat" title="${t('Powtarzaj')}"><i class="fas fa-redo"></i></button>
                 </div>
                 <div class="rm-np-actions">
+                    <button class="rm-np-action" id="rm-np-queue-btn"><i class="fas fa-list-ol"></i> ${t('Kolejka')}</button>
+                    <button class="rm-np-action" id="rm-np-lyrics"><i class="fas fa-align-left"></i> ${t('Tekst')}</button>
                     <button class="rm-np-action" id="rm-np-addpl"><i class="fas fa-plus"></i> ${t('Playlista')}</button>
-                    <button class="rm-np-action" id="rm-np-fav"><i class="fas fa-heart"></i> ${t('Ulubione')}</button>
+                    <button class="rm-np-action rm-np-cast-action" id="rm-np-cast" style="display:${_castAvailable() ? 'flex' : 'none'}"><i class="fab fa-chromecast"></i> Chromecast</button>
+                    <button class="rm-np-action" id="rm-np-lock"><i class="fas fa-lock"></i> ${t('Blokada')}</button>
                     <button class="rm-np-action" id="rm-np-close2"><i class="fas fa-times"></i> ${t('Zamknij')}</button>
                 </div>
+                <div class="rm-lyrics-panel" id="rm-np-lyrics-panel"></div>
+                <div class="rm-np-queue" id="rm-np-queue-panel"></div>
             </div>`;
 
         // Art image
@@ -1796,6 +2818,10 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
         // Controls
         ov.querySelector('#rm-np-playpause').onclick = () => {
+            if (_isCasting && _castController) {
+                _castController.playOrPause();
+                return;
+            }
             if (!_audio) return;
             if (_audio.paused) {
                 _audio.play();
@@ -1808,41 +2834,178 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         ov.querySelector('#rm-np-prev').onclick = () => _skipStation(-1);
         ov.querySelector('#rm-np-next').onclick = () => _skipStation(1);
 
+        // Repeat/Shuffle in Now Playing
+        function _syncNpRepeat() {
+            const btn = ov.querySelector('#rm-np-repeat');
+            if (!btn) return;
+            btn.classList.toggle('rm-mode-active', _repeatMode > 0);
+            btn.innerHTML = _repeatMode === 2 ? '<i class="fas fa-redo"></i><span style="font-size:9px;position:absolute;font-weight:700">1</span>' : '<i class="fas fa-redo"></i>';
+            btn.style.position = _repeatMode === 2 ? 'relative' : '';
+        }
+        function _syncNpShuffle() {
+            const btn = ov.querySelector('#rm-np-shuffle');
+            if (btn) btn.classList.toggle('rm-mode-active', _shuffle);
+        }
+        ov.querySelector('#rm-np-repeat').onclick = () => {
+            _repeatMode = (_repeatMode + 1) % 3;
+            _syncNpRepeat();
+            // Sync main player btn
+            const mainBtn = bodyEl.querySelector('#rm-repeat-btn');
+            if (mainBtn) {
+                mainBtn.classList.toggle('rm-mode-active', _repeatMode > 0);
+                mainBtn.innerHTML = _repeatMode === 2 ? '<i class="fas fa-redo"></i><span style="font-size:9px;position:absolute;font-weight:700">1</span>' : '<i class="fas fa-redo"></i>';
+                mainBtn.style.position = _repeatMode === 2 ? 'relative' : '';
+            }
+        };
+        ov.querySelector('#rm-np-shuffle').onclick = () => {
+            _shuffle = !_shuffle;
+            _syncNpShuffle();
+            const mainBtn = bodyEl.querySelector('#rm-shuffle-btn');
+            if (mainBtn) mainBtn.classList.toggle('rm-mode-active', _shuffle);
+        };
+        _syncNpRepeat();
+        _syncNpShuffle();
+
         // Add to playlist
         ov.querySelector('#rm-np-addpl').onclick = () => {
             if (typeof _showAddToPlaylistModal === 'function') _showAddToPlaylistModal(item);
         };
 
-        // Favorite toggle
-        ov.querySelector('#rm-np-fav').onclick = async () => {
-            const favBtn = ov.querySelector('#rm-np-fav');
-            if (item.type === 'radio' && item.uuid) {
-                await api('/radio-music/radio/favorite', { method: 'POST', body: { station: item } });
-                favBtn.innerHTML = '<i class="fas fa-heart" style="color:#e74c3c"></i> ' + t('Dodano');
+        // Lyrics toggle
+        ov.querySelector('#rm-np-lyrics').onclick = async () => {
+            const lyrBtn = ov.querySelector('#rm-np-lyrics');
+            const panel = ov.querySelector('#rm-np-lyrics-panel');
+            // Close queue if open
+            queuePanel.classList.remove('rm-np-queue-visible');
+            queueBtn.classList.remove('rm-lyrics-active');
+
+            if (panel.classList.contains('rm-lyrics-visible')) {
+                panel.classList.remove('rm-lyrics-visible');
+                lyrBtn.classList.remove('rm-lyrics-active');
+                return;
+            }
+            lyrBtn.classList.add('rm-lyrics-active');
+            panel.classList.add('rm-lyrics-visible');
+            panel.innerHTML = '<div class="rm-lyrics-loading"><i class="fas fa-spinner fa-spin"></i> ' + t('Szukam tekstu...') + '</div>';
+
+            // Parse artist/title from name — YouTube titles are often "Artist - Title (Official Video)"
+            let rawName = item.name || '';
+            // Strip common YouTube suffixes
+            let cleanName = rawName.replace(/\s*[\(\[](official\s*(video|audio|music\s*video|lyric\s*video|visualizer)|lyrics?|teledysk|audio|video|clip|hd|hq|4k|remastered|live)[\)\]]/gi, '').trim();
+
+            let title = cleanName;
+            let artist = '';
+            if (cleanName.includes(' - ')) {
+                const parts = cleanName.split(' - ');
+                artist = parts[0].trim();
+                title = parts.slice(1).join(' - ').trim();
+            }
+            // If no artist from name, try meta (YouTube channel)
+            if (!artist && item.meta) artist = item.meta;
+
+            // Try search with parsed artist+title first
+            let data = await api('/radio-music/lyrics?title=' + encodeURIComponent(title) + '&artist=' + encodeURIComponent(artist));
+            // Fallback: try with just the clean name if not found
+            if (!data.lyrics && title !== cleanName) {
+                data = await api('/radio-music/lyrics?title=' + encodeURIComponent(cleanName) + '&artist=');
+            }
+            if (data.lyrics) {
+                panel.textContent = data.lyrics;
             } else {
-                await api('/radio-music/history', { method: 'POST', body: { item } });
-                favBtn.innerHTML = '<i class="fas fa-check"></i> ' + t('OK');
+                panel.innerHTML = '<div class="rm-lyrics-empty"><i class="fas fa-music"></i> ' + t('Nie znaleziono tekstu') + '</div>';
             }
         };
+
+        // Queue panel toggle
+        const queueBtn = ov.querySelector('#rm-np-queue-btn');
+        const queuePanel = ov.querySelector('#rm-np-queue-panel');
+        function _renderNpQueue() {
+            if (!_musicQueue.length) {
+                queuePanel.innerHTML = '<div style="text-align:center;padding:20px;color:rgba(255,255,255,.3);font-size:13px"><i class="fas fa-list"></i> ' + t('Kolejka jest pusta') + '</div>';
+                return;
+            }
+            let html = '<div class="rm-np-queue-header"><span>' + t('Kolejka') + ' (' + _musicQueue.length + ')</span></div>';
+            _musicQueue.forEach((tr, idx) => {
+                const isCurrent = idx === _musicQueueIdx;
+                const name = tr.name || tr.title || '';
+                const meta = tr.meta || tr.channel || '';
+                const art = tr.image || tr.thumbnail || tr.favicon || '';
+                html += '<div class="rm-np-q-item' + (isCurrent ? ' rm-q-current' : '') + '" data-idx="' + idx + '">'
+                    + '<span class="rm-np-q-item-idx">' + (isCurrent ? '<i class="fas fa-volume-up"></i>' : (idx + 1)) + '</span>'
+                    + (art ? '<img class="rm-np-q-item-art" src="' + escH(art) + '" onerror="this.style.display=\'none\'">' : '')
+                    + '<div class="rm-np-q-item-info"><div class="rm-np-q-item-title">' + escH(name) + '</div>'
+                    + (meta ? '<div class="rm-np-q-item-meta">' + escH(meta) + '</div>' : '')
+                    + '</div></div>';
+            });
+            queuePanel.innerHTML = html;
+            // Scroll current into view
+            const cur = queuePanel.querySelector('.rm-q-current');
+            if (cur) cur.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            // Click to jump
+            queuePanel.querySelectorAll('.rm-np-q-item').forEach(el => {
+                el.onclick = () => {
+                    const idx = parseInt(el.dataset.idx, 10);
+                    if (isNaN(idx) || idx === _musicQueueIdx) return;
+                    _musicQueueIdx = idx;
+                    const tr = _musicQueue[idx];
+                    if (tr._plItem) {
+                        _playTrackFromPlaylist(tr);
+                    } else {
+                        playMusicTrack(tr);
+                    }
+                    _hideNowPlaying();
+                };
+            });
+        }
+        queueBtn.onclick = () => {
+            // Close lyrics if open
+            const lyrPanel = ov.querySelector('#rm-np-lyrics-panel');
+            if (lyrPanel) lyrPanel.classList.remove('rm-lyrics-visible');
+            ov.querySelector('#rm-np-lyrics').classList.remove('rm-lyrics-active');
+
+            if (queuePanel.classList.contains('rm-np-queue-visible')) {
+                queuePanel.classList.remove('rm-np-queue-visible');
+                queueBtn.classList.remove('rm-lyrics-active');
+                return;
+            }
+            queueBtn.classList.add('rm-lyrics-active');
+            queuePanel.classList.add('rm-np-queue-visible');
+            _renderNpQueue();
+        };
+
+        // Lock screen — blocks all touches until swipe-up unlock
+        ov.querySelector('#rm-np-lock').onclick = () => _showLockScreen();
+
+        // Cast button in NP overlay
+        const npCastBtn = ov.querySelector('#rm-np-cast');
+        if (npCastBtn) {
+            npCastBtn.onclick = () => _toggleCast();
+            if (_isCasting) npCastBtn.classList.add('rm-lyrics-active');
+        }
 
         // Seekbar for overlay
         if (hasSeek) {
             const npTrack = ov.querySelector('#rm-np-track');
+            const _seekTo = (pct) => {
+                if (_isCasting && _castPlayer && _castPlayer.duration > 0) {
+                    _castPlayer.currentTime = pct * _castPlayer.duration;
+                    _castController.seek();
+                } else if (_audio && isFinite(_audio.duration)) {
+                    _audio.currentTime = pct * _audio.duration;
+                }
+            };
             npTrack.onclick = (e) => {
-                if (!_audio || !isFinite(_audio.duration)) return;
                 const rect = npTrack.getBoundingClientRect();
-                const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-                _audio.currentTime = pct * _audio.duration;
+                _seekTo(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)));
             };
 
             // Touch drag for seek thumb
             const npThumb = ov.querySelector('#rm-np-thumb');
             npThumb.addEventListener('touchstart', () => { _npSeekDragging = true; }, { passive: true });
             document.addEventListener('touchmove', (e) => {
-                if (!_npSeekDragging || !_audio || !isFinite(_audio.duration)) return;
+                if (!_npSeekDragging) return;
                 const rect = npTrack.getBoundingClientRect();
-                const pct = Math.max(0, Math.min(1, (e.touches[0].clientX - rect.left) / rect.width));
-                _audio.currentTime = pct * _audio.duration;
+                _seekTo(Math.max(0, Math.min(1, (e.touches[0].clientX - rect.left) / rect.width)));
             }, { passive: true });
             document.addEventListener('touchend', () => { _npSeekDragging = false; }, { passive: true });
         }
@@ -1851,6 +3014,13 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         const wrap = bodyEl.querySelector('.rm-wrap');
         if (wrap) wrap.appendChild(ov);
         _npOverlay = ov;
+
+        // Auto-expand queue if there are queued tracks
+        if (_musicQueue.length > 0) {
+            queueBtn.classList.add('rm-lyrics-active');
+            queuePanel.classList.add('rm-np-queue-visible');
+            _renderNpQueue();
+        }
 
         // Start overlay seekbar updates
         _npUpdateLoop();
@@ -1861,6 +3031,58 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             _npOverlay.remove();
             _npOverlay = null;
         }
+    }
+
+    let _lockOverlay = null;
+    function _showLockScreen() {
+        if (_lockOverlay) return;
+        const item = _playing;
+        if (!item) return;
+
+        const ov = document.createElement('div');
+        ov.className = 'rm-lock-overlay';
+        const artSrc = item.image || item.favicon || '';
+        ov.innerHTML = `
+            <div class="rm-lock-icon"><i class="fas fa-lock"></i></div>
+            <div class="rm-lock-art">${artSrc ? '<img src="' + escH(artSrc) + '" onerror="this.outerHTML=\'<i class=\\\'fas fa-music\\\'></i>\'">' : '<i class="fas fa-music"></i>'}</div>
+            <div class="rm-lock-title">${escH(item.name)}</div>
+            <div class="rm-lock-meta">${escH(item.meta || '')}</div>
+            <div class="rm-lock-hint"><i class="fas fa-chevron-up"></i> ${t('Przesuń w górę aby odblokować')}</div>`;
+
+        // Block ALL touch events except our swipe detector
+        ov.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
+        ov.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+        ov.addEventListener('click', (e) => e.stopPropagation(), true);
+
+        // Swipe-up to unlock — requires deliberate 120px+ upward swipe
+        let startY = 0;
+        let tracking = false;
+        ov.addEventListener('touchstart', (e) => {
+            startY = e.touches[0].clientY;
+            tracking = true;
+        });
+        ov.addEventListener('touchend', (e) => {
+            if (!tracking) return;
+            tracking = false;
+            const dy = startY - e.changedTouches[0].clientY;
+            if (dy > 120) _hideLockScreen();
+        });
+
+        document.body.appendChild(ov);
+        _lockOverlay = ov;
+    }
+
+    function _hideLockScreen() {
+        if (_lockOverlay) {
+            _lockOverlay.remove();
+            _lockOverlay = null;
+        }
+    }
+
+    function _showAddToHomescreenPrompt() {
+        // Open dedicated install page — it has its own manifest so Chrome
+        // treats Radio & Music as a separate installable PWA
+        window.open(window.location.origin + '/music.html', '_blank');
     }
 
     function _npUpdateLoop() {
