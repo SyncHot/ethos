@@ -41,6 +41,15 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     let playerInterval = null;
     let bodyEl         = null;
 
+    /* multi-select */
+    let selectMode     = false;
+    let selectedIds    = new Set();
+
+    /* hidden-videos state (refreshed from pkg-status) */
+    let hidePasswordSet = false;
+    let hideUnlocked    = false;
+    let hiddenCount     = 0;
+
     /* ── window ────────────────────────────────────────────── */
     const win = createWindow('video-station', {
         title: t('Video Station'),
@@ -134,6 +143,10 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 
     /* ── main app layout ───────────────────────────────────── */
     function renderApp(body, st) {
+        hidePasswordSet = !!st.hide_password_set;
+        hideUnlocked = !!st.hide_unlocked;
+        hiddenCount = (st.stats && st.stats.hidden) || 0;
+
         body.innerHTML = `
 <style>${getCSS()}</style>
 <div class="vs-layout">
@@ -142,12 +155,14 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     <div class="vs-nav-item active" data-section="library"><i class="fas fa-film"></i><span>${t('Wszystkie filmy')}</span></div>
     <div class="vs-nav-item" data-section="recent"><i class="fas fa-clock"></i><span>${t('Ostatnie')}</span></div>
     <div class="vs-nav-item" data-section="collections"><i class="fas fa-folder-open"></i><span>${t('Kolekcje')}</span></div>
+    <div class="vs-nav-item" data-section="hidden"><i class="fas fa-eye-slash"></i><span>${t('Ukryte')}</span>${hiddenCount ? '<span class="vs-nav-badge">' + hiddenCount + '</span>' : ''}</div>
     <div class="vs-nav-section">${t('Zarządzanie')}</div>
     <div class="vs-nav-item" data-section="folders"><i class="fas fa-cog"></i><span>${t('Foldery')}</span></div>
     <div class="vs-sidebar-stats" id="vs-sidebar-stats"></div>
   </div>
   <div class="vs-main">
     <div class="vs-toolbar" id="vs-toolbar"></div>
+    <div class="vs-batch-bar" id="vs-batch-bar" style="display:none"></div>
     <div class="vs-content" id="vs-content"></div>
   </div>
 </div>
@@ -208,7 +223,9 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             case 'recent':     toolbar.innerHTML = '<div class="vs-toolbar-title">' + t('Ostatnio dodane') + '</div>'; loadRecent(); break;
             case 'collections': toolbar.innerHTML = '<div class="vs-toolbar-title">' + t('Kolekcje') + '</div>'; loadCollections(); break;
             case 'folders':    toolbar.innerHTML = '<div class="vs-toolbar-title">' + t('Foldery biblioteki') + '</div>'; loadFolders(); break;
+            case 'hidden':     toolbar.innerHTML = '<div class="vs-toolbar-title"><i class="fas fa-eye-slash"></i> ' + t('Ukryte filmy') + '</div>'; loadHidden(); break;
         }
+        _exitSelectMode();
     }
 
     function updateSidebarStats(body, stats) {
@@ -240,6 +257,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     '<option value="0"' + (currentWatched === '0' ? ' selected' : '') + '>' + t('Nieobejrzane') + '</option>' +
     '<option value="1"' + (currentWatched === '1' ? ' selected' : '') + '>' + t('Obejrzane') + '</option>' +
   '</select>' +
+  '<button id="vs-select-toggle" class="app-btn app-btn-sm" title="' + t('Zaznaczanie') + '"><i class="fas fa-check-square"></i></button>' +
 '</div>' +
 '<div class="vs-toolbar-group">' +
   '<div class="vs-scan-wrap" id="vs-scan-wrap">' +
@@ -273,6 +291,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         bodyEl.querySelector('#vs-scan-stop').onclick = stopScan;
         bodyEl.querySelector('#vs-tmdb-check').onchange = (e) => { useTmdb = e.target.checked; };
         bodyEl.querySelector('#vs-match-all-btn').onclick = matchAll;
+        bodyEl.querySelector('#vs-select-toggle').onclick = _toggleSelectMode;
         bodyEl.querySelector('#vs-reindex-btn').onclick = async () => {
             const btn = bodyEl.querySelector('#vs-reindex-btn');
             btn.disabled = true;
@@ -572,7 +591,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 
     /* ── grid rendering ────────────────────────────────────── */
     function renderGrid(items) {
-        let html = '<div class="vs-grid">';
+        let html = '<div class="vs-grid' + (selectMode ? ' vs-select-mode' : '') + '">';
         items.forEach(v => {
             const dur = formatDuration(v.duration);
             const pct = v.duration && v.position ? Math.min(100, Math.round((v.position / v.duration) * 100)) : 0;
@@ -585,9 +604,11 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
                 ? '/api/video-station/poster/' + v.id + '?token=' + NAS.token
                 : '/api/video-station/thumb/' + v.id + '?token=' + NAS.token;
             const rating = v.tmdb_rating ? v.tmdb_rating.toFixed(1) : '';
+            const sel = selectedIds.has(String(v.id));
 
             html +=
-'<div class="vs-card' + (hasPoster ? ' vs-card-poster' : '') + '" data-id="' + v.id + '">' +
+'<div class="vs-card' + (hasPoster ? ' vs-card-poster' : '') + (sel ? ' vs-selected' : '') + '" data-id="' + v.id + '">' +
+  (selectMode ? '<div class="vs-checkbox' + (sel ? ' checked' : '') + '"><i class="fas fa-' + (sel ? 'check-square' : 'square') + '"></i></div>' : '') +
   '<div class="vs-thumb' + (hasPoster ? ' vs-thumb-poster' : '') + '">' +
     '<img src="' + imgSrc + '" loading="lazy" alt="" onerror="this.style.display=\'none\'">' +
     '<div class="vs-thumb-placeholder"><i class="fas fa-film"></i></div>' +
@@ -606,20 +627,34 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 
     function attachGridEvents(container) {
         container.querySelectorAll('.vs-card[data-id]').forEach(card => {
-            card.onclick = () => openPlayer(card.dataset.id);
+            card.onclick = (e) => {
+                if (selectMode) {
+                    _toggleSelection(card);
+                    e.stopPropagation();
+                    return;
+                }
+                openPlayer(card.dataset.id);
+            };
             card.oncontextmenu = (e) => { e.preventDefault(); _showCardMenu(e, card.dataset.id); };
         });
     }
 
     function _showCardMenu(e, vid) {
-        // Remove any existing context menu
         document.querySelectorAll('.vs-ctx-menu').forEach(m => m.remove());
         const menu = document.createElement('div');
         menu.className = 'vs-ctx-menu';
-        menu.innerHTML =
+        const isHiddenSection = (activeSection === 'hidden');
+        let items =
+            '<div class="vs-ctx-item" data-action="select"><i class="fas fa-check-square"></i> ' + t('Zaznacz') + '</div>' +
             '<div class="vs-ctx-item" data-action="unwatch"><i class="fas fa-eye-slash"></i> ' + t('Oznacz jako nieobejrzane') + '</div>' +
-            '<div class="vs-ctx-item" data-action="info"><i class="fas fa-info-circle"></i> ' + t('Szczegóły') + '</div>' +
-            '<div class="vs-ctx-item vs-ctx-danger" data-action="remove"><i class="fas fa-trash-alt"></i> ' + t('Usuń z biblioteki') + '</div>';
+            '<div class="vs-ctx-item" data-action="info"><i class="fas fa-info-circle"></i> ' + t('Szczegóły') + '</div>';
+        if (isHiddenSection) {
+            items += '<div class="vs-ctx-item" data-action="unhide"><i class="fas fa-eye"></i> ' + t('Pokaż (odukryj)') + '</div>';
+        } else {
+            items += '<div class="vs-ctx-item" data-action="hide"><i class="fas fa-eye-slash"></i> ' + t('Ukryj') + '</div>';
+        }
+        items += '<div class="vs-ctx-item vs-ctx-danger" data-action="remove"><i class="fas fa-trash-alt"></i> ' + t('Usuń z biblioteki') + '</div>';
+        menu.innerHTML = items;
         menu.style.left = e.clientX + 'px';
         menu.style.top = e.clientY + 'px';
         document.body.appendChild(menu);
@@ -629,21 +664,29 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             item.onclick = async () => {
                 dismiss();
                 const action = item.dataset.action;
-                if (action === 'unwatch') {
+                if (action === 'select') {
+                    if (!selectMode) _enterSelectMode();
+                    selectedIds.add(String(vid));
+                    _refreshGrid();
+                } else if (action === 'unwatch') {
                     await api('/video-station/watched/' + vid, { method: 'POST', body: { watched: false, position: 0 } });
                     toast(t('Oznaczono jako nieobejrzane'), 'success');
-                    if (activeSection === 'library') loadLibrary();
-                    else if (activeSection === 'recent') loadRecent();
+                    _reloadSection();
                 } else if (action === 'remove') {
                     if (!await confirmDialog(t('Usunąć film z biblioteki? Plik nie zostanie usunięty.'))) return;
                     const res = await api('/video-station/remove/' + vid, { method: 'POST' });
                     if (res.error) { toast(res.error, 'error'); return; }
                     toast(t('Usunięto z biblioteki'), 'success');
-                    if (activeSection === 'library') loadLibrary();
-                    else if (activeSection === 'recent') loadRecent();
-                    else if (activeSection === 'collections') loadCollections();
+                    _reloadSection();
                 } else if (action === 'info') {
                     _showInfoModal(vid);
+                } else if (action === 'hide') {
+                    await _batchHideAction([vid]);
+                } else if (action === 'unhide') {
+                    const res = await api('/video-station/batch', { method: 'POST', body: { ids: [vid], action: 'unhide' } });
+                    if (res.error) { toast(res.error, 'error'); return; }
+                    toast(t('Film przywrócony'), 'success');
+                    _reloadSection();
                 }
             };
         });
@@ -728,6 +771,288 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         modal.querySelector('#vs-info-close').onclick = () => { modal.style.display = 'none'; };
         modal.querySelector('#vs-info-play').onclick = () => { modal.style.display = 'none'; openPlayer(vid); };
         modal.onclick = (e) => { if (e.target === modal) modal.style.display = 'none'; };
+    }
+
+    /* ── multi-select ──────────────────────────────────────── */
+    function _toggleSelectMode() {
+        if (selectMode) _exitSelectMode();
+        else _enterSelectMode();
+    }
+
+    function _enterSelectMode() {
+        selectMode = true;
+        selectedIds.clear();
+        const btn = bodyEl && bodyEl.querySelector('#vs-select-toggle');
+        if (btn) btn.classList.add('active');
+        _refreshGrid();
+        _updateBatchBar();
+    }
+
+    function _exitSelectMode() {
+        selectMode = false;
+        selectedIds.clear();
+        const btn = bodyEl && bodyEl.querySelector('#vs-select-toggle');
+        if (btn) btn.classList.remove('active');
+        const bar = bodyEl && bodyEl.querySelector('#vs-batch-bar');
+        if (bar) bar.style.display = 'none';
+        _refreshGrid();
+    }
+
+    function _toggleSelection(card) {
+        const id = String(card.dataset.id);
+        if (selectedIds.has(id)) selectedIds.delete(id);
+        else selectedIds.add(id);
+        // Update just this card's visual state
+        card.classList.toggle('vs-selected', selectedIds.has(id));
+        const cb = card.querySelector('.vs-checkbox');
+        if (cb) {
+            cb.classList.toggle('checked', selectedIds.has(id));
+            cb.innerHTML = '<i class="fas fa-' + (selectedIds.has(id) ? 'check-square' : 'square') + '"></i>';
+        }
+        _updateBatchBar();
+    }
+
+    function _refreshGrid() {
+        const content = bodyEl && bodyEl.querySelector('#vs-content');
+        if (!content) return;
+        const grid = content.querySelector('.vs-grid');
+        if (!grid) return;
+        grid.classList.toggle('vs-select-mode', selectMode);
+        grid.querySelectorAll('.vs-card[data-id]').forEach(card => {
+            const id = String(card.dataset.id);
+            const sel = selectedIds.has(id);
+            card.classList.toggle('vs-selected', sel);
+            let cb = card.querySelector('.vs-checkbox');
+            if (selectMode && !cb) {
+                cb = document.createElement('div');
+                cb.className = 'vs-checkbox' + (sel ? ' checked' : '');
+                cb.innerHTML = '<i class="fas fa-' + (sel ? 'check-square' : 'square') + '"></i>';
+                card.prepend(cb);
+            } else if (!selectMode && cb) {
+                cb.remove();
+            } else if (cb) {
+                cb.classList.toggle('checked', sel);
+                cb.innerHTML = '<i class="fas fa-' + (sel ? 'check-square' : 'square') + '"></i>';
+            }
+        });
+    }
+
+    function _updateBatchBar() {
+        const bar = bodyEl && bodyEl.querySelector('#vs-batch-bar');
+        if (!bar) return;
+        if (!selectMode || selectedIds.size === 0) {
+            bar.style.display = 'none';
+            return;
+        }
+        const isHiddenSection = (activeSection === 'hidden');
+        bar.style.display = 'flex';
+        bar.innerHTML =
+            '<span class="vs-batch-count">' + t('Zaznaczono') + ': <b>' + selectedIds.size + '</b></span>' +
+            '<button class="app-btn app-btn-sm vs-batch-btn" data-action="select-all"><i class="fas fa-check-double"></i> ' + t('Zaznacz wszystkie') + '</button>' +
+            '<button class="app-btn app-btn-sm vs-batch-btn" data-action="watched"><i class="fas fa-eye"></i> ' + t('Obejrzane') + '</button>' +
+            '<button class="app-btn app-btn-sm vs-batch-btn" data-action="unwatched"><i class="fas fa-eye-slash"></i> ' + t('Nieobejrzane') + '</button>' +
+            (isHiddenSection
+                ? '<button class="app-btn app-btn-sm vs-batch-btn" data-action="unhide"><i class="fas fa-eye"></i> ' + t('Pokaż') + '</button>'
+                : '<button class="app-btn app-btn-sm vs-batch-btn" data-action="hide"><i class="fas fa-lock"></i> ' + t('Ukryj') + '</button>') +
+            '<button class="app-btn app-btn-sm vs-batch-btn vs-batch-danger" data-action="remove"><i class="fas fa-trash-alt"></i> ' + t('Usuń') + '</button>' +
+            '<button class="app-btn app-btn-sm vs-batch-btn" data-action="cancel"><i class="fas fa-times"></i> ' + t('Anuluj') + '</button>';
+        bar.querySelectorAll('.vs-batch-btn').forEach(btn => {
+            btn.onclick = () => _onBatchAction(btn.dataset.action);
+        });
+    }
+
+    async function _onBatchAction(action) {
+        if (action === 'cancel') { _exitSelectMode(); return; }
+        if (action === 'select-all') {
+            const grid = bodyEl && bodyEl.querySelector('.vs-grid');
+            if (grid) {
+                grid.querySelectorAll('.vs-card[data-id]').forEach(card => {
+                    selectedIds.add(String(card.dataset.id));
+                });
+                _refreshGrid();
+                _updateBatchBar();
+            }
+            return;
+        }
+        const ids = Array.from(selectedIds).map(Number);
+        if (!ids.length) return;
+        if (action === 'remove') {
+            if (!await confirmDialog(t('Usunąć {n} filmów z biblioteki?', { n: ids.length }))) return;
+        }
+        if (action === 'hide') {
+            await _batchHideAction(ids);
+            return;
+        }
+        const res = await api('/video-station/batch', { method: 'POST', body: { ids, action } });
+        if (res.error) { toast(res.error, 'error'); return; }
+        const msgs = { watched: 'Oznaczono jako obejrzane', unwatched: 'Oznaczono jako nieobejrzane', remove: 'Usunięto z biblioteki', unhide: 'Filmy przywrócone' };
+        toast(t(msgs[action] || 'Gotowe'), 'success');
+        _exitSelectMode();
+        _reloadSection();
+    }
+
+    async function _batchHideAction(ids) {
+        if (!hidePasswordSet) {
+            _showSetPasswordPrompt(async () => {
+                const res = await api('/video-station/batch', { method: 'POST', body: { ids, action: 'hide' } });
+                if (res.error) { toast(res.error, 'error'); return; }
+                toast(t('Ukryto {n} filmów', { n: ids.length }), 'success');
+                hiddenCount += ids.length;
+                _updateHiddenBadge();
+                _exitSelectMode();
+                _reloadSection();
+            });
+            return;
+        }
+        const res = await api('/video-station/batch', { method: 'POST', body: { ids, action: 'hide' } });
+        if (res.error) { toast(res.error, 'error'); return; }
+        toast(t('Ukryto {n} filmów', { n: ids.length }), 'success');
+        hiddenCount += ids.length;
+        _updateHiddenBadge();
+        _exitSelectMode();
+        _reloadSection();
+    }
+
+    function _reloadSection() {
+        if (activeSection === 'library') loadLibrary();
+        else if (activeSection === 'recent') loadRecent();
+        else if (activeSection === 'collections') loadCollections();
+        else if (activeSection === 'hidden') loadHidden();
+    }
+
+    function _updateHiddenBadge() {
+        if (!bodyEl) return;
+        const navItem = bodyEl.querySelector('.vs-nav-item[data-section="hidden"]');
+        if (!navItem) return;
+        let badge = navItem.querySelector('.vs-nav-badge');
+        if (hiddenCount > 0) {
+            if (!badge) {
+                badge = document.createElement('span');
+                badge.className = 'vs-nav-badge';
+                navItem.appendChild(badge);
+            }
+            badge.textContent = hiddenCount;
+        } else if (badge) {
+            badge.remove();
+        }
+    }
+
+    /* ── hidden section ────────────────────────────────────── */
+    async function loadHidden() {
+        const content = bodyEl.querySelector('#vs-content');
+        if (!content) return;
+
+        if (!hidePasswordSet) {
+            content.innerHTML =
+                '<div class="vs-empty"><i class="fas fa-lock"></i>' +
+                '<p>' + t('Nie ustawiono hasła ukrywania') + '</p>' +
+                '<p class="vs-empty-sub">' + t('Ustaw hasło aby móc ukrywać filmy') + '</p>' +
+                '<button id="vs-set-hide-pw" class="app-btn app-btn-primary" style="margin-top:16px"><i class="fas fa-key"></i> ' + t('Ustaw hasło') + '</button></div>';
+            content.querySelector('#vs-set-hide-pw').onclick = () => _showSetPasswordPrompt(() => loadHidden());
+            return;
+        }
+
+        if (!hideUnlocked) {
+            content.innerHTML =
+                '<div class="vs-empty"><i class="fas fa-lock"></i>' +
+                '<p>' + t('Ukryte filmy są zablokowane') + '</p>' +
+                '<button id="vs-unlock-hidden" class="app-btn app-btn-primary" style="margin-top:16px"><i class="fas fa-unlock"></i> ' + t('Odblokuj') + '</button></div>';
+            content.querySelector('#vs-unlock-hidden').onclick = () => _showUnlockPrompt();
+            return;
+        }
+
+        content.innerHTML = '<div class="vs-loading"><i class="fas fa-spinner fa-spin"></i></div>';
+        const params = new URLSearchParams({ offset: libraryOffset, limit: PAGE_SIZE, sort: currentSort, show_hidden: '1' });
+        const data = await api('/video-station/library?' + params);
+        if (data.error) { content.innerHTML = '<div class="vs-empty">' + escH(data.error) + '</div>'; return; }
+
+        libraryItems = data.items || [];
+        libraryTotal = data.total || 0;
+        hiddenCount = libraryTotal;
+        _updateHiddenBadge();
+
+        if (!libraryItems.length) {
+            content.innerHTML =
+                '<div class="vs-empty"><i class="fas fa-eye-slash"></i>' +
+                '<p>' + t('Brak ukrytych filmów') + '</p>' +
+                '<button id="vs-lock-hidden" class="app-btn app-btn-sm" style="margin-top:16px"><i class="fas fa-lock"></i> ' + t('Zablokuj') + '</button></div>';
+            const lockBtn = content.querySelector('#vs-lock-hidden');
+            if (lockBtn) lockBtn.onclick = async () => {
+                await api('/video-station/hide-lock', { method: 'POST' });
+                hideUnlocked = false;
+                loadHidden();
+            };
+            return;
+        }
+
+        let html = '<div style="display:flex;justify-content:flex-end;padding:0 8px 8px">' +
+            '<button id="vs-lock-hidden" class="app-btn app-btn-sm"><i class="fas fa-lock"></i> ' + t('Zablokuj') + '</button></div>';
+        html += renderGrid(libraryItems) + renderPagination();
+        content.innerHTML = html;
+        attachGridEvents(content);
+        attachPaginationEvents(content);
+        const lockBtn = content.querySelector('#vs-lock-hidden');
+        if (lockBtn) lockBtn.onclick = async () => {
+            await api('/video-station/hide-lock', { method: 'POST' });
+            hideUnlocked = false;
+            loadHidden();
+        };
+    }
+
+    function _showSetPasswordPrompt(onSuccess) {
+        const html =
+            '<div class="vs-modal-overlay" id="vs-pw-modal">' +
+            '<div class="vs-modal-box">' +
+            '<h3><i class="fas fa-key"></i> ' + t('Ustaw hasło ukrywania') + '</h3>' +
+            '<input type="password" id="vs-pw-input" class="vs-input" placeholder="' + t('Hasło (min. 4 znaki)') + '" style="width:100%;margin:12px 0">' +
+            '<div style="display:flex;gap:8px;justify-content:flex-end">' +
+            '<button class="app-btn app-btn-sm" id="vs-pw-cancel">' + t('Anuluj') + '</button>' +
+            '<button class="app-btn app-btn-sm app-btn-primary" id="vs-pw-ok">' + t('Zapisz') + '</button>' +
+            '</div></div></div>';
+        bodyEl.insertAdjacentHTML('beforeend', html);
+        const modal = bodyEl.querySelector('#vs-pw-modal');
+        const input = bodyEl.querySelector('#vs-pw-input');
+        input.focus();
+        bodyEl.querySelector('#vs-pw-cancel').onclick = () => modal.remove();
+        bodyEl.querySelector('#vs-pw-ok').onclick = async () => {
+            const pw = input.value;
+            if (!pw || pw.length < 4) { toast(t('Hasło za krótkie'), 'warning'); return; }
+            const res = await api('/video-station/hide-password', { method: 'POST', body: { password: pw } });
+            if (res.error) { toast(res.error, 'error'); return; }
+            hidePasswordSet = true;
+            toast(t('Hasło ustawione'), 'success');
+            modal.remove();
+            if (onSuccess) onSuccess();
+        };
+        input.onkeydown = (e) => { if (e.key === 'Enter') bodyEl.querySelector('#vs-pw-ok').click(); };
+    }
+
+    function _showUnlockPrompt() {
+        const html =
+            '<div class="vs-modal-overlay" id="vs-pw-modal">' +
+            '<div class="vs-modal-box">' +
+            '<h3><i class="fas fa-unlock"></i> ' + t('Odblokuj ukryte filmy') + '</h3>' +
+            '<input type="password" id="vs-pw-input" class="vs-input" placeholder="' + t('Hasło') + '" style="width:100%;margin:12px 0">' +
+            '<div style="display:flex;gap:8px;justify-content:flex-end">' +
+            '<button class="app-btn app-btn-sm" id="vs-pw-cancel">' + t('Anuluj') + '</button>' +
+            '<button class="app-btn app-btn-sm app-btn-primary" id="vs-pw-ok">' + t('Odblokuj') + '</button>' +
+            '</div></div></div>';
+        bodyEl.insertAdjacentHTML('beforeend', html);
+        const modal = bodyEl.querySelector('#vs-pw-modal');
+        const input = bodyEl.querySelector('#vs-pw-input');
+        input.focus();
+        bodyEl.querySelector('#vs-pw-cancel').onclick = () => modal.remove();
+        bodyEl.querySelector('#vs-pw-ok').onclick = async () => {
+            const pw = input.value;
+            if (!pw) return;
+            const res = await api('/video-station/hide-unlock', { method: 'POST', body: { password: pw } });
+            if (res.error) { toast(res.error, 'error'); return; }
+            hideUnlocked = true;
+            toast(t('Odblokowano'), 'success');
+            modal.remove();
+            loadHidden();
+        };
+        input.onkeydown = (e) => { if (e.key === 'Enter') bodyEl.querySelector('#vs-pw-ok').click(); };
     }
 
     /* ── pagination ────────────────────────────────────────── */
@@ -863,6 +1188,23 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         const _spriteImg = new Image();
         _spriteImg.src = '/api/video-station/thumbstrip/' + vid + '?token=' + NAS.token;
 
+        // HLS live-mode: intercept native seekbar drags beyond buffer
+        if (needsTranscode) {
+            video.onseeking = () => {
+                if (!_transcoding || !_hlsInstance) return;
+                const buf = video.buffered;
+                const t = video.currentTime;
+                let inBuffer = false;
+                for (let i = 0; i < buf.length; i++) {
+                    if (t >= buf.start(i) - 1 && t <= buf.end(i) + 1) { inBuffer = true; break; }
+                }
+                if (!inBuffer) {
+                    const realPos = _startOffset + t;
+                    _startHls(vid, realPos, _currentAudioIdx);
+                }
+            };
+        }
+
         overlay.style.display = 'flex';
         video.focus();
 
@@ -986,10 +1328,12 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             maxBufferLength: 60,
             maxMaxBufferLength: 120,
             startPosition: -1,
-            fragLoadingTimeOut: 120000,
-            fragLoadingMaxRetry: 6,
-            fragLoadingRetryDelay: 2000,
-            levelLoadingTimeOut: 30000,
+            liveSyncDurationCount: 3,
+            liveMaxLatencyDurationCount: 6,
+            fragLoadingTimeOut: 30000,
+            fragLoadingMaxRetry: 3,
+            fragLoadingRetryDelay: 1000,
+            levelLoadingTimeOut: 15000,
         });
 
         _hlsInstance = hls;
@@ -1306,5 +1650,26 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 '.vs-info-play{display:inline-flex;align-items:center;gap:8px;background:var(--accent);color:#fff;border:none;padding:10px 24px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;margin-top:14px;transition:filter .15s}',
 '.vs-info-play:hover{filter:brightness(1.15)}',
 '.vs-info-play i{font-size:13px}',
+
+/* multi-select */
+'.vs-card.vs-selected{outline:2px solid var(--accent);outline-offset:-2px;border-radius:var(--r-md)}',
+'.vs-checkbox{position:absolute;top:6px;left:6px;z-index:5;font-size:18px;color:var(--text-muted);cursor:pointer;opacity:.85;text-shadow:0 1px 3px rgba(0,0,0,.5)}',
+'.vs-checkbox.checked{color:var(--accent);opacity:1}',
+'.vs-card{position:relative}',
+'.vs-select-mode .vs-card{cursor:pointer}',
+'#vs-select-toggle.active{background:var(--accent);color:#fff}',
+
+/* batch bar */
+'.vs-batch-bar{display:flex;align-items:center;gap:8px;padding:6px 14px;background:var(--bg-secondary);border-bottom:1px solid var(--border);flex-wrap:wrap}',
+'.vs-batch-count{font-size:13px;color:var(--text-secondary);margin-right:auto}',
+'.vs-batch-danger{color:var(--danger)!important}',
+
+/* nav badge */
+'.vs-nav-badge{margin-left:auto;font-size:11px;background:var(--accent);color:#fff;padding:1px 7px;border-radius:10px;min-width:18px;text-align:center}',
+
+/* password modal */
+'.vs-modal-overlay{position:absolute;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:90}',
+'.vs-modal-box{background:var(--bg-primary);border:1px solid var(--border);border-radius:var(--r-lg);padding:24px;width:340px;max-width:90%}',
+'.vs-modal-box h3{margin:0 0 8px;font-size:15px;color:var(--text-primary)}',
     ].join('\n'); }
 };

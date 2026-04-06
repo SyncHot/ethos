@@ -327,6 +327,8 @@ def _process_image(path, conn, yolo):
         conn.execute(
             'INSERT INTO faces (photo_path,x,y,w,h,embedding) VALUES (?,?,?,?,?,?)',
             (path, f['x'], f['y'], f['w'], f['h'], _emb2blob(f['embedding'])))
+        face_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+        _try_assign_face(conn, face_id, f['embedding'])
         ff += 1
     for obj in tags:
         conn.execute(
@@ -345,6 +347,35 @@ def _process_image(path, conn, yolo):
     except Exception:
         pass
     return ff, tf
+
+
+def _try_assign_face(conn, face_id, embedding):
+    """Incrementally assign a new face to an existing person by embedding similarity."""
+    import numpy as np
+    people = conn.execute(
+        'SELECT id FROM people WHERE hidden=0').fetchall()
+    if not people:
+        return
+    target = np.array(embedding)
+    best_pid, best_dist = None, _CLUSTER_THRESHOLD
+    for p in people:
+        rows = conn.execute(
+            'SELECT embedding FROM faces WHERE person_id=? LIMIT 30', (p['id'],)
+        ).fetchall()
+        if not rows:
+            continue
+        embs = np.array([_blob2emb(r['embedding']) for r in rows])
+        centroid = embs.mean(axis=0)
+        dist = float(np.linalg.norm(target - centroid))
+        if dist < best_dist:
+            best_dist = dist
+            best_pid = p['id']
+    if best_pid is not None:
+        conn.execute('UPDATE faces SET person_id=? WHERE id=?', (best_pid, face_id))
+        cnt = conn.execute(
+            'SELECT COUNT(DISTINCT photo_path) FROM faces WHERE person_id=?',
+            (best_pid,)).fetchone()[0]
+        conn.execute('UPDATE people SET photo_count=? WHERE id=?', (cnt, best_pid))
 
 
 # -- Clustering --
@@ -469,6 +500,13 @@ def _scan_worker(folders):
                                  'faces_found': _scan_state['faces_found'],
                                  'tags_found': _scan_state['tags_found'], 'started_at': t0})
             gevent.sleep(0.1)
+        # Run full clustering every 500 photos so new faces get grouped
+        if (i + 1) % 500 == 0:
+            try:
+                _run_clustering(conn)
+                log.info('Interim clustering at %d/%d photos', already_done + i + 1, total_all)
+            except Exception as e:
+                log.warning('Interim cluster: %s', e)
     np_ = 0
     try:
         np_ = _run_clustering(conn)

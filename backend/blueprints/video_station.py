@@ -28,6 +28,12 @@ Routes:
   POST /api/video-station/watched/<int:vid> - mark as watched / update position
   POST /api/video-station/rescan-metadata - re-probe videos with empty codec info
   POST /api/video-station/remove/<int:vid> - remove video from library (keeps file)
+  POST /api/video-station/batch           - batch operations (watched/unwatched/remove/hide/unhide)
+  GET  /api/video-station/hide-status     - hide password status & session unlock state
+  POST /api/video-station/hide-password   - set/change hide password
+  DELETE /api/video-station/hide-password - remove hide password & unhide all
+  POST /api/video-station/hide-unlock     - unlock hidden videos for session
+  POST /api/video-station/hide-lock       - re-lock hidden videos for session
   GET  /api/video-station/subtitles/<int:vid> - find subtitle files next to video
   GET  /api/video-station/subtitle-file/<int:vid>/<filename> - serve subtitle (srt→vtt)
   GET  /api/video-station/tmdb-config     - get TMDb API key status
@@ -48,6 +54,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+import threading
 import time
 import urllib.request
 import urllib.parse
@@ -56,6 +63,7 @@ import urllib.error
 from flask import Blueprint, jsonify, request, Response, send_file
 
 from host import host_run, q, data_path, app_path
+from crypto_utils import hash_folder_password as _hash_pw, verify_folder_password as _verify_pw
 
 from blueprints.admin_required import admin_required
 
@@ -69,6 +77,15 @@ _POSTER_DIR = data_path('video_posters')
 _BACKDROP_DIR = data_path('video_backdrops')
 _THUMBSTRIP_DIR = data_path('video_thumbstrips')
 _TMDB_CONF = data_path('video_tmdb.json')
+_HIDE_PW_FILE = data_path('vs_hide_password.json')
+
+# ── hide-password session state ────────────────────────────────
+_hide_unlocked = {}          # token → True
+_hide_lock = threading.Lock()
+_hide_attempts = {}          # token → {'count': int, 'first': float, 'locked_until': float}
+_HIDE_MAX_ATTEMPTS = 5
+_HIDE_ATTEMPT_WINDOW = 120   # seconds
+_HIDE_LOCKOUT_TIME = 300     # seconds
 
 VIDEO_EXTS = {'.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v',
               '.mpg', '.mpeg', '.ts', '.3gp', '.ogv', '.vob'}
@@ -86,7 +103,8 @@ _scan_state = {
 
 # ── HLS transcoding sessions ──────────────────────────────────
 _hls_sessions = {}   # session_id → {proc, tmpdir, vid, created}
-_HLS_MAX_AGE = 4 * 3600   # auto-cleanup after 4 hours
+_HLS_MAX_AGE = 2 * 3600   # auto-cleanup after 2 hours
+_HLS_ORPHAN_PREFIX = "vs_hls_"
 
 
 def _cleanup_hls(session_id):
@@ -110,11 +128,35 @@ def _cleanup_hls(session_id):
 
 
 def _cleanup_stale_hls():
-    """Remove HLS sessions older than _HLS_MAX_AGE."""
+    """Remove HLS sessions older than _HLS_MAX_AGE and orphaned temp dirs."""
     now = time.time()
     for sid in list(_hls_sessions):
         if now - _hls_sessions[sid].get('created', 0) > _HLS_MAX_AGE:
             _cleanup_hls(sid)
+    # Scan /tmp for orphaned vs_hls_* dirs not tracked in _hls_sessions
+    _cleanup_orphaned_hls_dirs()
+
+
+def _cleanup_orphaned_hls_dirs():
+    """Remove vs_hls_* temp dirs in /tmp that aren't tracked by any session."""
+    tracked_dirs = {s.get('tmpdir') for s in _hls_sessions.values()}
+    try:
+        for name in os.listdir(tempfile.gettempdir()):
+            if not name.startswith(_HLS_ORPHAN_PREFIX):
+                continue
+            dirpath = os.path.join(tempfile.gettempdir(), name)
+            if not os.path.isdir(dirpath):
+                continue
+            if dirpath in tracked_dirs:
+                continue
+            log.info("HLS cleanup: removing orphaned dir %s", dirpath)
+            shutil.rmtree(dirpath, ignore_errors=True)
+    except OSError:
+        pass
+
+
+# Clean up orphaned HLS dirs left from before server restart
+_cleanup_orphaned_hls_dirs()
 
 
 # --- Database ---
@@ -189,6 +231,7 @@ def _migrate_db():
             ('tmdb_cast', 'TEXT'),
             ('tmdb_director', 'TEXT'),
             ('tmdb_media_type', 'TEXT'),
+            ('hidden', 'INTEGER DEFAULT 0'),
         ]
         for col_name, col_def in migrations:
             if col_name not in cols:
@@ -206,6 +249,42 @@ _migrate_db()
 
 def _sio():
     return getattr(video_station_bp, '_socketio', None)
+
+
+def _get_token():
+    """Return current auth token from request."""
+    auth = request.headers.get('Authorization', '')
+    if auth.startswith('Bearer '):
+        return auth[7:]
+    qt = request.args.get('token', '')
+    if qt:
+        return qt
+    return request.cookies.get('nas_token', '')
+
+
+# ── hide-password helpers ──────────────────────────────────────
+def _load_hide_pw():
+    try:
+        with open(_HIDE_PW_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_hide_pw(data):
+    with open(_HIDE_PW_FILE, 'w') as f:
+        json.dump(data, f)
+
+
+def _hide_pw_is_set():
+    return bool(_load_hide_pw().get('hash'))
+
+
+def _is_hidden_unlocked():
+    """Check if hidden videos are unlocked for the current session token."""
+    token = _get_token()
+    with _hide_lock:
+        return _hide_unlocked.get(token, False)
 
 
 def _emit_progress():
@@ -618,16 +697,23 @@ def pkg_status():
         try:
             c = _get_db()
             stats = {
-                "videos": c.execute("SELECT COUNT(*) FROM videos").fetchone()[0],
+                "videos": c.execute("SELECT COUNT(*) FROM videos WHERE COALESCE(hidden,0)=0").fetchone()[0],
+                "total_videos": c.execute("SELECT COUNT(*) FROM videos").fetchone()[0],
                 "total_size": c.execute("SELECT COALESCE(SUM(file_size),0) FROM videos").fetchone()[0],
                 "watched": c.execute("SELECT COUNT(*) FROM watch_state WHERE watched=1").fetchone()[0],
+                "hidden": c.execute("SELECT COUNT(*) FROM videos WHERE COALESCE(hidden,0)=1").fetchone()[0],
             }
         except Exception:
             pass
         finally:
             if c:
                 c.close()
-    return jsonify({"installed": deps["ffmpeg"] and deps["ffprobe"], "deps": deps, "stats": stats, "scanning": _scan_state["running"]})
+    return jsonify({
+        "installed": deps["ffmpeg"] and deps["ffprobe"], "deps": deps,
+        "stats": stats, "scanning": _scan_state["running"],
+        "hide_password_set": _hide_pw_is_set(),
+        "hide_unlocked": _is_hidden_unlocked(),
+    })
 
 
 @video_station_bp.route("/install", methods=["POST"])
@@ -733,6 +819,7 @@ def continue_watching():
         "SELECT v.*, ws.watched, ws.position FROM videos v "
         "JOIN watch_state ws ON ws.video_id=v.id "
         "WHERE ws.position > 0 AND (ws.watched=0 OR ws.watched IS NULL) "
+        "AND COALESCE(v.hidden,0)=0 "
         "ORDER BY ws.updated_at DESC LIMIT ?", (limit,)).fetchall()
     items = [{
         "id": r["id"], "title": r["title"], "filename": r["filename"],
@@ -761,6 +848,7 @@ def library():
     q_search = request.args.get("q", "").strip()
     folder_filter = request.args.get("folder", "")
     watched_filter = request.args.get("watched", "")
+    show_hidden = request.args.get("show_hidden", "") == "1"
     order_map = {
         "added_desc": "added_at DESC", "added_asc": "added_at ASC",
         "name_asc": "title ASC", "name_desc": "title DESC",
@@ -770,6 +858,10 @@ def library():
     order = order_map.get(sort, "added_at DESC")
     where = []
     params = []
+    if show_hidden and _is_hidden_unlocked():
+        where.append("COALESCE(v.hidden,0)=1")
+    else:
+        where.append("COALESCE(v.hidden,0)=0")
     if q_search:
         where.append("(title LIKE ? OR filename LIKE ?)")
         params += ["%" + q_search + "%", "%" + q_search + "%"]
@@ -806,6 +898,7 @@ def library():
             "tmdb_overview": r["tmdb_overview"] or "",
             "watched": bool(r["watched"]), "position": r["position"] or 0,
             "added_at": r["added_at"],
+            "hidden": bool(r["hidden"]),
         })
     conn.close()
     return jsonify({"items": items, "total": total, "offset": offset, "limit": limit})
@@ -819,6 +912,7 @@ def recent():
     rows = conn.execute(
         "SELECT v.*, ws.watched, ws.position FROM videos v "
         "LEFT JOIN watch_state ws ON ws.video_id=v.id "
+        "WHERE COALESCE(v.hidden,0)=0 "
         "ORDER BY v.added_at DESC LIMIT ?", (limit,)).fetchall()
     items = [{
         "id": r["id"], "title": r["title"], "filename": r["filename"],
@@ -843,8 +937,8 @@ def collections():
     conn = _get_db()
     rows = conn.execute(
         "SELECT folder, COUNT(*) as cnt, SUM(duration) as total_dur, "
-        "(SELECT id FROM videos v2 WHERE v2.folder=v.folder AND v2.thumb_ok=1 LIMIT 1) as cover_id "
-        "FROM videos v GROUP BY folder ORDER BY cnt DESC LIMIT 50").fetchall()
+        "(SELECT id FROM videos v2 WHERE v2.folder=v.folder AND v2.thumb_ok=1 AND COALESCE(v2.hidden,0)=0 LIMIT 1) as cover_id "
+        "FROM videos v WHERE COALESCE(v.hidden,0)=0 GROUP BY folder ORDER BY cnt DESC LIMIT 50").fetchall()
     colls = []
     for r in rows:
         folder = r["folder"]
@@ -1234,10 +1328,10 @@ def hls_start(vid):
     else:
         cmd += " -map 0:a:0"
     cmd += " -c:v %s -c:a aac -b:a 192k -ac 2" % v_arg
-    cmd += " -f hls -hls_time 4 -hls_list_size 0"
+    cmd += " -f hls -hls_time 4 -hls_list_size 40"
     cmd += " -hls_segment_type mpegts"
     cmd += " -hls_segment_filename %s" % q(os.path.join(tmpdir, "seg%05d.ts"))
-    cmd += " -hls_flags append_list"
+    cmd += " -hls_flags delete_segments+append_list"
     cmd += " -y %s" % q(os.path.join(tmpdir, "playlist.m3u8"))
 
     log.info("HLS start vid=%d ss=%.1f cmd=%s", vid, start_sec, cmd[:200])
@@ -1275,11 +1369,11 @@ def hls_start(vid):
 
 @video_station_bp.route("/hls/<session_id>/playlist.m3u8")
 def hls_playlist(session_id):
-    """Serve a VOD-style HLS playlist.
+    """Serve the live HLS playlist written by ffmpeg.
 
-    Reads the actual segments produced so far and appends estimated future
-    segments to fill the known total duration.  Always includes
-    #EXT-X-PLAYLIST-TYPE:VOD and #EXT-X-ENDLIST so hls.js shows a seekbar.
+    Relays ffmpeg's sliding-window playlist directly.
+    When ffmpeg finishes, appends #EXT-X-ENDLIST so hls.js
+    knows the stream ended.
     """
     sess = _hls_sessions.get(session_id)
     if not sess:
@@ -1291,60 +1385,13 @@ def hls_playlist(session_id):
     with open(path, "r") as f:
         raw = f.read()
 
-    total_duration = sess.get("duration", 0)
-    start_offset = sess.get("start_offset", 0)
-    effective_dur = max(0, total_duration - start_offset)
-
-    # Parse existing segment entries (lines: #EXTINF:x.xxx, / segNNNNN.ts)
-    seg_re = re.compile(r"#EXTINF:([\d.]+),?\s*\n(\S+\.ts)")
-    actual_segs = seg_re.findall(raw)
-    actual_total = sum(float(d) for d, _ in actual_segs)
-    num_actual = len(actual_segs)
-
     proc = sess.get("proc")
     finished = proc is None or proc.poll() is not None
 
-    if finished and effective_dur > 0 and actual_total > 0:
-        # ffmpeg done — playlist is accurate, just ensure ENDLIST
-        if "#EXT-X-ENDLIST" not in raw:
-            raw = raw.rstrip() + "\n#EXT-X-ENDLIST\n"
-        content = raw
-    else:
-        # Build a VOD playlist: real segments + estimated future segments
-        avg_seg = actual_total / num_actual if num_actual > 0 else 10.0
-        target_dur = max(10, int(avg_seg) + 1)
+    if finished and "#EXT-X-ENDLIST" not in raw:
+        raw = raw.rstrip() + "\n#EXT-X-ENDLIST\n"
 
-        lines = [
-            "#EXTM3U",
-            "#EXT-X-VERSION:3",
-            "#EXT-X-TARGETDURATION:%d" % target_dur,
-            "#EXT-X-MEDIA-SEQUENCE:0",
-            "#EXT-X-PLAYLIST-TYPE:VOD",
-        ]
-
-        # Add real segments
-        for dur, name in actual_segs:
-            lines.append("#EXTINF:%s," % dur)
-            lines.append(name)
-
-        # Add estimated future segments
-        remaining = max(0, effective_dur - actual_total)
-        if remaining > 1.0 and not finished:
-            next_idx = num_actual
-            produced = 0.0
-            while produced < remaining:
-                seg_dur = min(avg_seg, remaining - produced)
-                if seg_dur < 0.1:
-                    break
-                lines.append("#EXTINF:%.6f," % seg_dur)
-                lines.append("seg%05d.ts" % next_idx)
-                next_idx += 1
-                produced += seg_dur
-
-        lines.append("#EXT-X-ENDLIST")
-        content = "\n".join(lines) + "\n"
-
-    resp = Response(content, mimetype="application/vnd.apple.mpegurl")
+    resp = Response(raw, mimetype="application/vnd.apple.mpegurl")
     resp.headers["Cache-Control"] = "no-cache, no-store"
     return resp
 
@@ -1353,8 +1400,9 @@ def hls_playlist(session_id):
 def hls_segment(session_id, filename):
     """Serve an HLS segment (.ts file).
 
-    If the segment hasn't been produced yet, wait up to 120s for ffmpeg
-    to catch up (with -c:v copy this is much faster than real-time).
+    With sliding-window playlist, segments are deleted by ffmpeg once they
+    fall outside the window.  Only a short wait for the next segment being
+    produced right now; old/deleted segments return 404 immediately.
     """
     sess = _hls_sessions.get(session_id)
     if not sess:
@@ -1366,19 +1414,17 @@ def hls_segment(session_id, filename):
 
     path = os.path.join(sess["tmpdir"], filename)
 
-    # Wait for segment to be produced by ffmpeg
+    # Short wait for segment being produced right now (up to 15s)
     if not os.path.exists(path):
         proc = sess.get("proc")
-        for _ in range(1200):   # up to 120 seconds
+        for _ in range(150):
             if os.path.exists(path):
                 break
             if proc and proc.poll() is not None:
-                # ffmpeg finished but segment doesn't exist
                 return "", 404
             time.sleep(0.1)
         else:
             return "", 404
-        # Brief pause to let ffmpeg finish writing the segment
         time.sleep(0.05)
 
     resp = send_file(path, mimetype="video/MP2T")
@@ -1468,6 +1514,158 @@ def remove_from_library(vid):
                 os.remove(p)
             except OSError:
                 pass
+    return jsonify({"ok": True})
+
+
+# ── batch operations ───────────────────────────────────────────
+@video_station_bp.route("/batch", methods=["POST"])
+def batch_action():
+    """Batch operations on multiple videos: watched, unwatched, remove, hide, unhide."""
+    d = request.json or {}
+    ids = d.get("ids", [])
+    action = d.get("action", "")
+    if not ids or not isinstance(ids, list):
+        return jsonify({"error": "Brak wybranych filmów."}), 400
+    if action not in ("watched", "unwatched", "remove", "hide", "unhide"):
+        return jsonify({"error": "Nieznana akcja."}), 400
+    conn = _get_db()
+    placeholders = ",".join("?" * len(ids))
+    if action == "watched":
+        now = time.time()
+        for vid in ids:
+            conn.execute(
+                "INSERT INTO watch_state (video_id,watched,position,updated_at) "
+                "VALUES (?,1,0,?) ON CONFLICT(video_id) DO UPDATE SET "
+                "watched=1, updated_at=?", (vid, now, now))
+    elif action == "unwatched":
+        now = time.time()
+        for vid in ids:
+            conn.execute(
+                "INSERT INTO watch_state (video_id,watched,position,updated_at) "
+                "VALUES (?,0,0,?) ON CONFLICT(video_id) DO UPDATE SET "
+                "watched=0, position=0, updated_at=?", (vid, now, now))
+    elif action == "remove":
+        rows = conn.execute("SELECT id FROM videos WHERE id IN (%s)" % placeholders, ids).fetchall()
+        for r in rows:
+            conn.execute("DELETE FROM watch_state WHERE video_id=?", (r["id"],))
+            conn.execute("DELETE FROM videos WHERE id=?", (r["id"],))
+            for d_dir in (_THUMB_DIR, _POSTER_DIR):
+                p = os.path.join(d_dir, str(r["id"]) + '.jpg')
+                if os.path.isfile(p):
+                    try:
+                        os.remove(p)
+                    except OSError:
+                        pass
+    elif action == "hide":
+        conn.execute("UPDATE videos SET hidden=1 WHERE id IN (%s)" % placeholders, ids)
+    elif action == "unhide":
+        conn.execute("UPDATE videos SET hidden=0 WHERE id IN (%s)" % placeholders, ids)
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True, "count": len(ids)})
+
+
+# ── hide password management ──────────────────────────────────
+@video_station_bp.route("/hide-status", methods=["GET"])
+def hide_status():
+    """Check if hide password is set and if current session is unlocked."""
+    return jsonify({
+        "password_set": _hide_pw_is_set(),
+        "unlocked": _is_hidden_unlocked(),
+        "hidden_count": _count_hidden(),
+    })
+
+
+def _count_hidden():
+    try:
+        conn = _get_db()
+        n = conn.execute("SELECT COUNT(*) FROM videos WHERE COALESCE(hidden,0)=1").fetchone()[0]
+        conn.close()
+        return n
+    except Exception:
+        return 0
+
+
+@video_station_bp.route("/hide-password", methods=["POST"])
+def hide_password_set():
+    """Set or change the hide password."""
+    d = request.json or {}
+    password = d.get("password", "")
+    old_password = d.get("old_password", "")
+    if not password or len(password) < 4:
+        return jsonify({"error": "Hasło musi mieć co najmniej 4 znaki."}), 400
+    pw_data = _load_hide_pw()
+    if pw_data.get("hash"):
+        if not old_password or not _verify_pw(old_password, pw_data["hash"]):
+            return jsonify({"error": "Nieprawidłowe obecne hasło."}), 403
+    pw_data["hash"] = _hash_pw(password)
+    _save_hide_pw(pw_data)
+    return jsonify({"ok": True})
+
+
+@video_station_bp.route("/hide-password", methods=["DELETE"])
+def hide_password_remove():
+    """Remove hide password and unhide all videos."""
+    d = request.json or {}
+    password = d.get("password", "")
+    pw_data = _load_hide_pw()
+    if not pw_data.get("hash"):
+        return jsonify({"error": "Hasło nie jest ustawione."}), 400
+    if not _verify_pw(password, pw_data["hash"]):
+        return jsonify({"error": "Nieprawidłowe hasło."}), 403
+    _save_hide_pw({})
+    conn = _get_db()
+    conn.execute("UPDATE videos SET hidden=0 WHERE hidden=1")
+    conn.commit()
+    conn.close()
+    with _hide_lock:
+        _hide_unlocked.clear()
+    return jsonify({"ok": True})
+
+
+@video_station_bp.route("/hide-unlock", methods=["POST"])
+def hide_unlock():
+    """Unlock hidden videos for the current session."""
+    d = request.json or {}
+    password = d.get("password", "")
+    pw_data = _load_hide_pw()
+    if not pw_data.get("hash"):
+        return jsonify({"error": "Hasło nie jest ustawione."}), 400
+
+    token = _get_token()
+    now = time.time()
+
+    # Brute-force protection
+    with _hide_lock:
+        att = _hide_attempts.get(token)
+        if att and now < att.get("locked_until", 0):
+            remaining = int(att["locked_until"] - now)
+            return jsonify({"error": "Zbyt wiele prób. Odczekaj %ds." % remaining}), 429
+        if att and now - att.get("first", now) > _HIDE_ATTEMPT_WINDOW:
+            _hide_attempts.pop(token, None)
+
+    if not _verify_pw(password, pw_data["hash"]):
+        with _hide_lock:
+            att = _hide_attempts.get(token, {"count": 0, "first": now, "locked_until": 0})
+            att["count"] += 1
+            if att["count"] >= _HIDE_MAX_ATTEMPTS:
+                att["locked_until"] = now + _HIDE_LOCKOUT_TIME
+                att["count"] = 0
+            _hide_attempts[token] = att
+        return jsonify({"error": "Nieprawidłowe hasło."}), 403
+
+    with _hide_lock:
+        _hide_attempts.pop(token, None)
+        _hide_unlocked[token] = True
+    return jsonify({"ok": True})
+
+
+@video_station_bp.route("/hide-lock", methods=["POST"])
+def hide_lock_session():
+    """Re-lock hidden videos for the current session."""
+    token = _get_token()
+    with _hide_lock:
+        _hide_unlocked.pop(token, None)
     return jsonify({"ok": True})
 
 
