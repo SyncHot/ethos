@@ -226,6 +226,25 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-install-btn:hover{filter:brightness(1.1)}',
 '.rm-install-btn:disabled{opacity:.5;cursor:wait}',
 
+/* download button */
+'.rm-dl-btn{background:none;border:none;color:var(--text-muted);cursor:pointer;padding:6px;font-size:14px;border-radius:50%;transition:all .12s;flex-shrink:0}',
+'.rm-dl-btn:hover{color:var(--accent);background:rgba(99,102,241,.1)}',
+'.rm-dl-btn.rm-downloading{color:var(--accent);animation:rm-pulse 1.2s infinite}',
+'.rm-dl-btn.rm-downloaded{color:#22c55e}',
+'@keyframes rm-pulse{0%,100%{opacity:1}50%{opacity:.4}}',
+
+/* download toast/indicator */
+'.rm-dl-toast{position:fixed;bottom:80px;right:16px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--r-lg);padding:10px 16px;font-size:12px;color:var(--text-primary);box-shadow:0 4px 20px rgba(0,0,0,.3);z-index:9998;display:flex;align-items:center;gap:8px;max-width:300px}',
+'.rm-dl-toast i{color:var(--accent);font-size:14px}',
+
+/* local music folder chips */
+'.rm-folder-chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}',
+'.rm-folder-chip{display:inline-flex;align-items:center;gap:4px;padding:5px 10px;border-radius:16px;background:var(--bg-secondary);border:1px solid var(--border);font-size:11px;color:var(--text-primary);cursor:default}',
+'.rm-folder-chip .rm-chip-remove{cursor:pointer;opacity:.5;margin-left:2px;font-size:10px}',
+'.rm-folder-chip .rm-chip-remove:hover{opacity:1;color:#ef4444}',
+'.rm-add-folder-btn{padding:5px 12px;border-radius:16px;background:none;border:1px dashed var(--border);color:var(--text-muted);font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:4px}',
+'.rm-add-folder-btn:hover{border-color:var(--accent);color:var(--accent)}',
+
 /* ── Now Playing overlay ───────────────────────────── */
 '.rm-np-overlay{position:absolute;inset:0;z-index:100;display:flex;flex-direction:column;overflow:hidden;transition:transform .35s cubic-bezier(.4,0,.2,1)}',
 '.rm-np-bg{position:absolute;inset:-40px;background-size:cover;background-position:center;filter:blur(40px) brightness(.35) saturate(1.4);z-index:0}',
@@ -303,6 +322,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     <div class="rm-sidebar-item" data-section="subscriptions"><i class="fas fa-rss"></i> ${t('Subskrypcje')}</div>
     <div class="rm-sidebar-label">${t('Muzyka')}</div>
     <div class="rm-sidebar-item" data-section="music"><i class="fab fa-youtube"></i> ${t('Szukaj')}</div>
+    <div class="rm-sidebar-item" data-section="local"><i class="fas fa-folder-open"></i> ${t('Lokalna muzyka')}</div>
     <div class="rm-sidebar-item" data-section="playlists"><i class="fas fa-list"></i> ${t('Playlisty')}</div>
     <div class="rm-sidebar-item" data-section="queue"><i class="fas fa-list-ol"></i> ${t('Kolejka')}</div>
     <div class="rm-sidebar-label">${t('Inne')}</div>
@@ -318,6 +338,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
       <button class="rm-mnav-btn" data-section="podcasts"><i class="fas fa-podcast"></i> ${t('Podcasty')}</button>
       <button class="rm-mnav-btn" data-section="subscriptions"><i class="fas fa-rss"></i> ${t('Subskrypcje')}</button>
       <button class="rm-mnav-btn" data-section="music"><i class="fab fa-youtube"></i> ${t('Muzyka')}</button>
+      <button class="rm-mnav-btn" data-section="local"><i class="fas fa-folder-open"></i> ${t('Lokalne')}</button>
       <button class="rm-mnav-btn" data-section="playlists"><i class="fas fa-list"></i> ${t('Playlisty')}</button>
       <button class="rm-mnav-btn" data-section="queue"><i class="fas fa-list-ol"></i> ${t('Kolejka')}</button>
       <button class="rm-mnav-btn" data-section="most-played"><i class="fas fa-fire"></i> ${t('Top')}</button>
@@ -424,6 +445,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             case 'podcasts': loadPodcasts(toolbar, content); break;
             case 'subscriptions': loadSubscriptions(content); break;
             case 'music': loadMusic(toolbar, content); break;
+            case 'local': loadLocal(toolbar, content); break;
             case 'playlists': loadPlaylists(toolbar, content); break;
             case 'most-played': loadMostPlayed(content); break;
             case 'queue': loadQueue(content); break;
@@ -939,11 +961,12 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 </div>
                 <span class="rm-track-dur">${escH(tr.duration_fmt)}</span>
                 <div class="rm-track-actions">
+                    <button class="rm-dl-btn" title="${t('Pobierz')}"><i class="fas fa-download"></i></button>
+                    <button class="rm-track-btn" title="${t('Playlista')}"><i class="fas fa-list-ul"></i></button>
                     <button class="rm-track-btn rm-add-queue-btn" title="${t('Dodaj do kolejki')}"><i class="fas fa-plus"></i></button>
                 </div>`;
             el.onclick = (e) => {
-                if (e.target.closest('.rm-add-queue-btn')) return;
-                // Play this track immediately, set remaining as queue
+                if (e.target.closest('.rm-add-queue-btn') || e.target.closest('.rm-dl-btn') || e.target.closest('.rm-track-btn')) return;
                 _musicQueue = tracks.slice(idx);
                 _musicQueueIdx = 0;
                 playMusicTrack(tr);
@@ -953,11 +976,30 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 _musicQueue.push(tr);
                 toast(t('Dodano do kolejki: ') + tr.title, 'success');
             };
+            el.querySelector('.rm-dl-btn').onclick = (e) => {
+                e.stopPropagation();
+                _downloadTrack(tr, e.currentTarget);
+            };
+            el.querySelector('.rm-track-btn[title="' + t('Playlista') + '"]').onclick = (e) => {
+                e.stopPropagation();
+                _showAddToPlaylistModal({
+                    name: tr.title, url: tr.url, type: 'music',
+                    meta: tr.channel, image: tr.thumbnail,
+                });
+            };
             list.appendChild(el);
         });
     }
 
     function playMusicTrack(tr) {
+        if (tr.source === 'local') {
+            playAudio({
+                name: tr.title, type: 'local', path: tr.url,
+                url: '/api/radio-music/local/stream?path=' + encodeURIComponent(tr.url) + '&token=' + (NAS.token || ''),
+                meta: tr.channel,
+            });
+            return;
+        }
         playAudio({
             id: tr.id,
             name: tr.title,
@@ -967,6 +1009,185 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             image: tr.thumbnail,
             duration: tr.duration,
             source: tr.source || 'youtube',
+        });
+    }
+
+    /* ── Download ───────────────────────────────────── */
+
+    async function _downloadTrack(track, btnEl) {
+        if (btnEl) { btnEl.classList.add('rm-downloading'); btnEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i>'; }
+        const data = await api('/radio-music/music/download', {
+            method: 'POST',
+            body: { url: track.url, title: track.title || track.name },
+        });
+        if (data.error) {
+            toast(data.error, 'error');
+            if (btnEl) { btnEl.classList.remove('rm-downloading'); btnEl.innerHTML = '<i class="fas fa-download"></i>'; }
+            return;
+        }
+        toast(t('Pobieranie rozpoczęte: ') + (track.title || track.name), 'success');
+        // Poll for completion
+        const jobId = data.job_id;
+        const _poll = setInterval(async () => {
+            const st = await api('/radio-music/music/downloads');
+            const job = (st.jobs || {})[jobId];
+            if (!job) { clearInterval(_poll); return; }
+            if (job.status === 'done') {
+                clearInterval(_poll);
+                toast(t('Pobrano: ') + (track.title || track.name), 'success');
+                if (btnEl) { btnEl.classList.remove('rm-downloading'); btnEl.classList.add('rm-downloaded'); btnEl.innerHTML = '<i class="fas fa-check"></i>'; }
+            } else if (job.status === 'error') {
+                clearInterval(_poll);
+                toast(t('Błąd pobierania: ') + (job.error || ''), 'error');
+                if (btnEl) { btnEl.classList.remove('rm-downloading'); btnEl.innerHTML = '<i class="fas fa-download"></i>'; }
+            }
+        }, 2000);
+    }
+
+    async function _downloadPlaylist(name, tracks) {
+        const data = await api('/radio-music/music/download-playlist', {
+            method: 'POST',
+            body: { name, tracks },
+        });
+        if (data.error) { toast(data.error, 'error'); return; }
+        toast(t('Pobieranie playlisty rozpoczęte: ') + name + ' (' + tracks.length + ' ' + t('utworów') + ')', 'success');
+        const jobId = data.job_id;
+        const _poll = setInterval(async () => {
+            const st = await api('/radio-music/music/downloads');
+            const job = (st.jobs || {})[jobId];
+            if (!job) { clearInterval(_poll); return; }
+            if (job.status === 'done' || job.status === 'done_partial') {
+                clearInterval(_poll);
+                const msg = job.status === 'done'
+                    ? t('Playlista pobrana: ') + name
+                    : t('Playlista pobrana częściowo: ') + name + (job.error ? ' — ' + job.error : '');
+                toast(msg, job.status === 'done' ? 'success' : 'warning');
+            } else if (job.status === 'error') {
+                clearInterval(_poll);
+                toast(t('Błąd pobierania: ') + (job.error || ''), 'error');
+            }
+        }, 3000);
+    }
+
+    /* ── Local Music ───────────────────────────────── */
+
+    async function loadLocal(toolbar, content) {
+        toolbar.innerHTML = '';
+        content.innerHTML = '<div class="rm-empty"><i class="fas fa-spinner fa-spin"></i></div>';
+
+        // Load folders config
+        const foldersData = await api('/radio-music/local/folders');
+        const folders = foldersData.items || [];
+
+        // Toolbar: folder chips + add button
+        let toolHtml = '<div class="rm-folder-chips">';
+        folders.forEach(f => {
+            const name = f.path.split('/').pop() || f.path;
+            toolHtml += '<span class="rm-folder-chip' + (f.exists ? '' : ' rm-chip-missing') + '" data-path="' + escH(f.path) + '">'
+                + '<i class="fas fa-folder' + (f.exists ? '' : '-times') + '" style="font-size:10px;margin-right:2px"></i> '
+                + escH(name)
+                + (f.removable ? ' <span class="rm-chip-remove" data-remove="' + escH(f.path) + '">×</span>' : '')
+                + '</span>';
+        });
+        toolHtml += '<button class="rm-add-folder-btn" id="rm-add-folder"><i class="fas fa-plus"></i> ' + t('Dodaj folder') + '</button>';
+        toolHtml += '</div>';
+        toolbar.innerHTML = toolHtml;
+
+        // Wire folder remove
+        toolbar.querySelectorAll('.rm-chip-remove').forEach(btn => {
+            btn.onclick = async (e) => {
+                e.stopPropagation();
+                const path = btn.dataset.remove;
+                await api('/radio-music/local/folders', { method: 'POST', body: { action: 'remove', path } });
+                loadLocal(toolbar, content);
+            };
+        });
+
+        // Wire add folder
+        toolbar.querySelector('#rm-add-folder').onclick = () => {
+            const path = prompt(t('Podaj ścieżkę do folderu z muzyką:'), '/home/');
+            if (!path) return;
+            api('/radio-music/local/folders', { method: 'POST', body: { action: 'add', path } }).then(res => {
+                if (res.error) toast(res.error, 'error');
+                else loadLocal(toolbar, content);
+            });
+        };
+
+        // Scan for audio files
+        const scanData = await api('/radio-music/local/scan');
+        const items = scanData.items || [];
+
+        if (!items.length) {
+            content.innerHTML = '<div class="rm-empty"><i class="fas fa-folder-open"></i><p>'
+                + t('Brak plików audio w skonfigurowanych folderach') + '</p><p style="font-size:12px;color:var(--text-muted)">'
+                + t('Dodaj foldery powyżej lub pobierz muzykę z YouTube') + '</p></div>';
+            return;
+        }
+
+        // Group by folder
+        const byFolder = {};
+        items.forEach(it => {
+            if (!byFolder[it.folder]) byFolder[it.folder] = [];
+            byFolder[it.folder].push(it);
+        });
+
+        let html = '';
+        for (const [folder, files] of Object.entries(byFolder)) {
+            const folderName = folder.split('/').pop() || folder;
+            html += '<div class="rm-section-title"><i class="fas fa-folder"></i> ' + escH(folderName)
+                + ' <span style="font-size:11px;color:var(--text-muted);font-weight:400">(' + files.length + ')</span></div>';
+            html += '<div style="display:flex;flex-direction:column;gap:4px;margin-bottom:16px">';
+            files.forEach((file, i) => {
+                const sizeMB = (file.size / 1048576).toFixed(1);
+                html += '<div class="rm-track rm-local-track" data-folder="' + escH(folder) + '" data-idx="' + i + '">'
+                    + '<div class="rm-track-thumb" style="display:flex;align-items:center;justify-content:center;background:#1a1a2e"><i class="fas fa-music" style="color:var(--text-muted)"></i></div>'
+                    + '<div class="rm-track-info"><div class="rm-track-title">' + escH(file.name) + '</div>'
+                    + '<div class="rm-track-meta">' + escH(file.filename) + ' · ' + sizeMB + ' MB</div></div>'
+                    + '<div class="rm-track-actions">'
+                    + '<button class="rm-track-btn" title="' + t('Playlista') + '"><i class="fas fa-list-ul"></i></button>'
+                    + '<button class="rm-track-btn rm-add-queue-btn" title="' + t('Kolejka') + '"><i class="fas fa-plus"></i></button>'
+                    + '</div></div>';
+            });
+            html += '</div>';
+        }
+        content.innerHTML = html;
+
+        // Wire clicks
+        content.querySelectorAll('.rm-local-track').forEach(el => {
+            const folder = el.dataset.folder;
+            const idx = parseInt(el.dataset.idx);
+            const file = byFolder[folder][idx];
+            const localItem = {
+                name: file.name, type: 'local', path: file.path,
+                url: '/api/radio-music/local/stream?path=' + encodeURIComponent(file.path) + '&token=' + (NAS.token || ''),
+                meta: file.filename,
+            };
+            el.onclick = (e) => {
+                if (e.target.closest('.rm-track-btn')) return;
+                // Play and set rest of folder as queue
+                const folderFiles = byFolder[folder];
+                _musicQueue = folderFiles.slice(idx).map(f => ({
+                    id: f.path, title: f.name, channel: f.filename,
+                    url: f.path, thumbnail: '', duration: 0, duration_fmt: '',
+                    source: 'local',
+                }));
+                _musicQueueIdx = 0;
+                playAudio(localItem);
+            };
+            el.querySelector('.rm-add-queue-btn').onclick = (e) => {
+                e.stopPropagation();
+                _musicQueue.push({
+                    id: file.path, title: file.name, channel: file.filename,
+                    url: file.path, thumbnail: '', duration: 0, duration_fmt: '',
+                    source: 'local',
+                });
+                toast(t('Dodano do kolejki: ') + file.name, 'success');
+            };
+            const plBtn = el.querySelector('.rm-track-btn[title="' + t('Playlista') + '"]');
+            if (plBtn) plBtn.onclick = (e) => {
+                e.stopPropagation();
+                _showAddToPlaylistModal(localItem);
+            };
         });
     }
 
@@ -1055,6 +1276,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             + '<button class="rm-pl-btn" id="rm-pl-back" style="font-size:16px;color:var(--text-primary)"><i class="fas fa-arrow-left"></i></button>'
             + '<h3>' + escH(pl.name) + '</h3>'
             + '<button class="rm-pl-btn rm-pl-play-all" title="' + t('Odtwórz wszystko') + '" style="color:var(--accent);font-size:16px"><i class="fas fa-play"></i></button>'
+            + '<button class="rm-dl-btn rm-pl-dl-all" title="' + t('Pobierz playlistę') + '" style="font-size:16px"><i class="fas fa-download"></i></button>'
             + '</div>';
 
         if (!pl.tracks.length) {
@@ -1091,6 +1313,18 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             }
         };
 
+        const dlAllBtn = content.querySelector('.rm-pl-dl-all');
+        if (dlAllBtn) dlAllBtn.onclick = () => {
+            const musicTracks = pl.tracks.filter(t => t.type === 'music' && t.url);
+            if (!musicTracks.length) {
+                toast(t('Brak utworów do pobrania (tylko YouTube)'), 'warning');
+                return;
+            }
+            _downloadPlaylist(pl.name, musicTracks);
+            dlAllBtn.classList.add('rm-downloading');
+            dlAllBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+        };
+
         content.querySelectorAll('.rm-track').forEach(el => {
             const idx = parseInt(el.dataset.idx);
             el.onclick = (e) => {
@@ -1112,6 +1346,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             playStation(tr);
         } else if (tr.type === 'music') {
             playMusicTrack(tr);
+        } else if (tr.type === 'local') {
+            playAudio(tr);
         } else {
             playAudio(tr);
         }
@@ -1297,6 +1533,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
         // Build ordered list of URLs to try (primary + fallbacks)
         const isMusic = item.type === 'music';
+        const isLocal = item.type === 'local';
         const urls = isMusic ? [item.url] : [item.url, ...(item.alt_urls || [])];
         let urlIdx = 0;
         let hasPlayed = false;
@@ -1323,7 +1560,10 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 return;
             }
             let src;
-            if (isMusic) {
+            if (isLocal) {
+                // Local files already have a full URL with token
+                src = item.url;
+            } else if (isMusic) {
                 src = '/api/radio-music/music/stream?url=' + encodeURIComponent(urls[idx])
                     + '&token=' + (NAS.token || '');
             } else {
@@ -1342,7 +1582,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             hasPlayed = true;
             _setBuffering(false);
             bodyEl.querySelector('#rm-play-pause').innerHTML = '<i class="fas fa-pause"></i>';
-            _showEq(!isMusic);
+            _showEq(!isMusic && !isLocal);
             _updateSeekbar();
         };
         _audio.onwaiting = () => _setBuffering(true);

@@ -21,6 +21,13 @@ Routes:
   POST /api/radio-music/music/install-deps - install yt-dlp
   GET  /api/radio-music/music/search       - search YouTube music (?q=, ?limit=)
   GET  /api/radio-music/music/stream       - proxy audio from YouTube (?url=)
+  POST /api/radio-music/music/download     - download track to music folder
+  POST /api/radio-music/music/download-playlist - download all tracks in a playlist
+  GET  /api/radio-music/music/downloads    - list active/recent downloads
+  GET  /api/radio-music/local/folders      - list configured music folders
+  POST /api/radio-music/local/folders      - add/remove music folder
+  GET  /api/radio-music/local/scan         - scan folders for audio files
+  GET  /api/radio-music/local/stream       - stream local audio file (?path=)
   GET  /api/radio-music/playlists           - list user's playlists
   POST /api/radio-music/playlists           - create playlist
   GET  /api/radio-music/playlists/<id>      - get playlist
@@ -30,25 +37,31 @@ Routes:
   DELETE /api/radio-music/playlists/<id>/tracks/<i> - remove track from playlist
   GET  /api/radio-music/history            - recently played items
   POST /api/radio-music/history            - add to history
+  GET  /api/radio-music/most-played        - most played items by count
 """
 
 import http.client
 import json
 import logging
+import mimetypes
 import os
+import pathlib
 import shutil
 import socket
 import ssl
 import subprocess
 import time
+import threading
 import urllib.request
 import urllib.parse
 import urllib.error
 import xml.etree.ElementTree as ET
 
-from flask import Blueprint, g, jsonify, request, Response
+import gevent
 
-from host import data_path, q as shq
+from flask import Blueprint, g, jsonify, request, Response, send_file
+
+from host import data_path, safe_path, q as shq
 
 log = logging.getLogger('ethos.radio_music')
 
@@ -60,6 +73,10 @@ _RADIO_API = 'https://de1.api.radio-browser.info'
 _ITUNES_API = 'https://itunes.apple.com/search'
 
 _MAX_HISTORY = 100
+
+_AUDIO_EXTS = {'.mp3', '.m4a', '.flac', '.ogg', '.opus', '.wav', '.wma', '.aac', '.webm', '.mp4', '.wv', '.ape'}
+_DOWNLOAD_JOBS = {}  # job_id -> {status, progress, path, title, error}
+_DOWNLOAD_LOCK = threading.Lock()
 
 
 def _user_dir():
@@ -589,6 +606,262 @@ def most_played():
     hist = _load_json(_user_file('history.json'), [])
     ranked = sorted(hist, key=lambda h: h.get('play_count', 1), reverse=True)
     return jsonify({'items': ranked[:limit]})
+
+
+# ── Music folders config (per-user) ─────────────────────────
+
+def _music_folders_file():
+    return _user_file('music_folders.json')
+
+
+def _default_music_dir():
+    """User's home Music folder, always included."""
+    username = getattr(g, 'username', None) or 'default'
+    return os.path.join('/home', username, 'Music')
+
+
+def _get_music_folders():
+    """Return list of configured music folders + user home Music (always)."""
+    folders = _load_json(_music_folders_file(), [])
+    home_music = _default_music_dir()
+    # Ensure home Music dir always present
+    if home_music not in folders:
+        folders.insert(0, home_music)
+    return folders
+
+
+@radio_music_bp.route('/local/folders', methods=['GET'])
+def local_folders_list():
+    folders = _get_music_folders()
+    result = []
+    for f in folders:
+        result.append({
+            'path': f,
+            'exists': os.path.isdir(f),
+            'removable': f != _default_music_dir(),
+        })
+    return jsonify({'items': result})
+
+
+@radio_music_bp.route('/local/folders', methods=['POST'])
+def local_folders_update():
+    body = request.get_json(force=True, silent=True) or {}
+    action = body.get('action', 'add')
+    folder = body.get('path', '').strip()
+    if not folder:
+        return jsonify({'error': 'Brak ścieżki.'}), 400
+    folder = os.path.abspath(folder)
+    if not os.path.isdir(folder):
+        return jsonify({'error': 'Folder nie istnieje.'}), 400
+
+    folders = _load_json(_music_folders_file(), [])
+    home_music = _default_music_dir()
+    if action == 'add':
+        if folder not in folders and folder != home_music:
+            folders.append(folder)
+    elif action == 'remove':
+        if folder == home_music:
+            return jsonify({'error': 'Nie można usunąć domyślnego folderu muzyki.'}), 400
+        folders = [f for f in folders if f != folder]
+    _save_json(_music_folders_file(), folders)
+    return jsonify({'ok': True})
+
+
+@radio_music_bp.route('/local/scan', methods=['GET'])
+def local_scan():
+    """Scan configured music folders for audio files."""
+    folders = _get_music_folders()
+    items = []
+    for base in folders:
+        if not os.path.isdir(base):
+            continue
+        for root, _dirs, files in os.walk(base):
+            for fname in sorted(files):
+                ext = os.path.splitext(fname)[1].lower()
+                if ext not in _AUDIO_EXTS:
+                    continue
+                fpath = os.path.join(root, fname)
+                try:
+                    stat = os.stat(fpath)
+                except OSError:
+                    continue
+                rel = os.path.relpath(fpath, base)
+                items.append({
+                    'name': os.path.splitext(fname)[0],
+                    'filename': fname,
+                    'path': fpath,
+                    'folder': base,
+                    'relative': rel,
+                    'size': stat.st_size,
+                    'modified': stat.st_mtime,
+                    'type': 'local',
+                })
+    # Sort by modification time descending (newest first)
+    items.sort(key=lambda x: x['modified'], reverse=True)
+    return jsonify({'items': items, 'folders': folders})
+
+
+@radio_music_bp.route('/local/stream', methods=['GET'])
+def local_stream():
+    """Stream a local audio file."""
+    fpath = request.args.get('path', '').strip()
+    if not fpath:
+        return jsonify({'error': 'Brak ścieżki'}), 400
+
+    # Validate path is within one of the configured music folders
+    fpath = os.path.abspath(fpath)
+    folders = _get_music_folders()
+    allowed = False
+    for base in folders:
+        try:
+            if fpath.startswith(os.path.realpath(base) + os.sep):
+                allowed = True
+                break
+        except Exception:
+            continue
+    if not allowed:
+        return jsonify({'error': 'Ścieżka poza dozwolonymi folderami'}), 403
+    if not os.path.isfile(fpath):
+        return jsonify({'error': 'Plik nie istnieje'}), 404
+
+    ext = os.path.splitext(fpath)[1].lower()
+    mime = mimetypes.guess_type(fpath)[0] or 'audio/mpeg'
+    return send_file(fpath, mimetype=mime, conditional=True)
+
+
+# ── Download (yt-dlp) ───────────────────────────────────────
+
+def _music_download_dir():
+    """Target directory for downloaded music. Creates if missing."""
+    d = _default_music_dir()
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+@radio_music_bp.route('/music/download', methods=['POST'])
+def music_download():
+    """Download a track to the user's music folder using yt-dlp."""
+    body = request.get_json(force=True, silent=True) or {}
+    url = body.get('url', '').strip()
+    title = body.get('title', 'Unknown')
+    if not url:
+        return jsonify({'error': 'Brak URL'}), 400
+
+    ytdlp = _find_ytdlp()
+    if not ytdlp:
+        return jsonify({'error': 'yt-dlp nie jest zainstalowane'}), 503
+
+    dest = _music_download_dir()
+    job_id = str(int(time.time() * 1000))
+    with _DOWNLOAD_LOCK:
+        _DOWNLOAD_JOBS[job_id] = {
+            'status': 'downloading', 'progress': 0,
+            'title': title, 'error': None, 'path': None,
+        }
+
+    from host import host_run
+
+    def _do_download():
+        try:
+            cmd = (
+                f'{shq(ytdlp)} -x --audio-format mp3 --audio-quality 0 '
+                f'--no-playlist --no-warnings '
+                f'-o {shq(os.path.join(dest, "%(title)s.%(ext)s"))} '
+                f'{shq(url)}'
+            )
+            r = host_run(cmd, timeout=300)
+            with _DOWNLOAD_LOCK:
+                if r.returncode == 0:
+                    # Find the downloaded file
+                    out_file = None
+                    if r.stdout:
+                        for line in r.stdout.splitlines():
+                            if 'Destination:' in line:
+                                out_file = line.split('Destination:', 1)[1].strip()
+                            elif '[ExtractAudio]' in line and 'Destination:' in line:
+                                out_file = line.split('Destination:', 1)[1].strip()
+                    _DOWNLOAD_JOBS[job_id]['status'] = 'done'
+                    _DOWNLOAD_JOBS[job_id]['progress'] = 100
+                    _DOWNLOAD_JOBS[job_id]['path'] = out_file or dest
+                else:
+                    _DOWNLOAD_JOBS[job_id]['status'] = 'error'
+                    _DOWNLOAD_JOBS[job_id]['error'] = (r.stderr or 'Nieznany błąd')[:200]
+        except Exception as e:
+            with _DOWNLOAD_LOCK:
+                _DOWNLOAD_JOBS[job_id]['status'] = 'error'
+                _DOWNLOAD_JOBS[job_id]['error'] = str(e)[:200]
+
+    gevent.spawn(_do_download)
+    return jsonify({'ok': True, 'job_id': job_id})
+
+
+@radio_music_bp.route('/music/download-playlist', methods=['POST'])
+def music_download_playlist():
+    """Download all tracks in a playlist."""
+    body = request.get_json(force=True, silent=True) or {}
+    tracks = body.get('tracks', [])
+    playlist_name = body.get('name', 'Playlist')
+    if not tracks:
+        return jsonify({'error': 'Brak utworów'}), 400
+
+    ytdlp = _find_ytdlp()
+    if not ytdlp:
+        return jsonify({'error': 'yt-dlp nie jest zainstalowane'}), 503
+
+    dest = os.path.join(_music_download_dir(), playlist_name.replace('/', '_'))
+    os.makedirs(dest, exist_ok=True)
+
+    job_id = str(int(time.time() * 1000))
+    with _DOWNLOAD_LOCK:
+        _DOWNLOAD_JOBS[job_id] = {
+            'status': 'downloading', 'progress': 0,
+            'title': playlist_name, 'error': None, 'path': dest,
+            'total': len(tracks), 'done_count': 0,
+        }
+
+    from host import host_run
+
+    def _do_batch():
+        done = 0
+        errors = []
+        for track in tracks:
+            turl = track.get('url', '').strip()
+            if not turl:
+                continue
+            cmd = (
+                f'{shq(ytdlp)} -x --audio-format mp3 --audio-quality 0 '
+                f'--no-playlist --no-warnings '
+                f'-o {shq(os.path.join(dest, "%(title)s.%(ext)s"))} '
+                f'{shq(turl)}'
+            )
+            r = host_run(cmd, timeout=300)
+            done += 1
+            with _DOWNLOAD_LOCK:
+                _DOWNLOAD_JOBS[job_id]['done_count'] = done
+                _DOWNLOAD_JOBS[job_id]['progress'] = int(done / len(tracks) * 100)
+            if r.returncode != 0:
+                errors.append(track.get('title', turl)[:40])
+
+        with _DOWNLOAD_LOCK:
+            _DOWNLOAD_JOBS[job_id]['status'] = 'done' if not errors else 'done_partial'
+            _DOWNLOAD_JOBS[job_id]['progress'] = 100
+            if errors:
+                _DOWNLOAD_JOBS[job_id]['error'] = f'Błędy: {", ".join(errors[:5])}'
+
+    gevent.spawn(_do_batch)
+    return jsonify({'ok': True, 'job_id': job_id})
+
+
+@radio_music_bp.route('/music/downloads', methods=['GET'])
+def music_downloads_status():
+    """Return status of active/recent download jobs."""
+    with _DOWNLOAD_LOCK:
+        # Clean up old completed jobs (>5 min)
+        now = time.time()
+        to_remove = [jid for jid, j in _DOWNLOAD_JOBS.items()
+                     if j['status'] in ('done', 'done_partial', 'error')]
+        jobs = dict(_DOWNLOAD_JOBS)
+    return jsonify({'jobs': jobs})
 
 
 # ── Playlists (per-user) ─────────────────────────────────────
