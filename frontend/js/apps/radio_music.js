@@ -27,6 +27,9 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     let _advanceLock = false;   // debounce double-advance from Cast + local onended
     let _castQueueActive = false; // true when Cast queue manages playlist advancement
 
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('radio-music', level, msg, details) : console.log('[radio-music]', msg, details || '');
+
     const _LS_KEY = 'rm_playback_state';
     let _savePending = false;
 
@@ -2585,9 +2588,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     }
 
     /* ── Chromecast / Google Cast SDK ──────────────────── */
-
-    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
-        ? NAS.logClient('radio-music', level, msg, details) : console.log('[radio-music]', msg, details || '');
 
     function _initCast() {
         function _setupCastFramework() {
