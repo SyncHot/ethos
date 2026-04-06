@@ -331,6 +331,66 @@ app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024 * 1024  # 50 GB upload limit
 socketio = SocketIO(app, async_mode='gevent')  # default: same-origin only
 
 
+# ── Auto-log API errors to Event Log ──────────────────────────────
+#
+# Maps /api/<prefix>/... to an eventlog category.  Anything not
+# explicitly listed falls back to 'system'.
+_API_CATEGORY_MAP = {
+    'files': 'files', 'storage': 'storage', 'backup': 'backup',
+    'cloud-backup': 'backup', 'docker': 'docker', 'network': 'network',
+    'printer': 'printer', 'security': 'security', 'users': 'security',
+    'radio-music': 'system', 'video-station': 'system',
+    'gallery': 'system', 'photos-ai': 'system',
+}
+
+def _api_category():
+    """Derive eventlog category from the request path."""
+    p = request.path
+    if not p.startswith('/api/'):
+        return 'system'
+    parts = p.split('/')       # ['', 'api', 'storage', ...]
+    prefix = parts[2] if len(parts) > 2 else ''
+    return _API_CATEGORY_MAP.get(prefix, 'system')
+
+# Noisy endpoints that produce harmless 4xx — skip logging them
+_SKIP_LOG_PREFIXES = ('/api/stats', '/api/eventlog', '/api/notifications')
+
+@app.after_request
+def _log_api_errors(response):
+    """Auto-log 4xx/5xx API responses to Event Log (except 401/404 on non-API)."""
+    try:
+        if not request.path.startswith('/api/'):
+            return response
+        code = response.status_code
+        if code < 400:
+            return response
+        # Skip auth challenges and harmless misses
+        if code in (401, 403, 404, 405):
+            return response
+        # Skip noisy endpoints
+        if any(request.path.startswith(p) for p in _SKIP_LOG_PREFIXES):
+            return response
+        # Extract error message from JSON body if possible
+        err_msg = ''
+        try:
+            body = response.get_json(silent=True)
+            if body and isinstance(body, dict):
+                err_msg = body.get('error', '')
+        except Exception:
+            pass
+
+        from blueprints.eventlog import log as elog
+        elog(
+            _api_category(),
+            'error',
+            f'{request.method} {request.path} → {code}' + (f': {err_msg}' if err_msg else ''),
+            {'status': code, 'method': request.method, 'path': request.path},
+        )
+    except Exception:
+        pass
+    return response
+
+
 # ── Production error handlers — never leak internals ──
 @app.errorhandler(404)
 def _handle_404(e):
@@ -348,6 +408,35 @@ def _handle_413(e):
 
 @app.errorhandler(500)
 def _handle_500(e):
+    import traceback
+    tb = traceback.format_exc()
+    try:
+        from blueprints.eventlog import log as elog
+        elog(
+            _api_category(),
+            'error',
+            f'500 {request.method} {request.path}',
+            {'traceback': tb[-2000:], 'method': request.method, 'path': request.path},
+        )
+    except Exception:
+        pass
+    return jsonify({'error': 'Internal server error'}), 500
+
+@app.errorhandler(Exception)
+def _handle_unhandled(e):
+    import traceback
+    tb = traceback.format_exc()
+    app.logger.error(f'Unhandled exception on {request.method} {request.path}: {tb}')
+    try:
+        from blueprints.eventlog import log as elog
+        elog(
+            _api_category(),
+            'error',
+            f'Unhandled: {type(e).__name__}: {str(e)[:200]}',
+            {'traceback': tb[-2000:], 'method': request.method, 'path': request.path},
+        )
+    except Exception:
+        pass
     return jsonify({'error': 'Internal server error'}), 500
 
 
