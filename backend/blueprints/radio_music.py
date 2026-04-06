@@ -926,7 +926,7 @@ def local_scan():
 @radio_music_bp.route('/local/stream', methods=['GET'])
 def local_stream():
     """Stream a local audio file."""
-    fpath = request.args.get('path', '').strip()
+    fpath = request.args.get('path', '').lstrip()
     if not fpath:
         return jsonify({'error': 'Brak ścieżki'}), 400
 
@@ -954,7 +954,7 @@ def local_stream():
 @radio_music_bp.route('/local/artwork', methods=['GET'])
 def local_artwork():
     """Extract embedded cover art from an audio file via ffmpeg."""
-    fpath = request.args.get('path', '').strip()
+    fpath = request.args.get('path', '').lstrip()
     if not fpath:
         return jsonify({'error': 'Brak ścieżki'}), 400
 

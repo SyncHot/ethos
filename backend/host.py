@@ -76,7 +76,12 @@ def host_run(cmd, timeout=30, cwd=None):
     def _run():
         return subprocess.run(full_cmd, shell=True, capture_output=True, text=True, timeout=timeout)
 
-    future = _fs_executor.submit(_run)
+    try:
+        future = _fs_executor.submit(_run)
+    except RuntimeError:
+        # Executor shut down (server stopping) — run directly as fallback
+        cp = subprocess.CompletedProcess(full_cmd, returncode=-1, stdout='', stderr='server shutting down')
+        return cp
     try:
         return future.result(timeout=timeout + 5)
     except FuturesTimeoutError:
@@ -92,7 +97,10 @@ def fs_call_with_timeout(func, *args, timeout=5):
     os.stat, shutil.*, …) that might hang on a stale or sleeping mount.
     Raises TimeoutError if the call doesn't complete in time.
     """
-    future = _fs_executor.submit(func, *args)
+    try:
+        future = _fs_executor.submit(func, *args)
+    except RuntimeError:
+        raise TimeoutError("Server shutting down")
     try:
         return future.result(timeout=timeout)
     except FuturesTimeoutError:

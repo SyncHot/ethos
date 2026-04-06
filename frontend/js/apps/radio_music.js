@@ -57,6 +57,35 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         {q:'polish music polskie', label:'🇵🇱 Polskie'},
     ];
 
+    let _npOverlay = null;
+    let _npSeekDragging = false;
+    let _lockOverlay = null;
+
+    const _AUDIOBOOK_CATEGORIES = [
+        {q: 'najlepsze audiobooki dla dzieci po polsku 2024 2025', label: '🏆 Top bajki'},
+        {q: 'bajki dla dzieci audiobook po polsku', label: '🇵🇱 Bajki po polsku'},
+        {q: 'bajki na dobranoc dla dzieci audiobook', label: '🌙 Na dobranoc'},
+        {q: 'baśnie braci grimm audiobook dla dzieci', label: '📖 Baśnie Grimm'},
+        {q: 'baśnie andersena audiobook dla dzieci', label: '👑 Andersen'},
+        {q: 'harry potter audiobook po polsku', label: '⚡ Harry Potter'},
+        {q: 'władca pierścieni audiobook po polsku', label: '💍 Władca Pierścieni'},
+        {q: 'narnia audiobook po polsku', label: '🦁 Opowieści z Narnii'},
+        {q: 'mały książę audiobook po polsku', label: '🌹 Mały Książę'},
+        {q: 'pippi langstrumpf audiobook po polsku', label: '🧦 Pippi'},
+        {q: 'muminki audiobook po polsku', label: '🏔️ Muminki'},
+        {q: 'kubuś puchatek audiobook', label: '🍯 Kubuś Puchatek'},
+        {q: 'smerfy audiobook bajka po polsku', label: '🔵 Smerfy'},
+        {q: 'masza i niedźwiedź bajka audiobook po polsku', label: '🐻 Masza'},
+        {q: 'franklin żółw audiobook bajka po polsku', label: '🐢 Franklin'},
+        {q: 'bolek i lolek audiobook bajka', label: '👦 Bolek i Lolek'},
+        {q: 'reksio audiobook bajka po polsku', label: '🐕 Reksio'},
+        {q: 'przygody audiobook dla dzieci po polsku', label: '🏴‍☠️ Przygody'},
+        {q: 'bajki zwierzęta audiobook dla dzieci', label: '🦊 Zwierzęta'},
+        {q: 'audiobook dla dzieci edukacyjny', label: '🎓 Edukacyjne'},
+        {q: 'pan tadeusz audiobook lektura', label: '📚 Lektury'},
+        {q: 'audiobook children english fairy tales', label: '🇬🇧 English'},
+    ];
+
     function _buildPlaybackState() {
         if (!_playing) return null;
         return {
@@ -2127,31 +2156,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
     /* ── Audiobooks for Kids ───────────────────────── */
 
-    const _AUDIOBOOK_CATEGORIES = [
-        {q: 'najlepsze audiobooki dla dzieci po polsku 2024 2025', label: '🏆 Top bajki'},
-        {q: 'bajki dla dzieci audiobook po polsku', label: '🇵🇱 Bajki po polsku'},
-        {q: 'bajki na dobranoc dla dzieci audiobook', label: '🌙 Na dobranoc'},
-        {q: 'baśnie braci grimm audiobook dla dzieci', label: '📖 Baśnie Grimm'},
-        {q: 'baśnie andersena audiobook dla dzieci', label: '👑 Andersen'},
-        {q: 'harry potter audiobook po polsku', label: '⚡ Harry Potter'},
-        {q: 'władca pierścieni audiobook po polsku', label: '💍 Władca Pierścieni'},
-        {q: 'narnia audiobook po polsku', label: '🦁 Opowieści z Narnii'},
-        {q: 'mały książę audiobook po polsku', label: '🌹 Mały Książę'},
-        {q: 'pippi langstrumpf audiobook po polsku', label: '🧦 Pippi'},
-        {q: 'muminki audiobook po polsku', label: '🏔️ Muminki'},
-        {q: 'kubuś puchatek audiobook', label: '🍯 Kubuś Puchatek'},
-        {q: 'smerfy audiobook bajka po polsku', label: '🔵 Smerfy'},
-        {q: 'masza i niedźwiedź bajka audiobook po polsku', label: '🐻 Masza'},
-        {q: 'franklin żółw audiobook bajka po polsku', label: '🐢 Franklin'},
-        {q: 'bolek i lolek audiobook bajka', label: '👦 Bolek i Lolek'},
-        {q: 'reksio audiobook bajka po polsku', label: '🐕 Reksio'},
-        {q: 'przygody audiobook dla dzieci po polsku', label: '🏴‍☠️ Przygody'},
-        {q: 'bajki zwierzęta audiobook dla dzieci', label: '🦊 Zwierzęta'},
-        {q: 'audiobook dla dzieci edukacyjny', label: '🎓 Edukacyjne'},
-        {q: 'pan tadeusz audiobook lektura', label: '📚 Lektury'},
-        {q: 'audiobook children english fairy tales', label: '🇬🇧 English'},
-    ];
-
     async function loadAudiobooks(toolbar, content) {
         if (_ytdlpReady === null) {
             const deps = await api('/radio-music/music/check-deps');
@@ -2903,9 +2907,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
     /* ── Now Playing Overlay ──────────────────────── */
 
-    let _npOverlay = null;
-    let _npSeekDragging = false;
-
     function _showNowPlaying() {
         if (!_playing) return;
         _hideNowPlaying();
@@ -3188,7 +3189,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         }
     }
 
-    let _lockOverlay = null;
     function _showLockScreen() {
         if (_lockOverlay) return;
         const item = _playing;
