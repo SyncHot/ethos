@@ -4,6 +4,9 @@
    ═══════════════════════════════════════════════════════════ */
 
 AppRegistry['dlna'] = function (appDef) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('dlna', level, msg, details) : console.log('[dlna]', msg, details || '');
+
     createWindow('dlna', {
         title: 'DLNA / UPnP',
         icon: appDef.icon,

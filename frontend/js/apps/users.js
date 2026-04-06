@@ -5,6 +5,9 @@
 
 AppRegistry['users'] = function (appDef) {
 
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('users', level, msg, details) : console.log('[users]', msg, details || '');
+
     const body = document.createElement('div');
     body.className = 'usr-app';
 

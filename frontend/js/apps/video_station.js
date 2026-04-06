@@ -26,6 +26,9 @@
 
 AppRegistry['video-station'] = function (appDef, launchOpts) {
 
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('video-station', level, msg, details) : console.log('[video-station]', msg, details || '');
+
     /* ── state ─────────────────────────────────────────────── */
     let activeSection  = 'library';
     let libraryItems   = [];

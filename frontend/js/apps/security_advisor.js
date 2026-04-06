@@ -1,5 +1,8 @@
 /* Security Advisor — system security scanner with score and one-click fixes */
 AppRegistry['security-advisor'] = function(appDef, launchOpts) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('security-advisor', level, msg, details) : console.log('[security-advisor]', msg, details || '');
+
     createWindow('security-advisor', {
         title: t('Security Advisor'),
         icon: appDef.icon,

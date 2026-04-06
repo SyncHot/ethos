@@ -3,6 +3,9 @@
    ═══════════════════════════════════════════════════════════ */
 
 AppRegistry['websites'] = function (appDef) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('websites', level, msg, details) : console.log('[websites]', msg, details || '');
+
     createWindow('websites', {
         title: t('Kreator stron'),
         icon: appDef.icon || 'fa-globe',

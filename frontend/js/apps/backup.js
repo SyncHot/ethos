@@ -5,6 +5,9 @@
    ═══════════════════════════════════════════════════════════ */
 
 AppRegistry['backup'] = function (appDef) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('backup', level, msg, details) : console.log('[backup]', msg, details || '');
+
     createWindow('backup', {
         title: t('Kopia zapasowa'),
         icon: appDef.icon,

@@ -4,6 +4,9 @@
    ═══════════════════════════════════════════════════════════ */
 
 AppRegistry['builder'] = function (appDef) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('builder', level, msg, details) : console.log('[builder]', msg, details || '');
+
     createWindow('builder', {
         title: 'Builder',
         icon: appDef.icon,

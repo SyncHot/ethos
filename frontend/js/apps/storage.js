@@ -36,6 +36,9 @@ const _SH_ALL_PROTOS = [
 
 /* ── App Registration ────────────────────────────────────── */
 AppRegistry['storage-manager'] = function (appDef) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('storage-manager', level, msg, details) : console.log('[storage-manager]', msg, details || '');
+
     createWindow('storage-manager', {
         title: t('Menedżer dysków'),
         icon: appDef.icon,

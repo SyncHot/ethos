@@ -4,6 +4,9 @@
  */
 
 AppRegistry['code-editor'] = function (appDef, launchOpts) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('code-editor', level, msg, details) : console.log('[code-editor]', msg, details || '');
+
     const winId = 'code-editor';
     if (WM.windows.has(winId) && launchOpts?.path) {
         closeWindow(winId);

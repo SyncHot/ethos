@@ -1,6 +1,9 @@
 /* EthOS — Notification Channels App */
 
 AppRegistry['notifications'] = function (appDef) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('notifications', level, msg, details) : console.log('[notifications]', msg, details || '');
+
     const w = createWindow('notifications', {
         title: 'Powiadomienia',
         icon: 'fa-bell',

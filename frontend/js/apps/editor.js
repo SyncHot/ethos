@@ -4,6 +4,9 @@
  */
 
 AppRegistry['doc-editor'] = function (appDef, launchOpts) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('doc-editor', level, msg, details) : console.log('[doc-editor]', msg, details || '');
+
     const winId = 'doc-editor';
     // Close existing if re-opening with a file
     if (WM.windows.has(winId) && launchOpts?.path) {

@@ -1,4 +1,7 @@
 AppRegistry['vm-manager'] = function (appDef) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('vm-manager', level, msg, details) : console.log('[vm-manager]', msg, details || '');
+
     createWindow('vm-manager', {
         title: t('VM Manager'),
         icon: appDef.icon,

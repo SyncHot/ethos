@@ -4,6 +4,9 @@
    ═══════════════════════════════════════════════════════════ */
 
 AppRegistry['usb-flasher'] = function (appDef) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('usb-flasher', level, msg, details) : console.log('[usb-flasher]', msg, details || '');
+
     createWindow('usb-flasher', {
         title: t('Kreator USB'),
         icon: appDef.icon,

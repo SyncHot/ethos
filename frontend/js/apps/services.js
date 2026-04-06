@@ -4,6 +4,9 @@
    ═══════════════════════════════════════════════════════════ */
 
 AppRegistry['services'] = function (appDef) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('services', level, msg, details) : console.log('[services]', msg, details || '');
+
     createWindow('services', {
         title: t('Usługi'),
         icon: appDef.icon,

@@ -4,6 +4,9 @@
    ═══════════════════════════════════════════════════════════ */
 
 AppRegistry['firewall'] = function (appDef) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('firewall', level, msg, details) : console.log('[firewall]', msg, details || '');
+
     let _lanSubnet = '';
     let _rules = [];
 

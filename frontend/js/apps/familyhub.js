@@ -4,6 +4,9 @@
  */
 
 AppRegistry['family-hub'] = function (appDef) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('family-hub', level, msg, details) : console.log('[family-hub]', msg, details || '');
+
     const winId = 'family-hub';
     createWindow(winId, {
         title: t('Centrum Rodzinne'),

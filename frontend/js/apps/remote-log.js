@@ -1,4 +1,7 @@
 AppRegistry['remote-log'] = function (appDef) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('remote-log', level, msg, details) : console.log('[remote-log]', msg, details || '');
+
     createWindow('remote-log', {
         title: t('Zdalne logi'),
         icon: appDef.icon,

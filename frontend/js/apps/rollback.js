@@ -4,6 +4,9 @@
    ═══════════════════════════════════════════════════════════ */
 
 AppRegistry['rollback'] = function (appDef) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('rollback', level, msg, details) : console.log('[rollback]', msg, details || '');
+
     createWindow('rollback', {
         title: t('Przywracanie systemu'),
         icon: appDef.icon,

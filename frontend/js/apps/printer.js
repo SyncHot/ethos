@@ -4,6 +4,9 @@
    ═══════════════════════════════════════════════════════════ */
 
 AppRegistry['printer'] = function (appDef) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('printer', level, msg, details) : console.log('[printer]', msg, details || '');
+
     createWindow('printer', {
         title: t('Serwer druku'),
         icon: appDef.icon,

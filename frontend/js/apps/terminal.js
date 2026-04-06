@@ -3,6 +3,9 @@
    ═══════════════════════════════════════════════════════════ */
 
 AppRegistry['terminal'] = function (appDef) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('terminal', level, msg, details) : console.log('[terminal]', msg, details || '');
+
     const winId = 'terminal-' + Date.now();
 
     const content = `

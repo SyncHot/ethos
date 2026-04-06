@@ -2,6 +2,9 @@
 /* globals AppRegistry, createWindow, NAS, showToast, t, WM */
 
 AppRegistry['ai-chat'] = function (appDef, launchOpts) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('ai-chat', level, msg, details) : console.log('[ai-chat]', msg, details || '');
+
     var alreadyOpen = typeof WM !== 'undefined' && WM.windows && WM.windows.has('ai-chat');
     createWindow('ai-chat', {
         title: t('AI Chat'),

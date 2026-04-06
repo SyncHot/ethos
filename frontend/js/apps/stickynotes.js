@@ -3,6 +3,9 @@
  * Slide-to-reveal panel at the right edge of the screen.
  */
 AppRegistry['sticky-notes'] = function (appDef) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('sticky-notes', level, msg, details) : console.log('[sticky-notes]', msg, details || '');
+
     const panelId = 'sticky-notes';
 
     // Toggle: if already open, remove it

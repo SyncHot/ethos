@@ -4,6 +4,9 @@
    ═══════════════════════════════════════════════════════════ */
 
 AppRegistry['fail2ban'] = function (appDef) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('fail2ban', level, msg, details) : console.log('[fail2ban]', msg, details || '');
+
     const win = createWindow('fail2ban', {
         title: 'Fail2Ban Manager',
         icon: 'fa-shield-alt',

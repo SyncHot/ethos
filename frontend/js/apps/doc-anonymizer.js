@@ -2,6 +2,9 @@
 /* globals AppRegistry, createWindow, NAS, api, t, showConfirm */
 
 AppRegistry['doc-anonymizer'] = function (appDef) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('doc-anonymizer', level, msg, details) : console.log('[doc-anonymizer]', msg, details || '');
+
     createWindow('doc-anonymizer', {
         title: t('Document Anonymizer'),
         icon: appDef.icon,

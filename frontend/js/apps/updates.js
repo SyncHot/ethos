@@ -4,6 +4,9 @@
    ═══════════════════════════════════════════════════════════ */
 
 AppRegistry['updates'] = function (appDef) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('updates', level, msg, details) : console.log('[updates]', msg, details || '');
+
     createWindow('updates', {
         title: t('Aktualizacje systemu'),
         icon: appDef.icon,

@@ -3,6 +3,9 @@
    Camera discovery, live view, recording & playback
    ═══════════════════════════════════════════════════════════════════ */
 AppRegistry['surveillance'] = function (appDef, launchOpts) {
+  const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+      ? NAS.logClient('surveillance', level, msg, details) : console.log('[surveillance]', msg, details || '');
+
   createWindow('surveillance', {
     title: 'Surveillance Station',
     icon: 'fa-solid fa-video',

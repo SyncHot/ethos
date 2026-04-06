@@ -4,6 +4,9 @@
  */
 
 AppRegistry['download-manager'] = function (appDef, launchOpts) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('download-manager', level, msg, details) : console.log('[download-manager]', msg, details || '');
+
     const winId = 'download-manager';
     if (WM.windows.has(winId)) {
         // If re-opened with a URL, add it

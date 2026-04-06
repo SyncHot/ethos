@@ -3,6 +3,9 @@
    ═══════════════════════════════════════════════════════════ */
 
 AppRegistry['power'] = function (appDef, launchOpts) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('power', level, msg, details) : console.log('[power]', msg, details || '');
+
     const w = createWindow('power', {
         title: t('Zarządzanie energią'),
         icon: 'fa-plug',

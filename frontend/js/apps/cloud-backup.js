@@ -1,6 +1,9 @@
 /* ── Cloud Backup (rclone) ─────────────────────────────────── */
 
 AppRegistry['cloud-backup'] = function (appDef) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('cloud-backup', level, msg, details) : console.log('[cloud-backup]', msg, details || '');
+
     createWindow('cloud-backup', {
         title: t('Backup w chmurze'),
         icon: appDef.icon,

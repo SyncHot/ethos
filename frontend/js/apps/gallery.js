@@ -2,6 +2,9 @@
    EthOS  —  Gallery  (state-of-the-art photo & video gallery)
    ═══════════════════════════════════════════════════════════════════ */
 AppRegistry['gallery'] = function (appDef, launchOpts) {
+  const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+      ? NAS.logClient('gallery', level, msg, details) : console.log('[gallery]', msg, details || '');
+
   createWindow('gallery', {
     title: t('Galeria'),
     icon: 'fa-solid fa-images',

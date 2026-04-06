@@ -5,6 +5,9 @@
 
 AppRegistry['cron'] = function (appDef) {
 
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('cron', level, msg, details) : console.log('[cron]', msg, details || '');
+
     const win = createWindow('cron', {
         title: 'Harmonogram',
         icon: 'fa-clock',

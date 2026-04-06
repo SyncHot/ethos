@@ -4,6 +4,9 @@
  */
 
 AppRegistry['naslink'] = function (appDef, launchOpts) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('naslink', level, msg, details) : console.log('[naslink]', msg, details || '');
+
     const winId = 'naslink';
     if (WM.windows.has(winId)) return;
 

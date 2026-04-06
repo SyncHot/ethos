@@ -4,6 +4,9 @@
    ═══════════════════════════════════════════════════════════ */
 
 AppRegistry['resource-monitor'] = function (appDef) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('resource-monitor', level, msg, details) : console.log('[resource-monitor]', msg, details || '');
+
     createWindow('resource-monitor', {
         title: t('Monitor zasobów'),
         icon: appDef.icon,

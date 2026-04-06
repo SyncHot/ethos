@@ -3,6 +3,9 @@
    ═══════════════════════════════════════════════════════════════ */
 
 AppRegistry['dashboard'] = function (appDef, launchOpts) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('dashboard', level, msg, details) : console.log('[dashboard]', msg, details || '');
+
     let refreshTimer = null;
     const w = createWindow('dashboard', {
         title: 'Pulpit',

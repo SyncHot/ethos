@@ -1,5 +1,8 @@
 /* Photos AI - Face recognition, object detection, smart albums */
 AppRegistry['photos-ai'] = function(appDef, launchOpts) {
+  const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+      ? NAS.logClient('photos-ai', level, msg, details) : console.log('[photos-ai]', msg, details || '');
+
   createWindow('photos-ai', {
     title: t('Photos AI'),
     icon: appDef.icon,

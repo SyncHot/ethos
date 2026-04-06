@@ -3,6 +3,9 @@
  * Centralised SSH key + known_hosts management.
  */
 AppRegistry['ssh-manager'] = function (appDef, launchOpts) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('ssh-manager', level, msg, details) : console.log('[ssh-manager]', msg, details || '');
+
     const winId = 'ssh-manager';
     if (WM.windows.has(winId)) return;
 

@@ -3,6 +3,9 @@
    ═══════════════════════════════════════════════════════════ */
 
 AppRegistry['wireguard'] = function (appDef) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('wireguard', level, msg, details) : console.log('[wireguard]', msg, details || '');
+
     function esc(str) {
         if (typeof str !== 'string') return str;
         return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')

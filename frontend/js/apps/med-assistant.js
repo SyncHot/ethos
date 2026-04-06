@@ -45,6 +45,9 @@ function _medMd(text) {
 }
 
 AppRegistry['med-assistant'] = function (appDef) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('med-assistant', level, msg, details) : console.log('[med-assistant]', msg, details || '');
+
     createWindow('med-assistant', {
         title: t('Medical Assistant'),
         icon: appDef.icon,

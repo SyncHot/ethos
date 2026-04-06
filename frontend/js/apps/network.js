@@ -5,6 +5,9 @@
 
 AppRegistry['network'] = function (appDef) {
 
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('network', level, msg, details) : console.log('[network]', msg, details || '');
+
     const body = document.createElement('div');
     body.className = 'net-app';
 

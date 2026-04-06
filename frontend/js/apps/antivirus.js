@@ -3,6 +3,9 @@
    ═══════════════════════════════════════════════════════════ */
 
 AppRegistry['antivirus'] = function (appDef) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('antivirus', level, msg, details) : console.log('[antivirus]', msg, details || '');
+
     function esc(s) {
         if (!s && s !== 0) return '';
         const d = document.createElement('div');

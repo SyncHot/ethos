@@ -1,4 +1,7 @@
 AppRegistry['docker-manager'] = function (appDef) {
+    const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
+        ? NAS.logClient('docker-manager', level, msg, details) : console.log('[docker-manager]', msg, details || '');
+
     createWindow('docker-manager', {
         title: t('Docker'),
         icon: appDef.icon,
