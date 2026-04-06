@@ -24,7 +24,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     let _preCastVolume = 0.8;
     let _castPlayer = null;
     let _castController = null;
-    let _advanceLock = false;  // debounce double-advance from Cast + local onended
+    let _advanceLock = false;   // debounce double-advance from Cast + local onended
+    let _castQueueActive = false; // true when Cast queue manages playlist advancement
 
     const _LS_KEY = 'rm_playback_state';
     let _savePending = false;
@@ -2277,6 +2278,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     // Advance to next track in queue (used by onended, Cast media ended, and error recovery)
     function _advanceQueue() {
         if (_advanceLock) return false;
+        if (_castQueueActive) return false; // Cast queue handles advancement
         if (!_musicQueue.length || _musicQueueIdx < 0) return false;
         _advanceLock = true;
         setTimeout(() => { _advanceLock = false; }, 500);
@@ -2479,11 +2481,59 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         // Start playback with fallback chain
         tryUrl(0);
 
-        // If casting, send new track to Chromecast immediately (uses direct URLs, no proxy)
-        if (_isCasting) _castLoadCurrentTrack();
+        // If casting, send track/queue to Chromecast
+        if (_isCasting) {
+            if (_musicQueue.length > 1 && !_castQueueActive) {
+                _castLoadQueue(_musicQueueIdx);
+            } else if (!_castQueueActive) {
+                _castLoadCurrentTrack();
+            }
+            // If _castQueueActive, Cast queue already manages playback
+        }
+    }
+
+    // Update player bar UI without starting playback (for Cast queue sync)
+    function _updatePlayerBar(item) {
+        if (!item || !bodyEl) return;
+        const nameEl = bodyEl.querySelector('#rm-player-name');
+        if (nameEl) nameEl.textContent = item.name || item.title || '';
+        const metaEl = bodyEl.querySelector('#rm-player-meta');
+        if (metaEl) metaEl.textContent = item.meta || item.channel || '';
+        const art = bodyEl.querySelector('#rm-player-art');
+        if (art) {
+            const img = item.image || item.thumbnail;
+            if (img) {
+                art.innerHTML = '<img src="' + escH(img) + '" onerror="this.outerHTML=\'<i class=\\\'fas fa-music\\\'></i>\'">';
+            } else {
+                art.innerHTML = '<i class="fas fa-music"></i>';
+            }
+        }
+        _savePlaybackState();
     }
 
     function _skipStation(dir) {
+        // Cast queue mode: use Chromecast queue controls
+        if (_isCasting && _castQueueActive) {
+            const session = cast.framework.CastContext.getInstance().getCurrentSession();
+            const media = session?.getMediaSession();
+            if (media) {
+                const ok = () => {}, fail = (e) => console.warn('Cast skip error:', e);
+                if (dir > 0) media.queueNext(ok, fail);
+                else media.queuePrev(ok, fail);
+                // Optimistic local state update
+                const nextIdx = _musicQueueIdx + dir;
+                if (nextIdx >= 0 && nextIdx < _musicQueue.length) {
+                    _musicQueueIdx = nextIdx;
+                    _playing = _musicQueue[nextIdx];
+                    _updatePlayerBar(_playing);
+                } else if (_repeatMode === 1 && _musicQueue.length > 0) {
+                    _musicQueueIdx = dir > 0 ? 0 : _musicQueue.length - 1;
+                    _playing = _musicQueue[_musicQueueIdx];
+                    _updatePlayerBar(_playing);
+                }
+                return;
+            }
+        }
         // Queue has priority (music tracks, local files, or history list items)
         if (_musicQueue.length > 0 && _musicQueueIdx >= 0) {
             let nextIdx;
@@ -2528,6 +2578,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         if (_castSession) { try { _castSession.endSession(true); } catch(e) {} }
         _castSession = null;
         _isCasting = false;
+        _castQueueActive = false;
         _syncCastBtnUi(false);
         if (_audio) {
             _audio.pause();
@@ -2588,11 +2639,24 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     function _onCastPlayerStateChanged() {
         if (!_isCasting || !_castPlayer) return;
         if (_castPlayer.playerState === 'IDLE') {
-            // Check idle reason — only advance on FINISHED (not CANCELLED/ERROR)
             const session = cast.framework.CastContext.getInstance().getCurrentSession();
             const media = session?.getMediaSession();
             if (media && media.idleReason === 'FINISHED') {
-                _advanceQueue();
+                if (_castQueueActive) {
+                    // Cast queue auto-advanced — sync local state
+                    const nextIdx = _musicQueueIdx + 1;
+                    if (nextIdx < _musicQueue.length) {
+                        _musicQueueIdx = nextIdx;
+                        _playing = _musicQueue[nextIdx];
+                        _updatePlayerBar(_playing);
+                    } else if (_repeatMode === 1 && _musicQueue.length > 0) {
+                        _musicQueueIdx = 0;
+                        _playing = _musicQueue[0];
+                        _updatePlayerBar(_playing);
+                    }
+                } else {
+                    _advanceQueue();
+                }
             }
         }
     }
@@ -2605,13 +2669,30 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             _isCasting = true;
             _syncCastBtnUi(true);
             toast(t('Połączono z Chromecast'), 'success');
-            _castLoadCurrentTrack();
+            if (_musicQueue.length > 1) {
+                _castLoadQueue(_musicQueueIdx);
+            } else {
+                _castLoadCurrentTrack();
+            }
         } else if (state === cast.framework.SessionState.SESSION_ENDED) {
+            const wasCastQueue = _castQueueActive;
+            const castTime = _castPlayer?.currentTime || 0;
             _castSession = null;
             _isCasting = false;
+            _castQueueActive = false;
             _syncCastBtnUi(false);
-            // Restore local volume
-            if (_audio) _audio.volume = _preCastVolume;
+            if (wasCastQueue && _musicQueue.length > 0 && _musicQueueIdx >= 0 && _musicQueueIdx < _musicQueue.length) {
+                // Resume local playback from Cast position
+                const cur = _musicQueue[_musicQueueIdx];
+                cur._plItem ? _playTrackFromPlaylist(cur) : playMusicTrack(cur);
+                if (castTime > 1 && _audio) {
+                    _audio.addEventListener('canplay', () => {
+                        if (_audio && castTime < _audio.duration) _audio.currentTime = castTime;
+                    }, { once: true });
+                }
+            } else if (_audio) {
+                _audio.volume = _preCastVolume;
+            }
         }
     }
 
@@ -2678,6 +2759,81 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         }
     }
 
+    // Resolve a track to an absolute URL accessible by Chromecast
+    async function _resolveCastMediaUrl(tr) {
+        if (tr.type === 'music' && tr.url && !tr.url.startsWith('/api/')) {
+            try {
+                const data = await api('/radio-music/music/direct-url?url=' + encodeURIComponent(tr.url));
+                if (data.audio_url) return { url: data.audio_url, ct: data.content_type || 'audio/mp4' };
+            } catch (e) {}
+            // Fallback: proxy URL (Chromecast → NAS → yt-dlp)
+            return {
+                url: location.origin + '/api/radio-music/music/stream?url=' + encodeURIComponent(tr.url) + '&token=' + (NAS.token || ''),
+                ct: 'audio/mp4'
+            };
+        }
+        if (tr.type === 'local') {
+            const path = tr.path || (tr.url?.match(/[?&]path=([^&]+)/)?.[1]);
+            if (path) {
+                return {
+                    url: location.origin + '/api/radio-music/local/stream?path=' + path + '&token=' + (NAS.token || ''),
+                    ct: 'audio/mpeg'
+                };
+            }
+        }
+        if (tr.type === 'radio' && tr.url) {
+            return { url: tr.url, ct: 'audio/mpeg' };
+        }
+        return null;
+    }
+
+    // Load full playlist queue on Chromecast (plays autonomously even when phone sleeps)
+    async function _castLoadQueue(startIdx) {
+        if (!_castSession) return _castLoadCurrentTrack();
+        const session = _castSession.getSessionObj ? _castSession.getSessionObj() : null;
+        if (!session || !session.queueLoad || _musicQueue.length <= 1) {
+            return _castLoadCurrentTrack();
+        }
+
+        // Resolve URLs for all queue items in parallel
+        const urlResults = await Promise.all(_musicQueue.map(tr => _resolveCastMediaUrl(tr)));
+
+        const items = [];
+        urlResults.forEach((resolved, i) => {
+            if (!resolved) return;
+            const tr = _musicQueue[i];
+            const mediaInfo = new chrome.cast.media.MediaInfo(resolved.url, resolved.ct);
+            mediaInfo.metadata = new chrome.cast.media.MusicTrackMediaMetadata();
+            mediaInfo.metadata.title = tr.name || tr.title || '';
+            mediaInfo.metadata.artist = tr.meta || tr.channel || '';
+            const img = tr.image || tr.thumbnail;
+            if (img) {
+                const imgUrl = img.startsWith('http') ? img : (location.origin + img);
+                mediaInfo.metadata.images = [new chrome.cast.Image(imgUrl)];
+            }
+            items.push(new chrome.cast.media.QueueItem(mediaInfo));
+        });
+
+        if (!items.length) return _castLoadCurrentTrack();
+
+        const queueRequest = new chrome.cast.media.QueueLoadRequest(items);
+        queueRequest.startIndex = startIdx ?? _musicQueueIdx ?? 0;
+        queueRequest.repeatMode = _repeatMode === 1 ? chrome.cast.media.RepeatMode.ALL
+            : _repeatMode === 2 ? chrome.cast.media.RepeatMode.SINGLE
+            : chrome.cast.media.RepeatMode.OFF;
+
+        try {
+            await new Promise((resolve, reject) => session.queueLoad(queueRequest, resolve, reject));
+            _castQueueActive = true;
+            _preCastVolume = (bodyEl.querySelector('#rm-vol')?.value || 80) / 100;
+            if (_audio) _audio.volume = 0;
+        } catch (err) {
+            console.warn('Cast queueLoad error:', err);
+            _castQueueActive = false;
+            return _castLoadCurrentTrack();
+        }
+    }
+
     function _toggleCast() {
         if (!_audio) {
             toast(t('Najpierw włącz muzykę'), 'info');
@@ -2687,8 +2843,9 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             _castSession.endSession(true);
             _isCasting = false;
             _castSession = null;
+            _castQueueActive = false;
             _syncCastBtnUi(false);
-            _audio.volume = _preCastVolume;
+            if (_audio) _audio.volume = _preCastVolume;
             return;
         }
         if (_castAvail) {
