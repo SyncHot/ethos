@@ -911,15 +911,79 @@ services:
         }).catch(() => { main.innerHTML = `<div class="dkr-empty">${t('Błąd połączenia z Dockerem')}</div>`; });
     }
 
-    // Initial render
-    renderTab();
+    // Check if Docker is available before rendering; show install screen if not
+    async function checkDockerAndRender() {
+        main.innerHTML = `<div class="dkr-loading"><i class="fas fa-spinner fa-spin"></i> ${t('Sprawdzanie Dockera...')}</div>`;
+        const status = await api('/docker/status').catch(() => ({ available: false }));
+        if (!status.available) {
+            renderInstallScreen();
+            return;
+        }
+        renderTab();
+        const refreshInterval = setInterval(() => {
+            if (!WM.windows.has('docker-manager')) { clearInterval(refreshInterval); clearAllIntervals(); return; }
+            if (S.tab === 'containers' && !S.selectedContainer) { loadContainers().then(fillContainersTable); }
+        }, 10000);
+        addInterval(refreshInterval);
+    }
 
-    // Auto-refresh (containers & projects, depending on active tab)
-    const refreshInterval = setInterval(() => {
-        if (!WM.windows.has('docker-manager')) { clearInterval(refreshInterval); clearAllIntervals(); return; }
-        if (S.tab === 'containers' && !S.selectedContainer) { loadContainers().then(fillContainersTable); }
-    }, 10000);
-    addInterval(refreshInterval);
+    function renderInstallScreen() {
+        main.innerHTML = `
+            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:20px;padding:40px;text-align:center">
+                <i class="fab fa-docker" style="font-size:4em;color:var(--text-muted)"></i>
+                <div style="font-size:1.3em;font-weight:600">${t('Docker nie jest zainstalowany')}</div>
+                <div style="color:var(--text-muted);max-width:380px">${t('Zainstaluj Docker Engine, aby zarządzać kontenerami i projektami Compose.')}</div>
+                <button class="dkr-btn success" id="dkr-install-btn" style="padding:10px 28px;font-size:1em">
+                    <i class="fas fa-download"></i> ${t('Zainstaluj Docker')}
+                </button>
+                <div id="dkr-install-progress" style="display:none;width:100%;max-width:420px">
+                    <div style="background:var(--bg-secondary);border-radius:4px;height:8px;overflow:hidden;margin-bottom:8px">
+                        <div id="dkr-install-bar" style="height:100%;background:var(--accent);width:0%;transition:width 0.3s"></div>
+                    </div>
+                    <div id="dkr-install-msg" style="font-size:0.85em;color:var(--text-muted)"></div>
+                </div>
+            </div>`;
+
+        main.querySelector('#dkr-install-btn').addEventListener('click', async () => {
+            main.querySelector('#dkr-install-btn').disabled = true;
+            main.querySelector('#dkr-install-btn').innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${t('Instalowanie...')}`;
+            main.querySelector('#dkr-install-progress').style.display = 'block';
+
+            if (NAS.socket) {
+                NAS.socket.on('docker_install', (d) => {
+                    const bar = main.querySelector('#dkr-install-bar');
+                    const msg = main.querySelector('#dkr-install-msg');
+                    if (bar) bar.style.width = (d.percent || 0) + '%';
+                    if (msg) msg.textContent = d.message || '';
+                    if (d.status === 'done') {
+                        NAS.socket.off('docker_install');
+                        toast(t('Docker zainstalowany!'), 'success');
+                        checkDockerAndRender();
+                    } else if (d.status === 'error') {
+                        NAS.socket.off('docker_install');
+                        toast(d.message || t('Instalacja nie powiodła się'), 'error');
+                        main.querySelector('#dkr-install-btn').disabled = false;
+                        main.querySelector('#dkr-install-btn').innerHTML = `<i class="fas fa-download"></i> ${t('Spróbuj ponownie')}`;
+                        _cl('error', 'docker install failed', d.message);
+                    }
+                });
+            }
+
+            const res = await api('/docker/install', { method: 'POST' }).catch(e => ({ error: e.message }));
+            if (res.error) {
+                toast(res.error, 'error');
+                main.querySelector('#dkr-install-btn').disabled = false;
+                main.querySelector('#dkr-install-btn').innerHTML = `<i class="fas fa-download"></i> ${t('Spróbuj ponownie')}`;
+            } else if (res.installed) {
+                // Already installed
+                checkDockerAndRender();
+            }
+            // If status=started, progress comes via socketio
+        });
+    }
+
+    // Initial render
+    checkDockerAndRender();
 }
 
 

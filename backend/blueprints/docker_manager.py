@@ -84,6 +84,10 @@ def _sanitize_shell_arg(value):
     return re.sub(r'[^a-zA-Z0-9_\-\.:/]', '', str(value))
 
 
+def _sio():
+    return getattr(docker_bp, '_socketio', None)
+
+
 @docker_bp.route('/status')
 def docker_status():
     """Check Docker availability. Returns install instructions if missing."""
@@ -94,11 +98,39 @@ def docker_status():
     })
 
 
+def _bg_install_docker():
+    s = _sio()
+    def emit(stage, pct, msg, status='running'):
+        if s:
+            s.emit('docker_install', {'stage': stage, 'percent': pct, 'message': msg, 'status': status})
+
+    emit('start', 5, 'Pobieranie skryptu instalacyjnego...')
+    try:
+        r = _host_run_base('curl -fsSL https://get.docker.com | sh', timeout=360)
+        if r.returncode != 0:
+            emit('error', 0, f'Instalacja nie powiodła się: {r.stderr[-300:]}', 'error')
+            return
+        emit('start_service', 80, 'Uruchamianie usługi Docker...')
+        _host_run_base('systemctl enable docker && systemctl start docker', timeout=30)
+        _host_run_base('apt-get clean 2>/dev/null', timeout=30)
+        if _docker_available():
+            emit('done', 100, 'Docker zainstalowany pomyślnie.', 'done')
+        else:
+            emit('error', 0, 'Instalacja zakończona, ale Docker niedostępny — sprawdź logi systemd.', 'error')
+    except Exception as e:
+        emit('error', 0, f'Błąd instalacji: {e}', 'error')
+
+
 @docker_bp.route('/install', methods=['POST'])
 def docker_install():
-    """Install Docker Engine via get.docker.com (uses ensure_dep)."""
+    """Install Docker Engine via get.docker.com — runs in background, progress via SocketIO docker_install."""
     if _docker_available():
         return jsonify({'status': 'ok', 'installed': True})
+    s = _sio()
+    if s:
+        s.start_background_task(_bg_install_docker)
+        return jsonify({'status': 'started'})
+    # Fallback: blocking install (no socketio)
     ok, msg = ensure_dep('docker', install=True)
     if ok:
         return jsonify({'status': 'ok'})
