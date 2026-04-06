@@ -38,6 +38,8 @@ Routes:
   GET  /api/radio-music/history            - recently played items
   POST /api/radio-music/history            - add to history
   GET  /api/radio-music/most-played        - most played items by count
+  GET  /api/radio-music/playback-state     - get saved playback state (cross-device resume)
+  POST /api/radio-music/playback-state     - save playback state
   GET  /api/radio-music/lyrics             - fetch song lyrics (?title=, ?artist=)
 """
 
@@ -666,7 +668,28 @@ def most_played():
     return jsonify({'items': ranked[:limit]})
 
 
-@radio_music_bp.route('/lyrics', methods=['GET'])
+# ── Playback state (cross-device resume) ────────────────────
+
+@radio_music_bp.route('/playback-state', methods=['GET'])
+def get_playback_state():
+    """Return saved playback state for cross-device resume."""
+    pfile = _user_file('playback_state.json')
+    state = _load_json(pfile, {})
+    return jsonify(state)
+
+
+@radio_music_bp.route('/playback-state', methods=['POST'])
+def save_playback_state():
+    """Save current playback state for cross-device resume."""
+    data = request.get_json(silent=True) or {}
+    if not data.get('playing'):
+        return jsonify({'ok': True})
+    # Cap queue to 200 items
+    if 'queue' in data and len(data['queue']) > 200:
+        data['queue'] = data['queue'][:200]
+    pfile = _user_file('playback_state.json')
+    _save_json(pfile, data)
+    return jsonify({'ok': True})
 def lyrics_search():
     """Fetch song lyrics from lrclib.net (free, no API key needed)."""
     title = request.args.get('title', '').strip()
