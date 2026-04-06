@@ -2572,7 +2572,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     /* ── Chromecast / Google Cast SDK ──────────────────── */
 
     function _initCast() {
-        // Full Cast SDK setup — shared by fresh load and script-already-loaded paths
         function _setupCastFramework() {
             _castAvail = true;
             try {
@@ -2581,7 +2580,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                     receiverApplicationId: chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
                     autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED,
                 });
-                // Remove previous listeners (from previous app open) to prevent duplicates
                 if (window._rmCastSessionCb) {
                     try { ctx.removeEventListener(cast.framework.CastContextEventType.SESSION_STATE_CHANGED, window._rmCastSessionCb); } catch(e) {}
                 }
@@ -2595,23 +2593,30 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 }
                 window._rmCastPlayerCb = _onCastPlayerStateChanged;
                 _castController.addEventListener(cast.framework.RemotePlayerEventType.PLAYER_STATE_CHANGED, _onCastPlayerStateChanged);
-            } catch (e) { console.warn('Cast init error:', e); }
+                console.log('[Cast] Framework setup complete, _castAvail=true');
+            } catch (e) {
+                console.warn('[Cast] init error:', e);
+                _castAvail = false;
+            }
         }
 
-        // Define callback BEFORE loading SDK script
         window['__onGCastApiAvailable'] = function(isAvailable) {
+            console.log('[Cast] __onGCastApiAvailable:', isAvailable);
             if (!isAvailable) { _castAvail = false; return; }
             _setupCastFramework();
         };
-        // Load Cast Web Sender SDK (once)
         if (!document.querySelector('script[src*="cast_sender"]')) {
             const s = document.createElement('script');
             s.src = 'https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1';
             s.async = true;
+            s.onerror = () => console.warn('[Cast] SDK script failed to load');
             document.head.appendChild(s);
+            console.log('[Cast] Loading SDK script...');
         } else if (window.cast && cast.framework) {
-            // SDK already loaded (app re-opened) — run full setup with new closure
+            console.log('[Cast] SDK already loaded, running setup');
             _setupCastFramework();
+        } else {
+            console.log('[Cast] Script tag exists but cast.framework not available');
         }
     }
 
@@ -2628,29 +2633,33 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
     function _onCastSessionChanged(event) {
         const state = event.sessionState;
+        console.log('[Cast] Session state changed:', state);
         if (state === cast.framework.SessionState.SESSION_STARTED ||
             state === cast.framework.SessionState.SESSION_RESUMED) {
             _castSession = cast.framework.CastContext.getInstance().getCurrentSession();
             _isCasting = true;
             _syncCastBtnUi(true);
             toast(t('Połączono z Chromecast'), 'success');
+            console.log('[Cast] Connected! Loading current track...');
             _castLoadCurrentTrack();
         } else if (state === cast.framework.SessionState.SESSION_ENDED) {
             _castSession = null;
             _isCasting = false;
             _castQueueActive = false;
             _syncCastBtnUi(false);
-            // Restore local volume
             if (_audio) _audio.volume = _preCastVolume;
+            console.log('[Cast] Session ended, restored local playback');
         }
     }
 
     async function _castLoadCurrentTrack() {
-        // Always refresh session reference
         if (window.cast && cast.framework) {
             _castSession = cast.framework.CastContext.getInstance().getCurrentSession();
         }
-        if (!_castSession || !_playing) return;
+        if (!_castSession || !_playing) {
+            console.log('[Cast] loadCurrentTrack: no session or no playing', !!_castSession, !!_playing);
+            return;
+        }
 
         let mediaUrl, ct;
 
@@ -2683,8 +2692,12 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             mediaUrl = _audio.src;
             ct = 'audio/mpeg';
         }
-        if (!mediaUrl) return;
+        if (!mediaUrl) {
+            console.log('[Cast] loadCurrentTrack: no mediaUrl resolved');
+            return;
+        }
 
+        console.log('[Cast] loadMedia:', mediaUrl.substring(0, 80) + '...', 'type:', ct);
         const mediaInfo = new chrome.cast.media.MediaInfo(mediaUrl, ct);
         mediaInfo.metadata = new chrome.cast.media.MusicTrackMediaMetadata();
         if (_playing) {
@@ -2701,10 +2714,12 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
         try {
             await _castSession.loadMedia(request);
+            console.log('[Cast] loadMedia SUCCESS');
             _preCastVolume = (bodyEl.querySelector('#rm-vol')?.value || 80) / 100;
             if (_audio) _audio.volume = 0;
         } catch (err) {
-            console.warn('Cast loadMedia error:', err);
+            console.warn('[Cast] loadMedia error:', err);
+            toast(t('Cast: nie udało się załadować utworu'), 'error');
         }
     }
 
@@ -2784,6 +2799,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     }
 
     function _toggleCast() {
+        console.log('[Cast] _toggleCast: _castAvail=' + _castAvail + ', _isCasting=' + _isCasting + ', hasSession=' + !!_castSession);
         if (!_audio) {
             toast(t('Najpierw włącz muzykę'), 'info');
             return;
@@ -2798,12 +2814,15 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             return;
         }
         if (_castAvail) {
+            console.log('[Cast] Using Cast SDK requestSession');
             cast.framework.CastContext.getInstance().requestSession().catch(err => {
+                console.warn('[Cast] requestSession error:', err);
                 if (err !== 'cancel') toast(t('Nie udało się połączyć z Chromecast'), 'error');
             });
             return;
         }
         // Fallback: Remote Playback API (single-track only)
+        console.log('[Cast] Cast SDK not available, trying Remote Playback API');
         if (_audio.remote) {
             _audio.remote.prompt().catch(err => {
                 if (err.name === 'NotAllowedError') return;

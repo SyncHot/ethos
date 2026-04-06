@@ -311,7 +311,7 @@ def add_security_headers(response):
         "media-src 'self' blob: https:; "
         "connect-src 'self' ws: wss: https:; "
         "worker-src 'self' blob:; "
-        "frame-src 'self'; "
+        "frame-src 'self' https://www.gstatic.com https://*.google.com; "
         f"{csp_frame_ancestors} "
         "object-src 'none'; "
         "base-uri 'self'; "
