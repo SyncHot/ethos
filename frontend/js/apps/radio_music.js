@@ -159,7 +159,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-mobile-nav .rm-mnav-btn i{font-size:11px}',
 
 /* responsive */
-'@media(max-width:768px){.rm-sidebar{display:none}.rm-mobile-nav{display:flex}.rm-grid{grid-template-columns:1fr}.rm-pod-header{flex-direction:column;align-items:center;text-align:center}.rm-pod-art{width:100px;height:100px}.rm-toolbar{padding:8px 10px}.rm-content{padding:10px}.rm-player{padding:6px 10px;gap:8px;min-height:56px;flex-wrap:wrap}.rm-vol-wrap{display:none}.rm-player-art{width:36px;height:36px}.rm-player-info{min-width:0;flex:1}.rm-player-name{font-size:12px}.rm-player-meta{font-size:10px}.rm-player-controls{gap:0}.rm-player-btn{padding:6px;font-size:14px}.rm-player-btn.rm-btn-play{width:32px;height:32px;font-size:16px}.rm-player-eq{height:14px;margin-left:2px}.rm-player-eq span{width:2px}}',
+'@media(max-width:768px){.rm-wrap{height:100%;max-height:100%}.rm-sidebar{display:none}.rm-mobile-nav{display:flex}.rm-main{min-height:0}.rm-grid{grid-template-columns:1fr}.rm-pod-header{flex-direction:column;align-items:center;text-align:center}.rm-pod-art{width:100px;height:100px}.rm-toolbar{padding:8px 10px;flex-shrink:0}.rm-content{padding:10px;min-height:0}.rm-player{padding:6px 8px;gap:6px;min-height:auto;flex-shrink:0}.rm-vol-wrap{display:none}.rm-player-art{width:32px;height:32px;min-width:32px}.rm-player-info{min-width:0;flex:1}.rm-player-name{font-size:12px}.rm-player-meta{font-size:10px}.rm-player-controls{gap:0;flex-shrink:0}.rm-player-btn{padding:4px;font-size:13px}.rm-player-btn.rm-btn-play{width:30px;height:30px;font-size:15px;min-width:30px}.rm-player-eq{display:none}}',
     ].join('\n'); }
 
     createWindow('radio-music', {
