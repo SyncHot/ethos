@@ -12,6 +12,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     let _musicQueueIdx = -1;   // index of currently playing track in queue
     let _ytdlpReady = null;    // null = unknown, true/false
     let _seekInterval = null;  // interval for updating seekbar
+    let _playlists = [];       // user's playlists
 
     const escH = s => s ? s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : '';
 
@@ -192,6 +193,31 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-queue-item-rm{background:none;border:none;color:var(--text-muted);cursor:pointer;padding:2px 4px;font-size:11px;opacity:.5;transition:opacity .12s}',
 '.rm-queue-item-rm:hover{opacity:1;color:#ef4444}',
 
+/* playlists */
+'.rm-pl-header{display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap}',
+'.rm-pl-header h3{margin:0;font-size:16px;color:var(--text-primary);flex:1}',
+'.rm-pl-create{display:flex;gap:8px;align-items:center}',
+'.rm-pl-create input{padding:6px 12px;border:1px solid var(--border);border-radius:var(--r-md);background:var(--bg-primary);color:var(--text-primary);font-size:13px;outline:none}',
+'.rm-pl-create button{padding:6px 14px;border-radius:var(--r-md);background:var(--accent);color:#fff;border:none;cursor:pointer;font-size:12px;font-weight:600}',
+'.rm-pl-card{display:flex;align-items:center;gap:12px;padding:12px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;cursor:pointer;transition:all .15s}',
+'.rm-pl-card:hover{background:var(--bg-hover);transform:translateY(-1px)}',
+'.rm-pl-icon{width:48px;height:48px;border-radius:10px;background:linear-gradient(135deg,var(--accent),#6366f1);display:flex;align-items:center;justify-content:center;color:#fff;font-size:18px;flex-shrink:0}',
+'.rm-pl-info{flex:1;min-width:0}',
+'.rm-pl-name{font-weight:600;color:var(--text-primary);font-size:14px}',
+'.rm-pl-meta{font-size:11px;color:var(--text-muted);margin-top:2px}',
+'.rm-pl-actions{display:flex;gap:4px}',
+'.rm-pl-btn{background:none;border:none;color:var(--text-muted);cursor:pointer;padding:6px;font-size:13px;border-radius:50%;transition:all .12s}',
+'.rm-pl-btn:hover{color:#ef4444;background:rgba(239,68,68,.1)}',
+
+/* add-to-playlist modal */
+'.rm-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:9999}',
+'.rm-modal{background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--r-lg);padding:20px;min-width:280px;max-width:400px;max-height:60vh;overflow-y:auto}',
+'.rm-modal h4{margin:0 0 12px;font-size:15px;color:var(--text-primary)}',
+'.rm-modal-item{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--r-md);cursor:pointer;transition:background .12s;font-size:13px;color:var(--text-primary)}',
+'.rm-modal-item:hover{background:var(--bg-hover)}',
+'.rm-modal-item i{color:var(--accent);width:16px;text-align:center}',
+'.rm-modal-close{margin-top:12px;padding:6px 16px;border-radius:var(--r-md);background:none;border:1px solid var(--border);color:var(--text-primary);cursor:pointer;font-size:12px;width:100%}',
+
 /* install banner */
 '.rm-install-banner{text-align:center;padding:40px 20px;max-width:400px;margin:0 auto}',
 '.rm-install-banner i{font-size:48px;color:var(--accent);margin-bottom:12px;display:block}',
@@ -199,6 +225,49 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-install-btn{padding:10px 24px;border-radius:var(--r-md);background:var(--accent);color:#fff;border:none;cursor:pointer;font-size:14px;font-weight:600;transition:filter .12s}',
 '.rm-install-btn:hover{filter:brightness(1.1)}',
 '.rm-install-btn:disabled{opacity:.5;cursor:wait}',
+
+/* ── Now Playing overlay ───────────────────────────── */
+'.rm-np-overlay{position:absolute;inset:0;z-index:100;display:flex;flex-direction:column;overflow:hidden;transition:transform .35s cubic-bezier(.4,0,.2,1)}',
+'.rm-np-bg{position:absolute;inset:-40px;background-size:cover;background-position:center;filter:blur(40px) brightness(.35) saturate(1.4);z-index:0}',
+'.rm-np-inner{position:relative;z-index:1;flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;gap:16px;overflow-y:auto}',
+'.rm-np-close{position:absolute;top:12px;left:12px;background:rgba(255,255,255,.1);border:none;color:#fff;font-size:18px;cursor:pointer;padding:8px 12px;border-radius:50%;z-index:2;backdrop-filter:blur(8px);transition:background .15s}',
+'.rm-np-close:hover{background:rgba(255,255,255,.2)}',
+'.rm-np-art{width:240px;height:240px;border-radius:16px;overflow:hidden;box-shadow:0 8px 40px rgba(0,0,0,.5);flex-shrink:0;background:#1a1a2e;display:flex;align-items:center;justify-content:center}',
+'.rm-np-art img{width:100%;height:100%;object-fit:cover}',
+'.rm-np-art .rm-letter-icon{font-size:64px;width:100%;height:100%}',
+'.rm-np-art i{font-size:64px;color:var(--text-muted)}',
+'.rm-np-info{text-align:center;max-width:320px;width:100%}',
+'.rm-np-title{font-size:20px;font-weight:700;color:#fff;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+'.rm-np-meta{font-size:13px;color:rgba(255,255,255,.6);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+'.rm-np-seek{display:flex;align-items:center;gap:10px;width:100%;max-width:320px}',
+'.rm-np-seek .rm-seek-time{color:rgba(255,255,255,.5);font-size:11px;min-width:38px}',
+'.rm-np-seek .rm-seek-track{flex:1;height:4px;background:rgba(255,255,255,.15);border-radius:2px;position:relative;cursor:pointer}',
+'.rm-np-seek .rm-seek-fill{height:100%;background:#fff;border-radius:2px;position:absolute;left:0;top:0}',
+'.rm-np-seek .rm-seek-thumb{width:14px;height:14px;border-radius:50%;background:#fff;position:absolute;top:50%;transform:translate(-50%,-50%);cursor:pointer}',
+'.rm-np-controls{display:flex;align-items:center;gap:16px}',
+'.rm-np-btn{background:none;border:none;color:rgba(255,255,255,.8);font-size:22px;cursor:pointer;padding:10px;border-radius:50%;transition:all .12s}',
+'.rm-np-btn:hover{color:#fff;background:rgba(255,255,255,.1)}',
+'.rm-np-btn.rm-np-play{width:60px;height:60px;font-size:26px;background:#fff;color:#000;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 20px rgba(0,0,0,.3)}',
+'.rm-np-btn.rm-np-play:hover{transform:scale(1.06)}',
+'.rm-np-actions{display:flex;gap:12px;margin-top:4px}',
+'.rm-np-action{background:rgba(255,255,255,.08);border:none;color:rgba(255,255,255,.6);font-size:13px;cursor:pointer;padding:8px 16px;border-radius:20px;transition:all .12s;display:flex;align-items:center;gap:6px}',
+'.rm-np-action:hover{background:rgba(255,255,255,.15);color:#fff}',
+'.rm-np-count{font-size:11px;color:rgba(255,255,255,.35);margin-top:2px}',
+
+/* ── Horizontal scroll section (Most Played) ───── */
+'.rm-section-title{font-size:15px;font-weight:700;color:var(--text-primary);margin:16px 0 10px;display:flex;align-items:center;gap:8px}',
+'.rm-section-title i{color:var(--accent);font-size:14px}',
+'.rm-hscroll{display:flex;overflow-x:auto;gap:12px;padding-bottom:8px;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;scrollbar-width:none}',
+'.rm-hscroll::-webkit-scrollbar{display:none}',
+'.rm-hcard{scroll-snap-align:start;min-width:140px;max-width:160px;flex-shrink:0;cursor:pointer;transition:transform .15s}',
+'.rm-hcard:hover{transform:translateY(-3px)}',
+'.rm-hcard-art{width:140px;height:140px;border-radius:12px;overflow:hidden;background:#1a1a2e;margin-bottom:8px;position:relative;box-shadow:0 4px 16px rgba(0,0,0,.25)}',
+'.rm-hcard-art img{width:100%;height:100%;object-fit:cover}',
+'.rm-hcard-art .rm-letter-icon{width:100%;height:100%;font-size:40px}',
+'.rm-hcard-art i{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:32px;color:var(--text-muted)}',
+'.rm-hcard-badge{position:absolute;top:6px;right:6px;background:rgba(0,0,0,.6);color:#fff;font-size:10px;padding:2px 6px;border-radius:10px;backdrop-filter:blur(4px)}',
+'.rm-hcard-title{font-size:12px;font-weight:600;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+'.rm-hcard-meta{font-size:10px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:1px}',
 
 /* mobile nav bar */
 '.rm-mobile-nav{display:none;overflow-x:auto;white-space:nowrap;background:var(--bg-secondary);border-bottom:1px solid var(--border);padding:6px 8px;gap:4px;-webkit-overflow-scrolling:touch;scrollbar-width:none}',
@@ -208,7 +277,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-mobile-nav .rm-mnav-btn i{font-size:11px}',
 
 /* responsive */
-'@media(max-width:768px){.rm-wrap{height:100%;max-height:100%}.rm-sidebar{display:none}.rm-mobile-nav{display:flex}.rm-main{min-height:0}.rm-grid{grid-template-columns:1fr}.rm-pod-header{flex-direction:column;align-items:center;text-align:center}.rm-pod-art{width:100px;height:100px}.rm-toolbar{padding:8px 10px;flex-shrink:0}.rm-content{padding:10px;min-height:0}.rm-seekbar{padding:0 10px;height:16px}.rm-seek-time{font-size:9px;min-width:30px}.rm-player{padding:6px 8px;gap:6px;min-height:auto;flex-shrink:0}.rm-vol-wrap{display:none}.rm-player-art{width:32px;height:32px;min-width:32px}.rm-player-info{min-width:0;flex:1}.rm-player-name{font-size:12px}.rm-player-meta{font-size:10px}.rm-player-controls{gap:0;flex-shrink:0}.rm-player-btn{padding:4px;font-size:13px}.rm-player-btn.rm-btn-play{width:30px;height:30px;font-size:15px;min-width:30px}.rm-player-eq{display:none}.rm-track-thumb{width:40px;height:40px}}',
+'@media(max-width:768px){.rm-wrap{height:100%;max-height:100%}.rm-sidebar{display:none}.rm-mobile-nav{display:flex}.rm-main{min-height:0}.rm-grid{grid-template-columns:1fr}.rm-pod-header{flex-direction:column;align-items:center;text-align:center}.rm-pod-art{width:100px;height:100px}.rm-toolbar{padding:8px 10px;flex-shrink:0}.rm-content{padding:10px;min-height:0}.rm-seekbar{padding:0 10px;height:16px}.rm-seek-time{font-size:9px;min-width:30px}.rm-player{padding:6px 8px;gap:6px;min-height:auto;flex-shrink:0;cursor:pointer}.rm-vol-wrap{display:none}.rm-player-art{width:32px;height:32px;min-width:32px}.rm-player-info{min-width:0;flex:1}.rm-player-name{font-size:12px}.rm-player-meta{font-size:10px}.rm-player-controls{gap:0;flex-shrink:0}.rm-player-btn{padding:4px;font-size:13px}.rm-player-btn.rm-btn-play{width:30px;height:30px;font-size:15px;min-width:30px}.rm-player-eq{display:none}.rm-track-thumb{width:40px;height:40px}.rm-np-art{width:200px;height:200px}.rm-np-title{font-size:18px}.rm-hcard{min-width:120px}.rm-hcard-art{width:120px;height:120px}}',
     ].join('\n'); }
 
     createWindow('radio-music', {
@@ -234,8 +303,10 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     <div class="rm-sidebar-item" data-section="subscriptions"><i class="fas fa-rss"></i> ${t('Subskrypcje')}</div>
     <div class="rm-sidebar-label">${t('Muzyka')}</div>
     <div class="rm-sidebar-item" data-section="music"><i class="fab fa-youtube"></i> ${t('Szukaj')}</div>
+    <div class="rm-sidebar-item" data-section="playlists"><i class="fas fa-list"></i> ${t('Playlisty')}</div>
     <div class="rm-sidebar-item" data-section="queue"><i class="fas fa-list-ol"></i> ${t('Kolejka')}</div>
     <div class="rm-sidebar-label">${t('Inne')}</div>
+    <div class="rm-sidebar-item" data-section="most-played"><i class="fas fa-fire"></i> ${t('Najczęściej grane')}</div>
     <div class="rm-sidebar-item" data-section="history"><i class="fas fa-history"></i> ${t('Historia')}</div>
   </div>
   <div class="rm-main">
@@ -247,7 +318,9 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
       <button class="rm-mnav-btn" data-section="podcasts"><i class="fas fa-podcast"></i> ${t('Podcasty')}</button>
       <button class="rm-mnav-btn" data-section="subscriptions"><i class="fas fa-rss"></i> ${t('Subskrypcje')}</button>
       <button class="rm-mnav-btn" data-section="music"><i class="fab fa-youtube"></i> ${t('Muzyka')}</button>
+      <button class="rm-mnav-btn" data-section="playlists"><i class="fas fa-list"></i> ${t('Playlisty')}</button>
       <button class="rm-mnav-btn" data-section="queue"><i class="fas fa-list-ol"></i> ${t('Kolejka')}</button>
+      <button class="rm-mnav-btn" data-section="most-played"><i class="fas fa-fire"></i> ${t('Top')}</button>
       <button class="rm-mnav-btn" data-section="history"><i class="fas fa-history"></i> ${t('Historia')}</button>
     </div>
     <div class="rm-toolbar" id="rm-toolbar"></div>
@@ -317,6 +390,10 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             body.querySelector('#rm-next-btn').onclick = () => _skipStation(1);
             body.querySelector('#rm-vol').oninput = (e) => { if (_audio) _audio.volume = e.target.value / 100; };
 
+            // Click player bar to open Now Playing overlay
+            body.querySelector('#rm-player-art').onclick = () => _showNowPlaying();
+            body.querySelector('#rm-player .rm-player-info').onclick = () => _showNowPlaying();
+
             // Seekbar interaction
             const seekTrack = body.querySelector('#rm-seek-track');
             seekTrack.onclick = (e) => {
@@ -347,6 +424,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             case 'podcasts': loadPodcasts(toolbar, content); break;
             case 'subscriptions': loadSubscriptions(content); break;
             case 'music': loadMusic(toolbar, content); break;
+            case 'playlists': loadPlaylists(toolbar, content); break;
+            case 'most-played': loadMostPlayed(content); break;
             case 'queue': loadQueue(content); break;
             case 'history': loadHistory(content); break;
         }
@@ -891,6 +970,184 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         });
     }
 
+    /* ── Playlists ──────────────────────────────────── */
+
+    async function _loadPlaylists() {
+        const data = await api('/radio-music/playlists');
+        _playlists = data.items || [];
+    }
+
+    async function loadPlaylists(toolbar, content) {
+        toolbar.innerHTML = '';
+        content.innerHTML = '<div class="rm-empty"><i class="fas fa-spinner fa-spin"></i></div>';
+        await _loadPlaylists();
+
+        let html = '<div class="rm-pl-header"><h3>' + t('Moje playlisty') + '</h3>'
+            + '<div class="rm-pl-create"><input id="rm-pl-name" placeholder="' + t('Nazwa playlisty...') + '">'
+            + '<button id="rm-pl-create-btn"><i class="fas fa-plus"></i> ' + t('Utwórz') + '</button></div></div>';
+
+        if (!_playlists.length) {
+            html += '<div class="rm-empty"><i class="fas fa-list"></i><p>' + t('Brak playlist. Utwórz pierwszą!') + '</p></div>';
+        } else {
+            html += '<div style="display:flex;flex-direction:column;gap:8px">';
+            _playlists.forEach(pl => {
+                html += `<div class="rm-pl-card" data-plid="${escH(pl.id)}">
+                    <div class="rm-pl-icon"><i class="fas fa-music"></i></div>
+                    <div class="rm-pl-info">
+                        <div class="rm-pl-name">${escH(pl.name)}</div>
+                        <div class="rm-pl-meta">${pl.tracks.length} ${t('utworów')}</div>
+                    </div>
+                    <div class="rm-pl-actions">
+                        <button class="rm-pl-btn rm-pl-play" title="${t('Odtwórz')}"><i class="fas fa-play"></i></button>
+                        <button class="rm-pl-btn rm-pl-del" title="${t('Usuń')}"><i class="fas fa-trash"></i></button>
+                    </div>
+                </div>`;
+            });
+            html += '</div>';
+        }
+        content.innerHTML = html;
+
+        // Create playlist
+        content.querySelector('#rm-pl-create-btn').onclick = async () => {
+            const name = content.querySelector('#rm-pl-name').value.trim();
+            if (!name) return;
+            await api('/radio-music/playlists', { method: 'POST', body: { name } });
+            loadPlaylists(toolbar, content);
+        };
+        content.querySelector('#rm-pl-name').onkeyup = (e) => {
+            if (e.key === 'Enter') content.querySelector('#rm-pl-create-btn').click();
+        };
+
+        // Click handlers
+        content.querySelectorAll('.rm-pl-card').forEach(card => {
+            const plId = card.dataset.plid;
+            card.onclick = (e) => {
+                if (e.target.closest('.rm-pl-play') || e.target.closest('.rm-pl-del')) return;
+                openPlaylist(plId, content);
+            };
+            const playBtn = card.querySelector('.rm-pl-play');
+            if (playBtn) playBtn.onclick = (e) => {
+                e.stopPropagation();
+                const pl = _playlists.find(p => p.id === plId);
+                if (pl && pl.tracks.length) {
+                    _musicQueue = pl.tracks.slice();
+                    _musicQueueIdx = 0;
+                    _playTrackFromPlaylist(pl.tracks[0]);
+                    toast(t('Odtwarzam: ') + pl.name, 'success');
+                }
+            };
+            const delBtn = card.querySelector('.rm-pl-del');
+            if (delBtn) delBtn.onclick = async (e) => {
+                e.stopPropagation();
+                await api('/radio-music/playlists/' + plId, { method: 'DELETE' });
+                loadPlaylists(toolbar, content);
+            };
+        });
+    }
+
+    async function openPlaylist(plId, content) {
+        content.innerHTML = '<div class="rm-empty"><i class="fas fa-spinner fa-spin"></i></div>';
+        const data = await api('/radio-music/playlists/' + plId);
+        if (data.error) { content.innerHTML = '<div class="rm-empty"><p>' + escH(data.error) + '</p></div>'; return; }
+        const pl = data.playlist;
+
+        let html = '<div class="rm-pl-header">'
+            + '<button class="rm-pl-btn" id="rm-pl-back" style="font-size:16px;color:var(--text-primary)"><i class="fas fa-arrow-left"></i></button>'
+            + '<h3>' + escH(pl.name) + '</h3>'
+            + '<button class="rm-pl-btn rm-pl-play-all" title="' + t('Odtwórz wszystko') + '" style="color:var(--accent);font-size:16px"><i class="fas fa-play"></i></button>'
+            + '</div>';
+
+        if (!pl.tracks.length) {
+            html += '<div class="rm-empty"><i class="fas fa-music"></i><p>' + t('Playlista jest pusta') + '</p><p style="font-size:12px;margin-top:4px">' + t('Dodaj utwory z sekcji Muzyka, Radio lub Podcasty') + '</p></div>';
+        } else {
+            html += '<div style="display:flex;flex-direction:column;gap:4px">';
+            pl.tracks.forEach((tr, idx) => {
+                const icon = tr.type === 'radio' ? 'fa-broadcast-tower' : tr.type === 'podcast' ? 'fa-podcast' : 'fa-music';
+                html += `<div class="rm-track" data-idx="${idx}">
+                    ${tr.image || tr.thumbnail ? '<img class="rm-track-thumb" src="' + escH(tr.image || tr.thumbnail) + '" loading="lazy">' : '<div class="rm-track-thumb" style="display:flex;align-items:center;justify-content:center"><i class="fas ' + icon + '" style="color:var(--text-muted)"></i></div>'}
+                    <div class="rm-track-info">
+                        <div class="rm-track-title">${escH(tr.name || tr.title)}</div>
+                        <div class="rm-track-meta">${escH(tr.meta || tr.channel || '')} ${tr.type ? '<span class="rm-card-codec">' + tr.type + '</span>' : ''}</div>
+                    </div>
+                    ${tr.duration_fmt ? '<span class="rm-track-dur">' + escH(tr.duration_fmt) + '</span>' : ''}
+                    <button class="rm-track-btn rm-pl-trk-rm" title="${t('Usuń')}"><i class="fas fa-times"></i></button>
+                </div>`;
+            });
+            html += '</div>';
+        }
+        content.innerHTML = html;
+
+        content.querySelector('#rm-pl-back').onclick = () => {
+            const toolbar = bodyEl.querySelector('#rm-toolbar');
+            loadPlaylists(toolbar, content);
+        };
+
+        const playAllBtn = content.querySelector('.rm-pl-play-all');
+        if (playAllBtn) playAllBtn.onclick = () => {
+            if (pl.tracks.length) {
+                _musicQueue = pl.tracks.slice();
+                _musicQueueIdx = 0;
+                _playTrackFromPlaylist(pl.tracks[0]);
+            }
+        };
+
+        content.querySelectorAll('.rm-track').forEach(el => {
+            const idx = parseInt(el.dataset.idx);
+            el.onclick = (e) => {
+                if (e.target.closest('.rm-pl-trk-rm')) return;
+                _musicQueue = pl.tracks.slice(idx);
+                _musicQueueIdx = 0;
+                _playTrackFromPlaylist(pl.tracks[idx]);
+            };
+            el.querySelector('.rm-pl-trk-rm').onclick = async (e) => {
+                e.stopPropagation();
+                await api('/radio-music/playlists/' + plId + '/tracks/' + idx, { method: 'DELETE' });
+                openPlaylist(plId, content);
+            };
+        });
+    }
+
+    function _playTrackFromPlaylist(tr) {
+        if (tr.type === 'radio') {
+            playStation(tr);
+        } else if (tr.type === 'music') {
+            playMusicTrack(tr);
+        } else {
+            playAudio(tr);
+        }
+    }
+
+    function _showAddToPlaylistModal(track) {
+        // Show a simple modal to pick a playlist
+        const overlay = document.createElement('div');
+        overlay.className = 'rm-modal-overlay';
+        overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+        let html = '<div class="rm-modal"><h4>' + t('Dodaj do playlisty') + '</h4>';
+        if (!_playlists.length) {
+            html += '<p style="color:var(--text-muted);font-size:13px">' + t('Brak playlist. Utwórz playlistę w sekcji Playlisty.') + '</p>';
+        } else {
+            _playlists.forEach(pl => {
+                html += `<div class="rm-modal-item" data-plid="${escH(pl.id)}"><i class="fas fa-list"></i> ${escH(pl.name)} <span style="color:var(--text-muted);margin-left:auto;font-size:11px">${pl.tracks.length}</span></div>`;
+            });
+        }
+        html += '<button class="rm-modal-close">' + t('Anuluj') + '</button></div>';
+        overlay.innerHTML = html;
+
+        overlay.querySelector('.rm-modal-close').onclick = () => overlay.remove();
+        overlay.querySelectorAll('.rm-modal-item').forEach(el => {
+            el.onclick = async () => {
+                const plId = el.dataset.plid;
+                await api('/radio-music/playlists/' + plId + '/tracks', { method: 'POST', body: { track } });
+                overlay.remove();
+                toast(t('Dodano do: ') + _playlists.find(p => p.id === plId)?.name, 'success');
+                await _loadPlaylists();
+            };
+        });
+
+        bodyEl.appendChild(overlay);
+    }
+
     /* ── Queue ──────────────────────────────────────── */
 
     function loadQueue(content) {
@@ -923,6 +1180,67 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 loadQueue(content);
             };
             list.appendChild(el);
+        });
+    }
+
+    /* ── Most Played ──────────────────────────────── */
+
+    async function loadMostPlayed(content) {
+        content.innerHTML = '<div class="rm-empty"><i class="fas fa-spinner fa-spin"></i></div>';
+        const data = await api('/radio-music/most-played?limit=30');
+        const items = data.items || [];
+        if (!items.length) {
+            content.innerHTML = '<div class="rm-empty"><i class="fas fa-fire"></i><p>' + t('Zacznij słuchać, aby zobaczyć najczęściej grane') + '</p></div>';
+            return;
+        }
+        let html = '<div class="rm-section-title"><i class="fas fa-fire"></i> ' + t('Najczęściej grane') + '</div>';
+        html += '<div class="rm-hscroll">';
+        items.forEach((item, i) => {
+            const artHtml = (item.image || item.favicon)
+                ? '<img src="' + escH(item.image || item.favicon) + '" onerror="this.outerHTML=\'<i class=\\\'fas fa-music\\\'></i>\'">'
+                : '<i class="fas ' + (item.type === 'podcast' ? 'fa-podcast' : item.type === 'music' ? 'fa-music' : 'fa-broadcast-tower') + '"></i>';
+            const badge = item.play_count > 1 ? '<span class="rm-hcard-badge">' + item.play_count + '×</span>' : '';
+            html += '<div class="rm-hcard" data-idx="' + i + '">'
+                + '<div class="rm-hcard-art">' + artHtml + badge + '</div>'
+                + '<div class="rm-hcard-title">' + escH(item.name) + '</div>'
+                + '<div class="rm-hcard-meta">' + escH(item.meta || item.country || '') + '</div>'
+                + '</div>';
+        });
+        html += '</div>';
+
+        // Also show recent grid below
+        html += '<div class="rm-section-title" style="margin-top:20px"><i class="fas fa-history"></i> ' + t('Ostatnio grane') + '</div>';
+        html += '<div class="rm-hscroll">';
+        const recent = (await api('/radio-music/history')).items || [];
+        recent.slice(0, 20).forEach((item, i) => {
+            const artHtml = (item.image || item.favicon)
+                ? '<img src="' + escH(item.image || item.favicon) + '" onerror="this.outerHTML=\'<i class=\\\'fas fa-music\\\'></i>\'">'
+                : '<i class="fas ' + (item.type === 'podcast' ? 'fa-podcast' : item.type === 'music' ? 'fa-music' : 'fa-broadcast-tower') + '"></i>';
+            html += '<div class="rm-hcard rm-hcard-recent" data-ridx="' + i + '">'
+                + '<div class="rm-hcard-art">' + artHtml + '</div>'
+                + '<div class="rm-hcard-title">' + escH(item.name) + '</div>'
+                + '<div class="rm-hcard-meta">' + escH(item.meta || item.country || '') + '</div>'
+                + '</div>';
+        });
+        html += '</div>';
+        content.innerHTML = html;
+
+        // Wire up clicks
+        content.querySelectorAll('.rm-hcard[data-idx]').forEach(card => {
+            card.onclick = () => {
+                const it = items[parseInt(card.dataset.idx)];
+                if (it.type === 'music') playMusicTrack(it);
+                else if (it.type === 'podcast') playAudio(it);
+                else playStation(it);
+            };
+        });
+        content.querySelectorAll('.rm-hcard-recent[data-ridx]').forEach(card => {
+            card.onclick = () => {
+                const it = recent[parseInt(card.dataset.ridx)];
+                if (it.type === 'music') playMusicTrack(it);
+                else if (it.type === 'podcast') playAudio(it);
+                else playStation(it);
+            };
         });
     }
 
@@ -1077,6 +1395,12 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         // Save to history
         api('/radio-music/history', { method: 'POST', body: { item } });
 
+        // Sync Now Playing overlay if open
+        if (_npOverlay) {
+            _hideNowPlaying();
+            setTimeout(() => _showNowPlaying(), 100);
+        }
+
         // Highlight playing card/track
         bodyEl.querySelectorAll('.rm-card, .rm-ep-item, .rm-track').forEach(c => c.classList.remove('rm-playing'));
 
@@ -1110,6 +1434,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         }
         _playing = null;
         _clearSeek();
+        _hideNowPlaying();
         const player = bodyEl?.querySelector('#rm-player');
         if (player) { player.style.display = 'none'; player.classList.remove('rm-buffering'); }
         bodyEl?.querySelectorAll('.rm-card.rm-buffering').forEach(c => c.classList.remove('rm-buffering'));
@@ -1154,6 +1479,177 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         s = Math.floor(s);
         if (s >= 3600) return Math.floor(s / 3600) + ':' + String(Math.floor((s % 3600) / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
         return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+    }
+
+    /* ── Now Playing Overlay ──────────────────────── */
+
+    let _npOverlay = null;
+    let _npSeekDragging = false;
+
+    function _showNowPlaying() {
+        if (!_playing) return;
+        _hideNowPlaying();
+        const item = _playing;
+        const isMusic = item.type === 'music';
+        const isPodcast = item.type === 'podcast';
+        const hasSeek = isMusic || isPodcast;
+        const bgUrl = item.image || item.favicon || '';
+
+        const ov = document.createElement('div');
+        ov.className = 'rm-np-overlay';
+        ov.innerHTML = `
+            <div class="rm-np-bg" style="background-image:url('${escH(bgUrl)}')"></div>
+            <button class="rm-np-close"><i class="fas fa-chevron-down"></i></button>
+            <div class="rm-np-inner">
+                <div class="rm-np-art" id="rm-np-art"></div>
+                <div class="rm-np-info">
+                    <div class="rm-np-title">${escH(item.name)}</div>
+                    <div class="rm-np-meta">${escH(item.meta || '')}</div>
+                </div>
+                ${hasSeek ? `
+                <div class="rm-np-seek">
+                    <span class="rm-seek-time" id="rm-np-cur">0:00</span>
+                    <div class="rm-seek-track" id="rm-np-track">
+                        <div class="rm-seek-fill" id="rm-np-fill"></div>
+                        <div class="rm-seek-thumb" id="rm-np-thumb"></div>
+                    </div>
+                    <span class="rm-seek-time right" id="rm-np-dur">0:00</span>
+                </div>` : '<div class="rm-np-count"><i class="fas fa-signal"></i> ' + t('Transmisja na żywo') + '</div>'}
+                <div class="rm-np-controls">
+                    <button class="rm-np-btn" id="rm-np-prev"><i class="fas fa-step-backward"></i></button>
+                    <button class="rm-np-btn rm-np-play" id="rm-np-playpause"><i class="fas ${_audio && !_audio.paused ? 'fa-pause' : 'fa-play'}"></i></button>
+                    <button class="rm-np-btn" id="rm-np-next"><i class="fas fa-step-forward"></i></button>
+                </div>
+                <div class="rm-np-actions">
+                    <button class="rm-np-action" id="rm-np-addpl"><i class="fas fa-plus"></i> ${t('Playlista')}</button>
+                    <button class="rm-np-action" id="rm-np-fav"><i class="fas fa-heart"></i> ${t('Ulubione')}</button>
+                    <button class="rm-np-action" id="rm-np-close2"><i class="fas fa-times"></i> ${t('Zamknij')}</button>
+                </div>
+            </div>`;
+
+        // Art image
+        const artContainer = ov.querySelector('#rm-np-art');
+        if (isMusic && item.image) {
+            artContainer.innerHTML = '<img src="' + escH(item.image) + '" onerror="this.outerHTML=\'<i class=\\\'fas fa-music\\\'></i>\'">';
+        } else if (item.image || item.favicon) {
+            artContainer.innerHTML = '<img src="' + escH(item.image || item.favicon) + '" onerror="this.outerHTML=\'<i class=\\\'fas fa-broadcast-tower\\\'></i>\'">';
+        } else {
+            const letter = (item.name || '?')[0].toUpperCase();
+            const hue = (item.name || '').split('').reduce((h, c) => h + c.charCodeAt(0), 0) % 360;
+            artContainer.innerHTML = '<div class="rm-letter-icon" style="background:hsl(' + hue + ',50%,35%);display:flex;align-items:center;justify-content:center;font-size:64px;color:#fff">' + letter + '</div>';
+        }
+
+        // Close handlers
+        ov.querySelector('.rm-np-close').onclick = () => _hideNowPlaying();
+        ov.querySelector('#rm-np-close2').onclick = () => _hideNowPlaying();
+
+        // Swipe down to close
+        let touchStartY = 0;
+        ov.addEventListener('touchstart', (e) => { touchStartY = e.touches[0].clientY; }, { passive: true });
+        ov.addEventListener('touchend', (e) => {
+            const dy = e.changedTouches[0].clientY - touchStartY;
+            if (dy > 80) _hideNowPlaying();
+        }, { passive: true });
+
+        // Controls
+        ov.querySelector('#rm-np-playpause').onclick = () => {
+            if (!_audio) return;
+            if (_audio.paused) {
+                _audio.play();
+                ov.querySelector('#rm-np-playpause').innerHTML = '<i class="fas fa-pause"></i>';
+            } else {
+                _audio.pause();
+                ov.querySelector('#rm-np-playpause').innerHTML = '<i class="fas fa-play"></i>';
+            }
+        };
+        ov.querySelector('#rm-np-prev').onclick = () => _skipStation(-1);
+        ov.querySelector('#rm-np-next').onclick = () => _skipStation(1);
+
+        // Add to playlist
+        ov.querySelector('#rm-np-addpl').onclick = () => {
+            if (typeof _showAddToPlaylistModal === 'function') _showAddToPlaylistModal(item);
+        };
+
+        // Favorite toggle
+        ov.querySelector('#rm-np-fav').onclick = async () => {
+            const favBtn = ov.querySelector('#rm-np-fav');
+            if (item.type === 'radio' && item.uuid) {
+                await api('/radio-music/radio/favorite', { method: 'POST', body: { station: item } });
+                favBtn.innerHTML = '<i class="fas fa-heart" style="color:#e74c3c"></i> ' + t('Dodano');
+            } else {
+                await api('/radio-music/history', { method: 'POST', body: { item } });
+                favBtn.innerHTML = '<i class="fas fa-check"></i> ' + t('OK');
+            }
+        };
+
+        // Seekbar for overlay
+        if (hasSeek) {
+            const npTrack = ov.querySelector('#rm-np-track');
+            npTrack.onclick = (e) => {
+                if (!_audio || !isFinite(_audio.duration)) return;
+                const rect = npTrack.getBoundingClientRect();
+                const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                _audio.currentTime = pct * _audio.duration;
+            };
+
+            // Touch drag for seek thumb
+            const npThumb = ov.querySelector('#rm-np-thumb');
+            npThumb.addEventListener('touchstart', () => { _npSeekDragging = true; }, { passive: true });
+            document.addEventListener('touchmove', (e) => {
+                if (!_npSeekDragging || !_audio || !isFinite(_audio.duration)) return;
+                const rect = npTrack.getBoundingClientRect();
+                const pct = Math.max(0, Math.min(1, (e.touches[0].clientX - rect.left) / rect.width));
+                _audio.currentTime = pct * _audio.duration;
+            }, { passive: true });
+            document.addEventListener('touchend', () => { _npSeekDragging = false; }, { passive: true });
+        }
+
+        // Insert overlay into the window wrap
+        const wrap = bodyEl.querySelector('.rm-wrap');
+        if (wrap) wrap.appendChild(ov);
+        _npOverlay = ov;
+
+        // Start overlay seekbar updates
+        _npUpdateLoop();
+    }
+
+    function _hideNowPlaying() {
+        if (_npOverlay) {
+            _npOverlay.remove();
+            _npOverlay = null;
+        }
+    }
+
+    function _npUpdateLoop() {
+        if (!_npOverlay || !_audio) return;
+        const dur = _audio.duration;
+        const cur = _audio.currentTime;
+        if (isFinite(dur) && dur > 0) {
+            const pct = (cur / dur) * 100;
+            const fill = _npOverlay.querySelector('#rm-np-fill');
+            const thumb = _npOverlay.querySelector('#rm-np-thumb');
+            const curEl = _npOverlay.querySelector('#rm-np-cur');
+            const durEl = _npOverlay.querySelector('#rm-np-dur');
+            if (fill) fill.style.width = pct + '%';
+            if (thumb) thumb.style.left = pct + '%';
+            if (curEl) curEl.textContent = _fmtTime(cur);
+            if (durEl) durEl.textContent = _fmtTime(dur);
+        }
+        // Sync play/pause icon
+        const ppBtn = _npOverlay.querySelector('#rm-np-playpause');
+        if (ppBtn && _audio) {
+            ppBtn.innerHTML = '<i class="fas ' + (_audio.paused ? 'fa-play' : 'fa-pause') + '"></i>';
+        }
+        requestAnimationFrame(() => _npUpdateLoop());
+    }
+
+    function _syncNowPlaying() {
+        // Update overlay info if track changed
+        if (!_npOverlay || !_playing) return;
+        _npOverlay.querySelector('.rm-np-title').textContent = _playing.name;
+        _npOverlay.querySelector('.rm-np-meta').textContent = _playing.meta || '';
+        const bgUrl = _playing.image || _playing.favicon || '';
+        _npOverlay.querySelector('.rm-np-bg').style.backgroundImage = "url('" + escH(bgUrl) + "')";
     }
 
     /* ── Country name helper ───────────────────────── */

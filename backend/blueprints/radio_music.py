@@ -21,6 +21,13 @@ Routes:
   POST /api/radio-music/music/install-deps - install yt-dlp
   GET  /api/radio-music/music/search       - search YouTube music (?q=, ?limit=)
   GET  /api/radio-music/music/stream       - proxy audio from YouTube (?url=)
+  GET  /api/radio-music/playlists           - list user's playlists
+  POST /api/radio-music/playlists           - create playlist
+  GET  /api/radio-music/playlists/<id>      - get playlist
+  PUT  /api/radio-music/playlists/<id>      - update playlist (name, tracks)
+  DELETE /api/radio-music/playlists/<id>    - delete playlist
+  POST /api/radio-music/playlists/<id>/tracks      - add track to playlist
+  DELETE /api/radio-music/playlists/<id>/tracks/<i> - remove track from playlist
   GET  /api/radio-music/history            - recently played items
   POST /api/radio-music/history            - add to history
 """
@@ -39,7 +46,7 @@ import urllib.parse
 import urllib.error
 import xml.etree.ElementTree as ET
 
-from flask import Blueprint, jsonify, request, Response
+from flask import Blueprint, g, jsonify, request, Response
 
 from host import data_path, q as shq
 
@@ -48,14 +55,24 @@ log = logging.getLogger('ethos.radio_music')
 radio_music_bp = Blueprint('radio-music', __name__, url_prefix='/api/radio-music')
 
 _DATA_DIR = data_path('radio_music')
-_FAV_FILE = os.path.join(_DATA_DIR, 'favorites.json')
-_SUBS_FILE = os.path.join(_DATA_DIR, 'subscriptions.json')
-_HISTORY_FILE = os.path.join(_DATA_DIR, 'history.json')
 
 _RADIO_API = 'https://de1.api.radio-browser.info'
 _ITUNES_API = 'https://itunes.apple.com/search'
 
 _MAX_HISTORY = 100
+
+
+def _user_dir():
+    """Per-user data directory: data/radio_music/users/{username}/"""
+    username = getattr(g, 'username', None) or 'default'
+    d = os.path.join(_DATA_DIR, 'users', username)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _user_file(name):
+    """Path to a per-user JSON file."""
+    return os.path.join(_user_dir(), name)
 
 
 def _ensure_dirs():
@@ -75,7 +92,7 @@ def _load_json(path, default=None):
 
 
 def _save_json(path, data):
-    _ensure_dirs()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + '.tmp'
     with open(tmp, 'w') as f:
         json.dump(data, f, ensure_ascii=False, indent=1)
@@ -236,7 +253,7 @@ def radio_top():
 
 @radio_music_bp.route('/radio/favorites', methods=['GET'])
 def radio_favorites():
-    return jsonify({'items': _load_json(_FAV_FILE, [])})
+    return jsonify({'items': _load_json(_user_file('favorites.json'), [])})
 
 
 @radio_music_bp.route('/radio/favorites', methods=['POST'])
@@ -247,7 +264,7 @@ def radio_favorites_edit():
     if not station or not station.get('uuid'):
         return jsonify({'error': 'Brak danych stacji.'}), 400
 
-    favs = _load_json(_FAV_FILE, [])
+    favs = _load_json(_user_file('favorites.json'), [])
 
     if action == 'remove':
         favs = [f for f in favs if f.get('uuid') != station['uuid']]
@@ -255,7 +272,7 @@ def radio_favorites_edit():
         if not any(f.get('uuid') == station['uuid'] for f in favs):
             favs.insert(0, station)
 
-    _save_json(_FAV_FILE, favs)
+    _save_json(_user_file('favorites.json'), favs)
     return jsonify({'ok': True, 'items': favs})
 
 
@@ -510,7 +527,7 @@ def _parse_duration(s):
 
 @radio_music_bp.route('/podcasts/subscriptions', methods=['GET'])
 def podcasts_subs():
-    return jsonify({'items': _load_json(_SUBS_FILE, [])})
+    return jsonify({'items': _load_json(_user_file('subscriptions.json'), [])})
 
 
 @radio_music_bp.route('/podcasts/subscribe', methods=['POST'])
@@ -521,7 +538,7 @@ def podcasts_subscribe():
     if not podcast or not podcast.get('feed_url'):
         return jsonify({'error': 'Brak danych podcastu.'}), 400
 
-    subs = _load_json(_SUBS_FILE, [])
+    subs = _load_json(_user_file('subscriptions.json'), [])
 
     if action == 'remove':
         subs = [s for s in subs if s.get('feed_url') != podcast['feed_url']]
@@ -530,7 +547,7 @@ def podcasts_subscribe():
             podcast['subscribed_at'] = time.time()
             subs.insert(0, podcast)
 
-    _save_json(_SUBS_FILE, subs)
+    _save_json(_user_file('subscriptions.json'), subs)
     return jsonify({'ok': True, 'items': subs})
 
 
@@ -538,7 +555,7 @@ def podcasts_subscribe():
 
 @radio_music_bp.route('/history', methods=['GET'])
 def history():
-    return jsonify({'items': _load_json(_HISTORY_FILE, [])})
+    return jsonify({'items': _load_json(_user_file('history.json'), [])})
 
 
 @radio_music_bp.route('/history', methods=['POST'])
@@ -549,14 +566,132 @@ def history_add():
         return jsonify({'error': 'Brak danych.'}), 400
 
     item['played_at'] = time.time()
-    hist = _load_json(_HISTORY_FILE, [])
+    hfile = _user_file('history.json')
+    hist = _load_json(hfile, [])
     key = (item.get('name', ''), item.get('url', ''))
-    hist = [h for h in hist if (h.get('name', ''), h.get('url', '')) != key]
+    existing = next((h for h in hist if (h.get('name', ''), h.get('url', '')) == key), None)
+    if existing:
+        item['play_count'] = existing.get('play_count', 1) + 1
+        hist = [h for h in hist if (h.get('name', ''), h.get('url', '')) != key]
+    else:
+        item['play_count'] = 1
     hist.insert(0, item)
     hist = hist[:_MAX_HISTORY]
 
-    _save_json(_HISTORY_FILE, hist)
+    _save_json(hfile, hist)
     return jsonify({'ok': True})
+
+
+@radio_music_bp.route('/most-played', methods=['GET'])
+def most_played():
+    """Return history items sorted by play_count descending."""
+    limit = min(int(request.args.get('limit', 30)), 100)
+    hist = _load_json(_user_file('history.json'), [])
+    ranked = sorted(hist, key=lambda h: h.get('play_count', 1), reverse=True)
+    return jsonify({'items': ranked[:limit]})
+
+
+# ── Playlists (per-user) ─────────────────────────────────────
+
+def _playlists_file():
+    return _user_file('playlists.json')
+
+
+@radio_music_bp.route('/playlists', methods=['GET'])
+def playlists_list():
+    return jsonify({'items': _load_json(_playlists_file(), [])})
+
+
+@radio_music_bp.route('/playlists', methods=['POST'])
+def playlists_create():
+    body = request.get_json(force=True, silent=True) or {}
+    name = (body.get('name') or '').strip()
+    if not name:
+        return jsonify({'error': 'Brak nazwy playlisty.'}), 400
+
+    pls = _load_json(_playlists_file(), [])
+    pl_id = str(int(time.time() * 1000))
+    pl = {
+        'id': pl_id,
+        'name': name,
+        'tracks': [],
+        'created_at': time.time(),
+        'updated_at': time.time(),
+    }
+    pls.insert(0, pl)
+    _save_json(_playlists_file(), pls)
+    return jsonify({'ok': True, 'playlist': pl, 'items': pls})
+
+
+@radio_music_bp.route('/playlists/<pl_id>', methods=['GET'])
+def playlists_get(pl_id):
+    pls = _load_json(_playlists_file(), [])
+    pl = next((p for p in pls if p['id'] == pl_id), None)
+    if not pl:
+        return jsonify({'error': 'Playlista nie znaleziona'}), 404
+    return jsonify({'playlist': pl})
+
+
+@radio_music_bp.route('/playlists/<pl_id>', methods=['PUT'])
+def playlists_update(pl_id):
+    body = request.get_json(force=True, silent=True) or {}
+    pfile = _playlists_file()
+    pls = _load_json(pfile, [])
+    pl = next((p for p in pls if p['id'] == pl_id), None)
+    if not pl:
+        return jsonify({'error': 'Playlista nie znaleziona'}), 404
+
+    if 'name' in body:
+        pl['name'] = (body['name'] or '').strip() or pl['name']
+    if 'tracks' in body:
+        pl['tracks'] = body['tracks']
+    pl['updated_at'] = time.time()
+    _save_json(pfile, pls)
+    return jsonify({'ok': True, 'playlist': pl})
+
+
+@radio_music_bp.route('/playlists/<pl_id>', methods=['DELETE'])
+def playlists_delete(pl_id):
+    pfile = _playlists_file()
+    pls = _load_json(pfile, [])
+    pls = [p for p in pls if p['id'] != pl_id]
+    _save_json(pfile, pls)
+    return jsonify({'ok': True, 'items': pls})
+
+
+@radio_music_bp.route('/playlists/<pl_id>/tracks', methods=['POST'])
+def playlists_add_track(pl_id):
+    """Add a track/station/podcast to a playlist."""
+    body = request.get_json(force=True, silent=True) or {}
+    track = body.get('track')
+    if not track:
+        return jsonify({'error': 'Brak danych utworu.'}), 400
+
+    pfile = _playlists_file()
+    pls = _load_json(pfile, [])
+    pl = next((p for p in pls if p['id'] == pl_id), None)
+    if not pl:
+        return jsonify({'error': 'Playlista nie znaleziona'}), 404
+
+    track['added_at'] = time.time()
+    pl['tracks'].append(track)
+    pl['updated_at'] = time.time()
+    _save_json(pfile, pls)
+    return jsonify({'ok': True, 'playlist': pl})
+
+
+@radio_music_bp.route('/playlists/<pl_id>/tracks/<int:track_idx>', methods=['DELETE'])
+def playlists_remove_track(pl_id, track_idx):
+    pfile = _playlists_file()
+    pls = _load_json(pfile, [])
+    pl = next((p for p in pls if p['id'] == pl_id), None)
+    if not pl:
+        return jsonify({'error': 'Playlista nie znaleziona'}), 404
+    if 0 <= track_idx < len(pl['tracks']):
+        pl['tracks'].pop(track_idx)
+        pl['updated_at'] = time.time()
+        _save_json(pfile, pls)
+    return jsonify({'ok': True, 'playlist': pl})
 
 
 # ── Music: YouTube / multi-source (via yt-dlp) ──────────────
