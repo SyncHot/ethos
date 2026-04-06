@@ -34,7 +34,7 @@ async function api(path, options = {}) {
     }
     const resp = await fetch(`/api${path}`, { ...options, headers });
     if (resp.status === 401) {
-        showLogin();
+        showLogin(`API ${path} returned 401 (token invalid or expired)`);
         throw new Error('Unauthorized');
     }
     if (resp.status === 403) {
@@ -472,7 +472,15 @@ function openDirPicker(startPath, title, onSelect) {
 
 // ─────────────────────────── Auth (cont.) ───────────────────
 
-function showLogin() {
+function showLogin(reason) {
+    // Log forced logout to Event Log (skip manual logout and initial page load)
+    if (reason) {
+        const detail = { reason, user: NAS.user?.username || '?', time: new Date().toISOString() };
+        if (typeof NAS !== 'undefined' && NAS.logClient) {
+            NAS.logClient('security', 'warning', `Forced logout: ${reason}`, detail);
+        }
+        console.warn('[auth] Forced logout:', reason, detail);
+    }
     NAS.token = null;
     NAS.user = null;
     NAS.sudoMode = false;
@@ -514,10 +522,10 @@ async function tryAutoLogin() {
                 showDesktop();
             }
         } else {
-            showLogin();
+            showLogin('Token verification failed (token expired or revoked)');
         }
-    } catch {
-        showLogin();
+    } catch (e) {
+        showLogin(`Server unreachable during auto-login: ${e.message || 'network error'}`);
     }
 }
 
