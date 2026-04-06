@@ -516,13 +516,15 @@ def _no_cache_api(response):
                    request.path.startswith('/api/video-station/poster/') or \
                    request.path.startswith('/api/video-station/backdrop/') or \
                    request.path.startswith('/api/video-station/thumbstrip/') or \
-                   request.path == '/api/radio-music/radio/proxy'
+                   request.path == '/api/radio-music/radio/proxy' or \
+                   request.path == '/api/radio-music/music/stream'
         if is_media and response.status_code in (200, 206):
             ct = response.content_type or ''
             if ct.startswith(('video/', 'audio/', 'image/', 'application/vnd.apple.mpegurl')):
                 # Transcode/HLS/radio proxy streams — don't advertise byte-range support
-                if not request.path.startswith(('/api/video-station/transcode/', '/api/video-station/hls/')) \
-                   and request.path != '/api/radio-music/radio/proxy':
+                _no_ranges = (request.path.startswith(('/api/video-station/transcode/', '/api/video-station/hls/'))
+                              or request.path == '/api/radio-music/radio/proxy')
+                if not _no_ranges:
                     response.headers['Accept-Ranges'] = 'bytes'
                 response.headers.pop('Pragma', None)
                 return response

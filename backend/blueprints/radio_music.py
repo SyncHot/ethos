@@ -17,6 +17,10 @@ Routes:
   GET  /api/radio-music/podcasts/feed      - parse podcast RSS feed (?url=)
   GET  /api/radio-music/podcasts/subscriptions - user's subscribed podcasts
   POST /api/radio-music/podcasts/subscribe - subscribe/unsubscribe
+  GET  /api/radio-music/music/check-deps   - check if yt-dlp is installed
+  POST /api/radio-music/music/install-deps - install yt-dlp
+  GET  /api/radio-music/music/search       - search YouTube music (?q=, ?limit=)
+  GET  /api/radio-music/music/stream       - proxy audio from YouTube (?url=)
   GET  /api/radio-music/history            - recently played items
   POST /api/radio-music/history            - add to history
 """
@@ -25,8 +29,10 @@ import http.client
 import json
 import logging
 import os
+import shutil
 import socket
 import ssl
+import subprocess
 import time
 import urllib.request
 import urllib.parse
@@ -35,7 +41,7 @@ import xml.etree.ElementTree as ET
 
 from flask import Blueprint, jsonify, request, Response
 
-from host import data_path
+from host import data_path, q as shq
 
 log = logging.getLogger('ethos.radio_music')
 
@@ -551,6 +557,204 @@ def history_add():
 
     _save_json(_HISTORY_FILE, hist)
     return jsonify({'ok': True})
+
+
+# ── Music: YouTube / multi-source (via yt-dlp) ──────────────
+
+_YTDLP_BIN = None
+_YTDLP_URL_CACHE = {}   # {video_url: (audio_url, ct_hint, expiry)}
+_YTDLP_CACHE_TTL = 3600  # 1 hour (YouTube URLs last ~6 hours)
+
+
+def _find_ytdlp():
+    """Locate yt-dlp binary (venv first, then system PATH)."""
+    global _YTDLP_BIN
+    if _YTDLP_BIN and os.path.isfile(_YTDLP_BIN):
+        return _YTDLP_BIN
+    # backend/blueprints/ → backend/ → /opt/ethos/
+    ethos_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    venv_bin = os.path.join(ethos_root, 'venv', 'bin', 'yt-dlp')
+    if os.path.isfile(venv_bin):
+        _YTDLP_BIN = venv_bin
+        return venv_bin
+    sys_bin = shutil.which('yt-dlp')
+    if sys_bin:
+        _YTDLP_BIN = sys_bin
+        return sys_bin
+    return None
+
+
+@radio_music_bp.route('/music/check-deps', methods=['GET'])
+def music_check_deps():
+    return jsonify({'ok': True, 'ready': bool(_find_ytdlp())})
+
+
+@radio_music_bp.route('/music/install-deps', methods=['POST'])
+def music_install_deps():
+    from host import host_run
+    ethos_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    pip_bin = os.path.join(ethos_root, 'venv', 'bin', 'pip')
+    r = host_run(f'{shq(pip_bin)} install --quiet yt-dlp', timeout=120)
+    if r.returncode != 0:
+        return jsonify({'error': r.stderr or 'Instalacja nie powiodła się'}), 500
+    global _YTDLP_BIN
+    _YTDLP_BIN = None
+    return jsonify({'ok': True, 'ready': bool(_find_ytdlp())})
+
+
+@radio_music_bp.route('/music/search', methods=['GET'])
+def music_search():
+    """Search for music via yt-dlp (YouTube by default)."""
+    q_str = request.args.get('q', '').strip()
+    limit = min(int(request.args.get('limit', 20)), 50)
+    if not q_str:
+        return jsonify({'items': []})
+
+    ytdlp = _find_ytdlp()
+    if not ytdlp:
+        return jsonify({'error': 'yt-dlp nie jest zainstalowane'}), 503
+
+    from host import host_run
+    search_arg = f'ytsearch{limit}:{q_str}'
+    cmd = (f'{shq(ytdlp)} --dump-json --flat-playlist --no-warnings '
+           f'--no-download {shq(search_arg)}')
+    r = host_run(cmd, timeout=30)
+
+    items = []
+    if r.stdout:
+        for line in r.stdout.strip().splitlines():
+            try:
+                d = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            vid_id = d.get('id', '')
+            dur = d.get('duration') or 0
+            items.append({
+                'id': vid_id,
+                'title': d.get('title', ''),
+                'channel': d.get('channel', d.get('uploader', '')),
+                'duration': dur,
+                'duration_fmt': _fmt_secs(dur),
+                'thumbnail': (d.get('thumbnails', [{}])[-1].get('url', '')
+                              or f'https://i.ytimg.com/vi/{vid_id}/hqdefault.jpg'),
+                'url': (d.get('url', '') or d.get('webpage_url', '')
+                        or f'https://www.youtube.com/watch?v={vid_id}'),
+                'source': 'youtube',
+            })
+    return jsonify({'items': items})
+
+
+def _fmt_secs(s):
+    """Format seconds to H:MM:SS or M:SS."""
+    if not s:
+        return ''
+    s = int(s)
+    if s >= 3600:
+        return f'{s // 3600}:{(s % 3600) // 60:02d}:{s % 60:02d}'
+    return f'{s // 60}:{s % 60:02d}'
+
+
+def _extract_audio_url(video_url):
+    """Extract direct audio URL from a video page via yt-dlp. Results are cached."""
+    now = time.time()
+    if video_url in _YTDLP_URL_CACHE:
+        audio_url, ct_hint, exp = _YTDLP_URL_CACHE[video_url]
+        if now < exp:
+            return audio_url, ct_hint
+
+    ytdlp = _find_ytdlp()
+    if not ytdlp:
+        return None, None
+
+    from host import host_run
+    cmd = (f'{shq(ytdlp)} -f "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio" '
+           f'-g --no-warnings --no-playlist {shq(video_url)}')
+    r = host_run(cmd, timeout=30)
+
+    audio_url = r.stdout.strip().splitlines()[0] if r.stdout and r.stdout.strip() else ''
+    if not audio_url:
+        log.warning('yt-dlp extraction failed for %s: %s', video_url, r.stderr[:200] if r.stderr else '')
+        return None, None
+
+    ct = 'audio/mp4' if ('m4a' in audio_url or 'mime=audio%2Fmp4' in audio_url) else 'audio/webm'
+    _YTDLP_URL_CACHE[video_url] = (audio_url, ct, now + _YTDLP_CACHE_TTL)
+
+    # Evict expired entries
+    for k in list(_YTDLP_URL_CACHE):
+        if _YTDLP_URL_CACHE[k][2] < now:
+            del _YTDLP_URL_CACHE[k]
+    return audio_url, ct
+
+
+@radio_music_bp.route('/music/stream', methods=['GET'])
+def music_stream():
+    """Stream audio from YouTube/other sources. Extracts URL via yt-dlp, caches, proxies."""
+    url = request.args.get('url', '').strip()
+    if not url:
+        return jsonify({'error': 'Brak URL'}), 400
+
+    audio_url, ct_hint = _extract_audio_url(url)
+    if not audio_url:
+        return jsonify({'error': 'Nie udało się wyodrębnić audio'}), 502
+
+    range_header = request.headers.get('Range')
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
+    }
+    if range_header:
+        headers['Range'] = range_header
+
+    def _open_audio(aurl):
+        req = urllib.request.Request(aurl, headers=headers)
+        return urllib.request.urlopen(req, timeout=15, context=_SSL_CTX)
+
+    try:
+        resp = _open_audio(audio_url)
+    except Exception:
+        # URL may have expired — clear cache and re-extract
+        _YTDLP_URL_CACHE.pop(url, None)
+        audio_url, ct_hint = _extract_audio_url(url)
+        if not audio_url:
+            return jsonify({'error': 'Ekstrakcja nie powiodła się'}), 502
+        try:
+            resp = _open_audio(audio_url)
+        except Exception as e:
+            log.warning('Music stream error for %s: %s', url, e)
+            return jsonify({'error': 'Strumień niedostępny'}), 502
+
+    ct = resp.headers.get('Content-Type', ct_hint or 'audio/mp4')
+    cl = resp.headers.get('Content-Length')
+    cr = resp.headers.get('Content-Range')
+    status = resp.status
+
+    def generate():
+        try:
+            while True:
+                chunk = resp.read(32768)
+                if not chunk:
+                    break
+                yield chunk
+        except GeneratorExit:
+            pass
+        except Exception:
+            pass
+        finally:
+            try:
+                resp.close()
+            except Exception:
+                pass
+
+    resp_headers = {
+        'Cache-Control': 'no-cache',
+        'Access-Control-Allow-Origin': '*',
+    }
+    if cl:
+        resp_headers['Content-Length'] = cl
+    if cr:
+        resp_headers['Content-Range'] = cr
+    resp_headers['Accept-Ranges'] = 'bytes' if cl else 'none'
+
+    return Response(generate(), status=status, mimetype=ct, headers=resp_headers)
 
 
 # ── Stream proxy (solves CORS, ICY, HLS issues) ─────────────
