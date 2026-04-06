@@ -421,8 +421,8 @@ def podcasts_feed():
 
     req = urllib.request.Request(feed_url, headers={'User-Agent': 'EthOS-RadioMusic/1.0'})
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            xml_text = resp.read(2 * 1024 * 1024).decode('utf-8', errors='replace')
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            xml_text = resp.read(10 * 1024 * 1024).decode('utf-8', errors='replace')
     except Exception as e:
         return jsonify({'error': 'Nie udało się pobrać feedu: ' + str(e)}), 502
 
