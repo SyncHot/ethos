@@ -20,6 +20,7 @@ Routes:
   GET  /api/radio-music/music/check-deps   - check if yt-dlp is installed
   POST /api/radio-music/music/install-deps - install yt-dlp
   GET  /api/radio-music/music/search       - search YouTube music (?q=, ?limit=)
+  GET  /api/radio-music/music/direct-url   - get direct CDN audio URL for Chromecast (?url=)
   GET  /api/radio-music/music/stream       - proxy audio from YouTube (?url=)
   POST /api/radio-music/music/download     - download track to music folder
   POST /api/radio-music/music/download-playlist - download all tracks in a playlist
@@ -1413,6 +1414,18 @@ def _extract_audio_url(video_url):
         if _YTDLP_URL_CACHE[k][2] < now:
             del _YTDLP_URL_CACHE[k]
     return audio_url, ct
+
+
+@radio_music_bp.route('/music/direct-url', methods=['GET'])
+def music_direct_url():
+    """Return the direct CDN audio URL (for Chromecast — bypasses proxy)."""
+    url = request.args.get('url', '').strip()
+    if not url:
+        return jsonify({'error': 'Brak URL'}), 400
+    audio_url, ct = _extract_audio_url(url)
+    if not audio_url:
+        return jsonify({'error': 'Extraction failed'}), 502
+    return jsonify({'ok': True, 'audio_url': audio_url, 'content_type': ct or 'audio/mp4'})
 
 
 @radio_music_bp.route('/music/stream', methods=['GET'])

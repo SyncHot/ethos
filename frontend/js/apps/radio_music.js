@@ -19,6 +19,12 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
     // ── Chromecast state ──
     let _isCasting = false;
+    let _castSession = null;
+    let _castAvail = false;
+    let _preCastVolume = 0.8;
+    let _castPlayer = null;
+    let _castController = null;
+    let _advanceLock = false;  // debounce double-advance from Cast + local onended
 
     const _LS_KEY = 'rm_playback_state';
     let _savePending = false;
@@ -741,6 +747,9 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             };
 
             loadSection('most-played');
+
+            // Initialize Google Cast SDK
+            _initCast();
 
             // Restore previous playback state (paused, showing last track)
             _restoreAndShowLastTrack(body);
@@ -2265,11 +2274,48 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         };
     }
 
+    // Advance to next track in queue (used by onended, Cast media ended, and error recovery)
+    function _advanceQueue() {
+        if (_advanceLock) return false;
+        if (!_musicQueue.length || _musicQueueIdx < 0) return false;
+        _advanceLock = true;
+        setTimeout(() => { _advanceLock = false; }, 500);
+
+        let nextIdx;
+        if (_shuffle) {
+            if (_musicQueue.length === 1) nextIdx = 0;
+            else { do { nextIdx = Math.floor(Math.random() * _musicQueue.length); } while (nextIdx === _musicQueueIdx); }
+        } else {
+            nextIdx = _musicQueueIdx + 1;
+        }
+        if (nextIdx < _musicQueue.length) {
+            _musicQueueIdx = nextIdx;
+            const nxt = _musicQueue[nextIdx];
+            nxt._plItem ? _playTrackFromPlaylist(nxt) : playMusicTrack(nxt);
+            return true;
+        }
+        if (_repeatMode === 1 && _musicQueue.length > 0) {
+            _musicQueueIdx = _shuffle ? Math.floor(Math.random() * _musicQueue.length) : 0;
+            const nxt = _musicQueue[_musicQueueIdx];
+            nxt._plItem ? _playTrackFromPlaylist(nxt) : playMusicTrack(nxt);
+            return true;
+        }
+        _advanceLock = false;
+        return false;
+    }
+
     function playAudio(item) {
-        if (_audio) { _audio.pause(); _audio.src = ''; }
+        if (_audio) {
+            // Null out handlers before resetting to prevent ghost events
+            _audio.onended = null; _audio.onerror = null;
+            _audio.onplay = null; _audio.onpause = null;
+            _audio.ontimeupdate = null; _audio.onloadedmetadata = null;
+            _audio.onwaiting = null; _audio.onplaying = null;
+            _audio.pause(); _audio.src = '';
+        }
         _clearSeek();
         _audio = new Audio();
-        _audio.volume = (bodyEl.querySelector('#rm-vol')?.value || 80) / 100;
+        _audio.volume = _isCasting ? 0 : (bodyEl.querySelector('#rm-vol')?.value || 80) / 100;
         _playing = item;
 
         // Build ordered list of URLs to try (primary + fallbacks)
@@ -2307,6 +2353,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 toast(t('Nie udało się odtworzyć żadnego źródła'), 'error');
                 _showEq(false);
                 _setBuffering(false);
+                // Skip failed track — advance queue after short delay
+                setTimeout(() => _advanceQueue(), 800);
                 return;
             }
             let src;
@@ -2348,50 +2396,53 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 urlIdx++;
                 tryUrl(urlIdx);
             } else {
-                toast(t('Strumień przerwany'), 'error');
                 _showEq(false);
                 _setBuffering(false);
+                // Stream broke mid-playback — advance queue
+                setTimeout(() => _advanceQueue(), 800);
             }
         };
+        let _endedHandled = false;
         _audio.onended = () => {
+            if (_endedHandled) return;
+            _endedHandled = true;
             _showEq(false);
             _clearSeek();
 
             // Repeat one — replay current track
             if (_repeatMode === 2) {
+                _endedHandled = false;
                 _audio.currentTime = 0;
                 _audio.play().then(() => _showEq(true)).catch(() => {});
                 return;
             }
 
-            // Auto-play next in queue (music/local)
-            if (_musicQueue.length && _musicQueueIdx >= 0) {
-                let nextIdx;
-                if (_shuffle) {
-                    if (_musicQueue.length === 1) { nextIdx = 0; }
-                    else {
-                        do { nextIdx = Math.floor(Math.random() * _musicQueue.length); } while (nextIdx === _musicQueueIdx);
-                    }
-                } else {
-                    nextIdx = _musicQueueIdx + 1;
-                }
-                if (nextIdx < _musicQueue.length) {
-                    _musicQueueIdx = nextIdx;
-                    const nxt = _musicQueue[nextIdx];
-                    nxt._plItem ? _playTrackFromPlaylist(nxt) : playMusicTrack(nxt);
-                    return;
-                }
-                // End of queue — repeat all wraps around
-                if (_repeatMode === 1 && _musicQueue.length > 0) {
-                    _musicQueueIdx = _shuffle ? Math.floor(Math.random() * _musicQueue.length) : 0;
-                    const nxt = _musicQueue[_musicQueueIdx];
-                    nxt._plItem ? _playTrackFromPlaylist(nxt) : playMusicTrack(nxt);
-                    return;
-                }
-            }
+            // Auto-play next in queue
+            if (_advanceQueue()) return;
             bodyEl.querySelector('#rm-play-pause').innerHTML = '<i class="fas fa-play"></i>';
         };
-        _audio.ontimeupdate = () => _updateSeekbar();
+        _audio.ontimeupdate = () => {
+            _updateSeekbar();
+            // Fallback: detect track finished (onended may not fire for proxied streams)
+            if (!_endedHandled && _audio && isFinite(_audio.duration) && _audio.duration > 1
+                && _audio.currentTime >= _audio.duration - 0.5) {
+                _endedHandled = true;
+                setTimeout(() => {
+                    // Double-check: audio truly stopped (not just buffering near end)
+                    if (_audio && (_audio.ended || _audio.paused || _audio.currentTime >= _audio.duration - 0.5)) {
+                        _showEq(false); _clearSeek();
+                        if (_repeatMode === 2) {
+                            _endedHandled = false;
+                            _audio.currentTime = 0;
+                            _audio.play().then(() => _showEq(true)).catch(() => {});
+                            return;
+                        }
+                        if (_advanceQueue()) return;
+                        bodyEl.querySelector('#rm-play-pause').innerHTML = '<i class="fas fa-play"></i>';
+                    } else { _endedHandled = false; }
+                }, 1500);
+            }
+        };
         _audio.onloadedmetadata = () => { _updateSeekbar(); _savePlaybackState(); };
 
         // Periodic save of playback position
@@ -2428,8 +2479,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         // Start playback with fallback chain
         tryUrl(0);
 
-        // Attach Remote Playback (Chromecast) listeners
-        _attachRemotePlayback(_audio);
+        // If casting, send new track to Chromecast immediately (uses direct URLs, no proxy)
+        if (_isCasting) _castLoadCurrentTrack();
     }
 
     function _skipStation(dir) {
@@ -2474,6 +2525,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     function stopPlayback() {
         _savePlaybackState();
         if (_saveStateInterval) { clearInterval(_saveStateInterval); _saveStateInterval = null; }
+        if (_castSession) { try { _castSession.endSession(true); } catch(e) {} }
+        _castSession = null;
         _isCasting = false;
         _syncCastBtnUi(false);
         if (_audio) {
@@ -2495,26 +2548,134 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         if (eq) eq.style.display = show ? 'flex' : 'none';
     }
 
-    /* ── Chromecast / Remote Playback ──────────────────── */
+    /* ── Chromecast / Google Cast SDK ──────────────────── */
 
-    function _initRemotePlayback() {
-        // Remote Playback API is built into Chrome — no external SDK needed.
-        // It works with Audio/Video elements directly.
-        // We attach listeners whenever a new _audio element is created.
+    function _initCast() {
+        // Define callback BEFORE loading SDK script
+        window['__onGCastApiAvailable'] = function(isAvailable) {
+            _castAvail = isAvailable;
+            if (!isAvailable) return;
+            try {
+                cast.framework.CastContext.getInstance().setOptions({
+                    receiverApplicationId: chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
+                    autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED,
+                });
+                cast.framework.CastContext.getInstance().addEventListener(
+                    cast.framework.CastContextEventType.SESSION_STATE_CHANGED,
+                    _onCastSessionChanged
+                );
+                // Listen for Chromecast player state (track ended → auto-advance)
+                _castPlayer = new cast.framework.RemotePlayer();
+                _castController = new cast.framework.RemotePlayerController(_castPlayer);
+                _castController.addEventListener(
+                    cast.framework.RemotePlayerEventType.PLAYER_STATE_CHANGED,
+                    _onCastPlayerStateChanged
+                );
+            } catch (e) { console.warn('Cast init error:', e); }
+        };
+        // Load Cast Web Sender SDK (once)
+        if (!document.querySelector('script[src*="cast_sender"]')) {
+            const s = document.createElement('script');
+            s.src = 'https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1';
+            s.async = true;
+            document.head.appendChild(s);
+        } else if (window.cast && cast.framework) {
+            // SDK already loaded (app re-opened), re-read availability
+            _castAvail = true;
+        }
     }
 
-    function _attachRemotePlayback(audio) {
-        if (!audio || !audio.remote) return;
-        audio.remote.onconnecting = () => { _syncCastBtnUi(true); };
-        audio.remote.onconnect = () => {
+    function _onCastPlayerStateChanged() {
+        if (!_isCasting || !_castPlayer) return;
+        if (_castPlayer.playerState === 'IDLE') {
+            // Check idle reason — only advance on FINISHED (not CANCELLED/ERROR)
+            const session = cast.framework.CastContext.getInstance().getCurrentSession();
+            const media = session?.getMediaSession();
+            if (media && media.idleReason === 'FINISHED') {
+                _advanceQueue();
+            }
+        }
+    }
+
+    function _onCastSessionChanged(event) {
+        const state = event.sessionState;
+        if (state === cast.framework.SessionState.SESSION_STARTED ||
+            state === cast.framework.SessionState.SESSION_RESUMED) {
+            _castSession = cast.framework.CastContext.getInstance().getCurrentSession();
             _isCasting = true;
             _syncCastBtnUi(true);
-            toast(t('Odtwarzanie na Chromecast'), 'success');
-        };
-        audio.remote.ondisconnect = () => {
+            toast(t('Połączono z Chromecast'), 'success');
+            _castLoadCurrentTrack();
+        } else if (state === cast.framework.SessionState.SESSION_ENDED) {
+            _castSession = null;
             _isCasting = false;
             _syncCastBtnUi(false);
-        };
+            // Restore local volume
+            if (_audio) _audio.volume = _preCastVolume;
+        }
+    }
+
+    async function _castLoadCurrentTrack() {
+        // Always refresh session reference
+        if (window.cast && cast.framework) {
+            _castSession = cast.framework.CastContext.getInstance().getCurrentSession();
+        }
+        if (!_castSession || !_playing) return;
+
+        let mediaUrl, ct;
+
+        // For YouTube music: get direct CDN URL (fast for Chromecast, no proxy delay)
+        if (_playing.type === 'music' && _playing.url && !_playing.url.startsWith('/api/')) {
+            try {
+                const data = await api('/radio-music/music/direct-url?url=' + encodeURIComponent(_playing.url));
+                if (data.audio_url) {
+                    mediaUrl = data.audio_url;
+                    ct = data.content_type || 'audio/mp4';
+                }
+            } catch (e) { console.warn('Cast direct-url error:', e); }
+        }
+
+        // For local files: absolute NAS URL (Chromecast can reach it)
+        if (!mediaUrl && _playing.type === 'local' && _playing.path) {
+            mediaUrl = location.origin + '/api/radio-music/local/stream?path='
+                + encodeURIComponent(_playing.path) + '&token=' + (NAS.token || '');
+            ct = 'audio/mpeg';
+        }
+
+        // For radio: use direct stream URL (no CORS issue for Chromecast)
+        if (!mediaUrl && _playing.type === 'radio' && _playing.url) {
+            mediaUrl = _playing.url;
+            ct = 'audio/mpeg';
+        }
+
+        // Fallback: use whatever _audio.src has (absolute)
+        if (!mediaUrl && _audio?.src) {
+            mediaUrl = _audio.src;
+            ct = 'audio/mpeg';
+        }
+        if (!mediaUrl) return;
+
+        const mediaInfo = new chrome.cast.media.MediaInfo(mediaUrl, ct);
+        mediaInfo.metadata = new chrome.cast.media.MusicTrackMediaMetadata();
+        if (_playing) {
+            mediaInfo.metadata.title = _playing.name || '';
+            mediaInfo.metadata.artist = _playing.meta || '';
+            if (_playing.image) {
+                const imgUrl = _playing.image.startsWith('http') ? _playing.image : (location.origin + _playing.image);
+                mediaInfo.metadata.images = [new chrome.cast.Image(imgUrl)];
+            }
+        }
+        const request = new chrome.cast.media.LoadRequest(mediaInfo);
+        request.autoplay = true;
+        if (_audio && _audio.currentTime > 1) request.currentTime = _audio.currentTime;
+
+        try {
+            await _castSession.loadMedia(request);
+            _preCastVolume = (bodyEl.querySelector('#rm-vol')?.value || 80) / 100;
+            if (_audio) _audio.volume = 0;
+        } catch (err) {
+            console.warn('Cast loadMedia error:', err);
+        }
     }
 
     function _toggleCast() {
@@ -2522,28 +2683,29 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             toast(t('Najpierw włącz muzykę'), 'info');
             return;
         }
-        if (!_audio.remote) {
-            toast(t('Przeglądarka nie wspiera przesyłania — użyj Chrome'), 'info');
-            return;
-        }
-        if (_isCasting) {
-            // Disconnect from remote device
-            _audio.remote.cancelWatchAvailability().catch(() => {});
-            _audio.pause();
+        if (_isCasting && _castSession) {
+            _castSession.endSession(true);
             _isCasting = false;
+            _castSession = null;
             _syncCastBtnUi(false);
-            _audio.play().catch(() => {});
+            _audio.volume = _preCastVolume;
             return;
         }
-        _audio.remote.prompt().catch((err) => {
-            if (err.name === 'NotAllowedError') return; // user cancelled
-            if (err.name === 'NotSupportedError') {
-                toast(t('Nie znaleziono urządzeń Chromecast w sieci'), 'info');
-            } else {
-                console.warn('Remote playback error:', err);
-                toast(t('Nie udało się połączyć z Chromecast'), 'error');
-            }
-        });
+        if (_castAvail) {
+            cast.framework.CastContext.getInstance().requestSession().catch(err => {
+                if (err !== 'cancel') toast(t('Nie udało się połączyć z Chromecast'), 'error');
+            });
+            return;
+        }
+        // Fallback: Remote Playback API (single-track only)
+        if (_audio.remote) {
+            _audio.remote.prompt().catch(err => {
+                if (err.name === 'NotAllowedError') return;
+                toast(t('Chromecast niedostępny — użyj Chrome'), 'info');
+            });
+            return;
+        }
+        toast(t('Chromecast niedostępny — użyj Chrome'), 'info');
     }
 
     function _syncCastBtnUi(casting) {
