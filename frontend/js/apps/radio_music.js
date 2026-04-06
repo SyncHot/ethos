@@ -2281,6 +2281,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         if (!_musicQueue.length || _musicQueueIdx < 0) return false;
         _advanceLock = true;
         setTimeout(() => { _advanceLock = false; }, 500);
+        _cl('debug', 'advanceQueue', { from: _musicQueueIdx, queueLen: _musicQueue.length, shuffle: _shuffle, repeat: _repeatMode });
 
         let nextIdx;
         if (_shuffle) {
@@ -2306,8 +2307,18 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     }
 
     function playAudio(item) {
+        // Safety: reset stuck _isCasting if no real Cast session exists
+        if (_isCasting) {
+            let realSession = null;
+            try { realSession = window.cast && cast.framework ? cast.framework.CastContext.getInstance().getCurrentSession() : null; } catch(e) {}
+            if (!realSession) {
+                _cl('warning', 'playAudio: _isCasting was true but no real Cast session — resetting');
+                _isCasting = false; _castSession = null; _castQueueActive = false;
+                _syncCastBtnUi(false);
+            }
+        }
+        _cl('info', 'playAudio', { name: item?.name, type: item?.type, isCasting: _isCasting, hasPath: !!item?.path, queueLen: _musicQueue.length, queueIdx: _musicQueueIdx });
         if (_audio) {
-            // Null out handlers before resetting to prevent ghost events
             _audio.onended = null; _audio.onerror = null;
             _audio.onplay = null; _audio.onpause = null;
             _audio.ontimeupdate = null; _audio.onloadedmetadata = null;
@@ -2351,16 +2362,15 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
         function tryUrl(idx) {
             if (idx >= urls.length) {
+                _cl('error', 'All URLs failed', { name: item?.name, type: item?.type, urlCount: urls.length });
                 toast(t('Nie udało się odtworzyć żadnego źródła'), 'error');
                 _showEq(false);
                 _setBuffering(false);
-                // Skip failed track — advance queue after short delay
                 setTimeout(() => _advanceQueue(), 800);
                 return;
             }
             let src;
             if (isLocal) {
-                // Local files already have a full URL with token
                 src = item.url;
             } else if (isMusic) {
                 src = '/api/radio-music/music/stream?url=' + encodeURIComponent(urls[idx])
@@ -2370,9 +2380,10 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                     + '&token=' + (NAS.token || '');
             }
 
+            _cl('debug', 'tryUrl(' + idx + '/' + urls.length + ')', { src: src?.substring(0, 120) });
             _audio.src = src;
             _audio.play().catch(err => {
-                console.warn('Play error:', err?.message, 'url:', urls[idx]);
+                _cl('warning', 'play() rejected', { idx, error: err?.message, src: src?.substring(0, 80) });
                 tryUrl(idx + 1);
             });
         }
@@ -2384,6 +2395,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             _showEq(!isMusic && !isLocal);
             _updateSeekbar();
             _savePlaybackState();
+            _cl('info', 'Audio playing', { name: item?.name, volume: _audio?.volume });
         };
         _audio.onwaiting = () => _setBuffering(true);
         _audio.onplaying = () => _setBuffering(false);
@@ -2393,13 +2405,15 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             _savePlaybackState();
         };
         _audio.onerror = () => {
+            const code = _audio?.error?.code;
+            const msg = _audio?.error?.message || '';
+            _cl('error', 'Audio error', { code, msg, hasPlayed, urlIdx, name: item?.name });
             if (!hasPlayed) {
                 urlIdx++;
                 tryUrl(urlIdx);
             } else {
                 _showEq(false);
                 _setBuffering(false);
-                // Stream broke mid-playback — advance queue
                 setTimeout(() => _advanceQueue(), 800);
             }
         };
@@ -2407,6 +2421,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         _audio.onended = () => {
             if (_endedHandled) return;
             _endedHandled = true;
+            _cl('info', 'Audio ended', { name: item?.name, isCasting: _isCasting });
             _showEq(false);
             _clearSeek();
 
@@ -2665,6 +2680,12 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         }
         if (!_castSession || !_playing) {
             _cl('warning', 'Cast loadTrack skipped: session=' + !!_castSession + ' playing=' + !!_playing);
+            if (!_castSession && _isCasting) {
+                _cl('warning', 'Resetting stuck _isCasting from _castLoadCurrentTrack');
+                _isCasting = false; _castQueueActive = false;
+                _syncCastBtnUi(false);
+                if (_audio) _audio.volume = (bodyEl.querySelector('#rm-vol')?.value || 80) / 100;
+            }
             return;
         }
 
