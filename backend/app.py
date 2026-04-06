@@ -304,11 +304,11 @@ def add_security_headers(response):
 
     csp = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; "
+        "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://www.gstatic.com; "
         "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://fonts.googleapis.com; "
         "font-src 'self' data: https://cdnjs.cloudflare.com https://fonts.gstatic.com; "
         "img-src 'self' data: blob: https:; "
-        "media-src 'self' blob:; "
+        "media-src 'self' blob: https:; "
         "connect-src 'self' ws: wss: https:; "
         "worker-src 'self' blob:; "
         "frame-src 'self'; "
