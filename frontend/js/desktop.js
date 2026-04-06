@@ -107,6 +107,76 @@ NAS.toast = toast;
 window.showToast = toast;
 window.showNotification = toast;
 
+// ───────────────── Client-side Error Logging ─────────────────
+// Sends errors to /api/eventlog/client for remote diagnostics.
+// Rate-limited to 20 events/min client-side; server enforces 30/min/IP.
+
+const _logQueue = [];
+let _logFlushTimer = null;
+let _logCount = 0;
+let _logWindowStart = Date.now();
+const _LOG_CLIENT_LIMIT = 20;
+const _LOG_CLIENT_WINDOW = 60000;
+const _LOG_FLUSH_DELAY = 500;   // batch events within 500ms
+
+/**
+ * Log a frontend event to the server-side Event Log.
+ * @param {string} app - App identifier (e.g. 'radio-music', 'file-manager')
+ * @param {string} level - 'debug' | 'info' | 'warning' | 'error'
+ * @param {string} message - Short description
+ * @param {object} [details] - Additional context
+ */
+function logClient(app, level, message, details) {
+    // Also log to console for dev
+    const consoleFn = level === 'error' ? console.error : level === 'warning' ? console.warn : console.log;
+    consoleFn(`[${app}]`, message, details || '');
+
+    // Client-side rate limit
+    const now = Date.now();
+    if (now - _logWindowStart > _LOG_CLIENT_WINDOW) {
+        _logCount = 0;
+        _logWindowStart = now;
+    }
+    if (++_logCount > _LOG_CLIENT_LIMIT) return;
+
+    _logQueue.push({ app, level, message, details });
+    if (!_logFlushTimer) {
+        _logFlushTimer = setTimeout(_flushLogQueue, _LOG_FLUSH_DELAY);
+    }
+}
+
+function _flushLogQueue() {
+    _logFlushTimer = null;
+    if (!NAS.token) return;
+    while (_logQueue.length) {
+        const ev = _logQueue.shift();
+        fetch('/api/eventlog/client', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${NAS.token}`,
+                ...(NAS.csrfToken ? { 'X-CSRFToken': NAS.csrfToken } : {}),
+            },
+            body: JSON.stringify(ev),
+        }).catch(() => {});
+    }
+}
+
+NAS.logClient = logClient;
+
+// ── Global unhandled error / rejection handlers ──
+window.addEventListener('error', (event) => {
+    const file = event.filename ? event.filename.split('/').pop() : '?';
+    logClient('global', 'error', `${event.message} (${file}:${event.lineno})`, {
+        file: event.filename, line: event.lineno, col: event.colno,
+    });
+});
+window.addEventListener('unhandledrejection', (event) => {
+    const msg = event.reason?.message || event.reason?.toString?.() || 'Unhandled promise rejection';
+    const stack = event.reason?.stack?.split('\n').slice(0, 3).join(' | ') || '';
+    logClient('global', 'error', msg, { stack });
+});
+
 // ───────────────────── Loading States ─────────────────────
 function showLoading(container, message) {
     if (typeof container === 'string') container = document.querySelector(container);

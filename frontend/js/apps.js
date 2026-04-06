@@ -5323,6 +5323,7 @@ function renderEventLog(body) {
         printer: { icon: 'fa-print', label: 'Druk', color: '#ef4444' },
         security: { icon: 'fa-shield-halved', label: t('Bezpieczeństwo'), color: '#a855f7' },
         error: { icon: 'fa-exclamation-triangle', label: t('Błąd'), color: '#ef4444' },
+        frontend: { icon: 'fa-desktop', label: 'Frontend', color: '#8b5cf6' },
     };
 
     const LEVELS = {

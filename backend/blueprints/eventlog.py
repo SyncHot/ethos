@@ -20,7 +20,7 @@ _socketio = None
 
 LEVELS = ('debug', 'info', 'warning', 'error')
 CATEGORIES = ('system', 'files', 'backup', 'docker', 'storage',
-              'network', 'printer', 'security', 'error')
+              'network', 'printer', 'security', 'error', 'frontend')
 
 def get_db():
     from blueprints.db_pool import get_pooled_db
@@ -239,6 +239,46 @@ def eventlog_create():
     if level not in LEVELS: level = 'info'
 
     log(category, level, message, details=detail)
+    return jsonify({'ok': True}), 201
+
+# ── Client-side error logging (from frontend apps) ──────────────────
+_client_log_buckets = {}   # ip -> [timestamps]  (simple rate limiter)
+_CLIENT_LOG_LIMIT = 30     # max events per window
+_CLIENT_LOG_WINDOW = 60    # seconds
+
+@eventlog_bp.route('/api/eventlog/client', methods=['POST'])
+def eventlog_client():
+    """Accept error/warning reports from frontend apps (auth required)."""
+    data = request.get_json(silent=True) or {}
+    app_name = (data.get('app') or 'unknown')[:64]
+    level = data.get('level', 'error')
+    message = (data.get('message') or '').strip()[:512]
+    details = data.get('details')
+
+    if not message:
+        return jsonify({'error': 'message is required'}), 400
+    if level not in LEVELS:
+        level = 'error'
+
+    # Simple per-IP rate limiter
+    ip = request.headers.get('X-Forwarded-For', request.remote_addr) or '?'
+    if ',' in ip:
+        ip = ip.split(',')[0].strip()
+    now = time.time()
+    bucket = _client_log_buckets.setdefault(ip, [])
+    bucket[:] = [ts for ts in bucket if now - ts < _CLIENT_LOG_WINDOW]
+    if len(bucket) >= _CLIENT_LOG_LIMIT:
+        return jsonify({'error': 'rate limited'}), 429
+    bucket.append(now)
+
+    # Truncate details to prevent abuse
+    if isinstance(details, dict):
+        details = {k[:64]: str(v)[:1024] for k, v in list(details.items())[:20]}
+    elif details is not None:
+        details = {'raw': str(details)[:2048]}
+
+    prefix = f'[{app_name}] ' if app_name != 'unknown' else ''
+    log_with_request('frontend', level, f'{prefix}{message}', details=details)
     return jsonify({'ok': True}), 201
 
 @eventlog_bp.route('/api/eventlog')
