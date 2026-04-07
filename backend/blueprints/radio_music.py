@@ -71,7 +71,7 @@ import xml.etree.ElementTree as ET
 import gevent
 from gevent.lock import BoundedSemaphore as _GeventBoundedSemaphore
 
-from flask import Blueprint, g, jsonify, request, Response, send_file, after_this_request
+from flask import Blueprint, g, jsonify, request, Response, send_file, after_this_request, redirect
 
 from host import data_path, safe_path, q as shq
 
@@ -1481,7 +1481,8 @@ def _fmt_secs(s):
 
 
 def _extract_audio_url(video_url):
-    """Extract direct audio URL from a video page via yt-dlp. Results are cached."""
+    """Extract direct audio URL from a video page via yt-dlp. Results are cached.
+    Falls back to HLS m3u8 for live streams / HLS-only videos."""
     now = time.time()
     if video_url in _YTDLP_URL_CACHE:
         audio_url, ct_hint, exp = _YTDLP_URL_CACHE[video_url]
@@ -1493,16 +1494,32 @@ def _extract_audio_url(video_url):
         return None, None
 
     from host import host_run
-    cmd = (f'{shq(ytdlp)} -f "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio" '
+    # First try: prefer audio-only formats (no HLS, no live stream overhead)
+    cmd = (f'{shq(ytdlp)} -f "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio[protocol!=m3u8]" '
            f'-g --no-warnings --no-playlist {shq(video_url)}')
     r = host_run(cmd, timeout=30)
 
     audio_url = r.stdout.strip().splitlines()[0] if r.stdout and r.stdout.strip() else ''
-    if not audio_url:
-        log.warning('yt-dlp extraction failed for %s: %s', video_url, r.stderr[:200] if r.stderr else '')
-        return None, None
 
-    ct = 'audio/mp4' if ('m4a' in audio_url or 'mime=audio%2Fmp4' in audio_url) else 'audio/webm'
+    # Fallback: HLS streams (live broadcasts, some regional content)
+    if not audio_url:
+        cmd2 = (f'{shq(ytdlp)} -f "91/92/93/bestaudio/best[height<=480]" '
+                f'-g --no-warnings --no-playlist {shq(video_url)}')
+        r2 = host_run(cmd2, timeout=30)
+        audio_url = r2.stdout.strip().splitlines()[0] if r2.stdout and r2.stdout.strip() else ''
+        if audio_url:
+            log.info('yt-dlp HLS fallback for %s', video_url)
+        else:
+            log.warning('yt-dlp extraction failed for %s: %s', video_url, (r.stderr or r2.stderr or '')[:200])
+            return None, None
+
+    if 'm3u8' in audio_url or 'manifest' in audio_url:
+        ct = 'application/x-mpegURL'
+    elif 'm4a' in audio_url or 'mime=audio%2Fmp4' in audio_url:
+        ct = 'audio/mp4'
+    else:
+        ct = 'audio/webm'
+
     _YTDLP_URL_CACHE[video_url] = (audio_url, ct, now + _YTDLP_CACHE_TTL)
 
     # Evict expired entries
@@ -1534,6 +1551,10 @@ def music_stream():
     audio_url, ct_hint = _extract_audio_url(url)
     if not audio_url:
         return jsonify({'error': 'Nie udało się wyodrębnić audio'}), 502
+
+    # HLS live stream — redirect directly to m3u8 so browser can use hls.js or native HLS
+    if ct_hint == 'application/x-mpegURL' or 'm3u8' in audio_url or 'manifest' in audio_url:
+        return redirect(audio_url, code=302)
 
     range_header = request.headers.get('Range')
     headers = {

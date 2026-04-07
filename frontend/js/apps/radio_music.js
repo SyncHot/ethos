@@ -141,6 +141,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     let _lockOverlay = null;
     let _wakeLock = null;
     let _seekLocked = false;    // true during track switch → seekbar won't jump to 0
+    let _hlsInstance = null;    // hls.js instance for HLS live streams
     let _prevNextTs = 0;        // debounce timestamp for Next/Prev buttons (500ms cooldown)
 
     // BroadcastChannel — coordinate multi-tab audio (E-07/E-12): only one tab plays at a time
@@ -2489,7 +2490,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 } else if (action === 'playlist') {
                     _showAddToPlaylistModal(track);
                 } else if (action === 'archive') {
-                    _archiveTrack(track);
+                    _onArchiveBtnClick(track.url, null);
                 } else if (action === 'download' && archKey) {
                     const a = document.createElement('a');
                     a.href = `/api/radio-music/archive/download/${archKey}?token=${NAS.token || ''}`;
@@ -3133,6 +3134,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             _audio.onwaiting = null; _audio.onplaying = null; _audio.onstalled = null;
             _audio.pause(); _audio.src = ''; _audio.load(); // release media resource
         }
+        if (_hlsInstance) { try { _hlsInstance.destroy(); } catch (_) {} _hlsInstance = null; }
         // F-04 RAM cleanup: immediately release preload buffer on every new play
         if (_preloadAudio) {
             _preloadAudio.oncanplaythrough = null;
@@ -3342,6 +3344,32 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             const msg = _audio?.error?.message || '';
             _cl('error', 'Audio error', { code, msg, hasPlayed, urlIdx, name: item?.name, isRadio });
             clearTimeout(_radioRetryTimer); _radioRetryTimer = null;
+
+            // MEDIA_ERR_SRC_NOT_SUPPORTED (4) — try hls.js for live streams / m3u8 redirects
+            if (code === 4 && typeof Hls !== 'undefined' && Hls.isSupported() && !_audio._hlsAttempted) {
+                const currentSrc = _audio.src;
+                _audio._hlsAttempted = true;
+                _cl('info', 'Trying HLS.js fallback', { src: currentSrc?.substring(0, 80) });
+                if (_hlsInstance) { try { _hlsInstance.destroy(); } catch (_) {} _hlsInstance = null; }
+                const hls = new Hls({ enableWorker: false });
+                _hlsInstance = hls;
+                hls.loadSource(currentSrc);
+                hls.attachMedia(_audio);
+                hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                    _audio.play().catch(err => {
+                        if (err.name !== 'AbortError') tryUrl(urlIdx + 1);
+                    });
+                });
+                hls.on(Hls.Events.ERROR, (ev, data) => {
+                    if (data.fatal) {
+                        _cl('warning', 'HLS.js fatal error', { type: data.type, details: data.details });
+                        hls.destroy(); _hlsInstance = null;
+                        tryUrl(urlIdx + 1);
+                    }
+                });
+                return;
+            }
+
             if (!hasPlayed) {
                 urlIdx++;
                 tryUrl(urlIdx);
