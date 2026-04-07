@@ -8,8 +8,11 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     let bodyEl, activeSection = 'most-played', _audio = null, _playing = null;
     let _favorites = [], _subscriptions = [], _countries = [], _tags = [];
     let _recentStations = [];  // for prev/next navigation
-    let _musicQueue = [];      // music track queue
+    let _musicQueue = [];      // music track queue (music + audiobook types only)
     let _musicQueueIdx = -1;   // index of currently playing track in queue
+    let _podQueue = [];        // podcast episode queue (separate from music)
+    let _podQueueIdx = -1;
+    let _savedMusicQueue = null; // snapshot saved when switching to radio
     let _repeatMode = 0;       // 0=off, 1=repeat all, 2=repeat one
     let _shuffle = false;
     let _ytdlpReady = null;    // null = unknown, true/false
@@ -40,6 +43,46 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
     const _LS_KEY = 'rm_playback_state';
     let _savePending = false;
+
+    // Sidebar group definitions — order is user-customisable via DnD (saved in localStorage)
+    const _SIDEBAR_GROUPS = [
+        { id: 'discover', label: 'Odkrywaj', items: [
+            { key: 'discovery', icon: 'fas fa-compass', label: 'Odkrywaj' },
+        ]},
+        { id: 'music', label: 'Muzyka', items: [
+            { key: 'music', icon: 'fab fa-youtube', label: 'Szukaj' },
+            { key: 'local', icon: 'fas fa-folder-open', label: 'Lokalna muzyka' },
+            { key: 'local-audiobooks', icon: 'fas fa-book-reader', label: 'Lok. audiobooki' },
+            { key: 'playlists', icon: 'fas fa-list', label: 'Playlisty' },
+            { key: 'queue', icon: 'fas fa-list-ol', label: 'Kolejka' },
+        ]},
+        { id: 'radio', label: 'Radio', items: [
+            { key: 'radio', icon: 'fas fa-broadcast-tower', label: 'Przeglądaj' },
+            { key: 'favorites', icon: 'fas fa-heart', label: 'Ulubione' },
+            { key: 'countries', icon: 'fas fa-globe', label: 'Kraje' },
+            { key: 'tags', icon: 'fas fa-tags', label: 'Gatunki' },
+        ]},
+        { id: 'podcasts', label: 'Podcasty', items: [
+            { key: 'podcasts', icon: 'fas fa-podcast', label: 'Szukaj' },
+            { key: 'subscriptions', icon: 'fas fa-rss', label: 'Subskrypcje' },
+            { key: 'pod-queue', icon: 'fas fa-list-ul', label: 'Kolejka odcinków' },
+        ]},
+        { id: 'other', label: 'Inne', items: [
+            { key: 'most-played', icon: 'fas fa-fire', label: 'Najczęściej grane' },
+            { key: 'audiobooks', icon: 'fas fa-book-open', label: 'Audiobooki' },
+            { key: 'history', icon: 'fas fa-history', label: 'Historia' },
+        ]},
+    ];
+
+    // Detect user's country from browser language (e.g. 'pl-PL' → 'PL')
+    function _detectCountry() {
+        const saved = localStorage.getItem('rm_user_country');
+        if (saved) return saved;
+        const lang = navigator.language || navigator.languages?.[0] || 'en';
+        const parts = lang.split('-');
+        const country = parts.length > 1 ? parts[1].toUpperCase() : parts[0].toUpperCase();
+        return country;
+    }
 
     const _POD_GENRES = [
         {key:'', label:'Wszystkie'}, {key:'truecrime', label:'True Crime'}, {key:'comedy', label:'Komedia'},
@@ -301,7 +344,41 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-sidebar-item:hover{color:#fff;background:rgba(255,255,255,.05)}',
 '.rm-sidebar-item.active{color:#1DB954;border-left-color:#1DB954;background:rgba(29,185,84,.08);font-weight:600}',
 '.rm-sidebar-item i{width:18px;text-align:center;font-size:14px}',
-'.rm-sidebar-label{padding:20px 20px 6px;font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:rgba(255,255,255,.35);font-weight:700}',
+'.rm-sidebar-label{padding:20px 20px 6px;font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:rgba(255,255,255,.35);font-weight:700;display:flex;align-items:center;justify-content:space-between;user-select:none}',
+'.rm-sidebar-group{transition:opacity .15s}',
+'.rm-sidebar-group.rm-dnd-dragging{opacity:.4}',
+'.rm-sidebar-group.rm-dnd-over{box-shadow:inset 0 2px 0 #1DB954}',
+'.rm-sidebar-edit-btn{background:none;border:none;color:rgba(255,255,255,.3);font-size:11px;cursor:pointer;padding:2px 8px 2px 4px;border-radius:4px;transition:color .15s;white-space:nowrap}',
+'.rm-sidebar-edit-btn:hover{color:#1DB954}',
+'.rm-sidebar-drag-handle{display:none;color:rgba(255,255,255,.25);font-size:12px;padding:0 8px;cursor:grab}',
+'.rm-sidebar-edit-mode .rm-sidebar-drag-handle{display:block}',
+'.rm-sidebar-edit-mode .rm-sidebar-group{cursor:default}',
+'.rm-sidebar-edit-mode .rm-sidebar-label{color:rgba(255,255,255,.6)}',
+'.rm-sidebar-done-btn{display:none;margin:8px 12px;padding:8px 16px;background:#1DB954;color:#000;border:none;border-radius:20px;font-size:12px;font-weight:700;cursor:pointer;width:calc(100% - 24px)}',
+'.rm-sidebar-done-btn:hover{background:#1ed760}',
+'.rm-sidebar-edit-mode .rm-sidebar-done-btn{display:block}',
+/* Discovery section */
+'.rm-disc-country{display:flex;align-items:center;gap:10px;padding:16px 20px 8px;background:rgba(255,255,255,.03);border-bottom:1px solid rgba(255,255,255,.06);flex-wrap:wrap}',
+'.rm-disc-country-label{font-size:12px;color:rgba(255,255,255,.5)}',
+'.rm-disc-country-select{padding:6px 12px;border:1px solid rgba(255,255,255,.1);border-radius:16px;background:rgba(255,255,255,.06);color:#fff;font-size:12px;outline:none;cursor:pointer}',
+'.rm-disc-section{margin-bottom:24px}',
+'.rm-disc-title{font-size:14px;font-weight:700;color:#fff;padding:16px 20px 8px;display:flex;align-items:center;gap:8px}',
+'.rm-disc-title i{color:#1DB954}',
+'.rm-disc-carousel{display:flex;gap:12px;overflow-x:auto;padding:0 20px 12px;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;scrollbar-width:none}',
+'.rm-disc-carousel::-webkit-scrollbar{display:none}',
+'.rm-disc-card{flex-shrink:0;width:160px;background:rgba(255,255,255,.05);border-radius:10px;overflow:hidden;cursor:pointer;transition:background .15s,transform .15s;scroll-snap-align:start;touch-action:pan-x}',
+'.rm-disc-card:hover{background:rgba(255,255,255,.1);transform:translateY(-2px)}',
+'.rm-disc-card-art{width:160px;height:100px;overflow:hidden;background:#282828;position:relative}',
+'.rm-disc-card-art img{width:100%;height:100%;object-fit:cover}',
+'.rm-disc-card-art i{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:32px;color:rgba(255,255,255,.2)}',
+'.rm-disc-card-body{padding:10px}',
+'.rm-disc-card-title{font-size:12px;font-weight:600;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+'.rm-disc-card-meta{font-size:11px;color:rgba(255,255,255,.4);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:3px}',
+'.rm-disc-badge{position:absolute;top:6px;left:6px;font-size:9px;font-weight:700;padding:2px 6px;border-radius:8px;backdrop-filter:blur(4px)}',
+'.rm-disc-badge-radio{background:rgba(29,185,84,.85);color:#000}',
+'.rm-disc-badge-pod{background:rgba(100,100,255,.85);color:#fff}',
+'.rm-disc-badge-music{background:rgba(255,60,60,.85);color:#fff}',
+'.rm-disc-empty{padding:20px;text-align:center;color:rgba(255,255,255,.3);font-size:13px}',
 '.rm-main{flex:1;display:flex;flex-direction:column;overflow:hidden;background:#121212}',
 '.rm-toolbar{display:flex;align-items:center;gap:10px;padding:12px 20px;background:#181818;border-bottom:1px solid rgba(255,255,255,.06);flex-wrap:wrap}',
 '.rm-search{flex:1;min-width:180px;padding:10px 16px;border:none;border-radius:24px;background:rgba(255,255,255,.08);color:#fff;font-size:13px;outline:none;transition:background .2s}',
@@ -612,26 +689,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             body.innerHTML = `
 <style>${getCSS()}</style>
 <div class="rm-wrap">
-  <div class="rm-sidebar">
-    <div class="rm-sidebar-label">${t('Muzyka')}</div>
-    <div class="rm-sidebar-item" data-section="music"><i class="fab fa-youtube"></i> ${t('Szukaj')}</div>
-    <div class="rm-sidebar-item" data-section="local"><i class="fas fa-folder-open"></i> ${t('Lokalna muzyka')}</div>
-    <div class="rm-sidebar-item" data-section="local-audiobooks"><i class="fas fa-book-reader"></i> ${t('Lokalne audiobooki')}</div>
-    <div class="rm-sidebar-item" data-section="playlists"><i class="fas fa-list"></i> ${t('Playlisty')}</div>
-    <div class="rm-sidebar-item" data-section="queue"><i class="fas fa-list-ol"></i> ${t('Kolejka')}</div>
-    <div class="rm-sidebar-label">${t('Radio')}</div>
-    <div class="rm-sidebar-item" data-section="radio"><i class="fas fa-broadcast-tower"></i> ${t('Przeglądaj')}</div>
-    <div class="rm-sidebar-item" data-section="favorites"><i class="fas fa-heart"></i> ${t('Ulubione')}</div>
-    <div class="rm-sidebar-item" data-section="countries"><i class="fas fa-globe"></i> ${t('Kraje')}</div>
-    <div class="rm-sidebar-item" data-section="tags"><i class="fas fa-tags"></i> ${t('Gatunki')}</div>
-    <div class="rm-sidebar-label">${t('Podcasty')}</div>
-    <div class="rm-sidebar-item" data-section="podcasts"><i class="fas fa-podcast"></i> ${t('Szukaj')}</div>
-    <div class="rm-sidebar-item" data-section="subscriptions"><i class="fas fa-rss"></i> ${t('Subskrypcje')}</div>
-    <div class="rm-sidebar-label">${t('Inne')}</div>
-    <div class="rm-sidebar-item active" data-section="most-played"><i class="fas fa-fire"></i> ${t('Najczęściej grane')}</div>
-    <div class="rm-sidebar-item" data-section="audiobooks"><i class="fas fa-book-open"></i> ${t('Audiobooki')}</div>
-    <div class="rm-sidebar-item" data-section="history"><i class="fas fa-history"></i> ${t('Historia')}</div>
-  </div>
+  <div class="rm-sidebar" id="rm-sidebar"></div>
   <div class="rm-main">
     <div class="rm-mobile-nav" id="rm-mobile-nav">
       <button class="rm-mnav-btn active" data-section="most-played"><i class="fas fa-fire"></i><span>${t('Home')}</span></button>
@@ -707,30 +765,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             };
             if (_isMobile) _enterFullscreen();
 
-            // Sections accessible via the "More" bottom sheet on mobile
-            const _MORE_SECTIONS = ['local','local-audiobooks','playlists','queue','history'];
-            function _syncMobileNav(section) {
-                body.querySelectorAll('#rm-mobile-nav > .rm-mnav-btn').forEach(b => {
-                    if (b.dataset.section === 'more') {
-                        b.classList.toggle('active', _MORE_SECTIONS.includes(section));
-                    } else {
-                        b.classList.toggle('active', b.dataset.section === section);
-                    }
-                });
-                const sheet = body.querySelector('#rm-more-sheet');
-                if (sheet) sheet.classList.remove('open');
-            }
-
-            // Sidebar navigation (desktop)
-            body.querySelectorAll('.rm-sidebar-item').forEach(el => {
-                el.onclick = () => {
-                    body.querySelectorAll('.rm-sidebar-item').forEach(e => e.classList.remove('active'));
-                    el.classList.add('active');
-                    _syncMobileNav(el.dataset.section);
-                    activeSection = el.dataset.section;
-                    loadSection(activeSection);
-                };
-            });
+            // Sidebar navigation is wired in _renderSidebar() below
 
             // Mobile bottom tab bar
             body.querySelectorAll('#rm-mobile-nav > .rm-mnav-btn').forEach(btn => {
@@ -830,6 +865,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 _audio.currentTime = pct * _audio.duration;
             };
 
+            _renderSidebar();
             loadSection('most-played');
 
             // Initialize Google Cast SDK (wrapped so failures don't break the app)
@@ -861,11 +897,155 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     });
     setTimeout(() => { if (typeof toggleMaximize === 'function') toggleMaximize('radio-music'); }, 50);
 
+    // ── Dynamic Sidebar with Drag & Drop reordering ───────────────────────────
+
+    const _MORE_SECTIONS = ['local','local-audiobooks','playlists','queue','history'];
+
+    function _syncMobileNav(section) {
+        if (!bodyEl) return;
+        bodyEl.querySelectorAll('#rm-mobile-nav > .rm-mnav-btn').forEach(b => {
+            if (b.dataset.section === 'more') {
+                b.classList.toggle('active', _MORE_SECTIONS.includes(section));
+            } else {
+                b.classList.toggle('active', b.dataset.section === section);
+            }
+        });
+        const sheet = bodyEl.querySelector('#rm-more-sheet');
+        if (sheet) sheet.classList.remove('open');
+    }
+
+    function _navTo(section) {
+        bodyEl.querySelectorAll('.rm-sidebar-item').forEach(e => e.classList.toggle('active', e.dataset.section === section));
+        _syncMobileNav(section);
+        activeSection = section;
+        loadSection(section);
+    }
+
+    function _renderSidebar() {
+        const sidebar = bodyEl.querySelector('#rm-sidebar');
+        if (!sidebar) return;
+
+        // Load saved group order (array of group IDs)
+        let order;
+        try { order = JSON.parse(localStorage.getItem('rm_menu_order') || 'null'); } catch(_) { order = null; }
+        const defaultOrder = _SIDEBAR_GROUPS.map(g => g.id);
+        const groupOrder = Array.isArray(order) ? order : defaultOrder;
+
+        // Build ordered group list (filter out unknowns, append any new groups at end)
+        const groupMap = Object.fromEntries(_SIDEBAR_GROUPS.map(g => [g.id, g]));
+        const orderedGroups = [
+            ...groupOrder.filter(id => groupMap[id]).map(id => groupMap[id]),
+            ..._SIDEBAR_GROUPS.filter(g => !groupOrder.includes(g.id)),
+        ];
+
+        sidebar.innerHTML = '';
+        let editMode = false;
+
+        // Edit button in sidebar header
+        const editBtn = document.createElement('button');
+        editBtn.className = 'rm-sidebar-edit-btn';
+        editBtn.style.cssText = 'margin:12px 12px 0;display:block;text-align:right';
+        editBtn.innerHTML = '<i class="fas fa-sliders-h"></i> ' + t('Edytuj');
+        editBtn.onclick = () => { editMode = !editMode; sidebar.classList.toggle('rm-sidebar-edit-mode', editMode); };
+        sidebar.appendChild(editBtn);
+
+        // Done button (shown in edit mode)
+        const doneBtn = document.createElement('button');
+        doneBtn.className = 'rm-sidebar-done-btn';
+        doneBtn.textContent = t('✓ Gotowe');
+        doneBtn.onclick = () => { editMode = false; sidebar.classList.remove('rm-sidebar-edit-mode'); };
+        sidebar.appendChild(doneBtn);
+
+        let dragSrc = null;
+
+        orderedGroups.forEach(group => {
+            const groupEl = document.createElement('div');
+            groupEl.className = 'rm-sidebar-group';
+            groupEl.dataset.groupId = group.id;
+
+            // Group label row with drag handle
+            const labelRow = document.createElement('div');
+            labelRow.className = 'rm-sidebar-label';
+            labelRow.innerHTML = `<span>${t(group.label)}</span>`;
+
+            const handle = document.createElement('span');
+            handle.className = 'rm-sidebar-drag-handle';
+            handle.innerHTML = '<i class="fas fa-grip-vertical"></i>';
+            labelRow.appendChild(handle);
+
+            groupEl.appendChild(labelRow);
+
+            // Group items
+            group.items.forEach(item => {
+                const el = document.createElement('div');
+                el.className = 'rm-sidebar-item' + (item.key === activeSection ? ' active' : '');
+                el.dataset.section = item.key;
+                el.innerHTML = `<i class="${item.icon}"></i> ${t(item.label)}`;
+                el.onclick = () => { if (!editMode) _navTo(item.key); };
+                groupEl.appendChild(el);
+            });
+
+            // HTML5 Drag & Drop — only active when in edit mode
+            // Guard: ignore drags starting within 20px of left/right edge (Motorola system gestures)
+            groupEl.setAttribute('draggable', 'true');
+
+            groupEl.addEventListener('dragstart', (e) => {
+                if (!editMode) { e.preventDefault(); return; }
+                // Motorola edge guard: ignore if drag starts near left (<20px) or right (>win-20px) edge
+                if (e.clientX < 20 || e.clientX > window.innerWidth - 20) { e.preventDefault(); return; }
+                dragSrc = groupEl;
+                groupEl.classList.add('rm-dnd-dragging');
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', group.id);
+            });
+
+            groupEl.addEventListener('dragend', () => {
+                groupEl.classList.remove('rm-dnd-dragging');
+                sidebar.querySelectorAll('.rm-dnd-over').forEach(el => el.classList.remove('rm-dnd-over'));
+            });
+
+            groupEl.addEventListener('dragover', (e) => {
+                if (!editMode || !dragSrc || dragSrc === groupEl) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                sidebar.querySelectorAll('.rm-dnd-over').forEach(el => el.classList.remove('rm-dnd-over'));
+                groupEl.classList.add('rm-dnd-over');
+            });
+
+            groupEl.addEventListener('dragleave', () => {
+                groupEl.classList.remove('rm-dnd-over');
+            });
+
+            groupEl.addEventListener('drop', (e) => {
+                if (!editMode || !dragSrc || dragSrc === groupEl) return;
+                e.preventDefault();
+                groupEl.classList.remove('rm-dnd-over');
+                // Reorder DOM
+                const groups = [...sidebar.querySelectorAll('.rm-sidebar-group')];
+                const srcIdx = groups.indexOf(dragSrc);
+                const dstIdx = groups.indexOf(groupEl);
+                if (srcIdx < dstIdx) groupEl.after(dragSrc);
+                else groupEl.before(dragSrc);
+                // Save new order to localStorage
+                const newOrder = [...sidebar.querySelectorAll('.rm-sidebar-group')].map(el => el.dataset.groupId);
+                localStorage.setItem('rm_menu_order', JSON.stringify(newOrder));
+                dragSrc = null;
+            });
+
+            sidebar.appendChild(groupEl);
+        });
+    }
+
+    function _syncSidebarActive(section) {
+        bodyEl.querySelectorAll('.rm-sidebar-item').forEach(e => e.classList.toggle('active', e.dataset.section === section));
+    }
+
     function loadSection(section) {
         const toolbar = bodyEl.querySelector('#rm-toolbar');
         const content = bodyEl.querySelector('#rm-content');
         toolbar.innerHTML = '';
         content.innerHTML = '';
+        _syncSidebarActive(section);
         // Detect slow NAS disk wake (>3s response): show indicator, remove when content populates
         clearTimeout(_nasSpinTimer);
         _nasSpinTimer = setTimeout(() => {
@@ -900,6 +1080,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             case 'queue': loadQueue(content); break;
             case 'history': loadHistory(content); break;
             case 'audiobooks': loadAudiobooks(toolbar, content); break;
+            case 'discovery': loadDiscovery(toolbar, content); break;
+            case 'pod-queue': loadPodQueue(content); break;
         }
     }
 
@@ -1308,18 +1490,27 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             openPodcast(podcast);
         };
 
-        // Episode play
+        // Episode play / queue
         content.querySelectorAll('.rm-ep-item').forEach(el => {
             el.onclick = () => {
                 const url = el.dataset.url;
                 const title = el.querySelector('.rm-ep-title').textContent;
-                playAudio({
+                const epItem = {
                     name: title,
                     url: url,
                     type: 'podcast',
                     meta: pod.title || podcast.name,
                     image: pod.image || podcast.artwork || '',
-                });
+                };
+                // Add to pod queue and play; if clicking the same index, just play
+                const existIdx = _podQueue.findIndex(e => e.url === url);
+                if (existIdx >= 0) {
+                    _podQueueIdx = existIdx;
+                } else {
+                    _podQueue.push(epItem);
+                    _podQueueIdx = _podQueue.length - 1;
+                }
+                playAudio(epItem);
             };
         });
     }
@@ -2303,6 +2494,168 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         });
     }
 
+    /* ── Discovery (Geo-personalized) ─────────────────── */
+
+    async function loadDiscovery(toolbar, content) {
+        const COUNTRY_MAP = [
+            {code:'PL',name:'Polska'},{code:'US',name:'USA'},{code:'GB',name:'UK'},
+            {code:'DE',name:'Niemcy'},{code:'FR',name:'Francja'},{code:'ES',name:'Hiszpania'},
+            {code:'IT',name:'Włochy'},{code:'BR',name:'Brazylia'},{code:'SE',name:'Szwecja'},
+            {code:'NL',name:'Holandia'},{code:'CZ',name:'Czechy'},{code:'UA',name:'Ukraina'},
+            {code:'JP',name:'Japonia'},{code:'AU',name:'Australia'},{code:'CA',name:'Kanada'},
+        ];
+
+        let country = _detectCountry();
+        // Normalise — must be valid code from map; fallback to PL
+        if (!COUNTRY_MAP.find(c => c.code === country)) country = 'PL';
+
+        // Country selector
+        toolbar.innerHTML = `<div class="rm-disc-country">
+            <span class="rm-disc-country-label"><i class="fas fa-globe"></i> ${t('Kraj')}:</span>
+            <select class="rm-disc-country-select" id="rm-disc-country-sel">
+                ${COUNTRY_MAP.map(c => `<option value="${c.code}"${c.code===country?' selected':''}>${escH(c.name)}</option>`).join('')}
+            </select>
+        </div>`;
+        toolbar.querySelector('#rm-disc-country-sel').onchange = (e) => {
+            localStorage.setItem('rm_user_country', e.target.value);
+            loadDiscovery(toolbar, content);
+        };
+
+        content.innerHTML = '<div class="rm-disc-loading" style="padding:40px;text-align:center;color:rgba(255,255,255,.4)"><i class="fas fa-compass fa-spin"></i> ' + t('Ładowanie odkryć…') + '</div>';
+
+        // Fetch all 3 data sources in parallel
+        const [radioData, podData] = await Promise.allSettled([
+            api('/radio-music/radio/search?country=' + country + '&limit=8&order=clickcount&reverse=true'),
+            api('/radio-music/podcasts/top?country=' + country.toLowerCase() + '&limit=8'),
+        ]);
+
+        const stations = (radioData.status === 'fulfilled' ? (radioData.value?.items || []) : []).slice(0, 6);
+        const pods = (podData.status === 'fulfilled' ? (podData.value?.items || []) : []).slice(0, 5);
+
+        // Music discovery: use regional genre search
+        const countryGenreMap = { PL:'polish music polskie', DE:'german music deutsch', FR:'french music chanson', ES:'spanish music pop espanol', IT:'italian music', BR:'brazilian music MPB', JP:'japanese pop music J-pop' };
+        const musicQ = countryGenreMap[country] || 'top hits ' + (new Date().getFullYear());
+
+        content.innerHTML = '';
+
+        // ── Top Radio ──
+        if (stations.length) {
+            const sec = document.createElement('div');
+            sec.className = 'rm-disc-section';
+            sec.innerHTML = `<div class="rm-disc-title"><i class="fas fa-broadcast-tower"></i> ${t('Top Radio')} — ${COUNTRY_MAP.find(c=>c.code===country)?.name||country}</div>`;
+            const carousel = document.createElement('div');
+            carousel.className = 'rm-disc-carousel';
+            stations.forEach(s => {
+                const card = document.createElement('div');
+                card.className = 'rm-disc-card';
+                const artHtml = s.favicon
+                    ? `<img src="${escH(s.favicon)}" loading="lazy" onerror="this.outerHTML='<i class=\\'fas fa-broadcast-tower\\'></i>'">`
+                    : '<i class="fas fa-broadcast-tower"></i>';
+                card.innerHTML = `<div class="rm-disc-card-art">${artHtml}<span class="rm-disc-badge rm-disc-badge-radio">LIVE</span></div>`
+                    + `<div class="rm-disc-card-body"><div class="rm-disc-card-title">${escH(s.name)}</div>`
+                    + `<div class="rm-disc-card-meta">${escH((s.tags||'').split(',')[0]||'')||'Radio'}</div></div>`;
+                card.onclick = () => playStation(s);
+                carousel.appendChild(card);
+            });
+            sec.appendChild(carousel);
+            content.appendChild(sec);
+        }
+
+        // ── Top Podcasts ──
+        if (pods.length) {
+            const sec = document.createElement('div');
+            sec.className = 'rm-disc-section';
+            sec.innerHTML = `<div class="rm-disc-title"><i class="fas fa-podcast"></i> ${t('Top Podcasty')}</div>`;
+            const carousel = document.createElement('div');
+            carousel.className = 'rm-disc-carousel';
+            pods.forEach(p => {
+                const card = document.createElement('div');
+                card.className = 'rm-disc-card';
+                const artHtml = p.artwork_url
+                    ? `<img src="${escH(p.artwork_url)}" loading="lazy" onerror="this.outerHTML='<i class=\\'fas fa-podcast\\'></i>'">`
+                    : '<i class="fas fa-podcast"></i>';
+                card.innerHTML = `<div class="rm-disc-card-art">${artHtml}<span class="rm-disc-badge rm-disc-badge-pod">POD</span></div>`
+                    + `<div class="rm-disc-card-body"><div class="rm-disc-card-title">${escH(p.name||p.title||'')}</div>`
+                    + `<div class="rm-disc-card-meta">${escH(p.artist_name||p.author||'')}</div></div>`;
+                card.onclick = () => { _navTo('podcasts'); };
+                carousel.appendChild(card);
+            });
+            sec.appendChild(carousel);
+            content.appendChild(sec);
+        }
+
+        // ── Trending Music ── (lazy-loaded so no spinner delay)
+        const musicSec = document.createElement('div');
+        musicSec.className = 'rm-disc-section';
+        musicSec.innerHTML = `<div class="rm-disc-title"><i class="fas fa-music"></i> ${t('Trending Music')}</div>`
+            + `<div class="rm-disc-carousel" id="rm-disc-music-carousel"><div class="rm-disc-empty"><i class="fas fa-spinner fa-spin"></i></div></div>`;
+        content.appendChild(musicSec);
+
+        // Fetch music async (don't block render)
+        api('/radio-music/music/search?q=' + encodeURIComponent(musicQ) + '&limit=8').then(d => {
+            const carousel = musicSec.querySelector('#rm-disc-music-carousel');
+            if (!carousel) return;
+            const tracks = (d.items || []).slice(0, 6);
+            if (!tracks.length) { carousel.innerHTML = '<div class="rm-disc-empty">' + t('Brak wyników') + '</div>'; return; }
+            carousel.innerHTML = '';
+            tracks.forEach(tr => {
+                const card = document.createElement('div');
+                card.className = 'rm-disc-card';
+                const artHtml = tr.image
+                    ? `<img src="${escH(tr.image)}" loading="lazy" onerror="this.outerHTML='<i class=\\'fas fa-music\\'></i>'">`
+                    : '<i class="fas fa-music"></i>';
+                card.innerHTML = `<div class="rm-disc-card-art">${artHtml}<span class="rm-disc-badge rm-disc-badge-music">♪</span></div>`
+                    + `<div class="rm-disc-card-body"><div class="rm-disc-card-title">${escH(tr.name||tr.title||'')}</div>`
+                    + `<div class="rm-disc-card-meta">${escH(tr.artist||tr.meta||'')}</div></div>`;
+                card.onclick = () => playAudio(tr);
+                carousel.appendChild(card);
+            });
+        }).catch(() => {});
+
+        if (!stations.length && !pods.length) {
+            content.innerHTML = '<div class="rm-disc-empty" style="padding:60px 20px"><i class="fas fa-compass" style="font-size:40px;margin-bottom:16px;display:block"></i>'
+                + t('Brak danych dla wybranego kraju.') + '<br><br>'
+                + '<button class="rm-chip" onclick="this.closest(\'.rm-content\').innerHTML=\'\'">' + t('Spróbuj inny kraj') + '</button></div>';
+        }
+    }
+
+    /* ── Podcast Episode Queue ─────────────────────────── */
+
+    function loadPodQueue(content) {
+        content.innerHTML = '';
+        const title = document.createElement('div');
+        title.className = 'rm-section-title';
+        title.innerHTML = '<i class="fas fa-list-ul"></i> ' + t('Kolejka odcinków');
+        content.appendChild(title);
+
+        if (!_podQueue.length) {
+            content.innerHTML += '<div class="rm-empty"><i class="fas fa-podcast"></i> ' + t('Kolejka jest pusta') + '</div>';
+            return;
+        }
+
+        _podQueue.forEach((ep, idx) => {
+            const row = document.createElement('div');
+            row.className = 'rm-queue-item' + (idx === _podQueueIdx ? ' rm-queue-active' : '');
+            row.innerHTML = `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escH(ep.name||ep.title||'')}</span>`
+                + `<button class="rm-queue-item-rm" title="${t('Usuń')}"><i class="fas fa-times"></i></button>`;
+            row.onclick = () => { _podQueueIdx = idx; playAudio(ep); loadPodQueue(content); };
+            row.querySelector('.rm-queue-item-rm').onclick = (e) => {
+                e.stopPropagation();
+                _podQueue.splice(idx, 1);
+                if (_podQueueIdx >= idx && _podQueueIdx > 0) _podQueueIdx--;
+                loadPodQueue(content);
+            };
+            content.appendChild(row);
+        });
+
+        const clearBtn = document.createElement('button');
+        clearBtn.className = 'rm-chip';
+        clearBtn.style.margin = '16px 0';
+        clearBtn.innerHTML = '<i class="fas fa-trash"></i> ' + t('Wyczyść kolejkę');
+        clearBtn.onclick = () => { _podQueue = []; _podQueueIdx = -1; loadPodQueue(content); };
+        content.appendChild(clearBtn);
+    }
+
     /* ── Audiobooks for Kids ───────────────────────── */
 
     async function loadAudiobooks(toolbar, content) {
@@ -2461,6 +2814,18 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         return false;
     }
 
+    // Advance podcast episode queue
+    function _advancePodQueue() {
+        if (!_podQueue.length || _podQueueIdx < 0) return false;
+        const nextIdx = _podQueueIdx + 1;
+        if (nextIdx < _podQueue.length) {
+            _podQueueIdx = nextIdx;
+            playAudio(_podQueue[nextIdx]);
+            return true;
+        }
+        return false;
+    }
+
     function playAudio(item) {
         // Safety: reset stuck _isCasting if no real Cast session exists
         if (_isCasting) {
@@ -2492,7 +2857,24 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         // Build ordered list of URLs to try (primary + fallbacks)
         const isMusic = item.type === 'music';
         const isLocal = item.type === 'local';
-        const isRadio = !isMusic && !isLocal;
+        const isPodcast = item.type === 'podcast';
+        const isRadio = !isMusic && !isLocal && !isPodcast;
+
+        // Context-Aware Queue:
+        // Radio — save current music queue, don't touch _musicQueue
+        // Podcast — use separate _podQueue
+        // Music/local — restore saved music queue if returning from radio
+        if (isRadio) {
+            if (_musicQueue.length > 0 && _savedMusicQueue === null) {
+                _savedMusicQueue = { queue: _musicQueue.slice(), idx: _musicQueueIdx };
+            }
+        } else if (isMusic || isLocal) {
+            if (_savedMusicQueue !== null) {
+                _musicQueue = _savedMusicQueue.queue;
+                _musicQueueIdx = _savedMusicQueue.idx;
+                _savedMusicQueue = null;
+            }
+        }
 
         // For local files, always refresh the token (stored URL may have stale token)
         if (isLocal && item.path) {
@@ -2661,8 +3043,9 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 return;
             }
 
-            // Auto-play next in queue
-            if (_advanceQueue()) return;
+            // Podcast — advance pod queue; music — advance music queue
+            if (isPodcast) { if (_advancePodQueue()) return; }
+            else { if (_advanceQueue()) return; }
             bodyEl.querySelector('#rm-play-pause').innerHTML = '<i class="fas fa-play"></i>';
         };
         _audio.ontimeupdate = () => {
