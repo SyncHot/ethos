@@ -1,11 +1,15 @@
 {
   "name": "EthOS",
   "short_name": "EthOS",
+  "id": "/",
   "start_url": "/",
   "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
   "theme_color": "#1e293b",
   "background_color": "#0f172a",
   "orientation": "any",
+  "categories": ["utilities", "productivity"],
+  "launch_handler": { "client_mode": "navigate-existing" },
   "icons": [
     {
       "src": "/img/icon-192.png",

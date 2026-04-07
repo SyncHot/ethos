@@ -1,7 +1,7 @@
 // EthOS Service Worker v2
 // Bump CACHE_VERSION when deploying static asset changes.
 // Versioned JS/CSS (?v=N in index.html) auto-invalidate on next load.
-const CACHE_VERSION = 'v2';
+const CACHE_VERSION = 'v3';
 const STATIC_CACHE = 'ethos-static-' + CACHE_VERSION;
 const RUNTIME_CACHE = 'ethos-runtime-' + CACHE_VERSION;
 
@@ -181,4 +181,22 @@ self.addEventListener('notificationclick', (event) => {
             return clients.openWindow(event.notification.data);
         })
     );
+});
+
+// Periodic Background Sync — refresh radio station list and music catalog
+// Registered by app with tag "rm-catalog-refresh" (24h interval)
+self.addEventListener("periodicsync", (event) => {
+    if (event.tag === "rm-catalog-refresh") {
+        event.waitUntil(
+            caches.open(STATIC_CACHE).then(async (cache) => {
+                const urls = ["/api/radio/stations", "/api/music/recent"];
+                for (const url of urls) {
+                    try {
+                        const resp = await fetch(url, { credentials: "include" });
+                        if (resp.ok) await cache.put(url, resp);
+                    } catch (_) { /* offline - skip */ }
+                }
+            })
+        );
+    }
 });

@@ -67,7 +67,9 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
     let _npOverlay = null;
     let _npSeekDragging = false;
+    let _npMinimizing = false;  // debounce guard for _onPopState / _minimizeNowPlaying
     let _lockOverlay = null;
+    let _wakeLock = null;
 
     const _AUDIOBOOK_CATEGORIES = [
         {q: 'najlepsze audiobooki dla dzieci po polsku 2024 2025', label: '🏆 Top bajki'},
@@ -838,6 +840,16 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
             // Android back button: minimize NP overlay instead of navigating away
             window.addEventListener('popstate', _onPopState, true);
+
+            // Register Periodic Background Sync to refresh station/music catalog every 24h
+            if ('serviceWorker' in navigator && 'periodicSync' in ServiceWorkerRegistration.prototype) {
+                navigator.serviceWorker.ready.then(async (reg) => {
+                    try {
+                        await reg.periodicSync.register('rm-catalog-refresh', { minInterval: 24 * 60 * 60 * 1000 });
+                        _cl('debug', 'Periodic Background Sync registered');
+                    } catch(e) { _cl('debug', 'PeriodicSync not allowed', { msg: e.message }); }
+                });
+            }
         },
         onClose() {
             _savePlaybackState();
@@ -2532,9 +2544,16 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             _audio.src = src;
             _audio.play().catch(err => {
                 if (err.name === 'NotAllowedError') {
-                    // Browser blocked autoplay — show tap-to-play overlay
                     _cl('warning', 'Autoplay blocked — showing tap-to-play', { name: item?.name });
-                    _showAutoplayPrompt();
+                    // If we've seen a successful play before in this browser, use silent click-to-play
+                    if (localStorage.getItem('rm_autoplay_ok')) {
+                        _setBuffering(false);
+                        document.addEventListener('click', () => {
+                            _audio?.play().then(() => _setBuffering(false)).catch(() => {});
+                        }, { once: true });
+                    } else {
+                        _showAutoplayPrompt();
+                    }
                 } else {
                     _cl('warning', 'play() rejected', { idx, error: err?.message, src: src?.substring(0, 80) });
                     tryUrl(idx + 1);
@@ -2562,6 +2581,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
         _audio.onplay = () => {
             hasPlayed = true;
+            localStorage.setItem('rm_autoplay_ok', '1');
+            _acquireWakeLock();
             _setBuffering(false);
             clearTimeout(_radioRetryTimer); _radioRetryTimer = null;
             bodyEl.querySelector('#rm-autoplay-prompt')?.remove(); // clear tap-to-play if shown
@@ -2576,6 +2597,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         _audio.onwaiting = () => _setBuffering(true);
         _audio.onplaying = () => { _setBuffering(false); clearTimeout(_radioRetryTimer); _radioRetryTimer = null; };
         _audio.onpause = () => {
+            _releaseWakeLock();
             bodyEl.querySelector('#rm-play-pause').innerHTML = '<i class="fas fa-play"></i>';
             _showEq(false);
             _savePlaybackState();
@@ -2792,6 +2814,27 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         playStation(_recentStations[next]);
     }
 
+    async function _acquireWakeLock() {
+        if (!('wakeLock' in navigator)) return;
+        try {
+            if (_wakeLock) return; // already held
+            _wakeLock = await navigator.wakeLock.request('screen');
+            _wakeLock.addEventListener('release', () => { _wakeLock = null; });
+            _cl('debug', 'WakeLock acquired');
+        } catch(e) { _cl('debug', 'WakeLock failed', { msg: e.message }); }
+    }
+
+    function _releaseWakeLock() {
+        if (_wakeLock) { _wakeLock.release(); _wakeLock = null; }
+    }
+
+    // Re-acquire wake lock when page becomes visible again (system releases on screen-off)
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && _audio && !_audio.paused) {
+            _acquireWakeLock();
+        }
+    });
+
     function stopPlayback() {
         _savePlaybackState();
         if (_saveStateInterval) { clearInterval(_saveStateInterval); _saveStateInterval = null; }
@@ -2810,6 +2853,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         _playing = null;
         _clearSeek();
         _hideNowPlaying();
+        _releaseWakeLock();
         if ('mediaSession' in navigator) {
             navigator.mediaSession.metadata = null;
             navigator.mediaSession.playbackState = 'none';
@@ -3177,6 +3221,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             _npOverlay.style.transform = '';
             _npOverlay.classList.remove('rm-np-minimized');
             if (!history.state?.rmNpOpen) history.pushState({ rmNpOpen: true }, '');
+            localStorage.setItem('rm_np_open', '1');
             const visCvs = _npOverlay.querySelector('#rm-np-vis');
             if (visCvs && _audio) _startVisualizer(visCvs);
             _npUpdateLoop();
@@ -3465,13 +3510,36 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         ov.classList.add('rm-np-minimized'); // start hidden
         if (wrap) wrap.appendChild(ov);
         _npOverlay = ov;
-        // Two rAF frames needed: first triggers layout, second removes class so transition fires
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-            ov.classList.remove('rm-np-minimized');
-        }));
+
+        // FLIP shared-element transition: album art flies from mini-player up to full overlay
+        const miniArt = bodyEl.querySelector('#rm-player-art');
+        const fullArt = ov.querySelector('#rm-np-art');
+        if (miniArt && fullArt) {
+            const from = miniArt.getBoundingClientRect();
+            requestAnimationFrame(() => {
+                ov.classList.remove('rm-np-minimized');
+                requestAnimationFrame(() => {
+                    const to = fullArt.getBoundingClientRect();
+                    const dx = from.left - to.left;
+                    const dy = from.top - to.top;
+                    const sx = from.width / to.width;
+                    const sy = from.height / to.height;
+                    fullArt.animate([
+                        { transform: `translate(${dx}px,${dy}px) scale(${sx},${sy})`, opacity: 0.7 },
+                        { transform: 'translate(0,0) scale(1)', opacity: 1 }
+                    ], { duration: 340, easing: 'cubic-bezier(0.4,0,0.2,1)', fill: 'none' });
+                });
+            });
+        } else {
+            // Two rAF frames needed: first triggers layout, second removes class so transition fires
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+                ov.classList.remove('rm-np-minimized');
+            }));
+        }
 
         // Push history state so Android back minimizes overlay instead of navigating away
         if (!history.state?.rmNpOpen) history.pushState({ rmNpOpen: true }, '');
+        localStorage.setItem('rm_np_open', '1');
 
         // Auto-expand queue if there are queued tracks
         if (_musicQueue.length > 0) {
@@ -3492,27 +3560,31 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             _npOverlay.remove();
             _npOverlay = null;
         }
+        localStorage.removeItem('rm_np_open');
     }
 
     // Minimize overlay to mini player (CSS slide-down, DOM kept alive)
     function _minimizeNowPlaying() {
+        if (!_npOverlay || _npMinimizing) return;
         _stopVisualizer();
-        if (!_npOverlay) return;
-        _npOverlay.style.transition = ''; // ensure CSS transition active
-        _npOverlay.style.transform = '';  // clear any in-progress drag
+        _npOverlay.style.transition = '';
+        _npOverlay.style.transform = '';
         _npOverlay.classList.add('rm-np-minimized');
-        // Pop the history state we pushed so the browser history is clean
+        localStorage.removeItem('rm_np_open');
         if (history.state?.rmNpOpen) history.back();
     }
 
     // Android back button handler — intercepts popstate to minimize overlay
-    function _onPopState(e) {
+    function _onPopState() {
+        if (_npMinimizing) return;
         if (_npOverlay && !_npOverlay.classList.contains('rm-np-minimized')) {
-            // Re-push so next back press is also intercepted
-            history.pushState({ rmNpOpen: true }, '');
-            _minimizeNowPlaying();
-            // Now pop the re-pushed state to land back where we were
-            history.back();
+            _npMinimizing = true;
+            _stopVisualizer();
+            _npOverlay.style.transition = '';
+            _npOverlay.style.transform = '';
+            _npOverlay.classList.add('rm-np-minimized');
+            localStorage.removeItem('rm_np_open');
+            setTimeout(() => { _npMinimizing = false; }, 500);
         }
     }
 

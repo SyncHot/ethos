@@ -6,9 +6,12 @@
   "start_url": "/?app=radio-music",
   "scope": "/",
   "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
   "theme_color": "#1a1a2e",
   "background_color": "#0f172a",
   "orientation": "any",
+  "categories": ["music", "entertainment"],
+  "launch_handler": { "client_mode": "navigate-existing" },
   "icons": [
     {
       "src": "/img/icon-music-192.png",
