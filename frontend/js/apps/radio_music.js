@@ -16,6 +16,10 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     let _seekInterval = null;  // interval for updating seekbar
     let _playlists = [];       // user's playlists
     let _saveStateInterval = null;
+    let _seekThrottleTs = 0;   // throttle seekbar DOM updates (ms)
+    let _preloadAudio = null;  // preload next track for near-gapless playback
+    let _radioRetryTimer = null;
+    let _radioRetries = 0;
 
     // ── Chromecast state ──
     let _isCasting = false;
@@ -2336,9 +2340,14 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         _audio.volume = _isCasting ? 0 : (bodyEl.querySelector('#rm-vol')?.value || 80) / 100;
         _playing = item;
 
+        // Reset reconnect state and preload on each new playback
+        clearTimeout(_radioRetryTimer); _radioRetryTimer = null; _radioRetries = 0;
+        if (_preloadAudio) { _preloadAudio.src = ''; _preloadAudio = null; }
+
         // Build ordered list of URLs to try (primary + fallbacks)
         const isMusic = item.type === 'music';
         const isLocal = item.type === 'local';
+        const isRadio = !isMusic && !isLocal;
 
         // For local files, always refresh the token (stored URL may have stale token)
         if (isLocal && item.path) {
@@ -2397,30 +2406,63 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         _audio.onplay = () => {
             hasPlayed = true;
             _setBuffering(false);
+            clearTimeout(_radioRetryTimer); _radioRetryTimer = null;
             bodyEl.querySelector('#rm-play-pause').innerHTML = '<i class="fas fa-pause"></i>';
             _showEq(!isMusic && !isLocal);
             _updateSeekbar();
             _savePlaybackState();
+            _updateMediaSession();
+            if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
             _cl('info', 'Audio playing', { name: item?.name, volume: _audio?.volume });
         };
         _audio.onwaiting = () => _setBuffering(true);
-        _audio.onplaying = () => _setBuffering(false);
+        _audio.onplaying = () => { _setBuffering(false); clearTimeout(_radioRetryTimer); _radioRetryTimer = null; };
         _audio.onpause = () => {
             bodyEl.querySelector('#rm-play-pause').innerHTML = '<i class="fas fa-play"></i>';
             _showEq(false);
             _savePlaybackState();
+            if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
+        };
+        _audio.onstalled = () => {
+            if (!isRadio || !hasPlayed) return;
+            _setBuffering(true);
+            clearTimeout(_radioRetryTimer);
+            _radioRetryTimer = setTimeout(() => {
+                if (!_audio || _playing !== item) return;
+                _cl('info', 'Radio stalled — reconnecting', { name: item?.name });
+                _audio.load();
+                _audio.play().catch(() => {});
+            }, 5000);
         };
         _audio.onerror = () => {
             const code = _audio?.error?.code;
             const msg = _audio?.error?.message || '';
-            _cl('error', 'Audio error', { code, msg, hasPlayed, urlIdx, name: item?.name });
+            _cl('error', 'Audio error', { code, msg, hasPlayed, urlIdx, name: item?.name, isRadio });
+            clearTimeout(_radioRetryTimer); _radioRetryTimer = null;
             if (!hasPlayed) {
                 urlIdx++;
                 tryUrl(urlIdx);
+            } else if (isRadio && _radioRetries < 3) {
+                _radioRetries++;
+                const delay = _radioRetries * 3000;
+                _setBuffering(true);
+                const meta = bodyEl.querySelector('#rm-player-meta');
+                if (meta) meta.textContent = t('Łączenie {n}/{max}…', { n: _radioRetries, max: 3 });
+                _cl('info', 'Radio error — retry ' + _radioRetries + '/3 in ' + delay + 'ms', { name: item?.name });
+                _radioRetryTimer = setTimeout(() => {
+                    if (!_audio || _playing !== item) return;
+                    tryUrl(urlIdx);
+                }, delay);
             } else {
                 _showEq(false);
                 _setBuffering(false);
-                setTimeout(() => _advanceQueue(), 800);
+                if (isRadio) {
+                    const meta = bodyEl.querySelector('#rm-player-meta');
+                    if (meta) meta.textContent = t('Błąd połączenia');
+                    toast(t('Nie można połączyć ze stacją. Spróbuj ponownie.'), 'error');
+                } else {
+                    setTimeout(() => _advanceQueue(), 800);
+                }
             }
         };
         let _endedHandled = false;
@@ -2444,7 +2486,34 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             bodyEl.querySelector('#rm-play-pause').innerHTML = '<i class="fas fa-play"></i>';
         };
         _audio.ontimeupdate = () => {
-            _updateSeekbar();
+            // Throttle seekbar DOM updates to max 4/s (audio currentTime fires up to 20/s)
+            const now = Date.now();
+            if (now - _seekThrottleTs >= 250) {
+                _seekThrottleTs = now;
+                _updateSeekbar();
+                // Update Media Session position state for iOS control center scrubbing
+                if ('mediaSession' in navigator && navigator.mediaSession.setPositionState && _audio
+                        && isFinite(_audio.duration) && _audio.duration > 0) {
+                    try { navigator.mediaSession.setPositionState({ duration: _audio.duration, playbackRate: 1, position: _audio.currentTime }); }
+                    catch(e) {}
+                }
+            }
+            // Preload next track ~30s before end for near-gapless playback (music queue only)
+            if ((isMusic || isLocal) && !_preloadAudio && _audio && isFinite(_audio.duration) && _audio.duration > 0) {
+                const remaining = _audio.duration - _audio.currentTime;
+                if (remaining < 30 && remaining > 0) {
+                    const nextIdx = _musicQueueIdx + 1;
+                    const nextItem = _musicQueue[nextIdx];
+                    if (nextItem && nextItem.url) {
+                        _preloadAudio = new Audio();
+                        _preloadAudio.preload = 'auto';
+                        const src = isLocal ? nextItem.url
+                            : '/api/radio-music/music/stream?url=' + encodeURIComponent(nextItem.url) + '&token=' + (NAS.token || '');
+                        _preloadAudio.src = src;
+                        _cl('debug', 'Preloading next track', { name: nextItem.name });
+                    }
+                }
+            }
             // Fallback: detect track finished (onended may not fire for proxied streams)
             if (!_endedHandled && _audio && isFinite(_audio.duration) && _audio.duration > 1
                 && _audio.currentTime >= _audio.duration - 0.5) {
@@ -2566,6 +2635,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     function stopPlayback() {
         _savePlaybackState();
         if (_saveStateInterval) { clearInterval(_saveStateInterval); _saveStateInterval = null; }
+        clearTimeout(_radioRetryTimer); _radioRetryTimer = null; _radioRetries = 0;
+        if (_preloadAudio) { _preloadAudio.src = ''; _preloadAudio = null; }
         if (_castSession) { try { _castSession.endSession(true); } catch(e) {} }
         _castSession = null;
         _isCasting = false;
@@ -2579,6 +2650,10 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         _playing = null;
         _clearSeek();
         _hideNowPlaying();
+        if ('mediaSession' in navigator) {
+            navigator.mediaSession.metadata = null;
+            navigator.mediaSession.playbackState = 'none';
+        }
         const player = bodyEl?.querySelector('#rm-player');
         if (player) { player.style.display = 'none'; player.classList.remove('rm-buffering'); }
         bodyEl?.querySelectorAll('.rm-card.rm-buffering').forEach(c => c.classList.remove('rm-buffering'));
@@ -2896,6 +2971,33 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         if (_seekInterval) { clearInterval(_seekInterval); _seekInterval = null; }
         const seekbar = bodyEl?.querySelector('#rm-seekbar');
         if (seekbar) seekbar.classList.remove('visible');
+    }
+
+    function _updateMediaSession() {
+        if (!('mediaSession' in navigator) || !_playing) return;
+        const item = _playing;
+        const artwork = item.image ? [{ src: item.image, sizes: '512x512', type: 'image/jpeg' }] : [];
+        navigator.mediaSession.metadata = new MediaMetadata({
+            title: item.name || '',
+            artist: item.meta || 'EthOS Radio & Music',
+            album: item.type === 'radio' ? t('Radio Live') : '',
+            artwork,
+        });
+        navigator.mediaSession.setActionHandler('play', () => { _audio?.play(); });
+        navigator.mediaSession.setActionHandler('pause', () => { _audio?.pause(); });
+        navigator.mediaSession.setActionHandler('stop', () => stopPlayback());
+        navigator.mediaSession.setActionHandler('nexttrack', _musicQueue.length > 1 ? () => _advanceQueue() : null);
+        navigator.mediaSession.setActionHandler('previoustrack', _musicQueue.length > 1 ? () => _changeStation(-1) : null);
+        const canSeek = item.type !== 'radio';
+        navigator.mediaSession.setActionHandler('seekto', canSeek ? (d) => {
+            if (_audio && isFinite(_audio.duration)) { _audio.currentTime = d.seekTime; }
+        } : null);
+        navigator.mediaSession.setActionHandler('seekbackward', canSeek ? (d) => {
+            if (_audio) _audio.currentTime = Math.max(0, _audio.currentTime - (d.seekOffset || 10));
+        } : null);
+        navigator.mediaSession.setActionHandler('seekforward', canSeek ? (d) => {
+            if (_audio) _audio.currentTime = Math.min(_audio.duration || Infinity, _audio.currentTime + (d.seekOffset || 10));
+        } : null);
     }
 
     function _fmtTime(s) {
@@ -3260,7 +3362,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         if (ppBtn && _audio) {
             ppBtn.innerHTML = '<i class="fas ' + (_audio.paused ? 'fa-play' : 'fa-pause') + '"></i>';
         }
-        requestAnimationFrame(() => _npUpdateLoop());
+        // 4fps is enough for time display (changes every second) — avoids 60fps DOM thrash
+        setTimeout(() => _npUpdateLoop(), 250);
     }
 
     function _syncNowPlaying() {
