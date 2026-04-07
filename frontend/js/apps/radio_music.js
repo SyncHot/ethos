@@ -967,11 +967,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             // Subscribe store → auto-refresh queue highlights when track changes via Next/Prev/Cast
             _rmStore.subscribe(() => {
                 _refreshQueueHighlight();
-                // Also refresh the mini-queue inside the NP overlay (if open and panel visible)
-                if (_renderNpQueueFn) {
-                    const panel = _npOverlay?.querySelector('#rm-np-queue-panel');
-                    if (panel?.classList.contains('rm-np-queue-visible')) _renderNpQueueFn();
-                }
+                // Refresh NP overlay queue — always (even if minimized), so it's ready on expand
+                if (_renderNpQueueFn) _renderNpQueueFn();
             });
 
             // Restore previous playback state (paused, showing last track)
@@ -4400,6 +4397,12 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             const visCvs = _npOverlay.querySelector('#rm-np-vis');
             if (visCvs && _audio) _startVisualizer(visCvs);
             _npUpdateLoop();
+            // Refresh queue panel if it's visible — content may be stale from a playlist switch
+            // that happened while the overlay was minimized
+            if (_renderNpQueueFn) {
+                const qp = _npOverlay.querySelector('#rm-np-queue-panel');
+                if (qp?.classList.contains('rm-np-queue-visible')) _renderNpQueueFn();
+            }
             return;
         }
 
