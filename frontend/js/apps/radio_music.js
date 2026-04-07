@@ -27,6 +27,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     let _archiveDb = {};
     let _swReady = false;      // Service Worker available for offline caching
     let _nasSpinTimer = null;  // detect slow NAS wake (>3s)
+    let _queueContent = null;  // DOM node of the queue panel (null when not visible)
 
     // ── Chromecast state ──
     let _isCasting = false;
@@ -48,6 +49,25 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
     const _LS_KEY = 'rm_playback_state';
     let _savePending = false;
+
+    // ── Shared playback state store (Observable pattern) ──────────────────────
+    // Single source of truth for currentTrack + queueIndex so PlaylistView and
+    // NowPlayingOverlay always stay in sync without rebuilding DOM.
+    const _rmStore = (() => {
+        let _state = { currentTrack: null, currentTrackIndex: -1 };
+        const _subs = [];
+        return {
+            get state() { return _state; },
+            set(patch) {
+                _state = Object.assign({}, _state, patch);
+                _subs.forEach(fn => { try { fn(_state); } catch(e) {} });
+            },
+            subscribe(fn) {
+                _subs.push(fn);
+                return () => { const i = _subs.indexOf(fn); if (i > -1) _subs.splice(i, 1); };
+            }
+        };
+    })();
 
     // Sidebar group definitions — order is user-customisable via DnD (saved in localStorage)
     const _SIDEBAR_GROUPS = [
@@ -926,6 +946,11 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             // Initialize offline archive manager (SocketIO listeners + SW readiness)
             try { _initArchive(); } catch(e) { _cl('error', 'Archive init failed', { error: e.message }); }
 
+            // Subscribe store → auto-refresh queue highlight when track changes via Next/Prev/Cast
+            _rmStore.subscribe(() => {
+                _refreshQueueHighlight();
+            });
+
             // Restore previous playback state (paused, showing last track)
             _restoreAndShowLastTrack(body);
 
@@ -1243,6 +1268,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             const card = document.createElement('div');
             card.className = 'rm-card' + (isPlaying ? ' rm-playing' : '');
             card._stationUuid = s.uuid;
+            if (s.url) card.dataset.url = s.url;
             card.innerHTML = `
                 <div class="rm-card-icon">${_stationIconHtml(s)}</div>
                 <div class="rm-card-info">
@@ -1688,6 +1714,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             const isPlaying = _playing && _playing.id === tr.id;
             const el = document.createElement('div');
             el.className = 'rm-track' + (isPlaying ? ' rm-playing' : '');
+            if (tr.url) el.dataset.url = tr.url;
             // Store metadata for archive use
             if (tr.url) _archiveDb[tr.url] = _archiveDb[tr.url] || {};
             if (tr.url && tr.title) (_archiveDb[tr.url] || {}).title = tr.title;
@@ -2343,7 +2370,22 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
     /* ── Queue ──────────────────────────────────────── */
 
+    // Update rm-playing highlight inside the queue panel without full re-render
+    function _refreshQueueHighlight() {
+        if (!_queueContent || !_queueContent.isConnected) { _queueContent = null; return; }
+        const items = _queueContent.querySelectorAll('.rm-queue-item');
+        items.forEach((el, idx) => {
+            const isCurrent = idx === _musicQueueIdx;
+            el.className = 'rm-queue-item' + (isCurrent ? ' rm-playing' : '');
+            const idxSpan = el.querySelector('.rm-queue-item-idx');
+            if (idxSpan) idxSpan.innerHTML = isCurrent ? '<i class="fas fa-volume-up"></i>' : String(idx + 1);
+        });
+        const cur = _queueContent.querySelector('.rm-queue-item.rm-playing');
+        if (cur) cur.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+
     function loadQueue(content) {
+        _queueContent = content;
         if (!_musicQueue.length) {
             content.innerHTML = '<div class="rm-empty"><i class="fas fa-list-ol"></i><p>' + t('Kolejka jest pusta') + '</p><p style="font-size:12px;margin-top:8px">' + t('Kliknij + przy utworze aby dodać do kolejki') + '</p></div>';
             return;
@@ -3259,15 +3301,16 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         // Save to history
         api('/radio-music/history', { method: 'POST', body: { item } });
 
-        // Sync Now Playing overlay — in-place update to avoid layout shift
-        if (_npOverlay && !_npOverlay.classList.contains('rm-np-minimized')) {
-            _updateNowPlayingContent(item); // smooth crossfade, no DOM rebuild
-        } else if (_npOverlay) {
-            _hideNowPlaying(); // was minimized — destroy silently, will reopen when user taps
+        // Sync Now Playing overlay — in-place update regardless of minimized state.
+        // The overlay is ONLY destroyed when the user explicitly closes it (swipe/button).
+        if (_npOverlay) {
+            _updateNowPlayingContent(item); // smooth crossfade, works whether open or minimized
         }
 
-        // Highlight playing card/track
-        bodyEl.querySelectorAll('.rm-card, .rm-ep-item, .rm-track').forEach(c => c.classList.remove('rm-playing'));
+        // Highlight the matching row in the list and scroll it into view
+        _highlightPlayingTrack(item);
+        // Update shared state store (subscribers like queue view react instantly)
+        _rmStore.set({ currentTrack: item, currentTrackIndex: _musicQueueIdx });
 
         // Start playback with fallback chain
         tryUrl(0);
@@ -3293,6 +3336,28 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             }
         }
         _savePlaybackState();
+    }
+
+    // Highlight the currently playing element in the list and scroll it into view.
+    // Uses data-url attributes (set during render) to find the matching element.
+    function _highlightPlayingTrack(item) {
+        if (!bodyEl) return;
+        bodyEl.querySelectorAll('.rm-card, .rm-ep-item, .rm-track').forEach(c => c.classList.remove('rm-playing'));
+        if (!item) return;
+
+        let el = null;
+        // Match by URL (music, local, podcast)
+        if (item.url) {
+            el = bodyEl.querySelector(`[data-url="${CSS.escape(item.url)}"]`);
+        }
+        // Fallback: match radio card by station UUID
+        if (!el && item.uuid) {
+            el = Array.from(bodyEl.querySelectorAll('.rm-card')).find(c => c._stationUuid === item.uuid);
+        }
+        if (el) {
+            el.classList.add('rm-playing');
+            el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
     }
 
     function _skipStation(dir) {
