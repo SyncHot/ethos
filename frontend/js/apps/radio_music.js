@@ -928,6 +928,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 if (!_audio) return;
                 // Restored state: audio src not yet loaded — reinitialise from saved track
                 if (!_audio.src && _playing) { playAudio(_playing); return; }
+                // When casting, route to Chromecast — don't touch local (muted) audio
+                if (_castTogglePlayPause()) return;
                 const npBtn = _npOverlay?.querySelector('#rm-np-playpause');
                 if (_audio.paused) {
                     playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
@@ -973,7 +975,16 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             body.querySelector('#rm-shuffle-btn').onclick = () => { _shuffle = !_shuffle; _syncShuffleBtn(); };
             _syncShuffleBtn();
 
-            body.querySelector('#rm-vol').oninput = (e) => { if (_audio) _audio.volume = e.target.value / 100; };
+            body.querySelector('#rm-vol').oninput = (e) => {
+                const vol = e.target.value / 100;
+                if (_isCasting && _castPlayer && _castController) {
+                    // Route volume to Chromecast receiver, not local audio
+                    _castPlayer.volumeLevel = vol;
+                    _castController.setVolumeLevel();
+                } else if (_audio) {
+                    _audio.volume = vol;
+                }
+            };
 
             // Click player bar to open Now Playing overlay
             body.querySelector('#rm-player-art').onclick = () => _showNowPlaying();
@@ -3895,6 +3906,10 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             toast(t('Połączono z Chromecast'), 'success');
             const deviceName = _castSession?.getCastDevice?.()?.friendlyName || '?';
             _cl('info', 'Cast connected to: ' + deviceName);
+            // Suppress browser MediaSession so Android shows only ONE Cast volume slider (not two)
+            if ('mediaSession' in navigator) {
+                navigator.mediaSession.playbackState = 'none';
+            }
             _castLoadCurrentTrack();
         } else if (state === cast.framework.SessionState.SESSION_ENDED) {
             // C-05: capture Cast position so we can resume locally from same spot
@@ -3904,6 +3919,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             _isCasting = false;
             _castQueueActive = false;
             _syncCastBtnUi(false);
+            // Restore browser MediaSession — user is back to local playback
+            _updateMediaSession();
             if (_audio) {
                 _audio.volume = _preCastVolume;
                 if (_playing?.type !== 'radio' && resumeAt > 1) {
@@ -3967,6 +3984,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
         _cl('info', 'Cast loadMedia', { url: mediaUrl.substring(0, 100), type: ct, track: _playing.name });
         const mediaInfo = new chrome.cast.media.MediaInfo(mediaUrl, ct);
+        // BUFFERED stream type: Android recognises it as music (not phone call), shows single Cast volume slider
+        mediaInfo.streamType = chrome.cast.media.StreamType.BUFFERED;
         mediaInfo.metadata = new chrome.cast.media.MusicTrackMediaMetadata();
         if (_playing) {
             mediaInfo.metadata.title = _playing.name || '';
@@ -4066,6 +4085,27 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         }
     }
 
+    // Unified Cast play/pause toggle — use explicit play()/pause() via RemoteMediaClient
+    // instead of controlling local _audio when Chromecast is active.
+    // Returns true if Cast handled the action (caller should skip local audio control).
+    function _castTogglePlayPause() {
+        if (!_isCasting || !_castPlayer || !_castController) return false;
+        const paused = _castPlayer.isPaused;
+        // Optimistic UI update — don't wait for Cast ACK
+        const icon = paused ? '<i class="fas fa-pause"></i>' : '<i class="fas fa-play"></i>';
+        const mainBtn = bodyEl?.querySelector('#rm-play-pause');
+        const npBtn = _npOverlay?.querySelector('#rm-np-playpause');
+        if (mainBtn) mainBtn.innerHTML = icon;
+        if (npBtn) npBtn.innerHTML = icon;
+        _showEq(paused);
+        if ('mediaSession' in navigator) {
+            navigator.mediaSession.playbackState = paused ? 'playing' : 'paused';
+        }
+        // Send command to Chromecast receiver
+        _castController.playOrPause();
+        return true;
+    }
+
     function _toggleCast() {
         _cl('info', 'Cast toggle', { castAvail: _castAvail, isCasting: _isCasting, hasSession: !!_castSession });
         if (!_audio) {
@@ -4160,8 +4200,20 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             album: item.type === 'radio' ? t('Radio Live') : (item.album || ''),
             artwork,
         });
-        navigator.mediaSession.setActionHandler('play', () => { _audio?.play(); });
-        navigator.mediaSession.setActionHandler('pause', () => { _audio?.pause(); });
+        navigator.mediaSession.setActionHandler('play', () => {
+            if (_isCasting) {
+                if (_castPlayer?.isPaused) _castController?.playOrPause();
+                return;
+            }
+            _audio?.play();
+        });
+        navigator.mediaSession.setActionHandler('pause', () => {
+            if (_isCasting) {
+                if (!_castPlayer?.isPaused) _castController?.playOrPause();
+                return;
+            }
+            _audio?.pause();
+        });
         navigator.mediaSession.setActionHandler('stop', () => stopPlayback());
         // Podcast queue uses _advancePodQueue, music uses _advanceQueue
         const isPod = _playing?.type === 'podcast';
@@ -4694,6 +4746,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             if (!_audio) return;
             // Restored state: audio src not yet loaded — reinitialise from saved track
             if (!_audio.src && _playing) { playAudio(_playing); return; }
+            // When casting, route to Chromecast — don't touch local (muted) audio
+            if (_castTogglePlayPause()) return;
             const btn = ov.querySelector('#rm-np-playpause');
             const miniBtn = bodyEl?.querySelector('#rm-play-pause');
             if (_audio.paused) {
