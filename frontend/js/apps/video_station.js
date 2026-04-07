@@ -237,7 +237,141 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         }
 
         switchSection('home');
+
+        // Async HW health check — show banner if drivers missing
+        _checkHwHealth(body);
     }
+
+    /* ── HW health banner & setup wizard ──────────────────── */
+    async function _checkHwHealth(body) {
+        let health;
+        try { health = await api('/video-station/hw-health'); } catch(e) { return; }
+        if (!health || health.is_hw || health.status === 'cpu_only') return;
+
+        // Inject banner into vs-main (above toolbar)
+        const vsMain = body.querySelector('.vs-main');
+        if (!vsMain || vsMain.querySelector('.vs-hw-banner')) return;
+
+        const banner = document.createElement('div');
+        banner.className = 'vs-hw-banner';
+        banner.innerHTML =
+            '<i class="fas fa-exclamation-triangle"></i>' +
+            '<span class="vs-hw-banner-msg">' +
+              escH(health.message || t('Akceleracja sprzętowa niedostępna.')) +
+            '</span>' +
+            '<button class="vs-hw-banner-btn"><i class="fas fa-tools"></i> ' + t('Jak naprawić?') + '</button>' +
+            '<button class="vs-hw-banner-close" title="' + t('Zamknij') + '"><i class="fas fa-times"></i></button>';
+
+        const toolbar = vsMain.querySelector('#vs-toolbar');
+        vsMain.insertBefore(banner, toolbar);
+
+        banner.querySelector('.vs-hw-banner-btn').onclick = () => _openHwWizard(body, health);
+        banner.querySelector('.vs-hw-banner-close').onclick = () => banner.remove();
+    }
+
+    function _openHwWizard(body, health) {
+        // Remove existing modal if any
+        const existing = body.querySelector('.vs-hw-modal');
+        if (existing) existing.remove();
+
+        const stepsHtml = (health.setup_steps || []).map(step => {
+            const cmds = (step.commands || []).map(cmd =>
+                '<div class="vs-hw-cmd">' +
+                  '<code>' + escH(cmd) + '</code>' +
+                  '<button class="vs-hw-cmd-copy" data-cmd="' + escH(cmd) + '" title="' + t('Kopiuj') + '">' +
+                    '<i class="fas fa-copy"></i>' +
+                  '</button>' +
+                '</div>'
+            ).join('');
+            return '<div class="vs-hw-step"><div class="vs-hw-step-title">' + escH(step.title) + '</div>' + cmds + '</div>';
+        }).join('');
+
+        const hwIcon = health.is_intel ? 'fa-microchip' : health.is_nvidia ? 'fa-bolt' : 'fa-server';
+        const cpuLabel = health.cpu_model ? '<span class="vs-hw-cpu-label">' + escH(health.cpu_model) + '</span>' : '';
+
+        const modal = document.createElement('div');
+        modal.className = 'vs-hw-modal';
+        modal.innerHTML =
+          '<div class="vs-hw-modal-backdrop"></div>' +
+          '<div class="vs-hw-modal-box">' +
+            '<div class="vs-hw-modal-header">' +
+              '<i class="fas ' + hwIcon + '"></i> ' +
+              '<span>' + t('Konfiguracja akceleracji sprzętowej') + '</span>' +
+              '<button class="vs-hw-modal-close"><i class="fas fa-times"></i></button>' +
+            '</div>' +
+            '<div class="vs-hw-modal-body">' +
+              '<div class="vs-hw-modal-status vs-hw-status-' + escH(health.status) + '">' +
+                '<i class="fas fa-info-circle"></i> ' + escH(health.message) +
+              '</div>' +
+              (cpuLabel ? '<div class="vs-hw-modal-cpu"><i class="fas fa-microchip"></i> ' + cpuLabel + '</div>' : '') +
+              '<div class="vs-hw-modal-diag">' +
+                _hwDiagRow(t('Węzeł GPU (/dev/dri/renderD128)'), health.render_node) +
+                _hwDiagRow(t('Dostęp do grupy render'), health.in_render_grp) +
+                _hwDiagRow(t('Sterownik VAAPI'), health.driver_ok) +
+                _hwDiagRow(t('Aktywna akceleracja HW'), health.is_hw) +
+              '</div>' +
+              (stepsHtml ? '<div class="vs-hw-modal-steps">' + stepsHtml + '</div>' : '') +
+            '</div>' +
+            '<div class="vs-hw-modal-footer">' +
+              '<button id="vs-hw-rescan-btn" class="app-btn app-btn-primary">' +
+                '<i class="fas fa-sync-alt"></i> ' + t('Skanuj ponownie') +
+              '</button>' +
+              '<button class="vs-hw-modal-close-btn app-btn">' + t('Zamknij') + '</button>' +
+            '</div>' +
+          '</div>';
+
+        body.appendChild(modal);
+
+        // Close handlers
+        const closeFn = () => modal.remove();
+        modal.querySelector('.vs-hw-modal-close').onclick = closeFn;
+        modal.querySelector('.vs-hw-modal-close-btn').onclick = closeFn;
+        modal.querySelector('.vs-hw-modal-backdrop').onclick = closeFn;
+
+        // Copy buttons
+        modal.querySelectorAll('.vs-hw-cmd-copy').forEach(btn => {
+            btn.onclick = () => {
+                navigator.clipboard.writeText(btn.dataset.cmd).then(() => {
+                    btn.innerHTML = '<i class="fas fa-check"></i>';
+                    setTimeout(() => { btn.innerHTML = '<i class="fas fa-copy"></i>'; }, 1500);
+                });
+            };
+        });
+
+        // Rescan
+        modal.querySelector('#vs-hw-rescan-btn').onclick = async () => {
+            const btn = modal.querySelector('#vs-hw-rescan-btn');
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Sprawdzam...');
+            // Force re-detection by fetching encoder-info (cache-busted)
+            try {
+                const fresh = await api('/video-station/hw-health');
+                modal.remove();
+                body.querySelector('.vs-hw-banner')?.remove();
+                if (fresh && fresh.is_hw) {
+                    toast(t('Akceleracja sprzętowa aktywna!') + ' (' + escH(fresh.hw_encoder) + ')', 'success');
+                } else {
+                    _checkHwHealth(body);
+                    _openHwWizard(body, fresh || health);
+                }
+            } catch(e) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-sync-alt"></i> ' + t('Skanuj ponownie');
+            }
+        };
+    }
+
+    function _hwDiagRow(label, ok) {
+        return '<div class="vs-hw-diag-row">' +
+            '<span>' + label + '</span>' +
+            '<span class="vs-hw-diag-' + (ok ? 'ok' : 'fail') + '">' +
+              '<i class="fas fa-' + (ok ? 'check-circle' : 'times-circle') + '"></i> ' +
+              (ok ? t('OK') : t('Brak')) +
+            '</span>' +
+        '</div>';
+    }
+
+
 
     /* ── section switching ─────────────────────────────────── */
     function switchSection(id) {
@@ -1842,15 +1976,36 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
                 const visible = statsOverlay.style.display !== 'none';
                 if (visible) { statsOverlay.style.display = 'none'; return; }
                 const enc = await api('/video-station/hls/encoder-info').catch(() => null);
+                const isSw = !enc || enc.type !== 'hw';
+                const swTip = isSw
+                    ? '<div class="vs-stats-hw-tip"><i class="fas fa-lightbulb"></i> ' +
+                      t('Używasz') + ' <strong>libx264 (CPU)</strong>. ' +
+                      t('Zainstaluj sterowniki VAAPI, aby odciążyć procesor i wydłużyć żywotność NucBoxa.') +
+                      ' <a class="vs-stats-hw-link" href="#" id="vs-stats-hw-setup">' + t('Jak naprawić?') + '</a></div>'
+                    : '';
                 statsOverlay.innerHTML =
                     '<div class="vs-stats-row"><span>' + t('Enkoder') + '</span><span>' +
                     escH(enc && enc.label ? enc.label : '—') + '</span></div>' +
                     '<div class="vs-stats-row"><span>' + t('Typ') + '</span><span>' +
-                    (enc && enc.type === 'hw' ? '<i class="fas fa-bolt" style="color:#facc15"></i> HW Accel' : '<i class="fas fa-microchip"></i> CPU (libx264)') +
+                    (enc && enc.type === 'hw'
+                        ? '<i class="fas fa-bolt" style="color:#facc15"></i> HW Accel'
+                        : '<i class="fas fa-microchip" style="color:var(--text-secondary)"></i> CPU (libx264)') +
                     '</span></div>' +
                     '<div class="vs-stats-row"><span>HLS</span><span>' + (_hlsSessionId ? escH(_hlsSessionId.slice(0,8) + '…') : t('Brak sesji')) + '</span></div>' +
-                    '<div class="vs-stats-row"><span>' + t('Pozycja') + '</span><span>' + Math.round(video.currentTime) + 's</span></div>';
+                    '<div class="vs-stats-row"><span>' + t('Pozycja') + '</span><span>' + Math.round(video.currentTime) + 's</span></div>' +
+                    swTip;
                 statsOverlay.style.display = '';
+
+                // "Jak naprawić?" link in stats overlay
+                const setupLink = statsOverlay.querySelector('#vs-stats-hw-setup');
+                if (setupLink) {
+                    setupLink.onclick = async (e) => {
+                        e.preventDefault();
+                        statsOverlay.style.display = 'none';
+                        const health = await api('/video-station/hw-health').catch(() => null);
+                        if (health) _openHwWizard(bodyEl, health);
+                    };
+                }
             };
         }
 

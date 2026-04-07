@@ -43,6 +43,7 @@ Routes:
   GET  /api/video-station/tmdb-search-list - search TMDb, return list (?q=query)
   POST /api/video-station/tmdb-apply/<int:vid> - apply a specific TMDb result (by tmdb_id)
   POST /api/video-station/rename/<int:vid> - rename video file on disk and update DB
+  GET  /api/video-station/hw-health       - detailed HW acceleration health report
 
 SocketIO events emitted:
   vs_scan_progress  - {running, total, processed, current_file}
@@ -149,7 +150,157 @@ def _detect_hw_encoder():
     return _HW_ENCODER
 
 
-def _cleanup_hls(session_id):
+def _hw_health_check():
+    """Return detailed HW acceleration health report for Intel/NVIDIA/AMD GPUs.
+
+    Returns a dict with:
+      status       : "ok" | "no_render_node" | "missing_driver" | "permission_denied" | "cpu_only"
+      hw_encoder   : detected encoder name
+      is_hw        : bool — True when real HW acceleration is active
+      render_node  : bool — /dev/dri/renderD128 exists
+      driver_ok    : bool — VAAPI driver responds
+      in_render_grp: bool — current process can access the render node
+      cpu_model    : str  — from /proc/cpuinfo
+      setup_steps  : list of {title, commands: [str]} — install instructions
+      message      : human-readable diagnosis
+    """
+    RENDER_NODE = '/dev/dri/renderD128'
+    encoder = _detect_hw_encoder()
+    is_hw = encoder != 'libx264'
+
+    # CPU model
+    cpu_model = ''
+    try:
+        for line in open('/proc/cpuinfo').readlines():
+            if 'model name' in line:
+                cpu_model = line.split(':', 1)[1].strip()
+                break
+    except Exception:
+        pass
+
+    # Is it Intel (N100/N95/etc.)?
+    is_intel = 'intel' in cpu_model.lower() or 'n100' in cpu_model.lower() or 'n95' in cpu_model.lower()
+    is_amd   = 'amd' in cpu_model.lower()
+    is_nvidia = encoder == 'h264_nvenc'
+
+    if is_hw:
+        return {
+            'status': 'ok',
+            'hw_encoder': encoder,
+            'is_hw': True,
+            'render_node': os.path.exists(RENDER_NODE),
+            'driver_ok': True,
+            'in_render_grp': True,
+            'cpu_model': cpu_model,
+            'setup_steps': [],
+            'message': 'Akceleracja sprzętowa aktywna (%s).' % encoder,
+        }
+
+    # Not using HW — diagnose why
+    render_node_exists = os.path.exists(RENDER_NODE)
+    in_render_grp = False
+    if render_node_exists:
+        try:
+            in_render_grp = os.access(RENDER_NODE, os.R_OK)
+        except Exception:
+            pass
+
+    driver_ok = False
+    if render_node_exists and in_render_grp:
+        r = subprocess.run(
+            ['ffmpeg', '-hide_banner', '-loglevel', 'error',
+             '-vaapi_device', RENDER_NODE,
+             '-f', 'lavfi', '-i', 'nullsrc=s=64x64:d=0.1',
+             '-vf', 'format=nv12,hwupload', '-c:v', 'h264_vaapi', '-f', 'null', '-'],
+            capture_output=True, timeout=8
+        )
+        driver_ok = r.returncode == 0
+
+    # Build setup steps for Intel N-series (N100/N95 = Alder Lake / Twin Lake)
+    pkg_main  = 'intel-media-va-driver-non-free'    # Xe iGPU (N100/N95/N200)
+    pkg_legacy = 'i965-va-driver'                   # older Intel (Haswell–Ice Lake)
+    run_user = os.environ.get('USER', '') or os.environ.get('SUDO_USER', '') or 'ethos'
+
+    if not render_node_exists:
+        status = 'no_render_node'
+        message = ('Brak węzła renderowania GPU (/dev/dri/renderD128). '
+                   'Sprawdź, czy GPU jest obsługiwane przez jądro systemu.')
+        steps = [
+            {'title': '1. Sprawdź dostępne urządzenia DRI',
+             'commands': ['ls -la /dev/dri/', 'lspci | grep -i vga']},
+            {'title': '2. Zainstaluj sterownik Intel (N100/N95)',
+             'commands': [
+                 'sudo apt update',
+                 'sudo apt install -y %s %s vainfo intel-gpu-tools' % (pkg_main, pkg_legacy),
+             ]},
+            {'title': '3. Przeładuj moduł i915',
+             'commands': ['sudo modprobe i915', 'ls /dev/dri/']},
+            {'title': '4. Uruchom ponownie serwer EthOS',
+             'commands': ['sudo systemctl restart ethos']},
+        ]
+    elif not in_render_grp:
+        status = 'permission_denied'
+        message = ('Węzeł /dev/dri/renderD128 istnieje, ale brak uprawnień. '
+                   'Użytkownik serwisu musi być w grupie "render" i "video".')
+        steps = [
+            {'title': '1. Dodaj użytkownika do grup render i video',
+             'commands': [
+                 'sudo usermod -aG render,video %s' % run_user,
+                 'groups %s' % run_user,
+             ]},
+            {'title': '2. Uruchom ponownie usługę (lub serwer)',
+             'commands': ['sudo systemctl restart ethos']},
+            {'title': '3. Weryfikacja uprawnień',
+             'commands': ['ls -la /dev/dri/renderD128', 'vainfo --display drm --device /dev/dri/renderD128']},
+        ]
+    elif not driver_ok:
+        status = 'missing_driver'
+        message = ('Węzeł GPU istnieje i masz do niego dostęp, ale sterownik VAAPI nie odpowiada. '
+                   'Zainstaluj intel-media-va-driver-non-free (Intel N100/N95).')
+        steps = [
+            {'title': '1. Zainstaluj sterownik VAAPI dla Intel N100/N95',
+             'commands': [
+                 'sudo apt update',
+                 'sudo apt install -y %s %s vainfo' % (pkg_main, pkg_legacy),
+             ]},
+            {'title': '2. Włącz non-free repozytorium (jeśli potrzebne)',
+             'commands': [
+                 "sudo sed -i 's/main$/main contrib non-free non-free-firmware/g' /etc/apt/sources.list",
+                 'sudo apt update',
+                 'sudo apt install -y %s' % pkg_main,
+             ]},
+            {'title': '3. Sprawdź działanie VAAPI',
+             'commands': [
+                 'vainfo --display drm --device /dev/dri/renderD128',
+                 'ffmpeg -hide_banner -vaapi_device /dev/dri/renderD128 -f lavfi -i nullsrc=s=64x64:d=0.1 -vf format=nv12,hwupload -c:v h264_vaapi -f null -',
+             ]},
+            {'title': '4. Uruchom ponownie EthOS i odśwież enkoder',
+             'commands': ['sudo systemctl restart ethos']},
+        ]
+    else:
+        # render node ok, driver ok, but encoder detection still returned libx264
+        status = 'cpu_only'
+        message = ('Sprzęt nie obsługuje akceleracji H.264 przez VAAPI lub NVENC. '
+                   'Używany jest enkoder programowy libx264 (CPU).')
+        steps = []
+
+    return {
+        'status': status,
+        'hw_encoder': encoder,
+        'is_hw': False,
+        'render_node': render_node_exists,
+        'driver_ok': driver_ok,
+        'in_render_grp': in_render_grp,
+        'cpu_model': cpu_model,
+        'is_intel': is_intel,
+        'is_amd': is_amd,
+        'is_nvidia': is_nvidia,
+        'setup_steps': steps,
+        'message': message,
+    }
+
+
+
     """Stop ffmpeg and remove temp dir for an HLS session."""
     sess = _hls_sessions.pop(session_id, None)
     if not sess:
@@ -1853,7 +2004,18 @@ def hls_encoder_info():
     )
 
 
-def update_watched(vid):
+@video_station_bp.route("/hw-health", methods=["GET"])
+def hw_health():
+    """Detailed HW acceleration health report.
+
+    Returns status, diagnostic info, and step-by-step setup instructions
+    when HW acceleration is not working. The frontend uses this to show
+    a warning banner and setup wizard modal.
+    """
+    return jsonify(_hw_health_check())
+
+
+
     d = request.json or {}
     conn = _get_db()
     r = conn.execute("SELECT id FROM videos WHERE id=?", (vid,)).fetchone()

@@ -6299,3 +6299,80 @@ textarea.app-input { resize: vertical; line-height: 1.5; }
 .vs-folder-rescan-row:last-child { border-bottom:none; }
 .vs-folder-rescan-path { flex:1; font-size:12px; color:var(--text-secondary);
     font-family:monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+/* ── VS HW Health Banner ──────────────────────────────────────────── */
+.vs-hw-banner { display:flex; align-items:center; gap:10px; padding:10px 16px;
+    background:rgba(250,176,5,.12); border-bottom:1px solid rgba(250,176,5,.3);
+    color:#fbbf24; font-size:13px; flex-shrink:0; }
+.vs-hw-banner i.fa-exclamation-triangle { font-size:16px; flex-shrink:0; }
+.vs-hw-banner-msg { flex:1; line-height:1.4; }
+.vs-hw-banner-btn { background:rgba(250,176,5,.2); border:1px solid rgba(250,176,5,.4);
+    color:#fbbf24; border-radius:6px; padding:5px 12px; font-size:12px; cursor:pointer;
+    white-space:nowrap; transition:background .15s; }
+.vs-hw-banner-btn:hover { background:rgba(250,176,5,.35); }
+.vs-hw-banner-close { background:none; border:none; color:rgba(250,176,5,.6);
+    cursor:pointer; font-size:14px; padding:2px 6px; margin-left:4px; }
+.vs-hw-banner-close:hover { color:#fbbf24; }
+
+/* ── VS HW Setup Wizard Modal ─────────────────────────────────────── */
+.vs-hw-modal { position:absolute; inset:0; z-index:200; display:flex;
+    align-items:center; justify-content:center; }
+.vs-hw-modal-backdrop { position:absolute; inset:0; background:rgba(0,0,0,.65);
+    backdrop-filter:blur(4px); }
+.vs-hw-modal-box { position:relative; width:min(600px,92%); max-height:80vh;
+    background:#161b22; border:1px solid rgba(255,255,255,.1); border-radius:12px;
+    display:flex; flex-direction:column; overflow:hidden;
+    box-shadow:0 24px 64px rgba(0,0,0,.7); }
+.vs-hw-modal-header { display:flex; align-items:center; gap:10px; padding:16px 20px;
+    border-bottom:1px solid rgba(255,255,255,.08); font-size:15px; font-weight:600;
+    color:#fff; flex-shrink:0; }
+.vs-hw-modal-header i { color:#facc15; font-size:18px; }
+.vs-hw-modal-header span { flex:1; }
+.vs-hw-modal-close { background:none; border:none; color:rgba(255,255,255,.5);
+    cursor:pointer; font-size:16px; padding:4px 8px; }
+.vs-hw-modal-close:hover { color:#fff; }
+.vs-hw-modal-body { flex:1; overflow-y:auto; padding:20px; display:flex;
+    flex-direction:column; gap:16px; }
+.vs-hw-modal-status { padding:10px 14px; border-radius:8px; font-size:13px;
+    line-height:1.5; display:flex; align-items:flex-start; gap:8px; }
+.vs-hw-status-missing_driver { background:rgba(239,68,68,.1); color:#fca5a5;
+    border:1px solid rgba(239,68,68,.25); }
+.vs-hw-status-permission_denied { background:rgba(245,158,11,.1); color:#fcd34d;
+    border:1px solid rgba(245,158,11,.25); }
+.vs-hw-status-no_render_node { background:rgba(99,102,241,.1); color:#a5b4fc;
+    border:1px solid rgba(99,102,241,.25); }
+.vs-hw-status-cpu_only { background:rgba(148,163,184,.08); color:var(--text-secondary);
+    border:1px solid var(--border-color); }
+.vs-hw-modal-cpu { font-size:12px; color:var(--text-secondary);
+    font-family:monospace; padding:4px 0; }
+.vs-hw-modal-diag { display:flex; flex-direction:column; gap:4px; padding:12px 14px;
+    background:rgba(255,255,255,.03); border-radius:8px; border:1px solid rgba(255,255,255,.07); }
+.vs-hw-diag-row { display:flex; justify-content:space-between; align-items:center;
+    font-size:12px; padding:4px 0; border-bottom:1px solid rgba(255,255,255,.05); }
+.vs-hw-diag-row:last-child { border-bottom:none; }
+.vs-hw-diag-ok { color:#4ade80; display:flex; align-items:center; gap:4px; }
+.vs-hw-diag-fail { color:#f87171; display:flex; align-items:center; gap:4px; }
+.vs-hw-modal-steps { display:flex; flex-direction:column; gap:12px; }
+.vs-hw-step { background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.07);
+    border-radius:8px; overflow:hidden; }
+.vs-hw-step-title { padding:10px 14px; font-size:13px; font-weight:600; color:#e2e8f0;
+    background:rgba(255,255,255,.04); border-bottom:1px solid rgba(255,255,255,.06); }
+.vs-hw-cmd { display:flex; align-items:center; gap:8px; padding:8px 14px;
+    border-bottom:1px solid rgba(255,255,255,.04); }
+.vs-hw-cmd:last-child { border-bottom:none; }
+.vs-hw-cmd code { flex:1; font-family:monospace; font-size:12px; color:#93c5fd;
+    word-break:break-all; line-height:1.5; }
+.vs-hw-cmd-copy { background:none; border:1px solid rgba(255,255,255,.12);
+    color:rgba(255,255,255,.5); border-radius:5px; padding:3px 8px; cursor:pointer;
+    font-size:11px; flex-shrink:0; transition:all .15s; }
+.vs-hw-cmd-copy:hover { background:rgba(255,255,255,.1); color:#fff; }
+.vs-hw-modal-footer { display:flex; gap:10px; justify-content:flex-end; padding:14px 20px;
+    border-top:1px solid rgba(255,255,255,.08); flex-shrink:0; }
+
+/* Stats overlay HW tip */
+.vs-stats-hw-tip { margin-top:8px; padding:8px 10px; background:rgba(250,176,5,.1);
+    border:1px solid rgba(250,176,5,.25); border-radius:6px; font-size:11px;
+    color:#fcd34d; line-height:1.5; }
+.vs-stats-hw-link { color:#fbbf24; text-decoration:underline; cursor:pointer; }
+.vs-stats-hw-link:hover { color:#fff; }
+
