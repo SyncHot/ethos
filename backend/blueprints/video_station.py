@@ -277,6 +277,10 @@ def _migrate_db():
         for col_name, col_def in migrations:
             if col_name not in cols:
                 conn.execute('ALTER TABLE videos ADD COLUMN %s %s' % (col_name, col_def))
+        # watch_state migrations
+        ws_cols = {r[1] for r in conn.execute('PRAGMA table_info(watch_state)').fetchall()}
+        if 'last_watched_at' not in ws_cols:
+            conn.execute('ALTER TABLE watch_state ADD COLUMN last_watched_at REAL DEFAULT 0')
         conn.commit()
         conn.close()
     except Exception:
@@ -879,6 +883,38 @@ def continue_watching():
     return jsonify({"items": items})
 
 
+@video_station_bp.route("/history", methods=["GET"])
+
+def watch_history():
+    """Return recently watched videos (fully watched), sorted by last_watched_at desc."""
+    conn = _get_db()
+    limit = min(int(request.args.get("limit", 40)), 100)
+    rows = conn.execute(
+        "SELECT v.*, ws.watched, ws.position, ws.last_watched_at FROM videos v "
+        "JOIN watch_state ws ON ws.video_id=v.id "
+        "WHERE ws.watched=1 AND COALESCE(v.hidden,0)=0 "
+        "ORDER BY COALESCE(ws.last_watched_at, ws.updated_at) DESC LIMIT ?",
+        (limit,)).fetchall()
+    items = [{
+        "id": r["id"], "title": r["title"], "filename": r["filename"],
+        "path": r["path"], "duration": r["duration"],
+        "duration_fmt": _format_duration(r["duration"]),
+        "width": r["width"], "height": r["height"],
+        "thumb_ok": bool(r["thumb_ok"]),
+        "poster_ok": bool(r["poster_ok"]),
+        "tmdb_id": r["tmdb_id"] or 0,
+        "tmdb_title": r["tmdb_title"] or "",
+        "tmdb_year": r["tmdb_year"] or "",
+        "tmdb_rating": r["tmdb_rating"] or 0,
+        "tmdb_genres": r["tmdb_genres"] or "",
+        "watched": True,
+        "position": r["position"] or 0,
+        "last_watched_at": r["last_watched_at"] or r["updated_at"] or 0,
+    } for r in rows]
+    conn.close()
+    return jsonify({"items": items})
+
+
 @video_station_bp.route("/library", methods=["GET"])
 
 def library():
@@ -937,6 +973,7 @@ def library():
             "tmdb_year": r["tmdb_year"] or "",
             "tmdb_rating": r["tmdb_rating"] or 0,
             "tmdb_overview": r["tmdb_overview"] or "",
+            "tmdb_genres": r["tmdb_genres"] or "",
             "watched": bool(r["watched"]), "position": r["position"] or 0,
             "added_at": r["added_at"],
             "hidden": bool(r["hidden"]),
@@ -1491,11 +1528,15 @@ def update_watched(vid):
         return jsonify({"error": "Nie znaleziono."}), 404
     watched = 1 if d.get("watched", False) else 0
     position = float(d.get("position", 0))
+    now = time.time()
+    last_watched = now if watched else 0
     conn.execute(
-        "INSERT INTO watch_state (video_id,watched,position,updated_at) "
-        "VALUES (?,?,?,?) ON CONFLICT(video_id) DO UPDATE SET "
-        "watched=excluded.watched,position=excluded.position,updated_at=excluded.updated_at",
-        (vid, watched, position, time.time()))
+        "INSERT INTO watch_state (video_id,watched,position,updated_at,last_watched_at) "
+        "VALUES (?,?,?,?,?) ON CONFLICT(video_id) DO UPDATE SET "
+        "watched=excluded.watched,position=excluded.position,updated_at=excluded.updated_at,"
+        "last_watched_at=CASE WHEN excluded.watched=1 THEN excluded.last_watched_at "
+        "ELSE watch_state.last_watched_at END",
+        (vid, watched, position, now, last_watched))
     conn.commit()
     conn.close()
     return jsonify({"ok": True})

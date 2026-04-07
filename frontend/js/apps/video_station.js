@@ -157,6 +157,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     <div class="vs-nav-section">${t('Biblioteka')}</div>
     <div class="vs-nav-item active" data-section="library"><i class="fas fa-film"></i><span>${t('Wszystkie filmy')}</span></div>
     <div class="vs-nav-item" data-section="recent"><i class="fas fa-clock"></i><span>${t('Ostatnie')}</span></div>
+    <div class="vs-nav-item" data-section="history"><i class="fas fa-history"></i><span>${t('Historia')}</span></div>
     <div class="vs-nav-item" data-section="collections"><i class="fas fa-folder-open"></i><span>${t('Kolekcje')}</span></div>
     <div class="vs-nav-item" data-section="hidden"><i class="fas fa-eye-slash"></i><span>${t('Ukryte')}</span>${hiddenCount ? '<span class="vs-nav-badge">' + hiddenCount + '</span>' : ''}</div>
     <div class="vs-nav-section">${t('Zarządzanie')}</div>
@@ -183,10 +184,15 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
       <option value="2">2x</option>
     </select>
     <button class="vs-pip-btn" id="vs-pip-btn" title="${t('Obraz w obrazie')}"><i class="fas fa-external-link-alt"></i></button>
+    <button class="vs-cast-btn" id="vs-cast-btn" title="${t('Cast na TV')}" style="display:none"><i class="fas fa-tv"></i></button>
     <button class="vs-fs-btn" id="vs-fs-btn" title="${t('Pełny ekran')}"><i class="fas fa-expand"></i></button>
     <button class="vs-player-close" id="vs-player-close"><i class="fas fa-times"></i></button>
   </div>
   <video id="vs-player-video" controls autoplay playsinline></video>
+  <div class="vs-thumbstrip-preview" id="vs-thumbstrip-preview" style="display:none">
+    <canvas id="vs-thumbstrip-canvas" width="160" height="90"></canvas>
+    <span class="vs-thumbstrip-time" id="vs-thumbstrip-time"></span>
+  </div>
   <div class="vs-resume-dialog" id="vs-resume-dialog" style="display:none">
     <div class="vs-resume-box">
       <div class="vs-resume-text" id="vs-resume-text"></div>
@@ -224,6 +230,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         switch (id) {
             case 'library':    renderLibraryToolbar(toolbar); loadLibrary(); break;
             case 'recent':     toolbar.innerHTML = '<div class="vs-toolbar-title">' + t('Ostatnio dodane') + '</div>'; loadRecent(); break;
+            case 'history':    toolbar.innerHTML = '<div class="vs-toolbar-title"><i class="fas fa-history"></i> ' + t('Historia oglądania') + '</div>'; loadHistory(); break;
             case 'collections': toolbar.innerHTML = '<div class="vs-toolbar-title">' + t('Kolekcje') + '</div>'; loadCollections(); break;
             case 'folders':    toolbar.innerHTML = '<div class="vs-toolbar-title">' + t('Foldery biblioteki') + '</div>'; loadFolders(); break;
             case 'hidden':     toolbar.innerHTML = '<div class="vs-toolbar-title"><i class="fas fa-eye-slash"></i> ' + t('Ukryte filmy') + '</div>'; loadHidden(); break;
@@ -396,6 +403,45 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             return;
         }
         content.innerHTML = renderGrid(items);
+        attachGridEvents(content);
+    }
+
+    /* ── history ───────────────────────────────────────────── */
+    async function loadHistory() {
+        const content = bodyEl.querySelector('#vs-content');
+        if (!content) return;
+        content.innerHTML = '<div class="vs-loading"><i class="fas fa-spinner fa-spin"></i></div>';
+
+        const data = await api('/video-station/history?limit=40');
+        if (data.error) { content.innerHTML = '<div class="vs-empty">' + escH(data.error) + '</div>'; return; }
+
+        const items = data.items || [];
+        if (!items.length) {
+            content.innerHTML = '<div class="vs-empty"><i class="fas fa-history"></i><p>' + t('Brak historii oglądania') + '</p><p class="vs-empty-sub">' + t('Obejrzane filmy pojawią się tutaj') + '</p></div>';
+            return;
+        }
+
+        // Group by date
+        const groups = {};
+        const now = Date.now() / 1000;
+        items.forEach(v => {
+            const ts = v.last_watched_at || 0;
+            let label;
+            const diff = now - ts;
+            if (diff < 86400) label = t('Dzisiaj');
+            else if (diff < 172800) label = t('Wczoraj');
+            else if (diff < 604800) label = t('Ten tydzień');
+            else label = new Date(ts * 1000).toLocaleDateString('pl-PL', { month: 'long', year: 'numeric' });
+            if (!groups[label]) groups[label] = [];
+            groups[label].push(v);
+        });
+
+        let html = '';
+        Object.entries(groups).forEach(([label, grpItems]) => {
+            html += '<div class="vs-section-header"><i class="fas fa-calendar-alt"></i> ' + escH(label) + '</div>';
+            html += renderGrid(grpItems, true);
+        });
+        content.innerHTML = html;
         attachGridEvents(content);
     }
 
@@ -593,7 +639,23 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     }
 
     /* ── grid rendering ────────────────────────────────────── */
-    function renderGrid(items) {
+    const _GENRE_MAP = {
+        28:'Akcja',12:'Przygodowy',16:'Animacja',35:'Komedia',80:'Kryminał',
+        99:'Dok.',18:'Dramat',10751:'Familijny',14:'Fantasy',36:'Historyczny',
+        27:'Horror',10402:'Muzyczny',9648:'Tajemnica',10749:'Romans',878:'Sci-Fi',
+        53:'Thriller',10752:'Wojenny',37:'Western',10759:'Akcja i Przygoda',
+        10762:'Dla dzieci',10763:'Informacyjny',10764:'Reality',10765:'Sci-Fi & Fantasy',
+        10766:'Telenowela',10767:'Talk-show',10768:'Wojenny i Polityczny',
+    };
+    function _genreBadges(tmdbGenres) {
+        if (!tmdbGenres) return '';
+        const ids = tmdbGenres.split(',');
+        const names = ids.slice(0, 2).map(id => _GENRE_MAP[parseInt(id.trim())] || '').filter(Boolean);
+        if (!names.length) return '';
+        return '<div class="vs-genre-badges">' + names.map(n => '<span class="vs-genre-badge">' + escH(n) + '</span>').join('') + '</div>';
+    }
+
+    function renderGrid(items, showWatched) {
         let html = '<div class="vs-grid' + (selectMode ? ' vs-select-mode' : '') + '">';
         items.forEach(v => {
             const dur = formatDuration(v.duration);
@@ -601,7 +663,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             const res = v.height ? (v.height >= 2160 ? '4K' : v.height >= 1080 ? '1080p' : v.height >= 720 ? '720p' : v.height + 'p') : '';
             const codec = v.codec || '';
             const size = v.file_size ? formatBytes(v.file_size) : '';
-            const meta = [res, codec, size].filter(Boolean).join(' \u00b7 ');
+            const meta = [v.tmdb_year || '', res, codec].filter(Boolean).join(' · ');
             const hasPoster = v.poster_ok;
             const imgSrc = hasPoster
                 ? '/api/video-station/poster/' + v.id + '?token=' + NAS.token
@@ -619,9 +681,11 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     (rating ? '<span class="vs-rating"><i class="fas fa-star"></i> ' + rating + '</span>' : '') +
     (pct > 0 && !v.watched ? '<div class="vs-progress" style="width:' + pct + '%"></div>' : '') +
     (v.watched ? '<span class="vs-watched"><i class="fas fa-check-circle"></i></span>' : '') +
+    '<div class="vs-card-hover-play"><i class="fas fa-play"></i></div>' +
   '</div>' +
   '<div class="vs-title" title="' + escH(v.title || v.filename || '') + '">' + escH(v.title || v.filename || '') + '</div>' +
   (meta ? '<div class="vs-meta">' + escH(meta) + '</div>' : '') +
+  _genreBadges(v.tmdb_genres) +
 '</div>';
         });
         html += '</div>';
@@ -919,6 +983,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     function _reloadSection() {
         if (activeSection === 'library') loadLibrary();
         else if (activeSection === 'recent') loadRecent();
+        else if (activeSection === 'history') loadHistory();
         else if (activeSection === 'collections') loadCollections();
         else if (activeSection === 'hidden') loadHidden();
     }
@@ -1102,6 +1167,115 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         });
     }
 
+    /** Thumbstrip seek preview using VTT sprite from backend */
+    let _thumbVtt = null;
+    let _thumbImg = null;
+    let _thumbVid = null;
+
+    async function _initThumbstrip(vid, videoEl, duration) {
+        const preview = bodyEl.querySelector('#vs-thumbstrip-preview');
+        const canvas = bodyEl.querySelector('#vs-thumbstrip-canvas');
+        const timeEl = bodyEl.querySelector('#vs-thumbstrip-time');
+        if (!preview || !canvas || !videoEl) return;
+
+        _thumbVtt = null;
+        _thumbImg = null;
+        _thumbVid = vid;
+
+        // Load VTT metadata
+        try {
+            const vttUrl = '/api/video-station/thumbstrip/' + vid + '?token=' + NAS.token;
+            const resp = await fetch(vttUrl);
+            if (!resp.ok) return; // 202 = not ready yet
+            const vttText = await resp.text();
+            _thumbVtt = _parseVtt(vttText, vttUrl);
+            // Load sprite image
+            if (_thumbVtt && _thumbVtt.length > 0 && _thumbVtt[0].imgUrl) {
+                _thumbImg = new Image();
+                _thumbImg.src = _thumbVtt[0].imgUrl + '?token=' + NAS.token;
+            }
+        } catch (_) { return; }
+
+        // Seek-bar preview: listen on progress bar mousemove
+        const seekBar = videoEl.parentElement ? videoEl.parentElement.querySelector('input[type=range]') : null;
+        // Since we use native controls, hook into mousemove on the overlay bottom area
+        const overlay = bodyEl.querySelector('#vs-player-overlay');
+        if (!overlay) return;
+
+        overlay.addEventListener('mousemove', _onSeekHover);
+
+        function _onSeekHover(e) {
+            if (!_thumbVtt || !_thumbImg || !_thumbImg.complete || _thumbVid !== vid) return;
+            const rect = overlay.getBoundingClientRect();
+            const relY = e.clientY - rect.top;
+            // Only show preview when mouse is in bottom 60px (near seek bar)
+            if (relY < rect.height - 80 || relY > rect.height - 10) {
+                preview.style.display = 'none'; return;
+            }
+            const relX = e.clientX - rect.left;
+            const fraction = Math.max(0, Math.min(1, relX / rect.width));
+            const seekTime = fraction * duration;
+            const entry = _thumbVtt.find(t => seekTime >= t.start && seekTime <= t.end)
+                || _thumbVtt[0];
+            if (!entry) { preview.style.display = 'none'; return; }
+
+            const ctx = canvas.getContext('2d');
+            canvas.width = entry.w || 160;
+            canvas.height = entry.h || 90;
+            try {
+                ctx.drawImage(_thumbImg, entry.x || 0, entry.y || 0, entry.w || 160, entry.h || 90, 0, 0, canvas.width, canvas.height);
+            } catch (_) { preview.style.display = 'none'; return; }
+
+            timeEl.textContent = formatDuration(seekTime);
+            const px = Math.max(80, Math.min(rect.width - 80, e.clientX - rect.left));
+            preview.style.left = (px - canvas.width / 2) + 'px';
+            preview.style.bottom = '70px';
+            preview.style.display = 'flex';
+        }
+
+        overlay._tsCleanup = () => overlay.removeEventListener('mousemove', _onSeekHover);
+        // Hide when mouse leaves bottom area
+        overlay.addEventListener('mouseleave', () => { preview.style.display = 'none'; });
+    }
+
+    function _parseVtt(text, baseUrl) {
+        const lines = text.split('\n');
+        const entries = [];
+        const base = baseUrl.replace(/[^/]*$/, '');
+        let i = 0;
+        while (i < lines.length) {
+            const line = lines[i].trim();
+            if (line.includes('-->')) {
+                const [startStr, endStr] = line.split('-->').map(s => s.trim());
+                const start = _vttTime(startStr);
+                const end = _vttTime(endStr);
+                const imgLine = (lines[i + 1] || '').trim();
+                if (imgLine) {
+                    const hashIdx = imgLine.indexOf('#xywh=');
+                    let imgUrl, x = 0, y = 0, w = 160, h = 90;
+                    if (hashIdx !== -1) {
+                        imgUrl = imgLine.slice(0, hashIdx);
+                        const parts = imgLine.slice(hashIdx + 6).split(',').map(Number);
+                        [x, y, w, h] = parts;
+                    } else {
+                        imgUrl = imgLine;
+                    }
+                    if (!imgUrl.startsWith('http') && !imgUrl.startsWith('/')) imgUrl = base + imgUrl;
+                    entries.push({ start, end, imgUrl, x, y, w, h });
+                }
+                i += 2;
+            } else { i++; }
+        }
+        return entries;
+    }
+
+    function _vttTime(s) {
+        const parts = s.replace(',', '.').split(':').map(Number);
+        if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+        if (parts.length === 2) return parts[0] * 60 + parts[1];
+        return parts[0];
+    }
+
     async function openPlayer(vid) {
         const info = await api('/video-station/info/' + vid);
         if (info.error) { toast(info.error, 'error'); return; }
@@ -1126,6 +1300,38 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 
         title.textContent = info.title || info.filename || '';
         badge.style.display = needsTranscode ? '' : 'none';
+
+        // Backdrop blur background on player overlay
+        if (info.backdrop_ok) {
+            overlay.style.backgroundImage = 'url(/api/video-station/backdrop/' + vid + '?token=' + NAS.token + ')';
+            overlay.style.backgroundSize = 'cover';
+            overlay.style.backgroundPosition = 'center';
+            overlay.classList.add('vs-player-has-backdrop');
+        } else {
+            overlay.style.backgroundImage = '';
+            overlay.style.backgroundSize = '';
+            overlay.classList.remove('vs-player-has-backdrop');
+        }
+
+        // RemotePlayback / Cast button
+        const castBtn = bodyEl.querySelector('#vs-cast-btn');
+        if (castBtn) {
+            const streamUrl = _buildStreamUrl(vid);
+            if ('remote' in HTMLVideoElement.prototype || video.remote) {
+                castBtn.style.display = '';
+                castBtn.onclick = () => {
+                    video.remote.prompt().catch(() => {});
+                };
+                video.remote.addEventListener('connecting', () => { castBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>'; });
+                video.remote.addEventListener('connect', () => { castBtn.innerHTML = '<i class="fas fa-tv" style="color:#1db954"></i>'; castBtn.title = t('Casting aktywny'); });
+                video.remote.addEventListener('disconnect', () => { castBtn.innerHTML = '<i class="fas fa-tv"></i>'; castBtn.title = t('Cast na TV'); });
+            } else {
+                castBtn.style.display = 'none';
+            }
+        }
+
+        // Thumbstrip seek preview
+        _initThumbstrip(vid, video, info.duration || 0);
 
         // Playback speed
         if (speedSel) {
@@ -1186,10 +1392,6 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         }
 
         _loadSubtitles(vid, video);
-
-        // Preload thumbstrip sprite for future use
-        const _spriteImg = new Image();
-        _spriteImg.src = '/api/video-station/thumbstrip/' + vid + '?token=' + NAS.token;
 
         // HLS live-mode: intercept native seekbar drags beyond buffer
         if (needsTranscode) {
@@ -1438,10 +1640,14 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             video.load();
         }
         if (overlay._keyHandler) { document.removeEventListener('keydown', overlay._keyHandler); overlay._keyHandler = null; }
+        if (overlay._tsCleanup) { overlay._tsCleanup(); overlay._tsCleanup = null; }
+        // clear backdrop
+        overlay.style.backgroundImage = '';
+        overlay.classList.remove('vs-player-has-backdrop');
+        _thumbVtt = null; _thumbImg = null; _thumbVid = null;
 
         // refresh current view to reflect watch state
-        if (activeSection === 'library') loadLibrary();
-        else if (activeSection === 'recent') loadRecent();
+        _reloadSection();
     }
 
     function stopPlayer() {
@@ -1547,7 +1753,12 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 '.vs-card-poster .vs-thumb{aspect-ratio:2/3}',
 '.vs-card-poster .vs-thumb img{object-fit:cover}',
 '.vs-title{padding:8px 10px 2px;font-size:13px;font-weight:500;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-'.vs-meta{padding:0 10px 8px;font-size:11px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+'.vs-meta{padding:0 10px 4px;font-size:11px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+'.vs-genre-badges{padding:0 10px 8px;display:flex;gap:4px;flex-wrap:wrap}',
+'.vs-genre-badge{font-size:10px;background:rgba(79,140,255,.15);color:rgba(79,140,255,.9);border:1px solid rgba(79,140,255,.2);border-radius:3px;padding:1px 6px;white-space:nowrap}',
+'.vs-card-hover-play{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:4;opacity:0;transition:opacity .18s;background:rgba(0,0,0,.35)}',
+'.vs-card:hover .vs-card-hover-play{opacity:1}',
+'.vs-card-hover-play i{font-size:32px;color:#fff;filter:drop-shadow(0 2px 8px rgba(0,0,0,.7))}',
 
 /* collection card tweaks */
 '.vs-collection-thumb{aspect-ratio:16/10}',
@@ -1584,8 +1795,10 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 /* player overlay */
 '.vs-player-overlay{position:fixed;top:0;left:0;width:100vw;height:100vh;background:#000;z-index:10000;display:flex;flex-direction:column;overflow:hidden}',
 '.vs-player-overlay:fullscreen{width:100%;height:100%}',
+'.vs-player-overlay.vs-player-has-backdrop::before{content:"";position:absolute;inset:0;background:inherit;filter:blur(60px) brightness(0.25);transform:scale(1.1);z-index:0}',
+'#vs-player-video{position:relative;z-index:1;width:100%;height:100%;outline:none;object-fit:contain}',
 '.vs-player-top{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;z-index:10;background:linear-gradient(to bottom,rgba(0,0,0,.85),transparent);position:absolute;top:0;left:0;right:0}',
-'.vs-player-title{color:#fff;font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+'.vs-player-title{color:#fff;font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}',
 '.vs-player-close{background:none;border:none;color:#fff;font-size:20px;cursor:pointer;padding:4px 8px;opacity:.7;transition:opacity .15s}',
 '.vs-player-close:hover{opacity:1}',
 '.vs-player-badge{display:inline-flex;align-items:center;gap:5px;background:rgba(255,165,0,.85);color:#000;font-size:11px;font-weight:600;padding:3px 10px;border-radius:12px;white-space:nowrap}',
@@ -1593,7 +1806,6 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 '.vs-audio-select option{background:#222;color:#fff}',
 '.vs-speed-select{background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.3);border-radius:4px;padding:2px 6px;font-size:12px;cursor:pointer}',
 '.vs-speed-select option{background:#222;color:#fff}',
-'#vs-player-video{width:100%;height:100%;outline:none;object-fit:contain}',
 '.vs-ctx-menu{position:fixed;background:var(--bg-elevated,#2a2a2e);border:1px solid var(--border);border-radius:var(--r-md,6px);padding:4px 0;z-index:9999;min-width:180px;box-shadow:0 8px 24px rgba(0,0,0,.5)}',
 '.vs-ctx-item{padding:8px 14px;cursor:pointer;font-size:13px;color:var(--text-primary,#fff);display:flex;align-items:center;gap:8px;white-space:nowrap}',
 '.vs-ctx-item:hover{background:var(--bg-hover,rgba(255,255,255,.08))}',
@@ -1601,11 +1813,18 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 '.vs-ctx-danger{color:var(--danger,#f87171)}',
 '.vs-ctx-danger:hover{background:rgba(248,113,113,.12)}',
 
-/* PiP & fullscreen buttons */
+/* PiP, fullscreen & cast buttons */
 '.vs-pip-btn{background:none;border:none;color:#fff;font-size:15px;cursor:pointer;padding:4px 8px;opacity:.7;transition:opacity .15s}',
 '.vs-pip-btn:hover{opacity:1}',
 '.vs-fs-btn{background:none;border:none;color:#fff;font-size:15px;cursor:pointer;padding:4px 8px;opacity:.7;transition:opacity .15s}',
 '.vs-fs-btn:hover{opacity:1}',
+'.vs-cast-btn{background:none;border:none;color:#fff;font-size:15px;cursor:pointer;padding:4px 8px;opacity:.7;transition:opacity .15s}',
+'.vs-cast-btn:hover{opacity:1;color:#1db954}',
+
+/* Thumbstrip seek preview */
+'.vs-thumbstrip-preview{position:absolute;display:flex;flex-direction:column;align-items:center;gap:4px;pointer-events:none;z-index:15;bottom:70px}',
+'.vs-thumbstrip-preview canvas{border-radius:4px;border:2px solid rgba(255,255,255,.3);box-shadow:0 4px 16px rgba(0,0,0,.8)}',
+'.vs-thumbstrip-time{color:#fff;font-size:11px;font-weight:600;background:rgba(0,0,0,.7);padding:2px 8px;border-radius:4px;font-variant-numeric:tabular-nums}',
 
 /* Resume dialog */
 '.vs-resume-dialog{position:absolute;inset:0;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center;z-index:20}',
