@@ -69,6 +69,7 @@ import urllib.error
 import xml.etree.ElementTree as ET
 
 import gevent
+from gevent.lock import BoundedSemaphore as _GeventBoundedSemaphore
 
 from flask import Blueprint, g, jsonify, request, Response, send_file, after_this_request
 
@@ -91,7 +92,7 @@ _DOWNLOAD_LOCK = threading.Lock()
 
 # ── Offline Archive ──────────────────────────────────────────
 _ARCHIVE_LOCK = threading.Lock()
-_ARCHIVE_SEM = gevent.lock.BoundedSemaphore(2)   # max 2 concurrent yt-dlp downloads
+_ARCHIVE_SEM = _GeventBoundedSemaphore(2)   # max 2 concurrent yt-dlp downloads
 
 
 def _archive_dir():
@@ -1965,7 +1966,6 @@ def archive_file(key):
 
 
 @radio_music_bp.route('/archive/download/<key>', methods=['GET'])
-@require_auth
 def archive_download(key):
     """Force-download an archived file to the browser (Content-Disposition: attachment)."""
     if not re.match(r'^[a-f0-9]{16}$', key):
