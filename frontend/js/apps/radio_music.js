@@ -2628,14 +2628,17 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             html += '<div class="rm-section-title"><i class="fas fa-fire"></i> ' + t('Najczęściej grane') + '</div>';
             html += '<div class="rm-hscroll">';
             items.slice(0, 30).forEach((item, i) => {
-                const artHtml = (item.image || item.favicon)
-                    ? '<img src="' + escH(item.image || item.favicon) + '" onerror="this.outerHTML=\'<i class=\\\'fas fa-music\\\'></i>\'">'
+                const art = item.image || item.thumbnail || item.favicon || '';
+                const title = item.name || item.title || '';
+                if (!title) return;
+                const artHtml = art
+                    ? '<img src="' + escH(art) + '" onerror="this.outerHTML=\'<i class=\\\'fas fa-music\\\'></i>\'">'
                     : '<i class="fas fa-music"></i>';
                 const badge = item.play_count > 1 ? '<span class="rm-hcard-badge">' + item.play_count + '×</span>' : '';
                 html += '<div class="rm-hcard" data-idx="' + i + '">'
                     + '<div class="rm-hcard-art">' + artHtml + badge + '</div>'
-                    + '<div class="rm-hcard-title">' + escH(item.name) + '</div>'
-                    + '<div class="rm-hcard-meta">' + escH(item.meta || item.country || '') + '</div>'
+                    + '<div class="rm-hcard-title">' + escH(title) + '</div>'
+                    + '<div class="rm-hcard-meta">' + escH(item.meta || item.channel || item.country || '') + '</div>'
                     + '</div>';
             });
             html += '</div>';
@@ -2643,18 +2646,19 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
         // "Ostatnio grane" — music/local only
         const allRecent = (await api('/radio-music/history')).items || [];
-        const recent = allRecent.filter(it => it.type === 'music' || it.type === 'local');
+        const recent = allRecent.filter(it => (it.type === 'music' || it.type === 'local') && (it.name || it.title));
         if (recent.length) {
             html += '<div class="rm-section-title" style="margin-top:20px"><i class="fas fa-history"></i> ' + t('Ostatnio grane') + '</div>';
             html += '<div class="rm-hscroll">';
             recent.slice(0, 20).forEach((item, i) => {
-                const artHtml = (item.image || item.favicon)
-                    ? '<img src="' + escH(item.image || item.favicon) + '" onerror="this.outerHTML=\'<i class=\\\'fas fa-music\\\'></i>\'">'
+                const art = item.image || item.thumbnail || item.favicon || '';
+                const artHtml = art
+                    ? '<img src="' + escH(art) + '" onerror="this.outerHTML=\'<i class=\\\'fas fa-music\\\'></i>\'">'
                     : '<i class="fas fa-music"></i>';
                 html += '<div class="rm-hcard rm-hcard-recent" data-ridx="' + i + '">'
                     + '<div class="rm-hcard-art">' + artHtml + '</div>'
-                    + '<div class="rm-hcard-title">' + escH(item.name) + '</div>'
-                    + '<div class="rm-hcard-meta">' + escH(item.meta || item.country || '') + '</div>'
+                    + '<div class="rm-hcard-title">' + escH(item.name || item.title) + '</div>'
+                    + '<div class="rm-hcard-meta">' + escH(item.meta || item.channel || item.country || '') + '</div>'
                     + '</div>';
             });
             html += '</div>';

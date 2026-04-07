@@ -686,6 +686,14 @@ def history_add():
     if not item:
         return jsonify({'error': 'Brak danych.'}), 400
 
+    # Normalize field aliases so history entries are always consistent
+    if not item.get('name') and item.get('title'):
+        item['name'] = item['title']
+    if not item.get('image') and item.get('thumbnail'):
+        item['image'] = item['thumbnail']
+    if not item.get('meta') and item.get('channel'):
+        item['meta'] = item['channel']
+
     item['played_at'] = time.time()
     hfile = _user_file('history.json')
     hist = _load_json(hfile, [])
