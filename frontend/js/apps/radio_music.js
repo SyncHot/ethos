@@ -403,6 +403,12 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-track-btn{background:none;border:none;color:rgba(255,255,255,.4);cursor:pointer;padding:6px;font-size:13px;border-radius:50%;transition:all .12s}',
 '.rm-track-btn:hover{color:#1DB954;background:rgba(29,185,84,.1)}',
 
+/* local music search */
+'.rm-local-search-wrap{padding:8px 12px 0}',
+'.rm-local-search-box{display:flex;align-items:center;gap:8px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:7px 12px;margin-bottom:12px}',
+'.rm-local-search-box input{flex:1;background:none;border:none;outline:none;color:#fff;font-size:13px;min-width:0}',
+'.rm-local-search-box input::placeholder{color:rgba(255,255,255,.3)}',
+
 /* seekbar */
 '.rm-seekbar{display:none;align-items:center;gap:8px;padding:0 20px;height:20px;flex-shrink:0;background:#181818}',
 '.rm-seekbar.visible{display:flex}',
@@ -1574,85 +1580,126 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             byFolder[it.folder].push(it);
         });
 
-        let html = '';
-        for (const [folder, files] of Object.entries(byFolder)) {
-            const folderName = folder.split('/').pop() || folder;
-            html += '<div class="rm-section-title"><i class="fas fa-folder"></i> ' + escH(folderName)
-                + ' <span style="font-size:11px;color:var(--text-muted);font-weight:400">(' + files.length + ')</span></div>';
-            html += '<div style="display:flex;flex-direction:column;gap:4px;margin-bottom:16px">';
-            files.forEach((file, i) => {
-                const sizeMB = (file.size / 1048576).toFixed(1);
-                const artUrl = file.has_art ? '/api/radio-music/local/artwork?path=' + encodeURIComponent(file.path) + '&token=' + (NAS.token || '') : '';
-                const metaParts = [];
-                if (file.artist) metaParts.push(file.artist);
-                if (file.album) metaParts.push(file.album);
-                if (file.year) metaParts.push(file.year);
-                if (file.genre) metaParts.push(file.genre);
-                if (!metaParts.length) metaParts.push(file.filename);
-                const durStr = file.duration ? _fmtSecs(file.duration) : '';
-                html += '<div class="rm-track rm-local-track" data-folder="' + escH(folder) + '" data-idx="' + i + '">'
-                    + (artUrl
-                        ? '<img class="rm-track-thumb" src="' + escH(artUrl) + '" loading="lazy" onerror="this.outerHTML=\'<div class=\\\'rm-track-thumb\\\' style=\\\'display:flex;align-items:center;justify-content:center;background:#1a1a2e\\\'><i class=\\\'fas fa-music\\\' style=\\\'color:var(--text-muted)\\\'></i></div>\'">'
-                        : '<div class="rm-track-thumb" style="display:flex;align-items:center;justify-content:center;background:#1a1a2e"><i class="fas fa-music" style="color:var(--text-muted)"></i></div>')
-                    + '<div class="rm-track-info"><div class="rm-track-title">' + escH(file.name) + '</div>'
-                    + '<div class="rm-track-meta">' + escH(metaParts.join(' · ')) + '</div></div>'
-                    + (durStr ? '<span class="rm-track-dur">' + durStr + '</span>' : '')
-                    + '<div class="rm-track-actions">'
-                    + '<button class="rm-track-btn" title="' + t('Playlista') + '"><i class="fas fa-list-ul"></i></button>'
-                    + '<button class="rm-track-btn rm-add-queue-btn" title="' + t('Kolejka') + '"><i class="fas fa-plus"></i></button>'
-                    + '</div></div>';
-            });
-            html += '</div>';
-        }
-        content.innerHTML = html;
+        // Precompute search string for each item
+        items.forEach(file => {
+            const metaParts = [];
+            if (file.artist) metaParts.push(file.artist);
+            if (file.album) metaParts.push(file.album);
+            if (file.year) metaParts.push(file.year);
+            if (file.genre) metaParts.push(file.genre);
+            if (!metaParts.length) metaParts.push(file.filename);
+            file._meta = metaParts.join(' · ');
+            file._search = (file.name + ' ' + file._meta).toLowerCase();
+        });
 
-        // Wire clicks
-        content.querySelectorAll('.rm-local-track').forEach(el => {
-            const folder = el.dataset.folder;
-            const idx = parseInt(el.dataset.idx);
-            const file = byFolder[folder][idx];
+        // Search bar + list wrapper
+        const searchWrap = document.createElement('div');
+        searchWrap.className = 'rm-local-search-wrap';
+        searchWrap.innerHTML = '<div class="rm-local-search-box">'
+            + '<i class="fas fa-search" style="color:var(--text-muted);font-size:13px"></i>'
+            + '<input id="rm-local-search" type="text" placeholder="' + t('Szukaj w bibliotece…') + '" autocomplete="off">'
+            + '<span id="rm-local-count" style="color:var(--text-muted);font-size:12px;white-space:nowrap">' + items.length + ' ' + t('plików') + '</span>'
+            + '</div>';
+        content.innerHTML = '';
+        content.appendChild(searchWrap);
+        const listWrap = document.createElement('div');
+        listWrap.id = 'rm-local-list-wrap';
+        content.appendChild(listWrap);
+
+        function _buildLocalTrackEl(file, folder) {
+            const artUrl = file.has_art ? '/api/radio-music/local/artwork?path=' + encodeURIComponent(file.path) + '&token=' + (NAS.token || '') : '';
+            const durStr = file.duration ? _fmtSecs(file.duration) : '';
+            const el = document.createElement('div');
+            el.className = 'rm-track rm-local-track';
+            el.innerHTML = (artUrl
+                ? '<img class="rm-track-thumb" src="' + escH(artUrl) + '" loading="lazy" onerror="this.outerHTML=\'<div class=\\\'rm-track-thumb\\\' style=\\\'display:flex;align-items:center;justify-content:center;background:#1a1a2e\\\'><i class=\\\'fas fa-music\\\' style=\\\'color:var(--text-muted)\\\'></i></div>\'">'
+                : '<div class="rm-track-thumb" style="display:flex;align-items:center;justify-content:center;background:#1a1a2e"><i class="fas fa-music" style="color:var(--text-muted)"></i></div>')
+                + '<div class="rm-track-info"><div class="rm-track-title">' + escH(file.name) + '</div>'
+                + '<div class="rm-track-meta">' + escH(file._meta) + '</div></div>'
+                + (durStr ? '<span class="rm-track-dur">' + durStr + '</span>' : '')
+                + '<div class="rm-track-actions">'
+                + '<button class="rm-track-btn" title="' + t('Playlista') + '"><i class="fas fa-list-ul"></i></button>'
+                + '<button class="rm-track-btn rm-add-queue-btn" title="' + t('Kolejka') + '"><i class="fas fa-plus"></i></button>'
+                + '</div>';
             const localItem = {
                 name: file.name, type: 'local', path: file.path,
                 url: '/api/radio-music/local/stream?path=' + encodeURIComponent(file.path) + '&token=' + (NAS.token || ''),
-                meta: file.filename,
+                meta: file._meta, image: '',
             };
             el.onclick = (e) => {
                 if (e.target.closest('.rm-track-btn')) return;
-                // Play and set rest of folder as queue
-                const folderFiles = byFolder[folder];
-                _musicQueue = folderFiles.slice(idx).map(f => {
+                const folderFiles = byFolder[folder] || [file];
+                const idx = folderFiles.indexOf(file);
+                _musicQueue = folderFiles.slice(idx >= 0 ? idx : 0).map(f => {
                     const fArt = f.has_art ? '/api/radio-music/local/artwork?path=' + encodeURIComponent(f.path) + '&token=' + (NAS.token || '') : '';
-                    return {
-                        id: f.path, title: f.name, channel: [f.artist, f.album, f.year].filter(Boolean).join(' · ') || f.filename,
-                        url: f.path, thumbnail: fArt, duration: f.duration || 0, duration_fmt: f.duration ? _fmtSecs(f.duration) : '',
-                        source: 'local',
-                    };
+                    return { id: f.path, title: f.name, channel: f._meta || f.filename, url: f.path, thumbnail: fArt, duration: f.duration || 0, duration_fmt: f.duration ? _fmtSecs(f.duration) : '', source: 'local' };
                 });
                 _musicQueueIdx = 0;
                 const fileArt = file.has_art ? '/api/radio-music/local/artwork?path=' + encodeURIComponent(file.path) + '&token=' + (NAS.token || '') : '';
-                playAudio({
-                    name: file.name, type: 'local', path: file.path,
-                    url: '/api/radio-music/local/stream?path=' + encodeURIComponent(file.path) + '&token=' + (NAS.token || ''),
-                    meta: [file.artist, file.album, file.year].filter(Boolean).join(' · ') || file.filename,
-                    image: fileArt,
-                });
+                playAudio({ name: file.name, type: 'local', path: file.path, url: localItem.url, meta: file._meta, image: fileArt });
             };
             el.querySelector('.rm-add-queue-btn').onclick = (e) => {
                 e.stopPropagation();
                 const fArt = file.has_art ? '/api/radio-music/local/artwork?path=' + encodeURIComponent(file.path) + '&token=' + (NAS.token || '') : '';
-                _musicQueue.push({
-                    id: file.path, title: file.name, channel: [file.artist, file.album, file.year].filter(Boolean).join(' · ') || file.filename,
-                    url: file.path, thumbnail: fArt, duration: file.duration || 0, duration_fmt: file.duration ? _fmtSecs(file.duration) : '',
-                    source: 'local',
-                });
+                _musicQueue.push({ id: file.path, title: file.name, channel: file._meta, url: file.path, thumbnail: fArt, duration: file.duration || 0, duration_fmt: file.duration ? _fmtSecs(file.duration) : '', source: 'local' });
                 toast(t('Dodano do kolejki: ') + file.name, 'success');
             };
             const plBtn = el.querySelector('.rm-track-btn[title="' + t('Playlista') + '"]');
-            if (plBtn) plBtn.onclick = (e) => {
-                e.stopPropagation();
-                _showAddToPlaylistModal(localItem);
-            };
+            if (plBtn) plBtn.onclick = (e) => { e.stopPropagation(); _showAddToPlaylistModal(localItem); };
+            return el;
+        }
+
+        // Progressive batch render — 80 items/frame to avoid blocking main thread
+        function _renderLocalBatch(entries, wrap, startIdx) {
+            const BATCH = 80;
+            const frag = document.createDocumentFragment();
+            const end = Math.min(startIdx + BATCH, entries.length);
+            for (let i = startIdx; i < end; i++) {
+                const entry = entries[i];
+                if (entry.isHeader) {
+                    const h = document.createElement('div');
+                    h.className = 'rm-section-title';
+                    h.innerHTML = '<i class="fas fa-folder"></i> ' + escH(entry.name)
+                        + ' <span style="font-size:11px;color:var(--text-muted);font-weight:400">(' + entry.count + ')</span>';
+                    frag.appendChild(h);
+                } else {
+                    frag.appendChild(_buildLocalTrackEl(entry.file, entry.folder));
+                }
+            }
+            wrap.appendChild(frag);
+            if (end < entries.length) requestAnimationFrame(() => _renderLocalBatch(entries, wrap, end));
+        }
+
+        let _localSearchTimer = null;
+        function _applyLocalFilter(query) {
+            listWrap.innerHTML = '';
+            const q = query.toLowerCase().trim();
+            const entries = [];
+            let count = 0;
+            if (q) {
+                items.filter(f => f._search.includes(q)).forEach(f => {
+                    entries.push({ file: f, folder: f.folder });
+                    count++;
+                });
+            } else {
+                for (const [folder, files] of Object.entries(byFolder)) {
+                    const folderName = folder.split('/').pop() || folder;
+                    entries.push({ isHeader: true, name: folderName, count: files.length });
+                    files.forEach(f => { entries.push({ file: f, folder }); count++; });
+                }
+            }
+            const countEl = content.querySelector('#rm-local-count');
+            if (countEl) countEl.textContent = count + ' ' + t('plików');
+            _renderLocalBatch(entries, listWrap, 0);
+        }
+
+        const searchInput = content.querySelector('#rm-local-search');
+        searchInput.addEventListener('input', () => {
+            clearTimeout(_localSearchTimer);
+            _localSearchTimer = setTimeout(() => _applyLocalFilter(searchInput.value), 200);
         });
+
+        _applyLocalFilter('');
     }
 
     /* ── Local Audiobooks ──────────────────────────────── */
@@ -2332,8 +2379,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             _audio.onended = null; _audio.onerror = null;
             _audio.onplay = null; _audio.onpause = null;
             _audio.ontimeupdate = null; _audio.onloadedmetadata = null;
-            _audio.onwaiting = null; _audio.onplaying = null;
-            _audio.pause(); _audio.src = '';
+            _audio.onwaiting = null; _audio.onplaying = null; _audio.onstalled = null;
+            _audio.pause(); _audio.src = ''; _audio.load(); // release media resource
         }
         _clearSeek();
         _audio = new Audio();
@@ -2644,7 +2691,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         _syncCastBtnUi(false);
         if (_audio) {
             _audio.pause();
-            _audio.src = '';
+            _audio.src = ''; _audio.load(); // release media resource
             _audio = null;
         }
         _playing = null;
