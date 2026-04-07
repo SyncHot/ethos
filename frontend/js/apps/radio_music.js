@@ -2124,7 +2124,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 if (file.album) metaParts.push(file.album);
                 if (!metaParts.length) metaParts.push(file.filename);
                 const durStr = file.duration ? _fmtSecs(file.duration) : '';
-                html += '<div class="rm-track rm-lab-track" data-group="' + escH(folder) + '" data-idx="' + i + '">'
+                const isLocalPlaying = _playing && _playing.path && _playing.path === file.path;
+                html += '<div class="rm-track rm-lab-track' + (isLocalPlaying ? ' rm-playing' : '') + '" data-group="' + escH(folder) + '" data-idx="' + i + '" data-url="' + escH(file.path) + '">'
                     + (artUrl
                         ? '<img class="rm-track-thumb" src="' + escH(artUrl) + '" loading="lazy" onerror="this.outerHTML=\'<div class=\\\'rm-track-thumb\\\' style=\\\'display:flex;align-items:center;justify-content:center;background:#1a1a2e\\\'><i class=\\\'fas fa-book\\\' style=\\\'color:var(--text-muted)\\\'></i></div>\'">'
                         : '<div class="rm-track-thumb" style="display:flex;align-items:center;justify-content:center;background:#1a1a2e"><i class="fas fa-book" style="color:var(--text-muted)"></i></div>')
@@ -2272,7 +2273,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             html += '<div style="display:flex;flex-direction:column;gap:4px">';
             pl.tracks.forEach((tr, idx) => {
                 const icon = tr.type === 'radio' ? 'fa-broadcast-tower' : tr.type === 'podcast' ? 'fa-podcast' : 'fa-music';
-                html += `<div class="rm-track" data-idx="${idx}">
+                const isPlaying = _playing && _playing.url && _playing.url === tr.url;
+                html += `<div class="rm-track${isPlaying ? ' rm-playing' : ''}" data-idx="${idx}" data-url="${escH(tr.url || '')}">
                     ${tr.image || tr.thumbnail ? '<img class="rm-track-thumb" src="' + escH(tr.image || tr.thumbnail) + '" loading="lazy">' : '<div class="rm-track-thumb" style="display:flex;align-items:center;justify-content:center"><i class="fas ' + icon + '" style="color:var(--text-muted)"></i></div>'}
                     <div class="rm-track-info">
                         <div class="rm-track-title">${escH(tr.name || tr.title)}</div>
@@ -3346,11 +3348,15 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         if (!item) return;
 
         let el = null;
-        // Match by URL (music, local, podcast)
+        // 1. Match by URL (music YT, playlist track, podcast)
         if (item.url) {
             el = bodyEl.querySelector(`[data-url="${CSS.escape(item.url)}"]`);
         }
-        // Fallback: match radio card by station UUID
+        // 2. Local files: item.url is the full stream URL but data-url stores the file path
+        if (!el && item.path) {
+            el = bodyEl.querySelector(`[data-url="${CSS.escape(item.path)}"]`);
+        }
+        // 3. Radio card: match by station UUID (JS property, not a DOM attribute)
         if (!el && item.uuid) {
             el = Array.from(bodyEl.querySelectorAll('.rm-card')).find(c => c._stationUuid === item.uuid);
         }
