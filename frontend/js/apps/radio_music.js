@@ -895,6 +895,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             const playPauseBtn = body.querySelector('#rm-play-pause');
             playPauseBtn.onclick = () => {
                 if (!_audio) return;
+                // Restored state: audio src not yet loaded — reinitialise from saved track
+                if (!_audio.src && _playing) { playAudio(_playing); return; }
                 const npBtn = _npOverlay?.querySelector('#rm-np-playpause');
                 if (_audio.paused) {
                     playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
@@ -3111,6 +3113,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                     } else {
                         _showAutoplayPrompt();
                     }
+                } else if (err.name === 'AbortError') {
+                    // Normal: src changed while play() was pending (e.g. fast track switch) — ignore silently
                 } else {
                     _cl('warning', 'play() rejected', { idx, error: err?.message, src: src?.substring(0, 80) });
                     tryUrl(idx + 1);
@@ -4508,6 +4512,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         // Controls — optimistic: icon flips instantly, reverts only if play() rejects
         ov.querySelector('#rm-np-playpause').onclick = () => {
             if (!_audio) return;
+            // Restored state: audio src not yet loaded — reinitialise from saved track
+            if (!_audio.src && _playing) { playAudio(_playing); return; }
             const btn = ov.querySelector('#rm-np-playpause');
             const miniBtn = bodyEl?.querySelector('#rm-play-pause');
             if (_audio.paused) {
