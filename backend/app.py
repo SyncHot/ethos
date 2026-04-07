@@ -7108,7 +7108,7 @@ def files_rename():
         return jsonify({'error': str(e)}), 500
 
 
-def _atomic_move(src, target):
+def _atomic_move(src, target, username=None):
     """Move *src* to *target* atomically.
 
     For same-filesystem moves, uses os.rename which is atomic.
@@ -7116,6 +7116,9 @@ def _atomic_move(src, target):
     replaces the target, and finally removes the source.  This ensures that
     a crash between any step leaves data intact (source still exists or target
     is already written).
+
+    *username* is used to chown the destination on cross-device moves.
+    It must be captured from the request context before entering the thread pool.
     """
     try:
         os.rename(src, target)
@@ -7128,7 +7131,7 @@ def _atomic_move(src, target):
             tmp_target = target + '.ethos_mv_tmp_dir'
             try:
                 shutil.copytree(src, tmp_target)
-                _chown_recursive(tmp_target)
+                _chown_recursive(tmp_target, username)
                 os.rename(tmp_target, target)
                 shutil.rmtree(src)
             except Exception:
@@ -7138,7 +7141,7 @@ def _atomic_move(src, target):
             tmp_target = target + '.ethos_mv_tmp'
             try:
                 shutil.copy2(src, tmp_target)
-                _chown_to_user(tmp_target)
+                _chown_to_user(tmp_target, username)
                 os.replace(tmp_target, target)
                 os.remove(src)
             except Exception:
@@ -7171,8 +7174,11 @@ def files_move():
         new_user_path = dest_user + '/' + os.path.basename(old_user_path)
 
         target = os.path.join(dest, os.path.basename(src))
+        # Capture username in request context before entering thread pool
+        _cur_user = get_current_user()
+        _username = _cur_user['username'] if _cur_user else None
         # Run in thread pool to avoid blocking gevent on cross-device moves
-        _fs_call(_atomic_move, src, target, timeout=300)
+        _fs_call(_atomic_move, src, target, _username, timeout=300)
 
         # Migrate folder passwords for moved folder
         _migrate_folder_passwords(old_user_path, new_user_path)
@@ -7457,6 +7463,8 @@ def files_move_multi():
     moved = []
     skipped = []
     errors = []
+    _cur_user = get_current_user()
+    _username = (_cur_user or {}).get('username')
     for src_path in sources:
         real_src = safe_path(src_path)
         if not real_src or not os.path.exists(real_src):
@@ -7469,8 +7477,8 @@ def files_move_multi():
             continue
         try:
             # Run in thread pool to avoid blocking gevent on cross-device moves
-            _fs_call(_atomic_move, real_src, target, timeout=300)
-            _chown_recursive(target)
+            _fs_call(_atomic_move, real_src, target, _username, timeout=300)
+            _chown_recursive(target, _username)
             moved.append(base_name)
             # Migrate folder passwords
             dest_user = data.get('dest', '').rstrip('/')
@@ -7544,7 +7552,7 @@ def _bg_move(resolved_sources, dest_dir, total, on_conflict='rename', dest_user_
                 continue
             try:
                 # Run in thread pool to avoid blocking gevent on cross-device moves
-                _fs_call(_atomic_move, real_src, target, timeout=600)
+                _fs_call(_atomic_move, real_src, target, _bg_username, timeout=600)
                 _chown_recursive(target, _bg_username)
                 done += item_count
                 moved.append(base_name)
