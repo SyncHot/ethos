@@ -2029,7 +2029,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             if (!_hlsSessionId) { clearInterval(_heartbeatTimer); return; }
             const pos = video ? video.currentTime : 0;
             api('/video-station/hls/' + _hlsSessionId + '/heartbeat',
-                { method: 'POST', body: JSON.stringify({ pos }) });
+                { method: 'POST', body: { pos } });
         }, 8000);
     }
 

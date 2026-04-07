@@ -1828,6 +1828,12 @@ def hls_heartbeat(session_id):
     if not sess:
         return jsonify(ok=False, error="Session not found"), 404
     data = request.get_json(silent=True) or {}
+    if isinstance(data, str):
+        # Defensive: body was double-serialized by client (JSON.stringify in api())
+        try:
+            data = json.loads(data)
+        except Exception:
+            data = {}
     sess['last_heartbeat'] = time.time()
     pos = float(data.get('pos', sess.get('client_pos', 0)))
     sess['client_pos'] = pos
