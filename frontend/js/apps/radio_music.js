@@ -745,6 +745,34 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-more-btn i{font-size:22px;color:rgba(255,255,255,.5);transition:color .15s}',
 '.rm-more-btn:active i{color:#1DB954}',
 
+/* per-track action bottom sheet */
+'.rm-tsheet-overlay{position:fixed;inset:0;z-index:9998;background:rgba(0,0,0,.5);backdrop-filter:blur(4px)}',
+'.rm-tsheet{position:fixed;bottom:0;left:0;right:0;z-index:9999;background:#1a1a1a;border-radius:20px 20px 0 0;padding:12px 0 env(safe-area-inset-bottom,0);box-shadow:0 -8px 40px rgba(0,0,0,.7);transform:translateY(100%);transition:transform .25s cubic-bezier(.25,1,.5,1)}',
+'.rm-tsheet.open{transform:translateY(0)}',
+'.rm-tsheet-handle{width:40px;height:4px;background:rgba(255,255,255,.2);border-radius:2px;margin:0 auto 8px}',
+'.rm-tsheet-title{padding:4px 16px 12px;font-size:13px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-bottom:1px solid rgba(255,255,255,.07);margin-bottom:4px}',
+'.rm-tsheet-row{display:flex;align-items:center;gap:14px;padding:14px 20px;cursor:pointer;transition:background .12s}',
+'.rm-tsheet-row:hover{background:rgba(255,255,255,.06)}',
+'.rm-tsheet-row:active{background:rgba(29,185,84,.12)}',
+'.rm-tsheet-row i{width:20px;text-align:center;font-size:16px;color:rgba(255,255,255,.55)}',
+'.rm-tsheet-row span{font-size:14px;color:rgba(255,255,255,.85)}',
+'.rm-tsheet-row.danger i,.rm-tsheet-row.danger span{color:#ef4444}',
+'.rm-tsheet-row.disabled{opacity:.4;pointer-events:none}',
+'.rm-tsheet-progress{font-size:11px;color:#1DB954;margin-left:auto;font-weight:600}',
+
+/* "..." button on tracks */
+'.rm-track-more{background:none;border:none;color:rgba(255,255,255,.3);font-size:16px;padding:8px;cursor:pointer;flex-shrink:0;border-radius:8px;transition:color .12s;line-height:1}',
+'.rm-track-more:hover{color:rgba(255,255,255,.7);background:rgba(255,255,255,.06)}',
+'.rm-track-more.rm-downloading{color:#1DB954;animation:rm-pulse 1s infinite}',
+
+/* playlist edit mode */
+'.rm-pl-edit-mode .rm-track{cursor:grab}',
+'.rm-pl-edit-mode .rm-track:active{cursor:grabbing}',
+'.rm-track.rm-dnd-over{box-shadow:inset 0 2px 0 #1DB954}',
+'.rm-track.rm-dnd-dragging{opacity:.4}',
+'.rm-pl-edit-btn{background:none;border:1px solid rgba(255,255,255,.2);color:rgba(255,255,255,.6);font-size:12px;padding:6px 14px;border-radius:20px;cursor:pointer;transition:all .15s}',
+'.rm-pl-edit-btn.active{background:#1DB954;color:#000;border-color:#1DB954}',
+
 /* exit fullscreen toggle (mobile only) */
 '.rm-exit-fs{display:none;position:absolute;top:8px;right:8px;z-index:200;width:40px;height:40px;border-radius:50%;background:rgba(0,0,0,.55);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.12);color:rgba(255,255,255,.7);font-size:15px;cursor:pointer;align-items:center;justify-content:center;transition:all .2s}',
 '.rm-exit-fs:active{transform:scale(.9);background:rgba(0,0,0,.8)}',
@@ -1751,18 +1779,19 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 <span class="rm-track-dur">${escH(tr.duration_fmt)}</span>
                 <div class="rm-track-actions">
                     ${_archiveBtnHtml(tr.url)}
-                    <button class="rm-track-btn" title="${t('Playlista')}"><i class="fas fa-list-ul"></i></button>
-                    <button class="rm-track-btn rm-add-queue-btn" title="${t('Dodaj do kolejki')}"><i class="fas fa-plus"></i></button>
+                    <button class="rm-track-more" title="${t('Opcje')}"><i class="fas fa-ellipsis-v"></i></button>
                 </div>`;
             el.onclick = (e) => {
-                if (e.target.closest('.rm-arch-btn') || e.target.closest('.rm-add-queue-btn') || e.target.closest('.rm-track-btn')) return;
+                if (e.target.closest('.rm-arch-btn') || e.target.closest('.rm-track-more')) return;
                 // F-02 playContext: clicking any track loads full folder as queue context
                 playContext(tracks.map(t => t), idx);
             };
-            el.querySelector('.rm-add-queue-btn').onclick = (e) => {
+            el.querySelector('.rm-track-more').onclick = (e) => {
                 e.stopPropagation();
-                _musicQueue.push(tr);
-                toast(t('Dodano do kolejki: ') + tr.title, 'success');
+                _showTrackSheet({
+                    name: tr.title, url: tr.url, type: 'music',
+                    meta: tr.channel, image: tr.thumbnail, source: 'youtube',
+                });
             };
             const archBtn = el.querySelector('.rm-arch-btn');
             if (archBtn) archBtn.onclick = (e) => {
@@ -1775,13 +1804,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                     };
                 }
                 _onArchiveBtnClick(tr.url, archBtn);
-            };
-            el.querySelector('.rm-track-btn[title="' + t('Playlista') + '"]').onclick = (e) => {
-                e.stopPropagation();
-                _showAddToPlaylistModal({
-                    name: tr.title, url: tr.url, type: 'music',
-                    meta: tr.channel, image: tr.thumbnail,
-                });
             };
             list.appendChild(el);
         });
@@ -2283,52 +2305,110 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         const data = await api('/radio-music/playlists/' + plId);
         if (data.error) { content.innerHTML = '<div class="rm-empty"><p>' + escH(data.error) + '</p></div>'; return; }
         const pl = data.playlist;
+        let editMode = false;
+        let currentTracks = pl.tracks.slice(); // mutable copy for DnD
+
+        function _renderTracks() {
+            const trackList = content.querySelector('#rm-pl-tracklist');
+            if (!trackList) return;
+            trackList.innerHTML = '';
+            currentTracks.forEach((tr, idx) => {
+                const icon = tr.type === 'radio' ? 'fa-broadcast-tower' : tr.type === 'podcast' ? 'fa-podcast' : 'fa-music';
+                const isPlaying = _playing && _playing.url && _playing.url === tr.url;
+                const el = document.createElement('div');
+                el.className = 'rm-track' + (isPlaying ? ' rm-playing' : '');
+                el.dataset.idx = idx;
+                el.dataset.url = tr.url || '';
+                if (editMode) el.setAttribute('draggable', 'true');
+                el.innerHTML = `${tr.image || tr.thumbnail ? '<img class="rm-track-thumb" src="' + escH(tr.image || tr.thumbnail) + '" loading="lazy">' : '<div class="rm-track-thumb" style="display:flex;align-items:center;justify-content:center"><i class="fas ' + icon + '" style="color:var(--text-muted)"></i></div>'}
+                    <div class="rm-track-info">
+                        <div class="rm-track-title">${escH(tr.name || tr.title)}</div>
+                        <div class="rm-track-meta">${escH(tr.meta || tr.channel || '')} ${tr.type ? '<span class="rm-card-codec">' + tr.type + '</span>' : ''}</div>
+                    </div>
+                    ${tr.duration_fmt ? '<span class="rm-track-dur">' + escH(tr.duration_fmt) + '</span>' : ''}
+                    <button class="rm-track-more" title="${t('Opcje')}"><i class="fas fa-ellipsis-v"></i></button>`;
+                el.onclick = (e) => {
+                    if (e.target.closest('.rm-track-more')) return;
+                    if (editMode) return;
+                    _musicQueue = currentTracks.slice(idx).map(t => ({...t, _plItem: true}));
+                    _musicQueueIdx = 0;
+                    _playTrackFromPlaylist(currentTracks[idx]);
+                };
+                el.querySelector('.rm-track-more').onclick = (e) => {
+                    e.stopPropagation();
+                    _showTrackSheet(tr, {
+                        inPlaylist: plId,
+                        trackIdx: idx,
+                        onRemoved: () => openPlaylist(plId, content),
+                    });
+                };
+                // DnD reorder
+                el.addEventListener('dragstart', (e) => {
+                    el.classList.add('rm-dnd-dragging');
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', idx);
+                });
+                el.addEventListener('dragend', () => el.classList.remove('rm-dnd-dragging'));
+                el.addEventListener('dragover', (e) => { e.preventDefault(); el.classList.add('rm-dnd-over'); });
+                el.addEventListener('dragleave', () => el.classList.remove('rm-dnd-over'));
+                el.addEventListener('drop', async (e) => {
+                    e.preventDefault();
+                    el.classList.remove('rm-dnd-over');
+                    const fromIdx = parseInt(e.dataTransfer.getData('text/plain'));
+                    const toIdx = parseInt(el.dataset.idx);
+                    if (isNaN(fromIdx) || fromIdx === toIdx) return;
+                    const moved = currentTracks.splice(fromIdx, 1)[0];
+                    currentTracks.splice(toIdx, 0, moved);
+                    _renderTracks();
+                    // Persist new order
+                    await api('/radio-music/playlists/' + plId, { method: 'PUT', body: { tracks: currentTracks } });
+                });
+                trackList.appendChild(el);
+            });
+        }
 
         let html = '<div class="rm-pl-header">'
             + '<button class="rm-pl-btn" id="rm-pl-back" style="font-size:16px;color:var(--text-primary)"><i class="fas fa-arrow-left"></i></button>'
             + '<h3>' + escH(pl.name) + '</h3>'
             + '<button class="rm-pl-btn rm-pl-play-all" title="' + t('Odtwórz wszystko') + '" style="color:var(--accent);font-size:16px"><i class="fas fa-play"></i></button>'
+            + '<button class="rm-pl-edit-btn" id="rm-pl-edit-toggle" title="' + t('Edytuj kolejność') + '"><i class="fas fa-sort"></i></button>'
             + '<button class="rm-dl-btn rm-pl-dl-all" title="' + t('Pobierz playlistę') + '" style="font-size:16px"><i class="fas fa-download"></i></button>'
             + '</div>';
 
         if (!pl.tracks.length) {
             html += '<div class="rm-empty"><i class="fas fa-music"></i><p>' + t('Playlista jest pusta') + '</p><p style="font-size:12px;margin-top:4px">' + t('Dodaj utwory z sekcji Muzyka, Radio lub Podcasty') + '</p></div>';
         } else {
-            html += '<div style="display:flex;flex-direction:column;gap:4px">';
-            pl.tracks.forEach((tr, idx) => {
-                const icon = tr.type === 'radio' ? 'fa-broadcast-tower' : tr.type === 'podcast' ? 'fa-podcast' : 'fa-music';
-                const isPlaying = _playing && _playing.url && _playing.url === tr.url;
-                html += `<div class="rm-track${isPlaying ? ' rm-playing' : ''}" data-idx="${idx}" data-url="${escH(tr.url || '')}">
-                    ${tr.image || tr.thumbnail ? '<img class="rm-track-thumb" src="' + escH(tr.image || tr.thumbnail) + '" loading="lazy">' : '<div class="rm-track-thumb" style="display:flex;align-items:center;justify-content:center"><i class="fas ' + icon + '" style="color:var(--text-muted)"></i></div>'}
-                    <div class="rm-track-info">
-                        <div class="rm-track-title">${escH(tr.name || tr.title)}</div>
-                        <div class="rm-track-meta">${escH(tr.meta || tr.channel || '')} ${tr.type ? '<span class="rm-card-codec">' + tr.type + '</span>' : ''}</div>
-                    </div>
-                    ${tr.duration_fmt ? '<span class="rm-track-dur">' + escH(tr.duration_fmt) + '</span>' : ''}
-                    <button class="rm-track-btn rm-pl-trk-rm" title="${t('Usuń')}"><i class="fas fa-times"></i></button>
-                </div>`;
-            });
-            html += '</div>';
+            html += '<div id="rm-pl-tracklist" style="display:flex;flex-direction:column;gap:4px"></div>';
         }
         content.innerHTML = html;
+        if (pl.tracks.length) _renderTracks();
 
         content.querySelector('#rm-pl-back').onclick = () => {
             const toolbar = bodyEl.querySelector('#rm-toolbar');
             loadPlaylists(toolbar, content);
         };
 
+        const editToggle = content.querySelector('#rm-pl-edit-toggle');
+        if (editToggle) editToggle.onclick = () => {
+            editMode = !editMode;
+            editToggle.classList.toggle('active', editMode);
+            editToggle.title = editMode ? t('Gotowe') : t('Edytuj kolejność');
+            content.querySelector('#rm-pl-tracklist')?.classList.toggle('rm-pl-edit-mode', editMode);
+            _renderTracks();
+        };
+
         const playAllBtn = content.querySelector('.rm-pl-play-all');
         if (playAllBtn) playAllBtn.onclick = () => {
-            if (pl.tracks.length) {
-                _musicQueue = pl.tracks.map(t => ({...t, _plItem: true}));
+            if (currentTracks.length) {
+                _musicQueue = currentTracks.map(t => ({...t, _plItem: true}));
                 _musicQueueIdx = 0;
-                _playTrackFromPlaylist(pl.tracks[0]);
+                _playTrackFromPlaylist(currentTracks[0]);
             }
         };
 
         const dlAllBtn = content.querySelector('.rm-pl-dl-all');
         if (dlAllBtn) dlAllBtn.onclick = () => {
-            const musicTracks = pl.tracks.filter(t => t.type === 'music' && t.url);
+            const musicTracks = currentTracks.filter(t => t.type === 'music' && t.url);
             if (!musicTracks.length) {
                 toast(t('Brak utworów do pobrania (tylko YouTube)'), 'warning');
                 return;
@@ -2337,21 +2417,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             dlAllBtn.classList.add('rm-downloading');
             dlAllBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
         };
-
-        content.querySelectorAll('.rm-track').forEach(el => {
-            const idx = parseInt(el.dataset.idx);
-            el.onclick = (e) => {
-                if (e.target.closest('.rm-pl-trk-rm')) return;
-                _musicQueue = pl.tracks.slice(idx).map(t => ({...t, _plItem: true}));
-                _musicQueueIdx = 0;
-                _playTrackFromPlaylist(pl.tracks[idx]);
-            };
-            el.querySelector('.rm-pl-trk-rm').onclick = async (e) => {
-                e.stopPropagation();
-                await api('/radio-music/playlists/' + plId + '/tracks/' + idx, { method: 'DELETE' });
-                openPlaylist(plId, content);
-            };
-        });
     }
 
     function _playTrackFromPlaylist(tr) {
@@ -2361,6 +2426,81 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             // Playlist items already have {name, url, type, meta, image} — playAudio format
             playAudio(tr);
         }
+    }
+
+    function _showTrackSheet(track, opts = {}) {
+        /* opts: { inPlaylist: plId, trackIdx: number, onRemoved: fn } */
+        const archEntry = track.url ? (_archiveDb[track.url] || null) : null;
+        const archKey = archEntry?.key || null;
+        const isYT = track.type === 'music';
+        const isDone = archEntry?.status === 'done';
+        const isDling = archEntry?.status === 'downloading';
+
+        const overlay = document.createElement('div');
+        overlay.className = 'rm-tsheet-overlay';
+        const sheet = document.createElement('div');
+        sheet.className = 'rm-tsheet';
+
+        const rows = [
+            { icon: 'fa-play-circle', label: t('Odtwórz'), action: 'play' },
+            { icon: 'fa-list-ol', label: t('Dodaj do kolejki'), action: 'queue' },
+            { icon: 'fa-list', label: t('Dodaj do playlisty'), action: 'playlist' },
+        ];
+        if (isYT && !isDone && !isDling) {
+            rows.push({ icon: 'fa-cloud-download-alt', label: t('Pobierz do folderu Muzyka'), action: 'archive' });
+        }
+        if (isYT && isDling) {
+            rows.push({ icon: 'fa-cloud-download-alt', label: t('Pobieranie…'), action: 'archive', extra: (archEntry.progress || 0) + '%', disabled: true });
+        }
+        if (isDone && archKey) {
+            rows.push({ icon: 'fa-download', label: t('Zapisz plik na dysku'), action: 'download' });
+        }
+        if (opts.inPlaylist != null) {
+            rows.push({ icon: 'fa-trash', label: t('Usuń z playlisty'), action: 'remove', danger: true });
+        }
+
+        sheet.innerHTML = `<div class="rm-tsheet-handle"></div>
+            <div class="rm-tsheet-title">${escH(track.name || track.title || '?')}</div>
+            ${rows.map(r => `<div class="rm-tsheet-row${r.danger ? ' danger' : ''}${r.disabled ? ' disabled' : ''}" data-action="${r.action}">
+                <i class="fas ${r.icon}"></i><span>${escH(r.label)}</span>
+                ${r.extra ? `<span class="rm-tsheet-progress">${escH(r.extra)}</span>` : ''}
+            </div>`).join('')}`;
+
+        document.body.appendChild(overlay);
+        document.body.appendChild(sheet);
+        requestAnimationFrame(() => sheet.classList.add('open'));
+
+        const close = () => {
+            sheet.classList.remove('open');
+            setTimeout(() => { overlay.remove(); sheet.remove(); }, 260);
+        };
+        overlay.onclick = close;
+
+        sheet.querySelectorAll('.rm-tsheet-row[data-action]').forEach(row => {
+            row.onclick = async () => {
+                const action = row.dataset.action;
+                close();
+                if (action === 'play') {
+                    if (track.type === 'radio') playStation(track);
+                    else playAudio(track);
+                } else if (action === 'queue') {
+                    _musicQueue.push(track);
+                    toast(t('Dodano do kolejki'), 'success');
+                } else if (action === 'playlist') {
+                    _showAddToPlaylistModal(track);
+                } else if (action === 'archive') {
+                    _archiveTrack(track);
+                } else if (action === 'download' && archKey) {
+                    const a = document.createElement('a');
+                    a.href = `/api/radio-music/archive/download/${archKey}?token=${NAS.token || ''}`;
+                    a.download = (track.name || track.title || archKey) + '.mp3';
+                    document.body.appendChild(a); a.click(); a.remove();
+                } else if (action === 'remove' && opts.inPlaylist != null) {
+                    await api('/radio-music/playlists/' + opts.inPlaylist + '/tracks/' + opts.trackIdx, { method: 'DELETE' });
+                    if (opts.onRemoved) opts.onRemoved();
+                }
+            };
+        });
     }
 
     function _showAddToPlaylistModal(track) {

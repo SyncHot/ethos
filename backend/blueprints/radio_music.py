@@ -91,6 +91,7 @@ _DOWNLOAD_LOCK = threading.Lock()
 
 # ── Offline Archive ──────────────────────────────────────────
 _ARCHIVE_LOCK = threading.Lock()
+_ARCHIVE_SEM = gevent.lock.BoundedSemaphore(2)   # max 2 concurrent yt-dlp downloads
 
 
 def _archive_dir():
@@ -1790,9 +1791,13 @@ def archive_start():
         }
         _save_archive(db)
 
+    # Capture username before spawning background task (g is not available in greenlets)
+    req_username = getattr(g, 'username', None) or 'default'
+
     def _do_archive():
         sio = _sio()
-        try:
+        with _ARCHIVE_SEM:   # max 2 concurrent yt-dlp downloads
+          try:
             dest_dir = _archive_dir()
             out_tmpl = os.path.join(dest_dir, key + '.%(ext)s')
             cmd = (
@@ -1838,6 +1843,17 @@ def archive_start():
                         db3[key]['progress'] = 100
                         db3[key]['nas_path'] = nas_path
                         db3[key]['size_bytes'] = os.path.getsize(nas_path)
+                        # Also copy to ~/Music/RadioMusic/ for direct file access
+                        try:
+                            music_rm_dir = os.path.join('/home', req_username, 'Music', 'RadioMusic')
+                            os.makedirs(music_rm_dir, exist_ok=True)
+                            safe_title = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', title or key)[:120]
+                            music_dest = os.path.join(music_rm_dir, safe_title + '.mp3')
+                            if not os.path.exists(music_dest):
+                                shutil.copy2(nas_path, music_dest)
+                            db3[key]['music_path'] = music_dest
+                        except Exception:
+                            pass
                     else:
                         db3[key]['status'] = 'error'
                         db3[key]['error'] = f'yt-dlp exited {rc}'
@@ -1849,7 +1865,7 @@ def archive_start():
                     sio.emit('rm_archive_error', {
                         'key': key, 'url': url, 'title': title, 'error': f'yt-dlp exited {rc}'
                     })
-        except Exception as exc:
+          except Exception as exc:
             with _ARCHIVE_LOCK:
                 db4 = _load_archive()
                 if key in db4:
@@ -1946,3 +1962,23 @@ def archive_file(key):
     resp.headers['Access-Control-Allow-Origin'] = '*'
     resp.headers['Cache-Control'] = 'no-cache'
     return resp
+
+
+@radio_music_bp.route('/archive/download/<key>', methods=['GET'])
+@require_auth
+def archive_download(key):
+    """Force-download an archived file to the browser (Content-Disposition: attachment)."""
+    if not re.match(r'^[a-f0-9]{16}$', key):
+        return jsonify({'error': 'Invalid key'}), 400
+    with _ARCHIVE_LOCK:
+        db = _load_archive()
+    entry = db.get(key)
+    if not entry or entry.get('status') != 'done':
+        return jsonify({'error': 'Not found or not yet downloaded'}), 404
+    nas_path = entry.get('nas_path')
+    if not nas_path or not os.path.isfile(nas_path):
+        return jsonify({'error': 'File missing on NAS'}), 404
+    safe_title = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', entry.get('title', key))[:120]
+    download_name = safe_title + '.mp3'
+    return send_file(nas_path, mimetype='audio/mpeg', as_attachment=True,
+                     download_name=download_name)
