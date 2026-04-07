@@ -1,7 +1,7 @@
-// EthOS Service Worker v2
+// EthOS Service Worker v3
 // Bump CACHE_VERSION when deploying static asset changes.
 // Versioned JS/CSS (?v=N in index.html) auto-invalidate on next load.
-const CACHE_VERSION = 'v3';
+const CACHE_VERSION = 'v5';
 const STATIC_CACHE = 'ethos-static-' + CACHE_VERSION;
 const RUNTIME_CACHE = 'ethos-runtime-' + CACHE_VERSION;
 // Persistent offline audio cache — never purged by version bump
@@ -19,7 +19,7 @@ const PRECACHE_ASSETS = [
     '/img/icon-music-192.png',
     '/img/icon-music-512.png',
     '/css/style.css?v=3',
-    '/css/apps.css?v=4',
+    '/css/apps.css?v=6',
     '/js/i18n.js?v=2',
     '/js/desktop.js?v=11',
     '/js/apps.js?v=11',
@@ -33,7 +33,7 @@ const PRECACHE_ASSETS = [
     '/js/apps/packages.js?v=3',
     '/js/apps/users.js?v=2',
     '/js/apps/network.js?v=1',
-    '/js/apps/gallery.js?v=2',
+    '/js/apps/gallery.js?v=4',
     '/js/apps/photos_ai.js?v=1',
     '/js/apps/docker-manager.js?v=1',
     '/js/apps/aichat.js?v=2',
@@ -268,5 +268,208 @@ self.addEventListener("periodicsync", (event) => {
                 }
             })
         );
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────
+// GALLERY PHOTO SYNC — Share Target + Background Sync
+// ─────────────────────────────────────────────────────────────────
+//
+// Flow:
+//  1. User shares photo(s) from phone → manifest share_target → POST /?app=gallery&share=1
+//  2. SW intercepts POST, reads files, saves to IndexedDB queue
+//  3. SW registers Background Sync tag "gallery-photo-sync"
+//  4. SW redirects user to /?app=gallery&pending=1
+//  5. When online: SW "sync" event fires → reads IDB queue → uploads to /api/gallery/upload
+//  6. Sends notification + message to open clients on completion
+// ─────────────────────────────────────────────────────────────────
+
+const GAL_UPLOAD_DB = 'ethos-gallery-queue';
+const GAL_UPLOAD_STORE = 'pending-photos';
+
+function _galOpenIDB() {
+    return new Promise((resolve, reject) => {
+        const req = indexedDB.open(GAL_UPLOAD_DB, 1);
+        req.onupgradeneeded = e => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains(GAL_UPLOAD_STORE)) {
+                const store = db.createObjectStore(GAL_UPLOAD_STORE, { keyPath: 'id', autoIncrement: true });
+                store.createIndex('timestamp', 'timestamp');
+            }
+        };
+        req.onsuccess = e => resolve(e.target.result);
+        req.onerror = e => reject(e.target.error);
+    });
+}
+
+function _galIDBAdd(item) {
+    return _galOpenIDB().then(db => new Promise((resolve, reject) => {
+        const tx = db.transaction(GAL_UPLOAD_STORE, 'readwrite');
+        tx.objectStore(GAL_UPLOAD_STORE).add(item).onsuccess = e => resolve(e.target.result);
+        tx.onerror = e => reject(e.target.error);
+    }));
+}
+
+function _galIDBGetAll() {
+    return _galOpenIDB().then(db => new Promise((resolve, reject) => {
+        const tx = db.transaction(GAL_UPLOAD_STORE, 'readonly');
+        const req = tx.objectStore(GAL_UPLOAD_STORE).getAll();
+        req.onsuccess = e => resolve(e.target.result);
+        req.onerror = e => reject(e.target.error);
+    }));
+}
+
+function _galIDBDelete(id) {
+    return _galOpenIDB().then(db => new Promise((resolve, reject) => {
+        const tx = db.transaction(GAL_UPLOAD_STORE, 'readwrite');
+        tx.objectStore(GAL_UPLOAD_STORE).delete(id).onsuccess = () => resolve();
+        tx.onerror = e => reject(e.target.error);
+    }));
+}
+
+// Intercept Share Target POST (method=POST to /?app=gallery&share=1)
+self.addEventListener('fetch', (event) => {
+    const url = new URL(event.request.url);
+    if (event.request.method === 'POST' &&
+        url.pathname === '/' &&
+        url.searchParams.get('share') === '1' &&
+        url.searchParams.get('app') === 'gallery') {
+
+        event.respondWith((async () => {
+            try {
+                const formData = await event.request.formData();
+                const files = formData.getAll('media');
+                const folder = formData.get('folder') || '';
+                const token = formData.get('token') || '';
+
+                for (const file of files) {
+                    if (file instanceof File) {
+                        const buf = await file.arrayBuffer();
+                        await _galIDBAdd({
+                            filename: file.name,
+                            type: file.type,
+                            data: buf,
+                            folder,
+                            token,
+                            timestamp: Date.now(),
+                        });
+                    }
+                }
+
+                // Register background sync (runs immediately if online, or when network returns)
+                if ('sync' in self.registration) {
+                    await self.registration.sync.register('gallery-photo-sync');
+                }
+
+                // Redirect to gallery with pending indicator
+                return Response.redirect('/?app=gallery&pending=1', 303);
+            } catch (err) {
+                console.error('[SW] Share target error:', err);
+                return Response.redirect('/?app=gallery', 303);
+            }
+        })());
+        return;
+    }
+});
+
+// Background Sync — upload queued photos when online
+self.addEventListener('sync', (event) => {
+    if (event.tag === 'gallery-photo-sync') {
+        event.waitUntil(_galFlushUploadQueue());
+    }
+});
+
+async function _galFlushUploadQueue() {
+    const items = await _galIDBGetAll();
+    if (!items.length) return;
+
+    // Try to get token from a connected client if not stored in item
+    let globalToken = null;
+    try {
+        const allClients = await clients.matchAll({ includeUncontrolled: true });
+        for (const c of allClients) {
+            // We'll try the token stored in item first
+            break;
+        }
+    } catch (_) {}
+
+    let uploaded = 0;
+    let failed = 0;
+
+    for (const item of items) {
+        const token = item.token || globalToken || '';
+        if (!token && !item.folder) {
+            // Can't upload without token — leave in queue, notify user
+            failed++;
+            continue;
+        }
+
+        try {
+            const blob = new Blob([item.data], { type: item.type || 'image/jpeg' });
+            const fd = new FormData();
+            fd.append('files', blob, item.filename);
+            fd.append('folder', item.folder || '');
+            fd.append('date_subfolders', '1'); // auto organize in YYYY/MM
+
+            const resp = await fetch('/api/gallery/upload', {
+                method: 'POST',
+                headers: token ? { 'Authorization': 'Bearer ' + token } : {},
+                body: fd,
+            });
+
+            if (resp.ok) {
+                await _galIDBDelete(item.id);
+                uploaded++;
+            } else {
+                failed++;
+                console.warn('[SW] Upload failed:', resp.status, item.filename);
+            }
+        } catch (err) {
+            failed++;
+            console.warn('[SW] Upload error:', err, item.filename);
+        }
+    }
+
+    // Notify all open gallery clients
+    const allClients = await clients.matchAll({ includeUncontrolled: true });
+    for (const c of allClients) {
+        c.postMessage({ type: 'GAL_SYNC_DONE', uploaded, failed });
+    }
+
+    // Push notification
+    if (uploaded > 0) {
+        await self.registration.showNotification('EthOS Gallery', {
+            body: `Zsynchronizowano ${uploaded} zdjęć${failed > 0 ? ` (${failed} błędów)` : ''}`,
+            icon: '/img/icon-192.png',
+            badge: '/img/icon-192.png',
+            tag: 'gallery-sync',
+            data: { url: '/?app=gallery' },
+        });
+    }
+}
+
+// Handle GAL_STORE_TOKEN message from main app — saves token for SW uploads
+self.addEventListener('message', (event) => {
+    const { type } = event.data || {};
+    if (type === 'GAL_STORE_TOKEN' && event.data.token && event.data.folder) {
+        // Update all queued items that have no token with the fresh one
+        _galOpenIDB().then(db => {
+            const tx = db.transaction(GAL_UPLOAD_STORE, 'readwrite');
+            const store = tx.objectStore(GAL_UPLOAD_STORE);
+            store.getAll().onsuccess = e => {
+                for (const item of e.target.result) {
+                    if (!item.token) {
+                        item.token = event.data.token;
+                        item.folder = item.folder || event.data.folder;
+                        store.put(item);
+                    }
+                }
+            };
+        }).catch(() => {});
+
+        // Re-register sync in case it was waiting for token
+        if ('sync' in self.registration) {
+            self.registration.sync.register('gallery-photo-sync').catch(() => {});
+        }
     }
 });

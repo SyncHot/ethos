@@ -254,7 +254,8 @@ async function renderGallery(body, launchOpts) {
   _galLoadCustomAlbums();
   await _galReload();
   _galInitDragDrop();
-  
+  _galInitPWASync();   // PWA: share target handler + background sync listener
+
   if (initFile) {
       const idx = GAL.items.findIndex(i => i.path === initFile);
       if (idx !== -1) _galOpenLightbox(idx);
@@ -2161,7 +2162,164 @@ function _galFmtSize(bytes) {
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
-function _galInitDragDrop() {
+/* ━━━━  PWA SYNC — Share Target & Background Sync  ━━━━━━━━━━━━━━━━━━━━━━━ */
+const GAL_IDB_DB = 'ethos-gallery-queue';
+const GAL_IDB_STORE = 'pending-photos';
+
+function _galOpenQueue() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(GAL_IDB_DB, 1);
+    req.onupgradeneeded = e => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(GAL_IDB_STORE)) {
+        db.createObjectStore(GAL_IDB_STORE, { keyPath: 'id', autoIncrement: true });
+      }
+    };
+    req.onsuccess = e => resolve(e.target.result);
+    req.onerror = e => reject(e.target.error);
+  });
+}
+
+async function _galGetPendingCount() {
+  try {
+    const db = await _galOpenQueue();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(GAL_IDB_STORE, 'readonly');
+      const req = tx.objectStore(GAL_IDB_STORE).count();
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = e => reject(e.target.error);
+    });
+  } catch (_) { return 0; }
+}
+
+async function _galGetAllPending() {
+  const db = await _galOpenQueue();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(GAL_IDB_STORE, 'readonly');
+    const req = tx.objectStore(GAL_IDB_STORE).getAll();
+    req.onsuccess = e => resolve(e.target.result);
+    req.onerror = e => reject(e.target.error);
+  });
+}
+
+async function _galDeletePending(id) {
+  const db = await _galOpenQueue();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(GAL_IDB_STORE, 'readwrite');
+    tx.objectStore(GAL_IDB_STORE).delete(id).onsuccess = () => resolve();
+    tx.onerror = e => reject(e.target.error);
+  });
+}
+
+async function _galInitPWASync() {
+  // 1. Send auth token + default folder to SW so it can upload on our behalf
+  if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+    const defaultFolder = GAL.gallerySources.find(s => s.exists)?.path || '';
+    navigator.serviceWorker.controller.postMessage({
+      type: 'GAL_STORE_TOKEN',
+      token: NAS.token || '',
+      folder: defaultFolder,
+    });
+  }
+
+  // 2. Listen for upload-done messages from SW
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('message', e => {
+      if (e.data?.type === 'GAL_SYNC_DONE') {
+        const { uploaded, failed } = e.data;
+        if (uploaded > 0) {
+          toast(t('Zsynchronizowano') + ' ' + uploaded + ' ' + t('zdjęć z telefonu'), 'success');
+          _galReload();
+        }
+        if (failed > 0) toast(t('Błąd synchronizacji') + ': ' + failed + ' ' + t('plików'), 'error');
+        _galUpdateSyncBanner();
+      }
+    });
+  }
+
+  // 3. Check if launched from Share Target (?pending=1) or has pending items in IDB
+  const urlParams = new URLSearchParams(window.location.search);
+  const fromShare = urlParams.get('pending') === '1';
+  const pendingCount = await _galGetPendingCount();
+
+  if (fromShare || pendingCount > 0) {
+    _galShowSyncBanner(pendingCount);
+    // Remove ?pending=1 from URL without reload
+    if (fromShare) {
+      const clean = window.location.pathname + (window.location.search.replace(/[?&]pending=1/, '') || '');
+      history.replaceState(null, '', clean);
+    }
+    // Trigger background sync if SW supports it
+    if ('serviceWorker' in navigator && 'SyncManager' in window) {
+      const reg = await navigator.serviceWorker.ready;
+      reg.sync.register('gallery-photo-sync').catch(() => {
+        // SyncManager not available — upload directly from foreground
+        _galFlushQueueForeground();
+      });
+    } else {
+      _galFlushQueueForeground();
+    }
+  }
+}
+
+function _galShowSyncBanner(count) {
+  const existing = GAL.root?.querySelector('.gal-sync-banner');
+  if (existing) { existing.remove(); }
+  if (!count || !GAL.root) return;
+
+  const banner = document.createElement('div');
+  banner.className = 'gal-sync-banner';
+  banner.innerHTML = `
+    <i class="fa-solid fa-cloud-arrow-up fa-spin"></i>
+    <span>${t('Synchronizowanie')} <strong>${count}</strong> ${t('zdjęć z telefonu')}…</span>
+    <button class="gal-sync-banner-close"><i class="fa-solid fa-xmark"></i></button>`;
+  banner.querySelector('.gal-sync-banner-close').onclick = () => banner.remove();
+  GAL.root.querySelector('.gal-main').prepend(banner);
+}
+
+async function _galUpdateSyncBanner() {
+  const count = await _galGetPendingCount();
+  if (count === 0) {
+    GAL.root?.querySelector('.gal-sync-banner')?.remove();
+  } else {
+    _galShowSyncBanner(count);
+  }
+}
+
+async function _galFlushQueueForeground() {
+  // Fallback: upload from main thread when SW Background Sync isn't available
+  let items;
+  try { items = await _galGetAllPending(); } catch (_) { return; }
+  if (!items.length) return;
+
+  const folder = GAL.gallerySources.find(s => s.exists)?.path || '';
+  if (!folder) {
+    toast(t('Brak folderu docelowego — dodaj folder w Galerii'), 'error');
+    return;
+  }
+
+  _galSetSyncIndicator(true);
+  let uploaded = 0;
+  for (const item of items) {
+    try {
+      const blob = new Blob([item.data], { type: item.type || 'image/jpeg' });
+      const fd = new FormData();
+      fd.append('files', blob, item.filename);
+      fd.append('folder', item.folder || folder);
+      fd.append('date_subfolders', '1');
+      const r = await api('/gallery/upload', { method: 'POST', body: fd });
+      if (!r.error) { await _galDeletePending(item.id); uploaded++; }
+    } catch (_) {}
+  }
+  _galSetSyncIndicator(false);
+  if (uploaded > 0) {
+    toast(t('Zsynchronizowano') + ' ' + uploaded + ' ' + t('zdjęć z telefonu'), 'success');
+    _galReload();
+  }
+  _galUpdateSyncBanner();
+}
+
+
   const main = GAL.root.querySelector('.gal-main');
   const dropOverlay = document.createElement('div');
   dropOverlay.className = 'gal-drop-overlay';
