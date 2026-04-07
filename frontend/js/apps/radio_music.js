@@ -2533,33 +2533,77 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     }
 
     function _showAddToPlaylistModal(track) {
-        // Show a simple modal to pick a playlist
         const overlay = document.createElement('div');
         overlay.className = 'rm-modal-overlay';
         overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
 
-        let html = '<div class="rm-modal"><h4>' + t('Dodaj do playlisty') + '</h4>';
-        if (!_playlists.length) {
-            html += '<p style="color:var(--text-muted);font-size:13px">' + t('Brak playlist. Utwórz playlistę w sekcji Playlisty.') + '</p>';
-        } else {
-            _playlists.forEach(pl => {
-                html += `<div class="rm-modal-item" data-plid="${escH(pl.id)}"><i class="fas fa-list"></i> ${escH(pl.name)} <span style="color:var(--text-muted);margin-left:auto;font-size:11px">${pl.tracks.length}</span></div>`;
-            });
-        }
-        html += '<button class="rm-modal-close">' + t('Anuluj') + '</button></div>';
-        overlay.innerHTML = html;
+        const modal = document.createElement('div');
+        modal.className = 'rm-modal';
 
-        overlay.querySelector('.rm-modal-close').onclick = () => overlay.remove();
-        overlay.querySelectorAll('.rm-modal-item').forEach(el => {
-            el.onclick = async () => {
-                const plId = el.dataset.plid;
-                await api('/radio-music/playlists/' + plId + '/tracks', { method: 'POST', body: { track } });
-                overlay.remove();
-                toast(t('Dodano do: ') + _playlists.find(p => p.id === plId)?.name, 'success');
-                await _loadPlaylists();
+        const render = () => {
+            let html = '<h4>' + t('Dodaj do playlisty') + '</h4>';
+            // "Create new" row
+            html += `<div class="rm-modal-item rm-modal-new-pl" data-action="new"><i class="fas fa-plus-circle" style="color:#1DB954"></i> <span>${t('Utwórz nową playlistę')}</span></div>`;
+            // Inline create form (hidden by default)
+            html += `<div class="rm-modal-create-form" style="display:none;padding:8px 0 4px">
+                <input class="rm-modal-new-input" placeholder="${t('Nazwa playlisty...')}" style="width:100%;box-sizing:border-box;padding:8px 10px;border-radius:8px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);color:#fff;font-size:13px;outline:none">
+                <div style="display:flex;gap:8px;margin-top:8px">
+                    <button class="rm-modal-create-confirm" style="flex:1;padding:7px;border-radius:20px;background:#1DB954;color:#000;border:none;cursor:pointer;font-size:12px;font-weight:700">${t('Utwórz i dodaj')}</button>
+                    <button class="rm-modal-create-cancel" style="flex:1;padding:7px;border-radius:20px;background:none;border:1px solid rgba(255,255,255,.15);color:rgba(255,255,255,.7);cursor:pointer;font-size:12px">${t('Anuluj')}</button>
+                </div>
+            </div>`;
+            if (_playlists.length) {
+                html += '<div style="margin:10px 0 4px;font-size:11px;color:rgba(255,255,255,.3);text-transform:uppercase;letter-spacing:.05em">' + t('Istniejące playlisty') + '</div>';
+                _playlists.forEach(pl => {
+                    html += `<div class="rm-modal-item" data-plid="${escH(pl.id)}"><i class="fas fa-list"></i> ${escH(pl.name)} <span style="color:var(--text-muted);margin-left:auto;font-size:11px">${pl.tracks.length}</span></div>`;
+                });
+            }
+            html += '<button class="rm-modal-close">' + t('Anuluj') + '</button>';
+            modal.innerHTML = html;
+
+            // Toggle create form
+            modal.querySelector('.rm-modal-new-pl').onclick = () => {
+                const form = modal.querySelector('.rm-modal-create-form');
+                const isOpen = form.style.display !== 'none';
+                form.style.display = isOpen ? 'none' : 'block';
+                if (!isOpen) modal.querySelector('.rm-modal-new-input').focus();
             };
-        });
 
+            // Create & add
+            const doCreate = async () => {
+                const input = modal.querySelector('.rm-modal-new-input');
+                const name = input.value.trim();
+                if (!name) { input.focus(); return; }
+                const res = await api('/radio-music/playlists', { method: 'POST', body: { name } });
+                if (res.error) { toast(res.error, 'error'); return; }
+                await _loadPlaylists();
+                const newPl = _playlists.find(p => p.name === name);
+                if (newPl) {
+                    await api('/radio-music/playlists/' + newPl.id + '/tracks', { method: 'POST', body: { track } });
+                    overlay.remove();
+                    toast(t('Utwórzono i dodano do: ') + name, 'success');
+                }
+            };
+            modal.querySelector('.rm-modal-create-confirm').onclick = doCreate;
+            modal.querySelector('.rm-modal-new-input').onkeydown = (e) => { if (e.key === 'Enter') doCreate(); };
+            modal.querySelector('.rm-modal-create-cancel').onclick = () => {
+                modal.querySelector('.rm-modal-create-form').style.display = 'none';
+            };
+
+            modal.querySelector('.rm-modal-close').onclick = () => overlay.remove();
+            modal.querySelectorAll('.rm-modal-item[data-plid]').forEach(el => {
+                el.onclick = async () => {
+                    const plId = el.dataset.plid;
+                    await api('/radio-music/playlists/' + plId + '/tracks', { method: 'POST', body: { track } });
+                    overlay.remove();
+                    toast(t('Dodano do: ') + _playlists.find(p => p.id === plId)?.name, 'success');
+                    await _loadPlaylists();
+                };
+            });
+        };
+
+        render();
+        overlay.appendChild(modal);
         bodyEl.appendChild(overlay);
     }
 
