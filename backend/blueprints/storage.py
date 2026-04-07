@@ -16,7 +16,7 @@ import sys
 from flask import Blueprint, jsonify, request, Response, stream_with_context
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from host import host_run as _host_run_base, host_run_stream as _host_run_stream_base, data_path, q as _q_imported, apt_install as _apt_install, claim_dep, release_dep, ufw_allow, ufw_delete
+from host import host_run as _host_run_base, host_run_stream as _host_run_stream_base, data_path, q as _q_imported, apt_install as _apt_install, claim_dep, release_dep, ufw_allow, ufw_delete, get_data_disk as _get_data_disk
 from utils import fmt_bytes, require_tools, check_tool
 from blueprints.admin_required import admin_required
 
@@ -4211,3 +4211,60 @@ def maintenance_schedule():
 
     _register_cron_job(cron, cmd, f'Storage maintenance: {mtype} on {target}')
     return jsonify({'ok': True, 'message': f'{mtype} scheduled {frequency} on {target}'})
+
+
+@storage_bp.route('/app-usage')
+@admin_required
+def app_usage():
+    """Return disk usage per known app directory on root and data partition.
+    Used by Storage Manager to show what is consuming space."""
+    results = []
+
+    def _du(path, label, partition):
+        if not os.path.isdir(path) and not os.path.isfile(path):
+            return None
+        r = _host_run_base(f'du -sb {_q_imported(path)} 2>/dev/null | cut -f1', timeout=15)
+        try:
+            size = int(r.stdout.strip())
+        except (ValueError, AttributeError):
+            return None
+        return {'label': label, 'path': path, 'bytes': size, 'partition': partition}
+
+    # Root partition consumers
+    root_apps = [
+        ('/var/lib/docker',      'Docker (dane)',        '/'),
+        ('/var/lib/clamav',      'ClamAV DB',            '/'),
+        ('/var/lib/minidlna',    'MiniDLNA DB',          '/'),
+        ('/var/lib/apt',         'APT cache/lists',      '/'),
+        ('/var/cache/apt',       'APT packages cache',   '/'),
+        ('/var/log',             'Logi systemowe',       '/'),
+        ('/tmp',                 'Pliki tymczasowe /tmp', '/'),
+        ('/opt/ethos/venv',      'Python venv',          '/'),
+    ]
+    for path, label, part in root_apps:
+        item = _du(path, label, part)
+        if item:
+            results.append(item)
+
+    # Data partition consumers
+    dd = _get_data_disk()
+    if dd:
+        data_apps = [
+            (os.path.join(dd, 'docker'),    'Docker (dane)',    dd),
+            (os.path.join(dd, 'clamav'),    'ClamAV DB',        dd),
+            (os.path.join(dd, 'minidlna'),  'MiniDLNA DB',      dd),
+            (os.path.join(dd, 'vms'),       'VM Manager',       dd),
+            (os.path.join(dd, 'ethos', 'data', 'models'),    'Modele AI',        dd),
+            (os.path.join(dd, 'ethos', 'data', 'surveillance'), 'Nadzór / nagrania', dd),
+            (os.path.join(dd, 'ethos', 'data', 'video_thumbs'),  'Video miniatury', dd),
+            (os.path.join(dd, 'ethos', 'backups'),  'Kopie zapasowe',   dd),
+            (os.path.join(dd, 'ethos', 'uploads'),  'Przesłane pliki',  dd),
+        ]
+        for path, label, part in data_apps:
+            item = _du(path, label, part)
+            if item:
+                results.append(item)
+
+    # Sort by size descending
+    results.sort(key=lambda x: x['bytes'], reverse=True)
+    return jsonify({'items': results})

@@ -6,6 +6,7 @@ MiniDLNA media server management: install, configure, start/stop, rescan.
 import os
 import re
 import shlex
+import shutil
 import json
 from flask import Blueprint, request, jsonify
 
@@ -19,6 +20,7 @@ dlna_bp = Blueprint('dlna', __name__, url_prefix='/api/dlna')
 
 MINIDLNA_CONF = '/etc/minidlna.conf'
 _MINIDLNA_DB_DEFAULT = '/var/lib/minidlna'
+_dlna_migrated = False
 
 
 def _minidlna_db_dir():
@@ -29,6 +31,68 @@ def _minidlna_db_dir():
         os.makedirs(p, exist_ok=True)
         return p
     return _MINIDLNA_DB_DEFAULT
+
+
+def _do_dlna_migration():
+    """Move existing MiniDLNA DB from /var/lib/minidlna to data partition if needed."""
+    global _dlna_migrated
+    if _dlna_migrated:
+        return {'moved': 0, 'skipped': True}
+    _dlna_migrated = True
+
+    target = _minidlna_db_dir()
+    if target == _MINIDLNA_DB_DEFAULT:
+        return {'moved': 0, 'skipped': True, 'reason': 'no data disk'}
+
+    src = _MINIDLNA_DB_DEFAULT
+    if not os.path.isdir(src):
+        return {'moved': 0, 'skipped': True, 'reason': 'source missing'}
+
+    # Check if conf already points to target
+    if os.path.isfile(MINIDLNA_CONF):
+        with open(MINIDLNA_CONF) as f:
+            if target in f.read():
+                return {'moved': 0, 'skipped': True, 'reason': 'already configured'}
+
+    moved, errors = 0, []
+    try:
+        host_run('systemctl stop minidlna 2>/dev/null', timeout=10)
+    except Exception:
+        pass
+    try:
+        for fname in os.listdir(src):
+            src_f = os.path.join(src, fname)
+            dst_f = os.path.join(target, fname)
+            if os.path.isfile(src_f) and not os.path.exists(dst_f):
+                shutil.move(src_f, dst_f)
+                moved += 1
+    except Exception as e:
+        errors.append(str(e))
+
+    # Patch minidlna.conf db_dir
+    if os.path.isfile(MINIDLNA_CONF):
+        try:
+            txt = open(MINIDLNA_CONF).read()
+            txt = re.sub(r'^db_dir=.*$', f'db_dir={target}', txt, flags=re.MULTILINE)
+            if 'db_dir=' not in txt:
+                txt += f'\ndb_dir={target}\n'
+            open(MINIDLNA_CONF, 'w').write(txt)
+        except Exception as e:
+            errors.append(f'conf patch: {e}')
+
+    try:
+        host_run('systemctl start minidlna 2>/dev/null', timeout=10)
+    except Exception:
+        pass
+
+    return {'moved': moved, 'errors': errors, 'target': target}
+
+
+# ─── Auto-migration on import (best-effort) ──────────────────────────────────
+try:
+    _do_dlna_migration()
+except Exception:
+    pass
 
 
 MINIDLNA_DB_DIR = _minidlna_db_dir()
@@ -323,6 +387,16 @@ def rescan_library():
     if r.returncode != 0:
         return jsonify({'error': r.stderr.strip() or 'Rescan failed'}), 500
     return jsonify({'status': 'ok'})
+
+
+@dlna_bp.route('/migrate-db', methods=['POST'])
+@admin_required
+def migrate_db():
+    """Migrate MiniDLNA database from /var/lib/minidlna to data partition."""
+    global _dlna_migrated
+    _dlna_migrated = False  # force re-run
+    result = _do_dlna_migration()
+    return jsonify({'ok': True, **result})
 
 
 @dlna_bp.route('/pkg-status')

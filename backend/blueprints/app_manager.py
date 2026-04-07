@@ -217,7 +217,7 @@ _OPTIONAL_BLUEPRINTS = {
     'sticky-notes':    ('stickynotes',     'notes_bp',          None,                False),
     'tickets':         ('tickets',         'tickets_bp',       'init_tickets',      True),
     'photos-ai':       ('photos_ai',       'photos_ai_bp',      None,                True),
-    'video-station':   ('video_station',   'video_station_bp',  None,                True),
+    'video-station':   ('video_station',   'video_station_bp',  '_start_hls_cleanup_loop', True),
     'radio-music':     ('radio_music',     'radio_music_bp',    None,                False),
     'security-advisor':('security_advisor','security_advisor_bp', None,              False),
 }

@@ -159,6 +159,47 @@ def _cleanup_orphaned_hls_dirs():
 _cleanup_orphaned_hls_dirs()
 
 
+def _start_hls_cleanup_loop(socketio_instance=None):
+    """Start a periodic background greenlet that cleans stale HLS sessions and /tmp."""
+    import gevent
+
+    def _loop():
+        while True:
+            gevent.sleep(30 * 60)  # every 30 minutes
+            try:
+                _cleanup_stale_hls()
+            except Exception:
+                pass
+            try:
+                _evict_tmp_if_low()
+            except Exception:
+                pass
+
+    gevent.spawn(_loop)
+
+
+def _evict_tmp_if_low():
+    """If /tmp is more than 80% full, remove all vs_hls_* dirs older than 10 min."""
+    try:
+        st = os.statvfs('/tmp')
+        used_pct = 100 * (1 - st.f_bavail / st.f_blocks) if st.f_blocks else 0
+        if used_pct < 80:
+            return
+        tmp = tempfile.gettempdir()
+        now = time.time()
+        for name in os.listdir(tmp):
+            if not name.startswith(_HLS_ORPHAN_PREFIX):
+                continue
+            dirpath = os.path.join(tmp, name)
+            if not os.path.isdir(dirpath):
+                continue
+            age = now - os.path.getmtime(dirpath)
+            if age > 600:  # older than 10 minutes
+                shutil.rmtree(dirpath, ignore_errors=True)
+    except OSError:
+        pass
+
+
 # --- Database ---
 
 def _get_db():

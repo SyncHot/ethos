@@ -5,6 +5,7 @@ Endpoints:
   GET  /api/antivirus/pkg-status         — check if clamav installed
   POST /api/antivirus/install            — install clamav (SocketIO: antivirus_install)
   POST /api/antivirus/uninstall          — remove clamav
+  POST /api/antivirus/migrate-db         — migrate virus DB from /var/lib to /mnt/data
   GET  /api/antivirus/status             — engine version, DB date, active scan info
   POST /api/antivirus/scan               — start on-demand scan (SocketIO: antivirus_scan)
   POST /api/antivirus/scan/cancel        — cancel running scan
@@ -39,6 +40,7 @@ SCAN_LOGS_DIR  = data_path('av_scan_logs')
 MAX_RESULTS    = 50
 _CRON_MARKER   = '# ETHOS_AV:'
 _CLAMAV_DEFAULT_DB = '/var/lib/clamav'
+_clamav_migrated = False  # guard — run auto-migration once per process
 
 
 def _clamav_db_dir():
@@ -49,6 +51,77 @@ def _clamav_db_dir():
         os.makedirs(p, exist_ok=True)
         return p
     return _CLAMAV_DEFAULT_DB
+
+
+def _do_clamav_migration():
+    """Move existing ClamAV DB from /var/lib/clamav to data partition if needed.
+    Safe to call multiple times — no-ops if already migrated or no data disk."""
+    global _clamav_migrated
+    if _clamav_migrated:
+        return {'moved': 0, 'skipped': True}
+    _clamav_migrated = True
+
+    target = _clamav_db_dir()
+    if target == _CLAMAV_DEFAULT_DB:
+        return {'moved': 0, 'skipped': True, 'reason': 'no data disk'}
+
+    src = _CLAMAV_DEFAULT_DB
+    if not os.path.isdir(src):
+        return {'moved': 0, 'skipped': True, 'reason': 'source missing'}
+
+    # Check if config already points to target (already migrated)
+    conf_file = '/etc/clamav/freshclam.conf'
+    if os.path.isfile(conf_file):
+        with open(conf_file) as f:
+            if target in f.read():
+                return {'moved': 0, 'skipped': True, 'reason': 'already configured'}
+
+    # Move files
+    moved = 0
+    errors = []
+    try:
+        host_run('systemctl stop clamav-freshclam 2>/dev/null', timeout=15)
+        host_run('systemctl stop clamav-daemon 2>/dev/null', timeout=15)
+    except Exception:
+        pass
+    try:
+        for fname in os.listdir(src):
+            src_f = os.path.join(src, fname)
+            dst_f = os.path.join(target, fname)
+            if os.path.isfile(src_f) and not os.path.exists(dst_f):
+                shutil.move(src_f, dst_f)
+                moved += 1
+    except Exception as e:
+        errors.append(str(e))
+
+    # Patch config files
+    for conf in ('/etc/clamav/freshclam.conf', '/etc/clamav/clamd.conf'):
+        if os.path.isfile(conf):
+            try:
+                txt = open(conf).read()
+                txt = re.sub(r'^DatabaseDirectory\s.*$',
+                             f'DatabaseDirectory {target}', txt, flags=re.MULTILINE)
+                if 'DatabaseDirectory' not in txt:
+                    txt += f'\nDatabaseDirectory {target}\n'
+                open(conf, 'w').write(txt)
+            except Exception as e:
+                errors.append(f'{conf}: {e}')
+
+    host_run(f'chown -R clamav:clamav {q(target)} 2>/dev/null', timeout=10)
+    try:
+        host_run('systemctl start clamav-freshclam 2>/dev/null', timeout=15)
+    except Exception:
+        pass
+
+    return {'moved': moved, 'errors': errors, 'target': target}
+
+
+# ─── Auto-migration on import (best-effort) ──────────────────────────────────
+try:
+    _do_clamav_migration()
+except Exception:
+    pass
+
 
 # ─── Active scan state ────────────────────────────────────────────────────────
 _active_scan = {}
@@ -618,6 +691,16 @@ def install():
 
     threading.Thread(target=_bg, daemon=True).start()
     return jsonify({'ok': True, 'task_id': task_id})
+
+
+@antivirus_bp.route('/migrate-db', methods=['POST'])
+@admin_required
+def migrate_db():
+    """Migrate ClamAV database from /var/lib/clamav to data partition."""
+    global _clamav_migrated
+    _clamav_migrated = False  # force re-run
+    result = _do_clamav_migration()
+    return jsonify({'ok': True, **result})
 
 
 @antivirus_bp.route('/uninstall', methods=['POST'])

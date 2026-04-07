@@ -3979,12 +3979,13 @@ function _smMaintenance(el) {
     let pollTimer = null;
 
     async function load() {
-        const [poolsRes, raidRes, statusRes, histRes, rootfsRes] = await Promise.allSettled([
+        const [poolsRes, raidRes, statusRes, histRes, rootfsRes, appUsageRes] = await Promise.allSettled([
             api('/storage/pool/list'),
             api('/raid/arrays'),
             api('/storage/maintenance/status'),
             api('/storage/maintenance/history?limit=20'),
             api('/update/rootfs-info'),
+            api('/storage/app-usage'),
         ]);
 
         const pools = ((poolsRes.status === 'fulfilled' ? poolsRes.value : {}).pools || []);
@@ -3992,6 +3993,7 @@ function _smMaintenance(el) {
         const active = ((statusRes.status === 'fulfilled' ? statusRes.value : {}).tasks || []).filter(t2 => t2.status === 'running');
         const history = ((histRes.status === 'fulfilled' ? histRes.value : {}).history || []);
         const rootfs = (rootfsRes.status === 'fulfilled' ? rootfsRes.value : {});
+        const appUsageItems = (appUsageRes.status === 'fulfilled' ? appUsageRes.value : {}).items || [];
 
         const btrfsPools = pools.filter(p => p.fstype === 'btrfs' && p.mounted);
         const raidArrays = Array.isArray(arrays) ? arrays : [];
@@ -4070,6 +4072,38 @@ function _smMaintenance(el) {
                 </div>
                 <div style="font-size:12px;color:var(--text-muted)">${t('Tryb')}: <strong>ext4</strong> — ${t('Standardowy install deweloperski. SquashFS nieaktywny.')}</div>
             </div>`;
+        }
+
+        // ── App disk usage card ──
+        if (appUsageItems.length > 0) {
+            const fmtBytes = b => {
+                if (b >= 1073741824) return (b/1073741824).toFixed(1)+' GB';
+                if (b >= 1048576) return (b/1048576).toFixed(0)+' MB';
+                return (b/1024).toFixed(0)+' KB';
+            };
+            const maxBytes = appUsageItems[0].bytes;
+            html += `<div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:10px;padding:16px;margin-bottom:16px">
+                <div style="font-size:13px;font-weight:600;margin-bottom:12px">
+                    <i class="fas fa-chart-bar" style="color:var(--accent);margin-right:6px"></i>${t('Wykorzystanie miejsca per aplikacja')}
+                </div>
+                <div style="display:flex;flex-direction:column;gap:8px">`;
+            for (const item of appUsageItems) {
+                const pct = maxBytes > 0 ? Math.max(2, Math.round(item.bytes * 100 / maxBytes)) : 0;
+                const onData = item.partition !== '/';
+                html += `<div style="font-size:12px">
+                    <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+                        <span style="color:var(--text-primary)" title="${item.path}">${item.label}
+                            <span style="color:var(--text-muted);font-size:10px;margin-left:4px">${item.partition}</span>
+                            ${onData ? '<span style="color:var(--accent);font-size:10px;margin-left:4px">✓ data</span>' : ''}
+                        </span>
+                        <span style="color:var(--text-secondary);font-weight:600">${fmtBytes(item.bytes)}</span>
+                    </div>
+                    <div style="background:var(--bg-primary);border-radius:4px;height:6px;overflow:hidden">
+                        <div style="width:${pct}%;height:100%;background:${onData ? 'var(--accent)' : '#eab308'};border-radius:4px;transition:width .3s"></div>
+                    </div>
+                </div>`;
+            }
+            html += `</div></div>`;
         }
 
         // Active tasks

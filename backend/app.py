@@ -10416,6 +10416,57 @@ if __name__ == '__main__':
     _ALERT_THRESHOLDS_FILE = os.path.join(os.path.dirname(__file__), '..', 'data', 'alert_thresholds.json')
     _alert_cooldowns = {}  # metric_key -> last_alert_ts
 
+    def _auto_clean_root():
+        """Free space on root partition: apt cache, pip cache, old /tmp files, old logs.
+        Returns human-readable string of freed space (e.g. '120 MB') or '' if nothing freed."""
+        import shutil as _shutil
+        before = shutil.disk_usage('/').free
+        try:
+            host_run('apt-get clean -y 2>/dev/null || true', timeout=60)
+        except Exception:
+            pass
+        try:
+            host_run('find /var/cache/apt/archives -name "*.deb" -delete 2>/dev/null || true', timeout=30)
+        except Exception:
+            pass
+        try:
+            host_run('find /root/.cache/pip /home/*/.cache/pip -maxdepth 0 -exec rm -rf {} + 2>/dev/null || true', timeout=30)
+        except Exception:
+            pass
+        try:
+            tmp = '/tmp'
+            cutoff = time.time() - 3600
+            for name in os.listdir(tmp):
+                p = os.path.join(tmp, name)
+                try:
+                    if os.path.getmtime(p) < cutoff:
+                        if os.path.isdir(p):
+                            _shutil.rmtree(p, ignore_errors=True)
+                        else:
+                            os.unlink(p)
+                except OSError:
+                    pass
+        except Exception:
+            pass
+        try:
+            log_dir = os.path.join(os.path.dirname(__file__), '..', 'logs')
+            cutoff = time.time() - 30 * 86400
+            for name in os.listdir(log_dir):
+                p = os.path.join(log_dir, name)
+                try:
+                    if os.path.isfile(p) and os.path.getmtime(p) < cutoff:
+                        os.unlink(p)
+                except OSError:
+                    pass
+        except Exception:
+            pass
+        after = shutil.disk_usage('/').free
+        freed = after - before
+        if freed > 1024 * 1024:
+            mb = freed // (1024 * 1024)
+            return f'{mb} MB'
+        return ''
+
     def _resource_alert_loop():
         import gevent as _gv
         import psutil
@@ -10449,7 +10500,8 @@ if __name__ == '__main__':
                         alerts.append(('ram', f'RAM: {mem.percent:.0f}% (próg: {thresholds["ram"]}%)'))
                         _alert_cooldowns['ram'] = now
 
-                # Disk usage
+                # Disk usage — alert and auto-clean root if critically full
+                _ROOT_CLEAN_THRESHOLD = 85
                 for part in psutil.disk_partitions():
                     if part.mountpoint in ('/', '/mnt/data') or part.mountpoint.startswith('/mnt/pool'):
                         try:
@@ -10459,6 +10511,19 @@ if __name__ == '__main__':
                                 if now - _alert_cooldowns.get(key, 0) > cooldown:
                                     alerts.append((key, f'Dysk {part.mountpoint}: {usage.percent:.0f}% (próg: {thresholds["disk"]}%)'))
                                     _alert_cooldowns[key] = now
+                            # Auto-clean root partition when above threshold
+                            if part.mountpoint == '/' and usage.percent >= _ROOT_CLEAN_THRESHOLD:
+                                clean_key = 'auto_clean:/'
+                                if now - _alert_cooldowns.get(clean_key, 0) > 3600:
+                                    _alert_cooldowns[clean_key] = now
+                                    freed = _auto_clean_root()
+                                    if freed:
+                                        try:
+                                            from blueprints.notifications import push_inbox
+                                            push_inbox('Auto-cleanup', f'Root {usage.percent:.0f}% pełny — zwolniono {freed}', msg_type='info', category='system')
+                                            elog('system', 'info', f'Auto-cleanup root: zwolniono {freed}')
+                                        except Exception:
+                                            pass
                         except OSError:
                             pass
 
