@@ -2469,7 +2469,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
         // Periodic save of playback position
         if (_saveStateInterval) clearInterval(_saveStateInterval);
-        _saveStateInterval = setInterval(_savePlaybackState, 5000);
+        _saveStateInterval = setInterval(_savePlaybackState, 30000); // save every 30s (was 5s)
 
         // Update player bar — show immediately with buffering indicator
         const player = bodyEl.querySelector('#rm-player');

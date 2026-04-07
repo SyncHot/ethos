@@ -10001,9 +10001,11 @@ prev_net = {'sent': 0, 'recv': 0, 'time': time.time()}
 
 def background_stats():
     global prev_net
+    # Warm up cpu_percent so first non-blocking call returns a valid delta
+    psutil.cpu_percent(interval=None)
     while True:
         try:
-            cpu = psutil.cpu_percent(interval=1)
+            cpu = psutil.cpu_percent(interval=None)  # non-blocking; uses delta since last call
             mem = psutil.virtual_memory()
             net = psutil.net_io_counters()
             now = time.time()
@@ -10024,7 +10026,7 @@ def background_stats():
             })
         except Exception:
             pass
-        socketio.sleep(3)
+        socketio.sleep(10)  # was 3s — 10s is sufficient for the header bar stats
 
 
 # ─────────────────────────── Terminal (PTY over WebSocket) ───────────────────
@@ -10487,7 +10489,7 @@ if __name__ == '__main__':
                 alerts = []
 
                 # CPU
-                cpu_pct = psutil.cpu_percent(interval=1)
+                cpu_pct = psutil.cpu_percent(interval=None)  # non-blocking
                 if cpu_pct >= thresholds.get('cpu', 90):
                     if now - _alert_cooldowns.get('cpu', 0) > cooldown:
                         alerts.append(('cpu', f'CPU: {cpu_pct:.0f}% (próg: {thresholds["cpu"]}%)'))
@@ -10562,13 +10564,17 @@ if __name__ == '__main__':
         import gevent as _gv
         _gv.sleep(120)  # wait for system to fully start
         services = ['ethos']  # core service always monitored
+        _services_last_check = 0  # throttle installed-service discovery
         while True:
             try:
-                # Check which services are installed
-                for svc in ['nginx', 'smbd', 'docker']:
-                    r = _host_run_base(f'systemctl list-unit-files {svc}.service 2>/dev/null | grep -c {svc}', timeout=5)
-                    if r.returncode == 0 and r.stdout.strip() != '0' and svc not in services:
-                        services.append(svc)
+                now = time.time()
+                # Discover installed services at most once every 10 minutes
+                if now - _services_last_check > 600:
+                    _services_last_check = now
+                    for svc in ['nginx', 'smbd', 'docker']:
+                        r = _host_run_base(f'systemctl list-unit-files {svc}.service 2>/dev/null | grep -c {svc}', timeout=5)
+                        if r.returncode == 0 and r.stdout.strip() != '0' and svc not in services:
+                            services.append(svc)
 
                 for svc in services:
                     if svc == 'ethos':
@@ -10603,7 +10609,7 @@ if __name__ == '__main__':
 
             except Exception:
                 pass
-            _gv.sleep(30)
+            _gv.sleep(60)  # was 30s — 1-minute resolution sufficient for watchdog
 
     socketio.start_background_task(_service_watchdog_loop)
 

@@ -314,7 +314,7 @@ def usb_monitor_loop(sio):
     _cleanup_all_stale_devmon()
 
     while True:
-        gevent.sleep(3)
+        gevent.sleep(10)  # was 3s — 10s sufficient for USB hot-plug detection
         try:
             current = _current_usb_parts()
             added = current - known
