@@ -18,6 +18,7 @@ Endpoints:
   POST /api/app-manager/<id>/uninstall     -> odinstaluj paczke
   POST /api/app-manager/<id>/update        -> zaktualizuj do najnowszej wersji
   GET  /api/app-manager/<id>/status        -> status instalacji paczki
+  GET  /api/app-manager/running-tasks      -> aktywne zadania (reconnect recovery)
 
 SocketIO events:
   app_manager_progress  ->  { task_id, stage, percent, message, app_id, status }
@@ -45,6 +46,9 @@ app_manager_bp = Blueprint('app_manager', __name__, url_prefix='/api/app-manager
 
 _socketio = None
 _flask_app = None
+# Maps task_id → last known event data for reconnect recovery
+_running_task_state = {}
+_running_task_lock = threading.Lock()
 
 
 def init_app_manager(sio):
@@ -67,6 +71,49 @@ def _on_register(state):
 def _emit(event_data):
     if _socketio:
         _socketio.emit('app_manager_progress', event_data)
+    # Track last known state per task for reconnect recovery
+    task_id = event_data.get('task_id')
+    if task_id:
+        with _running_task_lock:
+            if event_data.get('status') in ('done', 'error'):
+                _running_task_state.pop(task_id, None)
+            else:
+                _running_task_state[task_id] = {**event_data, '_ts': time.time()}
+
+
+def _stream_with_keepalive(cmd, emit_fn, stage, percent, interval=4):
+    """Iterate host_run_stream lines, emitting a keepalive if no output for `interval` seconds.
+
+    Used to prevent the progress bar getting stuck during silent operations
+    (e.g. apt-get update reading package lists, pip resolving dependencies).
+    Returns (exit_code, last_error_line).
+    """
+    exit_code = -1
+    last_err = ''
+    last_emit = time.time()
+    keepalive_msg = None
+
+    for line in host_run_stream(cmd):
+        stripped = line.strip()
+        if stripped.startswith('__EXIT_CODE__:'):
+            exit_code = int(stripped.split(':', 1)[1])
+            break
+
+        # Keep the last error line for reporting
+        lower = stripped.lower()
+        if lower and ('error' in lower or 'e:' in lower or 'err' in lower):
+            last_err = stripped
+
+        # Keepalive: if no emit in `interval` seconds, send a heartbeat
+        now = time.time()
+        if now - last_emit >= interval and stripped:
+            emit_fn({'stage': stage, 'message': stripped[:80], 'percent': percent, 'status': 'running'})
+            last_emit = now
+            keepalive_msg = stripped
+
+        yield stripped, last_err
+
+    return exit_code
 
 
 # ─── Paths ───────────────────────────────────────────────────
@@ -885,6 +932,7 @@ def _install_apt_deps(deps, emit_fn):
     exit_code = -1
     last_err = ''
     count = 0
+    last_emit = time.time()
     for line in host_run_stream(wrapped):
         stripped = line.strip()
         if stripped.startswith('__EXIT_CODE__:'):
@@ -892,15 +940,17 @@ def _install_apt_deps(deps, emit_fn):
             break
         if not stripped:
             continue
-        # Track apt progress — emit every few meaningful lines
         lower = stripped.lower()
-        if any(kw in lower for kw in ('unpacking', 'setting up', 'installing', 'get:', 'fetched')):
-            count += 1
-            pct = min(40, 28 + count)
-            short = stripped[:80]
-            emit_fn({'stage': 'deps_apt', 'message': short, 'percent': pct, 'status': 'running'})
         if 'e:' in lower or 'err' in lower:
             last_err = stripped
+        # Emit on keywords OR as keepalive every 4s to prevent stuck progress bar
+        now = time.time()
+        is_keyword = any(kw in lower for kw in ('unpacking', 'setting up', 'installing', 'get:', 'fetched', 'reading', 'building'))
+        if is_keyword or (now - last_emit >= 4):
+            count += 1
+            pct = min(40, 28 + count)
+            emit_fn({'stage': 'deps_apt', 'message': stripped[:80], 'percent': pct, 'status': 'running'})
+            last_emit = now
 
     if exit_code != 0:
         detail = last_err[:120] if last_err else f'exit code {exit_code}'
@@ -945,6 +995,7 @@ def _install_pip_deps(deps, emit_fn):
     exit_code = -1
     last_err = ''
     count = 0
+    last_emit = time.time()
     for line in host_run_stream(cmd):
         stripped = line.strip()
         if stripped.startswith('__EXIT_CODE__:'):
@@ -953,13 +1004,16 @@ def _install_pip_deps(deps, emit_fn):
         if not stripped:
             continue
         lower = stripped.lower()
-        if any(kw in lower for kw in ('collecting', 'downloading', 'installing', 'building', 'successfully')):
-            count += 1
-            pct = min(55, 47 + count)
-            short = stripped[:80]
-            emit_fn({'stage': 'deps_pip', 'message': short, 'percent': pct, 'status': 'running'})
         if 'error' in lower:
             last_err = stripped
+        # Emit on keywords OR as keepalive every 4s to prevent stuck progress bar
+        now = time.time()
+        is_keyword = any(kw in lower for kw in ('collecting', 'downloading', 'installing', 'building', 'successfully', 'obtaining'))
+        if is_keyword or (now - last_emit >= 4):
+            count += 1
+            pct = min(55, 47 + count)
+            emit_fn({'stage': 'deps_pip', 'message': stripped[:80], 'percent': pct, 'status': 'running'})
+            last_emit = now
 
     if exit_code != 0:
         detail = last_err[:120] if last_err else f'exit code {exit_code}'
@@ -1623,6 +1677,16 @@ def app_status(app_id):
     return jsonify({'installed': False, 'core': app_id in CORE_APPS})
 
 
+@app_manager_bp.route('/running-tasks')
+def get_running_tasks():
+    """Return currently running install/update task states for reconnect recovery."""
+    if not getattr(g, 'role', None):
+        return jsonify({'error': 'Unauthorized'}), 401
+    with _running_task_lock:
+        tasks = [v for v in _running_task_state.values()]
+    return jsonify({'tasks': tasks})
+
+
 # ═══════════════════════════════════════════════════════════
 #  App update source — GitHub (default) or OTA server
 # ═══════════════════════════════════════════════════════════
@@ -2034,6 +2098,8 @@ def _bg_update_apps(app_ids, base_url, task_id, source='ota'):
             module_name = bp_info[0]
             bp_url = base_url + f'/{app_id}/backend.py'
             bp_dest = os.path.join(_BLUEPRINTS_DIR, module_name + '.py')
+            emit({'stage': 'updating', 'percent': pct_base + 2, 'app_id': app_id,
+                  'status': 'running', 'message': f'{app_id}: pobieranie backend...'})
             if not _download_file(bp_url, bp_dest):
                 log.warning('[app_manager] Backend download failed: %s', app_id)
                 ok = False
@@ -2043,11 +2109,15 @@ def _bg_update_apps(app_ids, base_url, task_id, source='ota'):
             if fn:
                 js_url = base_url + f'/{app_id}/frontend.js'
                 js_dest = os.path.join(_FRONTEND_APPS_DIR, fn + '.js')
+                emit({'stage': 'updating', 'percent': pct_base + 4, 'app_id': app_id,
+                      'status': 'running', 'message': f'{app_id}: pobieranie frontend...'})
                 if not _download_file(js_url, js_dest):
                     log.warning('[app_manager] Frontend download failed: %s', app_id)
                     ok = False
 
             if ok:
+                emit({'stage': 'updating', 'percent': pct_base + 6, 'app_id': app_id,
+                      'status': 'running', 'message': f'{app_id}: ładowanie...'})
                 _hot_load_blueprint(app_id)
                 # Use catalog version if available, fall back to 'latest'
                 cat_entry = next((a for a in BUILTIN_CATALOG if a['id'] == app_id), {})

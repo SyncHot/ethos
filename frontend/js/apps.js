@@ -5864,9 +5864,9 @@ function renderPackageCenter(body) {
         if (_anyBusy() || !S.otaUpdates.length) return;
         const ids = S.otaUpdates.map(u => u.id);
         if (!await confirmDialog(t('Zaktualizować {n} aplikacji z serwera?', { n: ids.length }))) return;
-        // Set progress for each app
+        // Mark all as queued — watchdog must not kill apps waiting their turn
         ids.forEach(id => {
-            S.progressMap[id] = { stage: 'start', percent: 2, message: t('Oczekiwanie…'), status: 'running', _started: Date.now() };
+            S.progressMap[id] = { stage: 'start', percent: 2, message: t('Oczekiwanie…'), status: 'running', _started: Date.now(), _lastUpdate: Date.now(), _queued: true };
         });
         render();
         const data = await api('/app-manager/update-apps', { method: 'POST', body: { app_ids: ids } });
@@ -5881,9 +5881,21 @@ function renderPackageCenter(body) {
     function onProgress(ev) {
         const { app_id, stage, percent, message, status, updated, failed } = ev;
 
-        // Batch OTA update events (update-apps endpoint): update per-app progress
+        // Per-app progress event from batch update (stage='updating' with app_id)
+        if (app_id && stage === 'updating') {
+            const prev = S.progressMap[app_id];
+            S.progressMap[app_id] = {
+                stage, percent, message, status: 'running',
+                _started: prev?._started || Date.now(),
+                _lastUpdate: Date.now(),
+                _queued: false,
+            };
+            render();
+            return;
+        }
+
+        // Batch OTA update events without app_id — global start/sync
         if (!app_id && stage === 'updating') {
-            // Batch progress — no per-app action needed here
             return;
         }
         if (!app_id && (status === 'done' || status === 'error') && (updated || failed)) {
@@ -5950,21 +5962,23 @@ function renderPackageCenter(body) {
                 }
             }, delay);
         } else {
-            S.progressMap[app_id] = { stage, percent, message, status, _started: S.progressMap[app_id]?._started || Date.now(), _lastUpdate: Date.now() };
+            S.progressMap[app_id] = { stage, percent, message, status, _started: S.progressMap[app_id]?._started || Date.now(), _lastUpdate: Date.now(), _queued: false };
             render();
         }
     }
 
-    // Stale progress watchdog — auto-clear installs stuck for >120s with no update
+    // Stale progress watchdog — auto-clear installs stuck for >90s with no update.
+    // Queued batch apps (_queued flag) are exempt until they receive their first event.
     const _staleTimer = setInterval(() => {
         const now = Date.now();
         let changed = false;
         for (const [id, p] of Object.entries(S.progressMap)) {
             if (p.status !== 'running') continue;
+            if (p._queued) continue;  // batch-queued: exempt from stale check
             const lastUpdate = p._lastUpdate || p._started || now;
-            if (now - lastUpdate > 120000) {
+            if (now - lastUpdate > 90000) {
                 S.progressMap[id] = { stage: 'error', percent: 100,
-                    message: '<i class="fas fa-exclamation-triangle"></i> ' + t('Utracono polaczenie — sprawdz status recznie'),
+                    message: '<i class="fas fa-exclamation-triangle"></i> ' + t('Brak odpowiedzi — sprawdź logi'),
                     status: 'finishing' };
                 changed = true;
                 setTimeout(() => { delete S.progressMap[id]; render(); }, 5000);
@@ -5973,13 +5987,42 @@ function renderPackageCenter(body) {
         if (changed) render();
     }, 10000);
 
+    // Reconnect recovery — restore running task state from backend
+    async function _recoverRunningTasks() {
+        try {
+            const data = await api('/app-manager/running-tasks');
+            if (!data.tasks?.length) return;
+            let changed = false;
+            for (const task of data.tasks) {
+                const aid = task.app_id;
+                if (!aid) continue;
+                if (!S.progressMap[aid]) {
+                    S.progressMap[aid] = {
+                        stage: task.stage || 'running',
+                        percent: task.percent || 50,
+                        message: task.message || t('W toku…'),
+                        status: 'running',
+                        _started: Date.now(),
+                        _lastUpdate: Date.now(),
+                    };
+                    changed = true;
+                }
+            }
+            if (changed) render();
+        } catch (e) { /* ignore */ }
+    }
+
     if (NAS.socket) {
         NAS.socket.on('app_manager_progress', onProgress);
+        NAS.socket.on('connect', _recoverRunningTasks);
         body.closest('.window')?.addEventListener('window-close', () => {
             NAS.socket.off('app_manager_progress', onProgress);
+            NAS.socket.off('connect', _recoverRunningTasks);
             clearInterval(_staleTimer);
         });
     }
+    // Also recover on open in case tasks were running before app was opened
+    _recoverRunningTasks();
 
     /* ── load & filter events ── */
     async function loadCatalog(refresh) {
