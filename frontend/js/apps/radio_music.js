@@ -20,6 +20,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     let _preloadAudio = null;  // preload next track for near-gapless playback
     let _radioRetryTimer = null;
     let _radioRetries = 0;
+    let _nasSpinTimer = null;  // detect slow NAS wake (>3s)
 
     // ── Chromecast state ──
     let _isCasting = false;
@@ -359,6 +360,11 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '@keyframes rm-autoplay-pulse{0%,100%{opacity:1}50%{opacity:.8}}',
 '.rm-autoplay-prompt:hover{background:linear-gradient(135deg,#1ed760,#1DB954)}',
 '.rm-autoplay-prompt i{font-size:20px}',
+'.rm-nas-spinup{position:absolute;top:0;left:0;right:0;bottom:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:rgba(15,23,42,.88);z-index:20;border-radius:8px;pointer-events:none}',
+'.rm-nas-spinup-icon{font-size:32px;animation:rm-nas-spin 2s linear infinite}',
+'.rm-nas-spinup-text{font-size:13px;color:rgba(255,255,255,.7);text-align:center;line-height:1.5;max-width:220px}',
+'@keyframes rm-nas-spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}',
+
 '.rm-vol-wrap{display:flex;align-items:center;gap:6px}',
 '.rm-vol-wrap i{font-size:13px;color:rgba(255,255,255,.5)}',
 '.rm-vol-slider{width:80px;accent-color:#1DB954;height:4px}',
@@ -843,6 +849,24 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         const content = bodyEl.querySelector('#rm-content');
         toolbar.innerHTML = '';
         content.innerHTML = '';
+        // Detect slow NAS disk wake (>3s response): show indicator, remove when content populates
+        clearTimeout(_nasSpinTimer);
+        _nasSpinTimer = setTimeout(() => {
+            if (content.children.length === 0) {
+                const el = document.createElement('div');
+                el.className = 'rm-nas-spinup';
+                el.innerHTML = '<span class="rm-nas-spinup-icon">⚙️</span>'
+                    + '<span class="rm-nas-spinup-text">NAS budzi dyski…<br>Proszę czekać</span>';
+                content.style.position = 'relative';
+                content.appendChild(el);
+                const obs = new MutationObserver(() => {
+                    el.remove();
+                    clearTimeout(_nasSpinTimer);
+                    obs.disconnect();
+                });
+                obs.observe(content, { childList: true });
+            }
+        }, 3000);
 
         switch(section) {
             case 'radio': loadRadio(toolbar, content); break;

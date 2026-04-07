@@ -3,19 +3,129 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>EthOS - Offline</title>
+    <title>EthOS — Offline</title>
     <style>
-        body { background: #0f172a; color: #fff; font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-        .container { text-align: center; }
-        h1 { margin-bottom: 1rem; }
-        button { background: #2563eb; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background: #0f172a;
+            color: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 32px;
+        }
+        .container { text-align: center; max-width: 360px; }
+        .icon { font-size: 64px; margin-bottom: 24px; animation: spin-once 1s ease-out; }
+        h1 { font-size: 22px; margin-bottom: 10px; }
+        .subtitle { color: rgba(255,255,255,.55); font-size: 14px; line-height: 1.7; margin-bottom: 28px; }
+        .nas-hint {
+            background: rgba(251,191,36,.08);
+            border: 1px solid rgba(251,191,36,.25);
+            border-radius: 12px;
+            padding: 14px 18px;
+            font-size: 13px;
+            color: rgba(255,255,255,.75);
+            line-height: 1.6;
+            margin-bottom: 28px;
+            text-align: left;
+        }
+        .nas-hint strong { color: #fbbf24; }
+        .progress-bar {
+            width: 100%;
+            height: 4px;
+            background: rgba(255,255,255,.1);
+            border-radius: 2px;
+            overflow: hidden;
+            margin-bottom: 14px;
+        }
+        .progress-fill {
+            height: 100%;
+            background: #2563eb;
+            border-radius: 2px;
+            width: 0%;
+            transition: width 1s linear;
+        }
+        .countdown { font-size: 13px; color: rgba(255,255,255,.45); margin-bottom: 24px; }
+        .btn {
+            background: #2563eb;
+            color: white;
+            border: none;
+            padding: 12px 28px;
+            border-radius: 10px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background .15s;
+        }
+        .btn:hover { background: #1d4ed8; }
+        .status { margin-top: 14px; font-size: 13px; color: rgba(255,255,255,.4); min-height: 18px; }
+        @keyframes spin-once {
+            0% { transform: rotate(0deg); opacity: 0; }
+            60% { transform: rotate(20deg); }
+            100% { transform: rotate(0deg); opacity: 1; }
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Jesteś offline</h1>
-        <p>Sprawdź połączenie z internetem.</p>
-        <button onclick="window.location.reload()">Odśwież</button>
+        <div class="icon">🖥️</div>
+        <h1>Brak połączenia z NAS</h1>
+        <p class="subtitle">Nie można nawiązać połączenia z serwerem EthOS.</p>
+        <div class="nas-hint">
+            <strong>💡 Dyski NAS mogą być uśpione.</strong><br>
+            Pierwsze uruchomienie po uśpieniu zajmuje <strong>10–30 sekund</strong>.
+            Poczekaj chwilę — strona odświeży się automatycznie.
+        </div>
+        <div class="progress-bar"><div class="progress-fill" id="prog"></div></div>
+        <div class="countdown" id="countdown">Ponowna próba za <span id="sec">15</span>s…</div>
+        <button class="btn" onclick="tryNow()">Spróbuj teraz</button>
+        <div class="status" id="status"></div>
     </div>
+    <script>
+        let retryCount = 0;
+        const RETRY_DELAY = 15;
+        let timerInterval = null;
+        let remaining = RETRY_DELAY;
+
+        function startCountdown() {
+            remaining = RETRY_DELAY;
+            clearInterval(timerInterval);
+            document.getElementById('prog').style.width = '0%';
+            timerInterval = setInterval(() => {
+                remaining--;
+                document.getElementById('sec').textContent = remaining;
+                document.getElementById('prog').style.width = ((RETRY_DELAY - remaining) / RETRY_DELAY * 100) + '%';
+                if (remaining <= 0) {
+                    clearInterval(timerInterval);
+                    tryNow();
+                }
+            }, 1000);
+        }
+
+        async function tryNow() {
+            clearInterval(timerInterval);
+            retryCount++;
+            document.getElementById('status').textContent = 'Łączenie z NAS…';
+            document.getElementById('countdown').style.display = 'none';
+            try {
+                const r = await fetch('/', { method: 'HEAD', cache: 'no-store' });
+                if (r.ok || r.status < 500) {
+                    document.getElementById('status').textContent = '✅ Połączono! Przekierowuję…';
+                    setTimeout(() => window.location.reload(), 300);
+                    return;
+                }
+            } catch (e) { /* still offline */ }
+            document.getElementById('status').textContent = retryCount > 2
+                ? 'Nadal brak odpowiedzi. Sprawdź czy NAS jest włączony.'
+                : 'Brak odpowiedzi. Spróbuję za chwilę…';
+            document.getElementById('countdown').style.display = '';
+            startCountdown();
+        }
+
+        // Start auto-retry immediately
+        startCountdown();
+    </script>
 </body>
 </html>
