@@ -980,7 +980,6 @@ def local_scan():
 
 
 @radio_music_bp.route('/local/file', methods=['DELETE'])
-@require_auth
 def local_delete_file():
     """Delete a single local audio file."""
     body = request.get_json(force=True, silent=True) or {}
@@ -1006,7 +1005,6 @@ def local_delete_file():
 
 
 @radio_music_bp.route('/local/folder', methods=['DELETE'])
-@require_auth
 def local_delete_folder():
     """Delete a local folder and all its audio contents."""
     body = request.get_json(force=True, silent=True) or {}
