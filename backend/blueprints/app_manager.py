@@ -296,7 +296,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/printer/pkg-status',
     },
     {
-        'id': 'docker-manager', 'name': 'Docker Manager', 'version': '1.0.5',
+        'id': 'docker-manager', 'name': 'Docker Manager', 'version': '1.0.6',
         'icon': 'fa-cubes', 'color': '#2496ed', 'category': 'System', 'admin_only': True,
         'description': 'Zarządzanie kontenerami Docker, projektami Compose, obrazami i logami.',
         'apt_deps': [], 'pip_deps': [],
@@ -346,7 +346,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/flasher/pkg-status',
     },
     {
-        'id': 'builder', 'name': 'Builder', 'version': '1.0.2',
+        'id': 'builder', 'name': 'Builder', 'version': '1.0.3',
         'icon': 'fa-hammer', 'color': '#f97316', 'category': 'System', 'admin_only': True,
         'description': 'Budowanie wydan EthOS i obrazow systemowych przez interfejs webowy.',
         'apt_deps': ['squashfs-tools', 'genisoimage', 'rsync'], 'pip_deps': [],
@@ -355,7 +355,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/builder/pkg-status',
     },
     {
-        'id': 'disk-repair', 'name': 'Disk Repair', 'version': '1.0.12',
+        'id': 'disk-repair', 'name': 'Disk Repair', 'version': '1.0.13',
         'icon': 'fa-wrench', 'color': '#ef4444', 'category': 'Storage', 'admin_only': True,
         'description': 'Diagnostyka SMART i sprawdzanie systemu plikow z narzedziami naprawczymi.',
         'apt_deps': ['smartmontools', 'e2fsprogs'], 'pip_deps': [],
@@ -373,7 +373,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/remote-log/pkg-status',
     },
     {
-        'id': 'sharing-samba', 'name': 'File Sharing (Samba)', 'version': '1.0.12',
+        'id': 'sharing-samba', 'name': 'File Sharing (Samba)', 'version': '1.0.13',
         'icon': 'fa-windows', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Udostepnianie plikow przez siec (Windows, Mac, Linux).',
         'apt_deps': ['samba'], 'pip_deps': [],
@@ -382,7 +382,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/storage/samba/pkg-status',
     },
     {
-        'id': 'sharing-nfs', 'name': 'NFS', 'version': '1.0.12',
+        'id': 'sharing-nfs', 'name': 'NFS', 'version': '1.0.13',
         'icon': 'fa-network-wired', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Szybkie udostepnianie plikow dla Linux/Unix przez NFS.',
         'apt_deps': ['nfs-kernel-server'], 'pip_deps': [],
@@ -400,7 +400,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/storage/dlna/pkg-status',
     },
     {
-        'id': 'sharing-webdav', 'name': 'WebDAV', 'version': '1.0.12',
+        'id': 'sharing-webdav', 'name': 'WebDAV', 'version': '1.0.13',
         'icon': 'fa-globe', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Serwer WebDAV z dostepem do plikow przez HTTP.',
         'apt_deps': ['lighttpd'], 'pip_deps': [],
@@ -409,7 +409,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/storage/webdav/pkg-status',
     },
     {
-        'id': 'sharing-sftp', 'name': 'SFTP', 'version': '1.0.12',
+        'id': 'sharing-sftp', 'name': 'SFTP', 'version': '1.0.13',
         'icon': 'fa-lock', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Bezpieczny transfer plikow przez SSH.',
         'apt_deps': ['openssh-server'], 'pip_deps': [],
@@ -418,7 +418,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/storage/sftp/pkg-status',
     },
     {
-        'id': 'sharing-ftp', 'name': 'FTP', 'version': '1.0.12',
+        'id': 'sharing-ftp', 'name': 'FTP', 'version': '1.0.13',
         'icon': 'fa-upload', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Klasyczny serwer FTP z obsługa vsftpd.',
         'apt_deps': ['vsftpd'], 'pip_deps': [],
@@ -454,7 +454,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/cloud-backup/pkg-status',
     },
     {
-        'id': 'raid-lvm', 'name': 'RAID / LVM', 'version': '1.0.12',
+        'id': 'raid-lvm', 'name': 'RAID / LVM', 'version': '1.0.13',
         'icon': 'fa-layer-group', 'color': '#f59e0b', 'category': 'Storage', 'admin_only': True,
         'description': 'Macierze RAID z mdadm i wolumeny LVM.',
         'apt_deps': ['mdadm', 'lvm2'], 'pip_deps': [],
@@ -472,7 +472,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/wireguard/pkg-status',
     },
     {
-        'id': 'antivirus', 'name': 'Antivirus (ClamAV)', 'version': '1.0.2',
+        'id': 'antivirus', 'name': 'Antivirus (ClamAV)', 'version': '1.0.3',
         'icon': 'fa-shield-virus', 'color': '#16a34a', 'category': 'Security', 'admin_only': True,
         'description': 'ClamAV antywirus — skanowanie na zadanie i zaplanowane.',
         'apt_deps': ['clamav', 'clamav-freshclam'], 'pip_deps': [],
@@ -555,7 +555,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/video-station/pkg-status',
     },
     {
-        'id': 'radio-music', 'name': 'Radio & Music', 'version': '0.0.2',
+        'id': 'radio-music', 'name': 'Radio & Music', 'version': '0.0.3',
         'icon': 'fa-broadcast-tower', 'color': '#10b981', 'category': 'Media', 'admin_only': False,
         'description': 'Radio internetowe z całego świata, podcasty i odtwarzacz muzyki.',
         'apt_deps': ['ffmpeg'], 'pip_deps': ['yt-dlp'],
