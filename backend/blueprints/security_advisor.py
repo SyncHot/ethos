@@ -7,11 +7,13 @@ Endpoints:
   GET  /api/security-advisor/scan          — Run a full security scan
   POST /api/security-advisor/fix           — Apply a one-click fix
   GET  /api/security-advisor/pkg-status    — Package install status
+  POST /api/security-advisor/cleanup-disk  — Free disk space (apt/pip cache)
 """
 
 import json
 import os
 import re
+import shutil
 import time
 from datetime import datetime
 from flask import Blueprint, jsonify, request
@@ -352,3 +354,35 @@ def fix():
 @security_advisor_bp.route('/pkg-status', methods=['GET'])
 def pkg_status():
     return jsonify({'installed': True})
+
+
+@security_advisor_bp.route('/cleanup-disk', methods=['POST'])
+def cleanup_disk():
+    """Free disk space by cleaning apt/pip caches and temp files."""
+    import psutil
+    before = psutil.disk_usage('/').free
+
+    host_run('apt-get clean 2>/dev/null', timeout=30)
+    host_run('apt-get autoremove -y -qq 2>/dev/null', timeout=120)
+
+    # pip cache
+    host_run('pip cache purge 2>/dev/null || true', timeout=30)
+
+    # venv __pycache__
+    venv_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'venv')
+    venv_dir = os.path.normpath(venv_dir)
+    for root, dirs, _ in os.walk(venv_dir):
+        for d in dirs:
+            if d == '__pycache__':
+                shutil.rmtree(os.path.join(root, d), ignore_errors=True)
+
+    # blueprints __pycache__
+    for root, dirs, _ in os.walk(os.path.dirname(__file__)):
+        for d in dirs:
+            if d == '__pycache__':
+                shutil.rmtree(os.path.join(root, d), ignore_errors=True)
+
+    after = psutil.disk_usage('/').free
+    freed_mb = round((after - before) / 1024 / 1024)
+    free_mb = round(after / 1024 / 1024)
+    return jsonify({'ok': True, 'freed_mb': freed_mb, 'free_mb': free_mb})
