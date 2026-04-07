@@ -31,6 +31,9 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     let _advanceLock = false;   // debounce double-advance from Cast + local onended
     let _castQueueActive = false; // true when Cast queue manages playlist advancement
 
+    // Web Audio API — shared across plays (createMediaElementSource can only be called once per element)
+    let _audioCtx = null, _analyser = null, _audioSource = null, _visRafId = null;
+
     const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
         ? NAS.logClient('radio-music', level, msg, details) : console.log('[radio-music]', msg, details || '');
 
@@ -352,6 +355,10 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-cast-btn{font-size:15px;transition:color .2s}',
 '.rm-cast-btn.rm-casting{color:#1DB954;animation:rm-cast-pulse 2s ease-in-out infinite}',
 '@keyframes rm-cast-pulse{0%,100%{opacity:1}50%{opacity:.5}}',
+'.rm-autoplay-prompt{display:flex;align-items:center;justify-content:center;gap:10px;padding:12px 20px;background:linear-gradient(135deg,#1DB954,#0f9240);color:#000;font-weight:700;font-size:14px;cursor:pointer;border:none;width:100%;border-top:none;animation:rm-autoplay-pulse 1.5s ease-in-out infinite}',
+'@keyframes rm-autoplay-pulse{0%,100%{opacity:1}50%{opacity:.8}}',
+'.rm-autoplay-prompt:hover{background:linear-gradient(135deg,#1ed760,#1DB954)}',
+'.rm-autoplay-prompt i{font-size:20px}',
 '.rm-vol-wrap{display:flex;align-items:center;gap:6px}',
 '.rm-vol-wrap i{font-size:13px;color:rgba(255,255,255,.5)}',
 '.rm-vol-slider{width:80px;accent-color:#1DB954;height:4px}',
@@ -514,6 +521,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-np-action:hover{background:rgba(255,255,255,.12);color:#fff}',
 '.rm-np-action.rm-lyrics-active{background:rgba(29,185,84,.15);color:#1DB954}',
 '.rm-np-count{font-size:11px;color:rgba(255,255,255,.3);margin-top:2px}',
+'.rm-np-vis{display:block;width:100%;max-width:260px;height:48px;border-radius:6px;opacity:.85}',
 
 /* ── Lyrics panel ── */
 '.rm-lyrics-panel{display:none;width:100%;max-height:40vh;overflow-y:auto;padding:16px 8px;text-align:center;font-size:15px;line-height:1.8;color:rgba(255,255,255,.75);white-space:pre-line;-webkit-overflow-scrolling:touch;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.15) transparent}',
@@ -1650,24 +1658,73 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         }
 
         // Progressive batch render — 80 items/frame to avoid blocking main thread
-        function _renderLocalBatch(entries, wrap, startIdx) {
-            const BATCH = 80;
-            const frag = document.createDocumentFragment();
-            const end = Math.min(startIdx + BATCH, entries.length);
-            for (let i = startIdx; i < end; i++) {
-                const entry = entries[i];
-                if (entry.isHeader) {
-                    const h = document.createElement('div');
-                    h.className = 'rm-section-title';
-                    h.innerHTML = '<i class="fas fa-folder"></i> ' + escH(entry.name)
-                        + ' <span style="font-size:11px;color:var(--text-muted);font-weight:400">(' + entry.count + ')</span>';
-                    frag.appendChild(h);
-                } else {
-                    frag.appendChild(_buildLocalTrackEl(entry.file, entry.folder));
+        // True virtual scroll — only renders visible items + buffer in DOM
+        // TRACK_H / HEADER_H must match the rm-track and rm-section-title CSS heights
+        const VSCROLL_TRACK_H = 68;  // rm-track: 64px + 4px gap
+        const VSCROLL_HEADER_H = 52; // rm-section-title: margin+content
+        const VSCROLL_BUFFER_PX = 400;
+        let _vsScrollHandler = null;
+
+        function _renderEntry(entry) {
+            if (entry.isHeader) {
+                const h = document.createElement('div');
+                h.className = 'rm-section-title';
+                h.innerHTML = '<i class="fas fa-folder"></i> ' + escH(entry.name)
+                    + ' <span style="font-size:11px;color:var(--text-muted);font-weight:400">(' + entry.count + ')</span>';
+                return h;
+            }
+            return _buildLocalTrackEl(entry.file, entry.folder);
+        }
+
+        function _initVirtualScroll(entries) {
+            // Cleanup previous scroll listener
+            if (_vsScrollHandler) { content.removeEventListener('scroll', _vsScrollHandler); _vsScrollHandler = null; }
+
+            // Compute cumulative heights
+            const heights = entries.map(e => e.isHeader ? VSCROLL_HEADER_H : VSCROLL_TRACK_H);
+            const cumH = [0];
+            heights.forEach(h => cumH.push(cumH[cumH.length - 1] + h));
+            const totalH = cumH[entries.length];
+
+            listWrap.style.position = 'relative';
+            listWrap.style.height = totalH + 'px';
+
+            const pool = new Map(); // index → rendered element
+
+            function update() {
+                const listTop = listWrap.offsetTop;
+                const scroll = content.scrollTop;
+                const viewH = content.clientHeight;
+                const visStart = Math.max(0, scroll - listTop - VSCROLL_BUFFER_PX);
+                const visEnd = scroll - listTop + viewH + VSCROLL_BUFFER_PX;
+
+                // Binary search for first visible entry
+                let lo = 0, hi = entries.length - 1;
+                while (lo < hi) { const mid = (lo + hi) >> 1; if (cumH[mid + 1] <= visStart) lo = mid + 1; else hi = mid; }
+                const first = Math.max(0, lo);
+                let last = lo;
+                while (last < entries.length - 1 && cumH[last + 1] < visEnd) last++;
+                last = Math.min(entries.length - 1, last);
+
+                // Remove out-of-range items
+                for (const [i, el] of pool) {
+                    if (i < first || i > last) { el.remove(); pool.delete(i); }
+                }
+                // Insert in-range items
+                for (let i = first; i <= last; i++) {
+                    if (pool.has(i)) continue;
+                    const el = _renderEntry(entries[i]);
+                    el.style.position = 'absolute';
+                    el.style.top = cumH[i] + 'px';
+                    el.style.left = '0'; el.style.right = '0';
+                    listWrap.appendChild(el);
+                    pool.set(i, el);
                 }
             }
-            wrap.appendChild(frag);
-            if (end < entries.length) requestAnimationFrame(() => _renderLocalBatch(entries, wrap, end));
+
+            _vsScrollHandler = update;
+            content.addEventListener('scroll', update, { passive: true });
+            update();
         }
 
         let _localSearchTimer = null;
@@ -1690,7 +1747,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             }
             const countEl = content.querySelector('#rm-local-count');
             if (countEl) countEl.textContent = count + ' ' + t('plików');
-            _renderLocalBatch(entries, listWrap, 0);
+            _initVirtualScroll(entries);
         }
 
         const searchInput = content.querySelector('#rm-local-search');
@@ -2445,15 +2502,40 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             _cl('debug', 'tryUrl(' + idx + '/' + urls.length + ')', { src: src?.substring(0, 120) });
             _audio.src = src;
             _audio.play().catch(err => {
-                _cl('warning', 'play() rejected', { idx, error: err?.message, src: src?.substring(0, 80) });
-                tryUrl(idx + 1);
+                if (err.name === 'NotAllowedError') {
+                    // Browser blocked autoplay — show tap-to-play overlay
+                    _cl('warning', 'Autoplay blocked — showing tap-to-play', { name: item?.name });
+                    _showAutoplayPrompt();
+                } else {
+                    _cl('warning', 'play() rejected', { idx, error: err?.message, src: src?.substring(0, 80) });
+                    tryUrl(idx + 1);
+                }
             });
+        }
+
+        function _showAutoplayPrompt() {
+            _setBuffering(false);
+            // Remove any existing prompt
+            bodyEl.querySelector('#rm-autoplay-prompt')?.remove();
+            const prompt = document.createElement('button');
+            prompt.id = 'rm-autoplay-prompt';
+            prompt.className = 'rm-autoplay-prompt';
+            prompt.innerHTML = '<i class="fas fa-play-circle"></i> ' + t('Dotknij aby odtworzyć');
+            prompt.onclick = () => {
+                prompt.remove();
+                _setBuffering(true);
+                _audio?.play().then(() => _setBuffering(false)).catch(() => {});
+            };
+            // Insert above player bar
+            const player = bodyEl.querySelector('#rm-player');
+            if (player) player.insertAdjacentElement('beforebegin', prompt);
         }
 
         _audio.onplay = () => {
             hasPlayed = true;
             _setBuffering(false);
             clearTimeout(_radioRetryTimer); _radioRetryTimer = null;
+            bodyEl.querySelector('#rm-autoplay-prompt')?.remove(); // clear tap-to-play if shown
             bodyEl.querySelector('#rm-play-pause').innerHTML = '<i class="fas fa-pause"></i>';
             _showEq(!isMusic && !isLocal);
             _updateSeekbar();
@@ -3084,7 +3166,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                         <div class="rm-seek-thumb" id="rm-np-thumb"></div>
                     </div>
                     <span class="rm-seek-time right" id="rm-np-dur">0:00</span>
-                </div>` : '<div class="rm-np-count"><i class="fas fa-signal"></i> ' + t('Transmisja na żywo') + '</div>'}
+                </div>` : '<canvas id="rm-np-vis" class="rm-np-vis" width="260" height="48"></canvas>'}
                 <div class="rm-np-controls">
                     <button class="rm-np-btn" id="rm-np-shuffle" title="${t('Losowo')}"><i class="fas fa-random"></i></button>
                     <button class="rm-np-btn" id="rm-np-prev"><i class="fas fa-step-backward"></i></button>
@@ -3327,15 +3409,69 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             _renderNpQueue();
         }
 
-        // Start overlay seekbar updates
+        // Start visualizer for live radio (canvas), seekbar loop for music
+        const visCvs = ov.querySelector('#rm-np-vis');
+        if (visCvs && _audio) _startVisualizer(visCvs);
         _npUpdateLoop();
     }
 
     function _hideNowPlaying() {
+        _stopVisualizer();
         if (_npOverlay) {
             _npOverlay.remove();
             _npOverlay = null;
         }
+    }
+
+    function _startVisualizer(canvas) {
+        _stopVisualizer();
+        try {
+            // Create AudioContext once; reuse across plays
+            if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            // Connect current _audio element (only if not already connected)
+            if (!_audioSource || _audioSource.mediaElement !== _audio) {
+                try { if (_audioSource) _audioSource.disconnect(); } catch(e) {}
+                _audioSource = _audioCtx.createMediaElementSource(_audio);
+                _analyser = _audioCtx.createAnalyser();
+                _analyser.fftSize = 64;
+                _audioSource.connect(_analyser);
+                _analyser.connect(_audioCtx.destination);
+            }
+            if (_audioCtx.state === 'suspended') _audioCtx.resume();
+        } catch(e) {
+            _cl('warning', 'AudioContext visualizer error', { err: e?.message });
+            canvas.style.display = 'none';
+            return;
+        }
+        const ctx = canvas.getContext('2d');
+        const buf = new Uint8Array(_analyser.frequencyBinCount);
+        const W = canvas.width, H = canvas.height;
+        const BAR_COUNT = 24, BAR_GAP = 2;
+        const barW = Math.floor((W - BAR_GAP * (BAR_COUNT - 1)) / BAR_COUNT);
+
+        function draw() {
+            _visRafId = requestAnimationFrame(draw);
+            _analyser.getByteFrequencyData(buf);
+            ctx.clearRect(0, 0, W, H);
+            const step = Math.floor(buf.length / BAR_COUNT);
+            for (let i = 0; i < BAR_COUNT; i++) {
+                const val = buf[i * step] / 255;
+                const bH = Math.max(3, val * H);
+                const x = i * (barW + BAR_GAP);
+                const g = ctx.createLinearGradient(0, H, 0, H - bH);
+                g.addColorStop(0, '#1DB954');
+                g.addColorStop(1, '#4ade80');
+                ctx.fillStyle = g;
+                ctx.beginPath();
+                ctx.roundRect(x, H - bH, barW, bH, 2);
+                ctx.fill();
+            }
+        }
+        draw();
+    }
+
+    function _stopVisualizer() {
+        if (_visRafId) { cancelAnimationFrame(_visRafId); _visRafId = null; }
     }
 
     function _showLockScreen() {
