@@ -2219,6 +2219,7 @@ def scan_folder():
 
 
 
+@video_station_bp.route("/tmdb-config", methods=["GET"])
 def tmdb_config_get():
     key = _load_tmdb_key()
     return jsonify({
