@@ -104,6 +104,11 @@ function renderDockerManager(body) {
     async function loadContainers() {
         try {
             const res = await api('/docker/containers');
+            if (!Array.isArray(res)) {
+                if (res?.error) toast(res.error, 'error');
+                S.containers = [];
+                return;
+            }
             // Pre-compute search string for performance
             S.containers = res.map(c => {
                 c._search = (c.name + ' ' + c.image + ' ' + (c.project||'')).toLowerCase();
@@ -437,6 +442,11 @@ function renderDockerManager(body) {
     async function loadProjects() {
         try {
             const res = await api('/docker/projects');
+            if (!Array.isArray(res)) {
+                if (res?.error) toast(res.error, 'error');
+                S.projects = [];
+                return;
+            }
             S.projects = res.map(p => {
                 const srv = (p.containers||[]).map(c=>c.name + ' ' + (c.image||'')).join(' ');
                 p._search = (p.name + ' ' + srv).toLowerCase();
@@ -787,7 +797,11 @@ services:
 
     // ─── IMAGES TAB ───
     async function loadImages() {
-        try { S.images = await api('/docker/images'); } catch { toast(t('Błąd pobierania obrazów'), 'error'); }
+        try {
+            const res = await api('/docker/images');
+            S.images = Array.isArray(res) ? res : [];
+            if (!Array.isArray(res) && res?.error) toast(res.error, 'error');
+        } catch { toast(t('Błąd pobierania obrazów'), 'error'); }
     }
 
     function renderImagesTab() {
@@ -933,6 +947,7 @@ services:
                 <i class="fab fa-docker" style="font-size:4em;color:var(--text-muted)"></i>
                 <div style="font-size:1.3em;font-weight:600">${t('Docker nie jest zainstalowany')}</div>
                 <div style="color:var(--text-muted);max-width:380px">${t('Zainstaluj Docker Engine, aby zarządzać kontenerami i projektami Compose.')}</div>
+                <div id="dkr-disk-warn" style="display:none;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:10px 16px;color:#ef4444;font-size:0.85em;max-width:420px"></div>
                 <button class="dkr-btn success" id="dkr-install-btn" style="padding:10px 28px;font-size:1em">
                     <i class="fas fa-download"></i> ${t('Zainstaluj Docker')}
                 </button>
@@ -941,13 +956,39 @@ services:
                         <div id="dkr-install-bar" style="height:100%;background:var(--accent);width:0%;transition:width 0.3s"></div>
                     </div>
                     <div id="dkr-install-msg" style="font-size:0.85em;color:var(--text-muted)"></div>
+                    <div id="dkr-install-poll-msg" style="font-size:0.8em;color:var(--text-muted);margin-top:4px;opacity:.7"></div>
                 </div>
             </div>`;
 
+        // Check disk space and warn if low
+        api('/system/info').then(info => {
+            const rootDisk = (info.disks || []).find(d => d.label && (d.label.includes('Root') || d.label.includes('root')));
+            if (rootDisk) {
+                const freeMB = rootDisk.free / (1024 * 1024);
+                const warn = main.querySelector('#dkr-disk-warn');
+                if (warn) {
+                    if (freeMB < 500) {
+                        warn.style.display = 'block';
+                        warn.innerHTML = `<i class="fas fa-exclamation-triangle"></i> ${t('Mało miejsca na dysku')}: ${(freeMB/1024).toFixed(1)} GB ${t('wolne na partycji root. Docker wymaga ok. 500 MB — instalacja może się nie powieść.')}`;
+                        main.querySelector('#dkr-install-btn')?.setAttribute('data-low-disk', '1');
+                    } else if (freeMB < 1024) {
+                        warn.style.display = 'block';
+                        warn.style.background = 'rgba(234,179,8,.1)';
+                        warn.style.borderColor = 'rgba(234,179,8,.3)';
+                        warn.style.color = '#eab308';
+                        warn.innerHTML = `<i class="fas fa-info-circle"></i> ${t('Uwaga')}: ${(freeMB/1024).toFixed(1)} GB ${t('wolne. Docker używa ok. 400 MB podczas instalacji.')}`;
+                    }
+                }
+            }
+        }).catch(() => {});
+
         main.querySelector('#dkr-install-btn').addEventListener('click', async () => {
-            main.querySelector('#dkr-install-btn').disabled = true;
-            main.querySelector('#dkr-install-btn').innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${t('Instalowanie...')}`;
+            const btn = main.querySelector('#dkr-install-btn');
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${t('Instalowanie...')}`;
             main.querySelector('#dkr-install-progress').style.display = 'block';
+
+            let installDone = false;
 
             if (NAS.socket) {
                 NAS.socket.on('docker_install', (d) => {
@@ -956,29 +997,53 @@ services:
                     if (bar) bar.style.width = (d.percent || 0) + '%';
                     if (msg) msg.textContent = d.message || '';
                     if (d.status === 'done') {
+                        installDone = true;
                         NAS.socket.off('docker_install');
                         toast(t('Docker zainstalowany!'), 'success');
                         checkDockerAndRender();
                     } else if (d.status === 'error') {
+                        installDone = true;
                         NAS.socket.off('docker_install');
                         toast(d.message || t('Instalacja nie powiodła się'), 'error');
-                        main.querySelector('#dkr-install-btn').disabled = false;
-                        main.querySelector('#dkr-install-btn').innerHTML = `<i class="fas fa-download"></i> ${t('Spróbuj ponownie')}`;
+                        btn.disabled = false;
+                        btn.innerHTML = `<i class="fas fa-download"></i> ${t('Spróbuj ponownie')}`;
                         _cl('error', 'docker install failed', d.message);
                     }
                 });
             }
 
+            // Fallback poll: if SocketIO loses connection during long install, poll status every 15s
+            const pollInterval = setInterval(async () => {
+                if (installDone) { clearInterval(pollInterval); return; }
+                try {
+                    const st = await api('/docker/status').catch(() => null);
+                    const pollMsg = main.querySelector('#dkr-install-poll-msg');
+                    if (st?.available) {
+                        installDone = true;
+                        clearInterval(pollInterval);
+                        if (NAS.socket) NAS.socket.off('docker_install');
+                        toast(t('Docker zainstalowany!'), 'success');
+                        checkDockerAndRender();
+                    } else if (pollMsg) {
+                        pollMsg.textContent = t('Instalacja w toku… (może trwać 3–8 minut)');
+                    }
+                } catch { /* ignore */ }
+            }, 15000);
+            addInterval(pollInterval);
+
             const res = await api('/docker/install', { method: 'POST' }).catch(e => ({ error: e.message }));
             if (res.error) {
+                installDone = true;
+                clearInterval(pollInterval);
                 toast(res.error, 'error');
-                main.querySelector('#dkr-install-btn').disabled = false;
-                main.querySelector('#dkr-install-btn').innerHTML = `<i class="fas fa-download"></i> ${t('Spróbuj ponownie')}`;
+                btn.disabled = false;
+                btn.innerHTML = `<i class="fas fa-download"></i> ${t('Spróbuj ponownie')}`;
             } else if (res.installed) {
-                // Already installed
+                installDone = true;
+                clearInterval(pollInterval);
                 checkDockerAndRender();
             }
-            // If status=started, progress comes via socketio
+            // If status=started, progress comes via socketio + poll fallback
         });
     }
 

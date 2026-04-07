@@ -98,14 +98,30 @@ def docker_status():
     })
 
 
+_docker_installing = False   # guard against concurrent installs
+
+
 def _bg_install_docker():
+    global _docker_installing
     s = _sio()
     def emit(stage, pct, msg, status='running'):
         if s:
             s.emit('docker_install', {'stage': stage, 'percent': pct, 'message': msg, 'status': status})
 
-    emit('start', 5, 'Pobieranie skryptu instalacyjnego...')
     try:
+        # Pre-flight: check available disk space on root
+        try:
+            st = os.statvfs('/')
+            free_mb = (st.f_bavail * st.f_frsize) // (1024 * 1024)
+            if free_mb < 500:
+                emit('error', 0,
+                     f'Za mało miejsca na dysku: {free_mb} MB wolne, potrzeba minimum 500 MB. '
+                     f'Zwolnij miejsce i spróbuj ponownie.', 'error')
+                return
+        except Exception:
+            pass
+
+        emit('start', 5, 'Pobieranie skryptu instalacyjnego...')
         r = _host_run_base('curl -fsSL https://get.docker.com | sh', timeout=360)
         if r.returncode != 0:
             emit('error', 0, f'Instalacja nie powiodła się: {r.stderr[-300:]}', 'error')
@@ -119,18 +135,25 @@ def _bg_install_docker():
             emit('error', 0, 'Instalacja zakończona, ale Docker niedostępny — sprawdź logi systemd.', 'error')
     except Exception as e:
         emit('error', 0, f'Błąd instalacji: {e}', 'error')
+    finally:
+        _docker_installing = False
 
 
 @docker_bp.route('/install', methods=['POST'])
 def docker_install():
     """Install Docker Engine via get.docker.com — runs in background, progress via SocketIO docker_install."""
+    global _docker_installing
     if _docker_available():
         return jsonify({'status': 'ok', 'installed': True})
+    if _docker_installing:
+        return jsonify({'status': 'started', 'message': 'Instalacja już w toku…'})
+    _docker_installing = True
     s = _sio()
     if s:
         s.start_background_task(_bg_install_docker)
         return jsonify({'status': 'started'})
     # Fallback: blocking install (no socketio)
+    _docker_installing = False
     ok, msg = ensure_dep('docker', install=True)
     if ok:
         return jsonify({'status': 'ok'})
