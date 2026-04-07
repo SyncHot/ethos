@@ -248,7 +248,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/printer/pkg-status',
     },
     {
-        'id': 'docker-manager', 'name': 'Docker Manager', 'version': '1.0.3',
+        'id': 'docker-manager', 'name': 'Docker Manager', 'version': '1.0.4',
         'icon': 'fa-cubes', 'color': '#2496ed', 'category': 'System', 'admin_only': True,
         'description': 'Zarządzanie kontenerami Docker, projektami Compose, obrazami i logami.',
         'apt_deps': [], 'pip_deps': [],
@@ -1932,6 +1932,35 @@ def check_app_updates():
             updates.append(detail)
 
     return jsonify({'ok': True, 'updates': updates, 'source': 'ota', 'update_server': raw_url})
+
+
+@app_manager_bp.route('/cleanup-disk', methods=['POST'])
+def cleanup_disk():
+    """Free root partition space: apt cache, pip cache, __pycache__. Returns freed MB."""
+    err = _require_admin()
+    if err:
+        return err
+
+    def _free_mb():
+        st = os.statvfs('/')
+        return (st.f_bavail * st.f_frsize) / (1024 * 1024)
+
+    before = _free_mb()
+    log.info('[app_manager] cleanup-disk: %.0f MB free before', before)
+
+    host_run('apt-get clean 2>/dev/null', timeout=30)
+    host_run('apt-get autoremove -y 2>/dev/null', timeout=120)
+    host_run('rm -rf /root/.cache/pip /tmp/pip-* 2>/dev/null', timeout=10)
+    host_run('rm -rf /tmp/*.tmp /tmp/ethos-* 2>/dev/null', timeout=10)
+    venv_dir = os.path.join(os.environ.get('ETHOS_ROOT', '/opt/ethos'), 'venv')
+    host_run(
+        f'find {q(venv_dir)} -name __pycache__ -type d -exec rm -rf {{}} + 2>/dev/null',
+        timeout=30)
+
+    after = _free_mb()
+    freed = round(after - before)
+    log.info('[app_manager] cleanup-disk: %.0f MB free after, freed %d MB', after, freed)
+    return jsonify({'ok': True, 'freed_mb': freed, 'free_mb': round(after)})
 
 
 @app_manager_bp.route('/update-apps', methods=['POST'])
