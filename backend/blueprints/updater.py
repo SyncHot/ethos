@@ -552,17 +552,65 @@ def rootfs_info():
         'mode': 'squashfs+overlay' if sqsh else 'ext4',
     }
     if sqsh:
-        # Report overlay usage
+        active_slot = _get_active_slot()
+        # Overlay upper: prefer data partition, fall back to root partition
+        data_overlay = os.path.join('/mnt/data/ethos/overlay', active_slot, 'upper')
+        root_overlay = '/.rootfs/overlay/upper'
+        if os.path.isdir(data_overlay) and os.path.ismount('/mnt/data'):
+            info['overlay_upper'] = data_overlay
+            info['overlay_on_data'] = True
+        else:
+            info['overlay_upper'] = root_overlay
+            info['overlay_on_data'] = False
+
+        # Overlay disk usage
+        upper_path = info['overlay_upper']
+        if os.path.isdir(upper_path):
+            try:
+                r = _host_run(f'du -sb {upper_path}', timeout=10)
+                if r.returncode == 0:
+                    info['overlay_used_bytes'] = int(r.stdout.split()[0])
+            except Exception:
+                pass
+
+        # Root partition (/.rootfs) stats
         rootfs_path = '/.rootfs'
         if os.path.ismount(rootfs_path):
             try:
                 st = os.statvfs(rootfs_path)
                 total = st.f_blocks * st.f_frsize
                 free = st.f_bfree * st.f_frsize
-                info['overlay_total_mb'] = total // (1024 * 1024)
-                info['overlay_used_mb'] = (total - free) // (1024 * 1024)
+                info['root_partition_total_mb'] = total // (1024 * 1024)
+                info['root_partition_free_mb'] = free // (1024 * 1024)
+                info['root_partition_used_mb'] = (total - free) // (1024 * 1024)
             except Exception:
                 pass
+
+        # Data partition stats
+        if os.path.ismount('/mnt/data'):
+            try:
+                st = os.statvfs('/mnt/data')
+                total = st.f_blocks * st.f_frsize
+                free = st.f_bfree * st.f_frsize
+                info['data_total_mb'] = total // (1024 * 1024)
+                info['data_free_mb'] = free // (1024 * 1024)
+                info['data_used_mb'] = (total - free) // (1024 * 1024)
+            except Exception:
+                pass
+
+        # Docker data-root location
+        daemon_cfg = '/etc/docker/daemon.json'
+        if os.path.isfile(daemon_cfg):
+            try:
+                import json as _json
+                with open(daemon_cfg) as _f:
+                    dcfg = _json.load(_f)
+                info['docker_data_root'] = dcfg.get('data-root', '/var/lib/docker')
+            except Exception:
+                info['docker_data_root'] = '/var/lib/docker'
+        else:
+            info['docker_data_root'] = '/var/lib/docker'
+
         # Check dm-verity status
         r = _host_run('dmsetup status ethos-verity 2>/dev/null', timeout=5)
         if r.returncode == 0 and r.stdout.strip():

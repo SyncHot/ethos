@@ -3979,17 +3979,19 @@ function _smMaintenance(el) {
     let pollTimer = null;
 
     async function load() {
-        const [poolsRes, raidRes, statusRes, histRes] = await Promise.allSettled([
+        const [poolsRes, raidRes, statusRes, histRes, rootfsRes] = await Promise.allSettled([
             api('/storage/pool/list'),
             api('/raid/arrays'),
             api('/storage/maintenance/status'),
             api('/storage/maintenance/history?limit=20'),
+            api('/update/rootfs-info'),
         ]);
 
         const pools = ((poolsRes.status === 'fulfilled' ? poolsRes.value : {}).pools || []);
         const arrays = ((raidRes.status === 'fulfilled' ? raidRes.value : {}).arrays || (Array.isArray(raidRes.value) ? raidRes.value : []));
         const active = ((statusRes.status === 'fulfilled' ? statusRes.value : {}).tasks || []).filter(t2 => t2.status === 'running');
         const history = ((histRes.status === 'fulfilled' ? histRes.value : {}).history || []);
+        const rootfs = (rootfsRes.status === 'fulfilled' ? rootfsRes.value : {});
 
         const btrfsPools = pools.filter(p => p.fstype === 'btrfs' && p.mounted);
         const raidArrays = Array.isArray(arrays) ? arrays : [];
@@ -4000,6 +4002,75 @@ function _smMaintenance(el) {
         let html = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:20px">
             <h3 style="margin:0;font-size:16px;font-weight:600"><i class="fas fa-tools" style="color:var(--accent);margin-right:6px"></i>${t('Konserwacja storage')}</h3>
         </div>`;
+
+        // ── Root filesystem / Overlay info card ──
+        const fmtMB = mb => mb >= 1024 ? (mb/1024).toFixed(1)+' GB' : mb+' MB';
+        if (rootfs.squashfs) {
+            const onData = rootfs.overlay_on_data;
+            const overlayUsedMB = rootfs.overlay_used_bytes ? Math.round(rootfs.overlay_used_bytes / (1024*1024)) : null;
+            const rootFree = rootfs.root_partition_free_mb;
+            const dataFree = rootfs.data_free_mb;
+            const dataTotal = rootfs.data_total_mb;
+            const dockerRoot = rootfs.docker_data_root || '/var/lib/docker';
+            const dockerOnData = dockerRoot.startsWith('/mnt/data');
+            const verity = rootfs.verity;
+
+            html += `<div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:10px;padding:16px;margin-bottom:16px">
+                <div style="font-size:13px;font-weight:600;margin-bottom:12px">
+                    <i class="fas fa-layer-group" style="color:var(--accent);margin-right:6px"></i>${t('System plików (SquashFS + Overlay)')}
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;font-size:12px">
+                    <div style="background:var(--bg-primary);border-radius:8px;padding:10px">
+                        <div style="color:var(--text-muted);margin-bottom:4px">${t('Tryb')}</div>
+                        <div style="font-weight:600;color:var(--accent)">SquashFS + OverlayFS</div>
+                        <div style="color:var(--text-muted);font-size:11px;margin-top:2px">${t('Root tylko do odczytu')}</div>
+                    </div>
+                    <div style="background:var(--bg-primary);border-radius:8px;padding:10px">
+                        <div style="color:var(--text-muted);margin-bottom:4px">${t('Warstwa zapisu (upper)')}</div>
+                        <div style="font-weight:600;color:${onData ? 'var(--accent)' : '#eab308'}">
+                            ${onData ? '<i class="fas fa-check-circle"></i> '+t('Dysk danych') : '<i class="fas fa-exclamation-triangle"></i> '+t('Partycja root')}
+                        </div>
+                        <div style="color:var(--text-muted);font-size:11px;margin-top:2px">${onData ? t('Root nigdy się nie zapełni') : t('Same-disk lub brak dysku danych')}</div>
+                    </div>
+                    ${overlayUsedMB != null ? `<div style="background:var(--bg-primary);border-radius:8px;padding:10px">
+                        <div style="color:var(--text-muted);margin-bottom:4px">${t('Rozmiar overlay')}</div>
+                        <div style="font-weight:600">${fmtMB(overlayUsedMB)}</div>
+                        <div style="color:var(--text-muted);font-size:11px;margin-top:2px">${t('Zmiany od SquashFS')}</div>
+                    </div>` : ''}
+                    ${rootFree != null ? `<div style="background:var(--bg-primary);border-radius:8px;padding:10px">
+                        <div style="color:var(--text-muted);margin-bottom:4px">${t('Root wolne')}</div>
+                        <div style="font-weight:600;color:${rootFree < 200 ? '#ef4444' : rootFree < 500 ? '#eab308' : 'var(--text-primary)'}">${fmtMB(rootFree)}</div>
+                        <div style="color:var(--text-muted);font-size:11px;margin-top:2px">${t('Partycja Root-A/B')}</div>
+                    </div>` : ''}
+                    ${dataFree != null ? `<div style="background:var(--bg-primary);border-radius:8px;padding:10px">
+                        <div style="color:var(--text-muted);margin-bottom:4px">${t('Dysk danych wolne')}</div>
+                        <div style="font-weight:600">${fmtMB(dataFree)} / ${fmtMB(dataTotal)}</div>
+                        <div style="color:var(--text-muted);font-size:11px;margin-top:2px">EthOS-Data</div>
+                    </div>` : ''}
+                    <div style="background:var(--bg-primary);border-radius:8px;padding:10px">
+                        <div style="color:var(--text-muted);margin-bottom:4px">Docker data-root</div>
+                        <div style="font-weight:600;color:${dockerOnData ? 'var(--accent)' : '#eab308'}" title="${dockerRoot}">
+                            ${dockerOnData ? '<i class="fas fa-check-circle"></i> '+t('Dysk danych') : '<i class="fas fa-exclamation-triangle"></i> '+t('Root')}
+                        </div>
+                        <div style="color:var(--text-muted);font-size:11px;margin-top:2px;word-break:break-all">${dockerRoot}</div>
+                    </div>
+                    <div style="background:var(--bg-primary);border-radius:8px;padding:10px">
+                        <div style="color:var(--text-muted);margin-bottom:4px">dm-verity</div>
+                        <div style="font-weight:600;color:${verity ? 'var(--accent)' : 'var(--text-muted)'}">
+                            ${verity ? '<i class="fas fa-shield-alt"></i> '+t('Aktywna') : t('Nieaktywna')}
+                        </div>
+                        <div style="color:var(--text-muted);font-size:11px;margin-top:2px">${t('Weryfikacja integralności')}</div>
+                    </div>
+                </div>
+            </div>`;
+        } else if (rootfs.mode) {
+            html += `<div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:10px;padding:16px;margin-bottom:16px">
+                <div style="font-size:13px;font-weight:600;margin-bottom:6px">
+                    <i class="fas fa-hdd" style="color:var(--text-muted);margin-right:6px"></i>${t('System plików')}
+                </div>
+                <div style="font-size:12px;color:var(--text-muted)">${t('Tryb')}: <strong>ext4</strong> — ${t('Standardowy install deweloperski. SquashFS nieaktywny.')}</div>
+            </div>`;
+        }
 
         // Active tasks
         if (active.length) {
