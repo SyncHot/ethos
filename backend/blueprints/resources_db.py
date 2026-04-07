@@ -244,4 +244,9 @@ def cleanup_old_data(days=7):
     for table in tables:
         conn.execute(f'DELETE FROM {table} WHERE timestamp < ?', (cutoff,))
     conn.commit()
+    # VACUUM to reclaim disk space after bulk deletions
+    try:
+        conn.execute('VACUUM')
+    except Exception:
+        pass
     conn.close()

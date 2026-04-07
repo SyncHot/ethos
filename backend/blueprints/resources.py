@@ -24,8 +24,10 @@ from blueprints.resources_db import (
 
 resources_bp = Blueprint('resources', __name__, url_prefix='/api/resources')
 
-COLLECT_INTERVAL = int(os.environ.get('COLLECT_INTERVAL', 3))       # fast: CPU, RAM, network
-COLLECT_INTERVAL_SLOW = int(os.environ.get('COLLECT_INTERVAL_SLOW', 15))  # slow: disks, docker, USB, processes
+COLLECT_INTERVAL = int(os.environ.get('COLLECT_INTERVAL', 3))            # fast: CPU, RAM, network (WebSocket only)
+COLLECT_INTERVAL_SLOW = int(os.environ.get('COLLECT_INTERVAL_SLOW', 30)) # medium: disks, processes, GPU
+COLLECT_INTERVAL_VSLOW = int(os.environ.get('COLLECT_INTERVAL_VSLOW', 60)) # expensive: docker stats, SMART
+SAVE_TO_DB_INTERVAL = int(os.environ.get('SAVE_TO_DB_INTERVAL', 30))      # DB write cadence (independent of emit)
 CLEANUP_INTERVAL = int(os.environ.get('CLEANUP_INTERVAL', 3600))
 DATA_RETENTION_DAYS = int(os.environ.get('DATA_RETENTION_DAYS', 7))
 
@@ -172,12 +174,16 @@ def resources_background_collector(socketio):
     """Collect and broadcast data periodically. Called as a socketio background task.
 
     Uses tiered intervals:
-    - Fast (every COLLECT_INTERVAL=3s): CPU, RAM, network — cheap psutil calls
-    - Slow (every COLLECT_INTERVAL_SLOW=15s): disks, docker, USB, processes, GPU — subprocess calls
+    - Fast (every COLLECT_INTERVAL=3s): CPU, RAM, network — cheap psutil calls; WebSocket emit only
+    - Medium (every COLLECT_INTERVAL_SLOW=30s): disks, GPU, processes, USB
+    - Very slow (every COLLECT_INTERVAL_VSLOW=60s): docker stats, SMART — expensive subprocess calls
+    - DB writes happen every SAVE_TO_DB_INTERVAL=30s (independent of emit cadence)
     """
     global _snapshot, _snapshot_ts
     last_cleanup = time.time()
-    last_slow = 0  # force slow collection on first tick
+    last_slow = 0     # force medium collection on first tick
+    last_vslow = 0    # force very-slow collection on first tick
+    last_db_save = 0  # force DB save on first slow tick
 
     # Cached slow-changing data
     _disks = []
@@ -191,28 +197,35 @@ def resources_background_collector(socketio):
         try:
             now = time.time()
             do_slow = (now - last_slow) >= COLLECT_INTERVAL_SLOW
+            do_vslow = (now - last_vslow) >= COLLECT_INTERVAL_VSLOW
+            do_db = (now - last_db_save) >= SAVE_TO_DB_INTERVAL
 
             # Fast — always collected (non-blocking, ~0ms each)
             cpu = get_cpu_info()
             ram = get_ram_info()
             network = get_network_info()
 
-            # Slow — collected less frequently (subprocess calls)
+            # Medium — disks, GPU, processes, USB (subprocess calls but not docker/smart)
             if do_slow:
                 last_slow = now
                 _gpu = get_gpu_info()
                 _disks = get_disk_info()
-                _smart = get_smart_info()
-                _processes = get_processes('cpu', 30)
+                _processes = get_processes('cpu', 20)
                 _usb = get_usb_devices()
+
+            # Very slow — docker stats and SMART (expensive, can block several seconds)
+            if do_vslow:
+                last_vslow = now
+                _smart = get_smart_info()
                 _docker = get_docker_containers()
 
-            # Save to DB
-            try:
-                save_cpu_data(cpu)
-                save_ram_data(ram)
-                save_network_data(network)
-                if do_slow:
+            # Save to DB at reduced cadence to keep DB small
+            if do_db:
+                last_db_save = now
+                try:
+                    save_cpu_data(cpu)
+                    save_ram_data(ram)
+                    save_network_data(network)
                     if _gpu:
                         save_gpu_data(_gpu)
                     save_disk_data(_disks)
@@ -220,10 +233,10 @@ def resources_background_collector(socketio):
                     save_usb_data(_usb)
                     if _docker:
                         save_docker_data(_docker)
-            except Exception as e:
-                print(f"Resources DB save error: {e}")
+                except Exception as e:
+                    print(f"Resources DB save error: {e}")
 
-            # Broadcast via WebSocket (always include latest cached slow data)
+            # Broadcast via WebSocket every tick (always include latest cached slow data)
             data = {
                 'cpu': cpu,
                 'ram': ram,
@@ -242,7 +255,7 @@ def resources_background_collector(socketio):
 
             socketio.emit('resources_update', data)
 
-            # Cleanup old data
+            # Cleanup old data and VACUUM to reclaim space
             if now - last_cleanup > CLEANUP_INTERVAL:
                 cleanup_old_data(DATA_RETENTION_DAYS)
                 last_cleanup = now

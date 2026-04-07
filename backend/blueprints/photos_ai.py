@@ -4,6 +4,10 @@ Face recognition, object detection, and smart albums for the Gallery.
 """
 
 import os, io, json, time, struct, sqlite3, hashlib, threading, logging
+# Limit OpenMP threads used by dlib/face_recognition to avoid CPU saturation
+os.environ.setdefault('OMP_NUM_THREADS', '1')
+os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
+os.environ.setdefault('MKL_NUM_THREADS', '1')
 from pathlib import Path
 from flask import Blueprint, request, jsonify, send_file, g
 
@@ -274,16 +278,19 @@ def _check_deps():
 def _detect_faces(path):
     import face_recognition
     img = face_recognition.load_image_file(path)
-    locs = face_recognition.face_locations(img, model='hog')
+    locs = face_recognition.face_locations(img, model='hog', number_of_times_to_upsample=1)
     if not locs:
         return []
-    encs = face_recognition.face_encodings(img, locs)
+    encs = face_recognition.face_encodings(img, locs, num_jitters=1)
     return [{'x': l, 'y': t, 'w': r - l, 'h': b - t, 'embedding': list(e)}
             for (t, r, b, l), e in zip(locs, encs)]
 
 def _load_yolo():
     import onnxruntime as ort
-    return ort.InferenceSession(_YOLO_MODEL, providers=['CPUExecutionProvider'])
+    opts = ort.SessionOptions()
+    opts.intra_op_num_threads = 1  # limit ONNX to 1 CPU thread
+    opts.inter_op_num_threads = 1
+    return ort.InferenceSession(_YOLO_MODEL, providers=['CPUExecutionProvider'], sess_options=opts)
 
 def _detect_objects(sess, path):
     import numpy as np
@@ -512,7 +519,14 @@ def _scan_worker(folders):
         if _scan_state.get('stop_requested'):
             break
         _scan_state['current_file'] = path
-        gevent.sleep(0.3)  # throttle: yield CPU between images so server stays responsive
+        # Adaptive throttle: yield longer when system load is high
+        try:
+            import psutil as _psu
+            _cpu = _psu.cpu_percent(interval=None)
+            _yield = 2.0 if _cpu > 80 else (1.0 if _cpu > 60 else 0.5)
+        except Exception:
+            _yield = 0.5
+        gevent.sleep(_yield)
         ff, tf = _process_image(path, conn, yolo)
         _scan_state['processed'] = already_done + i + 1
         _scan_state['faces_found'] += ff
