@@ -593,10 +593,13 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         if (!content) return;
         content.innerHTML = '<div class="vs-loading"><i class="fas fa-spinner fa-spin"></i></div>';
 
-        const [tmdbConf, encInfo] = await Promise.all([
+        const [tmdbConf, encInfo, watcherInfo, foldersData] = await Promise.all([
             api('/video-station/tmdb-config'),
             api('/video-station/hls/encoder-info'),
+            api('/video-station/watcher-status'),
+            api('/video-station/folders'),
         ]);
+        const folders = (foldersData && foldersData.folders) || [];
 
         content.innerHTML =
 '<div class="vs-settings-page">' +
@@ -645,6 +648,33 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     escH(encInfo && encInfo.label ? encInfo.label : 'libx264 (CPU)') +
   '</div>' +
   '<p class="vs-settings-desc">' + t('Akceleracja sprzętowa wykrywana automatycznie przy starcie serwera.') + '</p>' +
+  '<p class="vs-settings-desc"><i class="fas fa-info-circle"></i> ' + t('Limit jednoczesnych sesji') + ': <strong>3</strong>. ' + t('Starsze sesje są automatycznie zamykane.') + '</p>' +
+'</div>' +
+
+// ── Foldery z rescan ──
+'<div class="vs-settings-card">' +
+  '<div class="vs-settings-card-title"><i class="fas fa-folder"></i> ' + t('Foldery biblioteki — rescan') + '</div>' +
+  '<p class="vs-settings-desc">' + t('Kliknij "Skanuj folder", aby zaktualizować zawartość wybranego folderu.') + '</p>' +
+  '<div id="vs-folder-rescan-list">' +
+  (folders.length ? folders.map((f, i) =>
+    '<div class="vs-folder-rescan-row">' +
+      '<span class="vs-folder-rescan-path">' + escH(f) + '</span>' +
+      '<button class="app-btn app-btn-sm vs-folder-rescan-btn" data-folder="' + escH(f) + '" data-idx="' + i + '">' +
+        '<i class="fas fa-sync-alt"></i> ' + t('Skanuj folder') +
+      '</button>' +
+    '</div>'
+  ).join('') : '<p class="vs-settings-desc">' + t('Brak skonfigurowanych folderów.') + '</p>') +
+  '</div>' +
+'</div>' +
+
+// ── File Watcher ──
+'<div class="vs-settings-card">' +
+  '<div class="vs-settings-card-title"><i class="fas fa-eye"></i> ' + t('Automatyczne wykrywanie nowych filmów') + '</div>' +
+  '<div class="vs-hw-badge ' + (watcherInfo && watcherInfo.ok ? 'vs-hw-badge-hw' : 'vs-hw-badge-sw') + '">' +
+    '<i class="fas fa-' + (watcherInfo && watcherInfo.ok ? 'check-circle' : 'times-circle') + '"></i> ' +
+    (watcherInfo && watcherInfo.ok ? t('Watcher aktywny') + ' (' + (watcherInfo.watched || []).length + ' ' + t('folderów') + ')' : t('Nieaktywny')) +
+  '</div>' +
+  '<p class="vs-settings-desc">' + t('Foldery sprawdzane co 60 sekund. Nowe pliki są dodawane automatycznie do biblioteki.') + '</p>' +
 '</div>' +
 
 '</div>';
@@ -681,6 +711,20 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             if (res.error) { toast(res.error, 'error'); return; }
             toast(t('Dopasowano {n} filmów', { n: res.matched || 0 }), 'success');
         };
+
+        // Per-folder rescan buttons
+        content.querySelectorAll('.vs-folder-rescan-btn').forEach(btn => {
+            btn.onclick = async () => {
+                const folder = btn.dataset.folder;
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Skanuję...');
+                const res = await api('/video-station/scan-folder', { method: 'POST', body: { folder, use_tmdb: useTmdb } });
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-sync-alt"></i> ' + t('Skanuj folder');
+                if (res.error) { toast(res.error, 'error'); return; }
+                toast(t('Skanowanie folderu rozpoczęte w tle'), 'success');
+            };
+        });
     }
 
     async function _settingsScan(content) {
@@ -1914,6 +1958,9 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         _startOffset = res.start_offset || 0;
         _startHeartbeat(video);
 
+        // Load embedded subtitle tracks from HLS start response
+        _loadSubtitleTracks(vid, res.sub_tracks || []);
+
         const playlistUrl = '/api/video-station/hls/' + _hlsSessionId + '/playlist.m3u8?token=' + NAS.token;
 
         // Safari supports HLS natively
@@ -2009,6 +2056,22 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             track.srclang = sub.language || 'und';
             track.src = '/api/video-station/subtitle-file/' + vid + '/' + encodeURIComponent(sub.filename) + '?token=' + NAS.token;
             if (i === 0) track.default = true;
+            video.appendChild(track);
+        });
+    }
+
+    function _loadSubtitleTracks(vid, subTracks) {
+        const video = bodyEl && bodyEl.querySelector('#vs-player-video');
+        if (!video || !subTracks || !subTracks.length) return;
+        // Remove existing embedded-sub tracks (not file-based ones)
+        video.querySelectorAll('track[data-embedded]').forEach(t => t.remove());
+        subTracks.forEach((sub, i) => {
+            const track = document.createElement('track');
+            track.kind = 'subtitles';
+            track.label = (sub.title || sub.language || ('Track ' + (i + 1)));
+            track.srclang = sub.language || 'und';
+            track.src = '/api/video-station/embedded-subs/' + vid + '/' + sub.index + '?token=' + NAS.token;
+            track.dataset.embedded = '1';
             video.appendChild(track);
         });
     }

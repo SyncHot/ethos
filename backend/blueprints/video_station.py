@@ -111,6 +111,10 @@ _HLS_ORPHAN_PREFIX = "vs_hls_"
 _HLS_HEARTBEAT_TIMEOUT = 20   # seconds — kill session if no heartbeat
 _HLS_THROTTLE_AHEAD = 90      # seconds — pause ffmpeg when this far ahead of playback
 _HLS_THROTTLE_RESUME = 30     # seconds — resume ffmpeg when buffer drops below this
+_HLS_MAX_SESSIONS = 3         # kill oldest session when this many are active
+
+# File-watcher state: folder_path → last-seen mtime
+_watcher_state = {}           # populated by _start_hls_cleanup_loop
 
 # Hardware encoder detection (run once at import)
 _HW_ENCODER = None  # 'h264_nvenc' | 'h264_vaapi' | 'h264_videotoolbox' | 'libx264'
@@ -268,6 +272,36 @@ def _start_hls_cleanup_loop(socketio_instance=None):
     gevent.spawn(_cleanup_loop)
     gevent.spawn(_heartbeat_watchdog)
     gevent.spawn(_throttle_loop)
+    gevent.spawn(_file_watcher_loop)
+
+
+def _file_watcher_loop():
+    """Poll library folders every 60 s; auto-scan if any folder mtime changed."""
+    import gevent
+    gevent.sleep(30)  # initial delay — let server finish starting
+    while True:
+        try:
+            folders = _load_folders()
+            changed = []
+            for f in folders:
+                if not os.path.isdir(f):
+                    continue
+                try:
+                    mt = os.path.getmtime(f)
+                except OSError:
+                    continue
+                prev = _watcher_state.get(f)
+                _watcher_state[f] = mt
+                if prev is not None and mt != prev:
+                    changed.append(f)
+            if changed and not _scan_state.get('running'):
+                log.info("File watcher: changes in %s — triggering scan", changed)
+                _scan_state.update(running=True, stop_requested=False,
+                                   total=0, processed=0, current_file='')
+                gevent.spawn(_scan_worker, folders, False)
+        except Exception as e:
+            log.debug("File watcher error: %s", e)
+        gevent.sleep(60)
 
 
 def _evict_tmp_if_low():
@@ -489,6 +523,7 @@ def _probe_video(path):
         fmt = data.get('format', {})
         vstream = next((s for s in data.get('streams', []) if s.get('codec_type') == 'video'), {})
         astreams = [s for s in data.get('streams', []) if s.get('codec_type') == 'audio']
+        sstreams = [s for s in data.get('streams', []) if s.get('codec_type') == 'subtitle']
         first_audio = astreams[0] if astreams else {}
         audio_tracks = []
         for i, a in enumerate(astreams):
@@ -497,6 +532,15 @@ def _probe_video(path):
                 'index': a.get('index', i),
                 'codec': a.get('codec_name', ''),
                 'channels': a.get('channels', 0),
+                'language': tags.get('language', ''),
+                'title': tags.get('title', ''),
+            })
+        sub_tracks = []
+        for s in sstreams:
+            tags = s.get('tags', {})
+            sub_tracks.append({
+                'index': s.get('index'),
+                'codec': s.get('codec_name', ''),
                 'language': tags.get('language', ''),
                 'title': tags.get('title', ''),
             })
@@ -509,6 +553,7 @@ def _probe_video(path):
             'bitrate': int(fmt.get('bit_rate', 0)),
             'title': fmt.get('tags', {}).get('title', ''),
             'audio_tracks': audio_tracks,
+            'sub_tracks': sub_tracks,
         }
     except Exception as e:
         log.debug('ffprobe failed for %s: %s', path, e)
@@ -843,6 +888,12 @@ def _scan_worker(folders, use_tmdb=False):
             if ok:
                 conn.execute("UPDATE videos SET thumb_ok=1 WHERE id=?", (vid_row["id"],))
                 conn.commit()
+            # Background thumbstrip generation (sprite for seek preview)
+            sprite_path = os.path.join(_THUMBSTRIP_DIR, str(vid_row["id"]) + ".jpg")
+            if not os.path.isfile(sprite_path) and meta.get("duration", 0) > 30:
+                vid_id = vid_row["id"]
+                dur = meta.get("duration", 0)
+                gevent.spawn(_generate_thumbstrip, vid_id, path, dur, sprite_path)
             # TMDb matching during scan
             if use_tmdb and _load_tmdb_key():
                 try:
@@ -1617,6 +1668,12 @@ def hls_start(vid):
         if _hls_sessions[sid].get("vid") == vid:
             _cleanup_hls(sid)
 
+    # Enforce max concurrent sessions — kill the oldest non-matching session
+    while len(_hls_sessions) >= _HLS_MAX_SESSIONS:
+        oldest_sid = min(_hls_sessions, key=lambda s: _hls_sessions[s].get('created', 0))
+        log.info("HLS session limit reached — killing oldest session %s", oldest_sid)
+        _cleanup_hls(oldest_sid)
+
     vcodec = (r["codec"] or "").lower()
     vcopy = vcodec in ("h264", "vp8", "vp9")
     if vcopy:
@@ -1683,7 +1740,8 @@ def hls_start(vid):
             return jsonify(error="Transkodowanie nie powiodło się: " + stderr), 500
         time.sleep(0.1)
 
-    return jsonify(ok=True, session_id=session_id, start_offset=start_sec)
+    return jsonify(ok=True, session_id=session_id, start_offset=start_sec,
+                   sub_tracks=json.loads(r["metadata_json"] or '{}').get('sub_tracks', []))
 
 
 @video_station_bp.route("/hls/<session_id>/playlist.m3u8")
@@ -1777,6 +1835,16 @@ def hls_heartbeat(session_id):
     return jsonify(ok=True, paused=paused, client_pos=pos)
 
 
+@video_station_bp.route("/hls/encoder-info", methods=["GET"])
+def hls_encoder_info():
+    """Return current HW encoder in use (for player stats overlay)."""
+    enc = _detect_hw_encoder()
+    hw = enc != 'libx264'
+    return jsonify(
+        encoder=enc,
+        type='hw' if hw else 'sw',
+        label='GPU (%s)' % enc if hw else 'CPU (libx264)',
+    )
 
 
 def update_watched(vid):
@@ -2075,7 +2143,75 @@ def subtitle_file(vid, filename):
 
     return send_file(sub_path, mimetype="text/plain")
 
-@video_station_bp.route("/tmdb-config", methods=["GET"])
+
+@video_station_bp.route("/embedded-subs/<int:vid>/<int:track>", methods=["GET"])
+def embedded_subs(vid, track):
+    """Extract an embedded subtitle stream from a video file to WebVTT on demand.
+
+    Uses ffmpeg to extract the subtitle stream at the given stream index.
+    Result is cached in /tmp for the session.
+    """
+    conn = _get_db()
+    r = conn.execute("SELECT path FROM videos WHERE id=?", (vid,)).fetchone()
+    conn.close()
+    if not r:
+        return jsonify({"error": "Nie znaleziono."}), 404
+    fp = os.path.realpath(r["path"])
+    if not os.path.isfile(fp):
+        return jsonify({"error": "Plik nie istnieje."}), 404
+    if not shutil.which("ffmpeg"):
+        return jsonify({"error": "ffmpeg nie jest zainstalowany."}), 500
+
+    cache_path = os.path.join(tempfile.gettempdir(), "vs_sub_%d_%d.vtt" % (vid, track))
+    if not os.path.isfile(cache_path):
+        try:
+            cmd = "ffmpeg -hide_banner -loglevel error -i %s -map 0:%d -c:s webvtt -f webvtt %s -y" % (
+                q(fp), track, q(cache_path))
+            res = host_run(cmd, timeout=60)
+            if res.returncode != 0 or not os.path.isfile(cache_path):
+                return jsonify({"error": "Błąd ekstrakcji napisów."}), 500
+        except Exception as e:
+            return jsonify({"error": "Błąd: " + str(e)}), 500
+
+    return send_file(cache_path, mimetype="text/vtt")
+
+
+@video_station_bp.route("/watcher-status", methods=["GET"])
+def watcher_status():
+    """Return file-watcher state (watched folders and their last-seen mtimes)."""
+    return jsonify({
+        "ok": True,
+        "watched": [
+            {"folder": f, "last_mtime": mt}
+            for f, mt in _watcher_state.items()
+        ],
+        "scanning": _scan_state.get("running", False),
+    })
+
+
+@video_station_bp.route("/scan-folder", methods=["POST"])
+def scan_folder():
+    """Trigger an incremental scan of a specific folder path.
+
+    POST body: {folder: "/path/to/folder", use_tmdb: bool}
+    """
+    import gevent
+    data = request.get_json(silent=True) or {}
+    folder = data.get("folder", "").strip()
+    if not folder:
+        return jsonify({"error": "Brak parametru folder."}), 400
+    if not os.path.isdir(folder):
+        return jsonify({"error": "Folder nie istnieje."}), 404
+    if _scan_state.get("running"):
+        return jsonify({"error": "Skanowanie już w toku."}), 409
+    use_tmdb = bool(data.get("use_tmdb", False))
+    _scan_state.update(running=True, stop_requested=False,
+                       total=0, processed=0, current_file="")
+    gevent.spawn(_scan_worker, [folder], use_tmdb)
+    return jsonify({"ok": True, "message": "Skanowanie folderu w tle..."})
+
+
+
 
 def tmdb_config_get():
     key = _load_tmdb_key()
