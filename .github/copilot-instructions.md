@@ -195,6 +195,122 @@ if (!data.ready) {
 }
 ```
 
+## App Data Storage Rules
+
+EthOS runs on a **4 GB SquashFS root partition** (A/B slots). The root fills instantly if apps store large data there. All user data, databases, and large files **MUST** go to the data partition (`/mnt/data`).
+
+### The golden rule
+
+| Stored on root ✅ | Stored on data partition ✅ |
+|-------------------|----------------------------|
+| apt binaries (`/usr`, `/lib`) | Virus/ML/AI model databases |
+| System configs (`/etc/*`) | App index/cache databases |
+| pip packages (`venv/`) | Docker images & containers |
+| Small state configs | VM disk images |
+| Systemd units | Downloaded media files |
+| | Recording files |
+
+### Pattern: `get_data_disk()` with fallback
+
+Always check if the data partition is available before using it. Fall back to root for same-disk installs (dev machine, minimal setup):
+
+```python
+from host import get_data_disk, data_path, q
+import os
+
+def _my_app_data_dir():
+    """Return data dir — prefers /mnt/data, falls back to data partition."""
+    dd = get_data_disk()          # returns '/mnt/data' or ''
+    if dd:
+        p = os.path.join(dd, 'myapp')
+        os.makedirs(p, exist_ok=True)
+        return p
+    return data_path('myapp')     # fallback: /opt/ethos/data/myapp (symlinked to data disk on sep-disk installs)
+```
+
+> `data_path()` is **also safe** — on separate-disk installs `data/` is a symlink to `/mnt/data/ethos/data/`. Use it for small configs and state files. Use `get_data_disk()` directly only when you need to escape the ethos subdirectory (e.g., Docker needs `/mnt/data/docker`, not `/mnt/data/ethos/data/docker`).
+
+### Pattern: redirect third-party app data directory after apt install
+
+When an apt package stores large data in `/var/lib/<pkg>`, redirect it after install:
+
+```python
+def _bg_install():
+    r = apt_install('somepkg', timeout=300)
+    if r.returncode != 0:
+        return
+
+    # Redirect data dir to data partition
+    dd = get_data_disk()
+    if dd:
+        data_dir = os.path.join(dd, 'somepkg')
+        os.makedirs(data_dir, exist_ok=True)
+        host_run(f'chown -R somepkg:somepkg {q(data_dir)}', timeout=10)
+
+        # Patch app config to use new dir
+        conf = '/etc/somepkg/somepkg.conf'
+        if os.path.isfile(conf):
+            import re
+            txt = open(conf).read()
+            txt = re.sub(r'^DataDirectory\s.*$', f'DataDirectory {data_dir}',
+                         txt, flags=re.MULTILINE)
+            if 'DataDirectory' not in txt:
+                txt += f'\nDataDirectory {data_dir}\n'
+            open(conf, 'w').write(txt)
+```
+
+### Checklist for every new app
+
+Before writing a single line of blueprint code, answer these questions:
+
+1. **Does the app install apt packages?**
+   - Binaries only (e.g., `ffmpeg`, `mdadm`) → root is fine
+   - Packages with data dirs in `/var/lib/<pkg>` → redirect to `get_data_disk()` after install
+
+2. **Does the app download large files?** (models, virus defs, media, ISOs)
+   - Always use `data_path('myapp/models')` or `get_data_disk()` path
+
+3. **Does the app run a containerized service?** (Docker, LXC)
+   - Set `data-root` / working dir to data partition
+
+4. **Does the app write a database/index?**
+   - Store in `data_path('myapp/myapp.db')` — never in `/var/lib` or `/tmp`
+
+5. **Does the app have a configurable data directory?**
+   - Expose it via conf file; patch it to `get_data_disk()` path at install time
+
+### Real examples
+
+```python
+# Docker — /etc/docker/daemon.json
+dd = get_data_disk()
+if dd:
+    json.dump({'data-root': os.path.join(dd, 'docker')}, open('/etc/docker/daemon.json','w'))
+
+# ClamAV — /etc/clamav/freshclam.conf + clamd.conf
+def _clamav_db_dir():
+    dd = get_data_disk()
+    if dd:
+        p = os.path.join(dd, 'clamav')
+        os.makedirs(p, exist_ok=True)
+        return p
+    return '/var/lib/clamav'
+
+# MiniDLNA — /etc/minidlna.conf  db_dir=...
+def _minidlna_db_dir():
+    dd = get_data_disk()
+    if dd:
+        p = os.path.join(dd, 'minidlna')
+        os.makedirs(p, exist_ok=True)
+        return p
+    return '/var/lib/minidlna'
+
+# VM Manager — already correct
+def _vm_root():
+    dd = get_data_disk()
+    return os.path.join(dd, 'vms') if dd else os.path.abspath('data/vms')
+```
+
 ## Common Pitfalls
 
 These are real bugs that have occurred — check for them in every change:
@@ -208,6 +324,8 @@ These are real bugs that have occurred — check for them in every change:
 | Creating GET endpoint for data embedded in parent object | Read from local state instead |
 | Slicing paths with `string[len(prefix):]` | Use `os.path.relpath()` or `pathlib` |
 | Using `conn.close()` on pooled DB connections | Return connection to pool instead |
+| Storing app data in `/var/lib/<pkg>` | Use `get_data_disk()` and patch app config after install |
+| Hardcoding `/var/lib/...` path in blueprint | Make it a function returning `get_data_disk()`-based path with fallback |
 
 ## Git Conventions
 

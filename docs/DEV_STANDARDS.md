@@ -16,6 +16,7 @@
 7. [Dokumentacja Kodu](#7-dokumentacja-kodu)
 8. [Git Workflow](#8-git-workflow)
 9. [Procedura Wdrożenia Zmian](#9-procedura-wdrożenia-zmian)
+10. [Przechowywanie Danych Aplikacji](#10-przechowywanie-danych-aplikacji-data-partition-rules)
 
 ---
 
@@ -1053,3 +1054,104 @@ ps aux | grep app.py
 
 *Dokument wygenerowany na podstawie analizy kodu źródłowego EthOS v1.x.
 Ostatnia aktualizacja: 2026-03-17.*
+
+---
+
+## 10. Przechowywanie Danych Aplikacji (Data Partition Rules)
+
+EthOS działa na **4 GB partycji root (SquashFS A/B)**. Partycja zapełnia się natychmiast, jeśli aplikacje przechowują tam duże dane. Każda nowa aplikacja — corowa i opcjonalna — MUSI przestrzegać poniższych zasad.
+
+### 10.1 Co należy gdzie trzymać
+
+| Na partycji root ✅ | Na partycji danych (/mnt/data) ✅ |
+|---------------------|-----------------------------------|
+| Binaria apt (/usr, /lib) | Bazy wirusów / modeli AI/ML |
+| Konfigi systemowe (/etc/*) | Bazy danych indeksów aplikacji |
+| Pakiety pip (venv/) | Obrazy i kontenery Docker |
+| Małe pliki stanu (JSON/SQLite) | Obrazy dysków VM |
+| Jednostki systemd | Pobrane pliki medialne |
+| | Pliki nagrań kamer |
+| | Cache / indeks DLNA |
+
+### 10.2 Funkcja `get_data_disk()` — wzorzec obowiązkowy
+
+```python
+from host import get_data_disk, data_path, q
+import os
+
+def _myapp_data_dir():
+    """Zwraca katalog danych — preferuje /mnt/data, fallback do data_path."""
+    dd = get_data_disk()      # zwraca '/mnt/data' lub ''
+    if dd:
+        p = os.path.join(dd, 'myapp')
+        os.makedirs(p, exist_ok=True)
+        return p
+    return data_path('myapp') # fallback: /opt/ethos/data/myapp
+```
+
+**Kiedy używać `get_data_disk()` bezpośrednio:**
+- Gdy potrzeba ścieżki poza podkatalogiem ethos (np. `/mnt/data/docker`, nie `/mnt/data/ethos/data/docker`)
+- Dla aplikacji third-party z konfigurowalnymi katalogami danych
+
+**Kiedy wystarczy `data_path()`:**
+- Małe pliki konfiguracyjne, pliki stanu, bazy SQLite aplikacji
+- `data/` jest symlinkiem do `/mnt/data/ethos/data/` na instalacjach z osobnym dyskiem danych
+
+### 10.3 Przekierowanie katalogu danych aplikacji apt po instalacji
+
+Gdy pakiet apt przechowuje duże dane w `/var/lib/<pkg>`, trzeba przekierować po instalacji:
+
+```python
+def _bg_install():
+    r = apt_install('somepkg', timeout=300)
+    if r.returncode != 0:
+        return
+
+    dd = get_data_disk()
+    if dd:
+        data_dir = os.path.join(dd, 'somepkg')
+        os.makedirs(data_dir, exist_ok=True)
+        host_run(f'chown -R somepkg:somepkg {q(data_dir)}', timeout=10)
+
+        import re
+        conf_path = '/etc/somepkg/somepkg.conf'
+        if os.path.isfile(conf_path):
+            txt = open(conf_path).read()
+            txt = re.sub(r'^DataDirectory\s.*$', f'DataDirectory {data_dir}',
+                         txt, flags=re.MULTILINE)
+            if 'DataDirectory' not in txt:
+                txt += f'\nDataDirectory {data_dir}\n'
+            open(conf_path, 'w').write(txt)
+```
+
+### 10.4 Lista kontrolna dla nowej aplikacji
+
+Przed napisaniem kodu blueprintu odpowiedz na te pytania:
+
+1. **Czy aplikacja instaluje pakiety apt?**
+   - Tylko binaria (np. `ffmpeg`, `mdadm`) → root OK
+   - Pakiety z katalogami danych w `/var/lib/<pkg>` → **obowiązkowy redirect do `get_data_disk()`**
+
+2. **Czy aplikacja pobiera duże pliki?** (modele, bazy wirusów, media, ISO)
+   - Zawsze `data_path('myapp/...')` lub `get_data_disk()`
+
+3. **Czy aplikacja uruchamia konteneryzowaną usługę?** (Docker, LXC)
+   - Ustaw `data-root` / katalog roboczy na partycję danych
+
+4. **Czy aplikacja zapisuje bazę danych / indeks?**
+   - `data_path('myapp/myapp.db')` — nigdy `/var/lib/` ani `/tmp/`
+
+5. **Czy aplikacja ma konfigurowalny katalog danych?**
+   - Patch conf po instalacji na ścieżkę z `get_data_disk()`
+
+### 10.5 Istniejące implementacje jako wzorzec
+
+| Aplikacja | Plik | Wzorzec |
+|-----------|------|---------|
+| Docker Manager | `docker_manager.py` | `get_data_disk()` → `/mnt/data/docker` w `daemon.json` |
+| ClamAV | `antivirus.py` | `_clamav_db_dir()` z fallbackiem; patch `freshclam.conf` + `clamd.conf` |
+| MiniDLNA | `dlna.py` | `_minidlna_db_dir()` z fallbackiem; patch `minidlna.conf` |
+| VM Manager | `vm_manager.py` | `_vm_root()` z `get_data_disk()` |
+| AI Chat | `aichat.py` | modele w `data_path('models/')` |
+| Photos AI | `photos_ai.py` | YOLO model w `data_path('models/photos_ai/')` |
+| Surveillance | `surveillance.py` | nagrania w `data_path('surveillance/recordings/')` |
