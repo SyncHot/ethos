@@ -26,6 +26,11 @@ Routes:
   POST /api/radio-music/music/download-playlist - download all tracks in a playlist
   GET  /api/radio-music/music/downloads    - list active/recent downloads
   GET  /api/radio-music/local/folders      - list configured music folders
+  POST /api/radio-music/archive/start      - start archiving a YT track to NAS offline-archive/
+  POST /api/radio-music/archive/batch      - batch status for a list of YT URLs
+  POST /api/radio-music/archive/delete     - delete archived track from NAS
+  GET  /api/radio-music/archive/quota      - disk usage of offline archive
+  GET  /api/radio-music/archive/file/<key> - stream archived audio file
   POST /api/radio-music/local/folders      - add/remove music folder
   GET  /api/radio-music/local/scan         - scan folders for audio files
   GET  /api/radio-music/local/stream       - stream local audio file (?path=)
@@ -52,6 +57,7 @@ import os
 import pathlib
 import re
 import shutil
+import hashlib
 import socket
 import ssl
 import subprocess
@@ -82,6 +88,44 @@ _MAX_HISTORY = 100
 _AUDIO_EXTS = {'.mp3', '.m4a', '.flac', '.ogg', '.opus', '.wav', '.wma', '.aac', '.webm', '.mp4', '.wv', '.ape'}
 _DOWNLOAD_JOBS = {}  # job_id -> {status, progress, path, title, error}
 _DOWNLOAD_LOCK = threading.Lock()
+
+# ── Offline Archive ──────────────────────────────────────────
+_ARCHIVE_LOCK = threading.Lock()
+
+
+def _archive_dir():
+    d = data_path('offline-archive')
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _archive_db_path():
+    return data_path('rm_archive.json')
+
+
+def _load_archive():
+    try:
+        with open(_archive_db_path()) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _save_archive(db):
+    tmp = _archive_db_path() + '.tmp'
+    with open(tmp, 'w') as f:
+        json.dump(db, f)
+    os.replace(tmp, _archive_db_path())
+
+
+def _archive_key(url):
+    """16-char hex key derived from URL — stable across restarts."""
+    return hashlib.md5(url.encode('utf-8')).hexdigest()[:16]
+
+
+def _sio():
+    """Return SocketIO instance wired by app_manager, or None."""
+    return getattr(radio_music_bp, '_socketio', None)
 
 
 def _user_dir():
@@ -1706,3 +1750,198 @@ def radio_proxy():
         mimetype=ct,
         headers=resp_headers,
     )
+
+# ── Offline Archive (yt-dlp → permanent NAS copy) ──────────────────────────
+
+@radio_music_bp.route('/archive/start', methods=['POST'])
+def archive_start():
+    """Start archiving a YouTube track to data/offline-archive/ using yt-dlp.
+    Body: {url, title, artist, thumbnail}
+    Returns: {ok, key, status}  key = md5(url)[:16]
+    Emits: rm_archive_progress, rm_archive_done, rm_archive_error via SocketIO.
+    """
+    from host import host_run_stream
+    body = request.get_json(force=True, silent=True) or {}
+    url = body.get('url', '').strip()
+    title = body.get('title', 'Unknown')
+    artist = body.get('artist', '')
+    thumbnail = body.get('thumbnail', '')
+    if not url:
+        return jsonify({'error': 'Brak URL'}), 400
+
+    ytdlp = _find_ytdlp()
+    if not ytdlp:
+        return jsonify({'error': 'yt-dlp nie jest zainstalowane. Zainstaluj w sekcji Muzyka.'}), 503
+
+    key = _archive_key(url)
+    with _ARCHIVE_LOCK:
+        db = _load_archive()
+        existing = db.get(key, {})
+        if existing.get('status') == 'done' and os.path.isfile(existing.get('nas_path', '')):
+            return jsonify({'ok': True, 'key': key, 'status': 'done', 'already': True})
+        if existing.get('status') == 'downloading':
+            return jsonify({'ok': True, 'key': key, 'status': 'downloading', 'already': True})
+        db[key] = {
+            'key': key, 'yt_url': url, 'title': title, 'artist': artist,
+            'thumbnail': thumbnail, 'status': 'downloading', 'progress': 0,
+            'nas_path': None, 'size_bytes': 0, 'error': None,
+            'created_at': time.time(),
+        }
+        _save_archive(db)
+
+    def _do_archive():
+        sio = _sio()
+        try:
+            dest_dir = _archive_dir()
+            out_tmpl = os.path.join(dest_dir, key + '.%(ext)s')
+            cmd = (
+                f'{shq(ytdlp)} -f bestaudio -x --audio-format mp3 --audio-quality 0 '
+                f'--embed-thumbnail --embed-metadata --no-playlist --no-warnings '
+                f'--progress --newline '
+                f'--parse-metadata "%(uploader)s:%(meta_artist)s" '
+                f'-o {shq(out_tmpl)} '
+                f'{shq(url)}'
+            )
+            stream = host_run_stream(cmd)
+            rc = -1
+            last_pct = -1
+            for line in stream:
+                if line.startswith('__EXIT_CODE__:'):
+                    try:
+                        rc = int(line.split(':')[1].strip())
+                    except ValueError:
+                        rc = -1
+                    break
+                m = re.search(r'\[download\]\s+(\d+\.?\d*)%', line)
+                if m:
+                    pct = min(99, int(float(m.group(1))))
+                    if pct != last_pct:
+                        last_pct = pct
+                        with _ARCHIVE_LOCK:
+                            db2 = _load_archive()
+                            if key in db2:
+                                db2[key]['progress'] = pct
+                                _save_archive(db2)
+                        if sio:
+                            sio.emit('rm_archive_progress', {
+                                'key': key, 'url': url, 'progress': pct, 'title': title
+                            })
+
+            nas_path = os.path.join(dest_dir, key + '.mp3')
+            success = rc == 0 and os.path.isfile(nas_path)
+            with _ARCHIVE_LOCK:
+                db3 = _load_archive()
+                if key in db3:
+                    if success:
+                        db3[key]['status'] = 'done'
+                        db3[key]['progress'] = 100
+                        db3[key]['nas_path'] = nas_path
+                        db3[key]['size_bytes'] = os.path.getsize(nas_path)
+                    else:
+                        db3[key]['status'] = 'error'
+                        db3[key]['error'] = f'yt-dlp exited {rc}'
+                    _save_archive(db3)
+            if sio:
+                if success:
+                    sio.emit('rm_archive_done', {'key': key, 'url': url, 'title': title})
+                else:
+                    sio.emit('rm_archive_error', {
+                        'key': key, 'url': url, 'title': title, 'error': f'yt-dlp exited {rc}'
+                    })
+        except Exception as exc:
+            with _ARCHIVE_LOCK:
+                db4 = _load_archive()
+                if key in db4:
+                    db4[key]['status'] = 'error'
+                    db4[key]['error'] = str(exc)[:300]
+                    _save_archive(db4)
+            if sio:
+                sio.emit('rm_archive_error', {'key': key, 'url': url, 'title': title, 'error': str(exc)[:200]})
+
+    gevent.spawn(_do_archive)
+    return jsonify({'ok': True, 'key': key, 'status': 'downloading'})
+
+
+@radio_music_bp.route('/archive/batch', methods=['POST'])
+def archive_batch():
+    """Batch-query archive status for a list of YouTube URLs.
+    Body: {urls: [...]}  (max 200)
+    Returns: {results: {<url>: {key, status, progress, size_bytes}}}
+    """
+    body = request.get_json(force=True, silent=True) or {}
+    urls = body.get('urls', [])
+    if not isinstance(urls, list):
+        return jsonify({'error': 'urls must be a list'}), 400
+    urls = [u for u in urls if isinstance(u, str)][:200]
+    with _ARCHIVE_LOCK:
+        db = _load_archive()
+    results = {}
+    for url in urls:
+        k = _archive_key(url)
+        entry = db.get(k, {})
+        results[url] = {
+            'key': k,
+            'status': entry.get('status', 'none'),
+            'progress': entry.get('progress', 0),
+            'size_bytes': entry.get('size_bytes', 0),
+            'title': entry.get('title', ''),
+        }
+    return jsonify({'results': results})
+
+
+@radio_music_bp.route('/archive/delete', methods=['POST'])
+def archive_delete():
+    """Delete an archived track. Body: {key}"""
+    body = request.get_json(force=True, silent=True) or {}
+    key = body.get('key', '').strip()
+    if not key or not re.match(r'^[a-f0-9]{16}$', key):
+        return jsonify({'error': 'Invalid key'}), 400
+    with _ARCHIVE_LOCK:
+        db = _load_archive()
+        entry = db.pop(key, None)
+        _save_archive(db)
+    if entry and entry.get('nas_path') and os.path.isfile(entry['nas_path']):
+        try:
+            os.remove(entry['nas_path'])
+        except OSError:
+            pass
+    return jsonify({'ok': True})
+
+
+@radio_music_bp.route('/archive/quota', methods=['GET'])
+def archive_quota():
+    """Disk usage of offline archive."""
+    d = _archive_dir()
+    total_bytes = 0
+    count = 0
+    try:
+        for fname in os.listdir(d):
+            fp = os.path.join(d, fname)
+            if os.path.isfile(fp):
+                total_bytes += os.path.getsize(fp)
+                count += 1
+    except OSError:
+        pass
+    with _ARCHIVE_LOCK:
+        db = _load_archive()
+    return jsonify({'ok': True, 'total_bytes': total_bytes, 'count': count,
+                    'tracked': len(db), 'dir': d})
+
+
+@radio_music_bp.route('/archive/file/<key>', methods=['GET'])
+def archive_file(key):
+    """Stream an archived audio file. Range requests supported for seeking."""
+    if not re.match(r'^[a-f0-9]{16}$', key):
+        return jsonify({'error': 'Invalid key'}), 400
+    with _ARCHIVE_LOCK:
+        db = _load_archive()
+    entry = db.get(key)
+    if not entry or entry.get('status') != 'done':
+        return jsonify({'error': 'Not found'}), 404
+    nas_path = entry.get('nas_path')
+    if not nas_path or not os.path.isfile(nas_path):
+        return jsonify({'error': 'File missing on NAS — was it deleted?'}), 404
+    resp = send_file(nas_path, mimetype='audio/mpeg', conditional=True)
+    resp.headers['Access-Control-Allow-Origin'] = '*'
+    resp.headers['Cache-Control'] = 'no-cache'
+    return resp

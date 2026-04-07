@@ -607,7 +607,8 @@ def _no_cache_api(response):
                    request.path.startswith('/api/video-station/thumbstrip/') or \
                    request.path == '/api/radio-music/radio/proxy' or \
                    request.path == '/api/radio-music/music/stream' or \
-                   request.path == '/api/radio-music/local/stream'
+                   request.path == '/api/radio-music/local/stream' or \
+                   request.path.startswith('/api/radio-music/archive/file/')
         if is_media and response.status_code in (200, 206):
             ct = response.content_type or ''
             if ct.startswith(('video/', 'audio/', 'image/', 'application/vnd.apple.mpegurl')):

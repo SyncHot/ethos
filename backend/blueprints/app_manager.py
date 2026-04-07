@@ -218,7 +218,7 @@ _OPTIONAL_BLUEPRINTS = {
     'tickets':         ('tickets',         'tickets_bp',       'init_tickets',      True),
     'photos-ai':       ('photos_ai',       'photos_ai_bp',      None,                True),
     'video-station':   ('video_station',   'video_station_bp',  '_start_hls_cleanup_loop', True),
-    'radio-music':     ('radio_music',     'radio_music_bp',    None,                False),
+    'radio-music':     ('radio_music',     'radio_music_bp',    None,                True),
     'security-advisor':('security_advisor','security_advisor_bp', None,              False),
 }
 
@@ -555,7 +555,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/video-station/pkg-status',
     },
     {
-        'id': 'radio-music', 'name': 'Radio & Music', 'version': '0.0.3',
+        'id': 'radio-music', 'name': 'Radio & Music', 'version': '0.0.4',
         'icon': 'fa-broadcast-tower', 'color': '#10b981', 'category': 'Media', 'admin_only': False,
         'description': 'Radio internetowe z całego świata, podcasty i odtwarzacz muzyki.',
         'apt_deps': ['ffmpeg'], 'pip_deps': ['yt-dlp'],

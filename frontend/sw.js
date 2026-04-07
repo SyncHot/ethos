@@ -4,6 +4,8 @@
 const CACHE_VERSION = 'v3';
 const STATIC_CACHE = 'ethos-static-' + CACHE_VERSION;
 const RUNTIME_CACHE = 'ethos-runtime-' + CACHE_VERSION;
+// Persistent offline audio cache — never purged by version bump
+const RM_OFFLINE_CACHE = 'rm-offline-v1';
 
 // Pre-cache: critical shell assets (versioned URLs from index.html ?v=N)
 const PRECACHE_ASSETS = [
@@ -97,7 +99,7 @@ self.addEventListener('activate', (event) => {
         caches.keys().then(keys =>
             Promise.all(
                 keys
-                    .filter(k => k !== STATIC_CACHE && k !== RUNTIME_CACHE)
+                    .filter(k => k !== STATIC_CACHE && k !== RUNTIME_CACHE && k !== RM_OFFLINE_CACHE)
                     .map(k => caches.delete(k))
             )
         ).then(() => self.clients.claim())
@@ -106,6 +108,24 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
     const url = new URL(event.request.url);
+
+    // Archive file: serve from offline cache if available (offline-first for cached tracks)
+    if (url.pathname.includes('/api/radio-music/archive/file/')) {
+        const cacheKey = url.pathname; // stable key without token query param
+        event.respondWith(
+            caches.open(RM_OFFLINE_CACHE).then(cache =>
+                cache.match(cacheKey).then(cached => {
+                    if (cached) return cached;
+                    // Not in cache — fetch from network and store for future offline use
+                    return fetch(event.request).then(resp => {
+                        if (resp.ok) cache.put(cacheKey, resp.clone());
+                        return resp;
+                    });
+                })
+            )
+        );
+        return;
+    }
 
     // Skip non-GET, cross-origin, and bypass patterns
     if (event.request.method !== 'GET') return;
@@ -151,6 +171,56 @@ self.addEventListener('fetch', (event) => {
             });
         })
     );
+});
+
+// ── Offline Audio Cache Messages ─────────────────────────────
+// RM_CACHE_AUDIO: cache an archive file to rm-offline-v1 for offline playback
+// RM_CACHE_STATUS: check if a key is cached
+// RM_UNCACHE_AUDIO: remove a cached file
+self.addEventListener('message', (event) => {
+    const { type, key, url } = event.data || {};
+    if (!type) return;
+
+    if (type === 'RM_CACHE_AUDIO' && url && key) {
+        const cacheKey = '/api/radio-music/archive/file/' + key;
+        event.waitUntil(
+            caches.open(RM_OFFLINE_CACHE).then(cache =>
+                fetch(url, { credentials: 'include' })
+                    .then(resp => {
+                        if (resp.ok) {
+                            return cache.put(cacheKey, resp).then(() => {
+                                event.source?.postMessage({ type: 'RM_CACHE_DONE', key });
+                            });
+                        }
+                        throw new Error('fetch failed: ' + resp.status);
+                    })
+                    .catch(err => {
+                        event.source?.postMessage({ type: 'RM_CACHE_ERROR', key, error: err.message });
+                    })
+            )
+        );
+        return;
+    }
+
+    if (type === 'RM_CACHE_STATUS' && key) {
+        const cacheKey = '/api/radio-music/archive/file/' + key;
+        event.waitUntil(
+            caches.open(RM_OFFLINE_CACHE).then(cache =>
+                cache.match(cacheKey).then(cached => {
+                    event.source?.postMessage({ type: 'RM_CACHE_STATUS_RESULT', key, cached: !!cached });
+                })
+            )
+        );
+        return;
+    }
+
+    if (type === 'RM_UNCACHE_AUDIO' && key) {
+        const cacheKey = '/api/radio-music/archive/file/' + key;
+        event.waitUntil(
+            caches.open(RM_OFFLINE_CACHE).then(cache => cache.delete(cacheKey))
+        );
+        return;
+    }
 });
 
 self.addEventListener('push', (event) => {
