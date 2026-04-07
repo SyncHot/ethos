@@ -445,8 +445,10 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-player-btn{background:none;border:none;color:rgba(255,255,255,.8);font-size:16px;cursor:pointer;padding:8px;border-radius:50%;transition:all .12s;line-height:1}',
 '.rm-player-btn:hover{color:#fff;transform:scale(1.08)}',
 '.rm-player-btn.rm-mode-active{color:#1DB954}',
-'.rm-player-btn.rm-btn-play{font-size:20px;width:40px;height:40px;display:flex;align-items:center;justify-content:center;background:#1DB954;color:#000;border-radius:50%;box-shadow:0 2px 8px rgba(29,185,84,.3)}',
+'.rm-player-btn.rm-btn-play{font-size:20px;width:40px;height:40px;display:flex;align-items:center;justify-content:center;background:#1DB954;color:#000;border-radius:50%;box-shadow:0 2px 8px rgba(29,185,84,.3);position:relative;overflow:visible}',
 '.rm-player-btn.rm-btn-play:hover{background:#1ed760;transform:scale(1.06)}',
+/* Loading state: Spotify-style progress ring around play button — signals NAS is loading */
+'.rm-player-btn.rm-btn-play.rm-loading::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:2px solid transparent;border-top-color:#1DB954;border-right-color:rgba(29,185,84,.4);animation:rm-spin .7s linear infinite;pointer-events:none}',
 '.rm-cast-btn{font-size:15px;transition:color .2s;display:none}',
 '.rm-cast-btn.rm-casting{color:#1DB954;animation:rm-cast-pulse 2s ease-in-out infinite}',
 '@keyframes rm-cast-pulse{0%,100%{opacity:1}50%{opacity:.5}}',
@@ -1660,9 +1662,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 </div>`;
             el.onclick = (e) => {
                 if (e.target.closest('.rm-add-queue-btn') || e.target.closest('.rm-dl-btn') || e.target.closest('.rm-track-btn')) return;
-                _musicQueue = tracks.slice(idx);
-                _musicQueueIdx = 0;
-                playMusicTrack(tr);
+                // F-02 playContext: clicking any track loads full folder as queue context
+                playContext(tracks.map(t => t), idx);
             };
             el.querySelector('.rm-add-queue-btn').onclick = (e) => {
                 e.stopPropagation();
@@ -2843,6 +2844,18 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     }
 
     function playAudio(item) {
+        // F-01 OPTIMISTIC STATE: update UI within <50ms before any audio events
+        // User sees pause icon + loading ring immediately — no perceived lag
+        const _optPlayBtn = bodyEl?.querySelector('#rm-play-pause');
+        if (_optPlayBtn) {
+            _optPlayBtn.innerHTML = '<i class="fas fa-pause"></i>';
+            _optPlayBtn.classList.add('rm-loading');
+        }
+        const _optPlayer = bodyEl?.querySelector('#rm-player');
+        if (_optPlayer) _optPlayer.style.display = 'flex';
+        const _optName = bodyEl?.querySelector('#rm-player-name');
+        if (_optName) _optName.textContent = item.name || '';
+
         // Safety: reset stuck _isCasting if no real Cast session exists
         if (_isCasting) {
             let realSession = null;
@@ -2860,6 +2873,13 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             _audio.ontimeupdate = null; _audio.onloadedmetadata = null;
             _audio.onwaiting = null; _audio.onplaying = null; _audio.onstalled = null;
             _audio.pause(); _audio.src = ''; _audio.load(); // release media resource
+        }
+        // F-04 RAM cleanup: immediately release preload buffer on every new play
+        if (_preloadAudio) {
+            _preloadAudio.oncanplaythrough = null;
+            _preloadAudio.src = '';
+            _preloadAudio.load();
+            _preloadAudio = null;
         }
         _clearSeek();
         _audio = new Audio();
@@ -2908,6 +2928,9 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         function _setBuffering(on) {
             const player = bodyEl.querySelector('#rm-player');
             if (player) player.classList.toggle('rm-buffering', on);
+            // F-01: progress ring on play button signals NAS loading to user
+            const playBtn = bodyEl.querySelector('#rm-play-pause');
+            if (playBtn) playBtn.classList.toggle('rm-loading', on);
             bodyEl.querySelectorAll('.rm-card, .rm-track').forEach(c => c.classList.remove('rm-buffering'));
             if (on && item.uuid) {
                 bodyEl.querySelectorAll('.rm-card').forEach(c => {
@@ -3086,19 +3109,39 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                     catch(e) {}
                 }
             }
-            // Preload next track ~30s before end for near-gapless playback (music queue only)
+            // F-03 GAPLESS: preload at 90% of track (or 30s remaining, whichever first)
+            // On NAS this gives ~8-12s for HDD spin-up before the track ends
             if ((isMusic || isLocal) && !_preloadAudio && _audio && isFinite(_audio.duration) && _audio.duration > 0) {
                 const remaining = _audio.duration - _audio.currentTime;
-                if (remaining < 30 && remaining > 0) {
+                const pct = _audio.currentTime / _audio.duration;
+                const shouldPreload = remaining < 30 || pct >= 0.9;
+                if (shouldPreload && remaining > 0) {
                     const nextIdx = _musicQueueIdx + 1;
                     const nextItem = _musicQueue[nextIdx];
-                    if (nextItem && nextItem.url) {
-                        _preloadAudio = new Audio();
-                        _preloadAudio.preload = 'auto';
-                        const src = isLocal ? nextItem.url
-                            : '/api/radio-music/music/stream?url=' + encodeURIComponent(nextItem.url) + '&token=' + (NAS.token || '');
-                        _preloadAudio.src = src;
-                        _cl('debug', 'Preloading next track', { name: nextItem.name });
+                    if (nextItem) {
+                        const nextSrc = nextItem.type === 'local'
+                            ? (nextItem.url || ('/api/radio-music/local/stream?path=' + encodeURIComponent(nextItem.path || '') + '&token=' + (NAS.token || '')))
+                            : (nextItem.url ? '/api/radio-music/music/stream?url=' + encodeURIComponent(nextItem.url) + '&token=' + (NAS.token || '') : null);
+                        if (nextSrc) {
+                            _preloadAudio = new Audio();
+                            _preloadAudio.preload = 'auto';
+                            _preloadAudio.volume = 0; // silent until crossfade starts
+                            _preloadAudio.src = nextSrc;
+                            const targetVol = _audio.volume;
+                            // When preload is buffered enough AND we're in final 5%, crossfade immediately
+                            _preloadAudio.oncanplaythrough = () => {
+                                if (!_preloadAudio || _playing !== item) return;
+                                const pctNow = _audio.currentTime / _audio.duration;
+                                if (pctNow >= 0.95) {
+                                    _cl('info', 'Gapless crossfade triggered at ' + Math.round(pctNow * 100) + '%', { next: nextItem.name });
+                                    _crossfade(_audio, _preloadAudio, targetVol, 1500, () => {
+                                        // After crossfade, officially switch to next track
+                                        _audio.onended?.(); // trigger queue advance
+                                    });
+                                }
+                            };
+                            _cl('debug', 'Preloading next track at ' + Math.round(pct * 100) + '%', { name: nextItem.name });
+                        }
                     }
                 }
             }
@@ -3790,6 +3833,56 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     // Go back one episode in pod queue
     function _prevPodQueue() {
         if (_podQueueIdx > 0) { _podQueueIdx--; playAudio(_podQueue[_podQueueIdx]); }
+    }
+
+    /**
+     * F-02 playContext — Spotify-like: click any track and the whole list becomes
+     * the queue. The clicked track plays first, rest queues up silently.
+     * @param {Array}  items    Full array of track objects (music/local type)
+     * @param {number} startIdx Index of the track the user clicked
+     */
+    function playContext(items, startIdx = 0) {
+        if (!items || !items.length) return;
+        const idx = Math.max(0, Math.min(startIdx, items.length - 1));
+        _musicQueue = items.slice();
+        _musicQueueIdx = idx;
+        _cl('info', 'playContext', { total: items.length, startIdx: idx, name: items[idx]?.name });
+        playAudio(items[idx]);
+    }
+
+    /**
+     * F-03 _crossfade — Double-buffer crossfade between two HTMLAudioElement instances.
+     * Uses rAF for smooth volume ramp on the main thread.
+     * @param {HTMLAudioElement} outAudio  Currently playing element (fades to 0)
+     * @param {HTMLAudioElement} inAudio   Preloaded next element (fades to targetVol)
+     * @param {number}           targetVol Final volume for inAudio (0–1)
+     * @param {number}           durationMs Crossfade duration in ms (default 1500)
+     * @param {Function}         onDone   Called after crossfade completes
+     */
+    function _crossfade(outAudio, inAudio, targetVol, durationMs = 1500, onDone) {
+        if (!outAudio || !inAudio) { onDone?.(); return; }
+        const startTime = performance.now();
+        const startVol = outAudio.volume;
+        inAudio.volume = 0;
+        inAudio.play().catch(e => {
+            _cl('warning', 'Crossfade inAudio.play failed', { error: e.message });
+            onDone?.();
+        });
+        function tick(now) {
+            const t = Math.min(1, (now - startTime) / durationMs);
+            // Ease in/out for smoother transition
+            const eased = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+            if (outAudio && !outAudio.paused) outAudio.volume = Math.max(0, startVol * (1 - eased));
+            if (inAudio) inAudio.volume = Math.min(targetVol, targetVol * eased);
+            if (t < 1) {
+                requestAnimationFrame(tick);
+            } else {
+                try { outAudio.pause(); outAudio.src = ''; outAudio.load(); } catch(e) {}
+                if (inAudio) inAudio.volume = targetVol;
+                onDone?.();
+            }
+        }
+        requestAnimationFrame(tick);
     }
 
     function _fmtTime(s) {
