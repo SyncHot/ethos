@@ -499,7 +499,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-add-folder-btn:hover{border-color:#1DB954;color:#1DB954}',
 
 /* ── Now Playing overlay ───────────────────────── */
-'.rm-np-overlay{position:absolute;inset:0;z-index:100;display:flex;flex-direction:column;overflow:hidden;background:#0a0a0a}',
+'.rm-np-overlay{position:absolute;inset:0;z-index:100;display:flex;flex-direction:column;overflow:hidden;background:#0a0a0a;transform:translateY(0);transition:transform 0.4s cubic-bezier(0.32,0.72,0,1);will-change:transform;padding-bottom:max(0px,env(safe-area-inset-bottom))}',
+'.rm-np-minimized{transform:translateY(100%)!important;pointer-events:none}',
 '.rm-np-bg{position:absolute;inset:-40px;background-size:cover;background-position:center;filter:blur(40px) brightness(.25) saturate(1.4);z-index:0}',
 '.rm-np-inner{position:relative;z-index:1;flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;gap:16px;overflow-y:auto}',
 '.rm-np-close{position:absolute;top:12px;left:12px;background:rgba(255,255,255,.08);border:none;color:#fff;font-size:18px;cursor:pointer;padding:8px 12px;border-radius:50%;z-index:2;backdrop-filter:blur(8px);transition:background .15s}',
@@ -834,11 +835,15 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
             // Restore previous playback state (paused, showing last track)
             _restoreAndShowLastTrack(body);
+
+            // Android back button: minimize NP overlay instead of navigating away
+            window.addEventListener('popstate', _onPopState, true);
         },
         onClose() {
             _savePlaybackState();
             stopPlayback();
             _hideLockScreen();
+            window.removeEventListener('popstate', _onPopState, true);
             document.body.classList.remove('app-fullscreen-active');
         },
     });
@@ -2712,9 +2717,11 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         api('/radio-music/history', { method: 'POST', body: { item } });
 
         // Sync Now Playing overlay if open
-        if (_npOverlay) {
+        if (_npOverlay && !_npOverlay.classList.contains('rm-np-minimized')) {
             _hideNowPlaying();
-            setTimeout(() => _showNowPlaying(), 100);
+            _showNowPlaying();
+        } else if (_npOverlay) {
+            _hideNowPlaying(); // was minimized — destroy silently, will reopen when user taps
         }
 
         // Highlight playing card/track
@@ -3164,6 +3171,18 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
     function _showNowPlaying() {
         if (!_playing) return;
+
+        // If overlay exists and is just minimized (same track), re-expand it — no DOM rebuild
+        if (_npOverlay && _npOverlay.classList.contains('rm-np-minimized')) {
+            _npOverlay.style.transform = '';
+            _npOverlay.classList.remove('rm-np-minimized');
+            if (!history.state?.rmNpOpen) history.pushState({ rmNpOpen: true }, '');
+            const visCvs = _npOverlay.querySelector('#rm-np-vis');
+            if (visCvs && _audio) _startVisualizer(visCvs);
+            _npUpdateLoop();
+            return;
+        }
+
         _hideNowPlaying();
         const item = _playing;
         const isMusic = item.type === 'music';
@@ -3222,16 +3241,36 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             artContainer.innerHTML = '<div class="rm-letter-icon" style="background:hsl(' + hue + ',50%,35%);display:flex;align-items:center;justify-content:center;font-size:64px;color:#fff">' + letter + '</div>';
         }
 
-        // Close handlers
-        ov.querySelector('.rm-np-close').onclick = () => _hideNowPlaying();
-        ov.querySelector('#rm-np-close2').onclick = () => _hideNowPlaying();
+        // Close handlers — minimize (CSS slide-down), not destroy
+        ov.querySelector('.rm-np-close').onclick = () => _minimizeNowPlaying();
+        ov.querySelector('#rm-np-close2').onclick = () => _minimizeNowPlaying();
 
-        // Swipe down to close
-        let touchStartY = 0;
-        ov.addEventListener('touchstart', (e) => { touchStartY = e.touches[0].clientY; }, { passive: true });
+        // Physics swipe-down: tracks finger, springs back or minimizes at 100px
+        // Guards: ignore Motorola/Android edge-gesture zones (top/bottom 44px)
+        let _swStartY = 0, _swActive = false;
+        ov.addEventListener('touchstart', (e) => {
+            const t = e.touches[0];
+            if (t.clientY < 44 || t.clientY > window.innerHeight - 44) return; // edge gesture zone
+            if (_npSeekDragging) return; // don't fight seekbar drag
+            _swStartY = t.clientY;
+            _swActive = true;
+            ov.style.transition = 'none'; // live-track finger — no easing during drag
+        }, { passive: true });
+        ov.addEventListener('touchmove', (e) => {
+            if (!_swActive) return;
+            const dy = Math.max(0, e.touches[0].clientY - _swStartY);
+            ov.style.transform = `translateY(${dy}px)`;
+        }, { passive: true });
         ov.addEventListener('touchend', (e) => {
-            const dy = e.changedTouches[0].clientY - touchStartY;
-            if (dy > 80) _hideNowPlaying();
+            if (!_swActive) return;
+            _swActive = false;
+            ov.style.transition = ''; // restore CSS transition
+            const dy = e.changedTouches[0].clientY - _swStartY;
+            if (dy > 100) {
+                _minimizeNowPlaying();
+            } else {
+                ov.style.transform = ''; // spring back to translateY(0)
+            }
         }, { passive: true });
 
         // Controls
@@ -3421,10 +3460,18 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             document.addEventListener('touchend', () => { _npSeekDragging = false; }, { passive: true });
         }
 
-        // Insert overlay into the window wrap
+        // Insert overlay — start off-screen (translateY 100%), animate in via rAF double-tick
         const wrap = bodyEl.querySelector('.rm-wrap');
+        ov.classList.add('rm-np-minimized'); // start hidden
         if (wrap) wrap.appendChild(ov);
         _npOverlay = ov;
+        // Two rAF frames needed: first triggers layout, second removes class so transition fires
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+            ov.classList.remove('rm-np-minimized');
+        }));
+
+        // Push history state so Android back minimizes overlay instead of navigating away
+        if (!history.state?.rmNpOpen) history.pushState({ rmNpOpen: true }, '');
 
         // Auto-expand queue if there are queued tracks
         if (_musicQueue.length > 0) {
@@ -3444,6 +3491,28 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         if (_npOverlay) {
             _npOverlay.remove();
             _npOverlay = null;
+        }
+    }
+
+    // Minimize overlay to mini player (CSS slide-down, DOM kept alive)
+    function _minimizeNowPlaying() {
+        _stopVisualizer();
+        if (!_npOverlay) return;
+        _npOverlay.style.transition = ''; // ensure CSS transition active
+        _npOverlay.style.transform = '';  // clear any in-progress drag
+        _npOverlay.classList.add('rm-np-minimized');
+        // Pop the history state we pushed so the browser history is clean
+        if (history.state?.rmNpOpen) history.back();
+    }
+
+    // Android back button handler — intercepts popstate to minimize overlay
+    function _onPopState(e) {
+        if (_npOverlay && !_npOverlay.classList.contains('rm-np-minimized')) {
+            // Re-push so next back press is also intercepted
+            history.pushState({ rmNpOpen: true }, '');
+            _minimizeNowPlaying();
+            // Now pop the re-pushed state to land back where we were
+            history.back();
         }
     }
 
@@ -3551,6 +3620,11 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
     function _npUpdateLoop() {
         if (!_npOverlay || !_audio) return;
+        // Skip DOM updates when overlay is minimized (invisible)
+        if (_npOverlay.classList.contains('rm-np-minimized')) {
+            setTimeout(() => _npUpdateLoop(), 500);
+            return;
+        }
         const dur = _audio.duration;
         const cur = _audio.currentTime;
         if (isFinite(dur) && dur > 0) {
