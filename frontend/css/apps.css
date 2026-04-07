@@ -6070,3 +6070,73 @@ textarea.app-input { resize: vertical; line-height: 1.5; }
 
 /* VS poster grid — narrower cards when posters are shown */
 .vs-grid:has(.vs-card-poster) { grid-template-columns:repeat(auto-fill, minmax(160px, 1fr)); }
+
+/* ── Video Station: info modal actions ─────────────────────────── */
+.vs-info-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:4px; }
+.vs-info-tmdb-btn, .vs-info-rename-btn {
+    padding:8px 14px; border:none; border-radius:6px; cursor:pointer;
+    font-size:13px; font-family:inherit; display:flex; align-items:center; gap:6px;
+}
+.vs-info-tmdb-btn { background:var(--accent-color); color:#fff; }
+.vs-info-tmdb-btn:hover { filter:brightness(1.15); }
+.vs-info-rename-btn { background:var(--bg-tertiary); color:var(--text-primary); }
+.vs-info-rename-btn:hover { background:var(--bg-hover); }
+
+/* ── Video Station: rename dialog ──────────────────────────────── */
+.vs-rename-overlay { position:fixed; inset:0; background:rgba(0,0,0,.7); z-index:9999;
+    display:flex; align-items:center; justify-content:center; }
+.vs-rename-dialog { background:var(--bg-secondary); border-radius:12px; width:420px;
+    max-width:90vw; padding:0; overflow:hidden; box-shadow:0 20px 60px rgba(0,0,0,.5); }
+.vs-rename-header { display:flex; justify-content:space-between; align-items:center;
+    padding:16px 20px; border-bottom:1px solid var(--border-color); font-weight:600; font-size:15px; }
+.vs-rename-close { background:none; border:none; color:var(--text-secondary); cursor:pointer;
+    font-size:16px; padding:4px; }
+.vs-rename-close:hover { color:var(--text-primary); }
+.vs-rename-body { padding:20px; }
+.vs-rename-label { display:block; font-size:12px; color:var(--text-secondary); margin-bottom:6px; }
+.vs-rename-input { width:100%; box-sizing:border-box; padding:10px 12px; border-radius:6px;
+    border:1px solid var(--border-color); background:var(--bg-tertiary); color:var(--text-primary);
+    font-size:14px; font-family:inherit; }
+.vs-rename-input:focus { outline:none; border-color:var(--accent-color); }
+.vs-rename-hint { font-size:11px; color:var(--text-secondary); margin:8px 0 0; }
+.vs-rename-footer { display:flex; gap:8px; justify-content:flex-end; padding:12px 20px;
+    border-top:1px solid var(--border-color); }
+
+/* ── Video Station: TMDb search dialog ─────────────────────────── */
+.vs-tmdb-overlay { position:fixed; inset:0; background:rgba(0,0,0,.7); z-index:9999;
+    display:flex; align-items:center; justify-content:center; }
+.vs-tmdb-dialog { background:var(--bg-secondary); border-radius:12px; width:560px;
+    max-width:94vw; max-height:85vh; display:flex; flex-direction:column;
+    overflow:hidden; box-shadow:0 20px 60px rgba(0,0,0,.5); }
+.vs-tmdb-header { display:flex; justify-content:space-between; align-items:center;
+    padding:16px 20px; border-bottom:1px solid var(--border-color); font-weight:600; font-size:15px;
+    flex-shrink:0; }
+.vs-tmdb-close { background:none; border:none; color:var(--text-secondary); cursor:pointer;
+    font-size:16px; padding:4px; }
+.vs-tmdb-close:hover { color:var(--text-primary); }
+.vs-tmdb-search-row { display:flex; gap:8px; padding:14px 20px; flex-shrink:0;
+    border-bottom:1px solid var(--border-color); }
+.vs-tmdb-search-input { flex:1; padding:9px 12px; border-radius:6px;
+    border:1px solid var(--border-color); background:var(--bg-tertiary); color:var(--text-primary);
+    font-size:14px; font-family:inherit; }
+.vs-tmdb-search-input:focus { outline:none; border-color:var(--accent-color); }
+.vs-tmdb-search-btn { white-space:nowrap; }
+.vs-tmdb-results { overflow-y:auto; flex:1; padding:8px 12px; }
+.vs-tmdb-hint { text-align:center; color:var(--text-secondary); font-size:13px; padding:20px; }
+.vs-tmdb-error { color:#e74c3c; }
+.vs-tmdb-result { display:flex; gap:12px; padding:10px 8px; border-radius:8px; cursor:pointer;
+    transition:background .15s; }
+.vs-tmdb-result:hover { background:var(--bg-hover); }
+.vs-tmdb-poster { width:46px; height:69px; border-radius:4px; object-fit:cover; flex-shrink:0; }
+.vs-tmdb-no-poster { background:var(--bg-tertiary); display:flex; align-items:center;
+    justify-content:center; color:var(--text-secondary); font-size:18px; }
+.vs-tmdb-result-info { flex:1; min-width:0; }
+.vs-tmdb-result-title { font-weight:600; font-size:14px; display:flex; align-items:center;
+    gap:6px; flex-wrap:wrap; margin-bottom:2px; }
+.vs-tmdb-result-year { font-size:12px; color:var(--text-secondary); margin-bottom:4px; }
+.vs-tmdb-result-overview { font-size:12px; color:var(--text-secondary); line-height:1.4;
+    overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+.vs-tmdb-type-badge { font-size:10px; font-weight:700; padding:2px 6px; border-radius:4px;
+    text-transform:uppercase; letter-spacing:.5px; flex-shrink:0; }
+.vs-tmdb-movie { background:#e67e22; color:#fff; }
+.vs-tmdb-tv { background:#3498db; color:#fff; }

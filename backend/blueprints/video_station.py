@@ -39,7 +39,10 @@ Routes:
   GET  /api/video-station/tmdb-config     - get TMDb API key status
   POST /api/video-station/tmdb-config     - save TMDb API key
   POST /api/video-station/tmdb-match/<int:vid> - manually trigger TMDb match for a video
-  POST /api/video-station/tmdb-match-all  - match all unmatched videos
+  POST /api/video-station/tmdb-match-all  - match all unmatched NON-HIDDEN videos
+  GET  /api/video-station/tmdb-search-list - search TMDb, return list (?q=query)
+  POST /api/video-station/tmdb-apply/<int:vid> - apply a specific TMDb result (by tmdb_id)
+  POST /api/video-station/rename/<int:vid> - rename video file on disk and update DB
 
 SocketIO events emitted:
   vs_scan_progress  - {running, total, processed, current_file}
@@ -1880,7 +1883,8 @@ def tmdb_match_all():
                            total=0, processed=0, current_file='')
         conn = _get_db()
         unmatched = conn.execute(
-            "SELECT id, filename FROM videos WHERE tmdb_id=0 OR tmdb_id IS NULL"
+            "SELECT id, filename FROM videos "
+            "WHERE (tmdb_id=0 OR tmdb_id IS NULL) AND COALESCE(hidden,0)=0"
         ).fetchall()
         _scan_state['total'] = len(unmatched)
         _emit_progress()
@@ -1908,3 +1912,155 @@ def tmdb_match_all():
 
     gevent.spawn(_do_match)
     return jsonify({"ok": True})
+
+
+@video_station_bp.route("/tmdb-search-list", methods=["GET"])
+
+def tmdb_search_list():
+    """Search TMDb and return a list of results for manual selection."""
+    query = request.args.get("q", "").strip()
+    if not query:
+        return jsonify({"results": []})
+    api_key = _load_tmdb_key()
+    if not api_key:
+        return jsonify({"error": "Brak klucza TMDb. Skonfiguruj w ustawieniach."}), 400
+    results = []
+    for endpoint, media_type in [('/search/movie', 'movie'), ('/search/tv', 'tv')]:
+        try:
+            params = urllib.parse.urlencode({
+                'api_key': api_key, 'query': query, 'language': 'pl-PL', 'page': 1,
+            })
+            url = _TMDB_BASE + endpoint + '?' + params
+            req = urllib.request.Request(url, headers={'User-Agent': 'EthOS/1.0'})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+            for r in (data.get('results') or [])[:5]:
+                title = r.get('title' if media_type == 'movie' else 'name', '')
+                date = r.get('release_date' if media_type == 'movie' else 'first_air_date', '') or ''
+                results.append({
+                    'tmdb_id': r.get('id', 0),
+                    'title': title,
+                    'year': date[:4],
+                    'overview': (r.get('overview', '') or '')[:200],
+                    'poster_path': r.get('poster_path', ''),
+                    'rating': round(r.get('vote_average', 0), 1),
+                    'media_type': media_type,
+                })
+        except Exception as e:
+            log.debug('tmdb_search_list %s failed: %s', endpoint, e)
+    results.sort(key=lambda x: x.get('rating', 0), reverse=True)
+    return jsonify({"results": results[:10]})
+
+
+@video_station_bp.route("/tmdb-apply/<int:vid>", methods=["POST"])
+
+def tmdb_apply(vid):
+    """Apply a specific TMDb result (chosen by user) to a video."""
+    d = request.json or {}
+    tmdb_id = d.get("tmdb_id")
+    media_type = d.get("type", "movie")
+    if not tmdb_id:
+        return jsonify({"error": "Brak tmdb_id."}), 400
+    if media_type not in ('movie', 'tv'):
+        return jsonify({"error": "Nieprawidłowy typ."}), 400
+    api_key = _load_tmdb_key()
+    if not api_key:
+        return jsonify({"error": "Brak klucza TMDb."}), 400
+    conn = _get_db()
+    r = conn.execute("SELECT id FROM videos WHERE id=?", (vid,)).fetchone()
+    if not r:
+        conn.close()
+        return jsonify({"error": "Nie znaleziono."}), 404
+    try:
+        url = '%s/%s/%d?api_key=%s&language=pl-PL' % (
+            _TMDB_BASE, media_type, int(tmdb_id), urllib.parse.quote(api_key))
+        req = urllib.request.Request(url, headers={'User-Agent': 'EthOS/1.0'})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            details = json.loads(resp.read().decode('utf-8'))
+    except Exception as e:
+        conn.close()
+        return jsonify({"error": "Błąd pobierania z TMDb: " + str(e)}), 500
+    title_key = 'title' if media_type == 'movie' else 'name'
+    date_key = 'release_date' if media_type == 'movie' else 'first_air_date'
+    tmdb_title = details.get(title_key, '')
+    tmdb_year = (details.get(date_key, '') or '')[:4]
+    tmdb_genres = ','.join(str(g['id']) for g in (details.get('genres') or []))
+    poster_path = details.get('poster_path', '')
+    backdrop_path = details.get('backdrop_path', '')
+    rating = details.get('vote_average', 0)
+    overview = details.get('overview', '')
+    cast, director = _fetch_tmdb_credits(tmdb_id, media_type, api_key)
+    conn.execute(
+        'UPDATE videos SET tmdb_id=?, tmdb_title=?, tmdb_overview=?, '
+        'tmdb_year=?, tmdb_rating=?, tmdb_genres=?, tmdb_poster_path=?, '
+        'tmdb_backdrop_path=?, tmdb_cast=?, tmdb_director=?, tmdb_media_type=? WHERE id=?',
+        (tmdb_id, tmdb_title, overview, tmdb_year, rating, tmdb_genres,
+         poster_path, backdrop_path, cast, director, media_type, vid))
+    conn.commit()
+    if tmdb_title:
+        display = tmdb_title + (' (' + tmdb_year + ')' if tmdb_year else '')
+        conn.execute('UPDATE videos SET title=? WHERE id=?', (display, vid))
+        conn.commit()
+    poster_ok = False
+    if poster_path:
+        poster_ok = _download_poster(poster_path, vid)
+        if poster_ok:
+            conn.execute('UPDATE videos SET poster_ok=1 WHERE id=?', (vid,))
+            conn.commit()
+    backdrop_ok = False
+    if backdrop_path:
+        backdrop_ok = _download_backdrop(backdrop_path, vid)
+        if backdrop_ok:
+            conn.execute('UPDATE videos SET backdrop_ok=1 WHERE id=?', (vid,))
+            conn.commit()
+    conn.close()
+    return jsonify({"ok": True, "title": tmdb_title, "year": tmdb_year,
+                    "poster_ok": poster_ok, "backdrop_ok": backdrop_ok})
+
+
+@video_station_bp.route("/rename/<int:vid>", methods=["POST"])
+
+def rename_video(vid):
+    """Rename a video file on disk and update DB path/filename."""
+    d = request.json or {}
+    new_name = (d.get("name") or "").strip()
+    if not new_name:
+        return jsonify({"error": "Brak nowej nazwy."}), 400
+    conn = _get_db()
+    r = conn.execute(
+        "SELECT id, path, filename, folder FROM videos WHERE id=?", (vid,)).fetchone()
+    if not r:
+        conn.close()
+        return jsonify({"error": "Nie znaleziono."}), 404
+    old_ext = os.path.splitext(r["filename"])[1].lower()
+    new_base, new_ext = os.path.splitext(new_name)
+    if not new_ext:
+        new_name = new_name + old_ext
+    elif new_ext.lower() != old_ext:
+        conn.close()
+        return jsonify({"error": "Nie można zmienić rozszerzenia pliku."}), 400
+    folder = r["folder"]
+    new_path = os.path.join(folder, new_name)
+    try:
+        new_path = safe_path(new_path, '/')
+        old_path = safe_path(r["path"], '/')
+    except Exception as e:
+        conn.close()
+        return jsonify({"error": str(e)}), 400
+    if not os.path.isfile(old_path):
+        conn.close()
+        return jsonify({"error": "Plik nie istnieje na dysku."}), 404
+    if os.path.exists(new_path) and new_path != old_path:
+        conn.close()
+        return jsonify({"error": "Plik o tej nazwie już istnieje."}), 400
+    try:
+        os.rename(old_path, new_path)
+    except OSError as e:
+        conn.close()
+        return jsonify({"error": "Błąd zmiany nazwy: " + str(e)}), 500
+    conn.execute(
+        "UPDATE videos SET path=?, filename=? WHERE id=?",
+        (new_path, new_name, vid))
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True, "new_path": new_path, "new_name": new_name})

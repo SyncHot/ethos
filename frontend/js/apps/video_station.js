@@ -713,6 +713,8 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         const isHiddenSection = (activeSection === 'hidden');
         let items =
             '<div class="vs-ctx-item" data-action="select"><i class="fas fa-check-square"></i> ' + t('Zaznacz') + '</div>' +
+            '<div class="vs-ctx-item" data-action="rename"><i class="fas fa-pen"></i> ' + t('Zmień nazwę') + '</div>' +
+            '<div class="vs-ctx-item" data-action="tmdb"><i class="fas fa-wand-magic-sparkles"></i> ' + t('Pobierz z TMDb…') + '</div>' +
             '<div class="vs-ctx-item" data-action="unwatch"><i class="fas fa-eye-slash"></i> ' + t('Oznacz jako nieobejrzane') + '</div>' +
             '<div class="vs-ctx-item" data-action="info"><i class="fas fa-info-circle"></i> ' + t('Szczegóły') + '</div>';
         if (isHiddenSection) {
@@ -735,6 +737,10 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
                     if (!selectMode) _enterSelectMode();
                     selectedIds.add(String(vid));
                     _refreshGrid();
+                } else if (action === 'rename') {
+                    _showRenameDialog(vid);
+                } else if (action === 'tmdb') {
+                    _showTmdbSearchDialog(vid);
                 } else if (action === 'unwatch') {
                     await api('/video-station/watched/' + vid, { method: 'POST', body: { watched: false, position: 0 } });
                     toast(t('Oznaczono jako nieobejrzane'), 'success');
@@ -828,7 +834,11 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         html += '</div>';
 
         // Play button
+        html += '<div class="vs-info-actions">';
         html += '<button class="vs-info-play" id="vs-info-play"><i class="fas fa-play"></i> ' + t('Odtwórz') + '</button>';
+        html += '<button class="vs-info-tmdb-btn" id="vs-info-tmdb"><i class="fas fa-wand-magic-sparkles"></i> ' + t('Pobierz z TMDb') + '</button>';
+        html += '<button class="vs-info-rename-btn" id="vs-info-rename"><i class="fas fa-pen"></i> ' + t('Zmień nazwę') + '</button>';
+        html += '</div>';
 
         html += '</div></div></div>';
 
@@ -837,8 +847,119 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 
         modal.querySelector('#vs-info-close').onclick = () => { modal.style.display = 'none'; };
         modal.querySelector('#vs-info-play').onclick = () => { modal.style.display = 'none'; openPlayer(vid); };
+        modal.querySelector('#vs-info-tmdb').onclick = () => { modal.style.display = 'none'; _showTmdbSearchDialog(vid); };
+        modal.querySelector('#vs-info-rename').onclick = () => { modal.style.display = 'none'; _showRenameDialog(vid); };
         modal.onclick = (e) => { if (e.target === modal) modal.style.display = 'none'; };
     }
+
+    /* ── rename dialog ─────────────────────────────────────────── */
+    function _showRenameDialog(vid) {
+        const item = libraryItems.find(i => String(i.id) === String(vid));
+        const currentName = item ? item.filename : '';
+        const overlay = document.createElement('div');
+        overlay.className = 'vs-modal-overlay vs-rename-overlay';
+        overlay.innerHTML =
+            '<div class="vs-rename-dialog">' +
+            '<div class="vs-rename-header"><span>' + t('Zmień nazwę pliku') + '</span>' +
+            '<button class="vs-rename-close"><i class="fas fa-times"></i></button></div>' +
+            '<div class="vs-rename-body">' +
+            '<label class="vs-rename-label">' + t('Nowa nazwa pliku') + '</label>' +
+            '<input class="vs-rename-input" id="vs-rename-input" type="text" value="' + (currentName || '').replace(/"/g, '&quot;') + '" />' +
+            '<p class="vs-rename-hint">' + t('Rozszerzenie zostanie zachowane automatycznie') + '</p>' +
+            '</div>' +
+            '<div class="vs-rename-footer">' +
+            '<button class="vs-btn-secondary vs-rename-cancel">' + t('Anuluj') + '</button>' +
+            '<button class="vs-btn-primary vs-rename-confirm"><i class="fas fa-check"></i> ' + t('Zmień nazwę') + '</button>' +
+            '</div></div>';
+        document.body.appendChild(overlay);
+        const input = overlay.querySelector('#vs-rename-input');
+        const extIdx = currentName ? currentName.lastIndexOf('.') : -1;
+        input.focus();
+        if (extIdx > 0) input.setSelectionRange(0, extIdx);
+
+        overlay.querySelector('.vs-rename-close').onclick = () => overlay.remove();
+        overlay.querySelector('.vs-rename-cancel').onclick = () => overlay.remove();
+        overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+        overlay.querySelector('.vs-rename-confirm').onclick = async () => {
+            const newName = input.value.trim();
+            if (!newName) return;
+            try {
+                const res = await api('/video-station/rename/' + vid, { method: 'POST', body: JSON.stringify({ name: newName }) });
+                if (res.error) { toast(res.error, 'error'); return; }
+                toast(t('Zmieniono nazwę na: ') + res.filename, 'success');
+                overlay.remove();
+                _reloadSection();
+            } catch (e) { toast(t('Błąd zmiany nazwy'), 'error'); }
+        };
+    }
+
+    /* ── TMDb search dialog ─────────────────────────────────────── */
+    function _showTmdbSearchDialog(vid) {
+        const item = libraryItems.find(i => String(i.id) === String(vid));
+        const initialQuery = item ? (item.title || item.filename || '').replace(/\.[^.]+$/, '') : '';
+        const overlay = document.createElement('div');
+        overlay.className = 'vs-modal-overlay vs-tmdb-overlay';
+        overlay.innerHTML =
+            '<div class="vs-tmdb-dialog">' +
+            '<div class="vs-tmdb-header"><span><i class="fas fa-wand-magic-sparkles"></i> ' + t('Wyszukaj w TMDb') + '</span>' +
+            '<button class="vs-tmdb-close"><i class="fas fa-times"></i></button></div>' +
+            '<div class="vs-tmdb-search-row">' +
+            '<input class="vs-tmdb-search-input" id="vs-tmdb-q" type="text" placeholder="' + t('Tytuł filmu lub serialu…') + '" value="' + initialQuery.replace(/"/g, '&quot;') + '" />' +
+            '<button class="vs-btn-primary vs-tmdb-search-btn" id="vs-tmdb-search-btn"><i class="fas fa-search"></i> ' + t('Szukaj') + '</button>' +
+            '</div>' +
+            '<div class="vs-tmdb-results" id="vs-tmdb-results"><p class="vs-tmdb-hint">' + t('Wpisz tytuł i kliknij Szukaj') + '</p></div>' +
+            '</div>';
+        document.body.appendChild(overlay);
+        overlay.querySelector('.vs-tmdb-close').onclick = () => overlay.remove();
+        overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+        const doSearch = async () => {
+            const q = overlay.querySelector('#vs-tmdb-q').value.trim();
+            if (!q) return;
+            const resultsEl = overlay.querySelector('#vs-tmdb-results');
+            resultsEl.innerHTML = '<p class="vs-tmdb-hint"><i class="fas fa-spinner fa-spin"></i> ' + t('Szukam…') + '</p>';
+            try {
+                const res = await api('/video-station/tmdb-search-list?q=' + encodeURIComponent(q));
+                if (res.error) { resultsEl.innerHTML = '<p class="vs-tmdb-hint vs-tmdb-error">' + res.error + '</p>'; return; }
+                if (!res.results || !res.results.length) { resultsEl.innerHTML = '<p class="vs-tmdb-hint">' + t('Brak wyników') + '</p>'; return; }
+                resultsEl.innerHTML = res.results.map(r => {
+                    const poster = r.poster_path ? 'https://image.tmdb.org/t/p/w92' + r.poster_path : '';
+                    const year = (r.release_date || r.first_air_date || '').slice(0, 4);
+                    const badge = r.media_type === 'tv'
+                        ? '<span class="vs-tmdb-type-badge vs-tmdb-tv">TV</span>'
+                        : '<span class="vs-tmdb-type-badge vs-tmdb-movie">Film</span>';
+                    return '<div class="vs-tmdb-result" data-id="' + r.id + '" data-type="' + r.media_type + '">' +
+                        (poster ? '<img class="vs-tmdb-poster" src="' + poster + '" loading="lazy" />'
+                                : '<div class="vs-tmdb-poster vs-tmdb-no-poster"><i class="fas fa-film"></i></div>') +
+                        '<div class="vs-tmdb-result-info">' +
+                        '<div class="vs-tmdb-result-title">' + (r.title || r.name || '') + ' ' + badge + '</div>' +
+                        '<div class="vs-tmdb-result-year">' + (year || '') + '</div>' +
+                        '<div class="vs-tmdb-result-overview">' + (r.overview || '').slice(0, 120) + ((r.overview || '').length > 120 ? '…' : '') + '</div>' +
+                        '</div></div>';
+                }).join('');
+                resultsEl.querySelectorAll('.vs-tmdb-result').forEach(el => {
+                    el.onclick = async () => {
+                        el.style.opacity = '0.5';
+                        try {
+                            const r2 = await api('/video-station/tmdb-apply/' + vid, {
+                                method: 'POST',
+                                body: JSON.stringify({ tmdb_id: el.dataset.id, type: el.dataset.type })
+                            });
+                            if (r2.error) { toast(r2.error, 'error'); el.style.opacity = ''; return; }
+                            toast(t('Metadane zaktualizowane!'), 'success');
+                            overlay.remove();
+                            _reloadSection();
+                        } catch(e) { toast(t('Błąd aktualizacji metadanych'), 'error'); el.style.opacity = ''; }
+                    };
+                });
+            } catch(e) { resultsEl.innerHTML = '<p class="vs-tmdb-hint vs-tmdb-error">' + t('Błąd wyszukiwania') + '</p>'; }
+        };
+
+        overlay.querySelector('#vs-tmdb-search-btn').onclick = doSearch;
+        overlay.querySelector('#vs-tmdb-q').onkeydown = (e) => { if (e.key === 'Enter') doSearch(); };
+        if (initialQuery) doSearch();
+    }
+
 
     /* ── multi-select ──────────────────────────────────────── */
     function _toggleSelectMode() {
