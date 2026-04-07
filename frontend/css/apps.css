@@ -6213,3 +6213,82 @@ textarea.app-input { resize: vertical; line-height: 1.5; }
 .vs-row-hover-overview { font-size:10px; color:rgba(255,255,255,.85); line-height:1.4;
     text-align:center; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical;
     overflow:hidden; }
+
+/* ── VS Sidebar nav (new layout) ──────────────────────────────────── */
+.vs-layout { display:flex; height:100%; overflow:hidden; transition:none; }
+.vs-sidebar-header { display:flex; align-items:center; justify-content:space-between;
+    padding:12px 14px 10px; border-bottom:1px solid var(--border-color); flex-shrink:0; }
+.vs-sidebar-logo { font-size:13px; font-weight:700; color:var(--text-primary);
+    display:flex; align-items:center; gap:8px; overflow:hidden; }
+.vs-sidebar-logo i { color:var(--accent-color); font-size:16px; flex-shrink:0; }
+.vs-sidebar-logo span { white-space:nowrap; transition:opacity .2s; }
+.vs-hamburger { background:none; border:none; color:var(--text-secondary); cursor:pointer;
+    font-size:16px; padding:4px; border-radius:4px; flex-shrink:0; }
+.vs-hamburger:hover { color:var(--text-primary); background:var(--bg-hover); }
+.vs-nav-section { padding:10px 14px 4px; font-size:10px; font-weight:700;
+    text-transform:uppercase; letter-spacing:.6px; color:var(--text-secondary);
+    white-space:nowrap; overflow:hidden; transition:opacity .2s; }
+.vs-nav-item { padding:8px 14px; cursor:pointer; display:flex; align-items:center;
+    gap:10px; font-size:13px; color:var(--text-secondary); border-radius:6px;
+    margin:1px 6px; transition:background .15s, color .15s; white-space:nowrap; }
+.vs-nav-item i { width:16px; text-align:center; flex-shrink:0; }
+.vs-nav-item span { overflow:hidden; text-overflow:ellipsis; transition:opacity .2s; }
+.vs-nav-item:hover { background:var(--bg-hover); color:var(--text-primary); }
+.vs-nav-item.active { background:var(--accent-color); color:#fff; }
+.vs-nav-badge { background:var(--accent-color); color:#fff; font-size:10px;
+    border-radius:99px; padding:1px 6px; margin-left:auto; }
+.vs-sidebar-stats { padding:12px 14px; font-size:11px; color:var(--text-secondary);
+    border-top:1px solid var(--border-color); margin-top:auto; overflow:hidden; }
+
+/* Collapsed sidebar */
+.vs-layout.vs-sidebar-collapsed .vs-sidebar { width:52px; min-width:52px; }
+.vs-layout.vs-sidebar-collapsed .vs-sidebar-logo span,
+.vs-layout.vs-sidebar-collapsed .vs-nav-section,
+.vs-layout.vs-sidebar-collapsed .vs-nav-item span,
+.vs-layout.vs-sidebar-collapsed .vs-nav-badge,
+.vs-layout.vs-sidebar-collapsed .vs-sidebar-stats { opacity:0; pointer-events:none; width:0; overflow:hidden; }
+.vs-layout.vs-sidebar-collapsed .vs-nav-item { justify-content:center; padding:8px 0; margin:1px 4px; }
+.vs-layout.vs-sidebar-collapsed .vs-sidebar-header { padding:12px 8px 10px; }
+.vs-toolbar-title { font-size:15px; font-weight:700; color:var(--text-primary);
+    display:flex; align-items:center; gap:8px; }
+
+/* ── VS Settings page ─────────────────────────────────────────────── */
+.vs-settings-page { padding:24px; display:flex; flex-direction:column; gap:20px;
+    max-width:700px; overflow-y:auto; }
+.vs-settings-card { background:var(--bg-secondary); border:1px solid var(--border-color);
+    border-radius:10px; padding:20px; }
+.vs-settings-card-title { font-size:14px; font-weight:700; color:var(--text-primary);
+    margin-bottom:12px; display:flex; align-items:center; gap:8px; }
+.vs-settings-desc { font-size:12px; color:var(--text-secondary); margin:0 0 12px; line-height:1.5; }
+.vs-settings-row { display:flex; align-items:center; gap:12px; margin-bottom:12px; }
+.vs-settings-actions { display:flex; gap:10px; flex-wrap:wrap; }
+.vs-tmdb-key-row { display:flex; gap:8px; align-items:center; }
+.vs-input { padding:7px 10px; border:1px solid var(--border-color); border-radius:6px;
+    background:var(--bg-primary); color:var(--text-primary); font-size:13px; flex:1; }
+.vs-input:focus { outline:none; border-color:var(--accent-color); }
+.vs-hw-badge { display:inline-flex; align-items:center; gap:6px; padding:6px 12px;
+    border-radius:20px; font-size:12px; font-weight:600; margin-bottom:8px; }
+.vs-hw-badge-hw { background:rgba(250,204,21,.15); color:#facc15; border:1px solid rgba(250,204,21,.3); }
+.vs-hw-badge-sw { background:rgba(148,163,184,.1); color:var(--text-secondary);
+    border:1px solid var(--border-color); }
+
+/* ── VS Player extras ─────────────────────────────────────────────── */
+.vs-stats-btn { background:none; border:none; color:rgba(255,255,255,.7); cursor:pointer;
+    font-size:14px; padding:4px 6px; border-radius:4px; }
+.vs-stats-btn:hover { color:#fff; background:rgba(255,255,255,.1); }
+.vs-stats-overlay { position:absolute; top:56px; right:12px; background:rgba(0,0,0,.82);
+    border:1px solid rgba(255,255,255,.15); border-radius:8px; padding:12px 16px;
+    font-size:12px; color:#fff; z-index:10; min-width:200px; backdrop-filter:blur(4px); }
+.vs-stats-row { display:flex; justify-content:space-between; gap:24px; padding:3px 0;
+    border-bottom:1px solid rgba(255,255,255,.07); }
+.vs-stats-row:last-child { border-bottom:none; }
+.vs-seek-hint { position:absolute; top:50%; transform:translateY(-50%); display:flex;
+    flex-direction:column; align-items:center; gap:4px; font-size:13px; color:#fff;
+    background:rgba(0,0,0,.55); border-radius:50%; width:72px; height:72px;
+    justify-content:center; pointer-events:none; opacity:0; transition:opacity .2s; z-index:8; }
+.vs-seek-hint-left { left:10%; }
+.vs-seek-hint-right { right:10%; }
+.vs-seek-hint.vs-seek-hint-visible { opacity:1; }
+.vs-swipe-hint { position:absolute; bottom:72px; left:50%; transform:translateX(-50%);
+    background:rgba(0,0,0,.7); color:#fff; padding:6px 14px; border-radius:20px;
+    font-size:13px; pointer-events:none; display:none; z-index:8; }

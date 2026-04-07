@@ -30,7 +30,8 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         ? NAS.logClient('video-station', level, msg, details) : console.log('[video-station]', msg, details || '');
 
     /* ── state ─────────────────────────────────────────────── */
-    let activeSection  = 'library';
+    let activeSection  = 'home';
+    let sidebarCollapsed = localStorage.getItem('vs_sidebar_collapsed') === '1';
     let libraryItems   = [];
     let libraryTotal   = 0;
     let libraryOffset  = 0;
@@ -152,18 +153,23 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 
         body.innerHTML = `
 <style>${getCSS()}</style>
-<div class="vs-layout">
+<div class="vs-layout${sidebarCollapsed ? ' vs-sidebar-collapsed' : ''}">
   <div class="vs-sidebar">
-    <div class="vs-nav-section">${t('Odkrywaj')}</div>
-    <div class="vs-nav-item" data-section="home"><i class="fas fa-home"></i><span>${t('Strona główna')}</span></div>
-    <div class="vs-nav-section">${t('Biblioteka')}</div>
-    <div class="vs-nav-item active" data-section="library"><i class="fas fa-film"></i><span>${t('Wszystkie filmy')}</span></div>
+    <div class="vs-sidebar-header">
+      <span class="vs-sidebar-logo"><i class="fas fa-film"></i><span> Video Station</span></span>
+      <button class="vs-hamburger" id="vs-hamburger" title="${t('Zwiń/rozwiń')}"><i class="fas fa-bars"></i></button>
+    </div>
+    <div class="vs-nav-section vs-nav-label">${t('Odkrywaj')}</div>
+    <div class="vs-nav-item active" data-section="home"><i class="fas fa-home"></i><span>${t('Strona główna')}</span></div>
+    <div class="vs-nav-label vs-nav-section">${t('Biblioteka')}</div>
+    <div class="vs-nav-item" data-section="library"><i class="fas fa-film"></i><span>${t('Wszystkie filmy')}</span></div>
     <div class="vs-nav-item" data-section="recent"><i class="fas fa-clock"></i><span>${t('Ostatnie')}</span></div>
     <div class="vs-nav-item" data-section="history"><i class="fas fa-history"></i><span>${t('Historia')}</span></div>
     <div class="vs-nav-item" data-section="collections"><i class="fas fa-folder-open"></i><span>${t('Kolekcje')}</span></div>
     <div class="vs-nav-item" data-section="hidden"><i class="fas fa-eye-slash"></i><span>${t('Ukryte')}</span>${hiddenCount ? '<span class="vs-nav-badge">' + hiddenCount + '</span>' : ''}</div>
-    <div class="vs-nav-section">${t('Zarządzanie')}</div>
-    <div class="vs-nav-item" data-section="folders"><i class="fas fa-cog"></i><span>${t('Foldery')}</span></div>
+    <div class="vs-nav-label vs-nav-section">${t('Zarządzanie')}</div>
+    <div class="vs-nav-item" data-section="settings"><i class="fas fa-sliders-h"></i><span>${t('Ustawienia')}</span></div>
+    <div class="vs-nav-item" data-section="folders"><i class="fas fa-folder-open"></i><span>${t('Foldery')}</span></div>
     <div class="vs-sidebar-stats" id="vs-sidebar-stats"></div>
   </div>
   <div class="vs-main">
@@ -187,10 +193,15 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     </select>
     <button class="vs-pip-btn" id="vs-pip-btn" title="${t('Obraz w obrazie')}"><i class="fas fa-external-link-alt"></i></button>
     <button class="vs-cast-btn" id="vs-cast-btn" title="${t('Cast na TV')}" style="display:none"><i class="fas fa-tv"></i></button>
+    <button class="vs-stats-btn" id="vs-stats-btn" title="${t('Statystyki dla geeków')}"><i class="fas fa-chart-bar"></i></button>
     <button class="vs-fs-btn" id="vs-fs-btn" title="${t('Pełny ekran')}"><i class="fas fa-expand"></i></button>
     <button class="vs-player-close" id="vs-player-close"><i class="fas fa-times"></i></button>
   </div>
   <video id="vs-player-video" controls autoplay playsinline></video>
+  <div class="vs-seek-hint vs-seek-hint-left" id="vs-seek-hint-left"><i class="fas fa-backward"></i><span>-10s</span></div>
+  <div class="vs-seek-hint vs-seek-hint-right" id="vs-seek-hint-right"><i class="fas fa-forward"></i><span>+10s</span></div>
+  <div class="vs-swipe-hint" id="vs-swipe-hint"></div>
+  <div class="vs-stats-overlay" id="vs-stats-overlay" style="display:none"></div>
   <div class="vs-thumbstrip-preview" id="vs-thumbstrip-preview" style="display:none">
     <canvas id="vs-thumbstrip-canvas" width="160" height="90"></canvas>
     <span class="vs-thumbstrip-time" id="vs-thumbstrip-time"></span>
@@ -215,7 +226,17 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             n.onclick = () => switchSection(n.dataset.section);
         });
 
-        switchSection('library');
+        // Hamburger toggle
+        const hamburger = body.querySelector('#vs-hamburger');
+        if (hamburger) {
+            hamburger.onclick = () => {
+                sidebarCollapsed = !sidebarCollapsed;
+                localStorage.setItem('vs_sidebar_collapsed', sidebarCollapsed ? '1' : '0');
+                body.querySelector('.vs-layout').classList.toggle('vs-sidebar-collapsed', sidebarCollapsed);
+            };
+        }
+
+        switchSection('home');
     }
 
     /* ── section switching ─────────────────────────────────── */
@@ -237,6 +258,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             case 'collections': toolbar.innerHTML = '<div class="vs-toolbar-title">' + t('Kolekcje') + '</div>'; loadCollections(); break;
             case 'folders':    toolbar.innerHTML = '<div class="vs-toolbar-title">' + t('Foldery biblioteki') + '</div>'; loadFolders(); break;
             case 'hidden':     toolbar.innerHTML = '<div class="vs-toolbar-title"><i class="fas fa-eye-slash"></i> ' + t('Ukryte filmy') + '</div>'; loadHidden(); break;
+            case 'settings':   toolbar.innerHTML = '<div class="vs-toolbar-title"><i class="fas fa-sliders-h"></i> ' + t('Ustawienia') + '</div>'; loadSettingsSection(); break;
         }
         _exitSelectMode();
     }
@@ -271,22 +293,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     '<option value="1"' + (currentWatched === '1' ? ' selected' : '') + '>' + t('Obejrzane') + '</option>' +
   '</select>' +
   '<button id="vs-select-toggle" class="app-btn app-btn-sm" title="' + t('Zaznaczanie') + '"><i class="fas fa-check-square"></i></button>' +
-'</div>' +
-'<div class="vs-toolbar-group">' +
-  '<div class="vs-scan-wrap" id="vs-scan-wrap">' +
-    '<label class="vs-tmdb-check" title="' + t('Rozpoznaj filmy przez TMDb') + '">' +
-      '<input type="checkbox" id="vs-tmdb-check"' + (useTmdb ? ' checked' : '') + '> ' +
-      '<i class="fas fa-magic"></i> TMDb' +
-    '</label>' +
-    '<button id="vs-scan-btn" class="app-btn app-btn-sm"><i class="fas fa-sync-alt"></i> ' + t('Skanuj') + '</button>' +
-    '<button id="vs-reindex-btn" class="app-btn app-btn-sm" title="' + t('Ponownie odczytaj metadane (kodeki, czas trwania) wszystkich filmów') + '"><i class="fas fa-database"></i> ' + t('Reindeksuj') + '</button>' +
-    '<button id="vs-match-all-btn" class="app-btn app-btn-sm" title="' + t('Dopasuj wszystkie nierozpoznane filmy do TMDb') + '"><i class="fas fa-wand-magic-sparkles"></i> ' + t('Dopasuj') + '</button>' +
-    '<div class="vs-scan-progress" id="vs-scan-bar" style="display:none">' +
-      '<div class="vs-prog-bar"><div class="vs-prog-fill" id="vs-scan-fill"></div></div>' +
-      '<span class="vs-scan-text" id="vs-scan-text"></span>' +
-      '<button id="vs-scan-stop" class="app-btn app-btn-sm" style="color:var(--danger)"><i class="fas fa-stop"></i></button>' +
-    '</div>' +
-  '</div>' +
+  '<button class="app-btn app-btn-sm" title="' + t('Ustawienia, skanowanie, TMDb') + '" id="vs-lib-settings-btn"><i class="fas fa-sliders-h"></i></button>' +
 '</div>';
 
         let searchTimer = null;
@@ -300,22 +307,8 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         bodyEl.querySelector('#vs-watched-filter').onchange = (e) => {
             currentWatched = e.target.value; libraryOffset = 0; loadLibrary();
         };
-        bodyEl.querySelector('#vs-scan-btn').onclick = startScan;
-        bodyEl.querySelector('#vs-scan-stop').onclick = stopScan;
-        bodyEl.querySelector('#vs-tmdb-check').onchange = (e) => { useTmdb = e.target.checked; };
-        bodyEl.querySelector('#vs-match-all-btn').onclick = matchAll;
         bodyEl.querySelector('#vs-select-toggle').onclick = _toggleSelectMode;
-        bodyEl.querySelector('#vs-reindex-btn').onclick = async () => {
-            const btn = bodyEl.querySelector('#vs-reindex-btn');
-            btn.disabled = true;
-            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Reindeksacja...');
-            const res = await api('/video-station/rescan-metadata', { method: 'POST', body: { all: true } });
-            btn.disabled = false;
-            btn.innerHTML = '<i class="fas fa-database"></i> ' + t('Reindeksuj');
-            if (res.error) { toast(res.error, 'error'); return; }
-            toast(t('Zreindeksowano {n} z {t} filmów', { n: res.updated || 0, t: res.total || 0 }), 'success');
-            loadLibrary();
-        };
+        bodyEl.querySelector('#vs-lib-settings-btn').onclick = () => switchSection('settings');
 
         if (scanning) checkScanStatus();
     }
@@ -592,6 +585,115 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
                 switchSection('library');
             };
         });
+    }
+
+    /* ── settings section ──────────────────────────────────── */
+    async function loadSettingsSection() {
+        const content = bodyEl.querySelector('#vs-content');
+        if (!content) return;
+        content.innerHTML = '<div class="vs-loading"><i class="fas fa-spinner fa-spin"></i></div>';
+
+        const [tmdbConf, encInfo] = await Promise.all([
+            api('/video-station/tmdb-config'),
+            api('/video-station/hls/encoder-info'),
+        ]);
+
+        content.innerHTML =
+'<div class="vs-settings-page">' +
+
+// ── TMDb ──
+'<div class="vs-settings-card">' +
+  '<div class="vs-settings-card-title"><i class="fas fa-magic"></i> TMDb — ' + t('rozpoznawanie filmów') + '</div>' +
+  '<p class="vs-settings-desc">' + t('Klucz API z') + ' <a href="https://www.themoviedb.org/settings/api" target="_blank" style="color:var(--accent)">themoviedb.org</a></p>' +
+  '<div class="vs-tmdb-key-row">' +
+    '<input type="text" id="vs-tmdb-key" class="vs-input" placeholder="' + t('Klucz API TMDb (v3)') + '">' +
+    '<button id="vs-tmdb-save" class="app-btn app-btn-sm app-btn-primary"><i class="fas fa-save"></i> ' + t('Zapisz') + '</button>' +
+  '</div>' +
+  '<div id="vs-tmdb-status" class="vs-tmdb-status" style="margin-top:8px">' +
+    (tmdbConf && tmdbConf.has_key
+      ? '<i class="fas fa-check-circle" style="color:var(--success)"></i> ' + t('Klucz aktywny') + ' (' + escH(tmdbConf.key_preview || '') + ')'
+      : '<i class="fas fa-exclamation-circle" style="color:var(--warning)"></i> ' + t('Brak klucza')) +
+  '</div>' +
+'</div>' +
+
+// ── Skanowanie ──
+'<div class="vs-settings-card">' +
+  '<div class="vs-settings-card-title"><i class="fas fa-sync-alt"></i> ' + t('Skanowanie biblioteki') + '</div>' +
+  '<div class="vs-settings-row">' +
+    '<label class="vs-tmdb-check" title="' + t('Rozpoznaj filmy przez TMDb podczas skanowania') + '">' +
+      '<input type="checkbox" id="vs-settings-tmdb-check"' + (useTmdb ? ' checked' : '') + '> ' +
+      '<i class="fas fa-magic"></i> ' + t('Użyj TMDb przy skanowaniu') +
+    '</label>' +
+  '</div>' +
+  '<div class="vs-settings-actions">' +
+    '<button id="vs-set-scan-btn" class="app-btn app-btn-primary"><i class="fas fa-sync-alt"></i> ' + t('Skanuj foldery') + '</button>' +
+    '<button id="vs-set-reindex-btn" class="app-btn"><i class="fas fa-database"></i> ' + t('Reindeksuj metadane') + '</button>' +
+    '<button id="vs-set-match-btn" class="app-btn"><i class="fas fa-wand-magic-sparkles"></i> ' + t('Dopasuj wszystko do TMDb') + '</button>' +
+  '</div>' +
+  '<div class="vs-scan-progress" id="vs-set-scan-bar" style="display:none">' +
+    '<div class="vs-prog-bar"><div class="vs-prog-fill" id="vs-set-scan-fill"></div></div>' +
+    '<span class="vs-scan-text" id="vs-set-scan-text"></span>' +
+    '<button id="vs-set-scan-stop" class="app-btn app-btn-sm" style="color:var(--danger)"><i class="fas fa-stop"></i></button>' +
+  '</div>' +
+'</div>' +
+
+// ── Enkoder ──
+'<div class="vs-settings-card">' +
+  '<div class="vs-settings-card-title"><i class="fas fa-microchip"></i> ' + t('Transkodowanie wideo') + '</div>' +
+  '<div class="vs-hw-badge ' + (encInfo && encInfo.type === 'hw' ? 'vs-hw-badge-hw' : 'vs-hw-badge-sw') + '">' +
+    '<i class="fas fa-' + (encInfo && encInfo.type === 'hw' ? 'bolt' : 'microchip') + '"></i> ' +
+    escH(encInfo && encInfo.label ? encInfo.label : 'libx264 (CPU)') +
+  '</div>' +
+  '<p class="vs-settings-desc">' + t('Akceleracja sprzętowa wykrywana automatycznie przy starcie serwera.') + '</p>' +
+'</div>' +
+
+'</div>';
+
+        // TMDb save
+        content.querySelector('#vs-tmdb-save').onclick = async () => {
+            const key = content.querySelector('#vs-tmdb-key').value.trim();
+            if (!key) { toast(t('Podaj klucz API'), 'warning'); return; }
+            const res = await api('/video-station/tmdb-config', { method: 'POST', body: { api_key: key } });
+            if (res.error) { toast(res.error, 'error'); return; }
+            toast(t('Klucz TMDb zapisany!'), 'success');
+            content.querySelector('#vs-tmdb-key').value = '';
+            content.querySelector('#vs-tmdb-status').innerHTML =
+                '<i class="fas fa-check-circle" style="color:var(--success)"></i> ' + t('Klucz aktywny');
+        };
+        content.querySelector('#vs-settings-tmdb-check').onchange = (e) => { useTmdb = e.target.checked; };
+
+        // Scan
+        content.querySelector('#vs-set-scan-btn').onclick = () => _settingsScan(content);
+        content.querySelector('#vs-set-scan-stop').onclick = stopScan;
+        content.querySelector('#vs-set-reindex-btn').onclick = async () => {
+            const btn = content.querySelector('#vs-set-reindex-btn');
+            btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Reindeksowanie...');
+            const res = await api('/video-station/rescan-metadata', { method: 'POST' });
+            btn.disabled = false; btn.innerHTML = '<i class="fas fa-database"></i> ' + t('Reindeksuj metadane');
+            if (res.error) { toast(res.error, 'error'); return; }
+            toast(t('Odświeżono metadane dla {n} filmów', { n: res.updated || 0 }), 'success');
+        };
+        content.querySelector('#vs-set-match-btn').onclick = async () => {
+            const btn = content.querySelector('#vs-set-match-btn');
+            btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Dopasowuję...');
+            const res = await api('/video-station/tmdb-match-all', { method: 'POST' });
+            btn.disabled = false; btn.innerHTML = '<i class="fas fa-wand-magic-sparkles"></i> ' + t('Dopasuj wszystko do TMDb');
+            if (res.error) { toast(res.error, 'error'); return; }
+            toast(t('Dopasowano {n} filmów', { n: res.matched || 0 }), 'success');
+        };
+    }
+
+    async function _settingsScan(content) {
+        const bar = content.querySelector('#vs-set-scan-bar');
+        const fill = content.querySelector('#vs-set-scan-fill');
+        const text = content.querySelector('#vs-set-scan-text');
+        if (!bar) { startScan(); return; }
+        bar.style.display = '';
+        fill.style.width = '0%';
+        text.textContent = t('Skanowanie...');
+        const res = await api('/video-station/scan', { method: 'POST', body: { use_tmdb: useTmdb } });
+        if (res.error) { toast(res.error, 'error'); bar.style.display = 'none'; return; }
+        // progress via socket
     }
 
     /* ── folders settings ──────────────────────────────────── */
@@ -1673,19 +1775,96 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             }
         };
 
-        // keyboard shortcuts
+        // keyboard shortcuts (J=-10s, K=play/pause, L=+10s like YouTube)
         overlay._keyHandler = (e) => {
             if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); video.paused ? video.play() : video.pause(); }
             else if (e.key === 'f') { toggleFullscreen(overlay); }
             else if (e.key === 'p') { togglePiP(video); }
             else if (e.key === 'Escape') { closePlayer(); }
-            else if (e.key === 'ArrowLeft') { seekPlayer(video, -10); }
-            else if (e.key === 'ArrowRight') { seekPlayer(video, 10); }
+            else if (e.key === 'ArrowLeft' || e.key === 'j' || e.key === 'J') { seekPlayer(video, -10); }
+            else if (e.key === 'ArrowRight' || e.key === 'l' || e.key === 'L') { seekPlayer(video, 10); }
+            else if (e.key === 'k' || e.key === 'K') { video.paused ? video.play() : video.pause(); }
             else if (e.key === 'ArrowUp') { e.preventDefault(); video.volume = Math.min(1, video.volume + 0.1); }
             else if (e.key === 'ArrowDown') { e.preventDefault(); video.volume = Math.max(0, video.volume - 0.1); }
             else if (e.key === 'm') { video.muted = !video.muted; }
         };
         document.addEventListener('keydown', overlay._keyHandler);
+
+        // Stats overlay
+        const statsBtn = bodyEl.querySelector('#vs-stats-btn');
+        const statsOverlay = bodyEl.querySelector('#vs-stats-overlay');
+        if (statsBtn && statsOverlay) {
+            statsBtn.onclick = async () => {
+                const visible = statsOverlay.style.display !== 'none';
+                if (visible) { statsOverlay.style.display = 'none'; return; }
+                const enc = await api('/video-station/hls/encoder-info').catch(() => null);
+                statsOverlay.innerHTML =
+                    '<div class="vs-stats-row"><span>' + t('Enkoder') + '</span><span>' +
+                    escH(enc && enc.label ? enc.label : '—') + '</span></div>' +
+                    '<div class="vs-stats-row"><span>' + t('Typ') + '</span><span>' +
+                    (enc && enc.type === 'hw' ? '<i class="fas fa-bolt" style="color:#facc15"></i> HW Accel' : '<i class="fas fa-microchip"></i> CPU (libx264)') +
+                    '</span></div>' +
+                    '<div class="vs-stats-row"><span>HLS</span><span>' + (_hlsSessionId ? escH(_hlsSessionId.slice(0,8) + '…') : t('Brak sesji')) + '</span></div>' +
+                    '<div class="vs-stats-row"><span>' + t('Pozycja') + '</span><span>' + Math.round(video.currentTime) + 's</span></div>';
+                statsOverlay.style.display = '';
+            };
+        }
+
+        // Touch gestures: double-tap left/right for ±10s seek, vertical swipe for volume (right) / brightness (left)
+        let _lastTapTime = 0, _lastTapX = 0;
+        let _swipeStartY = 0, _swipeStartX = 0, _swipeSide = null, _swipeBrightness = 1;
+        const swipeHint = bodyEl.querySelector('#vs-swipe-hint');
+        const seekHintL = bodyEl.querySelector('#vs-seek-hint-left');
+        const seekHintR = bodyEl.querySelector('#vs-seek-hint-right');
+
+        function _showSeekHint(side) {
+            const el = side === 'left' ? seekHintL : seekHintR;
+            if (!el) return;
+            el.classList.add('vs-seek-hint-visible');
+            clearTimeout(el._ht);
+            el._ht = setTimeout(() => el.classList.remove('vs-seek-hint-visible'), 700);
+        }
+
+        video.addEventListener('touchstart', (e) => {
+            const touch = e.changedTouches[0];
+            const now = Date.now();
+            const rect = video.getBoundingClientRect();
+            const relX = touch.clientX - rect.left;
+            const relY = touch.clientY - rect.top;
+            _swipeStartX = relX; _swipeStartY = relY;
+            _swipeSide = relX < rect.width / 2 ? 'left' : 'right';
+
+            // Double-tap detection
+            if (now - _lastTapTime < 300 && Math.abs(relX - _lastTapX) < 80) {
+                e.preventDefault();
+                if (relX < rect.width / 2) { seekPlayer(video, -10); _showSeekHint('left'); }
+                else { seekPlayer(video, 10); _showSeekHint('right'); }
+                _lastTapTime = 0;
+            } else {
+                _lastTapTime = now; _lastTapX = relX;
+            }
+        }, { passive: false });
+
+        video.addEventListener('touchmove', (e) => {
+            const touch = e.changedTouches[0];
+            const rect = video.getBoundingClientRect();
+            const dy = _swipeStartY - (touch.clientY - rect.top);
+            if (Math.abs(dy) < 10) return;
+            const ratio = dy / rect.height;
+            if (_swipeSide === 'right') {
+                video.volume = Math.max(0, Math.min(1, video.volume + ratio * 0.5));
+                if (swipeHint) { swipeHint.textContent = t('Głośność') + ': ' + Math.round(video.volume * 100) + '%'; swipeHint.style.display = ''; }
+            } else {
+                _swipeBrightness = Math.max(0.2, Math.min(2, _swipeBrightness + ratio * 1.0));
+                video.style.filter = 'brightness(' + _swipeBrightness + ')';
+                if (swipeHint) { swipeHint.textContent = t('Jasność') + ': ' + Math.round(_swipeBrightness * 100) + '%'; swipeHint.style.display = ''; }
+            }
+            _swipeStartY = touch.clientY - rect.top;
+        }, { passive: true });
+
+        video.addEventListener('touchend', () => {
+            if (swipeHint) { setTimeout(() => { swipeHint.style.display = 'none'; }, 1200); }
+        });
 
         // PiP button
         const pipBtn = bodyEl.querySelector('#vs-pip-btn');
