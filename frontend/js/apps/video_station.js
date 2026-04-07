@@ -1381,6 +1381,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     let _hlsInstance = null;
     let _knownDuration = 0;
     let _startOffset = 0;
+    let _heartbeatTimer = null;
 
     function _buildStreamUrl(vid) {
         return '/api/video-station/stream/' + vid + '?token=' + NAS.token;
@@ -1732,6 +1733,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         }
         _hlsSessionId = res.session_id;
         _startOffset = res.start_offset || 0;
+        _startHeartbeat(video);
 
         const playlistUrl = '/api/video-station/hls/' + _hlsSessionId + '/playlist.m3u8?token=' + NAS.token;
 
@@ -1795,7 +1797,18 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         });
     }
 
+    function _startHeartbeat(video) {
+        if (_heartbeatTimer) clearInterval(_heartbeatTimer);
+        _heartbeatTimer = setInterval(() => {
+            if (!_hlsSessionId) { clearInterval(_heartbeatTimer); return; }
+            const pos = video ? video.currentTime : 0;
+            api('/video-station/hls/' + _hlsSessionId + '/heartbeat',
+                { method: 'POST', body: JSON.stringify({ pos }) });
+        }, 8000);
+    }
+
     function _destroyHls() {
+        if (_heartbeatTimer) { clearInterval(_heartbeatTimer); _heartbeatTimer = null; }
         if (_hlsInstance) {
             _hlsInstance.destroy();
             _hlsInstance = null;

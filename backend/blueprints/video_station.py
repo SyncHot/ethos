@@ -105,9 +105,44 @@ _scan_state = {
 }
 
 # ── HLS transcoding sessions ──────────────────────────────────
-_hls_sessions = {}   # session_id → {proc, tmpdir, vid, created}
+_hls_sessions = {}   # session_id → {proc, tmpdir, vid, created, last_heartbeat, client_pos, paused}
 _HLS_MAX_AGE = 2 * 3600   # auto-cleanup after 2 hours
 _HLS_ORPHAN_PREFIX = "vs_hls_"
+_HLS_HEARTBEAT_TIMEOUT = 20   # seconds — kill session if no heartbeat
+_HLS_THROTTLE_AHEAD = 90      # seconds — pause ffmpeg when this far ahead of playback
+_HLS_THROTTLE_RESUME = 30     # seconds — resume ffmpeg when buffer drops below this
+
+# Hardware encoder detection (run once at import)
+_HW_ENCODER = None  # 'h264_nvenc' | 'h264_vaapi' | 'h264_videotoolbox' | 'libx264'
+
+def _detect_hw_encoder():
+    """Probe available HW H.264 encoders. Returns best available encoder name."""
+    global _HW_ENCODER
+    if _HW_ENCODER is not None:
+        return _HW_ENCODER
+    if not shutil.which('ffmpeg'):
+        _HW_ENCODER = 'libx264'
+        return _HW_ENCODER
+    candidates = [
+        ('h264_nvenc',        '-f lavfi -i nullsrc=s=64x64:d=0.1 -c:v h264_nvenc -f null -'),
+        ('h264_vaapi',        '-vaapi_device /dev/dri/renderD128 -f lavfi -i nullsrc=s=64x64:d=0.1 '
+                              '-vf format=nv12,hwupload -c:v h264_vaapi -f null -'),
+        ('h264_videotoolbox', '-f lavfi -i nullsrc=s=64x64:d=0.1 -c:v h264_videotoolbox -f null -'),
+    ]
+    for name, args in candidates:
+        try:
+            r = subprocess.run(
+                ['ffmpeg', '-hide_banner', '-loglevel', 'error'] + args.split(),
+                capture_output=True, timeout=5)
+            if r.returncode == 0:
+                _HW_ENCODER = name
+                log.info("HLS HW encoder: %s", name)
+                return _HW_ENCODER
+        except Exception:
+            pass
+    _HW_ENCODER = 'libx264'
+    log.info("HLS HW encoder: libx264 (no HW accel)")
+    return _HW_ENCODER
 
 
 def _cleanup_hls(session_id):
@@ -163,12 +198,12 @@ _cleanup_orphaned_hls_dirs()
 
 
 def _start_hls_cleanup_loop(socketio_instance=None):
-    """Start a periodic background greenlet that cleans stale HLS sessions and /tmp."""
+    """Start background greenlets: stale session cleanup + heartbeat watchdog + throttle."""
     import gevent
 
-    def _loop():
+    def _cleanup_loop():
         while True:
-            gevent.sleep(30 * 60)  # every 30 minutes
+            gevent.sleep(30 * 60)
             try:
                 _cleanup_stale_hls()
             except Exception:
@@ -178,7 +213,61 @@ def _start_hls_cleanup_loop(socketio_instance=None):
             except Exception:
                 pass
 
-    gevent.spawn(_loop)
+    def _heartbeat_watchdog():
+        """Kill sessions whose client hasn't sent a heartbeat for _HLS_HEARTBEAT_TIMEOUT s."""
+        while True:
+            gevent.sleep(5)
+            now = time.time()
+            for sid in list(_hls_sessions):
+                sess = _hls_sessions.get(sid)
+                if not sess:
+                    continue
+                last = sess.get('last_heartbeat', sess.get('created', now))
+                if now - last > _HLS_HEARTBEAT_TIMEOUT:
+                    log.info("HLS heartbeat timeout sid=%s — killing ffmpeg", sid)
+                    _cleanup_hls(sid)
+
+    def _throttle_loop():
+        """Pause/resume ffmpeg based on how far ahead of client the buffer is."""
+        while True:
+            gevent.sleep(2)
+            for sid, sess in list(_hls_sessions.items()):
+                proc = sess.get('proc')
+                if not proc or proc.poll() is not None:
+                    continue
+                client_pos = sess.get('client_pos', 0)
+                start_offset = sess.get('start_offset', 0)
+                seg_dur = 4  # seconds per HLS segment
+                tmpdir = sess.get('tmpdir', '')
+                try:
+                    segs = sorted(f for f in os.listdir(tmpdir) if f.endswith('.ts'))
+                except OSError:
+                    continue
+                if not segs:
+                    continue
+                # Estimate how many seconds are buffered ahead of client
+                seg_count = len(segs)
+                buffered_end = start_offset + seg_count * seg_dur
+                ahead = buffered_end - client_pos
+                paused = sess.get('paused', False)
+                if ahead > _HLS_THROTTLE_AHEAD and not paused:
+                    try:
+                        os.kill(proc.pid, 19)  # SIGSTOP
+                        sess['paused'] = True
+                        log.debug("HLS throttle STOP sid=%s ahead=%.0fs", sid, ahead)
+                    except OSError:
+                        pass
+                elif ahead < _HLS_THROTTLE_RESUME and paused:
+                    try:
+                        os.kill(proc.pid, 18)  # SIGCONT
+                        sess['paused'] = False
+                        log.debug("HLS throttle CONT sid=%s ahead=%.0fs", sid, ahead)
+                    except OSError:
+                        pass
+
+    gevent.spawn(_cleanup_loop)
+    gevent.spawn(_heartbeat_watchdog)
+    gevent.spawn(_throttle_loop)
 
 
 def _evict_tmp_if_low():
@@ -1530,7 +1619,17 @@ def hls_start(vid):
 
     vcodec = (r["codec"] or "").lower()
     vcopy = vcodec in ("h264", "vp8", "vp9")
-    v_arg = "copy" if vcopy else "libx264 -preset ultrafast -crf 23"
+    if vcopy:
+        v_arg = "copy"
+    else:
+        hw_enc = _detect_hw_encoder()
+        if hw_enc == 'h264_vaapi':
+            v_arg = "h264_vaapi -vf format=nv12,hwupload -qp 23"
+        elif hw_enc in ('h264_nvenc', 'h264_videotoolbox'):
+            v_arg = "%s -preset fast -cq 23" % hw_enc
+        else:
+            v_arg = "libx264 -preset ultrafast -crf 23"
+        log.info("HLS encode: %s → %s", vcodec, v_arg.split()[0])
 
     session_id = "%d_%s" % (vid, os.urandom(4).hex())
     tmpdir = tempfile.mkdtemp(prefix="vs_hls_")
@@ -1566,6 +1665,9 @@ def hls_start(vid):
         "start_offset": start_sec,
         "duration": r["duration"] or 0,
         "created": time.time(),
+        "last_heartbeat": time.time(),
+        "client_pos": start_sec,
+        "paused": False,
     }
 
     # Wait for first segment (up to 10s)
@@ -1656,7 +1758,26 @@ def hls_stop_session(session_id):
     return jsonify(ok=True)
 
 
-@video_station_bp.route("/watched/<int:vid>", methods=["POST"])
+@video_station_bp.route("/hls/<session_id>/heartbeat", methods=["POST"])
+def hls_heartbeat(session_id):
+    """Client keepalive — update last_heartbeat and current playback position.
+
+    POST body: {pos: seconds}
+    Must be called every ~8s while the player is active.
+    If no heartbeat for _HLS_HEARTBEAT_TIMEOUT seconds, the watchdog kills ffmpeg.
+    """
+    sess = _hls_sessions.get(session_id)
+    if not sess:
+        return jsonify(ok=False, error="Session not found"), 404
+    data = request.get_json(silent=True) or {}
+    sess['last_heartbeat'] = time.time()
+    pos = float(data.get('pos', sess.get('client_pos', 0)))
+    sess['client_pos'] = pos
+    paused = sess.get('paused', False)
+    return jsonify(ok=True, paused=paused, client_pos=pos)
+
+
+
 
 def update_watched(vid):
     d = request.json or {}
