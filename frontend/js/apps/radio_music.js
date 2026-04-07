@@ -3526,10 +3526,14 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
         // Player art — use thumbnail for music, logo cascade for radio
         const art = bodyEl.querySelector('#rm-player-art');
-        if (isMusic && item.image) {
-            art.innerHTML = '<img src="' + escH(item.image) + '" onerror="this.outerHTML=\'<i class=\\\'fas fa-music\\\'></i>\'">';
+        if (isMusic || item.type === 'local') {
+            const artSrc = item.image || item.thumbnail || '';
+            art.innerHTML = artSrc
+                ? '<img src="' + escH(artSrc) + '" onerror="this.outerHTML=\'<i class=\\\'fas fa-music\\\'></i>\'">'
+                : '<i class="fas fa-music"></i>';
         } else {
-            const _fItem = { name: item.name, favicon: item.image, homepage: item.homepage || '', url: item.url, stationuuid: item.uuid || item.stationuuid || '' };
+            // Radio / podcast — use station icon with logo manifest lookup
+            const _fItem = { name: item.name, favicon: item.image || item.favicon, homepage: item.homepage || '', url: item.url, stationuuid: item.uuid || item.stationuuid || '' };
             art.innerHTML = _stationIconHtml(_fItem);
         }
 
@@ -4587,8 +4591,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
             // Step 5: crossfade art image
             if (artEl) {
-                const isMusic = item.type === 'music';
-                const newSrc = item.image || null;
+                const isMusic = item.type === 'music' || item.type === 'local';
+                const newSrc = item.image || item.thumbnail || null;
 
                 if (isMusic && newSrc) {
                     // Pre-load new image; show skeleton until ready
@@ -4624,8 +4628,11 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                     artEl.classList.remove('rm-skeleton');
                     if (newSrc) {
                         artEl.innerHTML = `<img src="${escH(newSrc)}" style="width:100%;height:100%;object-fit:cover" onerror="this.outerHTML='<i class=\\'fas fa-music\\'></i>'">`;
+                    } else if (isMusic) {
+                        artEl.innerHTML = '<i class="fas fa-music"></i>';
                     } else {
-                        const _fItem = { name: item.name, favicon: item.image, homepage: item.homepage || '', url: item.url, stationuuid: item.uuid || item.stationuuid || '' };
+                        // Radio / podcast — station icon with logo manifest
+                        const _fItem = { name: item.name, favicon: item.image || item.favicon, homepage: item.homepage || '', url: item.url, stationuuid: item.uuid || item.stationuuid || '' };
                         artEl.innerHTML = _stationIconHtml(_fItem);
                     }
                 }
