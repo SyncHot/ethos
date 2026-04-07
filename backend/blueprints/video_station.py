@@ -66,7 +66,7 @@ import urllib.error
 
 from flask import Blueprint, jsonify, request, Response, send_file
 
-from host import host_run, q, data_path, app_path
+from host import host_run, host_run_stream, q, data_path, app_path
 from crypto_utils import hash_folder_password as _hash_pw, verify_folder_password as _verify_pw
 
 from blueprints.admin_required import admin_required
@@ -2015,7 +2015,86 @@ def hw_health():
     return jsonify(_hw_health_check())
 
 
+@video_station_bp.route("/hw-install", methods=["POST"])
+@admin_required
+def hw_install():
+    """Auto-install VAAPI drivers for Intel GPUs, streamed as SSE.
 
+    Streams progress lines as:
+      data: {"line": "...", "done": false}
+    Final event:
+      data: {"done": true, "ok": true|false, "hw_encoder": "..."}
+    """
+    from flask import Response
+
+    def _generate():
+        global _HW_ENCODER
+
+        def _send(line, done=False, **kw):
+            import json
+            payload = {"line": line, "done": done}
+            payload.update(kw)
+            return "data: %s\n\n" % json.dumps(payload)
+
+        try:
+            yield _send("🔍 Wykrywanie systemu...")
+            # Check if we can use non-free
+            sources = ""
+            try:
+                sources = open("/etc/apt/sources.list").read()
+            except Exception:
+                pass
+
+            if "non-free" not in sources:
+                yield _send("📦 Włączanie repozytorium non-free...")
+                r = host_run(
+                    "sed -i 's/main$/main contrib non-free non-free-firmware/g' /etc/apt/sources.list",
+                    timeout=10
+                )
+                if r.returncode != 0:
+                    yield _send("⚠️  Nie udało się edytować sources.list (kontynuuję...)")
+
+            yield _send("🔄 Aktualizacja listy pakietów (apt update)...")
+            for line in host_run_stream("apt-get update -qq 2>&1"):
+                yield _send(line.rstrip())
+
+            yield _send("📥 Instalacja sterowników VAAPI...")
+            pkgs = "intel-media-va-driver-non-free i965-va-driver vainfo"
+            for line in host_run_stream(
+                "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends %s 2>&1" % pkgs
+            ):
+                yield _send(line.rstrip())
+
+            # Add current user to render+video groups
+            run_user = os.environ.get('SUDO_USER', '') or os.environ.get('USER', '') or 'ethos'
+            yield _send("👤 Dodawanie użytkownika '%s' do grup render i video..." % run_user)
+            host_run("usermod -aG render,video %s 2>&1 || true" % q(run_user), timeout=10)
+
+            yield _send("✅ Sterowniki zainstalowane. Testuję VAAPI...")
+
+            # Reset encoder cache and re-detect
+            _HW_ENCODER = None
+            new_encoder = _detect_hw_encoder()
+            if new_encoder != 'libx264':
+                yield _send(
+                    "🎉 Akceleracja sprzętowa aktywna! Enkoder: %s" % new_encoder,
+                    done=True, ok=True, hw_encoder=new_encoder
+                )
+            else:
+                yield _send(
+                    "ℹ️  VAAPI zainstalowane — restart serwisu wymagany do aktywacji.",
+                    done=True, ok=True, hw_encoder='libx264', restart_required=True
+                )
+        except Exception as exc:
+            yield _send("❌ Błąd: %s" % str(exc), done=True, ok=False, hw_encoder='libx264')
+
+    return Response(_generate(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@video_station_bp.route("/watched/<int:vid>", methods=["POST"])
+@require_auth
+def update_watched(vid):
     d = request.json or {}
     conn = _get_db()
     r = conn.execute("SELECT id FROM videos WHERE id=?", (vid,)).fetchone()

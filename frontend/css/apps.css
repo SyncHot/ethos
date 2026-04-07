@@ -6375,4 +6375,10 @@ textarea.app-input { resize: vertical; line-height: 1.5; }
     color:#fcd34d; line-height:1.5; }
 .vs-stats-hw-link { color:#fbbf24; text-decoration:underline; cursor:pointer; }
 .vs-stats-hw-link:hover { color:#fff; }
+.vs-hw-install-log {
+    background:#0d1117; color:#c9d1d9; font-size:11px; line-height:1.5;
+    padding:10px 12px; margin:0; max-height:180px; overflow-y:auto;
+    border-top:1px solid #333; border-radius:0 0 8px 8px; white-space:pre-wrap;
+    word-break:break-all;
+}
 

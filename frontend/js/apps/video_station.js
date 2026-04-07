@@ -313,11 +313,16 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
               (stepsHtml ? '<div class="vs-hw-modal-steps">' + stepsHtml + '</div>' : '') +
             '</div>' +
             '<div class="vs-hw-modal-footer">' +
-              '<button id="vs-hw-rescan-btn" class="app-btn app-btn-primary">' +
+              (health.status !== 'ok' && health.status !== 'cpu_only' ?
+                '<button id="vs-hw-autoinstall-btn" class="app-btn app-btn-primary">' +
+                  '<i class="fas fa-magic"></i> ' + t('Zainstaluj automatycznie') +
+                '</button>' : '') +
+              '<button id="vs-hw-rescan-btn" class="app-btn">' +
                 '<i class="fas fa-sync-alt"></i> ' + t('Skanuj ponownie') +
               '</button>' +
               '<button class="vs-hw-modal-close-btn app-btn">' + t('Zamknij') + '</button>' +
             '</div>' +
+            '<pre id="vs-hw-install-log" class="vs-hw-install-log" style="display:none"></pre>' +
           '</div>';
 
         body.appendChild(modal);
@@ -338,12 +343,74 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             };
         });
 
+        // Auto-install button
+        const autoBtn = modal.querySelector('#vs-hw-autoinstall-btn');
+        if (autoBtn) {
+            autoBtn.onclick = async () => {
+                const log = modal.querySelector('#vs-hw-install-log');
+                autoBtn.disabled = true;
+                autoBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Instaluję...');
+                log.style.display = 'block';
+                log.textContent = '';
+
+                try {
+                    const resp = await fetch('/api/video-station/hw-install', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': 'Bearer ' + NAS.token,
+                            'X-CSRF-Token': NAS.csrfToken || '',
+                        }
+                    });
+                    const reader = resp.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = '';
+                    let finalData = null;
+
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        buffer += decoder.decode(value, { stream: true });
+                        const parts = buffer.split('\n\n');
+                        buffer = parts.pop();
+                        for (const part of parts) {
+                            if (!part.startsWith('data: ')) continue;
+                            try {
+                                const ev = JSON.parse(part.slice(6));
+                                if (ev.line) {
+                                    log.textContent += ev.line + '\n';
+                                    log.scrollTop = log.scrollHeight;
+                                }
+                                if (ev.done) finalData = ev;
+                            } catch(e) {}
+                        }
+                    }
+
+                    if (finalData && finalData.ok) {
+                        if (finalData.restart_required) {
+                            toast(t('Sterowniki zainstalowane — wymagany restart serwisu EthOS'), 'warning');
+                        } else {
+                            toast(t('Akceleracja sprzętowa aktywna!') + ' (' + (finalData.hw_encoder || '') + ')', 'success');
+                            modal.remove();
+                            body.querySelector('.vs-hw-banner')?.remove();
+                        }
+                    } else {
+                        toast(t('Instalacja nie powiodła się — sprawdź log poniżej'), 'error');
+                        autoBtn.disabled = false;
+                        autoBtn.innerHTML = '<i class="fas fa-magic"></i> ' + t('Zainstaluj automatycznie');
+                    }
+                } catch(e) {
+                    toast(t('Błąd połączenia') + ': ' + e.message, 'error');
+                    autoBtn.disabled = false;
+                    autoBtn.innerHTML = '<i class="fas fa-magic"></i> ' + t('Zainstaluj automatycznie');
+                }
+            };
+        }
+
         // Rescan
         modal.querySelector('#vs-hw-rescan-btn').onclick = async () => {
             const btn = modal.querySelector('#vs-hw-rescan-btn');
             btn.disabled = true;
             btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Sprawdzam...');
-            // Force re-detection by fetching encoder-info (cache-busted)
             try {
                 const fresh = await api('/video-station/hw-health');
                 modal.remove();
