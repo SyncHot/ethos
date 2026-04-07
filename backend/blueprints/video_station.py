@@ -2093,7 +2093,6 @@ def hw_install():
 
 
 @video_station_bp.route("/watched/<int:vid>", methods=["POST"])
-@require_auth
 def update_watched(vid):
     d = request.json or {}
     conn = _get_db()
