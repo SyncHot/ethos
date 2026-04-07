@@ -4015,10 +4015,19 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     function playContext(items, startIdx = 0) {
         if (!items || !items.length) return;
         const idx = Math.max(0, Math.min(startIdx, items.length - 1));
-        _musicQueue = items.slice();
+        // Ensure every item has type set — items from music search may lack it
+        const normalised = items.map(it => {
+            if (!it.type) {
+                // Infer type: YouTube/archive → music, local path → local
+                const isYt = it.source === 'youtube' || (it.url && (it.url.includes('youtube.com') || it.url.includes('youtu.be')));
+                return { ...it, type: isYt ? 'music' : (it.path ? 'local' : 'music') };
+            }
+            return it;
+        });
+        _musicQueue = normalised.slice();
         _musicQueueIdx = idx;
-        _cl('info', 'playContext', { total: items.length, startIdx: idx, name: items[idx]?.name });
-        playAudio(items[idx]);
+        _cl('info', 'playContext', { total: normalised.length, startIdx: idx, name: normalised[idx]?.name });
+        playAudio(normalised[idx]);
     }
 
     /**

@@ -1462,6 +1462,7 @@ def music_search():
                               or f'https://i.ytimg.com/vi/{vid_id}/hqdefault.jpg'),
                 'url': (d.get('url', '') or d.get('webpage_url', '')
                         or f'https://www.youtube.com/watch?v={vid_id}'),
+                'type': 'music',
                 'source': 'youtube',
             })
     return jsonify({'items': items})
