@@ -2319,7 +2319,7 @@ async function _galFlushQueueForeground() {
   _galUpdateSyncBanner();
 }
 
-
+function _galInitDragDrop() {
   const main = GAL.root.querySelector('.gal-main');
   const dropOverlay = document.createElement('div');
   dropOverlay.className = 'gal-drop-overlay';
