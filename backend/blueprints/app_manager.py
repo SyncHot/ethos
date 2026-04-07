@@ -863,6 +863,15 @@ def _get_github_app_base():
 _MIN_FREE_MB = 300  # minimum free space on root before apt/pip install
 
 
+def _semver_key(ver):
+    """Return a sortable tuple for semver comparison (handles 1.10.0 > 1.9.0 correctly)."""
+    try:
+        parts = str(ver).split('.')
+        return tuple(int(p) for p in (parts + ['0', '0', '0'])[:3])
+    except Exception:
+        return (0, 0, 0)
+
+
 def _ensure_root_space(emit_fn):
     """Check root partition free space; proactively clean caches before install."""
     _PROACTIVE_CLEAN_MB = 600  # always clean caches if less than this
@@ -1182,6 +1191,8 @@ def _bg_install(app_id, app_def, task_id):
         _emit({'task_id': task_id, 'app_id': app_id, **extra})
 
     _needs_restart = False
+    _downloaded_frontend = None   # track newly downloaded files for cleanup on failure
+    _downloaded_backend = None
     _task_start()
     try:
         emit({'stage': 'start', 'percent': 5, 'message': 'Instalowanie ' + app_def['name'] + '...', 'status': 'running'})
@@ -1199,6 +1210,7 @@ def _bg_install(app_id, app_def, task_id):
                 if not _download_file(url, dest):
                     emit({'stage': 'error', 'percent': 0, 'message': 'Bląd pobierania frontend', 'status': 'error'})
                     return
+                _downloaded_frontend = dest
         else:
             emit({'stage': 'download', 'percent': 15, 'message': 'Pliki juz dostepne (bundled)', 'status': 'running'})
 
@@ -1214,6 +1226,7 @@ def _bg_install(app_id, app_def, task_id):
                 if not _download_file(bp_url, bp_dest):
                     emit({'stage': 'error', 'percent': 0, 'message': 'Bład pobierania backend — sprawdz połaczenie z internetem', 'status': 'error'})
                     return
+                _downloaded_backend = bp_dest
 
         # Instalacja zaleznosci (apt: 25-42%, pip: 45-57%)
         apt_deps = app_def.get('apt_deps', [])
@@ -1223,9 +1236,22 @@ def _bg_install(app_id, app_def, task_id):
             return
 
         if apt_deps and not _install_apt_deps(apt_deps, emit):
+            # Clean up freshly downloaded files — app isn't usable without its deps
+            for p in (_downloaded_backend, _downloaded_frontend):
+                if p:
+                    try:
+                        os.remove(p)
+                    except OSError:
+                        pass
             return
 
         if pip_deps and not _install_pip_deps(pip_deps, emit):
+            for p in (_downloaded_backend, _downloaded_frontend):
+                if p:
+                    try:
+                        os.remove(p)
+                    except OSError:
+                        pass
             return
 
         # Hot-load blueprint so its routes are available immediately
@@ -1578,7 +1604,7 @@ def check_updates():
     for app in catalog:
         inst = installed.get(app['id'])
         if inst and inst.get('version') not in ('bundled', 'core', app.get('version', '')):
-            if app.get('version', '') > inst.get('version', ''):
+            if _semver_key(app.get('version', '')) > _semver_key(inst.get('version', '')):
                 updates.append({
                     'id': app['id'],
                     'name': app.get('name', app['id']),

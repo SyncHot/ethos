@@ -2243,9 +2243,26 @@ def _github_api(method, path, token, body=None, timeout=30):
     except urllib.error.HTTPError as e:
         try:
             body_text = e.read().decode()
-            return e.code, json.loads(body_text)
+            parsed = json.loads(body_text)
+            # Enrich with human-readable context for common errors
+            if e.code == 401:
+                parsed['_hint'] = 'Nieprawidłowy token GitHub. Sprawdź token w konfiguracji Publishera.'
+            elif e.code == 403:
+                rate_remaining = e.headers.get('X-RateLimit-Remaining', '?')
+                if rate_remaining == '0':
+                    reset_ts = e.headers.get('X-RateLimit-Reset', '')
+                    parsed['_hint'] = f'Przekroczono limit GitHub API. Poczekaj chwilę.'
+                else:
+                    parsed['_hint'] = 'Brak uprawnień. Token musi mieć scope: repo (lub contents:write).'
+            elif e.code == 404:
+                parsed['_hint'] = f'Nie znaleziono zasobu GitHub: {path}'
+            elif e.code == 422:
+                parsed['_hint'] = 'GitHub odrzucił żądanie (błąd walidacji). Sprawdź zawartość pliku.'
+            return e.code, parsed
         except Exception:
             return e.code, {'message': str(e)}
+    except Exception as e:
+        return 0, {'message': f'Błąd sieci: {e}'}
 
 
 def _bump_version(ver):
@@ -2414,7 +2431,9 @@ def publish_apps():
             # Get current main branch ref
             code, ref_data = _github_api('GET', f'/repos/{repo}/git/ref/heads/main', token)
             if code != 200:
-                yield _sse({'type': 'done', 'success': False, 'message': f'Nie można pobrać ref main: {ref_data.get("message", code)}'})
+                hint = ref_data.get('_hint', '')
+                msg = ref_data.get('message', str(code))
+                yield _sse({'type': 'done', 'success': False, 'message': f'Nie można pobrać ref main: {msg}' + (f' — {hint}' if hint else '')})
                 return
             current_sha = ref_data['object']['sha']
 

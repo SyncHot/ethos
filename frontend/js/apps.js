@@ -5681,17 +5681,23 @@ function renderPackageCenter(body) {
         const r = 13, c = 2 * Math.PI * r;
         const offset = c - (c * Math.min(pct, 100) / 100);
         // Counter-rotate text 90° to cancel the SVG's -90° rotation
-        const inner = done
-            ? `<text x="16" y="17" transform="rotate(90,16,16)" class="pm-ring-icon">✓</text>`
-            : `<text x="16" y="17" transform="rotate(90,16,16)" class="pm-ring-pct">${Math.round(pct)}</text>`;
-        return `<svg class="pm-ring-svg" viewBox="0 0 32 32"><circle class="pm-ring-bg" cx="16" cy="16" r="${r}"/><circle class="pm-ring-fill${done ? ' pm-ring-fill-done' : ''}" cx="16" cy="16" r="${r}" stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${offset.toFixed(1)}"/>${inner}</svg>`;
+        let inner;
+        if (done === 'error') {
+            inner = `<text x="16" y="17" transform="rotate(90,16,16)" class="pm-ring-icon pm-ring-icon-error">✗</text>`;
+        } else if (done) {
+            inner = `<text x="16" y="17" transform="rotate(90,16,16)" class="pm-ring-icon">✓</text>`;
+        } else {
+            inner = `<text x="16" y="17" transform="rotate(90,16,16)" class="pm-ring-pct">${Math.round(pct)}</text>`;
+        }
+        const fillClass = done === 'error' ? 'pm-ring-fill pm-ring-fill-error' : (done ? 'pm-ring-fill pm-ring-fill-done' : 'pm-ring-fill');
+        return `<svg class="pm-ring-svg" viewBox="0 0 32 32"><circle class="pm-ring-bg" cx="16" cy="16" r="${r}"/><circle class="${fillClass}" cx="16" cy="16" r="${r}" stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${offset.toFixed(1)}"/>${inner}</svg>`;
     }
 
     function renderCard(app) {
         const prog = S.progressMap[app.id];
         const isRunning = prog && prog.status === 'running';
         const isFinishing = prog && prog.status === 'finishing';
-        const hasError = prog && prog.status === 'error';
+        const isErrorStage = prog && prog.stage === 'error';
         const busy = _anyBusy();
         const dis = busy && !isRunning && !isFinishing ? ' disabled' : '';
 
@@ -5699,13 +5705,10 @@ function renderPackageCenter(body) {
         if (app.core) {
             actionHtml = `<span class="pm-badge-core"><i class="fas fa-lock"></i> Core</span>`;
         } else if (isFinishing) {
-            actionHtml = `<div class="pm-ring-wrap">${_ringSvg(100, true)}</div>`;
+            actionHtml = `<div class="pm-ring-wrap">${_ringSvg(100, isErrorStage ? 'error' : true)}</div>`;
         } else if (isRunning) {
             const pct = prog.percent || 0;
             actionHtml = `<div class="pm-ring-wrap">${_ringSvg(pct, false)}</div>`;
-        } else if (hasError) {
-            actionHtml = `<div class="pm-error-msg"><i class="fas fa-exclamation-triangle"></i> ${escHtml(prog.message)}</div>
-              <button class="pm-btn-install"${dis} data-id="${app.id}" title="${t('Spróbuj ponownie')}"><i class="fas fa-redo"></i></button>`;
         } else if (app.update_available) {
             actionHtml = `<button class="pm-btn-update"${dis} data-id="${app.id}" title="${t('Aktualizuj')}"><i class="fas fa-sync-alt"></i></button>
               <button class="pm-btn-uninstall"${dis} data-id="${app.id}" title="${t('Odinstaluj')}"><i class="fas fa-trash"></i></button>`;
@@ -5810,8 +5813,14 @@ function renderPackageCenter(body) {
         if (S.progressMap[appId]?.status === 'running') return;
         S.progressMap[appId] = { stage: 'start', percent: 5, message: t('Uruchamianie…'), status: 'running', _started: Date.now() };
         render();
-        const data = await api('/app-manager/' + appId + '/install', { method: 'POST' });
-        if (data.error) { toast(data.error, 'error'); delete S.progressMap[appId]; render(); }
+        try {
+            const data = await api('/app-manager/' + appId + '/install', { method: 'POST' });
+            if (data.error) { toast(data.error, 'error'); delete S.progressMap[appId]; render(); }
+        } catch (e) {
+            toast(t('Błąd połączenia z serwerem'), 'error');
+            delete S.progressMap[appId];
+            render();
+        }
     }
 
     async function uninstallApp(appId) {
@@ -5821,16 +5830,28 @@ function renderPackageCenter(body) {
         if (!await confirmDialog(t('Odinstalować') + ' ' + nm + '?')) return;
         S.progressMap[appId] = { stage: 'start', percent: 5, message: t('Odinstalowywanie…'), status: 'running', _started: Date.now() };
         render();
-        const data = await api('/app-manager/' + appId + '/uninstall', { method: 'POST' });
-        if (data.error) { toast(data.error, 'error'); delete S.progressMap[appId]; render(); }
+        try {
+            const data = await api('/app-manager/' + appId + '/uninstall', { method: 'POST' });
+            if (data.error) { toast(data.error, 'error'); delete S.progressMap[appId]; render(); }
+        } catch (e) {
+            toast(t('Błąd połączenia z serwerem'), 'error');
+            delete S.progressMap[appId];
+            render();
+        }
     }
 
     async function updateApp(appId) {
         if (_anyBusy()) return;
         S.progressMap[appId] = { stage: 'start', percent: 5, message: t('Aktualizowanie…'), status: 'running', _started: Date.now() };
         render();
-        const data = await api('/app-manager/' + appId + '/update', { method: 'POST' });
-        if (data.error) { toast(data.error, 'error'); delete S.progressMap[appId]; render(); }
+        try {
+            const data = await api('/app-manager/' + appId + '/update', { method: 'POST' });
+            if (data.error) { toast(data.error, 'error'); delete S.progressMap[appId]; render(); }
+        } catch (e) {
+            toast(t('Błąd połączenia z serwerem'), 'error');
+            delete S.progressMap[appId];
+            render();
+        }
     }
 
     async function checkOtaUpdates() {
