@@ -28,6 +28,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     let _swReady = false;      // Service Worker available for offline caching
     let _nasSpinTimer = null;  // detect slow NAS wake (>3s)
     let _queueContent = null;  // DOM node of the queue panel (null when not visible)
+    let _renderNpQueueFn = null; // ref to _renderNpQueue inside the overlay closure
 
     // ── Chromecast state ──
     let _isCasting = false;
@@ -672,8 +673,9 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-np-btn{background:none;border:none;color:rgba(255,255,255,.7);font-size:22px;cursor:pointer;padding:10px;border-radius:50%;transition:all .12s}',
 '.rm-np-btn.rm-mode-active{color:#1DB954}',
 '.rm-np-btn:hover{color:#fff;transform:scale(1.1)}',
-'.rm-np-btn.rm-np-play{width:64px;height:64px;font-size:26px;background:#1DB954;color:#000;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 20px rgba(29,185,84,.3)}',
+'.rm-np-btn.rm-np-play{width:64px;height:64px;font-size:26px;background:#1DB954;color:#000;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 20px rgba(29,185,84,.3);position:relative;overflow:visible}',
 '.rm-np-btn.rm-np-play:hover{background:#1ed760;transform:scale(1.06)}',
+'.rm-np-btn.rm-np-play.rm-loading::after{content:"";position:absolute;inset:-5px;border-radius:50%;border:3px solid transparent;border-top-color:#1DB954;border-right-color:rgba(29,185,84,.4);animation:rm-spin .7s linear infinite;pointer-events:none}',
 '.rm-np-actions{display:flex;gap:10px;margin-top:4px;flex-wrap:wrap;justify-content:center}',
 '.rm-np-action{background:rgba(255,255,255,.06);border:none;color:rgba(255,255,255,.5);font-size:13px;cursor:pointer;padding:8px 16px;border-radius:20px;transition:all .12s;display:flex;align-items:center;gap:6px}',
 '.rm-np-action:hover{background:rgba(255,255,255,.12);color:#fff}',
@@ -889,12 +891,28 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 }
             }, { passive: true });
 
-            // Player controls
+            // Player controls — optimistic toggle: icon flips instantly, reverts if play() rejects
             const playPauseBtn = body.querySelector('#rm-play-pause');
             playPauseBtn.onclick = () => {
                 if (!_audio) return;
-                if (_audio.paused) { _audio.play(); playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>'; _showEq(true); }
-                else { _audio.pause(); playPauseBtn.innerHTML = '<i class="fas fa-play"></i>'; _showEq(false); }
+                const npBtn = _npOverlay?.querySelector('#rm-np-playpause');
+                if (_audio.paused) {
+                    playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
+                    if (npBtn) npBtn.innerHTML = '<i class="fas fa-pause"></i>';
+                    _showEq(true);
+                    _audio.play().catch(err => {
+                        if (err.name !== 'AbortError') {
+                            playPauseBtn.innerHTML = '<i class="fas fa-play"></i>';
+                            if (npBtn) npBtn.innerHTML = '<i class="fas fa-play"></i>';
+                            _showEq(false);
+                        }
+                    });
+                } else {
+                    _audio.pause();
+                    playPauseBtn.innerHTML = '<i class="fas fa-play"></i>';
+                    if (npBtn) npBtn.innerHTML = '<i class="fas fa-play"></i>';
+                    _showEq(false);
+                }
             };
             body.querySelector('#rm-prev-btn').onclick = () => _skipStation(-1);
             body.querySelector('#rm-next-btn').onclick = () => _skipStation(1);
@@ -946,9 +964,14 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             // Initialize offline archive manager (SocketIO listeners + SW readiness)
             try { _initArchive(); } catch(e) { _cl('error', 'Archive init failed', { error: e.message }); }
 
-            // Subscribe store → auto-refresh queue highlight when track changes via Next/Prev/Cast
+            // Subscribe store → auto-refresh queue highlights when track changes via Next/Prev/Cast
             _rmStore.subscribe(() => {
                 _refreshQueueHighlight();
+                // Also refresh the mini-queue inside the NP overlay (if open and panel visible)
+                if (_renderNpQueueFn) {
+                    const panel = _npOverlay?.querySelector('#rm-np-queue-panel');
+                    if (panel?.classList.contains('rm-np-queue-visible')) _renderNpQueueFn();
+                }
             });
 
             // Restore previous playback state (paused, showing last track)
@@ -3027,6 +3050,9 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             // F-01: progress ring on play button signals NAS loading to user
             const playBtn = bodyEl.querySelector('#rm-play-pause');
             if (playBtn) playBtn.classList.toggle('rm-loading', on);
+            // Sync loading ring to NP overlay play button too
+            const npPlayBtn = _npOverlay?.querySelector('#rm-np-playpause');
+            if (npPlayBtn) npPlayBtn.classList.toggle('rm-loading', on);
             bodyEl.querySelectorAll('.rm-card, .rm-track').forEach(c => c.classList.remove('rm-buffering'));
             if (on && item.uuid) {
                 bodyEl.querySelectorAll('.rm-card').forEach(c => {
@@ -3124,6 +3150,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             clearTimeout(_radioRetryTimer); _radioRetryTimer = null;
             bodyEl.querySelector('#rm-autoplay-prompt')?.remove(); // clear tap-to-play if shown
             bodyEl.querySelector('#rm-play-pause').innerHTML = '<i class="fas fa-pause"></i>';
+            _npOverlay?.querySelector('#rm-np-playpause')?.innerHTML && (_npOverlay.querySelector('#rm-np-playpause').innerHTML = '<i class="fas fa-pause"></i>');
             _showEq(!isMusic && !isLocal);
             _updateSeekbar();
             _savePlaybackState();
@@ -3136,6 +3163,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         _audio.onpause = () => {
             _releaseWakeLock();
             bodyEl.querySelector('#rm-play-pause').innerHTML = '<i class="fas fa-play"></i>';
+            _npOverlay?.querySelector('#rm-np-playpause')?.innerHTML && (_npOverlay.querySelector('#rm-np-playpause').innerHTML = '<i class="fas fa-play"></i>');
             _showEq(false);
             _savePlaybackState();
             if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
@@ -3666,7 +3694,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         if (btn) btn.innerHTML = paused
             ? '<i class="fas fa-play"></i>'
             : '<i class="fas fa-pause"></i>';
-        const npBtn = _npOverlay?.querySelector('#rm-np-play-pause');
+        const npBtn = _npOverlay?.querySelector('#rm-np-playpause');
         if (npBtn) npBtn.innerHTML = paused
             ? '<i class="fas fa-play"></i>'
             : '<i class="fas fa-pause"></i>';
@@ -4465,15 +4493,25 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             }
         }, { passive: true });
 
-        // Controls
+        // Controls — optimistic: icon flips instantly, reverts only if play() rejects
         ov.querySelector('#rm-np-playpause').onclick = () => {
             if (!_audio) return;
+            const btn = ov.querySelector('#rm-np-playpause');
+            const miniBtn = bodyEl?.querySelector('#rm-play-pause');
             if (_audio.paused) {
-                _audio.play();
-                ov.querySelector('#rm-np-playpause').innerHTML = '<i class="fas fa-pause"></i>';
+                // Optimistic: show Pause immediately
+                btn.innerHTML = '<i class="fas fa-pause"></i>';
+                if (miniBtn) miniBtn.innerHTML = '<i class="fas fa-pause"></i>';
+                _audio.play().catch(err => {
+                    if (err.name !== 'AbortError') { // AbortError = another src change interrupted, not a real failure
+                        btn.innerHTML = '<i class="fas fa-play"></i>';
+                        if (miniBtn) miniBtn.innerHTML = '<i class="fas fa-play"></i>';
+                    }
+                });
             } else {
+                btn.innerHTML = '<i class="fas fa-play"></i>';
+                if (miniBtn) miniBtn.innerHTML = '<i class="fas fa-play"></i>';
                 _audio.pause();
-                ov.querySelector('#rm-np-playpause').innerHTML = '<i class="fas fa-play"></i>';
             }
         };
         ov.querySelector('#rm-np-prev').onclick = () => _skipStation(-1);
@@ -4586,19 +4624,21 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             // Scroll current into view
             const cur = queuePanel.querySelector('.rm-q-current');
             if (cur) cur.scrollIntoView({ block: 'center', behavior: 'smooth' });
-            // Click to jump
+            // Click to jump — Action Proxy: same as clicking the track in the list
             queuePanel.querySelectorAll('.rm-np-q-item').forEach(el => {
                 el.onclick = () => {
                     const idx = parseInt(el.dataset.idx, 10);
                     if (isNaN(idx) || idx === _musicQueueIdx) return;
                     _musicQueueIdx = idx;
                     const tr = _musicQueue[idx];
+                    // Overlay stays open — only content changes (R-02: no _hideNowPlaying here)
                     if (tr._plItem) {
                         _playTrackFromPlaylist(tr);
                     } else {
                         playMusicTrack(tr);
                     }
-                    _hideNowPlaying();
+                    // Refresh NP queue panel highlight in-place
+                    _renderNpQueue();
                 };
             });
         }
@@ -4684,6 +4724,9 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             }));
         }
 
+        // Expose _renderNpQueue so the store subscriber can refresh it on Next/Prev
+        _renderNpQueueFn = _renderNpQueue;
+
         // Push history state so Android back minimizes overlay instead of navigating away
         if (!history.state?.rmNpOpen) history.pushState({ rmNpOpen: true }, '');
         localStorage.setItem('rm_np_open', '1');
@@ -4707,6 +4750,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             _npOverlay.remove();
             _npOverlay = null;
         }
+        _renderNpQueueFn = null;
         localStorage.removeItem('rm_np_open');
     }
 
