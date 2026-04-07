@@ -34,6 +34,8 @@ Routes:
   POST /api/radio-music/local/folders      - add/remove music folder
   GET  /api/radio-music/local/scan         - scan folders for audio files
   GET  /api/radio-music/local/stream       - stream local audio file (?path=)
+  DELETE /api/radio-music/local/file       - delete a single local audio file
+  DELETE /api/radio-music/local/folder     - delete a local folder and its contents
   GET  /api/radio-music/playlists           - list user's playlists
   POST /api/radio-music/playlists           - create playlist
   GET  /api/radio-music/playlists/<id>      - get playlist
@@ -977,7 +979,59 @@ def local_scan():
     return jsonify({'items': items, 'folders': folders})
 
 
-@radio_music_bp.route('/local/stream', methods=['GET'])
+@radio_music_bp.route('/local/file', methods=['DELETE'])
+@require_auth
+def local_delete_file():
+    """Delete a single local audio file."""
+    body = request.get_json(force=True, silent=True) or {}
+    fpath = (body.get('path') or '').strip()
+    if not fpath:
+        return jsonify({'error': 'Brak ścieżki'}), 400
+    # Validate path is within a configured music folder
+    music_folders = _get_music_folders() + _get_audiobook_folders()
+    try:
+        resolved = safe_path(fpath, '/')
+    except ValueError:
+        return jsonify({'error': 'Nieprawidłowa ścieżka'}), 400
+    if not any(resolved.startswith(os.path.realpath(f) + os.sep) or resolved == os.path.realpath(f)
+               for f in music_folders):
+        return jsonify({'error': 'Plik poza folderem muzyki'}), 403
+    if not os.path.isfile(resolved):
+        return jsonify({'error': 'Plik nie istnieje'}), 404
+    try:
+        os.remove(resolved)
+    except OSError as e:
+        return jsonify({'error': str(e)}), 500
+    return jsonify({'ok': True})
+
+
+@radio_music_bp.route('/local/folder', methods=['DELETE'])
+@require_auth
+def local_delete_folder():
+    """Delete a local folder and all its audio contents."""
+    body = request.get_json(force=True, silent=True) or {}
+    fpath = (body.get('path') or '').strip()
+    if not fpath:
+        return jsonify({'error': 'Brak ścieżki'}), 400
+    music_folders = _get_music_folders() + _get_audiobook_folders()
+    try:
+        resolved = safe_path(fpath, '/')
+    except ValueError:
+        return jsonify({'error': 'Nieprawidłowa ścieżka'}), 400
+    real_music_folders = [os.path.realpath(f) for f in music_folders]
+    # Must be within (but not equal to) a configured music folder
+    if not any(resolved.startswith(rf + os.sep) for rf in real_music_folders):
+        return jsonify({'error': 'Folder poza folderem muzyki lub jest głównym folderem'}), 403
+    if not os.path.isdir(resolved):
+        return jsonify({'error': 'Folder nie istnieje'}), 404
+    try:
+        shutil.rmtree(resolved)
+    except OSError as e:
+        return jsonify({'error': str(e)}), 500
+    return jsonify({'ok': True})
+
+
+
 def local_stream():
     """Stream a local audio file."""
     fpath = request.args.get('path', '').lstrip()

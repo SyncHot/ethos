@@ -2030,6 +2030,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 + '<div class="rm-track-actions">'
                 + '<button class="rm-track-btn" title="' + t('Playlista') + '"><i class="fas fa-list-ul"></i></button>'
                 + '<button class="rm-track-btn rm-add-queue-btn" title="' + t('Kolejka') + '"><i class="fas fa-plus"></i></button>'
+                + '<button class="rm-track-btn rm-local-del-btn" title="' + t('Usuń plik') + '" style="color:rgba(239,68,68,.5)"><i class="fas fa-trash-alt"></i></button>'
                 + '</div>';
             const localItem = {
                 name: file.name, type: 'local', path: file.path,
@@ -2056,6 +2057,24 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             };
             const plBtn = el.querySelector('.rm-track-btn[title="' + t('Playlista') + '"]');
             if (plBtn) plBtn.onclick = (e) => { e.stopPropagation(); _showAddToPlaylistModal(localItem); };
+            const delBtn = el.querySelector('.rm-local-del-btn');
+            if (delBtn) delBtn.onclick = async (e) => {
+                e.stopPropagation();
+                if (!confirm(t('Usunąć plik?') + '\n' + file.filename)) return;
+                const res = await api('/radio-music/local/file', { method: 'DELETE', body: { path: file.path } });
+                if (res.error) { toast(res.error, 'error'); return; }
+                // Remove from in-memory lists and re-render
+                const idx = items.indexOf(file);
+                if (idx >= 0) items.splice(idx, 1);
+                const bfArr = byFolder[folder];
+                if (bfArr) {
+                    const bi = bfArr.indexOf(file);
+                    if (bi >= 0) bfArr.splice(bi, 1);
+                    if (!bfArr.length) delete byFolder[folder];
+                }
+                _applyLocalFilter(content.querySelector('#rm-local-search')?.value || '');
+                toast(t('Usunięto: ') + file.name, 'success');
+            };
             return el;
         }
 
@@ -2071,8 +2090,37 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             if (entry.isHeader) {
                 const h = document.createElement('div');
                 h.className = 'rm-section-title';
-                h.innerHTML = '<i class="fas fa-folder"></i> ' + escH(entry.name)
+                h.style.display = 'flex';
+                h.style.alignItems = 'center';
+                h.style.justifyContent = 'space-between';
+                const label = document.createElement('span');
+                label.innerHTML = '<i class="fas fa-folder"></i> ' + escH(entry.name)
                     + ' <span style="font-size:11px;color:var(--text-muted);font-weight:400">(' + entry.count + ')</span>';
+                h.appendChild(label);
+                if (entry.folderPath) {
+                    const delFolderBtn = document.createElement('button');
+                    delFolderBtn.className = 'rm-track-btn rm-local-del-btn';
+                    delFolderBtn.title = t('Usuń folder');
+                    delFolderBtn.style.cssText = 'color:rgba(239,68,68,.5);flex-shrink:0';
+                    delFolderBtn.innerHTML = '<i class="fas fa-folder-minus"></i>';
+                    delFolderBtn.onclick = async (e) => {
+                        e.stopPropagation();
+                        const groupKey = entry.groupKey;
+                        const folderFiles = byFolder[groupKey] || [];
+                        if (!confirm(t('Usunąć folder i') + ' ' + folderFiles.length + ' ' + t('plików?') + '\n' + entry.folderPath)) return;
+                        const res = await api('/radio-music/local/folder', { method: 'DELETE', body: { path: entry.folderPath } });
+                        if (res.error) { toast(res.error, 'error'); return; }
+                        // Remove all files in this group from in-memory lists
+                        folderFiles.forEach(f => {
+                            const idx = items.indexOf(f);
+                            if (idx >= 0) items.splice(idx, 1);
+                        });
+                        delete byFolder[groupKey];
+                        _applyLocalFilter(content.querySelector('#rm-local-search')?.value || '');
+                        toast(t('Usunięto folder: ') + entry.name, 'success');
+                    };
+                    h.appendChild(delFolderBtn);
+                }
                 return h;
             }
             return _buildLocalTrackEl(entry.file, entry.folder);
@@ -2143,7 +2191,10 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             } else {
                 const sortedGroups = Object.entries(byFolder).sort(([a], [b]) => a.localeCompare(b));
                 for (const [group, files] of sortedGroups) {
-                    entries.push({ isHeader: true, name: group, count: files.length });
+                    const sample = files[0];
+                    const parts = (sample.relative || sample.filename).split('/');
+                    const realFolderPath = parts.length > 1 ? (sample.folder + '/' + group) : sample.folder;
+                    entries.push({ isHeader: true, name: group, count: files.length, folderPath: realFolderPath, groupKey: group });
                     files.forEach(f => { entries.push({ file: f, folder: group }); count++; });
                 }
             }
