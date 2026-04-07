@@ -30,6 +30,10 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     let _queueContent = null;  // DOM node of the queue panel (null when not visible)
     let _renderNpQueueFn = null; // ref to _renderNpQueue inside the overlay closure
 
+    // ── Local radio logo cache (UUID → /img/radio-logos/filename) ──
+    let _logoManifest = null;
+    fetch('/img/radio-logos/manifest.json').then(r => r.ok ? r.json() : {}).then(d => { _logoManifest = d; }).catch(() => { _logoManifest = {}; });
+
     // ── Chromecast state ──
     let _isCasting = false;
     let _castSession = null;
@@ -354,10 +358,21 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
     // Multi-layer logo: Google favicon (128px, from homepage domain) → Radio Browser favicon → letter avatar
     // Google service returns high-quality logos; Radio Browser favicons are often tiny/broken
+    // Priority: local cached logo (from manifest) → Google favicon → RB favicon → letter avatar
     function _stationIconHtml(s) {
         const letter = _stationInitial(s.name);
         const bg = _stationColor(s.name);
         const letterFallback = '<span class="rm-letter-icon" style="display:none;background:' + bg + '">' + escH(letter) + '</span>';
+        const uuid = s.stationuuid || '';
+        const localFile = uuid && _logoManifest ? _logoManifest[uuid] : null;
+        const localSrc = localFile ? '/img/radio-logos/' + localFile : null;
+
+        // If we have a pre-downloaded local logo, use it first (fast, no external request)
+        if (localSrc) {
+            return '<img src="' + escH(localSrc) + '" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">'
+                 + letterFallback;
+        }
+
         const domain = _domainOf(s.homepage || s.url);
         const googleSrc = _googleIcon(domain);
         const rbFavicon = s.favicon || '';
