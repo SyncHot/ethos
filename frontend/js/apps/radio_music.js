@@ -114,6 +114,19 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     let _lockOverlay = null;
     let _wakeLock = null;
 
+    // BroadcastChannel — coordinate multi-tab audio (E-07/E-12): only one tab plays at a time
+    const _tabId = Math.random().toString(36).slice(2);
+    const _bc = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('rm-audio-master') : null;
+    if (_bc) {
+        _bc.onmessage = (e) => {
+            // Another tab started playing — pause this tab silently
+            if (e.data.type === 'playing' && e.data.tabId !== _tabId && _audio && !_audio.paused) {
+                _audio.pause();
+                _cl('info', 'Paused: another tab took audio focus', { remoteTab: e.data.tabId });
+            }
+        };
+    }
+
     const _AUDIOBOOK_CATEGORIES = [
         {q: 'najlepsze audiobooki dla dzieci po polsku 2024 2025', label: '🏆 Top bajki'},
         {q: 'bajki dla dzieci audiobook po polsku', label: '🇵🇱 Bajki po polsku'},
@@ -893,6 +906,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             _hideLockScreen();
             window.removeEventListener('popstate', _onPopState, true);
             document.body.classList.remove('app-fullscreen-active');
+            if (_bc) _bc.close();
         },
     });
     setTimeout(() => { if (typeof toggleMaximize === 'function') toggleMaximize('radio-music'); }, 50);
@@ -2965,6 +2979,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             hasPlayed = true;
             localStorage.setItem('rm_autoplay_ok', '1');
             _acquireWakeLock();
+            // Notify other tabs to pause (master-tab coordination)
+            if (_bc) _bc.postMessage({ type: 'playing', tabId: _tabId });
             _setBuffering(false);
             clearTimeout(_radioRetryTimer); _radioRetryTimer = null;
             bodyEl.querySelector('#rm-autoplay-prompt')?.remove(); // clear tap-to-play if shown
@@ -2984,6 +3000,13 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             _showEq(false);
             _savePlaybackState();
             if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
+            // E-12: Audio Focus Loss detection — if pause was NOT user-initiated
+            // (hasPlayed=true means we were actually playing), show subtle resume hint
+            if (hasPlayed && document.visibilityState === 'hidden') {
+                // System took audio focus (another app started playing) — nothing to do,
+                // user will resume from lock screen MediaSession controls
+                _cl('info', 'Audio paused by system (audio focus loss / hidden page)');
+            }
         };
         _audio.onstalled = () => {
             if (!isRadio || !hasPlayed) return;
@@ -3217,6 +3240,71 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             _acquireWakeLock();
         }
     });
+
+    // E-11: Bluetooth / audio output device disconnect — auto-pause to avoid music
+    // blaring from phone speaker when headphones are pulled out in public
+    if ('mediaDevices' in navigator && 'enumerateDevices' in navigator.mediaDevices) {
+        let _lastOutputCount = 0;
+        navigator.mediaDevices.enumerateDevices().then(devs => {
+            _lastOutputCount = devs.filter(d => d.kind === 'audiooutput').length;
+        }).catch(() => {});
+
+        navigator.mediaDevices.addEventListener('devicechange', async () => {
+            if (!_audio || _audio.paused) return;
+            try {
+                const devs = await navigator.mediaDevices.enumerateDevices();
+                const outputs = devs.filter(d => d.kind === 'audiooutput');
+                if (outputs.length < _lastOutputCount) {
+                    _audio.pause();
+                    _cl('info', 'Audio paused: output device removed (Bluetooth disconnect)');
+                    _showSystemInterruptToast(t('Słuchawki odłączone — wstrzymano'));
+                }
+                _lastOutputCount = outputs.length;
+            } catch(e) { _cl('debug', 'devicechange check failed', { msg: e.message }); }
+        });
+    }
+
+    // E-12: Audio focus loss — another app/tab takes audio focus.
+    // Web has no explicit AudioFocus API; we use two signals:
+    // 1. MediaSession 'pause' action fired by Android system (already wired above via onpause)
+    // 2. Page visibility hidden while playing (tab backgrounded by another media app)
+    document.addEventListener('visibilitychange', () => {
+        // When page hides we check again a moment later; if still paused it was system-initiated
+        if (document.visibilityState === 'hidden') {
+            const audioRef = _audio;
+            if (!audioRef || audioRef.paused) return;
+            // Store the moment we hid; if audio is paused when we come back, show a resume prompt
+            audioRef._hiddenAt = Date.now();
+        } else if (document.visibilityState === 'visible' && _audio) {
+            if (_audio.paused && _audio._hiddenAt) {
+                const wasPausedExternally = (Date.now() - _audio._hiddenAt) < 60000;
+                if (wasPausedExternally) {
+                    _showSystemInterruptToast(t('Przerwano przez system — dotknij aby wznowić'), true);
+                }
+                _audio._hiddenAt = null;
+            }
+        }
+    });
+
+    // Toast for system-initiated pause events (BT disconnect, audio focus loss)
+    function _showSystemInterruptToast(msg, withResumeBtn = false) {
+        if (!bodyEl) return;
+        const existing = bodyEl.querySelector('#rm-sys-toast');
+        if (existing) existing.remove();
+        const toast = document.createElement('div');
+        toast.id = 'rm-sys-toast';
+        toast.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:rgba(30,30,30,.95);color:#fff;padding:12px 20px;border-radius:24px;font-size:13px;z-index:9999;display:flex;align-items:center;gap:12px;box-shadow:0 4px 20px rgba(0,0,0,.5);backdrop-filter:blur(12px);max-width:90vw;text-align:center';
+        toast.innerHTML = '<i class="fas fa-pause-circle" style="color:#1DB954"></i><span>' + msg + '</span>';
+        if (withResumeBtn) {
+            const btn = document.createElement('button');
+            btn.style.cssText = 'background:#1DB954;color:#000;border:none;border-radius:16px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap';
+            btn.textContent = t('▶ Wznów');
+            btn.onclick = () => { _audio?.play().catch(() => {}); toast.remove(); };
+            toast.appendChild(btn);
+        }
+        bodyEl.appendChild(toast);
+        setTimeout(() => toast.remove(), withResumeBtn ? 8000 : 3000);
+    }
 
     function stopPlayback() {
         _savePlaybackState();
@@ -3563,18 +3651,36 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     function _updateMediaSession() {
         if (!('mediaSession' in navigator) || !_playing) return;
         const item = _playing;
-        const artwork = item.image ? [{ src: item.image, sizes: '512x512', type: 'image/jpeg' }] : [];
+        // Build artwork array with multiple sizes for best lock screen rendering (min 512x512 on Motorola)
+        const artwork = [];
+        if (item.image) {
+            // Add explicit size variants — browsers pick the largest available
+            artwork.push({ src: item.image, sizes: '512x512', type: 'image/jpeg' });
+            artwork.push({ src: item.image, sizes: '256x256', type: 'image/jpeg' });
+            artwork.push({ src: item.image, sizes: '96x96',  type: 'image/jpeg' });
+        } else {
+            // Fallback: NAS icon — always 512x512 so lock screen is never blank
+            artwork.push({ src: '/img/icon-512.png', sizes: '512x512', type: 'image/png' });
+        }
         navigator.mediaSession.metadata = new MediaMetadata({
             title: item.name || '',
             artist: item.meta || 'EthOS Radio & Music',
-            album: item.type === 'radio' ? t('Radio Live') : '',
+            album: item.type === 'radio' ? t('Radio Live') : (item.album || ''),
             artwork,
         });
         navigator.mediaSession.setActionHandler('play', () => { _audio?.play(); });
         navigator.mediaSession.setActionHandler('pause', () => { _audio?.pause(); });
         navigator.mediaSession.setActionHandler('stop', () => stopPlayback());
-        navigator.mediaSession.setActionHandler('nexttrack', _musicQueue.length > 1 ? () => _advanceQueue() : null);
-        navigator.mediaSession.setActionHandler('previoustrack', _musicQueue.length > 1 ? () => _changeStation(-1) : null);
+        // Podcast queue uses _advancePodQueue, music uses _advanceQueue
+        const isPod = _playing?.type === 'podcast';
+        navigator.mediaSession.setActionHandler('nexttrack',
+            (isPod ? _podQueue.length > 1 : _musicQueue.length > 1)
+                ? () => { isPod ? _advancePodQueue() : _advanceQueue(); }
+                : null);
+        navigator.mediaSession.setActionHandler('previoustrack',
+            (isPod ? _podQueueIdx > 0 : _musicQueue.length > 1)
+                ? () => { isPod ? _prevPodQueue() : _changeStation(-1); }
+                : null);
         const canSeek = item.type !== 'radio';
         navigator.mediaSession.setActionHandler('seekto', canSeek ? (d) => {
             if (_audio && isFinite(_audio.duration)) { _audio.currentTime = d.seekTime; }
@@ -3585,6 +3691,11 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         navigator.mediaSession.setActionHandler('seekforward', canSeek ? (d) => {
             if (_audio) _audio.currentTime = Math.min(_audio.duration || Infinity, _audio.currentTime + (d.seekOffset || 10));
         } : null);
+    }
+
+    // Go back one episode in pod queue
+    function _prevPodQueue() {
+        if (_podQueueIdx > 0) { _podQueueIdx--; playAudio(_podQueue[_podQueueIdx]); }
     }
 
     function _fmtTime(s) {
