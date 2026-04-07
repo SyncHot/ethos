@@ -1968,27 +1968,197 @@ async function _galBatchShare() {
 }
 
 /* ━━━━  UPLOAD  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+/* ━━━━  UPLOAD MODAL (folder picker + per-file progress)  ━━━━━━━━━━━━━━━━━ */
+
+let _galUploadQueue = [];    // { file, status:'pending'|'uploading'|'done'|'error', progress:0-100, el }
+let _galUploading = false;
+
 function _galUploadClick() {
   const input = document.createElement('input');
   input.type = 'file';
   input.multiple = true;
   input.accept = 'image/*,video/*';
-  input.addEventListener('change', async () => {
-    const files = input.files;
-    if (!files.length) return;
-    const targetFolder = GAL.folder || (GAL.gallerySources.length ? GAL.gallerySources[0].path : '');
-    if (!targetFolder) { toast(t('Wybierz folder docelowy'), 'error'); return; }
-    const fd = new FormData();
-    for (const f of files) fd.append('files', f);
-    fd.append('folder', targetFolder);
-    toast(t('Przesyłanie') + ` ${files.length} ` + t('plików') + '...', 'info');
-    try {
-      const r = await api('/gallery/upload', { method: 'POST', body: fd });
-      toast(t('Przesłano') + ` ${r.uploaded} ` + t('plików'), 'success');
-      _galReload();
-    } catch(e) { toast(t('Błąd przesyłania: ') + e.message, 'error'); }
+  input.addEventListener('change', () => {
+    if (input.files.length) _galShowUploadModal([...input.files]);
   });
   input.click();
+}
+
+function _galShowUploadModal(files) {
+  const sources = GAL.gallerySources.filter(s => s.exists);
+  if (!sources.length) { toast(t('Najpierw dodaj folder źródłowy galerii'), 'error'); return; }
+
+  const defaultFolder = GAL.folder || sources[0].path;
+  let selectedFolder = defaultFolder;
+  let useDateSubfolders = false;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'gal-upload-overlay';
+
+  const renderQueue = () => _galUploadQueue.map((item, i) => `
+    <div class="gal-uq-item" data-idx="${i}">
+      <div class="gal-uq-icon"><i class="fa-solid fa-${item.file.type.startsWith('video/') ? 'film' : 'image'}"></i></div>
+      <div class="gal-uq-info">
+        <div class="gal-uq-name">${_esc(item.file.name)}</div>
+        <div class="gal-uq-size">${_galFmtSize(item.file.size)}</div>
+        <div class="gal-uq-bar-wrap" style="display:${item.status === 'pending' ? 'none' : 'block'}">
+          <div class="gal-uq-bar" style="width:${item.progress}%"></div>
+        </div>
+      </div>
+      <div class="gal-uq-status">
+        ${item.status === 'pending' ? '<i class="fa-solid fa-clock" style="color:var(--text-muted)"></i>'
+          : item.status === 'uploading' ? `<span class="gal-uq-pct">${item.progress}%</span>`
+          : item.status === 'done' ? '<i class="fa-solid fa-check-circle" style="color:#1DB954"></i>'
+          : '<i class="fa-solid fa-circle-xmark" style="color:#ef4444"></i>'}
+      </div>
+    </div>
+  `).join('');
+
+  const render = () => {
+    const done = _galUploadQueue.filter(i => i.status === 'done').length;
+    const total = _galUploadQueue.length;
+    const allDone = done === total && total > 0;
+    const uploading = _galUploadQueue.some(i => i.status === 'uploading');
+
+    overlay.innerHTML = `
+      <div class="gal-upload-modal">
+        <div class="gal-upload-modal-header">
+          <span class="gal-upload-modal-title"><i class="fa-solid fa-cloud-arrow-up"></i> ${t('Prześlij pliki')}</span>
+          <button class="gal-upload-modal-close" ${uploading ? 'disabled' : ''}><i class="fa-solid fa-xmark"></i></button>
+        </div>
+
+        <div class="gal-upload-dest">
+          <label class="gal-upload-dest-label"><i class="fa-solid fa-folder-open"></i> ${t('Folder docelowy')}</label>
+          <select class="gal-upload-folder-sel">
+            ${sources.map(s => `<option value="${_esc(s.path)}" ${s.path === selectedFolder ? 'selected' : ''}>${_esc(s.label)}</option>`).join('')}
+          </select>
+          <label class="gal-upload-date-label">
+            <input type="checkbox" class="gal-upload-date-cb" ${useDateSubfolders ? 'checked' : ''}>
+            ${t('Organizuj w podfolderach RRRR/MM')}
+          </label>
+        </div>
+
+        <div class="gal-uq-list">${renderQueue()}</div>
+
+        <div class="gal-upload-modal-footer">
+          <span class="gal-upload-summary">${allDone ? t('Przesłano') + ' ' + done + '/' + total : done + '/' + total + ' ' + t('plików')}</span>
+          <div style="display:flex;gap:8px">
+            <button class="gal-btn gal-upload-add-btn" ${uploading || allDone ? 'disabled' : ''}><i class="fa-solid fa-plus"></i> ${t('Dodaj więcej')}</button>
+            <button class="gal-btn gal-upload-start-btn" style="background:var(--gal-accent);color:#fff;border-color:var(--gal-accent)" ${uploading || allDone ? 'disabled' : ''}>${uploading ? '<i class="fa-solid fa-spinner fa-spin"></i> ' + t('Wysyłanie…') : '<i class="fa-solid fa-paper-plane"></i> ' + t('Wyślij')}</button>
+          </div>
+        </div>
+      </div>`;
+
+    // Wire events
+    overlay.querySelector('.gal-upload-modal-close').onclick = () => { overlay.remove(); if (done > 0) _galReload(); };
+    overlay.querySelector('.gal-upload-folder-sel').onchange = e => { selectedFolder = e.target.value; };
+    overlay.querySelector('.gal-upload-date-cb').onchange = e => { useDateSubfolders = e.target.checked; };
+
+    const addMoreBtn = overlay.querySelector('.gal-upload-add-btn');
+    if (addMoreBtn && !addMoreBtn.disabled) addMoreBtn.onclick = () => {
+      const inp = document.createElement('input');
+      inp.type = 'file'; inp.multiple = true; inp.accept = 'image/*,video/*';
+      inp.onchange = () => {
+        [...inp.files].forEach(f => _galUploadQueue.push({ file: f, status: 'pending', progress: 0 }));
+        render();
+      };
+      inp.click();
+    };
+
+    const startBtn = overlay.querySelector('.gal-upload-start-btn');
+    if (startBtn && !startBtn.disabled) startBtn.onclick = () => _galRunUploadQueue(selectedFolder, useDateSubfolders, render);
+  };
+
+  // init queue from files
+  _galUploadQueue = files.map(f => ({ file: f, status: 'pending', progress: 0 }));
+  render();
+  document.body.appendChild(overlay);
+}
+
+async function _galRunUploadQueue(folder, useDateSubfolders, rerenderFn) {
+  if (_galUploading) return;
+  _galUploading = true;
+  _galSetSyncIndicator(true);
+  rerenderFn();
+
+  const pending = _galUploadQueue.filter(i => i.status === 'pending');
+  // Upload one at a time with XHR for progress tracking
+  for (const item of pending) {
+    item.status = 'uploading';
+    rerenderFn();
+    try {
+      await new Promise((resolve, reject) => {
+        const fd = new FormData();
+        fd.append('files', item.file);
+        fd.append('folder', folder);
+        fd.append('date_subfolders', useDateSubfolders ? '1' : '0');
+
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/api/gallery/upload');
+        xhr.setRequestHeader('Authorization', 'Bearer ' + (NAS.token || ''));
+        xhr.setRequestHeader('X-CSRF-Token', NAS.csrfToken || '');
+
+        xhr.upload.onprogress = e => {
+          if (e.lengthComputable) {
+            item.progress = Math.round((e.loaded / e.total) * 100);
+            rerenderFn();
+          }
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            item.progress = 100;
+            item.status = 'done';
+            resolve();
+          } else {
+            item.status = 'error';
+            reject(new Error(xhr.statusText));
+          }
+          rerenderFn();
+        };
+        xhr.onerror = () => { item.status = 'error'; rerenderFn(); reject(new Error('Network error')); };
+        xhr.send(fd);
+      });
+    } catch (e) {
+      item.status = 'error';
+      rerenderFn();
+    }
+  }
+
+  _galUploading = false;
+  _galSetSyncIndicator(false);
+  rerenderFn();
+
+  const doneCount = _galUploadQueue.filter(i => i.status === 'done').length;
+  if (doneCount > 0) {
+    toast(t('Przesłano') + ' ' + doneCount + ' ' + t('plików'), 'success');
+    // Browser notification if supported and permission granted
+    if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification(t('Galeria — upload zakończony'), {
+        body: t('Przesłano') + ' ' + doneCount + ' ' + t('plików do') + ' ' + folder.split('/').pop(),
+        icon: '/img/icon-192.png',
+      });
+    }
+    _galReload();
+  }
+}
+
+function _galSetSyncIndicator(active) {
+  if (!GAL.root) return;
+  let ind = GAL.root.querySelector('.gal-sync-indicator');
+  if (active && !ind) {
+    ind = document.createElement('div');
+    ind.className = 'gal-sync-indicator';
+    ind.innerHTML = '<i class="fa-solid fa-cloud-arrow-up fa-spin"></i> ' + t('Wysyłanie…');
+    GAL.root.querySelector('.gal-toolbar-right').prepend(ind);
+  } else if (!active && ind) {
+    ind.remove();
+  }
+}
+
+function _galFmtSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
 function _galInitDragDrop() {
@@ -2003,23 +2173,14 @@ function _galInitDragDrop() {
   main.addEventListener('dragenter', e => { e.preventDefault(); dragCounter++; dropOverlay.style.display = 'flex'; });
   main.addEventListener('dragleave', e => { e.preventDefault(); dragCounter--; if (dragCounter <= 0) { dragCounter = 0; dropOverlay.style.display = 'none'; } });
   main.addEventListener('dragover', e => e.preventDefault());
-  main.addEventListener('drop', async e => {
+  main.addEventListener('drop', e => {
     e.preventDefault(); dragCounter = 0; dropOverlay.style.display = 'none';
-    const files = e.dataTransfer.files;
-    if (!files.length) return;
-    const targetFolder = GAL.folder || (GAL.gallerySources.length ? GAL.gallerySources[0].path : '');
-    if (!targetFolder) { toast(t('Wybierz folder docelowy'), 'error'); return; }
-    const fd = new FormData();
-    for (const f of files) fd.append('files', f);
-    fd.append('folder', targetFolder);
-    toast(t('Przesyłanie') + ` ${files.length} ` + t('plików') + '...', 'info');
-    try {
-      const r = await api('/gallery/upload', { method: 'POST', body: fd });
-      toast(t('Przesłano') + ` ${r.uploaded} ` + t('plików'), 'success');
-      _galReload();
-    } catch(e) { toast(t('Błąd przesyłania: ') + e.message, 'error'); }
+    const files = [...e.dataTransfer.files].filter(f => f.type.startsWith('image/') || f.type.startsWith('video/'));
+    if (files.length) _galShowUploadModal(files);
   });
 }
+
+
 
 /* ━━━━  MAP VIEW  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 async function _galLoadLeaflet() {

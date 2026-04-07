@@ -1116,7 +1116,9 @@ def gallery_custom_album_get(album_id):
 
 @gallery_bp.route('/upload', methods=['POST'])
 def gallery_upload():
-    """Upload files to a gallery folder."""
+    """Upload files to a gallery folder.
+    Optional form field 'date_subfolders': '1' → creates YYYY/MM/ subfolders based on upload date.
+    """
     folder = request.form.get('folder', '').strip().rstrip('/')
     if not folder:
         return jsonify({'error': 'Target folder required'}), 400
@@ -1126,17 +1128,34 @@ def gallery_upload():
     real_folder = _safe_path(folder)
     if not real_folder or not os.path.isdir(real_folder):
         return jsonify({'error': 'Folder not found'}), 404
+
+    use_date_subfolders = request.form.get('date_subfolders', '0') == '1'
+    if use_date_subfolders:
+        now = time.localtime()
+        sub = os.path.join(str(now.tm_year), f'{now.tm_mon:02d}')
+        real_folder = os.path.join(real_folder, sub)
+        os.makedirs(real_folder, exist_ok=True)
+
     files = request.files.getlist('files')
     if not files:
         return jsonify({'error': 'No files provided'}), 400
     uploaded = 0
+    skipped = 0
     for f in files:
         if f.filename:
             safe_name = os.path.basename(f.filename)
             dest = os.path.join(real_folder, safe_name)
+            # Avoid overwriting: append _1, _2 ... if file exists
+            if os.path.exists(dest):
+                base, ext = os.path.splitext(safe_name)
+                counter = 1
+                while os.path.exists(dest):
+                    dest = os.path.join(real_folder, f'{base}_{counter}{ext}')
+                    counter += 1
             f.save(dest)
             uploaded += 1
-    return jsonify({'ok': True, 'uploaded': uploaded})
+    return jsonify({'ok': True, 'uploaded': uploaded, 'skipped': skipped,
+                    'dest_folder': os.path.relpath(real_folder, folder.rsplit('/', 1)[0]) if use_date_subfolders else folder})
 
 
 # ─── Batch Download (ZIP) ───────────────────────────────────

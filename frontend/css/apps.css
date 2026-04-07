@@ -1709,6 +1709,65 @@ select.fm-input {
 .gal-drop-zone i { font-size:48px; color:#ec4899; display:block; margin-bottom:16px; }
 .gal-drop-zone p { font-size:18px; margin:0; }
 
+/* ── Upload modal ── */
+.gal-upload-overlay {
+  position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,.7);
+  backdrop-filter:blur(6px); display:flex; align-items:center; justify-content:center;
+}
+.gal-upload-modal {
+  background:#1a1a2e; border:1px solid rgba(255,255,255,.08); border-radius:16px;
+  width:520px; max-width:95vw; max-height:85vh; display:flex; flex-direction:column;
+  overflow:hidden; box-shadow:0 24px 80px rgba(0,0,0,.6);
+}
+.gal-upload-modal-header {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:16px 20px; border-bottom:1px solid rgba(255,255,255,.06);
+}
+.gal-upload-modal-title { font-size:15px; font-weight:700; color:#fff; display:flex; align-items:center; gap:8px; }
+.gal-upload-modal-title i { color:#ec4899; }
+.gal-upload-modal-close { background:none; border:none; color:rgba(255,255,255,.5); cursor:pointer; font-size:16px; padding:4px 8px; border-radius:6px; }
+.gal-upload-modal-close:hover { color:#fff; background:rgba(255,255,255,.08); }
+.gal-upload-modal-close:disabled { opacity:.3; cursor:not-allowed; }
+.gal-upload-dest {
+  padding:14px 20px; border-bottom:1px solid rgba(255,255,255,.06);
+  display:flex; flex-direction:column; gap:8px;
+}
+.gal-upload-dest-label { font-size:11px; color:rgba(255,255,255,.4); text-transform:uppercase; letter-spacing:.05em; }
+.gal-upload-folder-sel {
+  width:100%; padding:8px 10px; background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.1);
+  border-radius:8px; color:#fff; font-size:13px; cursor:pointer;
+}
+.gal-upload-folder-sel:focus { outline:none; border-color:#ec4899; }
+.gal-upload-date-label {
+  display:flex; align-items:center; gap:8px; font-size:12px; color:rgba(255,255,255,.6); cursor:pointer;
+}
+.gal-upload-date-label input { accent-color:#ec4899; cursor:pointer; }
+.gal-uq-list { flex:1; overflow-y:auto; padding:8px 12px; display:flex; flex-direction:column; gap:4px; }
+.gal-uq-item {
+  display:flex; align-items:center; gap:10px; padding:8px 10px;
+  border-radius:8px; background:rgba(255,255,255,.04);
+}
+.gal-uq-icon { width:28px; text-align:center; color:#ec4899; font-size:14px; flex-shrink:0; }
+.gal-uq-info { flex:1; min-width:0; }
+.gal-uq-name { font-size:12px; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-bottom:2px; }
+.gal-uq-size { font-size:10px; color:rgba(255,255,255,.35); margin-bottom:4px; }
+.gal-uq-bar-wrap { height:3px; background:rgba(255,255,255,.1); border-radius:2px; overflow:hidden; }
+.gal-uq-bar { height:100%; background:#ec4899; border-radius:2px; transition:width .15s; }
+.gal-uq-status { flex-shrink:0; font-size:14px; }
+.gal-uq-pct { font-size:11px; color:#ec4899; font-weight:700; }
+.gal-upload-modal-footer {
+  padding:12px 20px; border-top:1px solid rgba(255,255,255,.06);
+  display:flex; align-items:center; justify-content:space-between;
+}
+.gal-upload-summary { font-size:12px; color:rgba(255,255,255,.4); }
+/* Sync indicator in toolbar */
+.gal-sync-indicator {
+  display:flex; align-items:center; gap:6px; font-size:12px;
+  color:#ec4899; padding:4px 10px; border-radius:20px;
+  background:rgba(236,72,153,.1); border:1px solid rgba(236,72,153,.2);
+}
+
+
 /* ── Map view ── */
 .gal-map-view { width:100%; height:100%; position:relative; }
 
