@@ -6140,3 +6140,76 @@ textarea.app-input { resize: vertical; line-height: 1.5; }
     text-transform:uppercase; letter-spacing:.5px; flex-shrink:0; }
 .vs-tmdb-movie { background:#e67e22; color:#fff; }
 .vs-tmdb-tv { background:#3498db; color:#fff; }
+
+/* ── Video Station: Netflix Home ───────────────────────────────── */
+.vs-home { display:flex; flex-direction:column; gap:0; padding-bottom:40px; }
+
+/* Hero */
+.vs-hero { position:relative; min-height:380px; display:flex; align-items:flex-end;
+    overflow:hidden; cursor:pointer; border-radius:0; flex-shrink:0; }
+.vs-hero-backdrop { position:absolute; inset:0; background-size:cover; background-position:center top;
+    transition:transform .4s; }
+.vs-hero:hover .vs-hero-backdrop { transform:scale(1.02); }
+.vs-hero-grad { position:absolute; inset:0;
+    background:linear-gradient(to top, rgba(8,8,8,1) 0%, rgba(8,8,8,.7) 40%, rgba(8,8,8,.1) 100%); }
+.vs-hero-info { position:relative; z-index:1; padding:32px 40px; max-width:600px; }
+.vs-hero-rating { font-size:13px; color:#f5c518; font-weight:700; margin-bottom:8px; display:flex; align-items:center; gap:4px; }
+.vs-hero-title { font-size:clamp(22px,3vw,40px); font-weight:800; color:#fff; margin:0 0 6px;
+    line-height:1.15; text-shadow:0 2px 8px rgba(0,0,0,.6); }
+.vs-hero-year { font-size:13px; color:rgba(255,255,255,.6); margin-right:10px; }
+.vs-hero-overview { font-size:14px; color:rgba(255,255,255,.8); margin:10px 0 16px;
+    line-height:1.5; text-shadow:0 1px 4px rgba(0,0,0,.5); }
+.vs-hero-btns { display:flex; gap:10px; flex-wrap:wrap; }
+.vs-hero-play { background:var(--accent-color); color:#fff; border:none; padding:11px 24px;
+    border-radius:6px; font-size:15px; font-weight:700; cursor:pointer; display:flex;
+    align-items:center; gap:8px; transition:filter .15s; }
+.vs-hero-play:hover { filter:brightness(1.2); }
+.vs-hero-info-btn { background:rgba(255,255,255,.15); color:#fff; border:1px solid rgba(255,255,255,.3);
+    padding:10px 20px; border-radius:6px; font-size:14px; cursor:pointer;
+    display:flex; align-items:center; gap:7px; backdrop-filter:blur(4px); transition:background .15s; }
+.vs-hero-info-btn:hover { background:rgba(255,255,255,.25); }
+
+/* Rows */
+.vs-row { padding:20px 0 8px; }
+.vs-row-header { display:flex; align-items:center; justify-content:space-between;
+    padding:0 20px 10px; }
+.vs-row-title { font-size:16px; font-weight:700; color:var(--text-primary); margin:0; }
+.vs-row-arrows { display:flex; gap:4px; }
+.vs-row-prev, .vs-row-next { background:var(--bg-tertiary); border:none; color:var(--text-secondary);
+    width:28px; height:28px; border-radius:50%; cursor:pointer; display:flex;
+    align-items:center; justify-content:center; font-size:11px; transition:all .15s; }
+.vs-row-prev:hover, .vs-row-next:hover { background:var(--bg-hover); color:var(--text-primary); }
+.vs-row-track { display:flex; gap:12px; overflow-x:auto; padding:4px 20px 12px;
+    scroll-snap-type:x mandatory; scrollbar-width:none; -ms-overflow-style:none; }
+.vs-row-track::-webkit-scrollbar { display:none; }
+
+/* Row cards */
+.vs-row-card { flex:0 0 160px; cursor:pointer; transition:transform .2s;
+    scroll-snap-align:start; }
+.vs-row-card:hover { transform:scale(1.06); z-index:2; }
+.vs-row-card-img { position:relative; aspect-ratio:2/3; border-radius:8px; overflow:hidden;
+    background:var(--bg-tertiary); }
+.vs-row-card-img img { width:100%; height:100%; object-fit:cover; display:block; }
+.vs-row-card-noimg { width:100%; height:100%; display:flex; align-items:center;
+    justify-content:center; color:var(--text-secondary); font-size:32px; }
+.vs-row-progress { position:absolute; bottom:0; left:0; right:0; height:3px;
+    background:rgba(255,255,255,.2); }
+.vs-row-progress div { height:100%; background:var(--accent-color); }
+.vs-row-card-title { font-size:12px; color:var(--text-secondary); margin-top:6px;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding:0 2px; }
+.vs-row-card:hover .vs-row-card-title { color:var(--text-primary); }
+
+/* Hover overlay on cards */
+.vs-row-card-hover { position:absolute; inset:0; background:rgba(0,0,0,.75);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:8px; opacity:0; transition:opacity .2s; padding:10px; }
+.vs-row-card:hover .vs-row-card-hover { opacity:1; }
+.vs-row-play-btn { background:rgba(255,255,255,.9); color:#000; border:none;
+    width:44px; height:44px; border-radius:50%; font-size:15px; cursor:pointer;
+    display:flex; align-items:center; justify-content:center; transition:transform .15s; }
+.vs-row-play-btn:hover { transform:scale(1.1); }
+.vs-row-hover-rating { font-size:11px; color:#f5c518; font-weight:700; display:flex;
+    align-items:center; gap:3px; }
+.vs-row-hover-overview { font-size:10px; color:rgba(255,255,255,.85); line-height:1.4;
+    text-align:center; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical;
+    overflow:hidden; }

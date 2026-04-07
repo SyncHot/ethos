@@ -458,33 +458,75 @@ _TMDB_BACKDROP_BASE = 'https://image.tmdb.org/t/p/w1280'
 # Common noise tokens stripped from filenames before TMDb search
 _NOISE_RE = re.compile(
     r'\b('
-    r'720p|1080p|1080i|2160p|4k|uhd|hdr|hdr10|dolby|atmos|dts|aac|ac3|'
-    r'bluray|blu-ray|bdrip|brrip|dvdrip|webrip|web-dl|webdl|hdtv|hdrip|'
-    r'x264|x265|h264|h265|hevc|avc|xvid|divx|'
-    r'remastered|extended|directors.cut|unrated|theatrical|'
-    r'proper|repack|internal|limited|'
+    # Resolution / quality
+    r'480p|576p|720p|1080p|1080i|2160p|4k|uhd|fhd|hd|'
+    r'hdr|hdr10|hdr10plus|dv|dolbyvision|sdr|'
+    # Audio codecs
+    r'dolby|atmos|dts|dts-hd|truehd|aac|ac3|eac3|ddp5?[\.\s]?1|'
+    r'flac|mp3|opus|vorbis|'
+    # Video codecs / containers
+    r'x264|x265|h264|h265|hevc|avc|xvid|divx|av1|vp9|'
+    r'mkv|mp4|avi|mov|wmv|ts|m2ts|'
+    # Source / rip type
+    r'bluray|blu-ray|bdrip|brrip|bdremux|remux|'
+    r'dvdrip|dvdscr|dvd|'
+    r'webrip|web-dl|webdl|web|'
+    r'hdtv|hdrip|pdtv|dsr|'
+    r'hc|hq|cam|ts|scr|'
+    # Streaming sources
+    r'nf|amzn|dsnp|hmax|hulu|atvp|pcok|sho|'
+    # Edition/cut tags
+    r'remastered|extended|extended-cut|directors?.cut|unrated|theatrical|'
+    r'open.matte|imax|proper|repack|internal|limited|retail|'
+    # Language tags
+    r'multi|dual|pl|eng|ger|fra|por|spa|ita|rus|cze|'
+    r'dubbed|lektor|napisy|subs|subbed|'
+    # Common release groups / site prefixes
     r'yts|yify|rarbg|eztv|ettv|sparks|geckos|fgt|'
-    r'mkv|mp4|avi|mov'
+    r'nodlabs|rzero-?x|poke|cmrg|ntg|fum|wbr|nhanc3|'
+    r'evo|galadriel|axxo|vxt|mzabi|tigole|qxr|flux|'
+    # Bracket/paren noise
+    r'sample|trailer|featurette|extra'
     r')\b', re.IGNORECASE
 )
+# Strip site-prefix patterns like "DDLValley.me_83_" or "SiteTag_NNN_"
+_SITE_PREFIX_RE = re.compile(r'^[A-Za-z0-9]+\.[a-z]{2,4}[_\-\s]\d*[_\-\s]', re.IGNORECASE)
+# TV episode pattern: S01E01, S01, E01, 1x01
+_EPISODE_RE = re.compile(r'\bS\d{1,2}E\d{1,2}\b|\bS\d{1,2}\b|\bE\d{1,2}\b|\b\d{1,2}x\d{2}\b', re.IGNORECASE)
 _YEAR_RE = re.compile(r'[\(\[\.]?((?:19|20)\d{2})[\)\]\.]?')
 _CLEAN_RE = re.compile(r'[\.\-_]+')
 _MULTI_SPACE = re.compile(r'\s{2,}')
 
 
 def _parse_filename(filename):
-    """Extract title and year from a video filename."""
+    """Extract clean title and year from a video filename.
+
+    Handles:
+      - Site prefixes: DDLValley.me_83_scream.7.2026 → Scream 7
+      - Quality/codec noise: 1080p, x265, BluRay, HEVC, AMZN, etc.
+      - Release groups: NodLabs, POKE, RZeroX, etc.
+      - TV episode tags: S01E01, 2x04, etc. (stripped for TMDb search)
+    """
     name = os.path.splitext(filename)[0]
+    # Strip leading site-prefix (e.g. "DDLValley.me_83_")
+    name = _SITE_PREFIX_RE.sub('', name)
     # Try to find year first — everything before it is likely the title
     year_match = _YEAR_RE.search(name)
     year = ''
     if year_match:
         year = year_match.group(1)
         name = name[:year_match.start()]
+    else:
+        # Cut off at first episode marker if no year
+        ep_match = _EPISODE_RE.search(name)
+        if ep_match:
+            name = name[:ep_match.start()]
     # Replace dots/dashes/underscores with spaces
     name = _CLEAN_RE.sub(' ', name)
     # Remove noise tokens
     name = _NOISE_RE.sub('', name)
+    # Remove leftover episode tags (e.g. "S01E01" after space normalisation)
+    name = _EPISODE_RE.sub('', name)
     name = _MULTI_SPACE.sub(' ', name).strip()
     return name, year
 
@@ -983,6 +1025,100 @@ def library():
         })
     conn.close()
     return jsonify({"items": items, "total": total, "offset": offset, "limit": limit})
+
+
+def _row_items(rows):
+    """Convert DB rows to lean dicts for Netflix home rows."""
+    items = []
+    for r in rows:
+        d = dict(r)
+        items.append({
+            "id": d["id"], "title": d["title"], "filename": d["filename"],
+            "duration": d["duration"], "duration_fmt": _format_duration(d["duration"]),
+            "thumb_ok": bool(d.get("thumb_ok")), "poster_ok": bool(d.get("poster_ok")),
+            "backdrop_ok": bool(d.get("backdrop_ok", 0)),
+            "tmdb_id": d.get("tmdb_id") or 0,
+            "tmdb_title": d.get("tmdb_title") or "",
+            "tmdb_year": d.get("tmdb_year") or "",
+            "tmdb_rating": d.get("tmdb_rating") or 0,
+            "tmdb_overview": d.get("tmdb_overview") or "",
+            "tmdb_genres": d.get("tmdb_genres") or "",
+            "tmdb_media_type": d.get("tmdb_media_type") or "movie",
+            "watched": bool(d.get("watched")), "position": d.get("position") or 0,
+            "added_at": d.get("added_at"),
+        })
+    return items
+
+
+@video_station_bp.route("/home", methods=["GET"])
+def home():
+    """Netflix-style home rows: hero, continue watching, recently added, per-genre rows."""
+    conn = _get_db()
+    hidden_clause = "COALESCE(v.hidden,0)=0"
+
+    # Hero: last watched with backdrop, else last added with backdrop
+    hero_row = conn.execute(
+        "SELECT v.*, ws.watched, ws.position, ws.last_watched_at FROM videos v "
+        "LEFT JOIN watch_state ws ON ws.video_id=v.id "
+        "WHERE " + hidden_clause + " AND v.backdrop_ok=1 "
+        "ORDER BY COALESCE(ws.last_watched_at, v.added_at) DESC LIMIT 1"
+    ).fetchone()
+    hero = None
+    if hero_row:
+        hero = _row_items([hero_row])[0]
+        hero["last_watched_at"] = dict(hero_row).get("last_watched_at")
+
+    # Continue watching — has position > 5% of duration
+    cw_rows = conn.execute(
+        "SELECT v.*, ws.watched, ws.position FROM videos v "
+        "JOIN watch_state ws ON ws.video_id=v.id "
+        "WHERE " + hidden_clause + " AND ws.watched=0 "
+        "AND v.duration > 0 AND ws.position > (v.duration * 0.05) "
+        "ORDER BY ws.updated_at DESC LIMIT 20"
+    ).fetchall()
+
+    # Recently added
+    recent_rows = conn.execute(
+        "SELECT v.*, ws.watched, ws.position FROM videos v "
+        "LEFT JOIN watch_state ws ON ws.video_id=v.id "
+        "WHERE " + hidden_clause + " ORDER BY v.added_at DESC LIMIT 20"
+    ).fetchall()
+
+    # Genre rows — collect top genres present in library
+    genre_rows = conn.execute(
+        "SELECT tmdb_genres FROM videos WHERE COALESCE(hidden,0)=0"
+        " AND tmdb_genres IS NOT NULL AND tmdb_genres != '' LIMIT 500"
+    ).fetchall()
+    # Count genre IDs
+    from collections import Counter
+    genre_counter = Counter()
+    for g in genre_rows:
+        for gid in (g["tmdb_genres"] or "").split(","):
+            gid = gid.strip()
+            if gid:
+                genre_counter[gid] += 1
+    # Top 6 genres
+    top_genres = [gid for gid, _ in genre_counter.most_common(6)]
+
+    genre_sections = []
+    for gid in top_genres:
+        g_rows = conn.execute(
+            "SELECT v.*, ws.watched, ws.position FROM videos v "
+            "LEFT JOIN watch_state ws ON ws.video_id=v.id "
+            "WHERE " + hidden_clause + " AND (',' || v.tmdb_genres || ',') LIKE ? "
+            "ORDER BY v.tmdb_rating DESC LIMIT 20",
+            ('%,' + gid + ',%',)
+        ).fetchall()
+        if g_rows:
+            genre_sections.append({"genre_id": int(gid), "items": _row_items(g_rows)})
+
+    conn.close()
+    return jsonify({
+        "hero": hero,
+        "continue_watching": _row_items(cw_rows),
+        "recently_added": _row_items(recent_rows),
+        "genres": genre_sections,
+    })
 
 
 @video_station_bp.route("/recent", methods=["GET"])

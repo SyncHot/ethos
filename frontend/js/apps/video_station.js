@@ -154,6 +154,8 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 <style>${getCSS()}</style>
 <div class="vs-layout">
   <div class="vs-sidebar">
+    <div class="vs-nav-section">${t('Odkrywaj')}</div>
+    <div class="vs-nav-item" data-section="home"><i class="fas fa-home"></i><span>${t('Strona główna')}</span></div>
     <div class="vs-nav-section">${t('Biblioteka')}</div>
     <div class="vs-nav-item active" data-section="library"><i class="fas fa-film"></i><span>${t('Wszystkie filmy')}</span></div>
     <div class="vs-nav-item" data-section="recent"><i class="fas fa-clock"></i><span>${t('Ostatnie')}</span></div>
@@ -228,6 +230,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         if (!toolbar || !content) return;
 
         switch (id) {
+            case 'home':       toolbar.innerHTML = ''; loadHome(); break;
             case 'library':    renderLibraryToolbar(toolbar); loadLibrary(); break;
             case 'recent':     toolbar.innerHTML = '<div class="vs-toolbar-title">' + t('Ostatnio dodane') + '</div>'; loadRecent(); break;
             case 'history':    toolbar.innerHTML = '<div class="vs-toolbar-title"><i class="fas fa-history"></i> ' + t('Historia oglądania') + '</div>'; loadHistory(); break;
@@ -385,6 +388,113 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         // Continue Watching card events
         content.querySelectorAll('.vs-cw-card[data-id]').forEach(card => {
             card.onclick = () => openPlayer(card.dataset.id);
+        });
+    }
+
+    /* ── home (Netflix-style) ──────────────────────────────────── */
+    async function loadHome() {
+        const content = bodyEl.querySelector('#vs-content');
+        if (!content) return;
+        content.innerHTML = '<div class="vs-loading"><i class="fas fa-spinner fa-spin"></i></div>';
+        const data = await api('/video-station/home');
+        if (data.error) { content.innerHTML = '<div class="vs-empty">' + escH(data.error) + '</div>'; return; }
+
+        let html = '<div class="vs-home">';
+
+        // Hero banner
+        const hero = data.hero;
+        if (hero) {
+            const heroImg = hero.backdrop_ok
+                ? '/api/video-station/backdrop/' + hero.id + '?token=' + NAS.token
+                : (hero.poster_ok ? '/api/video-station/poster/' + hero.id + '?token=' + NAS.token : '');
+            const stars = hero.tmdb_rating ? '★ ' + hero.tmdb_rating.toFixed(1) : '';
+            const overview = (hero.tmdb_overview || '').slice(0, 220) + ((hero.tmdb_overview || '').length > 220 ? '…' : '');
+            html += '<div class="vs-hero" data-vid="' + hero.id + '">';
+            if (heroImg) html += '<div class="vs-hero-backdrop" style="background-image:url(' + heroImg + ')"></div>';
+            html += '<div class="vs-hero-grad"></div>';
+            html += '<div class="vs-hero-info">';
+            if (stars) html += '<div class="vs-hero-rating"><i class="fas fa-star"></i> ' + escH(stars.replace('★ ', '')) + '</div>';
+            html += '<h1 class="vs-hero-title">' + escH(hero.tmdb_title || hero.title) + '</h1>';
+            if (hero.tmdb_year) html += '<span class="vs-hero-year">' + escH(hero.tmdb_year) + '</span>';
+            if (_genreBadges(hero.tmdb_genres)) html += _genreBadges(hero.tmdb_genres);
+            if (overview) html += '<p class="vs-hero-overview">' + escH(overview) + '</p>';
+            html += '<div class="vs-hero-btns">';
+            html += '<button class="vs-hero-play" data-vid="' + hero.id + '"><i class="fas fa-play"></i> ' + t('Odtwórz') + '</button>';
+            html += '<button class="vs-hero-info-btn" data-vid="' + hero.id + '"><i class="fas fa-info-circle"></i> ' + t('Szczegóły') + '</button>';
+            html += '</div></div></div>';
+        }
+
+        // Rows
+        const rows = [];
+        if (data.continue_watching && data.continue_watching.length)
+            rows.push({ title: t('Oglądaj dalej'), items: data.continue_watching, cls: 'vs-row-continue' });
+        if (data.recently_added && data.recently_added.length)
+            rows.push({ title: t('Ostatnio dodane'), items: data.recently_added, cls: 'vs-row-recent' });
+        (data.genres || []).forEach(g => {
+            const name = _GENRE_MAP[g.genre_id] || t('Inne');
+            if (g.items && g.items.length)
+                rows.push({ title: name, items: g.items, cls: 'vs-row-genre' });
+        });
+
+        rows.forEach(row => {
+            html += '<div class="vs-row ' + row.cls + '">';
+            html += '<div class="vs-row-header"><h2 class="vs-row-title">' + escH(row.title) + '</h2>';
+            html += '<div class="vs-row-arrows"><button class="vs-row-prev"><i class="fas fa-chevron-left"></i></button>'
+                  + '<button class="vs-row-next"><i class="fas fa-chevron-right"></i></button></div></div>';
+            html += '<div class="vs-row-track">';
+            row.items.forEach(v => {
+                const img = v.poster_ok
+                    ? '/api/video-station/poster/' + v.id + '?token=' + NAS.token
+                    : (v.thumb_ok ? '/api/video-station/thumb/' + v.id + '?token=' + NAS.token : '');
+                const pct = v.duration > 0 ? Math.round(v.position / v.duration * 100) : 0;
+                const rating = v.tmdb_rating ? v.tmdb_rating.toFixed(1) : '';
+                const overview = (v.tmdb_overview || '').slice(0, 100) + ((v.tmdb_overview || '').length > 100 ? '…' : '');
+                html += '<div class="vs-row-card" data-vid="' + v.id + '">';
+                html += '<div class="vs-row-card-img">';
+                if (img) html += '<img src="' + img + '" loading="lazy" />';
+                else html += '<div class="vs-row-card-noimg"><i class="fas fa-film"></i></div>';
+                if (pct > 5 && pct < 95) html += '<div class="vs-row-progress"><div style="width:' + pct + '%"></div></div>';
+                html += '<div class="vs-row-card-hover">';
+                html += '<button class="vs-row-play-btn" data-vid="' + v.id + '"><i class="fas fa-play"></i></button>';
+                if (rating) html += '<div class="vs-row-hover-rating"><i class="fas fa-star"></i> ' + rating + '</div>';
+                if (overview) html += '<div class="vs-row-hover-overview">' + escH(overview) + '</div>';
+                html += _genreBadges(v.tmdb_genres);
+                html += '</div></div>';
+                html += '<div class="vs-row-card-title">' + escH(v.tmdb_title || v.title) + '</div>';
+                html += '</div>';
+            });
+            html += '</div></div>';
+        });
+
+        if (!hero && !rows.length) {
+            html += '<div class="vs-empty"><i class="fas fa-film"></i><p>' + t('Biblioteka jest pusta. Dodaj foldery i zeskanuj.') + '</p></div>';
+        }
+        html += '</div>';
+        content.innerHTML = html;
+
+        // Hero buttons
+        content.querySelectorAll('.vs-hero-play').forEach(btn =>
+            btn.onclick = () => openPlayer(parseInt(btn.dataset.vid)));
+        content.querySelectorAll('.vs-hero-info-btn').forEach(btn =>
+            btn.onclick = () => _showInfoModal(parseInt(btn.dataset.vid)));
+        content.querySelectorAll('.vs-hero').forEach(el =>
+            el.onclick = (e) => { if (e.target === el || el.querySelector('.vs-hero-backdrop') === e.target) openPlayer(parseInt(el.dataset.vid)); });
+
+        // Row cards
+        content.querySelectorAll('.vs-row-card').forEach(card => {
+            card.onclick = (e) => {
+                if (e.target.closest('.vs-row-play-btn')) return;
+                openPlayer(parseInt(card.dataset.vid));
+            };
+        });
+        content.querySelectorAll('.vs-row-play-btn').forEach(btn =>
+            btn.onclick = (e) => { e.stopPropagation(); openPlayer(parseInt(btn.dataset.vid)); });
+
+        // Scroll arrows
+        content.querySelectorAll('.vs-row').forEach(rowEl => {
+            const track = rowEl.querySelector('.vs-row-track');
+            rowEl.querySelector('.vs-row-prev').onclick = () => track.scrollBy({ left: -track.offsetWidth * 0.8, behavior: 'smooth' });
+            rowEl.querySelector('.vs-row-next').onclick = () => track.scrollBy({ left: track.offsetWidth * 0.8, behavior: 'smooth' });
         });
     }
 
