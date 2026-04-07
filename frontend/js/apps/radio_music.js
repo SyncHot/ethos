@@ -34,6 +34,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     let _castController = null;
     let _advanceLock = false;   // debounce double-advance from Cast + local onended
     let _castQueueActive = false; // true when Cast queue manages playlist advancement
+    // LAN origin for Chromecast URLs (fetched once from /cast-info; Chromecast cannot use localhost)
+    let _castLanOrigin = location.origin;
 
     // Web Audio API — shared across plays (createMediaElementSource can only be called once per element)
     let _audioCtx = null, _analyser = null, _audioSource = null, _visRafId = null;
@@ -445,7 +447,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-player-btn.rm-mode-active{color:#1DB954}',
 '.rm-player-btn.rm-btn-play{font-size:20px;width:40px;height:40px;display:flex;align-items:center;justify-content:center;background:#1DB954;color:#000;border-radius:50%;box-shadow:0 2px 8px rgba(29,185,84,.3)}',
 '.rm-player-btn.rm-btn-play:hover{background:#1ed760;transform:scale(1.06)}',
-'.rm-cast-btn{font-size:15px;transition:color .2s}',
+'.rm-cast-btn{font-size:15px;transition:color .2s;display:none}',
 '.rm-cast-btn.rm-casting{color:#1DB954;animation:rm-cast-pulse 2s ease-in-out infinite}',
 '@keyframes rm-cast-pulse{0%,100%{opacity:1}50%{opacity:.5}}',
 '.rm-autoplay-prompt{display:flex;align-items:center;justify-content:center;gap:10px;padding:12px 20px;background:linear-gradient(135deg,#1DB954,#0f9240);color:#000;font-weight:700;font-size:14px;cursor:pointer;border:none;width:100%;border-top:none;animation:rm-autoplay-pulse 1.5s ease-in-out infinite}',
@@ -3356,6 +3358,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 }
                 window._rmCastSessionCb = _onCastSessionChanged;
                 ctx.addEventListener(cast.framework.CastContextEventType.SESSION_STATE_CHANGED, _onCastSessionChanged);
+                // Show/hide cast button based on device availability (C-01)
+                ctx.addEventListener(cast.framework.CastContextEventType.CAST_STATE_CHANGED, _onCastStateChanged);
 
                 _castPlayer = new cast.framework.RemotePlayer();
                 _castController = new cast.framework.RemotePlayerController(_castPlayer);
@@ -3364,6 +3368,14 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 }
                 window._rmCastPlayerCb = _onCastPlayerStateChanged;
                 _castController.addEventListener(cast.framework.RemotePlayerEventType.PLAYER_STATE_CHANGED, _onCastPlayerStateChanged);
+
+                // Seek bar sync — update PWA seekbar from Cast position (remote control feel)
+                _castController.addEventListener(cast.framework.RemotePlayerEventType.CURRENT_TIME_CHANGED, _onCastTimeChanged);
+                // Volume sync — physical TV remote / receiver volume reflected in PWA slider
+                _castController.addEventListener(cast.framework.RemotePlayerEventType.VOLUME_LEVEL_CHANGED, _onCastVolumeChanged);
+                // Pause/play sync — if paused from Cast receiver UI, update PWA button
+                _castController.addEventListener(cast.framework.RemotePlayerEventType.IS_PAUSED_CHANGED, _onCastPausedChanged);
+
                 _cl('info', 'Cast SDK initialized, _castAvail=true');
             } catch (e) {
                 _cl('error', 'Cast framework init error', { error: e.message || String(e) });
@@ -3376,6 +3388,13 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             if (!isAvailable) { _castAvail = false; return; }
             _setupCastFramework();
         };
+        // Fetch NAS LAN IP — Chromecast needs the real IP, not localhost/hostname
+        api('/radio-music/cast-info').then(d => {
+            if (d?.lan_origin) {
+                _castLanOrigin = d.lan_origin;
+                _cl('info', 'Cast LAN origin: ' + _castLanOrigin);
+            }
+        }).catch(() => {});
         if (!document.querySelector('script[src*="cast_sender"]')) {
             const s = document.createElement('script');
             s.src = 'https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1';
@@ -3405,6 +3424,69 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         }
     }
 
+    // C-01: Show/hide cast button based on whether Cast devices are present on the network
+    function _onCastStateChanged(event) {
+        const state = event.castState;
+        const hasDevices = state !== cast.framework.CastState.NO_DEVICES_AVAILABLE;
+        const btn = bodyEl?.querySelector('#rm-cast-btn');
+        if (btn) btn.style.display = hasDevices ? '' : 'none';
+        _cl('debug', 'Cast state changed: ' + state + ', hasDevices=' + hasDevices);
+    }
+
+    // Seekbar sync: Cast position → PWA seekbar (fires ~1Hz from Cast SDK)
+    function _onCastTimeChanged() {
+        if (!_isCasting || !_castPlayer) return;
+        const cur = _castPlayer.currentTime;
+        const dur = _castPlayer.duration;
+        if (!isFinite(dur) || dur <= 0) return;
+        const pct = (cur / dur) * 100;
+        const seekbar = bodyEl?.querySelector('#rm-seekbar');
+        if (!seekbar) return;
+        seekbar.classList.add('visible');
+        const fill = seekbar.querySelector('#rm-seek-fill');
+        const thumb = seekbar.querySelector('#rm-seek-thumb');
+        if (fill) fill.style.width = pct + '%';
+        if (thumb) thumb.style.left = pct + '%';
+        const curEl = seekbar.querySelector('#rm-seek-cur');
+        const durEl = seekbar.querySelector('#rm-seek-dur');
+        if (curEl) curEl.textContent = _fmtTime(cur);
+        if (durEl) durEl.textContent = _fmtTime(dur);
+        // Sync NP overlay seekbar too
+        const npBar = _npOverlay?.querySelector('#rm-np-seek-fill');
+        if (npBar) npBar.style.width = pct + '%';
+        const npCur = _npOverlay?.querySelector('#rm-np-cur');
+        if (npCur) npCur.textContent = _fmtTime(cur);
+    }
+
+    // Volume sync: Cast receiver volume → PWA volume slider
+    function _onCastVolumeChanged() {
+        if (!_isCasting || !_castPlayer) return;
+        const vol = _castPlayer.volumeLevel;
+        const slider = bodyEl?.querySelector('#rm-vol');
+        if (slider) {
+            slider.value = Math.round(vol * 100);
+            slider.dispatchEvent(new Event('input', { bubbles: false })); // update icon only
+        }
+        _cl('debug', 'Cast volume: ' + Math.round(vol * 100));
+    }
+
+    // Pause sync: Cast receiver pause state → PWA play/pause button
+    function _onCastPausedChanged() {
+        if (!_isCasting || !_castPlayer) return;
+        const paused = _castPlayer.isPaused;
+        const btn = bodyEl?.querySelector('#rm-play-pause');
+        if (btn) btn.innerHTML = paused
+            ? '<i class="fas fa-play"></i>'
+            : '<i class="fas fa-pause"></i>';
+        const npBtn = _npOverlay?.querySelector('#rm-np-play-pause');
+        if (npBtn) npBtn.innerHTML = paused
+            ? '<i class="fas fa-play"></i>'
+            : '<i class="fas fa-pause"></i>';
+        if ('mediaSession' in navigator) {
+            navigator.mediaSession.playbackState = paused ? 'paused' : 'playing';
+        }
+    }
+
     function _onCastSessionChanged(event) {
         const state = event.sessionState;
         _cl('info', 'Cast session: ' + state);
@@ -3418,12 +3500,24 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             _cl('info', 'Cast connected to: ' + deviceName);
             _castLoadCurrentTrack();
         } else if (state === cast.framework.SessionState.SESSION_ENDED) {
+            // C-05: capture Cast position so we can resume locally from same spot
+            const resumeAt = _castPlayer?.currentTime || 0;
+            const wasPlaying = _castPlayer && !_castPlayer.isPaused;
             _castSession = null;
             _isCasting = false;
             _castQueueActive = false;
             _syncCastBtnUi(false);
-            if (_audio) _audio.volume = _preCastVolume;
-            _cl('info', 'Cast disconnected, restored local playback');
+            if (_audio) {
+                _audio.volume = _preCastVolume;
+                if (_playing?.type !== 'radio' && resumeAt > 1) {
+                    _audio.currentTime = resumeAt;
+                }
+                if (wasPlaying) {
+                    _audio.play().catch(() => {});
+                    toast(t('Odtwarzanie wróciło na urządzenie'), 'info');
+                }
+            }
+            _cl('info', 'Cast disconnected, resumed locally at ' + Math.round(resumeAt) + 's');
         }
     }
 
@@ -3455,7 +3549,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         }
 
         if (!mediaUrl && _playing.type === 'local' && _playing.path) {
-            mediaUrl = location.origin + '/api/radio-music/local/stream?path='
+            mediaUrl = _castLanOrigin + '/api/radio-music/local/stream?path='
                 + encodeURIComponent(_playing.path) + '&token=' + (NAS.token || '');
             ct = 'audio/mpeg';
         }
@@ -3481,7 +3575,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             mediaInfo.metadata.title = _playing.name || '';
             mediaInfo.metadata.artist = _playing.meta || '';
             if (_playing.image) {
-                const imgUrl = _playing.image.startsWith('http') ? _playing.image : (location.origin + _playing.image);
+                const imgUrl = _playing.image.startsWith('http') ? _playing.image : (_castLanOrigin + _playing.image);
                 mediaInfo.metadata.images = [new chrome.cast.Image(imgUrl)];
             }
         }
@@ -3507,9 +3601,9 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 const data = await api('/radio-music/music/direct-url?url=' + encodeURIComponent(tr.url));
                 if (data.audio_url) return { url: data.audio_url, ct: data.content_type || 'audio/mp4' };
             } catch (e) {}
-            // Fallback: proxy URL (Chromecast → NAS → yt-dlp)
+            // Fallback: proxy URL via NAS LAN IP (Chromecast must reach real IP, not localhost)
             return {
-                url: location.origin + '/api/radio-music/music/stream?url=' + encodeURIComponent(tr.url) + '&token=' + (NAS.token || ''),
+                url: _castLanOrigin + '/api/radio-music/music/stream?url=' + encodeURIComponent(tr.url) + '&token=' + (NAS.token || ''),
                 ct: 'audio/mp4'
             };
         }
@@ -3517,7 +3611,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             const path = tr.path || (tr.url?.match(/[?&]path=([^&]+)/)?.[1]);
             if (path) {
                 return {
-                    url: location.origin + '/api/radio-music/local/stream?path=' + path + '&token=' + (NAS.token || ''),
+                    url: _castLanOrigin + '/api/radio-music/local/stream?path=' + path + '&token=' + (NAS.token || ''),
                     ct: 'audio/mpeg'
                 };
             }
@@ -3549,7 +3643,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             mediaInfo.metadata.artist = tr.meta || tr.channel || '';
             const img = tr.image || tr.thumbnail;
             if (img) {
-                const imgUrl = img.startsWith('http') ? img : (location.origin + img);
+                const imgUrl = img.startsWith('http') ? img : (_castLanOrigin + img);
                 mediaInfo.metadata.images = [new chrome.cast.Image(imgUrl)];
             }
             items.push(new chrome.cast.media.QueueItem(mediaInfo));

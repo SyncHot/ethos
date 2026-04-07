@@ -64,7 +64,7 @@ import xml.etree.ElementTree as ET
 
 import gevent
 
-from flask import Blueprint, g, jsonify, request, Response, send_file
+from flask import Blueprint, g, jsonify, request, Response, send_file, after_this_request
 
 from host import data_path, safe_path, q as shq
 
@@ -948,6 +948,11 @@ def local_stream():
 
     ext = os.path.splitext(fpath)[1].lower()
     mime = mimetypes.guess_type(fpath)[0] or 'audio/mpeg'
+    @after_this_request
+    def _add_cors(resp):
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        resp.headers['Access-Control-Allow-Headers'] = 'Range, Authorization'
+        return resp
     return send_file(fpath, mimetype=mime, conditional=True)
 
 
@@ -996,7 +1001,51 @@ def local_artwork():
 
     return Response(r.stdout, mimetype=mime, headers={
         'Cache-Control': 'public, max-age=86400',
+        'Access-Control-Allow-Origin': '*',
     })
+
+
+
+# ── Chromecast helpers ──────────────────────────────────────
+
+@radio_music_bp.route('/cast-info', methods=['GET'])
+def cast_info():
+    """Return NAS LAN IP(s) and origin for Chromecast URL building.
+
+    Chromecast cannot use 127.0.0.1 or hostnames it doesn't know.
+    This endpoint exposes the real LAN IP so the frontend can build
+    absolute URLs that Chromecast can reach.
+    """
+    import socket
+    ips = []
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(('8.8.8.8', 80))
+        ips.append(s.getsockname()[0])
+        s.close()
+    except Exception:
+        pass
+    # Include all non-loopback IPv4 addresses as fallback
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None):
+            addr = info[4][0]
+            if '.' in addr and not addr.startswith('127.'):
+                if addr not in ips:
+                    ips.append(addr)
+    except Exception:
+        pass
+
+    origin = request.host_url.rstrip('/')
+    # Build a guaranteed-LAN origin using the primary LAN IP + port
+    lan_origin = None
+    if ips:
+        try:
+            port = int(request.host.split(':')[1]) if ':' in request.host else 9000
+            lan_origin = f'http://{ips[0]}:{port}'
+        except Exception:
+            lan_origin = f'http://{ips[0]}:9000'
+
+    return jsonify({'ips': ips, 'origin': origin, 'lan_origin': lan_origin or origin})
 
 
 # ── Download (yt-dlp) ───────────────────────────────────────
