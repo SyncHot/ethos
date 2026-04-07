@@ -1981,11 +1981,13 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             return;
         }
 
-        // Group by folder
+        // Group by first subdirectory (artist/album level), same as audiobooks
         const byFolder = {};
         items.forEach(it => {
-            if (!byFolder[it.folder]) byFolder[it.folder] = [];
-            byFolder[it.folder].push(it);
+            const parts = (it.relative || it.filename).split('/');
+            const group = parts.length > 1 ? parts[0] : (it.folder.split('/').pop() || 'Muzyka');
+            if (!byFolder[group]) byFolder[group] = [];
+            byFolder[group].push(it);
         });
 
         // Precompute search string for each item
@@ -2139,10 +2141,10 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                     count++;
                 });
             } else {
-                for (const [folder, files] of Object.entries(byFolder)) {
-                    const folderName = folder.split('/').pop() || folder;
-                    entries.push({ isHeader: true, name: folderName, count: files.length });
-                    files.forEach(f => { entries.push({ file: f, folder }); count++; });
+                const sortedGroups = Object.entries(byFolder).sort(([a], [b]) => a.localeCompare(b));
+                for (const [group, files] of sortedGroups) {
+                    entries.push({ isHeader: true, name: group, count: files.length });
+                    files.forEach(f => { entries.push({ file: f, folder: group }); count++; });
                 }
             }
             const countEl = content.querySelector('#rm-local-count');
