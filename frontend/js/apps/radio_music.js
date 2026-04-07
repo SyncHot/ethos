@@ -39,6 +39,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     let _castController = null;
     let _advanceLock = false;   // debounce double-advance from Cast + local onended
     let _castQueueActive = false; // true when Cast queue manages playlist advancement
+    let _isBuffering = false;   // true while track is loading — blocks rapid Next/Prev
     // LAN origin for Chromecast URLs (fetched once from /cast-info; Chromecast cannot use localhost)
     let _castLanOrigin = location.origin;
 
@@ -676,6 +677,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-np-btn.rm-np-play{width:64px;height:64px;font-size:26px;background:#1DB954;color:#000;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 20px rgba(29,185,84,.3);position:relative;overflow:visible}',
 '.rm-np-btn.rm-np-play:hover{background:#1ed760;transform:scale(1.06)}',
 '.rm-np-btn.rm-np-play.rm-loading::after{content:"";position:absolute;inset:-5px;border-radius:50%;border:3px solid transparent;border-top-color:#1DB954;border-right-color:rgba(29,185,84,.4);animation:rm-spin .7s linear infinite;pointer-events:none}',
+'.rm-btn-disabled{opacity:.35!important;pointer-events:none!important;cursor:default!important}',
 '.rm-np-actions{display:flex;gap:10px;margin-top:4px;flex-wrap:wrap;justify-content:center}',
 '.rm-np-action{background:rgba(255,255,255,.06);border:none;color:rgba(255,255,255,.5);font-size:13px;cursor:pointer;padding:8px 16px;border-radius:20px;transition:all .12s;display:flex;align-items:center;gap:6px}',
 '.rm-np-action:hover{background:rgba(255,255,255,.12);color:#fff}',
@@ -3044,6 +3046,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
         // ── Buffering state helpers ──
         function _setBuffering(on) {
+            _isBuffering = on;
             const player = bodyEl.querySelector('#rm-player');
             if (player) player.classList.toggle('rm-buffering', on);
             // F-01: progress ring on play button signals NAS loading to user
@@ -3052,6 +3055,13 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             // Sync loading ring to NP overlay play button too
             const npPlayBtn = _npOverlay?.querySelector('#rm-np-playpause');
             if (npPlayBtn) npPlayBtn.classList.toggle('rm-loading', on);
+            // Disable skip buttons while buffering so rapid taps don't skip past the loading track
+            [
+                bodyEl.querySelector('#rm-prev-btn'),
+                bodyEl.querySelector('#rm-next-btn'),
+                _npOverlay?.querySelector('#rm-np-prev'),
+                _npOverlay?.querySelector('#rm-np-next'),
+            ].forEach(btn => { if (btn) btn.classList.toggle('rm-btn-disabled', on); });
             bodyEl.querySelectorAll('.rm-card, .rm-track').forEach(c => c.classList.remove('rm-buffering'));
             if (on && item.uuid) {
                 bodyEl.querySelectorAll('.rm-card').forEach(c => {
@@ -3396,9 +3406,11 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     }
 
     function _skipStation(dir) {
-        // Debounce rapid taps (500ms cooldown) — prevents queued animations on fast Next/Next
+        // Block while buffering — prevents skipping past a track that's still loading
+        if (_isBuffering) return;
+        // Debounce rapid taps (1500ms cooldown) — prevents queued animations on fast Next/Next
         const now = Date.now();
-        if (now - _prevNextTs < 500) return;
+        if (now - _prevNextTs < 1500) return;
         _prevNextTs = now;
 
         // Queue has priority (music tracks, local files, or history list items)
