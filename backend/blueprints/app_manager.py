@@ -199,7 +199,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/aichat/status',
     },
     {
-        'id': 'doc-anonymizer', 'name': 'Document Anonymizer', 'version': '1.1.3',
+        'id': 'doc-anonymizer', 'name': 'Document Anonymizer', 'version': '1.1.4',
         'icon': 'fa-user-shield', 'color': '#0ea5e9', 'category': 'Tools', 'admin_only': False,
         'description': 'Anonimizacja dokumentow medycznych PDF/DOCX przy uzyciu polskiego modelu Bielik LLM.',
         'apt_deps': ['poppler-utils', 'tesseract-ocr', 'tesseract-ocr-pol'],
@@ -210,7 +210,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/doc-anonymizer/pkg-status',
     },
     {
-        'id': 'med-assistant', 'name': 'Medical Assistant', 'version': '0.0.3',
+        'id': 'med-assistant', 'name': 'Medical Assistant', 'version': '0.0.4',
         'icon': 'fa-user-md', 'color': '#06b6d4', 'category': 'Tools', 'admin_only': False,
         'description': 'Asystent medyczny -- analiza dokumentacji, interakcje lekowe, skierowania, wytyczne ESC.',
         'apt_deps': ['poppler-utils', 'tesseract-ocr', 'tesseract-ocr-pol'],
@@ -248,7 +248,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/printer/pkg-status',
     },
     {
-        'id': 'docker-manager', 'name': 'Docker Manager', 'version': '1.0.4',
+        'id': 'docker-manager', 'name': 'Docker Manager', 'version': '1.0.5',
         'icon': 'fa-cubes', 'color': '#2496ed', 'category': 'System', 'admin_only': True,
         'description': 'Zarządzanie kontenerami Docker, projektami Compose, obrazami i logami.',
         'apt_deps': [], 'pip_deps': [],
@@ -343,7 +343,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/storage/nfs/pkg-status',
     },
     {
-        'id': 'sharing-dlna', 'name': 'DLNA (MiniDLNA)', 'version': '1.0.13',
+        'id': 'sharing-dlna', 'name': 'DLNA (MiniDLNA)', 'version': '1.0.14',
         'icon': 'fa-photo-video', 'color': '#6366f1', 'category': 'Media', 'admin_only': True,
         'description': 'Serwer DLNA do strumieniowania multimediow na TV i odtwarzacze.',
         'apt_deps': ['minidlna'], 'pip_deps': [],
@@ -397,7 +397,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/websites/pkg-status',
     },
     {
-        'id': 'cloud-backup', 'name': 'Cloud Backup', 'version': '1.0.3',
+        'id': 'cloud-backup', 'name': 'Cloud Backup', 'version': '1.0.4',
         'icon': 'fa-cloud-upload-alt', 'color': '#0ea5e9', 'category': 'Storage', 'admin_only': True,
         'description': 'Backup do S3, Backblaze, Google Drive, WebDAV i SFTP z harmonogramem.',
         'apt_deps': ['rclone'], 'pip_deps': [],
@@ -433,14 +433,14 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/antivirus/pkg-status',
     },
     {
-        'id': 'security-advisor', 'name': 'Security Advisor', 'version': '0.0.2',
+        'id': 'security-advisor', 'name': 'Security Advisor', 'version': '0.0.3',
         'icon': 'fa-user-shield', 'color': '#059669', 'category': 'Security', 'admin_only': True,
         'description': 'Skaner bezpieczenstwa systemu z wynikiem 0-100 i automatycznymi poprawkami.',
         'apt_deps': [], 'pip_deps': [], 'simple': True, 'core': True,
         'status_endpoint': '/api/security-advisor/pkg-status',
     },
     {
-        'id': 'photos-ai', 'name': 'Photos AI', 'version': '0.0.6',
+        'id': 'photos-ai', 'name': 'Photos AI', 'version': '0.0.7',
         'icon': 'fa-brain', 'color': '#8b5cf6', 'category': 'Media', 'admin_only': False,
         'description': 'Rozpoznawanie twarzy, wykrywanie obiektow i inteligentne albumy dla Galerii.',
         'apt_deps': ['cmake', 'libopenblas-dev'], 'pip_deps': ['face_recognition', 'onnxruntime', 'scipy'],
@@ -474,7 +474,7 @@ BUILTIN_CATALOG = [
         'apt_deps': [], 'pip_deps': [], 'simple': True,
     },
     {
-        'id': 'ups', 'name': 'UPS', 'version': '1.0.3',
+        'id': 'ups', 'name': 'UPS', 'version': '1.0.4',
         'icon': 'fa-battery-full', 'color': '#f59e0b', 'category': 'System', 'admin_only': True,
         'description': 'Status baterii UPS i zarządzanie bezpiecznym wyłączeniem.',
         'apt_deps': [], 'pip_deps': [], 'simple': True,
@@ -498,7 +498,7 @@ BUILTIN_CATALOG = [
         'apt_deps': [], 'pip_deps': [], 'simple': True,
     },
     {
-        'id': 'video-station', 'name': 'Video Station', 'version': '0.0.4',
+        'id': 'video-station', 'name': 'Video Station', 'version': '0.0.5',
         'icon': 'fa-film', 'color': '#7c3aed', 'category': 'Media', 'admin_only': False,
         'description': 'Biblioteka filmow z miniaturkami, streamingiem i sledzeniem postepu.',
         'apt_deps': ['ffmpeg'], 'pip_deps': [],
