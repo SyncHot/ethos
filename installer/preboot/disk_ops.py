@@ -753,6 +753,10 @@ def _prepare_data_dirs(data_part):
             return
         for dirname in ("data", "logs", "backups", "uploads", "venv"):
             os.makedirs(os.path.join(tmp_mount, "ethos", dirname), exist_ok=True)
+        # Per-slot overlay dirs — upper layer lives on data partition (like Synology)
+        for slot in ("a", "b"):
+            os.makedirs(os.path.join(tmp_mount, "ethos", "overlay", slot, "upper"), exist_ok=True)
+            os.makedirs(os.path.join(tmp_mount, "ethos", "overlay", slot, "work"), exist_ok=True)
         log.info("Created data partition directories for squashfs mode")
     finally:
         _run(f"umount {tmp_mount} 2>/dev/null", timeout=15)
@@ -788,6 +792,11 @@ def _setup_data_separation(mount_dir, data_part):
 
             src_dir = os.path.join(ethos_root, dirname)
             _move_and_symlink(src_dir, target_dir, f"/mnt/data/ethos/{dirname}")
+
+        # --- Per-slot overlay dirs (SquashFS upper layer lives here) ---
+        for slot in ("a", "b"):
+            os.makedirs(os.path.join(ethos_data_root, "overlay", slot, "upper"), exist_ok=True)
+            os.makedirs(os.path.join(ethos_data_root, "overlay", slot, "work"), exist_ok=True)
 
         # --- User homes: /home → /mnt/data/homes ---
         homes_target = os.path.join(data_mount, "homes")

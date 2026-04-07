@@ -589,8 +589,8 @@ def factory_reset():
     if not os.path.ismount(rootfs_path):
         return jsonify({'error': 'Rootfs ext4 not mounted at /.rootfs'}), 500
 
-    upper_dir = os.path.join(rootfs_path, 'overlay/upper')
-    work_dir = os.path.join(rootfs_path, 'overlay/work')
+    active_slot = _get_active_slot()
+    upper_dir, work_dir = _get_overlay_dirs(active_slot)
 
     if not os.path.isdir(upper_dir):
         return jsonify({'error': 'Overlay upper directory not found'}), 500
@@ -1128,6 +1128,32 @@ def _do_apply_from_file(pkg_path):
 # ── A/B Slot Update ──────────────────────────────────────────
 
 _AB_MOUNT = '/mnt/ethos-update'
+_DATA_OVERLAY_BASE = '/mnt/data/ethos/overlay'  # per-slot overlay on data partition
+
+
+def _get_overlay_dirs(slot, ab_mount=None):
+    """Return (upper_dir, work_dir) for the given slot's overlay.
+
+    Prefers the data partition (Synology-style: root never fills up).
+    Falls back to the Root-A/B ext4 partition when data disk unavailable.
+
+    For the inactive slot during an OTA update pass ab_mount (the mounted
+    inactive root).  For the running system pass ab_mount=None.
+    """
+    data_slot_dir = os.path.join(_DATA_OVERLAY_BASE, slot)
+    if os.path.ismount('/mnt/data') and os.path.isdir(_DATA_OVERLAY_BASE):
+        upper = os.path.join(data_slot_dir, 'upper')
+        work = os.path.join(data_slot_dir, 'work')
+        os.makedirs(upper, exist_ok=True)
+        os.makedirs(work, exist_ok=True)
+        return upper, work
+    # Fallback: overlay dirs on the root partition (old behaviour)
+    base = ab_mount if ab_mount else '/.rootfs'
+    upper = os.path.join(base, 'overlay/upper')
+    work = os.path.join(base, 'overlay/work')
+    os.makedirs(upper, exist_ok=True)
+    os.makedirs(work, exist_ok=True)
+    return upper, work
 
 
 def _get_active_slot():
@@ -1247,8 +1273,7 @@ def _do_ab_slot_update_squashfs(pkg_dir, new_ver, ab_slots_file):
         _write_status(_st)
         _emit('update_status', _st)
 
-        overlay_upper = os.path.join(_AB_MOUNT, 'overlay/upper')
-        overlay_work = os.path.join(_AB_MOUNT, 'overlay/work')
+        overlay_upper, overlay_work = _get_overlay_dirs(inactive, ab_mount=_AB_MOUNT)
         shutil.rmtree(overlay_upper, ignore_errors=True)
         shutil.rmtree(overlay_work, ignore_errors=True)
         os.makedirs(overlay_upper, exist_ok=True)
@@ -1338,8 +1363,13 @@ def _do_ab_slot_update_squashfs(pkg_dir, new_ver, ab_slots_file):
         _write_status(_st)
         _emit('update_status', _st)
 
-        active_fstab = '/.rootfs/overlay/upper/etc/fstab'
-        if os.path.isfile(active_fstab):
+        # fstab for active system: data-partition overlay takes priority, else root-partition path
+        active_fstab_candidates = [
+            os.path.join(_DATA_OVERLAY_BASE, active, 'upper/etc/fstab'),  # data partition
+            '/.rootfs/overlay/upper/etc/fstab',                            # root partition (legacy)
+        ]
+        active_fstab = next((p for p in active_fstab_candidates if os.path.isfile(p)), None)
+        if active_fstab:
             inactive_fstab_dir = os.path.join(overlay_upper, 'etc')
             os.makedirs(inactive_fstab_dir, exist_ok=True)
             # Read active fstab and replace active root UUID with inactive root UUID

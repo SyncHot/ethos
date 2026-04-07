@@ -126,6 +126,27 @@ def _bg_install_docker():
         if r.returncode != 0:
             emit('error', 0, f'Instalacja nie powiodła się: {r.stderr[-300:]}', 'error')
             return
+
+        # Redirect Docker data to data partition if available (like Synology)
+        # This prevents Docker images/containers from filling up the root partition
+        data_root = '/mnt/data/docker'
+        if os.path.ismount('/mnt/data'):
+            emit('start_service', 70, 'Konfigurowanie magazynu Docker na dysku danych...')
+            os.makedirs(data_root, exist_ok=True)
+            daemon_cfg = '/etc/docker/daemon.json'
+            try:
+                import json as _json
+                existing = {}
+                if os.path.isfile(daemon_cfg):
+                    with open(daemon_cfg) as _f:
+                        existing = _json.load(_f)
+                existing['data-root'] = data_root
+                with open(daemon_cfg, 'w') as _f:
+                    _json.dump(existing, _f, indent=2)
+                emit('start_service', 75, f'Dane Docker będą przechowywane w {data_root}')
+            except Exception as _e:
+                emit('start_service', 75, f'Uwaga: nie udało się skonfigurować data-root: {_e}')
+
         emit('start_service', 80, 'Uruchamianie usługi Docker...')
         _host_run_base('systemctl enable docker && systemctl start docker', timeout=30)
         _host_run_base('apt-get clean 2>/dev/null', timeout=30)
