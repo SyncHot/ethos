@@ -11,14 +11,27 @@ from flask import Blueprint, request, jsonify
 
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from host import host_run
+from host import host_run, get_data_disk as _get_data_disk
 from utils import require_tools, check_tool
 from blueprints.admin_required import admin_required
 
 dlna_bp = Blueprint('dlna', __name__, url_prefix='/api/dlna')
 
 MINIDLNA_CONF = '/etc/minidlna.conf'
-MINIDLNA_DB_DIR = '/var/lib/minidlna'
+_MINIDLNA_DB_DEFAULT = '/var/lib/minidlna'
+
+
+def _minidlna_db_dir():
+    """Return MiniDLNA database directory — data partition preferred over root."""
+    dd = _get_data_disk()
+    if dd:
+        p = os.path.join(dd, 'minidlna')
+        os.makedirs(p, exist_ok=True)
+        return p
+    return _MINIDLNA_DB_DEFAULT
+
+
+MINIDLNA_DB_DIR = _minidlna_db_dir()
 
 # =====================================================================
 # Helpers
@@ -39,7 +52,7 @@ def _is_running():
 def _get_file_count():
     """Get indexed file count from minidlna database."""
     # Try the status URL first (minidlna serves a status page on its port)
-    r = host_run("find /var/lib/minidlna -name '*.db' -size +0 2>/dev/null | head -1", timeout=5)
+    r = host_run(f"find {shlex.quote(MINIDLNA_DB_DIR)} -name '*.db' -size +0 2>/dev/null | head -1", timeout=5)
     if r.returncode == 0 and r.stdout.strip():
         # Count from DB using sqlite if available
         db_path = r.stdout.strip()
@@ -50,7 +63,7 @@ def _get_file_count():
         if cr.returncode == 0 and cr.stdout.strip().isdigit():
             return int(cr.stdout.strip())
     # Fallback: count art_cache thumbnails as a rough indicator
-    r2 = host_run("find /tmp/minidlna /var/cache/minidlna /var/lib/minidlna -type f 2>/dev/null | wc -l", timeout=10)
+    r2 = host_run(f"find /tmp/minidlna /var/cache/minidlna {shlex.quote(MINIDLNA_DB_DIR)} -type f 2>/dev/null | wc -l", timeout=10)
     if r2.returncode == 0 and r2.stdout.strip().isdigit():
         return int(r2.stdout.strip())
     return 0
@@ -139,7 +152,7 @@ def _write_config(friendly_name, port, media_dirs, inotify):
         '',
         f'friendly_name={friendly_name}',
         f'port={port}',
-        f'db_dir={MINIDLNA_DB_DIR}',
+        f'db_dir={_minidlna_db_dir()}',
         'log_dir=/var/log',
         f'inotify={"yes" if inotify else "no"}',
         'album_art_names=Cover.jpg/cover.jpg/AlbumArtSmall.jpg/albumartsmall.jpg',
@@ -305,7 +318,7 @@ def rescan_library():
         return jsonify({'error': 'minidlna is not installed'}), 400
     # Stop, clear DB, restart with fresh scan
     host_run("sudo systemctl stop minidlna 2>/dev/null", timeout=10)
-    host_run(f"sudo rm -rf {shlex.quote(MINIDLNA_DB_DIR)}/files.db", timeout=10)
+    host_run(f"sudo rm -rf {shlex.quote(_minidlna_db_dir())}/files.db", timeout=10)
     r = host_run("sudo systemctl start minidlna", timeout=15)
     if r.returncode != 0:
         return jsonify({'error': r.stderr.strip() or 'Rescan failed'}), 500

@@ -28,7 +28,7 @@ import time
 from datetime import datetime
 from flask import Blueprint, jsonify, request
 from blueprints.admin_required import admin_required
-from host import data_path, q, host_run, apt_install
+from host import data_path, q, host_run, apt_install, get_data_disk as _get_data_disk
 
 antivirus_bp = Blueprint('antivirus', __name__, url_prefix='/api/antivirus')
 
@@ -38,6 +38,17 @@ RESULTS_FILE   = data_path('antivirus_results.json')
 SCAN_LOGS_DIR  = data_path('av_scan_logs')
 MAX_RESULTS    = 50
 _CRON_MARKER   = '# ETHOS_AV:'
+_CLAMAV_DEFAULT_DB = '/var/lib/clamav'
+
+
+def _clamav_db_dir():
+    """Return ClamAV database directory — data partition preferred over root."""
+    dd = _get_data_disk()
+    if dd:
+        p = os.path.join(dd, 'clamav')
+        os.makedirs(p, exist_ok=True)
+        return p
+    return _CLAMAV_DEFAULT_DB
 
 # ─── Active scan state ────────────────────────────────────────────────────────
 _active_scan = {}
@@ -100,9 +111,10 @@ def _clamav_version():
 
 
 def _db_info():
+    db_dir = _clamav_db_dir()
     for fname in ('daily.info', 'main.info'):
         try:
-            fpath = '/var/lib/clamav/' + fname
+            fpath = os.path.join(db_dir, fname)
             if os.path.exists(fpath):
                 with open(fpath) as f:
                     for line in f:
@@ -570,6 +582,32 @@ def install():
             if r.returncode != 0:
                 _emit('error', 0, 'Install error: ' + (r.stderr or '')[:300])
                 return
+
+            # Redirect virus database to data partition if available
+            db_dir = _clamav_db_dir()
+            if db_dir != _CLAMAV_DEFAULT_DB:
+                _emit('progress', 60, f'Konfigurowanie bazy wirusów → {db_dir}')
+                try:
+                    # Update freshclam.conf and clamd.conf to use data partition
+                    for conf_file in ('/etc/clamav/freshclam.conf', '/etc/clamav/clamd.conf'):
+                        if os.path.isfile(conf_file):
+                            with open(conf_file) as _f:
+                                content = _f.read()
+                            # Replace or add DatabaseDirectory line
+                            import re as _re
+                            if _re.search(r'^DatabaseDirectory\s', content, _re.MULTILINE):
+                                content = _re.sub(r'^DatabaseDirectory\s.*$',
+                                                  f'DatabaseDirectory {db_dir}',
+                                                  content, flags=_re.MULTILINE)
+                            else:
+                                content += f'\nDatabaseDirectory {db_dir}\n'
+                            with open(conf_file, 'w') as _f:
+                                _f.write(content)
+                    # Ensure directory owned by clamav user
+                    host_run(f'chown -R clamav:clamav {q(db_dir)}', timeout=10)
+                except Exception as _e:
+                    _emit('progress', 65, f'Uwaga: konfiguracja db_dir nie powiodła się: {_e}')
+
             _emit('progress', 70, 'Downloading virus database...')
             host_run('systemctl stop clamav-freshclam', timeout=15)
             host_run('freshclam --stdout --no-warnings', timeout=300)
