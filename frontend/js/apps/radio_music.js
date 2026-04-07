@@ -363,7 +363,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         const letter = _stationInitial(s.name);
         const bg = _stationColor(s.name);
         const letterFallback = '<span class="rm-letter-icon" style="display:none;background:' + bg + '">' + escH(letter) + '</span>';
-        const uuid = s.stationuuid || '';
+        const uuid = s.stationuuid || s.uuid || '';
         const localFile = uuid && _logoManifest ? _logoManifest[uuid] : null;
         const localSrc = localFile ? '/img/radio-logos/' + localFile : null;
 
@@ -2666,9 +2666,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             html += '<div class="rm-section-title" style="margin-top:20px"><i class="fas fa-broadcast-tower"></i> ' + t('Ostatnio słuchane radia') + '</div>';
             html += '<div class="rm-hscroll">';
             recentRadios.slice(0, 20).forEach((item, i) => {
-                const artHtml = (item.image || item.favicon)
-                    ? '<img src="' + escH(item.image || item.favicon) + '" onerror="this.outerHTML=\'<i class=\\\'fas fa-broadcast-tower\\\'></i>\'">'
-                    : '<i class="fas fa-broadcast-tower"></i>';
+                const artHtml = _stationIconHtml(item);
                 html += '<div class="rm-hcard rm-hcard-radio" data-radidx="' + i + '">'
                     + '<div class="rm-hcard-art">' + artHtml + '</div>'
                     + '<div class="rm-hcard-title">' + escH(item.name) + '</div>'
@@ -2787,7 +2785,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             card.className = 'rm-card';
             const icon = item.type === 'podcast' ? 'fa-podcast' : 'fa-broadcast-tower';
             card.innerHTML = `
-                <div class="rm-card-icon">${item.image || item.favicon ? '<img src="' + escH(item.image || item.favicon) + '">' : '<i class="fas ' + icon + '"></i>'}</div>
+                <div class="rm-card-icon">${(item.type === 'radio' || (!item.type && item.uuid)) ? _stationIconHtml(item) : (item.image || item.favicon ? '<img src="' + escH(item.image || item.favicon) + '">' : '<i class="fas ' + icon + '"></i>')}</div>
                 <div class="rm-card-info">
                     <div class="rm-card-name">${escH(item.name)}</div>
                     <div class="rm-card-meta">${escH(item.meta || item.country || '')}</div>
@@ -2851,9 +2849,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             stations.forEach(s => {
                 const card = document.createElement('div');
                 card.className = 'rm-disc-card';
-                const artHtml = s.favicon
-                    ? `<img src="${escH(s.favicon)}" loading="lazy" onerror="this.outerHTML='<i class=\\'fas fa-broadcast-tower\\'></i>'">`
-                    : '<i class="fas fa-broadcast-tower"></i>';
+                const artHtml = _stationIconHtml(s);
                 card.innerHTML = `<div class="rm-disc-card-art">${artHtml}<span class="rm-disc-badge rm-disc-badge-radio">LIVE</span></div>`
                     + `<div class="rm-disc-card-body"><div class="rm-disc-card-title">${escH(s.name)}</div>`
                     + `<div class="rm-disc-card-meta">${escH((s.tags||'').split(',')[0]||'')||'Radio'}</div></div>`;
@@ -3529,7 +3525,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         if (isMusic && item.image) {
             art.innerHTML = '<img src="' + escH(item.image) + '" onerror="this.outerHTML=\'<i class=\\\'fas fa-music\\\'></i>\'">';
         } else {
-            const _fItem = { name: item.name, favicon: item.image, homepage: item.homepage || '', url: item.url };
+            const _fItem = { name: item.name, favicon: item.image, homepage: item.homepage || '', url: item.url, stationuuid: item.uuid || item.stationuuid || '' };
             art.innerHTML = _stationIconHtml(_fItem);
         }
 
@@ -4625,7 +4621,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                     if (newSrc) {
                         artEl.innerHTML = `<img src="${escH(newSrc)}" style="width:100%;height:100%;object-fit:cover" onerror="this.outerHTML='<i class=\\'fas fa-music\\'></i>'">`;
                     } else {
-                        const _fItem = { name: item.name, favicon: item.image, homepage: item.homepage || '', url: item.url };
+                        const _fItem = { name: item.name, favicon: item.image, homepage: item.homepage || '', url: item.url, stationuuid: item.uuid || item.stationuuid || '' };
                         artEl.innerHTML = _stationIconHtml(_fItem);
                     }
                 }
