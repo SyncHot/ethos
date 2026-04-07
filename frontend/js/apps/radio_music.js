@@ -115,6 +115,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     let _npMinimizing = false;  // debounce guard for _onPopState / _minimizeNowPlaying
     let _lockOverlay = null;
     let _wakeLock = null;
+    let _seekLocked = false;    // true during track switch → seekbar won't jump to 0
+    let _prevNextTs = 0;        // debounce timestamp for Next/Prev buttons (500ms cooldown)
 
     // BroadcastChannel — coordinate multi-tab audio (E-07/E-12): only one tab plays at a time
     const _tabId = Math.random().toString(36).slice(2);
@@ -597,17 +599,27 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 /* ── Now Playing overlay ───────────────────────── */
 '.rm-np-overlay{position:absolute;inset:0;z-index:100;display:flex;flex-direction:column;overflow:hidden;background:#0a0a0a;transform:translateY(0);transition:transform 0.4s cubic-bezier(0.32,0.72,0,1);will-change:transform;padding-bottom:max(0px,env(safe-area-inset-bottom))}',
 '.rm-np-minimized{transform:translateY(100%)!important;pointer-events:none}',
-'.rm-np-bg{position:absolute;inset:-40px;background-size:cover;background-position:center;filter:blur(40px) brightness(.25) saturate(1.4);z-index:0}',
+/* Background: smooth colour transition between tracks */
+'.rm-np-bg{position:absolute;inset:-40px;background-size:cover;background-position:center;filter:blur(40px) brightness(.25) saturate(1.4);z-index:0;transition:opacity 300ms ease}',
 '.rm-np-inner{position:relative;z-index:1;flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;gap:16px;overflow-y:auto}',
 '.rm-np-close{position:absolute;top:max(50px,calc(env(safe-area-inset-top,0px) + 12px));left:12px;background:rgba(255,255,255,.08);border:none;color:#fff;font-size:18px;cursor:pointer;padding:8px 12px;border-radius:50%;z-index:2;backdrop-filter:blur(8px);transition:background .15s}',
 '.rm-np-close:hover{background:rgba(255,255,255,.15)}',
-'.rm-np-art{width:260px;height:260px;border-radius:8px;overflow:hidden;box-shadow:0 8px 40px rgba(0,0,0,.6);flex-shrink:0;background:#282828;display:flex;align-items:center;justify-content:center}',
-'.rm-np-art img{width:100%;height:100%;object-fit:cover}',
+/* Fixed aspect-ratio art box — never causes layout shift */
+'.rm-np-art{width:260px;height:260px;aspect-ratio:1/1;border-radius:8px;overflow:hidden;box-shadow:0 8px 40px rgba(0,0,0,.6);flex-shrink:0;background:#282828;display:flex;align-items:center;justify-content:center;position:relative}',
+/* Art image cross-fade via opacity */
+'.rm-np-art img{width:100%;height:100%;object-fit:cover;transition:opacity 200ms ease;position:absolute;inset:0}',
+'.rm-np-art img.rm-art-loading{opacity:0}',
+'.rm-np-art img.rm-art-loaded{opacity:1}',
 '.rm-np-art .rm-letter-icon{font-size:64px;width:100%;height:100%}',
 '.rm-np-art i{font-size:64px;color:rgba(255,255,255,.3)}',
+/* Skeleton shimmer — shown while artwork fetches from NAS */
+'.rm-np-art.rm-skeleton::before{content:"";position:absolute;inset:0;background:linear-gradient(90deg,#282828 25%,#333 50%,#282828 75%);background-size:200% 100%;animation:rm-skeleton-sweep 1.2s infinite}',
+'@keyframes rm-skeleton-sweep{0%{background-position:200% 0}100%{background-position:-200% 0}}',
 '.rm-np-info{text-align:center;max-width:320px;width:100%}',
-'.rm-np-title{font-size:22px;font-weight:700;color:#fff;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-'.rm-np-meta{font-size:13px;color:rgba(255,255,255,.5);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+/* Title + meta fade on track swap */
+'.rm-np-title{font-size:22px;font-weight:700;color:#fff;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:opacity 150ms ease}',
+'.rm-np-meta{font-size:13px;color:rgba(255,255,255,.5);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:opacity 150ms ease}',
+'.rm-np-title.rm-fading,.rm-np-meta.rm-fading{opacity:0}',
 '.rm-np-seek{display:flex;align-items:center;gap:10px;width:100%;max-width:320px}',
 '.rm-np-seek .rm-seek-time{color:rgba(255,255,255,.4);font-size:11px;min-width:38px}',
 '.rm-np-seek .rm-seek-track{flex:1;height:4px;background:rgba(255,255,255,.12);border-radius:2px;position:relative;cursor:pointer}',
@@ -2885,6 +2897,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         _audio = new Audio();
         _audio.volume = _isCasting ? 0 : (bodyEl.querySelector('#rm-vol')?.value || 80) / 100;
         _playing = item;
+        _seekLocked = true; // unlock on onplay/oncanplay — prevents seekbar jumping to 0
 
         // Reset reconnect state and preload on each new playback
         clearTimeout(_radioRetryTimer); _radioRetryTimer = null; _radioRetries = 0;
@@ -3004,6 +3017,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             hasPlayed = true;
             localStorage.setItem('rm_autoplay_ok', '1');
             _acquireWakeLock();
+            _seekLocked = false; // unlock seekbar — audio has started
             // Notify other tabs to pause (master-tab coordination)
             if (_bc) _bc.postMessage({ type: 'playing', tabId: _tabId });
             _setBuffering(false);
@@ -3189,10 +3203,9 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         // Save to history
         api('/radio-music/history', { method: 'POST', body: { item } });
 
-        // Sync Now Playing overlay if open
+        // Sync Now Playing overlay — in-place update to avoid layout shift
         if (_npOverlay && !_npOverlay.classList.contains('rm-np-minimized')) {
-            _hideNowPlaying();
-            _showNowPlaying();
+            _updateNowPlayingContent(item); // smooth crossfade, no DOM rebuild
         } else if (_npOverlay) {
             _hideNowPlaying(); // was minimized — destroy silently, will reopen when user taps
         }
@@ -3227,6 +3240,11 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     }
 
     function _skipStation(dir) {
+        // Debounce rapid taps (500ms cooldown) — prevents queued animations on fast Next/Next
+        const now = Date.now();
+        if (now - _prevNextTs < 500) return;
+        _prevNextTs = now;
+
         // Queue has priority (music tracks, local files, or history list items)
         if (_musicQueue.length > 0 && _musicQueueIdx >= 0) {
             let nextIdx;
@@ -3759,6 +3777,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
     function _updateSeekbar() {
         if (!_audio) return;
+        if (_seekLocked) return; // don't jump to 0 during track switch
         const seekbar = bodyEl?.querySelector('#rm-seekbar');
         if (!seekbar) return;
         const dur = _audio.duration;
@@ -3893,6 +3912,101 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     }
 
     /* ── Now Playing Overlay ──────────────────────── */
+
+    /**
+     * In-place NP overlay content update — no DOM rebuild, no layout shift.
+     * Crossfades art (200ms) and fades title/meta (150ms) simultaneously.
+     * Called when a new track starts while overlay is already open.
+     */
+    function _updateNowPlayingContent(item) {
+        if (!_npOverlay || !item) return;
+
+        const titleEl = _npOverlay.querySelector('.rm-np-title');
+        const metaEl  = _npOverlay.querySelector('.rm-np-meta');
+        const artEl   = _npOverlay.querySelector('#rm-np-art');
+        const bgEl    = _npOverlay.querySelector('.rm-np-bg');
+
+        // Step 1: fade out title + meta
+        if (titleEl) titleEl.classList.add('rm-fading');
+        if (metaEl)  metaEl.classList.add('rm-fading');
+
+        // Step 2: skeleton art while new image loads (if >100ms)
+        if (artEl) artEl.classList.add('rm-skeleton');
+
+        // Fade out background
+        if (bgEl) bgEl.style.opacity = '0';
+
+        setTimeout(() => {
+            // Step 3: swap text content while invisible
+            if (titleEl) { titleEl.textContent = item.name || ''; titleEl.classList.remove('rm-fading'); }
+            if (metaEl)  { metaEl.textContent  = item.meta || ''; metaEl.classList.remove('rm-fading'); }
+
+            // Step 4: swap background
+            if (bgEl) {
+                const bgUrl = item.image || item.favicon || '';
+                bgEl.style.backgroundImage = bgUrl ? `url('${escH(bgUrl)}')` : '';
+                bgEl.style.opacity = '1';
+            }
+
+            // Step 5: crossfade art image
+            if (artEl) {
+                const isMusic = item.type === 'music';
+                const newSrc = item.image || null;
+
+                if (isMusic && newSrc) {
+                    // Pre-load new image; show skeleton until ready
+                    const newImg = document.createElement('img');
+                    newImg.className = 'rm-art-loading';
+                    newImg.style.cssText = 'width:100%;height:100%;object-fit:cover;position:absolute;inset:0;opacity:0;transition:opacity 200ms ease';
+                    let skeletonTimer = setTimeout(() => {
+                        artEl.classList.add('rm-skeleton'); // show shimmer if slow
+                    }, 100);
+                    newImg.onload = () => {
+                        clearTimeout(skeletonTimer);
+                        artEl.classList.remove('rm-skeleton');
+                        // Fade out old content, fade in new image
+                        const oldChildren = [...artEl.children];
+                        artEl.appendChild(newImg);
+                        requestAnimationFrame(() => {
+                            newImg.style.opacity = '1';
+                            setTimeout(() => {
+                                oldChildren.forEach(c => c.remove());
+                                newImg.style.position = '';
+                                newImg.style.inset = '';
+                                newImg.className = 'rm-art-loaded';
+                            }, 220);
+                        });
+                    };
+                    newImg.onerror = () => {
+                        clearTimeout(skeletonTimer);
+                        artEl.classList.remove('rm-skeleton');
+                        artEl.innerHTML = '<i class="fas fa-music"></i>';
+                    };
+                    newImg.src = newSrc;
+                } else {
+                    artEl.classList.remove('rm-skeleton');
+                    if (newSrc) {
+                        artEl.innerHTML = `<img src="${escH(newSrc)}" style="width:100%;height:100%;object-fit:cover" onerror="this.outerHTML='<i class=\\'fas fa-music\\'></i>'">`;
+                    } else {
+                        const _fItem = { name: item.name, favicon: item.image, homepage: item.homepage || '', url: item.url };
+                        artEl.innerHTML = _stationIconHtml(_fItem);
+                    }
+                }
+            }
+
+            // Step 6: reset seekbar to 0 state cleanly (no jump — _seekLocked handles the live bar)
+            const fill = _npOverlay.querySelector('#rm-np-fill');
+            const cur  = _npOverlay.querySelector('#rm-np-cur');
+            const dur  = _npOverlay.querySelector('#rm-np-dur');
+            if (fill) fill.style.width = '0%';
+            if (cur)  cur.textContent = '0:00';
+            if (dur)  dur.textContent = '0:00';
+
+            // Step 7: update MediaSession with new track
+            _updateMediaSession();
+
+        }, 160); // wait for fade-out transition to complete
+    }
 
     function _showNowPlaying() {
         if (!_playing) return;
