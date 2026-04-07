@@ -172,6 +172,7 @@ _OPTIONAL_BLUEPRINTS = {
     'photos-ai':       ('photos_ai',       'photos_ai_bp',      None,                True),
     'video-station':   ('video_station',   'video_station_bp',  None,                True),
     'radio-music':     ('radio_music',     'radio_music_bp',    None,                False),
+    'security-advisor':('security_advisor','security_advisor_bp', None,              False),
 }
 
 # Public alias
