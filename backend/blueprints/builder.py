@@ -73,6 +73,8 @@ _build_state = {
     'start_time': 0,
     'pid': 0,               # host PID of nsenter process
     'result': None,         # {success, message, img, iso} on completion
+    'resume_available': False,  # True when failed build can be resumed
+    'build_dir': '',        # WORK_DIR path for resume
 }
 _build_lock = threading.Lock()
 
@@ -179,6 +181,8 @@ def _reset_build(build_type=''):
             'start_time': time.time(),
             'pid': 0,
             'result': None,
+            'resume_available': False,
+            'build_dir': '',
         })
         _save_build_state()
 
@@ -364,6 +368,8 @@ def build_status():
             'log_total': len(_build_state['logs']),
             'elapsed': elapsed,
             'result': _build_state['result'],
+            'resume_available': _build_state.get('resume_available', False),
+            'build_dir': _build_state.get('build_dir', ''),
         })
 
 
@@ -710,6 +716,34 @@ rm -rf "$BUILD_DIR"
 #  API — Build Image (SSE)
 # ═══════════════════════════════════════════════════════════
 
+@builder_bp.route('/resume-image', methods=['POST'])
+@admin_required
+def resume_image():
+    """Resume a failed image build from the last checkpoint."""
+    if _build_state['status'] == 'building':
+        return jsonify({'error': 'Build already in progress.'}), 409
+    if not _build_state.get('resume_available'):
+        return jsonify({'error': 'No resumable build found.'}), 400
+    build_dir = _build_state.get('build_dir', '/tmp/ethos-x86-build-web')
+    import os
+    ckpt_dir = os.path.join(build_dir, '.ckpts')
+    if not os.path.isdir(ckpt_dir):
+        return jsonify({'error': f'Build directory not found: {build_dir}'}), 400
+
+    nasos = _get_host_nasos_dir()
+    _reset_build('image')
+    _update_build(message=f'Wznawianie z checkpointa...')
+
+    t = threading.Thread(
+        target=_build_image_worker,
+        args=(nasos,),
+        kwargs={'resume': True},
+        daemon=True,
+    )
+    t.start()
+    return jsonify({'status': 'ok', 'resumed': True})
+
+
 @builder_bp.route('/image', methods=['POST'])
 def build_image():
     """Build a bootable system image in background thread."""
@@ -733,10 +767,12 @@ def build_image():
     return jsonify({'status': 'ok'})
 
 
-def _build_image_worker(nasos):
+def _build_image_worker(nasos, resume=False):
     """Background worker that runs the x86 image build."""
     try:
         wrapper = _x86_wrapper_script(nasos)
+        if resume:
+            wrapper = 'export ETHOS_RESUME=1\n' + wrapper
 
         start_time = time.time()
         result_info = {}
@@ -769,8 +805,15 @@ def _build_image_worker(nasos):
                 p = line.split(':')
                 result_info['img_path'] = p[1] if len(p) > 1 else ''
                 result_info['img_size'] = p[2] if len(p) > 2 else '0'
+            elif line.startswith('LOG:RESUME_AVAILABLE:'):
+                build_dir = line[len('LOG:RESUME_AVAILABLE:'):]
+                with _build_lock:
+                    _build_state['resume_available'] = True
+                    _build_state['build_dir'] = build_dir.strip()
+                    _save_build_state()
             elif line.startswith('LOG:'):
-                _update_build(log=line[4:])
+                msg = line[4:]
+                _update_build(log=msg)
             elif line.strip():
                 _update_build(log=line)
     except Exception as e:
@@ -847,6 +890,17 @@ else
     mkdir -p "$WORK_DIR"
 fi
 OUTPUT_IMG="$WORK_DIR/ethos-x86.img"
+CKPT_DIR="$WORK_DIR/.ckpts"
+BUILD_DONE=0
+
+# ── Stage checkpoint helpers (idempotent builds) ──
+_ckpt_done() {{ [ -f "$CKPT_DIR/$1" ]; }}
+_ckpt_set()  {{ mkdir -p "$CKPT_DIR"; touch "$CKPT_DIR/$1"; echo "LOG:✓ Stage checkpoint: $1"; }}
+
+RESUME_MODE="${{ETHOS_RESUME:-0}}"
+if [ "$RESUME_MODE" = "1" ] && [ -d "$CKPT_DIR" ]; then
+    echo "LOG:Resume mode — existing checkpoints: $(ls "$CKPT_DIR/" 2>/dev/null | tr '\n' ' ')"
+fi
 
 # ── Build cache directories (persist across builds) ──
 DEBOOTSTRAP_CACHE="/var/cache/ethos-builder/debootstrap"
@@ -869,83 +923,118 @@ cleanup() {{
     if [[ -n "${{LOOP_DEV:-}}" ]]; then
         losetup -d "$LOOP_DEV" 2>/dev/null || true
     fi
-    if [ "$USE_TMPFS" -eq 1 ]; then
-        umount "$WORK_DIR" 2>/dev/null || \
-            umount -l "$WORK_DIR" 2>/dev/null || true
+    if [ "$BUILD_DONE" = "1" ]; then
+        # Success — clean up completely
+        if [ "$USE_TMPFS" -eq 1 ]; then
+            umount "$WORK_DIR" 2>/dev/null || \
+                umount -l "$WORK_DIR" 2>/dev/null || true
+        fi
+        rm -rf "$WORK_DIR" 2>/dev/null || true
+    else
+        # Failure — preserve WORK_DIR for resume
+        echo "LOG:RESUME_AVAILABLE:$WORK_DIR"
+        if [ "$USE_TMPFS" -eq 1 ]; then
+            echo "LOG:Note: Build dir is in tmpfs — checkpoints survive crash but not reboot"
+        fi
     fi
-    rm -rf "$WORK_DIR" 2>/dev/null || true
 }}
 trap cleanup EXIT
 
+# ── Re-mount helper (used when resuming from checkpoint) ──
+_remount_for_resume() {{
+    echo "LOG:Remounting build artifacts for resume..."
+    mkdir -p "$WORK_DIR/root" "$WORK_DIR/efi"
+    LOOP_DEV=$(losetup --find --show --partscan "$OUTPUT_IMG" 2>/dev/null) || {{
+        echo "LOG:ERROR: Cannot attach loop device to $OUTPUT_IMG"; exit 1;
+    }}
+    echo "LOG:Loop device: $LOOP_DEV"
+    mount "${{LOOP_DEV}}p2" "$WORK_DIR/root" || {{ echo "LOG:ERROR: Cannot mount root partition"; exit 1; }}
+    mkdir -p "$WORK_DIR/root/boot/efi"
+    mount "${{LOOP_DEV}}p1" "$WORK_DIR/root/boot/efi" 2>/dev/null || true
+    echo "LOG:Disk remounted for resume"
+}}
+
 # ── Step 1: Create disk image ──
-echo "STEP:8:Creating disk image (${{IMG_SIZE_GB}}GB)..."
-mkdir -p "$WORK_DIR"/{{root,efi}}
-rm -f "$OUTPUT_IMG" "$FINAL_IMG"
-truncate -s "${{IMG_SIZE_GB}}G" "$OUTPUT_IMG"
+if _ckpt_done "01_disk"; then
+    echo "STEP:8:Resuming — disk image exists"
+    _remount_for_resume
+    echo "STEP:14:Obraz dysku (z checkpointa)"
+else
+    echo "STEP:8:Creating disk image (${{IMG_SIZE_GB}}GB)..."
+    mkdir -p "$WORK_DIR"/{{root,efi}}
+    rm -f "$OUTPUT_IMG" "$FINAL_IMG"
+    truncate -s "${{IMG_SIZE_GB}}G" "$OUTPUT_IMG"
 
-LOOP_DEV=$(losetup --find --show --partscan "$OUTPUT_IMG")
-echo "LOG:Loop device: $LOOP_DEV"
+    LOOP_DEV=$(losetup --find --show --partscan "$OUTPUT_IMG")
+    echo "LOG:Loop device: $LOOP_DEV"
 
-parted -s "$LOOP_DEV" mklabel gpt
-parted -s "$LOOP_DEV" mkpart ESP fat32 1MiB ${{ESP_SIZE_MB}}MiB
-parted -s "$LOOP_DEV" set 1 esp on
-parted -s "$LOOP_DEV" mkpart primary ext4 ${{ESP_SIZE_MB}}MiB $((${{ESP_SIZE_MB}} + ${{ROOT_SIZE_MB}}))MiB
-partprobe "$LOOP_DEV"; sleep 1
+    parted -s "$LOOP_DEV" mklabel gpt
+    parted -s "$LOOP_DEV" mkpart ESP fat32 1MiB ${{ESP_SIZE_MB}}MiB
+    parted -s "$LOOP_DEV" set 1 esp on
+    parted -s "$LOOP_DEV" mkpart primary ext4 ${{ESP_SIZE_MB}}MiB $((${{ESP_SIZE_MB}} + ${{ROOT_SIZE_MB}}))MiB
+    partprobe "$LOOP_DEV"; sleep 1
 
-mkfs.vfat -F32 "${{LOOP_DEV}}p1"
-mkfs.ext4 -q -L "ethos-root" "${{LOOP_DEV}}p2"
+    mkfs.vfat -F32 "${{LOOP_DEV}}p1"
+    mkfs.ext4 -q -L "ethos-root" "${{LOOP_DEV}}p2"
 
-mount "${{LOOP_DEV}}p2" "$WORK_DIR/root"
-mkdir -p "$WORK_DIR/root/boot/efi"
-mount "${{LOOP_DEV}}p1" "$WORK_DIR/root/boot/efi"
+    mount "${{LOOP_DEV}}p2" "$WORK_DIR/root"
+    mkdir -p "$WORK_DIR/root/boot/efi"
+    mount "${{LOOP_DEV}}p1" "$WORK_DIR/root/boot/efi"
 
-echo "STEP:14:Obraz dysku utworzony"
+    echo "STEP:14:Obraz dysku utworzony"
+    _ckpt_set "01_disk"
+fi
 
 # ── Step 2: Debootstrap ──
-if [ "$BASE_DISTRO" = "ubuntu" ]; then
-    echo "STEP:15:Debootstrap — minimal Ubuntu install (this will take a few minutes)..."
-    DEBOOTSTRAP_MIRROR="http://archive.ubuntu.com/ubuntu/"
-    DEBOOTSTRAP_EXTRA_OPTS="--no-check-gpg --components=main,restricted,universe"
+if _ckpt_done "02_debootstrap"; then
+    echo "STEP:45:${{BASE_DISTRO^}} base system present (checkpoint — skipped)"
 else
-    echo "STEP:15:Debootstrap — minimal Debian install (this will take a few minutes)..."
-    DEBOOTSTRAP_MIRROR="http://deb.debian.org/debian"
-    DEBOOTSTRAP_EXTRA_OPTS=""
-fi
-PKG_COUNT=0
-if [ -d "$DEBOOTSTRAP_CACHE" ] && [ "$(ls -A "$DEBOOTSTRAP_CACHE" 2>/dev/null)" ]; then
-    echo "LOG:Using debootstrap cache ($(du -sh "$DEBOOTSTRAP_CACHE" | cut -f1))"
-fi
-debootstrap --cache-dir="$DEBOOTSTRAP_CACHE" --variant=minbase $DEBOOTSTRAP_EXTRA_OPTS --include=\\
+    if [ "$BASE_DISTRO" = "ubuntu" ]; then
+        echo "STEP:15:Debootstrap — minimal Ubuntu install (this will take a few minutes)..."
+        DEBOOTSTRAP_MIRROR="http://archive.ubuntu.com/ubuntu/"
+        DEBOOTSTRAP_EXTRA_OPTS="--no-check-gpg --components=main,restricted,universe"
+    else
+        echo "STEP:15:Debootstrap — minimal Debian install (this will take a few minutes)..."
+        DEBOOTSTRAP_MIRROR="http://deb.debian.org/debian"
+        DEBOOTSTRAP_EXTRA_OPTS=""
+    fi
+    PKG_COUNT=0
+    if [ -d "$DEBOOTSTRAP_CACHE" ] && [ "$(ls -A "$DEBOOTSTRAP_CACHE" 2>/dev/null)" ]; then
+        echo "LOG:Using debootstrap cache ($(du -sh "$DEBOOTSTRAP_CACHE" | cut -f1))"
+    fi
+    debootstrap --cache-dir="$DEBOOTSTRAP_CACHE" --variant=minbase $DEBOOTSTRAP_EXTRA_OPTS --include=\\
 $DEBOOTSTRAP_INCLUDE \\
-    "$DEBIAN_RELEASE" "$WORK_DIR/root" "$DEBOOTSTRAP_MIRROR" 2>&1 | \\
-    while IFS= read -r line; do
-        if echo "$line" | grep -qE "^I: Retrieving"; then
-            PKG_COUNT=$((PKG_COUNT + 1))
-            if (( PKG_COUNT % 20 == 0 )); then
-                echo "LOG:Downloading packages... ($PKG_COUNT downloaded)"
+        "$DEBIAN_RELEASE" "$WORK_DIR/root" "$DEBOOTSTRAP_MIRROR" 2>&1 | \\
+        while IFS= read -r line; do
+            if echo "$line" | grep -qE "^I: Retrieving"; then
+                PKG_COUNT=$((PKG_COUNT + 1))
+                if (( PKG_COUNT % 20 == 0 )); then
+                    echo "LOG:Downloading packages... ($PKG_COUNT downloaded)"
+                fi
+            elif echo "$line" | grep -qE "^I: Validating"; then
+                echo "LOG:$line"
+            elif echo "$line" | grep -qE "^I: Extracting"; then
+                PKG_COUNT=$((PKG_COUNT + 1))
+                if (( PKG_COUNT % 30 == 0 )); then
+                    echo "LOG:Extracting... ($PKG_COUNT)"
+                fi
+            elif echo "$line" | grep -qE "^I: Unpacking|^I: Configuring"; then
+                echo "LOG:$line"
+            elif echo "$line" | grep -qE "^I: |^W: |^E: "; then
+                echo "LOG:$line"
             fi
-        elif echo "$line" | grep -qE "^I: Validating"; then
-            echo "LOG:$line"
-        elif echo "$line" | grep -qE "^I: Extracting"; then
-            PKG_COUNT=$((PKG_COUNT + 1))
-            if (( PKG_COUNT % 30 == 0 )); then
-                echo "LOG:Extracting... ($PKG_COUNT)"
-            fi
-        elif echo "$line" | grep -qE "^I: Unpacking|^I: Configuring"; then
-            echo "LOG:$line"
-        elif echo "$line" | grep -qE "^I: |^W: |^E: "; then
-            echo "LOG:$line"
-        fi
-    done
+        done
 
-# Verify debootstrap succeeded
-if [ ! -d "$WORK_DIR/root/dev" ] || [ ! -d "$WORK_DIR/root/etc" ]; then
-    echo "LOG:ERROR: debootstrap did not create rootfs — check logs"
-    echo "STEP:45:Debootstrap failed"
-    exit 1
+    # Verify debootstrap succeeded
+    if [ ! -d "$WORK_DIR/root/dev" ] || [ ! -d "$WORK_DIR/root/etc" ]; then
+        echo "LOG:ERROR: debootstrap did not create rootfs — check logs"
+        echo "STEP:45:Debootstrap failed"
+        exit 1
+    fi
+
+    echo "STEP:45:${{BASE_DISTRO^}} installed. Configuring system..."
+    _ckpt_set "02_debootstrap"
 fi
-
-echo "STEP:45:${{BASE_DISTRO^}} installed. Configuring system..."
 
 # ── Step 3: Configure system ──
 ROOT="$WORK_DIR/root"
@@ -1631,6 +1720,7 @@ else
 fi
 
 echo "STEP:75:Dependencies installed"
+_ckpt_set "05_apt_deps"
 
 # ── Step 6: Inject EthOS (full package) ──
 echo "STEP:76:Injecting EthOS..."
@@ -1959,6 +2049,7 @@ USERPROFILE
 chown $(chroot "$ROOT" id -u $DEFAULT_USER):$(chroot "$ROOT" id -g $DEFAULT_USER) "$ROOT/home/$DEFAULT_USER/.bash_profile"
 
 echo "STEP:85:EthOS injected"
+_ckpt_set "06_inject_ethos"
 
 # ── Step 7: Cleanup & finalize ──
 echo "STEP:86:Finalizing..."
@@ -2157,6 +2248,7 @@ fi
 # Results
 IMG_SIZE=$(stat -c%s "$OUTPUT_IMG" 2>/dev/null || echo 0)
 
+BUILD_DONE=1
 echo "STEP:100:Obraz gotowy!"
 echo "RESULT_IMG:$OUTPUT_IMG:$IMG_SIZE"
 """
