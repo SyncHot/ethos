@@ -106,7 +106,7 @@ DEFAULT_SPEC = {
         'compression_level': 3,
     },
     'preflight': {
-        'enabled': True,
+        'enabled': False,
         'timeout_seconds': 180,
     },
 }

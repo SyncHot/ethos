@@ -2426,7 +2426,12 @@ echo "PREFLIGHT:DONE"
 systemctl disable ethos-preflight.service 2>/dev/null || true
 rm -f /usr/local/sbin/ethos-preflight.sh /etc/systemd/system/ethos-preflight.service
 systemctl daemon-reload 2>/dev/null || true
-shutdown -h now
+# Only power off in QA/beacon mode — when ETHOS_BUILD_HOST is set in ethos.env
+# (injected by builder when ETHOS_QA_BUILD_HOST env var is set on the build host).
+# Without it the image runs normally so the user can access the web UI.
+if grep -q "^ETHOS_BUILD_HOST=" /opt/ethos/ethos.env 2>/dev/null; then
+    shutdown -h now
+fi
 PFSCRIPT
     chmod +x "$ROOT/usr/local/sbin/ethos-preflight.sh"
     cat > "$ROOT/etc/systemd/system/ethos-preflight.service" <<'PFSVC'
