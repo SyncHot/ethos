@@ -194,7 +194,19 @@ def write_setup_done(username, hostname, root_dir="/"):
     ethos_root = os.path.join(root_dir, "opt/ethos")
 
     data_dir = os.path.join(ethos_root, "data")
-    os.makedirs(data_dir, exist_ok=True)
+    # After data separation, data_dir is a symlink → /mnt/data/ethos/data.
+    # If /mnt/data is mounted (normal case), makedirs follows the symlink.
+    # If dangling (mount failed), we fall back to creating a real directory
+    # so setup_done is written somewhere the system can find it on boot.
+    try:
+        os.makedirs(data_dir, exist_ok=True)
+    except OSError:
+        if os.path.islink(data_dir):
+            log.warning("data symlink dangling — removing and creating real dir")
+            os.remove(data_dir)
+            os.makedirs(data_dir, exist_ok=True)
+        else:
+            raise
     path = os.path.join(data_dir, "setup_done")
     with open(path, "w") as f:
         json.dump({
@@ -273,6 +285,10 @@ def generate_tls_cert(hostname, root_dir="/"):
 
     Mirrors the logic from firstboot-v2.sh so that certificates are created
     during the standard installer path (where firstboot is disabled).
+
+    After data separation, {root_dir}/opt/ethos/data is an absolute symlink
+    to /mnt/data/ethos/data.  When called from routes_install.py, /mnt/data
+    is mounted on the HOST — Python follows the absolute symlink transparently.
     """
     ethos_dir = os.path.join(root_dir, "opt/ethos")
     ssl_dir = os.path.join(ethos_dir, "data/ssl")
@@ -283,19 +299,14 @@ def generate_tls_cert(hostname, root_dir="/"):
         log.info("TLS certificate already exists, skipping")
         return
 
-    # data/ssl might be behind a dangling symlink when data partition isn't mounted
-    # under the target. In that case, resolve the real path on the data mount.
-    if os.path.islink(os.path.join(ethos_dir, "data")):
-        data_ssl = os.path.join(root_dir, "mnt/data/ethos/data/ssl")
-        if os.path.isdir(os.path.join(root_dir, "mnt/data/ethos/data")):
-            ssl_dir = data_ssl
-            ssl_key = os.path.join(ssl_dir, "ethos.key")
-            ssl_crt = os.path.join(ssl_dir, "ethos.crt")
-        else:
-            log.warning("data symlink dangling and /mnt/data not mounted — skipping TLS cert")
-            return
-
-    os.makedirs(ssl_dir, exist_ok=True)
+    # data/ may be a dangling symlink if /mnt/data isn't mounted.
+    # os.makedirs follows symlinks — if the target resolves, it works;
+    # if dangling, we get OSError and skip gracefully.
+    try:
+        os.makedirs(ssl_dir, exist_ok=True)
+    except OSError as e:
+        log.warning("Cannot create SSL dir %s (data partition not mounted?): %s", ssl_dir, e)
+        return
 
     fqdn = f"{hostname}.local" if hostname else "ethos.local"
     _, _, rc = _run(
@@ -318,7 +329,6 @@ def generate_tls_cert(hostname, root_dir="/"):
                 env_content = f.read()
             if "SSL_CERT=" not in env_content:
                 with open(env_path, "a") as f:
-                    # Store paths relative to ethos dir (installer may be chrooted)
                     f.write(f"SSL_CERT=/opt/ethos/data/ssl/ethos.crt\n")
                     f.write(f"SSL_KEY=/opt/ethos/data/ssl/ethos.key\n")
         log.info("TLS certificate generated: %s", ssl_crt)

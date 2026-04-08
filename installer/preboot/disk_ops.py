@@ -68,7 +68,7 @@ def _get_boot_device():
     m = re.match(r"/dev/(\w+?)p?\d*$", out)
     if m:
         return m.group(1)
-    m = re.match(r"/dev/(sd[a-z]+|nvme\d+n\d+|mmcblk\d+)", out)
+    m = re.match(r"/dev/(sd[a-z]+|vd[a-z]+|nvme\d+n\d+|mmcblk\d+)", out)
     if m:
         return m.group(1)
     return None
@@ -142,7 +142,7 @@ def discover():
             continue
         name = dev["name"]
         size_bytes = int(dev.get("size", 0) or 0)
-        if size_bytes < 4 * 1024**3:  # Skip < 4GB
+        if size_bytes < 1 * 1024**3:  # Skip < 1GB (unusable for OS or data)
             continue
 
         # Check if any partition is mounted as root
@@ -341,12 +341,16 @@ def install(os_disk, data_disk, progress_cb=None):
                       data_dev=data_dev)
 
         # Phase 5: fstab
+        # In separate-disk mode, fstab is written later (after data disk setup)
+        # to include the data partition entry. Skip the first write.
         if squashfs_mode:
-            _p("configuring", 80, "Writing fstab to overlay...")
-            _write_overlay_fstab(os_dev, mount_dir, same_disk)
+            if same_disk:
+                _p("configuring", 80, "Writing fstab to overlay...")
+                _write_overlay_fstab(os_dev, mount_dir, same_disk)
         else:
-            _p("bootloader", 80, "Configuring fstab...")
-            _generate_fstab(os_dev, mount_dir, same_disk)
+            if same_disk:
+                _p("bootloader", 80, "Configuring fstab...")
+                _generate_fstab(os_dev, mount_dir, same_disk)
 
         # Phase 6: Data disk (if separate)
         nvme_pool_part = None
