@@ -2044,8 +2044,8 @@ BACKUP_DIR=/opt/ethos/backups
 ETHOS_BUILD_ID=build-$(date +%s)
 ENVFILE
 # Inject build host for QA beacon (only if ETHOS_QA_BUILD_HOST is set in the host env)
-if [[ -n "${ETHOS_QA_BUILD_HOST:-}" ]]; then
-    echo "ETHOS_BUILD_HOST=${ETHOS_QA_BUILD_HOST}" >> "$ETHOS_DIR/ethos.env"
+if [[ -n "${{ETHOS_QA_BUILD_HOST:-}}" ]]; then
+    echo "ETHOS_BUILD_HOST=${{ETHOS_QA_BUILD_HOST}}" >> "$ETHOS_DIR/ethos.env"
 fi
 chmod 640 "$ETHOS_DIR/ethos.env"
 
