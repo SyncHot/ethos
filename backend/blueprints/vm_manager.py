@@ -29,6 +29,7 @@ Endpoints:
 import os
 import json
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -1119,7 +1120,6 @@ def start_vm(vm_id):
             vm_path = _vm_dir(vm_id)
             sd_copy = os.path.join(vm_path, 'sd-card.img')
             if not os.path.exists(sd_copy):
-                import shutil
                 _logger.info('Copying RPi image as SD card: %s → %s', boot_image, sd_copy)
                 shutil.copy2(boot_image, sd_copy)
         else:
@@ -1317,16 +1317,27 @@ def start_vm(vm_id):
         # VNC display (for remote access through browser)
         cmd += ['-vnc', f':{vnc_display}']
 
-        # UEFI firmware — always enabled (EthOS images use GPT + EFI)
-        ovmf_paths = [
-            '/usr/share/OVMF/OVMF_CODE.fd',
-            '/usr/share/ovmf/OVMF.fd',
-            '/usr/share/qemu/OVMF.fd',
+        # UEFI firmware — pflash mode with per-VM writable NVRAM
+        # This preserves UEFI boot entries across reboots (required for
+        # grub-install / efibootmgr to persist after installer finishes).
+        _ovmf_pairs = [
+            ('/usr/share/OVMF/OVMF_CODE_4M.fd', '/usr/share/OVMF/OVMF_VARS_4M.fd'),
+            ('/usr/share/OVMF/OVMF_CODE.fd',    '/usr/share/OVMF/OVMF_VARS.fd'),
+            ('/usr/share/ovmf/OVMF.fd',          None),
+            ('/usr/share/qemu/OVMF.fd',          None),
         ]
-        for ovmf in ovmf_paths:
-            if os.path.exists(ovmf):
-                cmd += ['-bios', ovmf]
-                break
+        for ovmf_code, ovmf_vars_template in _ovmf_pairs:
+            if not os.path.exists(ovmf_code):
+                continue
+            if ovmf_vars_template and os.path.exists(ovmf_vars_template):
+                vm_vars = os.path.join(_vm_dir(vm_id), 'OVMF_VARS.fd')
+                if not os.path.exists(vm_vars):
+                    shutil.copy2(ovmf_vars_template, vm_vars)
+                cmd += ['-drive', f'if=pflash,format=raw,unit=0,file={ovmf_code},readonly=on']
+                cmd += ['-drive', f'if=pflash,format=raw,unit=1,file={vm_vars}']
+            else:
+                cmd += ['-bios', ovmf_code]
+            break
 
         # USB tablet for better mouse tracking in VNC
         cmd += ['-device', 'usb-ehci', '-device', 'usb-tablet']
