@@ -702,7 +702,7 @@ class _TokenStore:
             return {
                 'username': row[0],
                 'role': row[1],
-                'expires': datetime.fromtimestamp(row[2]),
+                'expires': datetime.fromtimestamp(float(row[2])) if not isinstance(row[2], str) or row[2].replace('.','',1).isdigit() else datetime.fromisoformat(row[2]),
             }
         return default
 
@@ -727,7 +727,8 @@ class _TokenStore:
         finally:
             conn.close()
         return [
-            (r[0], {'username': r[1], 'role': r[2], 'expires': datetime.fromtimestamp(r[3])})
+            (r[0], {'username': r[1], 'role': r[2],
+                    'expires': datetime.fromtimestamp(float(r[3])) if not isinstance(r[3], str) or r[3].replace('.','',1).isdigit() else datetime.fromisoformat(r[3])})
             for r in rows
         ]
 
