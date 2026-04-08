@@ -256,6 +256,10 @@ def csrf_check():
     if request.path == '/api/auth/login':
         return
 
+    # Boot beacon — VM has no session token or CSRF cookie
+    if request.path == '/api/builder/beacon' and request.method == 'POST':
+        return
+
     # Allow localhost (internal services like smartd, fail2ban)
     if request.remote_addr in ('127.0.0.1', '::1'):
         return
@@ -1026,6 +1030,9 @@ def _blueprint_auth_guard():
             return
         # Internal RAG indexing endpoint (localhost only, used by cron)
         if path == '/api/aichat/rag/index-internal':
+            return
+        # Boot beacon (no auth — freshly booted EthOS VM sends this before having a token)
+        if path == '/api/builder/beacon' and request.method == 'POST':
             return
         # Allow network WiFi/AP endpoints during setup wizard (no auth yet)
         if not _is_setup_done() and path.startswith(('/api/network/wifi',

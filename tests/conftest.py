@@ -16,8 +16,25 @@ _cached_token = None
 
 
 def _login_with_retry(base_url, retries=5, delay=3):
-    """Login with retries to handle transient DB pool exhaustion."""
+    """Login with retries to handle transient DB pool exhaustion.
+
+    If ETHOS_TOKEN is set in the environment, it is used directly
+    (useful for CI or dev environments where login credentials are unknown).
+    """
     global _cached_token
+
+    # Allow pre-injected token via env (e.g. generated directly in DB for dev)
+    env_token = os.environ.get("ETHOS_TOKEN", "")
+    if env_token:
+        r = requests.get(
+            f"{base_url}/api/auth/verify",
+            headers={"Authorization": f"Bearer {env_token}"},
+            timeout=10,
+        )
+        if r.status_code == 200 and r.json().get("valid"):
+            _cached_token = env_token
+            return env_token
+
     if _cached_token:
         r = requests.get(
             f"{base_url}/api/auth/verify",

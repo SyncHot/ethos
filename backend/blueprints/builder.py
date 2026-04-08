@@ -26,6 +26,8 @@ Endpoints:
   GET  /api/builder/download              -> download artifact
   GET  /api/builder/signing-key           -> builder public key (PEM)
   GET  /api/builder/manifest              -> verify & return manifest JSON
+  POST /api/builder/beacon                -> receive "I AM ALIVE" from a freshly booted EthOS VM (no auth)
+  GET  /api/builder/beacon                -> return last received beacon info
 """
 
 import json
@@ -47,6 +49,7 @@ from utils import load_json as _load_json, save_json as _save_json, fmt_bytes, r
     require_tools, check_tool
 from blueprints.builder_spec import load_spec, save_spec, generate_default_spec, \
     spec_to_shell_vars, DEFAULT_SPEC
+from blueprints.admin_required import admin_required
 
 builder_bp = Blueprint('builder', __name__, url_prefix='/api/builder')
 
@@ -78,7 +81,11 @@ _build_state = {
     'resume_available': False,  # True when failed build can be resumed
     'build_dir': '',        # WORK_DIR path for resume
     'preflight_result': '',  # 'ok'|'fail'|'timeout'|'skipped'|'disabled'
+    'last_beacon': None,    # Last "I AM ALIVE" beacon received from a booted VM
 }
+
+# Beacon ID is set at build completion; the booted VM must include it in its POST.
+_BEACON_FILE = data_path('builder_beacon.json')
 _build_lock = threading.Lock()
 
 
@@ -410,6 +417,72 @@ def dismiss_build():
         })
         _save_build_state()
     return jsonify({'ok': True})
+
+
+# ═══════════════════════════════════════════════════════════
+#  API — Boot Beacon  (Success Beacon for E2E validation)
+# ═══════════════════════════════════════════════════════════
+
+@builder_bp.route('/beacon', methods=['POST'])
+def receive_beacon():
+    """Receive an 'I AM ALIVE' signal from a freshly booted EthOS VM.
+
+    No authentication required — the newly installed system doesn't have a
+    session token yet.  The caller must supply ``build_id`` matching the
+    beacon_id embedded in the image at build time.
+
+    Body (JSON):
+        build_id  — matches the beacon_id stored in _build_state at completion
+        hostname  — hostname of the booted system
+        version   — EthOS version string from /etc/os-release
+        timestamp — Unix epoch (seconds) of first boot
+        extras    — optional dict of additional diagnostic fields
+    """
+    body = request.get_json(force=True, silent=True) or {}
+    build_id = str(body.get('build_id', '')).strip()
+    if not build_id:
+        return jsonify({'error': 'build_id required'}), 400
+
+    beacon = {
+        'build_id': build_id,
+        'hostname': str(body.get('hostname', ''))[:128],
+        'version': str(body.get('version', ''))[:64],
+        'timestamp': body.get('timestamp', int(time.time())),
+        'received_at': int(time.time()),
+        'remote_addr': request.remote_addr,
+        'extras': body.get('extras') if isinstance(body.get('extras'), dict) else {},
+    }
+
+    with _build_lock:
+        _build_state['last_beacon'] = beacon
+
+    try:
+        _save_json(_BEACON_FILE, beacon)
+    except Exception as exc:
+        _logger.warning('beacon: could not persist: %s', exc)
+
+    _logger.info('beacon: received from %s (build_id=%s)', beacon['hostname'], build_id)
+    return jsonify({'ok': True, 'acknowledged': True})
+
+
+@builder_bp.route('/beacon', methods=['GET'])
+@admin_required
+def get_beacon():
+    """Return the last boot beacon received from a built image (auth required)."""
+    with _build_lock:
+        beacon = _build_state.get('last_beacon')
+
+    if beacon is None:
+        # Try loading from disk (survives server restart)
+        beacon = _load_json(_BEACON_FILE, None)
+
+    if beacon is None:
+        return jsonify({'ok': True, 'beacon': None,
+                        'message': 'No beacon received yet'})
+
+    expected_id = _build_state.get('beacon_id', '')
+    matched = bool(expected_id and beacon.get('build_id') == expected_id)
+    return jsonify({'ok': True, 'beacon': beacon, 'build_id_matched': matched})
 
 
 @builder_bp.route('/history')
@@ -795,10 +868,14 @@ def _build_image_worker(nasos, resume=False):
                     img_size = _human_size(int(result_info.get('img_size', 0)))
                     msg = f'Image ready! IMG: {img_size}'
                     msg += f' (czas: {elapsed_m}min {elapsed_s}s)'
+                    beacon_id = f"build-{int(start_time)}"
                     res = {
                         'success': True, 'message': msg,
                         'img': result_info.get('img_path', ''),
+                        'beacon_id': beacon_id,
                     }
+                    with _build_lock:
+                        _build_state['beacon_id'] = beacon_id
                     _update_build(status='done', percent=100, message=msg, result=res)
                 else:
                     msg = f'Image build error (code: {code}, time: {elapsed_m}min {elapsed_s}s)'
@@ -1964,7 +2041,12 @@ NAS_NAME=EthOS
 PORT=$NAS_PORT
 ETHOS_ROOT=/opt/ethos
 BACKUP_DIR=/opt/ethos/backups
+ETHOS_BUILD_ID=build-$(date +%s)
 ENVFILE
+# Inject build host for QA beacon (only if ETHOS_QA_BUILD_HOST is set in the host env)
+if [[ -n "${ETHOS_QA_BUILD_HOST:-}" ]]; then
+    echo "ETHOS_BUILD_HOST=${ETHOS_QA_BUILD_HOST}" >> "$ETHOS_DIR/ethos.env"
+fi
 chmod 640 "$ETHOS_DIR/ethos.env"
 
 cat > "$ETHOS_DIR/start.sh" <<'MGMT_STARTSH'
@@ -2599,7 +2681,7 @@ echo "RESULT_IMG:$OUTPUT_IMG:$IMG_SIZE"
 # ═══════════════════════════════════════════════════════════
 
 @builder_bp.route('/signing-key')
-@require_auth
+@admin_required
 def get_signing_key():
     """Return the builder public key (PEM). Used for offline artifact verification."""
     from blueprints.builder_signing import ensure_signing_key, get_public_key_pem
@@ -2611,7 +2693,7 @@ def get_signing_key():
 
 
 @builder_bp.route('/manifest')
-@require_auth
+@admin_required
 def get_manifest():
     """
     Verify and return a build manifest.

@@ -145,6 +145,25 @@ if [[ "$ETHOS_SETUP_WIZARD" != "yes" ]]; then
 fi
 echo "installed $(date -Iseconds)" > "$INSTALLED_MARKER"
 
+# ── E2E Validation: Boot Beacon ──────────────────────────────────────────────
+# If ETHOS_BUILD_HOST is set (injected at build time for QA), POST a "I AM ALIVE"
+# beacon back to the Builder host so automated tests can confirm successful boot.
+if [[ -n "${ETHOS_BUILD_HOST:-}" ]]; then
+    ETHOS_VERSION=$(grep '^VERSION_ID=' /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '"' || echo "unknown")
+    BEACON_PAYLOAD="{\"build_id\":\"${ETHOS_BUILD_ID:-}\",\"hostname\":\"${ETHOS_HOSTNAME}\",\"version\":\"${ETHOS_VERSION}\",\"timestamp\":$(date +%s)}"
+    # Retry up to 10 times (service may not be up immediately)
+    for _try in $(seq 1 10); do
+        if curl -sf --max-time 5 \
+                -H "Content-Type: application/json" \
+                -d "${BEACON_PAYLOAD}" \
+                "${ETHOS_BUILD_HOST}/api/builder/beacon" > /dev/null 2>&1; then
+            echo "  Boot beacon sent to ${ETHOS_BUILD_HOST} (attempt ${_try})"
+            break
+        fi
+        sleep 6
+    done
+fi
+
 echo ""
 echo "=========================================="
 echo " First boot complete! Starting EthOS..."
