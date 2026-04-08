@@ -24,6 +24,8 @@ Endpoints:
   POST /api/builder/logs/clear            -> clear log
   POST /api/builder/delete                -> delete artifact
   GET  /api/builder/download              -> download artifact
+  GET  /api/builder/signing-key           -> builder public key (PEM)
+  GET  /api/builder/manifest              -> verify & return manifest JSON
 """
 
 import json
@@ -772,6 +774,8 @@ def build_image():
 
 def _build_image_worker(nasos, resume=False):
     """Background worker that runs the x86 image build."""
+    from blueprints.builder_resources import enter_build_slice, leave_build_slice
+    enter_build_slice()
     try:
         wrapper = _x86_wrapper_script(nasos)
         if resume:
@@ -828,6 +832,8 @@ def _build_image_worker(nasos, resume=False):
     except Exception as e:
         msg = f'Exception: {e}'
         _update_build(status='error', message=msg, result={'success': False, 'message': msg})
+    finally:
+        leave_build_slice()
 
 
 
@@ -887,15 +893,19 @@ FINAL_IMG="$NASOS/installer/images/ethos-x86.img"
 WORK_DIR="/tmp/ethos-x86-build-web"
 
 # ── Performance: use tmpfs (RAM) for build if enough memory ──
-TOTAL_RAM_MB=$(awk '/MemAvailable/{{print int($2/1024)}}' /proc/meminfo 2>/dev/null || echo 0)
+# VM-aware: subtract RAM already used by running QEMU processes.
+MEM_AVAIL_MB=$(awk '/MemAvailable/{{print int($2/1024)}}' /proc/meminfo 2>/dev/null || echo 0)
+VM_RAM_MB=$(ps -eo rss,comm --no-headers 2>/dev/null | awk '/qemu/{{s+=$1}} END{{print int(s/1024)}}')
+VM_RAM_MB=${{VM_RAM_MB:-0}}
+EFFECTIVE_RAM_MB=$(( MEM_AVAIL_MB - VM_RAM_MB - 512 ))
 USE_TMPFS=0
-if [ "$TOTAL_RAM_MB" -gt "$TMPFS_MIN_RAM_MB" ]; then
+if [ "$EFFECTIVE_RAM_MB" -gt "$TMPFS_MIN_RAM_MB" ]; then
     USE_TMPFS=1
-    echo "LOG:Available RAM: ${{TOTAL_RAM_MB}}MB — building in tmpfs (RAM) for speed"
+    echo "LOG:RAM: avail=${{MEM_AVAIL_MB}}MB vms=${{VM_RAM_MB}}MB effective=${{EFFECTIVE_RAM_MB}}MB — building in tmpfs"
     mkdir -p "$WORK_DIR"
     mount -t tmpfs -o size=${{IMG_SIZE_GB}}G,nr_inodes=0 tmpfs "$WORK_DIR"
 else
-    echo "LOG:Available RAM: ${{TOTAL_RAM_MB}}MB — not enough for tmpfs, building on disk"
+    echo "LOG:RAM: avail=${{MEM_AVAIL_MB}}MB vms=${{VM_RAM_MB}}MB effective=${{EFFECTIVE_RAM_MB}}MB — building on disk"
     mkdir -p "$WORK_DIR"
 fi
 OUTPUT_IMG="$WORK_DIR/ethos-x86.img"
@@ -934,7 +944,7 @@ cleanup() {{
     fi
     if [ "$BUILD_DONE" = "1" ]; then
         # Success — clean up completely
-        if [ "$USE_TMPFS" -eq 1 ]; then
+        if [ "$USE_TMPFS" -eq 1 ] && mountpoint -q "$WORK_DIR" 2>/dev/null; then
             umount "$WORK_DIR" 2>/dev/null || \
                 umount -l "$WORK_DIR" 2>/dev/null || true
         fi
@@ -981,7 +991,18 @@ else
     parted -s "$LOOP_DEV" mkpart ESP fat32 1MiB ${{ESP_SIZE_MB}}MiB
     parted -s "$LOOP_DEV" set 1 esp on
     parted -s "$LOOP_DEV" mkpart primary ext4 ${{ESP_SIZE_MB}}MiB $((${{ESP_SIZE_MB}} + ${{ROOT_SIZE_MB}}))MiB
-    partprobe "$LOOP_DEV"; sleep 1
+    partprobe "$LOOP_DEV"
+    # Wait for partition devices to appear (up to 10s, 0.5s steps)
+    for _pnum in 1 2; do
+        _waited=0
+        while [ ! -b "${{LOOP_DEV}}p${{_pnum}}" ] && [ $_waited -lt 20 ]; do
+            sleep 0.5; _waited=$((_waited + 1))
+        done
+        if [ ! -b "${{LOOP_DEV}}p${{_pnum}}" ]; then
+            echo "LOG:ERROR: Partition ${{LOOP_DEV}}p${{_pnum}} not ready after 10s"
+            exit 1
+        fi
+    done
 
     mkfs.vfat -F32 "${{LOOP_DEV}}p1"
     mkfs.ext4 -q -L "ethos-root" "${{LOOP_DEV}}p2"
@@ -1011,9 +1032,11 @@ else
     if [ -d "$DEBOOTSTRAP_CACHE" ] && [ "$(ls -A "$DEBOOTSTRAP_CACHE" 2>/dev/null)" ]; then
         echo "LOG:Using debootstrap cache ($(du -sh "$DEBOOTSTRAP_CACHE" | cut -f1))"
     fi
+    DEBS_LOG="/tmp/ethos-debootstrap-$$.log"
     debootstrap --cache-dir="$DEBOOTSTRAP_CACHE" --variant=minbase $DEBOOTSTRAP_EXTRA_OPTS --include=\\
 $DEBOOTSTRAP_INCLUDE \\
         "$DEBIAN_RELEASE" "$WORK_DIR/root" "$DEBOOTSTRAP_MIRROR" 2>&1 | \\
+        tee "$DEBS_LOG" | \\
         while IFS= read -r line; do
             if echo "$line" | grep -qE "^I: Retrieving"; then
                 PKG_COUNT=$((PKG_COUNT + 1))
@@ -1033,6 +1056,15 @@ $DEBOOTSTRAP_INCLUDE \\
                 echo "LOG:$line"
             fi
         done
+    DEBS_RC=${{PIPESTATUS[0]}}
+    if [ "$DEBS_RC" -ne 0 ]; then
+        echo "LOG:ERROR: debootstrap failed (exit $DEBS_RC)"
+        tail -5 "$DEBS_LOG" 2>/dev/null | while IFS= read -r _l; do echo "LOG:DEBS> $_l"; done
+        rm -f "$DEBS_LOG"
+        echo "STEP:45:Debootstrap failed"
+        exit 1
+    fi
+    rm -f "$DEBS_LOG"
 
     # Verify debootstrap succeeded
     if [ ! -d "$WORK_DIR/root/dev" ] || [ ! -d "$WORK_DIR/root/etc" ]; then
@@ -1437,9 +1469,15 @@ DEBIAN_FRONTEND=noninteractive chroot "$ROOT" apt-get install -y -qq efibootmgr 
 mkdir -p "$ROOT/boot/efi/EFI/BOOT"
 echo "LOG:GRUB UEFI install..."
 chroot "$ROOT" grub-install --target=x86_64-efi --efi-directory=/boot/efi \\
-    --boot-directory=/boot --removable --no-nvram 2>/dev/null || {{
-    echo "STEP:0:ERROR: UEFI grub-install failed!"; exit 1;
-}}
+    --boot-directory=/boot --removable --no-nvram 2>&1 | tail -5
+GRUB_RC=${{PIPESTATUS[0]}}
+GRUB_EFI_BIN="$ROOT/boot/efi/EFI/BOOT/BOOTX64.EFI"
+if [ "$GRUB_RC" -ne 0 ] || [ ! -f "$GRUB_EFI_BIN" ]; then
+    echo "LOG:ERROR: grub-install failed (rc=$GRUB_RC) or BOOTX64.EFI missing"
+    ls -la "$ROOT/boot/efi/EFI/" 2>/dev/null | while IFS= read -r _l; do echo "LOG:EFI> $_l"; done
+    echo "STEP:0:ERROR: UEFI grub-install failed!"
+    exit 1
+fi
 
 KERN=$(ls "$ROOT/boot/vmlinuz-"* 2>/dev/null | sort -V | tail -1 | sed "s|$ROOT||")
 INITRD=$(ls "$ROOT/boot/initrd.img-"* 2>/dev/null | sort -V | tail -1 | sed "s|$ROOT||")
@@ -2131,6 +2169,21 @@ if command -v mksquashfs >/dev/null 2>&1; then
             echo "$ROOTHASH" > "$ROOTHASH_OUT"
             VERITY_SIZE=$(stat -c%s "$VERITY_OUT" 2>/dev/null || echo 0)
             echo "LOG:dm-verity: root hash=$ROOTHASH, hash tree=$((VERITY_SIZE / 1024))KB"
+            # Sign artifact — produce ethos-manifest.json alongside .sqsh and .verity
+            echo "LOG:Signing artifact (RSA-SHA256)..."
+            python3 -c "
+import sys
+sys.path.insert(0, '$NASOS/backend')
+from blueprints.builder_signing import sign_artifact, write_manifest
+import json
+try:
+    ver = json.load(open('$NASOS/backend/version.json')).get('version','?')
+except Exception:
+    ver = '?'
+m = sign_artifact('$SQSH_OUT', '$ROOTHASH', build_version=ver)
+p = write_manifest(m, '$WORK_DIR')
+print('LOG:Manifest written: ' + p if p else 'LOG:WARNING: manifest signing failed')
+" 2>&1 | while IFS= read -r _l; do echo "LOG:$_l"; done || echo "LOG:WARNING: signing step failed (non-fatal)"
         else
             echo "LOG:WARNING: dm-verity format failed — skipping"
             rm -f "$VERITY_OUT" "$ROOTHASH_OUT"
@@ -2229,6 +2282,12 @@ if [ -f "$WORK_DIR/ethos-root.sqsh" ]; then
         cp "$WORK_DIR/ethos-root.sqsh.roothash" "$WORK_DIR/root/boot/efi/EFI/ethos/roothash"
         echo "LOG:dm-verity data injected"
         rm -f "$WORK_DIR/ethos-root.sqsh.verity" "$WORK_DIR/ethos-root.sqsh.roothash"
+        # Inject manifest (signing artifact)
+        if [ -f "$WORK_DIR/ethos-manifest.json" ]; then
+            cp "$WORK_DIR/ethos-manifest.json" "$WORK_DIR/root/opt/ethos/installer/images/ethos-manifest.json"
+            echo "LOG:Manifest injected into image"
+            rm -f "$WORK_DIR/ethos-manifest.json"
+        fi
     fi
     sync
     umount "$WORK_DIR/root" 2>/dev/null || \
@@ -2385,6 +2444,72 @@ BUILD_DONE=1
 echo "STEP:100:Obraz gotowy!"
 echo "RESULT_IMG:$OUTPUT_IMG:$IMG_SIZE"
 """
+
+
+
+# ═══════════════════════════════════════════════════════════
+#  API — Artifact Signing
+# ═══════════════════════════════════════════════════════════
+
+@builder_bp.route('/signing-key')
+@require_auth
+def get_signing_key():
+    """Return the builder public key (PEM). Used for offline artifact verification."""
+    from blueprints.builder_signing import ensure_signing_key, get_public_key_pem
+    ensure_signing_key()
+    pem = get_public_key_pem()
+    if not pem:
+        return jsonify({'error': 'Signing key not available'}), 503
+    return jsonify({'ok': True, 'public_key': pem})
+
+
+@builder_bp.route('/manifest')
+@require_auth
+def get_manifest():
+    """
+    Verify and return a build manifest.
+
+    Query params:
+      path  — path to ethos-manifest.json (must be inside installer/ dir)
+      sqsh  — (optional) path to .sqsh for full verification
+    """
+    from blueprints.builder_signing import verify_artifact
+    manifest_path = request.args.get('path', '').strip()
+    sqsh_path     = request.args.get('sqsh', '').strip()
+
+    if not manifest_path:
+        return jsonify({'error': 'path param required'}), 400
+
+    nasos        = _get_host_nasos_dir()
+    allowed_root = os.path.realpath(os.path.join(nasos, 'installer'))
+    real_path    = os.path.realpath(manifest_path)
+    if not real_path.startswith(allowed_root + '/'):
+        return jsonify({'error': 'Path not allowed'}), 403
+
+    if not os.path.isfile(real_path):
+        return jsonify({'error': 'Manifest not found'}), 404
+
+    import json as _json
+    try:
+        manifest = _json.load(open(real_path))
+    except Exception as exc:
+        return jsonify({'error': f'Cannot read manifest: {exc}'}), 400
+
+    verified   = None
+    verify_msg = ''
+    if sqsh_path:
+        real_sqsh = os.path.realpath(sqsh_path)
+        if real_sqsh.startswith(allowed_root + '/') and os.path.isfile(real_sqsh):
+            verified, verify_msg = verify_artifact(real_sqsh, real_path)
+        else:
+            verify_msg = 'sqsh path not accessible'
+
+    return jsonify({
+        'ok':        True,
+        'manifest':  manifest,
+        'verified':  verified,
+        'verify_msg': verify_msg,
+    })
 
 
 # ═══════════════════════════════════════════════════════════
