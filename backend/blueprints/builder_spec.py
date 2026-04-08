@@ -26,6 +26,7 @@ from host import data_path
 
 DEFAULT_SPEC = {
     'base': {
+        'distro': 'debian',
         'arch': 'amd64',
         'release': 'bookworm',
         'mirror': 'http://deb.debian.org/debian',
@@ -175,6 +176,7 @@ def spec_to_shell_vars(spec):
     build_cfg = spec.get('build', {})
 
     lines = [
+        f'BASE_DISTRO="{base.get("distro", "debian")}"',
         f'DEBIAN_RELEASE="{base.get("release", "bookworm")}"',
         f'IMG_SIZE_GB={base.get("img_size_gb", 8)}',
         f'DEFAULT_USER="{identity.get("default_user", "nasadmin")}"',

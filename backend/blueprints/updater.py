@@ -52,10 +52,11 @@ _socketio = None
 _update_lock = threading.Lock()
 
 # All known grubenv locations — GRUB's $prefix varies by UEFI firmware
-# and boot entry (EFI/BOOT, EFI/debian, or boot/grub on ESP).
+# and boot entry (EFI/BOOT, EFI/debian, EFI/ubuntu, or boot/grub on ESP).
 GRUBENV_PATHS = (
     '/boot/efi/EFI/BOOT/grubenv',
     '/boot/efi/EFI/debian/grubenv',
+    '/boot/efi/EFI/ubuntu/grubenv',
     '/boot/efi/boot/grub/grubenv',
     '/boot/grub/grubenv',
 )

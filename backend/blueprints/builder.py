@@ -815,11 +815,16 @@ for cmd in debootstrap parted mkfs.ext4 mkfs.vfat grub-install; do
     fi
 done
 
-# Ensure debian-archive-keyring is present (needed on Ubuntu hosts)
-if [ ! -f /usr/share/keyrings/debian-archive-keyring.gpg ]; then
-    echo "LOG:Installing debian-archive-keyring..."
-    apt-get update -qq 2>/dev/null
-    apt-get install -y -qq debian-archive-keyring 2>/dev/null || true
+# Ensure the appropriate archive keyring is present
+if [ "$BASE_DISTRO" = "ubuntu" ]; then
+    # Ubuntu debootstrap uses --no-check-gpg since ubuntu-keyring may be unavailable on Debian hosts
+    echo "LOG:Ubuntu build — skipping keyring check (using --no-check-gpg for debootstrap)"
+else
+    if [ ! -f /usr/share/keyrings/debian-archive-keyring.gpg ]; then
+        echo "LOG:Installing debian-archive-keyring..."
+        apt-get update -qq 2>/dev/null
+        apt-get install -y -qq debian-archive-keyring 2>/dev/null || true
+    fi
 fi
 
 echo "STEP:5:Preparing environment..."
@@ -897,14 +902,22 @@ mount "${{LOOP_DEV}}p1" "$WORK_DIR/root/boot/efi"
 echo "STEP:14:Obraz dysku utworzony"
 
 # ── Step 2: Debootstrap ──
-echo "STEP:15:Debootstrap — minimal Debian install (this will take a few minutes)..."
+if [ "$BASE_DISTRO" = "ubuntu" ]; then
+    echo "STEP:15:Debootstrap — minimal Ubuntu install (this will take a few minutes)..."
+    DEBOOTSTRAP_MIRROR="http://archive.ubuntu.com/ubuntu/"
+    DEBOOTSTRAP_EXTRA_OPTS="--no-check-gpg --components=main,restricted,universe"
+else
+    echo "STEP:15:Debootstrap — minimal Debian install (this will take a few minutes)..."
+    DEBOOTSTRAP_MIRROR="http://deb.debian.org/debian"
+    DEBOOTSTRAP_EXTRA_OPTS=""
+fi
 PKG_COUNT=0
 if [ -d "$DEBOOTSTRAP_CACHE" ] && [ "$(ls -A "$DEBOOTSTRAP_CACHE" 2>/dev/null)" ]; then
     echo "LOG:Using debootstrap cache ($(du -sh "$DEBOOTSTRAP_CACHE" | cut -f1))"
 fi
-debootstrap --cache-dir="$DEBOOTSTRAP_CACHE" --variant=minbase --include=\\
+debootstrap --cache-dir="$DEBOOTSTRAP_CACHE" --variant=minbase $DEBOOTSTRAP_EXTRA_OPTS --include=\\
 $DEBOOTSTRAP_INCLUDE \\
-    "$DEBIAN_RELEASE" "$WORK_DIR/root" http://deb.debian.org/debian 2>&1 | \\
+    "$DEBIAN_RELEASE" "$WORK_DIR/root" "$DEBOOTSTRAP_MIRROR" 2>&1 | \\
     while IFS= read -r line; do
         if echo "$line" | grep -qE "^I: Retrieving"; then
             PKG_COUNT=$((PKG_COUNT + 1))
@@ -932,7 +945,7 @@ if [ ! -d "$WORK_DIR/root/dev" ] || [ ! -d "$WORK_DIR/root/etc" ]; then
     exit 1
 fi
 
-echo "STEP:45:Debian installed. Configuring system..."
+echo "STEP:45:${{BASE_DISTRO^}} installed. Configuring system..."
 
 # ── Step 3: Configure system ──
 ROOT="$WORK_DIR/root"
@@ -1067,12 +1080,21 @@ chroot "$ROOT" locale-gen >/dev/null 2>&1
 echo 'LANG=en_US.UTF-8' > "$ROOT/etc/default/locale"
 ln -sf /usr/share/zoneinfo/Europe/Warsaw "$ROOT/etc/localtime"
 
+if [ "$BASE_DISTRO" = "ubuntu" ]; then
+cat > "$ROOT/etc/apt/sources.list" <<APT
+deb http://archive.ubuntu.com/ubuntu $DEBIAN_RELEASE main restricted universe multiverse
+deb http://archive.ubuntu.com/ubuntu $DEBIAN_RELEASE-updates main restricted universe multiverse
+deb http://security.ubuntu.com/ubuntu $DEBIAN_RELEASE-security main restricted universe multiverse
+deb http://archive.ubuntu.com/ubuntu $DEBIAN_RELEASE-backports main restricted universe multiverse
+APT
+else
 cat > "$ROOT/etc/apt/sources.list" <<APT
 deb http://deb.debian.org/debian $DEBIAN_RELEASE main contrib non-free non-free-firmware
 deb http://deb.debian.org/debian $DEBIAN_RELEASE-updates main contrib non-free non-free-firmware
 deb http://security.debian.org/debian-security $DEBIAN_RELEASE-security main contrib non-free non-free-firmware
 deb http://deb.debian.org/debian $DEBIAN_RELEASE-backports main contrib non-free non-free-firmware
 APT
+fi
 
 echo "LOG:Creating user $DEFAULT_USER..."
 PASS_HASH=$(openssl passwd -6 "$USER_PASS")
@@ -1280,7 +1302,7 @@ NAME="$BRAND_NAME"
 VERSION_ID="${{VERSION}}"
 VERSION="${{VERSION}}"
 ID=ethos
-ID_LIKE=debian
+ID_LIKE=$BASE_DISTRO
 HOME_URL="https://ethos.local"
 OSREL
 
@@ -1306,8 +1328,12 @@ echo "STEP:53:Installing GRUB (UEFI)..."
 
 echo "LOG:apt-get update in chroot..."
 chroot "$ROOT" apt-get update -qq 2>&1 | tail -3 || true
-echo "LOG:Installing GRUB packages (from backports for UEFI compatibility)..."
-DEBIAN_FRONTEND=noninteractive chroot "$ROOT" apt-get install -y -qq -t ${{DEBIAN_RELEASE}}-backports grub-efi-amd64 grub-efi-amd64-bin grub-common grub2-common 2>&1 | tail -5 || true
+echo "LOG:Installing GRUB packages..."
+if [ "$BASE_DISTRO" = "ubuntu" ]; then
+    DEBIAN_FRONTEND=noninteractive chroot "$ROOT" apt-get install -y -qq grub-efi-amd64 grub-efi-amd64-bin grub-common grub2-common 2>&1 | tail -5 || true
+else
+    DEBIAN_FRONTEND=noninteractive chroot "$ROOT" apt-get install -y -qq -t ${{DEBIAN_RELEASE}}-backports grub-efi-amd64 grub-efi-amd64-bin grub-common grub2-common 2>&1 | tail -5 || true
+fi
 DEBIAN_FRONTEND=noninteractive chroot "$ROOT" apt-get install -y -qq efibootmgr 2>&1 | tail -5 || true
 
 mkdir -p "$ROOT/boot/efi/EFI/BOOT"
@@ -1369,10 +1395,14 @@ chroot "$ROOT" apt-get install -y -qq \
     2>&1 | tail -10 || echo "LOG:Some packages skipped"
 
 echo "LOG:Installing firmware..."
-chroot "$ROOT" apt-get install -y -qq \
-    firmware-atheros firmware-realtek firmware-brcm80211 \
-    firmware-misc-nonfree firmware-linux-nonfree bluez firmware-intel-sound \
-    2>&1 | tail -10 || echo "LOG:Some firmware skipped"
+if [ "$BASE_DISTRO" = "ubuntu" ]; then
+    chroot "$ROOT" apt-get install -y -qq linux-firmware bluez 2>&1 | tail -5 || echo "LOG:Some firmware skipped"
+else
+    chroot "$ROOT" apt-get install -y -qq \
+        firmware-atheros firmware-realtek firmware-brcm80211 \
+        firmware-misc-nonfree firmware-linux-nonfree bluez firmware-intel-sound \
+        2>&1 | tail -10 || echo "LOG:Some firmware skipped"
+fi
 
 # All other packages (storage tools, sensors, printer, archives, etc.)
 # are installed lazily by EthOS (ensure_dep) when user enables features.
@@ -1383,15 +1413,20 @@ chroot "$ROOT" apt-get install -y -qq \
     parted dosfstools e2fsprogs btrfs-progs mtools \
     2>&1 | tail -5 || echo "LOG:Some builder tools skipped"
 
-echo "STEP:73:Installing kernel and firmware from backports..."
+echo "STEP:73:Installing kernel and firmware updates..."
 
 # First clean apt cache to free space before big installs
 chroot "$ROOT" apt-get clean 2>/dev/null || true
-echo "LOG:Disk usage before backports:"
+echo "LOG:Disk usage before kernel/firmware update:"
 df -h "$ROOT" 2>/dev/null | tail -1 || true
 
-echo "LOG:Installing linux-image-amd64 from backports..."
-chroot "$ROOT" apt-get install -y -qq -t ${{DEBIAN_RELEASE}}-backports linux-image-amd64 2>&1 | tail -5 || echo "LOG:Backports kernel skipped"
+if [ "$BASE_DISTRO" = "ubuntu" ]; then
+    echo "LOG:Ubuntu: upgrading kernel and linux-firmware if newer available..."
+    chroot "$ROOT" apt-get install -y -qq --only-upgrade linux-image-amd64 linux-firmware 2>&1 | tail -5 || echo "LOG:Kernel/firmware upgrade skipped"
+else
+    echo "LOG:Installing linux-image-amd64 from backports..."
+    chroot "$ROOT" apt-get install -y -qq -t ${{DEBIAN_RELEASE}}-backports linux-image-amd64 2>&1 | tail -5 || echo "LOG:Backports kernel skipped"
+fi
 
 # Remove OLD kernel to save ~200MB and avoid initramfs for 2 kernels
 OLD_KERN=$(ls "$ROOT/boot/vmlinuz-"* 2>/dev/null | sort -V | head -1 | sed 's|.*/vmlinuz-||')
@@ -1404,7 +1439,7 @@ if [[ -n "$OLD_KERN" && -n "$NEW_KERN" && "$OLD_KERN" != "$NEW_KERN" ]]; then
     echo "LOG:Old kernel removed"
 fi
 
-# Refresh grub.cfg + BOOTX64.EFI now that the backports kernel is active
+# Refresh grub.cfg + BOOTX64.EFI now that the latest kernel is active
 KERN=$(ls "$ROOT/boot/vmlinuz-"* 2>/dev/null | sort -V | tail -1 | sed "s|$ROOT||")
 INITRD=$(ls "$ROOT/boot/initrd.img-"* 2>/dev/null | sort -V | tail -1 | sed "s|$ROOT||")
 echo "LOG:Refreshing GRUB config for kernel: $KERN"
@@ -1432,14 +1467,18 @@ cp "$ROOT/boot/${{INITRD##*/}}" "$ROOT/boot/efi/EFI/recovery/initrd.img" 2>/dev/
 # Re-run grub-install to refresh BOOTX64.EFI modules
 chroot "$ROOT" grub-install --target=x86_64-efi --efi-directory=/boot/efi \
     --boot-directory=/boot --removable --no-nvram 2>/dev/null || echo "LOG:grub-install refresh skipped"
-echo "LOG:GRUB refreshed for backports kernel"
+echo "LOG:GRUB refreshed for latest kernel"
 
-echo "LOG:Installing firmware-iwlwifi from backports..."
-chroot "$ROOT" apt-get install -y -qq -t ${{DEBIAN_RELEASE}}-backports firmware-iwlwifi 2>&1 | tail -5 || echo "LOG:Backports iwlwifi skipped"
-echo "LOG:Installing firmware-realtek from backports..."
-chroot "$ROOT" apt-get install -y -qq -t ${{DEBIAN_RELEASE}}-backports firmware-realtek 2>&1 | tail -5 || echo "LOG:Backports realtek skipped"
-echo "LOG:Installing firmware-misc-nonfree from backports..."
-chroot "$ROOT" apt-get install -y -qq -t ${{DEBIAN_RELEASE}}-backports firmware-misc-nonfree 2>&1 | tail -5 || echo "LOG:Backports misc skipped"
+if [ "$BASE_DISTRO" = "ubuntu" ]; then
+    echo "LOG:Ubuntu: linux-firmware already up-to-date from main repos"
+else
+    echo "LOG:Installing firmware-iwlwifi from backports..."
+    chroot "$ROOT" apt-get install -y -qq -t ${{DEBIAN_RELEASE}}-backports firmware-iwlwifi 2>&1 | tail -5 || echo "LOG:Backports iwlwifi skipped"
+    echo "LOG:Installing firmware-realtek from backports..."
+    chroot "$ROOT" apt-get install -y -qq -t ${{DEBIAN_RELEASE}}-backports firmware-realtek 2>&1 | tail -5 || echo "LOG:Backports realtek skipped"
+    echo "LOG:Installing firmware-misc-nonfree from backports..."
+    chroot "$ROOT" apt-get install -y -qq -t ${{DEBIAN_RELEASE}}-backports firmware-misc-nonfree 2>&1 | tail -5 || echo "LOG:Backports misc skipped"
+fi
 
 # Disable standalone dnsmasq (NM uses its own for AP mode)
 chroot "$ROOT" systemctl disable dnsmasq 2>/dev/null || true

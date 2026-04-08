@@ -1084,11 +1084,15 @@ function renderBuilderApp(body) {
                 <div class="bl-spec-card">
                     <div class="bl-spec-card-title"><i class="fas fa-cube"></i> ${t('Baza systemu')}</div>
                     <div class="bl-spec-field">
-                        <label>${t('Release Debian')}</label>
-                        <select class="bl-select" id="sp-release">
-                            <option value="bookworm" ${base.release === 'bookworm' ? 'selected' : ''}>Bookworm (12)</option>
-                            <option value="trixie" ${base.release === 'trixie' ? 'selected' : ''}>Trixie (13)</option>
+                        <label>${t('Dystrybucja')}</label>
+                        <select class="bl-select" id="sp-distro">
+                            <option value="debian" ${(base.distro || 'debian') === 'debian' ? 'selected' : ''}>Debian</option>
+                            <option value="ubuntu" ${base.distro === 'ubuntu' ? 'selected' : ''}>Ubuntu Server LTS</option>
                         </select>
+                    </div>
+                    <div class="bl-spec-field">
+                        <label id="sp-release-label">${t('Release')}</label>
+                        <select class="bl-select" id="sp-release"></select>
                     </div>
                     <div class="bl-spec-field">
                         <label>${t('Architektura')}</label>
@@ -1245,10 +1249,34 @@ function renderBuilderApp(body) {
             <button class="bl-btn bl-btn-green" id="sp-save"><i class="fas fa-save"></i> ${t('Zapisz konfigurację')}</button>
         </div>`;
 
+        // Populate and manage release options based on distro
+        const RELEASES = {
+            debian: [{v: 'bookworm', l: 'Bookworm (12 LTS)'}, {v: 'trixie', l: 'Trixie (13)'}],
+            ubuntu: [{v: 'noble', l: 'Noble Numbat (24.04 LTS)'}, {v: 'jammy', l: 'Jammy Jellyfish (22.04 LTS)'}],
+        };
+        function updateReleaseOptions(distro, currentRelease) {
+            const sel = blBody.querySelector('#sp-release');
+            sel.innerHTML = '';
+            (RELEASES[distro] || RELEASES.debian).forEach(opt => {
+                const o = document.createElement('option');
+                o.value = opt.v;
+                o.textContent = opt.l;
+                if (opt.v === currentRelease) o.selected = true;
+                sel.appendChild(o);
+            });
+            if (!sel.value) sel.selectedIndex = 0;
+        }
+        updateReleaseOptions(base.distro || 'debian', base.release || 'bookworm');
+        blBody.querySelector('#sp-distro').onchange = (e) => {
+            const defaults = {debian: 'bookworm', ubuntu: 'noble'};
+            updateReleaseOptions(e.target.value, defaults[e.target.value] || 'bookworm');
+        };
+
         // Save spec
         blBody.querySelector('#sp-save').onclick = async () => {
             const updated = {
                 base: {
+                    distro: blBody.querySelector('#sp-distro').value,
                     release: blBody.querySelector('#sp-release').value,
                     arch: 'amd64',
                     img_size_gb: parseInt(blBody.querySelector('#sp-imgsize').value) || 8,

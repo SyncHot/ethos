@@ -1252,12 +1252,13 @@ menuentry "EthOS Recovery Shell (ESP)" {{
     log.info("Wrote A/B ESP grub.cfg: kernel=%s root_a=%s root_b=%s", kver, root_a_uuid, root_b_uuid)
 
     # ── 2) Initialize grubenv with default boot state ──
-    # GRUB 2.12 (Debian backports) uses $prefix = (hd0,gpt1)/EFI/debian
-    # so save_env writes to /EFI/debian/grubenv on the ESP.  We create
-    # grubenv at ALL locations GRUB might look for it.
+    # GRUB's $prefix varies by distro/firmware: EFI/debian (Debian GRUB 2.12),
+    # EFI/ubuntu (Ubuntu GRUB), or EFI/BOOT (removable fallback).
+    # Create grubenv at ALL locations GRUB might look for it.
     grubenv_locations = [
         os.path.join(boot_grub_dir, "grubenv"),                              # /boot/grub/grubenv on ESP
-        os.path.join(mount_dir, "boot/efi/EFI/debian", "grubenv"),           # /EFI/debian/grubenv (GRUB 2.12 prefix)
+        os.path.join(mount_dir, "boot/efi/EFI/debian", "grubenv"),           # /EFI/debian/grubenv (Debian GRUB 2.12)
+        os.path.join(mount_dir, "boot/efi/EFI/ubuntu", "grubenv"),           # /EFI/ubuntu/grubenv (Ubuntu GRUB)
         os.path.join(mount_dir, "boot/efi/EFI/BOOT", "grubenv"),            # /EFI/BOOT/grubenv (removable fallback)
     ]
     for gpath in grubenv_locations:
