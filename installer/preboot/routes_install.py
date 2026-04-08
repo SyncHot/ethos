@@ -160,6 +160,8 @@ def start_install():
             system_ops.configure_services(root_dir=mount_dir)
             _add_log("Regenerating SSH keys...")
             system_ops.regenerate_ssh_keys(root_dir=mount_dir)
+            _add_log("Generating TLS certificate...")
+            system_ops.generate_tls_cert(hostname, root_dir=mount_dir)
 
             # Step 7: Mark installed
             _set_state(phase="marker", percent=97, message="Finalizing...")

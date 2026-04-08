@@ -211,6 +211,27 @@ def validate(os_disk, data_disk, boot_device):
         errors.append("Cannot use boot device as data disk")
         return False, errors, warnings
 
+    # Minimum size check: ESP (512M) + Root-A (4G) + Root-B (4G) = 8.5 GB
+    # Same-disk needs extra space for data partition
+    _MIN_OS_BYTES = 9 * 1024**3       # 9 GB minimum for OS disk
+    _MIN_DATA_BYTES = 1 * 1024**3     # 1 GB minimum for separate data disk
+    os_size = _disk_size_bytes(f"/dev/{os_disk}")
+    if os_size > 0 and os_size < _MIN_OS_BYTES:
+        errors.append(
+            f"OS disk too small ({os_size // (1024**3)} GB). "
+            f"Minimum {_MIN_OS_BYTES // (1024**3)} GB required for A/B partition scheme."
+        )
+        return False, errors, warnings
+
+    if not same_disk:
+        data_size = _disk_size_bytes(f"/dev/{data_disk}")
+        if data_size > 0 and data_size < _MIN_DATA_BYTES:
+            errors.append(
+                f"Data disk too small ({data_size // (1024**3)} GB). "
+                f"Minimum {_MIN_DATA_BYTES // (1024**3)} GB required."
+            )
+            return False, errors, warnings
+
     smart = _smart_status(f"/dev/{os_disk}")
     if smart == "failed":
         warnings.append(f"SMART failure detected on /dev/{os_disk}")
@@ -316,7 +337,8 @@ def install(os_disk, data_disk, progress_cb=None):
 
         # Phase 4: GRUB
         _p("bootloader", 75, "Installing GRUB bootloader...")
-        _install_grub(os_dev, mount_dir, _p, squashfs_mode=squashfs_mode)
+        _install_grub(os_dev, mount_dir, _p, squashfs_mode=squashfs_mode,
+                      data_dev=data_dev)
 
         # Phase 5: fstab
         if squashfs_mode:
@@ -964,17 +986,6 @@ WantedBy=multi-user.target
         os.remove(preboot_link)
         log.info("Disabled ethos-preboot.service")
 
-    # Enable ethos-firstboot.service so it runs on first boot
-    fb_link = os.path.join(wants_dir, "ethos-firstboot.service")
-    if not os.path.exists(fb_link):
-        try:
-            os.symlink(
-                "/etc/systemd/system/ethos-firstboot.service", fb_link
-            )
-            log.info("Enabled ethos-firstboot.service")
-        except OSError:
-            pass
-
     # Enable the main ethos service
     ethos_link = os.path.join(wants_dir, "ethos.service")
     if not os.path.exists(ethos_link):
@@ -1031,7 +1042,7 @@ WantedBy=multi-user.target
         log.info("Created setup_done + .password_changed (wizard=%s)", setup_wizard)
 
 
-def _install_grub(dev, mount_dir, progress_cb=None, squashfs_mode=False):
+def _install_grub(dev, mount_dir, progress_cb=None, squashfs_mode=False, data_dev=None):
     """Install UEFI GRUB bootloader with sub-step progress reporting."""
     import platform
     arch = platform.machine()
@@ -1079,13 +1090,14 @@ def _install_grub(dev, mount_dir, progress_cb=None, squashfs_mode=False):
         # grub-install --removable already created BOOTX64.EFI from the
         # target's GRUB packages; we only need to write our A/B config.
         _p(79, "Writing A/B boot configuration...")
-        _write_esp_grub(dev, mount_dir, progress_cb, squashfs_mode=squashfs_mode)
+        _write_esp_grub(dev, mount_dir, progress_cb, squashfs_mode=squashfs_mode,
+                        data_dev=data_dev)
 
     else:
         log.info("Non-x86 arch (%s): skipping GRUB (assuming U-Boot/other)", arch)
 
 
-def _write_esp_grub(dev, mount_dir, progress_cb=None, squashfs_mode=False):
+def _write_esp_grub(dev, mount_dir, progress_cb=None, squashfs_mode=False, data_dev=None):
     """Write ESP grub.cfg with A/B boot counter.
 
     Partition layout (target disk):
@@ -1282,14 +1294,22 @@ menuentry "EthOS Recovery Shell (ESP)" {{
     # After data separation, /opt/ethos/data may be a dangling symlink
     # (→ /mnt/data/ethos/data, but data partition isn't mounted in target).
     # Mount the data partition temporarily so we can write ab_slots.json.
+    #
+    # In separate-disk mode, data lives on data_dev p1, NOT os_dev p4
+    # (p4 is the NVMe fast-storage pool — a different partition).
     slot_meta_dir = os.path.join(mount_dir, "opt/ethos/data")
     _data_tmp_mount = None
     try:
         if os.path.islink(slot_meta_dir) and not os.path.exists(slot_meta_dir):
             _data_tmp_mount = "/tmp/data-slot-meta"
             os.makedirs(_data_tmp_mount, exist_ok=True)
+            # Use the correct data partition: data_dev p1 for separate-disk, os_dev p4 for same-disk
+            if data_dev:
+                data_part_for_meta = _part(data_dev, 1)
+            else:
+                data_part_for_meta = _part(dev, 4)
             _, _, drc = _run(
-                f"mount -o subvol=@data {_part(dev, 4)} {_data_tmp_mount}", timeout=30
+                f"mount -o subvol=@data {data_part_for_meta} {_data_tmp_mount}", timeout=30
             )
             if drc == 0:
                 real_dir = os.path.join(_data_tmp_mount, "ethos/data")

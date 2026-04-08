@@ -268,6 +268,64 @@ def regenerate_ssh_keys(root_dir="/"):
         log.info("SSH keys regenerated")
 
 
+def generate_tls_cert(hostname, root_dir="/"):
+    """Generate self-signed TLS certificate for HTTPS.
+
+    Mirrors the logic from firstboot-v2.sh so that certificates are created
+    during the standard installer path (where firstboot is disabled).
+    """
+    ethos_dir = os.path.join(root_dir, "opt/ethos")
+    ssl_dir = os.path.join(ethos_dir, "data/ssl")
+    ssl_key = os.path.join(ssl_dir, "ethos.key")
+    ssl_crt = os.path.join(ssl_dir, "ethos.crt")
+
+    if os.path.exists(ssl_crt):
+        log.info("TLS certificate already exists, skipping")
+        return
+
+    # data/ssl might be behind a dangling symlink when data partition isn't mounted
+    # under the target. In that case, resolve the real path on the data mount.
+    if os.path.islink(os.path.join(ethos_dir, "data")):
+        data_ssl = os.path.join(root_dir, "mnt/data/ethos/data/ssl")
+        if os.path.isdir(os.path.join(root_dir, "mnt/data/ethos/data")):
+            ssl_dir = data_ssl
+            ssl_key = os.path.join(ssl_dir, "ethos.key")
+            ssl_crt = os.path.join(ssl_dir, "ethos.crt")
+        else:
+            log.warning("data symlink dangling and /mnt/data not mounted — skipping TLS cert")
+            return
+
+    os.makedirs(ssl_dir, exist_ok=True)
+
+    fqdn = f"{hostname}.local" if hostname else "ethos.local"
+    _, _, rc = _run(
+        f'openssl req -x509 -newkey rsa:4096 -nodes '
+        f'-keyout {ssl_key} -out {ssl_crt} '
+        f'-days 3650 '
+        f'-subj "/CN={fqdn}/O=EthOS/OU=Auto-generated" '
+        f'-addext "subjectAltName=DNS:{fqdn},DNS:ethos.local,DNS:localhost" '
+        f'2>/dev/null',
+        timeout=60,
+    )
+
+    if rc == 0 and os.path.exists(ssl_crt):
+        os.chmod(ssl_key, 0o600)
+        os.chmod(ssl_crt, 0o644)
+        # Register paths in ethos.env
+        env_path = os.path.join(ethos_dir, "ethos.env")
+        if os.path.exists(env_path):
+            with open(env_path, "r") as f:
+                env_content = f.read()
+            if "SSL_CERT=" not in env_content:
+                with open(env_path, "a") as f:
+                    # Store paths relative to ethos dir (installer may be chrooted)
+                    f.write(f"SSL_CERT=/opt/ethos/data/ssl/ethos.crt\n")
+                    f.write(f"SSL_KEY=/opt/ethos/data/ssl/ethos.key\n")
+        log.info("TLS certificate generated: %s", ssl_crt)
+    else:
+        log.warning("TLS certificate generation failed (rc=%s)", rc)
+
+
 def reboot(delay=3):
     """Schedule system reboot."""
     log.info("Rebooting in %d seconds...", delay)
