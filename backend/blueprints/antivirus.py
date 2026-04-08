@@ -271,7 +271,7 @@ def _sync_schedule_to_cron(schedule):
     if enabled:
         new_lines.append(marker)
         new_lines.append(
-            cron_expr + '  clamscan -r --infected'
+            cron_expr + '  nice -n 15 clamscan -r --infected'
             ' --log=' + q(log_file) + ' ' + q(scan_path) + ' > /dev/null 2>&1'
         )
     _write_crontab(new_lines)
@@ -426,7 +426,7 @@ def start_scan():
 
         try:
             proc = subprocess.Popen(
-                ['clamscan', '-r', '--infected', scan_path],
+                ['nice', '-n', '15', 'clamscan', '-r', '--infected', scan_path],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
