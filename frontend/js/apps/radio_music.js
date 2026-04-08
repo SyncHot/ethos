@@ -150,7 +150,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
     // BroadcastChannel — coordinate multi-tab audio (E-07/E-12): only one tab plays at a time
     const _tabId = Math.random().toString(36).slice(2);
-    const _bc = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('rm-audio-master') : null;
+    let _bc = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('rm-audio-master') : null;
     if (_bc) {
         _bc.onmessage = (e) => {
             // Another tab started playing — pause this tab silently
@@ -1052,7 +1052,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             _hideLockScreen();
             window.removeEventListener('popstate', _onPopState, true);
             document.body.classList.remove('app-fullscreen-active');
-            if (_bc) _bc.close();
+            if (_bc) { _bc.close(); _bc = null; }
         },
     });
     setTimeout(() => { if (typeof toggleMaximize === 'function') toggleMaximize('radio-music'); }, 50);

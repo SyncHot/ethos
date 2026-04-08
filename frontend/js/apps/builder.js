@@ -1375,7 +1375,7 @@ function renderBuilderApp(body) {
                 },
             };
             try {
-                await api('/builder/spec', { method: 'PUT', body: JSON.stringify(updated) });
+                await api('/builder/spec', { method: 'PUT', body: updated });
                 toast(t('Konfiguracja zapisana'), 'success');
             } catch (e) {
                 toast(e.message || t('Błąd zapisu'), 'error');
