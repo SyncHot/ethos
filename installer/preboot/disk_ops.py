@@ -512,6 +512,7 @@ def _clone_root(mount_dir, progress_cb):
         "--exclude=/swapfile --exclude=/var/swap "
         "--exclude=/opt/ethos/data/visual_qa "
         "--exclude=/opt/ethos/logs/copilot_tickets "
+        "--exclude=/etc/NetworkManager/system-connections "
     )
     cmd = f"rsync -aAXH {excludes} / {mount_dir}/ 2>&1"
     log.info("Cloning: %s", cmd)
@@ -535,9 +536,10 @@ def _clone_root(mount_dir, progress_cb):
     if rc not in (0, 24):  # 24 = vanished files (ok during live copy)
         raise RuntimeError(f"rsync failed with code {rc}")
 
-    # Create required mount points
+    # Create required mount points and dirs excluded from rsync
     for d in ("proc", "sys", "dev", "run", "tmp", "mnt", "media"):
         os.makedirs(f"{mount_dir}/{d}", exist_ok=True)
+    os.makedirs(f"{mount_dir}/etc/NetworkManager/system-connections", mode=0o700, exist_ok=True)
 
 
 def _dd_clone(compressed_img, target_part, progress_cb):
