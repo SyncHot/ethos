@@ -106,6 +106,31 @@ rm -f /etc/ssh/ssh_host_* 2>/dev/null || true
 ssh-keygen -A 2>/dev/null || true
 systemctl enable ssh 2>/dev/null || true
 
+# OOBE: generate unique self-signed TLS certificate for HTTPS
+SSL_DIR="${ETHOS_DIR}/data/ssl"
+SSL_KEY="${SSL_DIR}/ethos.key"
+SSL_CRT="${SSL_DIR}/ethos.crt"
+if [ ! -f "$SSL_CRT" ] && command -v openssl >/dev/null 2>&1; then
+    mkdir -p "$SSL_DIR"
+    HOSTNAME_FQDN="${ETHOS_HOSTNAME:-ethos}.local"
+    openssl req -x509 -newkey rsa:4096 -nodes \
+        -keyout "$SSL_KEY" -out "$SSL_CRT" \
+        -days 3650 \
+        -subj "/CN=${HOSTNAME_FQDN}/O=EthOS/OU=Auto-generated" \
+        -addext "subjectAltName=DNS:${HOSTNAME_FQDN},DNS:ethos.local,DNS:localhost" \
+        2>/dev/null || true
+    if [ -f "$SSL_CRT" ]; then
+        chmod 600 "$SSL_KEY"
+        chmod 644 "$SSL_CRT"
+        # Register paths in ethos.env
+        if ! grep -q "^SSL_CERT=" "${ETHOS_DIR}/ethos.env" 2>/dev/null; then
+            echo "SSL_CERT=${SSL_CRT}" >> "${ETHOS_DIR}/ethos.env"
+            echo "SSL_KEY=${SSL_KEY}"  >> "${ETHOS_DIR}/ethos.env"
+        fi
+        echo "  TLS certificate generated: ${SSL_CRT}"
+    fi
+fi
+
 echo "[8/8] Marking installation complete..."
 # Write ETHOS_USER to ethos.env so backend knows the correct user
 if ! grep -q "^ETHOS_USER=" "$ETHOS_DIR/ethos.env" 2>/dev/null; then

@@ -1157,6 +1157,58 @@ kernel.nmi_watchdog = 0
 net.ipv4.ip_forward = 1
 IOTUNE
 
+# ── Security hardening: sysctl ──
+cat > "$ROOT/etc/sysctl.d/91-ethos-security.conf" <<'SECSYSCTL'
+# Kernel pointer hardening
+kernel.kptr_restrict = 2
+kernel.dmesg_restrict = 1
+kernel.perf_event_paranoid = 3
+kernel.unprivileged_bpf_disabled = 1
+# Reverse-path filtering (spoofing protection)
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+# SYN flood protection
+net.ipv4.tcp_syncookies = 1
+# Disable ICMP redirects
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
+net.ipv6.conf.all.accept_redirects = 0
+net.ipv6.conf.default.accept_redirects = 0
+net.ipv4.conf.all.send_redirects = 0
+# Disable source routing
+net.ipv4.conf.all.accept_source_route = 0
+net.ipv6.conf.all.accept_source_route = 0
+SECSYSCTL
+
+# ── Security: kernel module blacklist ──
+cat > "$ROOT/etc/modprobe.d/ethos-security-blacklist.conf" <<'MODBLK'
+# Disable DMA-capable bus interfaces (potential physical attack vectors)
+blacklist firewire-core
+blacklist thunderbolt
+# Disable uncommon/legacy filesystems (attack surface reduction)
+blacklist cramfs
+blacklist freevxfs
+blacklist jffs2
+blacklist hfs
+blacklist hfsplus
+blacklist udf
+install cramfs /bin/true
+install freevxfs /bin/true
+install jffs2 /bin/true
+install hfs /bin/true
+install hfsplus /bin/true
+install udf /bin/true
+# Disable uncommon network protocols
+blacklist dccp
+blacklist sctp
+blacklist rds
+blacklist tipc
+install dccp /bin/true
+install sctp /bin/true
+install rds /bin/true
+install tipc /bin/true
+MODBLK
+
 cat > "$ROOT/etc/udev/rules.d/99-ethos-power.rules" <<'UDEV_PWR'
 ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{{queue/rotational}}=="1", RUN+="/sbin/hdparm -S 242 /dev/%k"
 UDEV_PWR
@@ -1441,6 +1493,39 @@ $BRAND_NAME \\n \\l
 
 ISSUE
 echo "$BRAND_NAME" > "$ROOT/etc/issue.net"
+
+# ── Full Debian branding purge ──
+# lsb-release
+cat > "$ROOT/etc/lsb-release" <<LSBREL
+DISTRIB_ID=EthOS
+DISTRIB_RELEASE=${{VERSION}}
+DISTRIB_CODENAME=ethos
+DISTRIB_DESCRIPTION="$BRAND_NAME v${{VERSION}}"
+LSBREL
+# /usr/lib/os-release (canonical path, symlinked by many tools)
+if [ -d "$ROOT/usr/lib" ]; then
+    cp "$ROOT/etc/os-release" "$ROOT/usr/lib/os-release" 2>/dev/null || true
+fi
+# Neutralise /etc/debian_version (content doesn't matter for EthOS)
+echo "ethos/${{VERSION}}" > "$ROOT/etc/debian_version" 2>/dev/null || true
+# Replace dpkg origin so dpkg --version shows EthOS
+if [ -d "$ROOT/etc/dpkg/origins" ]; then
+    cat > "$ROOT/etc/dpkg/origins/ethos" <<DPKGORIG
+Vendor: EthOS
+Vendor-URL: https://ethos.local
+Bugs: https://ethos.local/bugs
+Parent: Debian
+DPKGORIG
+    ln -sf ethos "$ROOT/etc/dpkg/origins/default" 2>/dev/null || true
+fi
+# Remove Debian motd snippets that would reveal base distro
+rm -f "$ROOT/etc/update-motd.d/10-uname" 2>/dev/null || true
+cat > "$ROOT/etc/motd" <<MOTD
+
+  Welcome to $BRAND_NAME v${{VERSION}}
+  https://ethos.local
+
+MOTD
 
 # ── GRUB defaults (so update-grub keeps EthOS name) ──
 cat > "$ROOT/etc/default/grub" <<GRUBDEF
@@ -1768,6 +1853,21 @@ fi
 
 echo "STEP:75:Dependencies installed"
 _ckpt_set "05_apt_deps"
+
+# ── SBOM: generate Software Bill of Materials ──
+echo "LOG:Generating SBOM (SPDX-2.3)..."
+python3 - "$ROOT" "$VERSION" "$BRAND_NAME" "$WORK_DIR" <<'SBOMPY'
+import sys, os
+sys.path.insert(0, '/opt/ethos/backend/blueprints')
+try:
+    from builder_sbom import generate_sbom, write_sbom
+    rootfs, version, brand, outdir = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+    sbom = generate_sbom(rootfs, version, brand)
+    write_sbom(sbom, outdir)
+    print(f"LOG:SBOM: {len(sbom.get('packages', []))} packages documented", flush=True)
+except Exception as e:
+    print(f"LOG:SBOM generation skipped: {e}", flush=True)
+SBOMPY
 
 # ── Step 6: Inject EthOS (full package) ──
 echo "STEP:76:Injecting EthOS..."
@@ -2222,6 +2322,24 @@ if systemctl is-active ethos.service >/dev/null 2>&1; then
 else
     echo "PREFLIGHT:ETHOS:FAIL"
 fi
+# Branding validation
+if grep -q "ID=ethos" /etc/os-release 2>/dev/null; then
+    echo "PREFLIGHT:BRANDING:OK"
+else
+    echo "PREFLIGHT:BRANDING:FAIL"
+fi
+# Hardening validation
+if [ -f /etc/sysctl.d/91-ethos-security.conf ]; then
+    echo "PREFLIGHT:HARDENING:OK"
+else
+    echo "PREFLIGHT:HARDENING:FAIL"
+fi
+# Flask available
+if python3 -c "import flask" 2>/dev/null; then
+    echo "PREFLIGHT:FLASK:OK"
+else
+    echo "PREFLIGHT:FLASK:FAIL"
+fi
 echo "PREFLIGHT:DONE"
 systemctl disable ethos-preflight.service 2>/dev/null || true
 rm -f /usr/local/sbin/ethos-preflight.sh /etc/systemd/system/ethos-preflight.service
@@ -2249,6 +2367,29 @@ PFSVC
     chroot "$ROOT" systemctl enable ethos-preflight.service 2>/dev/null || true
     echo "LOG:Pre-flight service injected into rootfs"
 fi
+
+# ── Secure Boot MOK signing ──
+echo "LOG:Attempting Secure Boot MOK signing..."
+python3 - "$ROOT" "$BRAND_NAME" <<'SBSIGNPY'
+import sys, os
+sys.path.insert(0, '/opt/ethos/backend/blueprints')
+try:
+    from builder_secureboot import ensure_mok_keys, sign_rootfs_efi_binaries, install_mok_der_to_esp
+    rootfs, brand = sys.argv[1], sys.argv[2]
+    if ensure_mok_keys(brand):
+        results = sign_rootfs_efi_binaries(rootfs, brand)
+        signed = [k for k, v in results.items() if v]
+        install_mok_der_to_esp(rootfs)
+        if signed:
+            print(f"LOG:Secure Boot: signed {len(signed)} EFI binaries", flush=True)
+            print(f"LOG:Secure Boot: after install run: sudo mokutil --import /boot/efi/EFI/ethos/MOK.der", flush=True)
+        else:
+            print("LOG:Secure Boot: no EFI binaries signed (sbsign not installed or no targets found)", flush=True)
+    else:
+        print("LOG:Secure Boot: MOK key generation failed — skipping", flush=True)
+except Exception as e:
+    print(f"LOG:Secure Boot signing skipped: {e}", flush=True)
+SBSIGNPY
 
 sync
 
@@ -2287,6 +2428,12 @@ if [ -f "$WORK_DIR/ethos-root.sqsh" ]; then
             cp "$WORK_DIR/ethos-manifest.json" "$WORK_DIR/root/opt/ethos/installer/images/ethos-manifest.json"
             echo "LOG:Manifest injected into image"
             rm -f "$WORK_DIR/ethos-manifest.json"
+        fi
+        # Inject SBOM alongside squashfs
+        if [ -f "$WORK_DIR/ethos-sbom.json" ]; then
+            cp "$WORK_DIR/ethos-sbom.json" "$WORK_DIR/root/opt/ethos/installer/images/ethos-sbom.json"
+            echo "LOG:SBOM injected into image"
+            rm -f "$WORK_DIR/ethos-sbom.json"
         fi
     fi
     sync
