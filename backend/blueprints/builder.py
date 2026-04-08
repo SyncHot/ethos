@@ -252,7 +252,7 @@ def _host_run(cmd, timeout=60):
 
 
 def _host_run_stream(cmd, track_pid=False):
-    stream = _host_run_stream_base(cmd)
+    stream = _host_run_stream_base(f"renice -n 10 $$ 2>/dev/null; {cmd}")
     if track_pid and hasattr(stream, 'pid') and stream.pid:
         _update_build(pid=stream.pid)
     for line in stream:
