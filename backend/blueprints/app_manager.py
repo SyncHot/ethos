@@ -269,7 +269,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/med-assistant/pkg-status',
     },
     {
-        'id': 'gallery', 'name': 'Gallery', 'version': '1.0.3',
+        'id': 'gallery', 'name': 'Gallery', 'version': '1.0.4',
         'icon': 'fa-images', 'color': '#ec4899', 'category': 'Media', 'admin_only': False,
         'description': 'Galeria zdjec i filmow z EXIF, miniaturkami i haslami folderow.',
         'apt_deps': [], 'pip_deps': [],
@@ -346,7 +346,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/flasher/pkg-status',
     },
     {
-        'id': 'builder', 'name': 'Builder', 'version': '1.0.3',
+        'id': 'builder', 'name': 'Builder', 'version': '1.0.4',
         'icon': 'fa-hammer', 'color': '#f97316', 'category': 'System', 'admin_only': True,
         'description': 'Budowanie wydan EthOS i obrazow systemowych przez interfejs webowy.',
         'apt_deps': ['squashfs-tools', 'genisoimage', 'rsync'], 'pip_deps': [],
@@ -472,7 +472,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/wireguard/pkg-status',
     },
     {
-        'id': 'antivirus', 'name': 'Antivirus (ClamAV)', 'version': '1.0.3',
+        'id': 'antivirus', 'name': 'Antivirus (ClamAV)', 'version': '1.0.4',
         'icon': 'fa-shield-virus', 'color': '#16a34a', 'category': 'Security', 'admin_only': True,
         'description': 'ClamAV antywirus — skanowanie na zadanie i zaplanowane.',
         'apt_deps': ['clamav', 'clamav-freshclam'], 'pip_deps': [],
@@ -546,7 +546,7 @@ BUILTIN_CATALOG = [
         'apt_deps': [], 'pip_deps': [], 'simple': True,
     },
     {
-        'id': 'video-station', 'name': 'Video Station', 'version': '0.0.5',
+        'id': 'video-station', 'name': 'Video Station', 'version': '0.0.6',
         'icon': 'fa-film', 'color': '#7c3aed', 'category': 'Media', 'admin_only': False,
         'description': 'Biblioteka filmow z miniaturkami, streamingiem i sledzeniem postepu.',
         'apt_deps': ['ffmpeg'], 'pip_deps': [],
@@ -555,7 +555,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/video-station/pkg-status',
     },
     {
-        'id': 'radio-music', 'name': 'Radio & Music', 'version': '0.0.4',
+        'id': 'radio-music', 'name': 'Radio & Music', 'version': '0.0.5',
         'icon': 'fa-broadcast-tower', 'color': '#10b981', 'category': 'Media', 'admin_only': False,
         'description': 'Radio internetowe z całego świata, podcasty i odtwarzacz muzyki.',
         'apt_deps': ['ffmpeg'], 'pip_deps': ['yt-dlp'],

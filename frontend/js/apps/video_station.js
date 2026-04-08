@@ -252,14 +252,15 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         const vsMain = body.querySelector('.vs-main');
         if (!vsMain || vsMain.querySelector('.vs-hw-banner')) return;
 
+        const isError = health.status === 'permission_denied' || health.status === 'missing_driver';
         const banner = document.createElement('div');
-        banner.className = 'vs-hw-banner';
+        banner.className = 'vs-hw-banner' + (isError ? ' vs-hw-banner-error' : '');
         banner.innerHTML =
-            '<i class="fas fa-exclamation-triangle"></i>' +
+            '<i class="fas fa-' + (isError ? 'lock' : 'exclamation-triangle') + '"></i>' +
             '<span class="vs-hw-banner-msg">' +
               escH(health.message || t('Akceleracja sprzętowa niedostępna.')) +
             '</span>' +
-            '<button class="vs-hw-banner-btn"><i class="fas fa-tools"></i> ' + t('Jak naprawić?') + '</button>' +
+            '<button class="vs-hw-banner-btn"><i class="fas fa-tools"></i> ' + t('Napraw') + '</button>' +
             '<button class="vs-hw-banner-close" title="' + t('Zamknij') + '"><i class="fas fa-times"></i></button>';
 
         const toolbar = vsMain.querySelector('#vs-toolbar');
@@ -288,6 +289,38 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 
         const hwIcon = health.is_intel ? 'fa-microchip' : health.is_nvidia ? 'fa-bolt' : 'fa-server';
         const cpuLabel = health.cpu_model ? '<span class="vs-hw-cpu-label">' + escH(health.cpu_model) + '</span>' : '';
+        const grpLabel = health.render_grp ? escH(t('Dostęp do grupy') + ' "' + health.render_grp + '"') : t('Dostęp do grupy render');
+        const dockerWarning = health.in_docker
+            ? '<div class="vs-hw-docker-warn"><i class="fab fa-docker"></i> ' +
+              t('Wykryto środowisko Docker. Dodaj flagę') +
+              ' <code>--device /dev/dri:/dev/dri</code> ' +
+              t('do konfiguracji kontenera.') + '</div>'
+            : '';
+
+        // iHD-specific alert banner (shown prominently for IHD_INIT_FAILED)
+        const ihdAlert = health.status === 'ihd_init_failed'
+            ? '<div class="vs-hw-ihd-alert">' +
+              '<div class="vs-hw-ihd-alert-header">' +
+                '<i class="fas fa-exclamation-circle"></i>' +
+                '<strong>' + t('Wykryto procesor Intel N100, ale sterownik iHD nie może wystartować.') + '</strong>' +
+              '</div>' +
+              '<div class="vs-hw-ihd-alert-body">' +
+                '<div class="vs-hw-ihd-row">' +
+                  '<span class="vs-hw-ihd-label">iHD_drv_video.so</span>' +
+                  '<span class="vs-hw-ihd-val' + (health.iHD_present ? ' ok' : ' fail') + '">' +
+                    (health.iHD_present ? t('Znaleziony') + ' — init failed' : t('Brak')) +
+                  '</span>' +
+                '</div>' +
+                '<div class="vs-hw-ihd-row">' +
+                  '<span class="vs-hw-ihd-label">LIBVA_DRIVER_NAME</span>' +
+                  '<span class="vs-hw-ihd-val' + (health.libva_correct ? ' ok' : ' warn') + '">' +
+                    (health.libva_driver_name ? escH(health.libva_driver_name) : t('Nie ustawiono')) +
+                    (health.libva_correct ? '' : ' → ' + t('powinno być: ihd')) +
+                  '</span>' +
+                '</div>' +
+              '</div>' +
+            '</div>'
+            : '';
 
         const modal = document.createElement('div');
         modal.className = 'vs-hw-modal';
@@ -300,23 +333,35 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
               '<button class="vs-hw-modal-close"><i class="fas fa-times"></i></button>' +
             '</div>' +
             '<div class="vs-hw-modal-body">' +
-              '<div class="vs-hw-modal-status vs-hw-status-' + escH(health.status) + '">' +
-                '<i class="fas fa-info-circle"></i> ' + escH(health.message) +
-              '</div>' +
-              (cpuLabel ? '<div class="vs-hw-modal-cpu"><i class="fas fa-microchip"></i> ' + cpuLabel + '</div>' : '') +
+              ihdAlert +
+              (ihdAlert ? '' :
+                '<div class="vs-hw-modal-status vs-hw-status-' + escH(health.status) + '">' +
+                  '<i class="fas fa-info-circle"></i> ' + escH(health.message) +
+                '</div>'
+              ) +
+              dockerWarning +
+              (cpuLabel ? '<div class="vs-hw-modal-cpu"><i class="fas fa-microchip"></i> ' + cpuLabel +
+                (health.process_user ? ' &nbsp;·&nbsp; <i class="fas fa-user"></i> ' + escH(health.process_user) : '') +
+              '</div>' : '') +
               '<div class="vs-hw-modal-diag">' +
                 _hwDiagRow(t('Węzeł GPU (/dev/dri/renderD128)'), health.render_node) +
-                _hwDiagRow(t('Dostęp do grupy render'), health.in_render_grp) +
-                _hwDiagRow(t('Sterownik VAAPI'), health.driver_ok) +
+                _hwDiagRow(grpLabel, health.in_render_grp) +
+                _hwDiagRow(t('Sterownik iHD_drv_video.so'), health.iHD_present) +
+                (health.status === 'ihd_init_failed' ? _hwDiagRow('LIBVA_DRIVER_NAME=ihd', health.libva_correct) : '') +
+                _hwDiagRow(t('Sterownik VAAPI aktywny'), health.driver_ok) +
                 _hwDiagRow(t('Aktywna akceleracja HW'), health.is_hw) +
               '</div>' +
               (stepsHtml ? '<div class="vs-hw-modal-steps">' + stepsHtml + '</div>' : '') +
+              '<div id="vs-hw-vainfo-result" class="vs-hw-vainfo-result" style="display:none"></div>' +
             '</div>' +
             '<div class="vs-hw-modal-footer">' +
               (health.status !== 'ok' && health.status !== 'cpu_only' ?
                 '<button id="vs-hw-autoinstall-btn" class="app-btn app-btn-primary">' +
                   '<i class="fas fa-magic"></i> ' + t('Zainstaluj automatycznie') +
                 '</button>' : '') +
+              '<button id="vs-hw-vainfo-btn" class="app-btn">' +
+                '<i class="fas fa-vial"></i> ' + t('Testuj ponownie') +
+              '</button>' +
               '<button id="vs-hw-rescan-btn" class="app-btn">' +
                 '<i class="fas fa-sync-alt"></i> ' + t('Skanuj ponownie') +
               '</button>' +
@@ -392,6 +437,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
                             toast(t('Akceleracja sprzętowa aktywna!') + ' (' + (finalData.hw_encoder || '') + ')', 'success');
                             modal.remove();
                             body.querySelector('.vs-hw-banner')?.remove();
+                            _updateHwBadges(body, true);
                         }
                     } else {
                         toast(t('Instalacja nie powiodła się — sprawdź log poniżej'), 'error');
@@ -406,6 +452,42 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             };
         }
 
+        // Testuj ponownie — runs vainfo directly
+        modal.querySelector('#vs-hw-vainfo-btn').onclick = async () => {
+            const btn = modal.querySelector('#vs-hw-vainfo-btn');
+            const resultBox = modal.querySelector('#vs-hw-vainfo-result');
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Testuję...');
+            resultBox.style.display = 'none';
+            try {
+                const res = await api('/video-station/vainfo-test');
+                if (res.ok) {
+                    const profileList = (res.profiles || []).slice(0, 8).map(p =>
+                        '<li>' + escH(p) + '</li>'
+                    ).join('');
+                    resultBox.className = 'vs-hw-vainfo-result vs-hw-vainfo-ok';
+                    resultBox.innerHTML =
+                        '<i class="fas fa-check-circle"></i> <strong>' + t('vainfo: OK') + '</strong>' +
+                        (profileList ? '<ul class="vs-hw-vainfo-profiles">' + profileList + '</ul>' : '');
+                    resultBox.style.display = 'block';
+                    toast(t('GPU działa prawidłowo — akceleracja Intel QuickSync aktywna'), 'success');
+                    body.querySelector('.vs-hw-banner')?.remove();
+                    _updateHwBadges(body, true);
+                } else {
+                    resultBox.className = 'vs-hw-vainfo-result vs-hw-vainfo-fail';
+                    resultBox.innerHTML =
+                        '<i class="fas fa-times-circle"></i> <strong>' + t('vainfo: błąd') + '</strong>' +
+                        (res.error ? '<div class="vs-hw-vainfo-err">' + escH(res.error) + '</div>' : '');
+                    resultBox.style.display = 'block';
+                }
+            } catch(e) {
+                toast(t('Błąd testu vainfo') + ': ' + e.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-vial"></i> ' + t('Testuj ponownie');
+            }
+        };
+
         // Rescan
         modal.querySelector('#vs-hw-rescan-btn').onclick = async () => {
             const btn = modal.querySelector('#vs-hw-rescan-btn');
@@ -417,6 +499,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
                 body.querySelector('.vs-hw-banner')?.remove();
                 if (fresh && fresh.is_hw) {
                     toast(t('Akceleracja sprzętowa aktywna!') + ' (' + escH(fresh.hw_encoder) + ')', 'success');
+                    _updateHwBadges(body, true);
                 } else {
                     _checkHwHealth(body);
                     _openHwWizard(body, fresh || health);
@@ -426,6 +509,88 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
                 btn.innerHTML = '<i class="fas fa-sync-alt"></i> ' + t('Skanuj ponownie');
             }
         };
+    }
+
+    /** Update all HW encoder badges in the current app window to reflect active/confirmed state. */
+    function _updateHwBadges(body, active) {
+        body.querySelectorAll('.vs-hw-badge').forEach(badge => {
+            badge.classList.remove('vs-hw-badge-sw', 'vs-hw-badge-hw', 'vs-hw-badge-active');
+            badge.classList.add(active ? 'vs-hw-badge-active' : 'vs-hw-badge-sw');
+            const icon = badge.querySelector('i');
+            if (icon) icon.className = active ? 'fas fa-bolt' : 'fas fa-exclamation-triangle';
+            const txt = badge.querySelector('span') || badge.lastChild;
+            if (txt && txt.nodeType === Node.TEXT_NODE) {
+                txt.textContent = active ? ' GPU (QuickSync)' : ' CPU';
+            }
+            if (active) {
+                badge.title = 'Intel QuickSync (iHD) — Aktywny';
+            } else {
+                badge.title = 'libx264 (CPU) — akceleracja GPU niedostępna';
+            }
+        });
+    }
+
+    /** Re-test GPU: resets encoder cache and probes H264/HEVC/VP9/AV1 via backend. */
+    async function _retestGpu(container) {
+        const btn = container.querySelector('#vs-gpu-retest-btn');
+        const badge = container.querySelector('#vs-hw-badge-encoder');
+        const pillsEl = container.querySelector('#vs-codec-pills');
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Testuję GPU...'); }
+
+        try {
+            const res = await api('/video-station/gpu-retest', { method: 'POST' });
+            if (!res) throw new Error('Brak odpowiedzi');
+
+            // Update badge
+            if (badge) {
+                badge.classList.remove('vs-hw-badge-sw', 'vs-hw-badge-hw', 'vs-hw-badge-active');
+                if (res.ok && res.is_hw) {
+                    badge.classList.add('vs-hw-badge-active');
+                    badge.title = res.tooltip || 'Intel QuickSync (iHD) — Aktywny';
+                    badge.innerHTML = '<i class="fas fa-bolt"></i> GPU (' + escH(res.hw_encoder) + ')';
+                } else {
+                    const errIcon = res.error_code ? 'fa-exclamation-triangle' : 'fa-microchip';
+                    badge.classList.add('vs-hw-badge-sw');
+                    badge.title = res.tooltip || 'libx264 (CPU) — akceleracja GPU niedostępna';
+                    badge.innerHTML = '<i class="fas ' + errIcon + '"></i> CPU (libx264)';
+                }
+            }
+
+            // Codec pills
+            if (pillsEl && res.codecs) {
+                const codecList = [
+                    { key: 'h264', label: 'H.264' },
+                    { key: 'hevc', label: 'H.265/HEVC' },
+                    { key: 'vp9',  label: 'VP9' },
+                    { key: 'av1',  label: 'AV1' },
+                ];
+                pillsEl.innerHTML = codecList.map(c =>
+                    '<span class="vs-codec-pill ' + (res.codecs[c.key] ? 'vs-codec-pill-ok' : 'vs-codec-pill-fail') + '" ' +
+                    'title="' + c.label + ': ' + (res.codecs[c.key] ? t('obsługiwany przez GPU') : t('tylko CPU')) + '">' +
+                    '<i class="fas fa-' + (res.codecs[c.key] ? 'check' : 'times') + '"></i> ' + c.label +
+                    '</span>'
+                ).join('');
+            }
+
+            // Also update all player badges in the window
+            _updateHwBadges(bodyEl, res.ok && res.is_hw);
+
+            if (res.ok) {
+                toast(t('GPU aktywny!') + ' Intel QuickSync (iHD)', 'success');
+                bodyEl.querySelector('.vs-hw-banner')?.remove();
+            } else if (res.error_code === 'IHD_INIT_FAILED') {
+                toast(t('iHD init failed — sprawdź sterowniki i LIBVA_DRIVER_NAME'), 'error');
+                // Re-open wizard with fresh health data
+                const health = await api('/video-station/hw-health').catch(() => null);
+                if (health) _openHwWizard(bodyEl, health);
+            } else {
+                toast(t('GPU niedostępny') + (res.error_code ? ' (' + res.error_code + ')' : ''), 'warning');
+            }
+        } catch(e) {
+            toast(t('Błąd testu GPU') + ': ' + e.message, 'error');
+        } finally {
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-vial"></i> ' + t('Re-test GPU'); }
+        }
     }
 
     function _hwDiagRow(label, ok) {
@@ -844,9 +1009,15 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 // ── Enkoder ──
 '<div class="vs-settings-card">' +
   '<div class="vs-settings-card-title"><i class="fas fa-microchip"></i> ' + t('Transkodowanie wideo') + '</div>' +
-  '<div class="vs-hw-badge ' + (encInfo && encInfo.type === 'hw' ? 'vs-hw-badge-hw' : 'vs-hw-badge-sw') + '">' +
-    '<i class="fas fa-' + (encInfo && encInfo.type === 'hw' ? 'bolt' : 'microchip') + '"></i> ' +
+  '<div id="vs-hw-badge-encoder" class="vs-hw-badge ' +
+       (encInfo && encInfo.type === 'hw' ? 'vs-hw-badge-hw' : 'vs-hw-badge-sw') + '" ' +
+       'title="' + escH(encInfo && encInfo.tooltip ? encInfo.tooltip : (encInfo && encInfo.type === 'hw' ? 'Intel QuickSync (iHD) — Aktywny' : 'libx264 (CPU) — akceleracja GPU niedostępna')) + '">' +
+    '<i class="fas fa-' + (encInfo && encInfo.type === 'hw' ? 'bolt' : (encInfo ? 'exclamation-triangle' : 'microchip')) + '"></i> ' +
     escH(encInfo && encInfo.label ? encInfo.label : 'libx264 (CPU)') +
+  '</div>' +
+  '<div id="vs-codec-pills" class="vs-codec-pills"></div>' +
+  '<div class="vs-settings-actions" style="margin-top:10px">' +
+    '<button id="vs-gpu-retest-btn" class="app-btn"><i class="fas fa-vial"></i> ' + t('Re-test GPU') + '</button>' +
   '</div>' +
   '<p class="vs-settings-desc">' + t('Akceleracja sprzętowa wykrywana automatycznie przy starcie serwera.') + '</p>' +
   '<p class="vs-settings-desc"><i class="fas fa-info-circle"></i> ' + t('Limit jednoczesnych sesji') + ': <strong>3</strong>. ' + t('Starsze sesje są automatycznie zamykane.') + '</p>' +
@@ -912,6 +1083,9 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             if (res.error) { toast(res.error, 'error'); return; }
             toast(t('Dopasowano {n} filmów', { n: res.matched || 0 }), 'success');
         };
+
+        // Re-test GPU
+        content.querySelector('#vs-gpu-retest-btn').onclick = () => _retestGpu(content);
 
         // Per-folder rescan buttons
         content.querySelectorAll('.vs-folder-rescan-btn').forEach(btn => {
@@ -2044,6 +2218,9 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
                 if (visible) { statsOverlay.style.display = 'none'; return; }
                 const enc = await api('/video-station/hls/encoder-info').catch(() => null);
                 const isSw = !enc || enc.type !== 'hw';
+                const isIhd = enc && enc.type === 'hw' && enc.tooltip && enc.tooltip.includes('iHD');
+                const hwTooltip = enc && enc.tooltip ? enc.tooltip
+                    : (isIhd ? 'Intel QuickSync (iHD) — Aktywny' : (enc && enc.type === 'hw' ? 'Akceleracja GPU' : ''));
                 const swTip = isSw
                     ? '<div class="vs-stats-hw-tip"><i class="fas fa-lightbulb"></i> ' +
                       t('Używasz') + ' <strong>libx264 (CPU)</strong>. ' +
@@ -2053,10 +2230,11 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
                 statsOverlay.innerHTML =
                     '<div class="vs-stats-row"><span>' + t('Enkoder') + '</span><span>' +
                     escH(enc && enc.label ? enc.label : '—') + '</span></div>' +
-                    '<div class="vs-stats-row"><span>' + t('Typ') + '</span><span>' +
+                    '<div class="vs-stats-row"><span>' + t('Typ') + '</span>' +
+                    '<span title="' + escH(hwTooltip) + '">' +
                     (enc && enc.type === 'hw'
-                        ? '<i class="fas fa-bolt" style="color:#facc15"></i> HW Accel'
-                        : '<i class="fas fa-microchip" style="color:var(--text-secondary)"></i> CPU (libx264)') +
+                        ? '<i class="fas fa-bolt" style="color:var(--success)"></i> Intel QuickSync (iHD)'
+                        : '<i class="fas fa-' + (enc ? 'exclamation-triangle' : 'microchip') + '" style="color:var(--text-secondary)"></i> CPU (libx264)') +
                     '</span></div>' +
                     '<div class="vs-stats-row"><span>HLS</span><span>' + (_hlsSessionId ? escH(_hlsSessionId.slice(0,8) + '…') : t('Brak sesji')) + '</span></div>' +
                     '<div class="vs-stats-row"><span>' + t('Pozycja') + '</span><span>' + Math.round(video.currentTime) + 's</span></div>' +

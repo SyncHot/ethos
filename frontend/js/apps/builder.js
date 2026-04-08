@@ -49,6 +49,7 @@ function renderBuilderApp(body) {
         .bl-btn-outline:hover { border-color:var(--accent); color:var(--accent); }
         .bl-btn-sm { padding:5px 10px; font-size:12px; }
         .bl-btn-cancel { background:#f59e0b; }
+        .bl-btn-resume { background:#6366f1; }
 
         .bl-ver { display:inline-flex; align-items:center; gap:6px; background:var(--accent); color:#fff; padding:4px 12px; border-radius:20px; font-weight:600; font-size:13px; }
 
@@ -547,7 +548,7 @@ function renderBuilderApp(body) {
             barText.textContent = r.percent + '%';
             detail.textContent = r.message || '';
             const res = r.result || {};
-            showResult(resultEl, res.success, res.message || r.message, res);
+            showResult(resultEl, res.success, res.message || r.message, res, r.resume_available);
         }
     }
 
@@ -890,7 +891,7 @@ function renderBuilderApp(body) {
         logEl.scrollTop = logEl.scrollHeight;
     }
 
-    function showResult(el, success, msg, res) {
+    function showResult(el, success, msg, res, resumeAvailable) {
         el.style.display = '';
         const dismissBtn = `<div style="margin-top:12px"><button class="bl-btn bl-btn-sm" id="bl-dismiss-btn"><i class="fas fa-times"></i> Zamknij</button></div>`;
         if (success) {
@@ -905,10 +906,16 @@ function renderBuilderApp(body) {
                 <div style="font-weight:600;color:#10b981">${msg}</div>${links}${dismissBtn}`;
             toast(t('Budowanie zakończone!'), 'success');
         } else {
+            const resumeBtn = resumeAvailable
+                ? `<div style="margin-top:10px"><button class="bl-btn bl-btn-resume bl-btn-sm" id="bl-resume-btn"><i class="fas fa-redo"></i> Wznów build (od checkpointa)</button></div>`
+                : '';
             el.innerHTML = `<div class="bl-result-icon" style="color:#ef4444"><i class="fas fa-times-circle"></i></div>
                 <div style="font-weight:600;color:#ef4444">${t('Błąd')}</div>
-                <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${msg}</div>${dismissBtn}`;
+                <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${msg}</div>${resumeBtn}${dismissBtn}`;
             toast(t('Budowanie nie powiodło się'), 'error');
+            if (resumeAvailable) {
+                el.querySelector('#bl-resume-btn').onclick = resumeBuild;
+            }
         }
         const btn = el.querySelector('#bl-dismiss-btn');
         if (btn) btn.onclick = async () => {
@@ -1017,7 +1024,7 @@ function renderBuilderApp(body) {
                     state.building = false;
                     setDisabled(false);
                     const res = st.result || {};
-                    showResult(resultEl, res.success, res.message || st.message, res);
+                    showResult(resultEl, res.success, res.message || st.message, res, st.resume_available);
                     loadInfo();
                 }
             } catch {}
@@ -1047,6 +1054,55 @@ function renderBuilderApp(body) {
             toast('Anulowano build', 'info');
         } catch (e) {
             toast(e.message || t('Błąd'), 'error');
+        }
+    }
+
+    async function resumeBuild() {
+        if (state.building) return;
+        if (!await confirmDialog(t('Wznowić build od ostatniego checkpointa?') + '\n' + t('Etapy zakończone przed awarią zostaną pominięte.'))) return;
+
+        state.building = true;
+        setDisabled(true);
+
+        const bar = blBody.querySelector('#bl-bar');
+        const barText = blBody.querySelector('#bl-bar-text');
+        const detail = blBody.querySelector('#bl-detail');
+        const logEl = blBody.querySelector('#bl-log');
+        const resultEl = blBody.querySelector('#bl-result');
+        const progressW = blBody.querySelector('#bl-progress');
+
+        if (progressW) progressW.classList.add('active');
+        if (logEl) { logEl.innerHTML = ''; logEl.classList.remove('visible'); }
+        if (resultEl) resultEl.style.display = 'none';
+        if (bar) { bar.style.width = '0%'; }
+        if (barText) barText.textContent = '0%';
+        if (detail) detail.textContent = t('Wznawianie od checkpointa...');
+        showCancelBtn();
+
+        const timerEl = blBody.querySelector('#bl-timer');
+        const buildStart = Date.now();
+        const timerIv = setInterval(() => {
+            const s = Math.floor((Date.now() - buildStart) / 1000);
+            const m = Math.floor(s / 60);
+            if (timerEl) timerEl.textContent = `⏱ ${m}:${String(s % 60).padStart(2, '0')}`;
+        }, 1000);
+
+        try {
+            const res = await api('/builder/resume-image', { method: 'POST' });
+            if (res.error) {
+                showResult(resultEl, false, res.error);
+                clearInterval(timerIv);
+                state.building = false;
+                setDisabled(false);
+                return;
+            }
+            _logSince = 0;
+            startPolling();
+        } catch (e) {
+            showResult(resultEl, false, e.message || t('Błąd'));
+            clearInterval(timerIv);
+            state.building = false;
+            setDisabled(false);
         }
     }
 

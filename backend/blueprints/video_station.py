@@ -44,15 +44,19 @@ Routes:
   POST /api/video-station/tmdb-apply/<int:vid> - apply a specific TMDb result (by tmdb_id)
   POST /api/video-station/rename/<int:vid> - rename video file on disk and update DB
   GET  /api/video-station/hw-health       - detailed HW acceleration health report
+  GET  /api/video-station/vainfo-test     - run vainfo against /dev/dri/renderD128, return profiles
+  POST /api/video-station/gpu-retest      - reset encoder cache, re-probe all VAAPI codecs (H264/HEVC/VP9/AV1)
 
 SocketIO events emitted:
   vs_scan_progress  - {running, total, processed, current_file}
   vs_scan_done      - {total_processed, duration}
 """
 
+import grp
 import json
 import logging
 import os
+import pwd
 import re
 import shutil
 import sqlite3
@@ -150,23 +154,94 @@ def _detect_hw_encoder():
     return _HW_ENCODER
 
 
+def _detect_docker():
+    """Return True if the current process is running inside a Docker container."""
+    if os.path.exists('/.dockerenv'):
+        return True
+    try:
+        with open('/proc/1/cgroup') as f:
+            content = f.read()
+        if 'docker' in content or 'kubepods' in content or 'containerd' in content:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _check_iHD_driver():
+    """Return (present: bool, path: str) for iHD_drv_video.so (Intel Media Driver)."""
+    search_paths = [
+        '/usr/lib/x86_64-linux-gnu/dri/iHD_drv_video.so',
+        '/usr/lib/dri/iHD_drv_video.so',
+        '/usr/lib64/dri/iHD_drv_video.so',
+        '/usr/local/lib/dri/iHD_drv_video.so',
+    ]
+    for p in search_paths:
+        if os.path.exists(p):
+            return True, p
+    return False, ''
+
+
+def _render_node_group_info(render_node):
+    """Return (in_group: bool, group_name: str, process_user: str) for render node access.
+
+    Checks actual supplemental group membership of the running process, which
+    is more accurate than os.access() for setuid scenarios.
+    """
+    try:
+        st = os.stat(render_node)
+        gid = st.st_gid
+        try:
+            grp_name = grp.getgrgid(gid).gr_name
+        except KeyError:
+            grp_name = str(gid)
+
+        # Also get the video group gid for secondary check
+        try:
+            video_gid = grp.getgrnam('video').gr_gid
+        except KeyError:
+            video_gid = None
+
+        proc_gids = os.getgroups()
+        proc_egid = os.getegid()
+        in_group = (gid in proc_gids or gid == proc_egid
+                    or (video_gid is not None and video_gid in proc_gids))
+
+        try:
+            process_user = pwd.getpwuid(os.geteuid()).pw_name
+        except KeyError:
+            process_user = str(os.geteuid())
+
+        return in_group, grp_name, process_user
+    except Exception:
+        # Fallback: simple access check
+        return os.access(render_node, os.R_OK), 'render', ''
+
+
 def _hw_health_check():
     """Return detailed HW acceleration health report for Intel/NVIDIA/AMD GPUs.
 
     Returns a dict with:
-      status       : "ok" | "no_render_node" | "missing_driver" | "permission_denied" | "cpu_only"
-      hw_encoder   : detected encoder name
-      is_hw        : bool — True when real HW acceleration is active
-      render_node  : bool — /dev/dri/renderD128 exists
-      driver_ok    : bool — VAAPI driver responds
-      in_render_grp: bool — current process can access the render node
-      cpu_model    : str  — from /proc/cpuinfo
-      setup_steps  : list of {title, commands: [str]} — install instructions
-      message      : human-readable diagnosis
+      status        : "ok" | "no_render_node" | "missing_driver" | "permission_denied" | "cpu_only"
+      hw_encoder    : detected encoder name
+      is_hw         : bool — True when real HW acceleration is active
+      render_node   : bool — /dev/dri/renderD128 exists
+      driver_ok     : bool — VAAPI driver responds
+      in_render_grp : bool — current process can access the render node
+      render_grp    : str  — OS group owning the render node (e.g. "render")
+      process_user  : str  — username of the running process
+      iHD_present   : bool — iHD_drv_video.so (Intel Media Driver) found on disk
+      iHD_path      : str  — full path to iHD_drv_video.so or ''
+      in_docker     : bool — process is running inside a Docker container
+      cpu_model     : str  — from /proc/cpuinfo
+      setup_steps   : list of {title, commands: [str]} — install instructions
+      message       : human-readable diagnosis
     """
     RENDER_NODE = '/dev/dri/renderD128'
     encoder = _detect_hw_encoder()
     is_hw = encoder != 'libx264'
+    in_docker = _detect_docker()
+    iHD_present, iHD_path = _check_iHD_driver()
 
     # CPU model
     cpu_model = ''
@@ -191,6 +266,11 @@ def _hw_health_check():
             'render_node': os.path.exists(RENDER_NODE),
             'driver_ok': True,
             'in_render_grp': True,
+            'render_grp': '',
+            'process_user': '',
+            'iHD_present': iHD_present,
+            'iHD_path': iHD_path,
+            'in_docker': in_docker,
             'cpu_model': cpu_model,
             'setup_steps': [],
             'message': 'Akceleracja sprzętowa aktywna (%s).' % encoder,
@@ -198,12 +278,9 @@ def _hw_health_check():
 
     # Not using HW — diagnose why
     render_node_exists = os.path.exists(RENDER_NODE)
-    in_render_grp = False
+    in_render_grp, render_grp, process_user = False, 'render', ''
     if render_node_exists:
-        try:
-            in_render_grp = os.access(RENDER_NODE, os.R_OK)
-        except Exception:
-            pass
+        in_render_grp, render_grp, process_user = _render_node_group_info(RENDER_NODE)
 
     driver_ok = False
     if render_node_exists and in_render_grp:
@@ -216,10 +293,24 @@ def _hw_health_check():
         )
         driver_ok = r.returncode == 0
 
-    # Build setup steps for Intel N-series (N100/N95 = Alder Lake / Twin Lake)
+    # Build setup steps for Intel N-series (N100/N95 = Alder Lake / Twin Lake / GMKtec G3 Plus)
     pkg_main  = 'intel-media-va-driver-non-free'    # Xe iGPU (N100/N95/N200)
     pkg_legacy = 'i965-va-driver'                   # older Intel (Haswell–Ice Lake)
-    run_user = os.environ.get('USER', '') or os.environ.get('SUDO_USER', '') or 'ethos'
+    run_user = process_user or os.environ.get('USER', '') or os.environ.get('SUDO_USER', '') or 'ethos'
+
+    # LIBVA_DRIVER_NAME env var check — important for iHD init
+    libva_driver_name = os.environ.get('LIBVA_DRIVER_NAME', '')
+    libva_correct = libva_driver_name.lower() == 'ihd'
+
+    # Docker-specific step (shown when any permission/driver issue + running in container)
+    docker_step = {
+        'title': '🐳 Docker: przekaż urządzenie GPU do kontenera',
+        'commands': [
+            'docker run --device /dev/dri:/dev/dri ...',
+            '# lub w docker-compose.yml:',
+            'devices:\n  - /dev/dri:/dev/dri',
+        ],
+    } if in_docker else None
 
     if not render_node_exists:
         status = 'no_render_node'
@@ -228,7 +319,7 @@ def _hw_health_check():
         steps = [
             {'title': '1. Sprawdź dostępne urządzenia DRI',
              'commands': ['ls -la /dev/dri/', 'lspci | grep -i vga']},
-            {'title': '2. Zainstaluj sterownik Intel (N100/N95)',
+            {'title': '2. Zainstaluj sterownik Intel (N100/N95 — GMKtec G3 Plus)',
              'commands': [
                  'sudo apt update',
                  'sudo apt install -y %s %s vainfo intel-gpu-tools' % (pkg_main, pkg_legacy),
@@ -238,45 +329,122 @@ def _hw_health_check():
             {'title': '4. Uruchom ponownie serwer EthOS',
              'commands': ['sudo systemctl restart ethos']},
         ]
+        if docker_step:
+            steps.append(docker_step)
     elif not in_render_grp:
         status = 'permission_denied'
-        message = ('Węzeł /dev/dri/renderD128 istnieje, ale brak uprawnień. '
-                   'Użytkownik serwisu musi być w grupie "render" i "video".')
+        message = ('Błąd akceleracji: Brak uprawnień do procesora graficznego Intel N100. '
+                   'Użytkownik "%s" musi być w grupie "%s" i "video".' % (run_user, render_grp))
         steps = [
-            {'title': '1. Dodaj użytkownika do grup render i video',
+            {'title': '1. Nadaj uprawnienia QuickSync — dodaj użytkownika do grup %s i video' % render_grp,
              'commands': [
-                 'sudo usermod -aG render,video %s' % run_user,
-                 'groups %s' % run_user,
+                 'sudo usermod -aG video,%s %s' % (render_grp, run_user),
+                 'groups %s  # weryfikacja — na liście powinno być: video %s' % (run_user, render_grp),
              ]},
-            {'title': '2. Uruchom ponownie usługę (lub serwer)',
-             'commands': ['sudo systemctl restart ethos']},
-            {'title': '3. Weryfikacja uprawnień',
-             'commands': ['ls -la /dev/dri/renderD128', 'vainfo --display drm --device /dev/dri/renderD128']},
-        ]
-    elif not driver_ok:
-        status = 'missing_driver'
-        message = ('Węzeł GPU istnieje i masz do niego dostęp, ale sterownik VAAPI nie odpowiada. '
-                   'Zainstaluj intel-media-va-driver-non-free (Intel N100/N95).')
-        steps = [
-            {'title': '1. Zainstaluj sterownik VAAPI dla Intel N100/N95',
+            {'title': '2. Uruchom ponownie usługę lub zaloguj się ponownie',
              'commands': [
-                 'sudo apt update',
-                 'sudo apt install -y %s %s vainfo' % (pkg_main, pkg_legacy),
+                 'sudo systemctl restart ethos',
+                 '# Jeśli uruchamiasz lokalnie: wyloguj się i zaloguj ponownie',
              ]},
-            {'title': '2. Włącz non-free repozytorium (jeśli potrzebne)',
+            {'title': '3. Weryfikacja dostępu do GPU (GMKtec G3 Plus — Intel N100)',
              'commands': [
-                 "sudo sed -i 's/main$/main contrib non-free non-free-firmware/g' /etc/apt/sources.list",
-                 'sudo apt update',
-                 'sudo apt install -y %s' % pkg_main,
-             ]},
-            {'title': '3. Sprawdź działanie VAAPI',
-             'commands': [
+                 'ls -la /dev/dri/renderD128',
                  'vainfo --display drm --device /dev/dri/renderD128',
-                 'ffmpeg -hide_banner -vaapi_device /dev/dri/renderD128 -f lavfi -i nullsrc=s=64x64:d=0.1 -vf format=nv12,hwupload -c:v h264_vaapi -f null -',
              ]},
-            {'title': '4. Uruchom ponownie EthOS i odśwież enkoder',
-             'commands': ['sudo systemctl restart ethos']},
         ]
+        if docker_step:
+            steps.insert(0, docker_step)
+    elif not driver_ok:
+        # Run vainfo to get precise iHD failure info
+        ihd_init_failed = False
+        if iHD_present and shutil.which('vainfo'):
+            try:
+                vr = subprocess.run(
+                    ['vainfo', '--display', 'drm', '--device', RENDER_NODE],
+                    capture_output=True, timeout=8, text=True
+                )
+                vc = (vr.stdout or '') + (vr.stderr or '')
+                if ('iHD_drv_video.so init failed' in vc
+                        or 'Failed to open the given device' in vc
+                        or 'init failed' in vc):
+                    ihd_init_failed = True
+            except Exception:
+                pass
+
+        if ihd_init_failed:
+            status = 'ihd_init_failed'
+            message = ('Wykryto procesor Intel N100, ale sterownik iHD nie może wystartować. '
+                       'iHD_drv_video.so init failed — brakujące zależności lub LIBVA_DRIVER_NAME.')
+            steps = [
+                {'title': '1. Zainstaluj brakujące zależności (Intel N100 — GMKtec G3 Plus)',
+                 'commands': [
+                     'sudo apt install -y intel-media-va-driver-non-free libmfx1 libmfx-gen1 libva-drm2',
+                 ]},
+                {'title': '2. Wymuś sterownik iHD (LIBVA_DRIVER_NAME=ihd)',
+                 'commands': [
+                     'export LIBVA_DRIVER_NAME=ihd  # tymczasowo w bieżącej sesji',
+                     '# Trwale — dodaj do /etc/environment:',
+                     'echo "LIBVA_DRIVER_NAME=ihd" | sudo tee -a /etc/environment',
+                     '# Dla usługi EthOS — edytuj /etc/default/ethos (lub /etc/systemd/system/ethos.service):',
+                     'sudo sed -i \'/^\\[Service\\]/a Environment=LIBVA_DRIVER_NAME=ihd\' /etc/systemd/system/ethos.service',
+                     'sudo systemctl daemon-reload',
+                 ]},
+                {'title': '3. Dodaj użytkownika do grup render i video',
+                 'commands': [
+                     'sudo usermod -aG render,video %s' % run_user,
+                     'sudo systemctl restart ethos',
+                 ]},
+            ]
+        elif not iHD_present:
+            status = 'missing_driver'
+            message = ('Węzeł GPU dostępny, ale brak sterownika Intel Media Driver (iHD_drv_video.so). '
+                       'Wymagany pakiet: intel-media-va-driver-non-free (Intel N100/N95).')
+            steps = [
+                {'title': '1. Zainstaluj sterownik VAAPI dla Intel N100/N95 (GMKtec G3 Plus)',
+                 'commands': [
+                     'sudo apt update',
+                     'sudo apt install -y %s %s vainfo' % (pkg_main, pkg_legacy),
+                 ]},
+                {'title': '2. Włącz repozytorium non-free (jeśli potrzebne)',
+                 'commands': [
+                     "sudo sed -i 's/main$/main contrib non-free non-free-firmware/g' /etc/apt/sources.list",
+                     'sudo apt update',
+                     'sudo apt install -y %s' % pkg_main,
+                 ]},
+                {'title': '3. Sprawdź działanie VAAPI',
+                 'commands': [
+                     'vainfo --display drm --device /dev/dri/renderD128',
+                     'ffmpeg -hide_banner -vaapi_device /dev/dri/renderD128 -f lavfi -i nullsrc=s=64x64:d=0.1 -vf format=nv12,hwupload -c:v h264_vaapi -f null -',
+                 ]},
+                {'title': '4. Uruchom ponownie EthOS i odśwież enkoder',
+                 'commands': ['sudo systemctl restart ethos']},
+            ]
+        else:
+            status = 'missing_driver'
+            message = ('Węzeł GPU istnieje i masz do niego dostęp, ale sterownik VAAPI nie odpowiada. '
+                       'Zainstaluj intel-media-va-driver-non-free (Intel N100/N95).')
+            steps = [
+                {'title': '1. Zainstaluj sterownik VAAPI dla Intel N100/N95 (GMKtec G3 Plus)',
+                 'commands': [
+                     'sudo apt update',
+                     'sudo apt install -y %s %s vainfo' % (pkg_main, pkg_legacy),
+                 ]},
+                {'title': '2. Włącz repozytorium non-free (jeśli potrzebne)',
+                 'commands': [
+                     "sudo sed -i 's/main$/main contrib non-free non-free-firmware/g' /etc/apt/sources.list",
+                     'sudo apt update',
+                     'sudo apt install -y %s' % pkg_main,
+                 ]},
+                {'title': '3. Sprawdź działanie VAAPI',
+                 'commands': [
+                     'vainfo --display drm --device /dev/dri/renderD128',
+                     'ffmpeg -hide_banner -vaapi_device /dev/dri/renderD128 -f lavfi -i nullsrc=s=64x64:d=0.1 -vf format=nv12,hwupload -c:v h264_vaapi -f null -',
+                 ]},
+                {'title': '4. Uruchom ponownie EthOS i odśwież enkoder',
+                 'commands': ['sudo systemctl restart ethos']},
+            ]
+        if docker_step:
+            steps.append(docker_step)
     else:
         # render node ok, driver ok, but encoder detection still returned libx264
         status = 'cpu_only'
@@ -291,6 +459,13 @@ def _hw_health_check():
         'render_node': render_node_exists,
         'driver_ok': driver_ok,
         'in_render_grp': in_render_grp,
+        'render_grp': render_grp,
+        'process_user': run_user,
+        'iHD_present': iHD_present,
+        'iHD_path': iHD_path,
+        'in_docker': in_docker,
+        'libva_driver_name': libva_driver_name,
+        'libva_correct': libva_correct,
         'cpu_model': cpu_model,
         'is_intel': is_intel,
         'is_amd': is_amd,
@@ -1997,10 +2172,13 @@ def hls_encoder_info():
     """Return current HW encoder in use (for player stats overlay)."""
     enc = _detect_hw_encoder()
     hw = enc != 'libx264'
+    libva_driver_name = os.environ.get('LIBVA_DRIVER_NAME', '')
     return jsonify(
         encoder=enc,
         type='hw' if hw else 'sw',
         label='GPU (%s)' % enc if hw else 'CPU (libx264)',
+        tooltip=('Intel QuickSync (iHD) — Aktywny' if 'vaapi' in enc else enc) if hw else 'libx264 (CPU) — akceleracja GPU niedostępna',
+        libva_driver_name=libva_driver_name,
     )
 
 
@@ -2015,7 +2193,174 @@ def hw_health():
     return jsonify(_hw_health_check())
 
 
-@video_station_bp.route("/hw-install", methods=["POST"])
+@video_station_bp.route("/vainfo-test", methods=["GET"])
+def vainfo_test():
+    """Run vainfo against /dev/dri/renderD128 and return parsed result.
+
+    Returns:
+      ok                : bool
+      output            : raw vainfo stdout+stderr
+      profiles          : list of detected VAProfile/VAEntrypoint strings
+      error_code        : "IHD_INIT_FAILED" | "PERMISSION_DENIED" | "MISSING_DRIVER" |
+                          "NO_RENDER_NODE" | "MISSING_VAINFO" | "TIMEOUT" | ""
+      error             : human-readable error string (only on failure)
+      libva_driver_name : value of LIBVA_DRIVER_NAME env var
+      libva_correct     : bool — LIBVA_DRIVER_NAME == 'ihd'
+    """
+    RENDER_NODE = '/dev/dri/renderD128'
+    libva_driver_name = os.environ.get('LIBVA_DRIVER_NAME', '')
+    libva_correct = libva_driver_name.lower() == 'ihd'
+
+    if not shutil.which('vainfo'):
+        return jsonify(ok=False, output='', profiles=[], error_code='MISSING_VAINFO',
+                       error='Polecenie vainfo nie jest zainstalowane. '
+                             'Uruchom: sudo apt install vainfo',
+                       libva_driver_name=libva_driver_name, libva_correct=libva_correct)
+    if not os.path.exists(RENDER_NODE):
+        return jsonify(ok=False, output='', profiles=[], error_code='NO_RENDER_NODE',
+                       error='Węzeł %s nie istnieje.' % RENDER_NODE,
+                       libva_driver_name=libva_driver_name, libva_correct=libva_correct)
+    try:
+        r = subprocess.run(
+            ['vainfo', '--display', 'drm', '--device', RENDER_NODE],
+            capture_output=True, timeout=10, text=True
+        )
+        combined = (r.stdout or '') + (r.stderr or '')
+        ok = r.returncode == 0 and 'VAEntrypoint' in combined
+
+        # Parse supported profiles
+        profiles = []
+        for line in combined.splitlines():
+            m = re.search(r'(VAProfile\w+)\s*/\s*(VAEntrypoint\w+)', line)
+            if m:
+                profiles.append('%s / %s' % (m.group(1), m.group(2)))
+
+        if ok:
+            return jsonify(ok=True, output=combined, profiles=profiles, error_code='', error='',
+                           libva_driver_name=libva_driver_name, libva_correct=libva_correct)
+
+        # Classify the failure
+        if ('iHD_drv_video.so init failed' in combined
+                or 'Failed to open the given device' in combined
+                or ('init failed' in combined and 'iHD' in combined)):
+            error_code = 'IHD_INIT_FAILED'
+            error_msg = ('iHD_drv_video.so init failed — brakujące zależności lub LIBVA_DRIVER_NAME. '
+                         'Uruchom: sudo apt install intel-media-va-driver-non-free libmfx1 libmfx-gen1 libva-drm2')
+        elif 'Permission denied' in combined or 'permission denied' in combined:
+            error_code = 'PERMISSION_DENIED'
+            error_msg = ('Brak dostępu do /dev/dri/renderD128. '
+                         'Uruchom: sudo usermod -aG render,video $USER')
+        elif 'va_openDriver() returns -1' in combined:
+            error_code = 'MISSING_DRIVER'
+            error_msg = 'Brak sterownika VAAPI. Uruchom: sudo apt install intel-media-va-driver-non-free'
+        else:
+            err_m = re.search(r'(error|failed)[^\n]*', combined, re.I)
+            error_code = 'UNKNOWN'
+            error_msg = err_m.group(0) if err_m else ('vainfo błąd (kod %d)' % r.returncode)
+
+        return jsonify(ok=False, output=combined, profiles=[], error_code=error_code, error=error_msg,
+                       libva_driver_name=libva_driver_name, libva_correct=libva_correct)
+    except subprocess.TimeoutExpired:
+        return jsonify(ok=False, output='', profiles=[], error_code='TIMEOUT',
+                       error='Timeout — vainfo nie odpowiedział w 10s.',
+                       libva_driver_name=libva_driver_name, libva_correct=libva_correct)
+    except Exception as exc:
+        return jsonify(ok=False, output='', profiles=[], error_code='EXCEPTION',
+                       error=str(exc), libva_driver_name=libva_driver_name, libva_correct=libva_correct)
+
+
+@video_station_bp.route("/gpu-retest", methods=["POST"])
+def gpu_retest():
+    """Reset HW encoder cache and re-probe GPU capabilities via vainfo + ffmpeg.
+
+    Returns:
+      ok                : bool — vainfo succeeded
+      hw_encoder        : str  — newly detected best encoder
+      is_hw             : bool
+      error_code        : str  — IHD_INIT_FAILED | PERMISSION_DENIED | etc.
+      profiles          : list — VAProfile/VAEntrypoint strings
+      codecs            : dict — {h264, hevc, vp9, av1}: bool
+      libva_driver_name : str
+      libva_correct     : bool
+    """
+    global _HW_ENCODER
+    _HW_ENCODER = None  # reset encoder cache to force re-detection
+
+    RENDER_NODE = '/dev/dri/renderD128'
+    libva_driver_name = os.environ.get('LIBVA_DRIVER_NAME', '')
+    libva_correct = libva_driver_name.lower() == 'ihd'
+
+    # ── vainfo probe ────────────────────────────────────────────────────
+    vainfo_ok = False
+    profiles = []
+    error_code = ''
+    vainfo_output = ''
+
+    if shutil.which('vainfo') and os.path.exists(RENDER_NODE):
+        try:
+            vr = subprocess.run(
+                ['vainfo', '--display', 'drm', '--device', RENDER_NODE],
+                capture_output=True, timeout=10, text=True
+            )
+            vainfo_output = (vr.stdout or '') + (vr.stderr or '')
+            vainfo_ok = vr.returncode == 0 and 'VAEntrypoint' in vainfo_output
+            for line in vainfo_output.splitlines():
+                m = re.search(r'(VAProfile\w+)\s*/\s*(VAEntrypoint\w+)', line)
+                if m:
+                    profiles.append('%s / %s' % (m.group(1), m.group(2)))
+            if not vainfo_ok:
+                if ('iHD_drv_video.so init failed' in vainfo_output
+                        or 'Failed to open the given device' in vainfo_output
+                        or ('init failed' in vainfo_output and 'iHD' in vainfo_output)):
+                    error_code = 'IHD_INIT_FAILED'
+                elif 'Permission denied' in vainfo_output or 'permission denied' in vainfo_output:
+                    error_code = 'PERMISSION_DENIED'
+                elif 'va_openDriver() returns -1' in vainfo_output:
+                    error_code = 'MISSING_DRIVER'
+                else:
+                    error_code = 'UNKNOWN'
+        except subprocess.TimeoutExpired:
+            error_code = 'TIMEOUT'
+        except Exception:
+            error_code = 'EXCEPTION'
+
+    # ── per-codec ffmpeg probe ───────────────────────────────────────────
+    codecs = {}
+    if shutil.which('ffmpeg') and os.path.exists(RENDER_NODE):
+        _base = '-vaapi_device %s -f lavfi -i nullsrc=s=64x64:d=0.1 -vf format=nv12,hwupload' % RENDER_NODE
+        codec_tests = [
+            ('h264',  '%s -c:v h264_vaapi -f null -'  % _base),
+            ('hevc',  '%s -c:v hevc_vaapi -f null -'  % _base),
+            ('vp9',   '%s -c:v vp9_vaapi  -f null -'  % _base),
+            ('av1',   '%s -c:v av1_vaapi  -f null -'  % _base),
+        ]
+        for codec_name, args in codec_tests:
+            try:
+                cr = subprocess.run(
+                    ['ffmpeg', '-hide_banner', '-loglevel', 'error'] + args.split(),
+                    capture_output=True, timeout=6
+                )
+                codecs[codec_name] = cr.returncode == 0
+            except Exception:
+                codecs[codec_name] = False
+
+    new_encoder = _detect_hw_encoder()
+    return jsonify(
+        ok=vainfo_ok,
+        hw_encoder=new_encoder,
+        is_hw=new_encoder != 'libx264',
+        error_code=error_code,
+        profiles=profiles,
+        codecs=codecs,
+        libva_driver_name=libva_driver_name,
+        libva_correct=libva_correct,
+        tooltip=('Intel QuickSync (iHD) — Aktywny' if vainfo_ok else
+                 'libx264 (CPU) — akceleracja GPU niedostępna'),
+    )
+
+
+
+@video_station_bp.route("/hw-install", methods=["GET", "POST"])
 @admin_required
 def hw_install():
     """Auto-install VAAPI drivers for Intel GPUs, streamed as SSE.
