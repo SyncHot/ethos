@@ -1864,9 +1864,9 @@ try:
     rootfs, version, brand, outdir = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
     sbom = generate_sbom(rootfs, version, brand)
     write_sbom(sbom, outdir)
-    print(f"LOG:SBOM: {len(sbom.get('packages', []))} packages documented", flush=True)
+    print(f"LOG:SBOM: {{len(sbom.get('packages', []))}} packages documented", flush=True)
 except Exception as e:
-    print(f"LOG:SBOM generation skipped: {e}", flush=True)
+    print(f"LOG:SBOM generation skipped: {{e}}", flush=True)
 SBOMPY
 
 # ── Step 6: Inject EthOS (full package) ──
@@ -2381,14 +2381,14 @@ try:
         signed = [k for k, v in results.items() if v]
         install_mok_der_to_esp(rootfs)
         if signed:
-            print(f"LOG:Secure Boot: signed {len(signed)} EFI binaries", flush=True)
+            print(f"LOG:Secure Boot: signed {{len(signed)}} EFI binaries", flush=True)
             print(f"LOG:Secure Boot: after install run: sudo mokutil --import /boot/efi/EFI/ethos/MOK.der", flush=True)
         else:
             print("LOG:Secure Boot: no EFI binaries signed (sbsign not installed or no targets found)", flush=True)
     else:
         print("LOG:Secure Boot: MOK key generation failed — skipping", flush=True)
 except Exception as e:
-    print(f"LOG:Secure Boot signing skipped: {e}", flush=True)
+    print(f"LOG:Secure Boot signing skipped: {{e}}", flush=True)
 SBSIGNPY
 
 sync

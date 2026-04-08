@@ -131,8 +131,9 @@ def write_sbom(sbom: dict, out_dir: str) -> str:
             json.dump(sbom, f, indent=2, ensure_ascii=False)
         os.replace(tmp, path)
         size_kb = os.path.getsize(path) // 1024
+        pkg_count = sbom.get('_meta', {}).get('total_packages', len(sbom.get('packages', [])))
         logger.info('builder_sbom: SBOM written to %s (%d KB, %d packages)',
-                    path, size_kb, sbom.get('_meta', {}).get('total_packages', '?'))
+                    path, size_kb, pkg_count if isinstance(pkg_count, int) else 0)
         return path
     except Exception as exc:
         logger.error('builder_sbom: write failed: %s', exc)
