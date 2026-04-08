@@ -26,10 +26,10 @@ from host import data_path
 
 DEFAULT_SPEC = {
     'base': {
-        'distro': 'debian',
+        'distro': 'ubuntu',
         'arch': 'amd64',
-        'release': 'bookworm',
-        'mirror': 'http://deb.debian.org/debian',
+        'release': 'noble',
+        'mirror': 'http://archive.ubuntu.com/ubuntu',
         'img_size_gb': 8,
         'variant': 'minbase',
     },
@@ -51,7 +51,7 @@ DEFAULT_SPEC = {
     'packages': {
         'debootstrap': [
             'systemd', 'systemd-sysv', 'dbus',
-            'linux-image-amd64',
+            'linux-image-generic',
             'efibootmgr',
             'sudo', 'openssh-server', 'curl', 'ca-certificates', 'gnupg',
             'lsb-release', 'fail2ban',
@@ -180,8 +180,8 @@ def spec_to_shell_vars(spec):
     build_cfg = spec.get('build', {})
 
     lines = [
-        f'BASE_DISTRO="{base.get("distro", "debian")}"',
-        f'DEBIAN_RELEASE="{base.get("release", "bookworm")}"',
+        f'BASE_DISTRO="{base.get("distro", "ubuntu")}"',
+        f'DEBIAN_RELEASE="{base.get("release", "noble")}"',
         f'IMG_SIZE_GB={base.get("img_size_gb", 8)}',
         f'DEFAULT_USER="{identity.get("default_user", "nasadmin")}"',
         f'DEFAULT_HOSTNAME="{identity.get("hostname", "ethos")}"',

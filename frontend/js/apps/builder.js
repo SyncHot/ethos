@@ -1155,8 +1155,8 @@ function renderBuilderApp(body) {
                     <div class="bl-spec-field">
                         <label>${t('Dystrybucja')}</label>
                         <select class="bl-select" id="sp-distro">
-                            <option value="debian" ${(base.distro || 'debian') === 'debian' ? 'selected' : ''}>Debian</option>
-                            <option value="ubuntu" ${base.distro === 'ubuntu' ? 'selected' : ''}>Ubuntu Server LTS</option>
+                            <option value="debian" ${(base.distro || 'ubuntu') === 'debian' ? 'selected' : ''}>Debian</option>
+                            <option value="ubuntu" ${(base.distro || 'ubuntu') === 'ubuntu' ? 'selected' : ''}>Ubuntu Server LTS</option>
                         </select>
                     </div>
                     <div class="bl-spec-field">
@@ -1335,7 +1335,7 @@ function renderBuilderApp(body) {
             });
             if (!sel.value) sel.selectedIndex = 0;
         }
-        updateReleaseOptions(base.distro || 'debian', base.release || 'bookworm');
+        updateReleaseOptions(base.distro || 'ubuntu', base.release || 'noble');
         blBody.querySelector('#sp-distro').onchange = (e) => {
             const defaults = {debian: 'bookworm', ubuntu: 'noble'};
             updateReleaseOptions(e.target.value, defaults[e.target.value] || 'bookworm');

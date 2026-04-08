@@ -1720,7 +1720,7 @@ df -h "$ROOT" 2>/dev/null | tail -1 || true
 
 if [ "$BASE_DISTRO" = "ubuntu" ]; then
     echo "LOG:Ubuntu: upgrading kernel and linux-firmware if newer available..."
-    chroot "$ROOT" apt-get install -y -qq --only-upgrade linux-image-amd64 linux-firmware 2>&1 | tail -5 || echo "LOG:Kernel/firmware upgrade skipped"
+    chroot "$ROOT" apt-get install -y -qq --only-upgrade linux-image-generic linux-firmware 2>&1 | tail -5 || echo "LOG:Kernel/firmware upgrade skipped"
 else
     echo "LOG:Installing linux-image-amd64 from backports..."
     chroot "$ROOT" apt-get install -y -qq -t ${{DEBIAN_RELEASE}}-backports linux-image-amd64 2>&1 | tail -5 || echo "LOG:Backports kernel skipped"
