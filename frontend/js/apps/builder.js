@@ -548,7 +548,7 @@ function renderBuilderApp(body) {
             barText.textContent = r.percent + '%';
             detail.textContent = r.message || '';
             const res = r.result || {};
-            showResult(resultEl, res.success, res.message || r.message, res, r.resume_available);
+            showResult(resultEl, res.success, res.message || r.message, res, r.resume_available, r.preflight_result);
         }
     }
 
@@ -891,7 +891,19 @@ function renderBuilderApp(body) {
         logEl.scrollTop = logEl.scrollHeight;
     }
 
-    function showResult(el, success, msg, res, resumeAvailable) {
+    function _preflightBadge(pfResult) {
+        if (!pfResult || pfResult === 'disabled') return '';
+        const map = {
+            ok: ['#10b981', 'fa-shield-check', t('VM test: OK')],
+            fail: ['#ef4444', 'fa-shield-xmark', t('VM test: FAILED')],
+            timeout: ['#f59e0b', 'fa-clock', t('VM test: timeout')],
+            skipped: ['#6b7280', 'fa-shield', t('VM test: skipped (QEMU/OVMF missing)')],
+        };
+        const [color, icon, label] = map[pfResult] || ['#6b7280', 'fa-shield', t(`VM test: ${pfResult}`)];
+        return `<div style="margin-top:8px;display:inline-flex;align-items:center;gap:6px;background:rgba(0,0,0,.15);border-radius:20px;padding:4px 12px;font-size:12px;color:${color}"><i class="fas ${icon}"></i> ${label}</div>`;
+    }
+
+    function showResult(el, success, msg, res, resumeAvailable, preflightResult) {
         el.style.display = '';
         const dismissBtn = `<div style="margin-top:12px"><button class="bl-btn bl-btn-sm" id="bl-dismiss-btn"><i class="fas fa-times"></i> Zamknij</button></div>`;
         if (success) {
@@ -902,8 +914,9 @@ function renderBuilderApp(body) {
                 if (res.iso) links += `<a href="/api/builder/download?path=${encodeURIComponent(res.iso)}&token=${encodeURIComponent(NAS.token)}"><i class="fas fa-download"></i> Pobierz .iso</a>`;
                 links += `</div>`;
             }
+            const pfBadge = _preflightBadge(preflightResult);
             el.innerHTML = `<div class="bl-result-icon" style="color:#10b981"><i class="fas fa-check-circle"></i></div>
-                <div style="font-weight:600;color:#10b981">${msg}</div>${links}${dismissBtn}`;
+                <div style="font-weight:600;color:#10b981">${msg}</div>${pfBadge}${links}${dismissBtn}`;
             toast(t('Budowanie zakończone!'), 'success');
         } else {
             const resumeBtn = resumeAvailable
@@ -1024,7 +1037,7 @@ function renderBuilderApp(body) {
                     state.building = false;
                     setDisabled(false);
                     const res = st.result || {};
-                    showResult(resultEl, res.success, res.message || st.message, res, st.resume_available);
+                    showResult(resultEl, res.success, res.message || st.message, res, st.resume_available, st.preflight_result);
                     loadInfo();
                 }
             } catch {}

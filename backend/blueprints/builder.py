@@ -75,6 +75,7 @@ _build_state = {
     'result': None,         # {success, message, img, iso} on completion
     'resume_available': False,  # True when failed build can be resumed
     'build_dir': '',        # WORK_DIR path for resume
+    'preflight_result': '',  # 'ok'|'fail'|'timeout'|'skipped'|'disabled'
 }
 _build_lock = threading.Lock()
 
@@ -183,6 +184,7 @@ def _reset_build(build_type=''):
             'result': None,
             'resume_available': False,
             'build_dir': '',
+            'preflight_result': '',
         })
         _save_build_state()
 
@@ -370,6 +372,7 @@ def build_status():
             'result': _build_state['result'],
             'resume_available': _build_state.get('resume_available', False),
             'build_dir': _build_state.get('build_dir', ''),
+            'preflight_result': _build_state.get('preflight_result', ''),
         })
 
 
@@ -811,6 +814,12 @@ def _build_image_worker(nasos, resume=False):
                     _build_state['resume_available'] = True
                     _build_state['build_dir'] = build_dir.strip()
                     _save_build_state()
+            elif line.startswith('PREFLIGHT_RESULT:'):
+                pf_res = line[len('PREFLIGHT_RESULT:'):].strip()
+                with _build_lock:
+                    _build_state['preflight_result'] = pf_res
+                    _save_build_state()
+                _update_build(log=f'Pre-flight result: {pf_res}')
             elif line.startswith('LOG:'):
                 msg = line[4:]
                 _update_build(log=msg)
@@ -1444,7 +1453,7 @@ insmod ext2
 insmod gzio
 menuentry "EthOS v${{VERSION}}" {{
     search --no-floppy --fs-uuid --set=root ${{ROOT_UUID}}
-    linux ${{KERN}} root=UUID=${{ROOT_UUID}} ro quiet net.ifnames=0 biosdevname=0 fsck.repair=preen
+    linux ${{KERN}} root=UUID=${{ROOT_UUID}} ro quiet net.ifnames=0 biosdevname=0 fsck.repair=preen console=ttyS0,115200n8
     initrd ${{INITRD}}
 }}
 menuentry "EthOS v${{VERSION}} (recovery)" {{
@@ -1540,7 +1549,7 @@ insmod ext2
 insmod gzio
 menuentry "EthOS v${{VERSION}}" {{
     search --no-floppy --fs-uuid --set=root ${{ROOT_UUID}}
-    linux ${{KERN}} root=UUID=${{ROOT_UUID}} ro quiet net.ifnames=0 biosdevname=0 fsck.repair=preen
+    linux ${{KERN}} root=UUID=${{ROOT_UUID}} ro quiet net.ifnames=0 biosdevname=0 fsck.repair=preen console=ttyS0,115200n8
     initrd ${{INITRD}}
 }}
 menuentry "EthOS v${{VERSION}} (recovery)" {{
@@ -2141,6 +2150,53 @@ else
     echo "LOG:WARNING: mksquashfs not found — SquashFS image will not be created"
 fi
 
+# ── Inject pre-flight health-check service (into installer rootfs AFTER squashfs creation) ──
+# This service will NOT be in the installed system (squashfs is already baked).
+# It runs once in the QEMU test, reports health, then self-destructs.
+if [ "$PREFLIGHT_ENABLED" = "1" ] && mountpoint -q "$ROOT" 2>/dev/null; then
+    echo "LOG:Injecting pre-flight health-check service into rootfs..."
+    mkdir -p "$ROOT/usr/local/sbin"
+    cat > "$ROOT/usr/local/sbin/ethos-preflight.sh" <<'PFSCRIPT'
+#!/bin/bash
+# EthOS pre-flight check — runs once in test VM, reports via serial console
+exec 1>/dev/ttyS0 2>&1
+echo "PREFLIGHT:START"
+echo "PREFLIGHT:kernel=$(uname -r)"
+SYSTEMD_STATE=$(systemctl is-system-running --wait --timeout=30 2>/dev/null || echo unknown)
+echo "PREFLIGHT:SYSTEMD:$SYSTEMD_STATE"
+if systemctl is-active ethos.service >/dev/null 2>&1; then
+    echo "PREFLIGHT:ETHOS:OK"
+else
+    echo "PREFLIGHT:ETHOS:FAIL"
+fi
+echo "PREFLIGHT:DONE"
+systemctl disable ethos-preflight.service 2>/dev/null || true
+rm -f /usr/local/sbin/ethos-preflight.sh /etc/systemd/system/ethos-preflight.service
+systemctl daemon-reload 2>/dev/null || true
+shutdown -h now
+PFSCRIPT
+    chmod +x "$ROOT/usr/local/sbin/ethos-preflight.sh"
+    cat > "$ROOT/etc/systemd/system/ethos-preflight.service" <<'PFSVC'
+[Unit]
+Description=EthOS Pre-flight Health Check
+After=ethos.service
+Wants=ethos.service
+ConditionPathExists=/usr/local/sbin/ethos-preflight.sh
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ethos-preflight.sh
+TimeoutStartSec=120
+StandardOutput=null
+StandardError=null
+
+[Install]
+WantedBy=multi-user.target
+PFSVC
+    chroot "$ROOT" systemctl enable ethos-preflight.service 2>/dev/null || true
+    echo "LOG:Pre-flight service injected into rootfs"
+fi
+
 sync
 
 for m in boot/efi run sys proc dev/shm dev/pts dev; do
@@ -2247,6 +2303,83 @@ fi
 
 # Results
 IMG_SIZE=$(stat -c%s "$OUTPUT_IMG" 2>/dev/null || echo 0)
+
+# ── Step 8: Pre-flight VM validation ──
+if [ "$PREFLIGHT_ENABLED" = "1" ]; then
+    echo "STEP:92:Pre-flight VM test — booting image in QEMU..."
+    OVMF_FW=""
+    for _p in /usr/share/OVMF/OVMF.fd /usr/share/ovmf/OVMF.fd /usr/share/qemu/OVMF.fd \\
+              /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd; do
+        if [ -f "$_p" ]; then OVMF_FW="$_p"; break; fi
+    done
+    if [ -z "$OVMF_FW" ]; then
+        echo "LOG:Pre-flight: OVMF not found — install 'ovmf' package to enable VM test"
+        echo "PREFLIGHT_RESULT:skipped"
+    elif ! command -v qemu-system-x86_64 >/dev/null 2>&1; then
+        echo "LOG:Pre-flight: qemu-system-x86_64 not found — install 'qemu-system-x86' package"
+        echo "PREFLIGHT_RESULT:skipped"
+    else
+        PFLOG="/tmp/ethos-preflight-$$.serial"
+        KVM_OPTS=""
+        if [ -e /dev/kvm ]; then
+            KVM_OPTS="-enable-kvm -cpu host"
+            echo "LOG:Pre-flight: KVM available — hardware acceleration enabled"
+        else
+            echo "LOG:Pre-flight: KVM not available — using software emulation (may be slow)"
+        fi
+        echo "LOG:Pre-flight: Starting QEMU (timeout: ${{PREFLIGHT_TIMEOUT}}s)..."
+        qemu-system-x86_64 \\
+            -bios "$OVMF_FW" \\
+            -drive file="$OUTPUT_IMG",format=raw,if=virtio,readonly=on \\
+            -m 1024 \\
+            -smp 2 \\
+            $KVM_OPTS \\
+            -nographic \\
+            -serial file:"$PFLOG" \\
+            -no-reboot \\
+            -display none \\
+            2>/dev/null &
+        QEMU_PID=$!
+        PFLIGHT_OK=0
+        PFLIGHT_FAIL=0
+        _elapsed=0
+        while [ $_elapsed -lt "${{PREFLIGHT_TIMEOUT}}" ]; do
+            sleep 2
+            _elapsed=$((_elapsed + 2))
+            if [ -f "$PFLOG" ]; then
+                if grep -q "^PREFLIGHT:DONE" "$PFLOG" 2>/dev/null; then
+                    PFLIGHT_OK=1
+                    break
+                fi
+                if grep -q "Kernel panic" "$PFLOG" 2>/dev/null; then
+                    PFLIGHT_FAIL=1
+                    break
+                fi
+            fi
+        done
+        kill $QEMU_PID 2>/dev/null
+        wait $QEMU_PID 2>/dev/null || true
+        if [ "$PFLIGHT_OK" = "1" ]; then
+            echo "LOG:Pre-flight: PASSED — image booted and services verified"
+            if [ -f "$PFLOG" ]; then
+                grep "^PREFLIGHT:" "$PFLOG" 2>/dev/null | while IFS= read -r _line; do
+                    echo "LOG:VM> $_line"
+                done
+            fi
+            echo "PREFLIGHT_RESULT:ok"
+        elif [ "$PFLIGHT_FAIL" = "1" ]; then
+            echo "LOG:Pre-flight: FAILED — kernel panic detected"
+            echo "PREFLIGHT_RESULT:fail"
+        else
+            echo "LOG:Pre-flight: TIMEOUT — VM did not report within ${{PREFLIGHT_TIMEOUT}}s"
+            echo "PREFLIGHT_RESULT:timeout"
+        fi
+        rm -f "$PFLOG"
+    fi
+else
+    echo "LOG:Pre-flight VM test disabled"
+    echo "PREFLIGHT_RESULT:disabled"
+fi
 
 BUILD_DONE=1
 echo "STEP:100:Obraz gotowy!"

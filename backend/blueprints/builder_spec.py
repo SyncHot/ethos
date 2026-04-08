@@ -105,6 +105,10 @@ DEFAULT_SPEC = {
         'compression': 'zstd',
         'compression_level': 3,
     },
+    'preflight': {
+        'enabled': True,
+        'timeout_seconds': 180,
+    },
 }
 
 
@@ -189,6 +193,10 @@ def spec_to_shell_vars(spec):
         f'TMPFS_MIN_RAM_MB={build_cfg.get("tmpfs_min_ram_mb", 10000)}',
         f'SQSH_COMPRESSION_LEVEL={build_cfg.get("compression_level", 3)}',
     ]
+
+    pflight = spec.get('preflight', {})
+    lines.append(f'PREFLIGHT_ENABLED={1 if pflight.get("enabled", True) else 0}')
+    lines.append(f'PREFLIGHT_TIMEOUT={pflight.get("timeout_seconds", 180)}')
 
     pkgs = spec.get('packages', {}).get('debootstrap', DEFAULT_SPEC['packages']['debootstrap'])
     lines.append(f'DEBOOTSTRAP_INCLUDE="{",".join(pkgs)}"')
