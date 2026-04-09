@@ -478,7 +478,7 @@ def _hw_health_check():
     }
 
 
-
+def _cleanup_hls(session_id):
     """Stop ffmpeg and remove temp dir for an HLS session."""
     sess = _hls_sessions.pop(session_id, None)
     if not sess:
