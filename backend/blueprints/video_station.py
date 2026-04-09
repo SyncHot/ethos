@@ -98,6 +98,9 @@ _HIDE_LOCKOUT_TIME = 300     # seconds
 VIDEO_EXTS = {'.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v',
               '.mpg', '.mpeg', '.ts', '.3gp', '.ogv', '.vob'}
 
+# Video codecs that browsers can natively decode inside <video>
+_BROWSER_VIDEO_CODECS = {'h264', 'avc1', 'vp8', 'vp9', 'theora', 'av1'}
+
 # Audio codecs that browsers can natively decode inside <video>
 _BROWSER_AUDIO_CODECS = {'aac', 'mp3', 'opus', 'vorbis', 'flac'}
 
@@ -1651,8 +1654,10 @@ def video_info(vid):
     except Exception:
         pass
     audio_codec = (r["audio_codec"] or "").lower()
+    video_codec = (r["codec"] or "").lower()
     ext = os.path.splitext(r["path"])[1].lower()
-    needs_tc = (bool(audio_codec) and audio_codec not in _BROWSER_AUDIO_CODECS) or \
+    needs_tc = (bool(video_codec) and video_codec not in _BROWSER_VIDEO_CODECS) or \
+               (bool(audio_codec) and audio_codec not in _BROWSER_AUDIO_CODECS) or \
                (ext not in _BROWSER_CONTAINERS)
     audio_tracks = meta.get("audio_tracks", [])
 

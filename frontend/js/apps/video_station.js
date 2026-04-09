@@ -183,6 +183,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     <span class="vs-player-title" id="vs-player-title"></span>
     <span class="vs-player-badge" id="vs-player-badge" style="display:none"><i class="fas fa-sync-alt fa-spin"></i> ${t('Transkodowanie')}</span>
     <select class="vs-audio-select" id="vs-audio-select" style="display:none"></select>
+    <select class="vs-sub-select" id="vs-sub-select" style="display:none"></select>
     <select class="vs-speed-select" id="vs-speed-select">
       <option value="0.5">0.5x</option>
       <option value="0.75">0.75x</option>
@@ -2038,6 +2039,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         const title    = bodyEl.querySelector('#vs-player-title');
         const badge    = bodyEl.querySelector('#vs-player-badge');
         const audioSel = bodyEl.querySelector('#vs-audio-select');
+        const subSel   = bodyEl.querySelector('#vs-sub-select');
         const speedSel = bodyEl.querySelector('#vs-speed-select');
         if (!overlay || !video) return;
 
@@ -2048,13 +2050,12 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         _knownDuration = info.duration || 0;
         _startOffset = 0;
 
-        // Always use native controls
         video.controls = true;
 
         title.textContent = info.title || info.filename || '';
         badge.style.display = needsTranscode ? '' : 'none';
 
-        // Backdrop blur background on player overlay
+        // Backdrop blur background
         if (info.backdrop_ok) {
             overlay.style.backgroundImage = 'url(/api/video-station/backdrop/' + vid + '?token=' + NAS.token + ')';
             overlay.style.backgroundSize = 'cover';
@@ -2069,12 +2070,9 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         // RemotePlayback / Cast button
         const castBtn = bodyEl.querySelector('#vs-cast-btn');
         if (castBtn) {
-            const streamUrl = _buildStreamUrl(vid);
             if ('remote' in HTMLVideoElement.prototype || video.remote) {
                 castBtn.style.display = '';
-                castBtn.onclick = () => {
-                    video.remote.prompt().catch(() => {});
-                };
+                castBtn.onclick = () => { video.remote.prompt().catch(() => {}); };
                 video.remote.addEventListener('connecting', () => { castBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>'; });
                 video.remote.addEventListener('connect', () => { castBtn.innerHTML = '<i class="fas fa-tv" style="color:#1db954"></i>'; castBtn.title = t('Casting aktywny'); });
                 video.remote.addEventListener('disconnect', () => { castBtn.innerHTML = '<i class="fas fa-tv"></i>'; castBtn.title = t('Cast na TV'); });
@@ -2109,6 +2107,9 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             audioSel.style.display = 'none';
         }
 
+        // Subtitle selector — hidden until tracks are loaded
+        if (subSel) { subSel.style.display = 'none'; subSel.innerHTML = ''; }
+
         const resumePos = (info.position && info.position > 0 && !info.watched) ? info.position : 0;
 
         async function _doPlay(startSec) {
@@ -2126,7 +2127,6 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         }
 
         if (resumePos > 30) {
-            // Show Plex-like resume dialog
             const dlg = bodyEl.querySelector('#vs-resume-dialog');
             const txt = bodyEl.querySelector('#vs-resume-text');
             const btnCont = bodyEl.querySelector('#vs-resume-continue');
@@ -2144,9 +2144,10 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             await _doPlay(0);
         }
 
+        // Load subtitles (file-based + embedded via HLS) and populate subtitle picker
         _loadSubtitles(vid, video);
 
-        // HLS live-mode: intercept native seekbar drags beyond buffer
+        // HLS seeking beyond buffer
         if (needsTranscode) {
             video.onseeking = () => {
                 if (!_transcoding || !_hlsInstance) return;
@@ -2188,13 +2189,17 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         // Fallback: if raw stream fails, retry with HLS transcode
         video.onerror = () => {
             if (!_transcoding && video.error) {
+                _cl('warn', 'Direct stream failed, falling back to HLS transcode', {
+                    vid, codec: info.codec, audioCodec: info.audio_codec,
+                    errorCode: video.error.code, errorMsg: video.error.message
+                });
                 _transcoding = true;
                 badge.style.display = '';
                 _startHls(vid, 0, null);
             }
         };
 
-        // keyboard shortcuts (J=-10s, K=play/pause, L=+10s like YouTube)
+        // keyboard shortcuts
         overlay._keyHandler = (e) => {
             if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); video.paused ? video.play() : video.pause(); }
             else if (e.key === 'f') { toggleFullscreen(overlay); }
@@ -2238,10 +2243,12 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
                     '</span></div>' +
                     '<div class="vs-stats-row"><span>HLS</span><span>' + (_hlsSessionId ? escH(_hlsSessionId.slice(0,8) + '…') : t('Brak sesji')) + '</span></div>' +
                     '<div class="vs-stats-row"><span>' + t('Pozycja') + '</span><span>' + Math.round(video.currentTime) + 's</span></div>' +
+                    '<div class="vs-stats-row"><span>' + t('Kodek video') + '</span><span>' + escH(info.codec || '—') + '</span></div>' +
+                    '<div class="vs-stats-row"><span>' + t('Kodek audio') + '</span><span>' + escH(info.audio_codec || '—') + '</span></div>' +
+                    '<div class="vs-stats-row"><span>' + t('Rozdzielczość') + '</span><span>' + (info.width && info.height ? info.width + '×' + info.height : '—') + '</span></div>' +
                     swTip;
                 statsOverlay.style.display = '';
 
-                // "Jak naprawić?" link in stats overlay
                 const setupLink = statsOverlay.querySelector('#vs-stats-hw-setup');
                 if (setupLink) {
                     setupLink.onclick = async (e) => {
@@ -2277,8 +2284,6 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             const relY = touch.clientY - rect.top;
             _swipeStartX = relX; _swipeStartY = relY;
             _swipeSide = relX < rect.width / 2 ? 'left' : 'right';
-
-            // Double-tap detection
             if (now - _lastTapTime < 300 && Math.abs(relX - _lastTapX) < 80) {
                 e.preventDefault();
                 if (relX < rect.width / 2) { seekPlayer(video, -10); _showSeekHint('left'); }
@@ -2317,7 +2322,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             pipBtn.onclick = () => togglePiP(video);
         }
 
-        // Fullscreen button — fullscreens the overlay, not the bare video
+        // Fullscreen button
         const fsBtn = bodyEl.querySelector('#vs-fs-btn');
         if (fsBtn) {
             fsBtn.onclick = () => toggleFullscreen(overlay);
@@ -2447,24 +2452,32 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 
     async function _loadSubtitles(vid, video) {
         video.querySelectorAll('track').forEach(t => t.remove());
+        const subSel = bodyEl.querySelector('#vs-sub-select');
+        const allTracks = [];
+
+        // Load file-based subtitles
         const data = await api('/video-station/subtitles/' + vid);
-        if (!data.ok || !data.subtitles || !data.subtitles.length) return;
-        data.subtitles.forEach((sub, i) => {
-            const track = document.createElement('track');
-            track.kind = 'subtitles';
-            track.label = sub.language || sub.filename;
-            track.srclang = sub.language || 'und';
-            track.src = '/api/video-station/subtitle-file/' + vid + '/' + encodeURIComponent(sub.filename) + '?token=' + NAS.token;
-            if (i === 0) track.default = true;
-            video.appendChild(track);
-        });
+        if (data.ok && data.subtitles && data.subtitles.length) {
+            data.subtitles.forEach((sub, i) => {
+                const track = document.createElement('track');
+                track.kind = 'subtitles';
+                track.label = sub.language || sub.filename;
+                track.srclang = sub.language || 'und';
+                track.src = '/api/video-station/subtitle-file/' + vid + '/' + encodeURIComponent(sub.filename) + '?token=' + NAS.token;
+                video.appendChild(track);
+                allTracks.push({ label: track.label, idx: i, type: 'file' });
+            });
+        }
+
+        // Populate subtitle picker
+        _updateSubSelect(video, allTracks);
     }
 
     function _loadSubtitleTracks(vid, subTracks) {
         const video = bodyEl && bodyEl.querySelector('#vs-player-video');
         if (!video || !subTracks || !subTracks.length) return;
-        // Remove existing embedded-sub tracks (not file-based ones)
         video.querySelectorAll('track[data-embedded]').forEach(t => t.remove());
+        const existingCount = video.querySelectorAll('track:not([data-embedded])').length;
         subTracks.forEach((sub, i) => {
             const track = document.createElement('track');
             track.kind = 'subtitles';
@@ -2474,6 +2487,56 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             track.dataset.embedded = '1';
             video.appendChild(track);
         });
+        // Rebuild subtitle picker with all tracks
+        const allTracks = [];
+        const trackEls = video.querySelectorAll('track');
+        trackEls.forEach((tr, i) => {
+            allTracks.push({ label: tr.label || ('Track ' + (i + 1)), idx: i, type: tr.dataset.embedded ? 'embedded' : 'file' });
+        });
+        _updateSubSelect(video, allTracks);
+    }
+
+    function _updateSubSelect(video, allTracks) {
+        const subSel = bodyEl && bodyEl.querySelector('#vs-sub-select');
+        if (!subSel) return;
+        if (!allTracks.length) {
+            subSel.style.display = 'none';
+            return;
+        }
+        const savedLang = localStorage.getItem('vs_sub_lang') || '';
+        let html = '<option value="-1">' + escH(t('Napisy: wyłączone')) + '</option>';
+        allTracks.forEach((tr, i) => {
+            const icon = tr.type === 'embedded' ? '\u{1F4E6} ' : '\u{1F4C4} ';
+            html += '<option value="' + i + '">' + icon + escH(tr.label) + '</option>';
+        });
+        subSel.innerHTML = html;
+        subSel.style.display = '';
+
+        // Auto-select matching saved language or first track
+        let autoIdx = -1;
+        if (savedLang) {
+            autoIdx = allTracks.findIndex(tr => tr.label.toLowerCase().includes(savedLang.toLowerCase()));
+        }
+        if (autoIdx < 0 && allTracks.length > 0) autoIdx = 0;
+
+        subSel.value = String(autoIdx);
+        _applySubTrack(video, autoIdx);
+
+        subSel.onchange = () => {
+            const idx = parseInt(subSel.value);
+            _applySubTrack(video, idx);
+            // Remember last selected language
+            if (idx >= 0 && allTracks[idx]) {
+                localStorage.setItem('vs_sub_lang', allTracks[idx].label);
+            }
+        };
+    }
+
+    function _applySubTrack(video, activeIdx) {
+        const tracks = video.textTracks;
+        for (let i = 0; i < tracks.length; i++) {
+            tracks[i].mode = (i === activeIdx) ? 'showing' : 'hidden';
+        }
     }
 
     function seekPlayer(video, delta) {
@@ -2588,7 +2651,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 /* main layout */
 '.vs-layout{display:flex;height:100%;overflow:hidden}',
 '.vs-sidebar{width:200px;min-width:200px;background:var(--bg-secondary);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow-y:auto}',
-'.vs-main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}',
+'.vs-main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0;min-height:0}',
 
 /* sidebar nav */
 '.vs-nav-section{font-size:11px;font-weight:600;text-transform:uppercase;color:var(--text-muted);padding:14px 16px 6px;letter-spacing:.04em}',
@@ -2613,7 +2676,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 '.vs-scan-text{font-size:12px;color:var(--text-muted);white-space:nowrap}',
 
 /* content area */
-'.vs-content{flex:1;overflow-y:auto;padding:16px}',
+'.vs-content{flex:1;overflow-y:auto;padding:16px;min-height:0}',
 '.vs-loading{display:flex;align-items:center;justify-content:center;height:200px;color:var(--text-muted);font-size:20px}',
 '.vs-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:300px;color:var(--text-muted);gap:8px;font-size:14px}',
 '.vs-empty i{font-size:48px;opacity:.4}',
@@ -2690,6 +2753,8 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 '.vs-player-badge{display:inline-flex;align-items:center;gap:5px;background:rgba(255,165,0,.85);color:#000;font-size:11px;font-weight:600;padding:3px 10px;border-radius:12px;white-space:nowrap}',
 '.vs-audio-select{background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.3);border-radius:4px;padding:2px 6px;font-size:12px;max-width:220px;cursor:pointer}',
 '.vs-audio-select option{background:#222;color:#fff}',
+'.vs-sub-select{background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.3);border-radius:4px;padding:2px 6px;font-size:12px;max-width:220px;cursor:pointer}',
+'.vs-sub-select option{background:#222;color:#fff}',
 '.vs-speed-select{background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.3);border-radius:4px;padding:2px 6px;font-size:12px;cursor:pointer}',
 '.vs-speed-select option{background:#222;color:#fff}',
 '.vs-ctx-menu{position:fixed;background:var(--bg-elevated,#2a2a2e);border:1px solid var(--border);border-radius:var(--r-md,6px);padding:4px 0;z-index:9999;min-width:180px;box-shadow:0 8px 24px rgba(0,0,0,.5)}',
