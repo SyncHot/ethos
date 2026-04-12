@@ -1059,42 +1059,65 @@ def _install_grub(dev, mount_dir, progress_cb=None, squashfs_mode=False, data_de
             progress_cb("bootloader", pct, msg)
 
     if arch == "x86_64":
-        # Bind-mount required filesystems for chroot
-        _p(75, "Mounting filesystems for chroot...")
-        for fs in ("dev", "proc", "sys"):
-            _, err, rc = _run(f"mount --bind /{fs} {mount_dir}/{fs}", timeout=10)
+        efi_dir = os.path.join(mount_dir, "boot/efi")
+        bootx64 = os.path.join(efi_dir, "EFI/BOOT/BOOTX64.EFI")
+
+        if not squashfs_mode:
+            # Traditional (ext4) install: chroot has full filesystem
+            _p(75, "Mounting filesystems for chroot...")
+            for fs in ("dev", "proc", "sys"):
+                _, err, rc = _run(f"mount --bind /{fs} {mount_dir}/{fs}", timeout=10)
+                if rc != 0:
+                    log.warning("mount --bind /%s failed: %s", fs, err)
+            _run(f"mount --bind /dev/pts {mount_dir}/dev/pts", timeout=10)
+
+            _p(76, "Installing GRUB UEFI (x86_64-efi) via chroot...")
+            _, err, rc = _run(
+                f"chroot {mount_dir} grub-install --target=x86_64-efi "
+                f"--efi-directory=/boot/efi --boot-directory=/boot "
+                f"--removable --no-nvram {dev} 2>&1",
+                timeout=120,
+            )
             if rc != 0:
-                log.warning("mount --bind /%s failed: %s", fs, err)
-        _run(f"mount --bind /dev/pts {mount_dir}/dev/pts", timeout=10)
+                log.error("GRUB UEFI chroot failed (rc=%d): %s", rc, err)
+                _p(77, f"GRUB UEFI chroot failed (rc={rc})")
+            else:
+                _p(77, "GRUB UEFI installed successfully via chroot")
 
-        # Install GRUB UEFI
-        _p(76, "Installing GRUB UEFI (x86_64-efi)...")
-        _, err, rc = _run(
-            f"chroot {mount_dir} grub-install --target=x86_64-efi "
-            f"--efi-directory=/boot/efi --boot-directory=/boot "
-            f"--removable --no-nvram {dev} 2>&1",
-            timeout=120,
-        )
-        if rc != 0:
-            log.error("GRUB UEFI failed (rc=%d): %s", rc, err)
-            _p(77, f"GRUB UEFI failed (rc={rc}): {err}")
+            _p(78, "Generating GRUB configuration (update-grub)...")
+            _, uerr, urc = _run(f"chroot {mount_dir} update-grub 2>&1", timeout=120)
+            if urc != 0:
+                log.warning("update-grub failed (rc=%d): %s", urc, uerr)
+
+            _p(79, "Unmounting chroot filesystems...")
+            for fs in ("dev/pts", "sys", "proc", "dev"):
+                _run(f"umount {mount_dir}/{fs} 2>/dev/null")
         else:
-            _p(77, "GRUB UEFI installed successfully")
+            log.info("SquashFS mode: skipping chroot grub-install (target has no binaries)")
 
-        _p(78, "Generating GRUB configuration (update-grub)...")
-        _, uerr, urc = _run(f"chroot {mount_dir} update-grub 2>&1", timeout=120)
-        if urc != 0:
-            log.warning("update-grub failed (rc=%d): %s", urc, uerr)
-            _p(78, f"update-grub warning (rc={urc})")
+        # Fallback: if BOOTX64.EFI is missing (SquashFS mode, or chroot failed),
+        # run grub-install from the host (installer) targeting the mounted ESP.
+        if not os.path.isfile(bootx64):
+            _p(76, "Installing GRUB UEFI from host system...")
+            _, err, rc = _run(
+                f"grub-install --target=x86_64-efi "
+                f"--efi-directory={efi_dir} "
+                f"--boot-directory={os.path.join(mount_dir, 'boot')} "
+                f"--removable --no-nvram 2>&1",
+                timeout=120,
+            )
+            if rc != 0:
+                log.error("Host grub-install also failed (rc=%d): %s", rc, err)
+                _p(77, f"GRUB install failed: {err}")
+            else:
+                _p(77, "GRUB UEFI installed from host system")
 
-        # Unbind
-        _p(79, "Unmounting chroot filesystems...")
-        for fs in ("dev/pts", "sys", "proc", "dev"):
-            _run(f"umount {mount_dir}/{fs} 2>/dev/null")
+        if os.path.isfile(bootx64):
+            log.info("BOOTX64.EFI confirmed at %s", bootx64)
+        else:
+            log.error("BOOTX64.EFI MISSING — system will not boot!")
 
         # Write A/B boot config to ESP and root /boot/grub/.
-        # grub-install --removable already created BOOTX64.EFI from the
-        # target's GRUB packages; we only need to write our A/B config.
         _p(79, "Writing A/B boot configuration...")
         _write_esp_grub(dev, mount_dir, progress_cb, squashfs_mode=squashfs_mode,
                         data_dev=data_dev)
@@ -1268,6 +1291,13 @@ menuentry "EthOS Recovery Shell (ESP)" {{
 }}
 """)
     log.info("Wrote A/B ESP grub.cfg: kernel=%s root_a=%s root_b=%s", kver, root_a_uuid, root_b_uuid)
+
+    # Also place grub.cfg where GRUB's $prefix looks (boot/grub/ on ESP).
+    # grub-install --removable sets prefix=(hd0,gpt1)/boot/grub, so GRUB
+    # looks for grub.cfg there FIRST, before EFI/BOOT/grub.cfg.
+    boot_grub_cfg = os.path.join(boot_grub_dir, "grub.cfg")
+    shutil.copy2(esp_grub_cfg, boot_grub_cfg)
+    log.info("Copied grub.cfg to ESP /boot/grub/grub.cfg (GRUB $prefix location)")
 
     # ── 2) Initialize grubenv with default boot state ──
     # GRUB's $prefix varies by distro/firmware: EFI/debian (Debian GRUB 2.12),

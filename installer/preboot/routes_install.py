@@ -48,9 +48,11 @@ def start_install():
 
     data = request.get_json(silent=True) or {}
 
-    # Required fields
-    os_disk = data.get("os_disk", "").strip()
+    # Required fields — strip /dev/ prefix if present (disk_ops expects bare names like 'vdb')
+    os_disk = data.get("os_disk", "").strip().removeprefix("/dev/")
     data_disk = data.get("data_disk")  # None/"same"/device
+    if isinstance(data_disk, str):
+        data_disk = data_disk.strip().removeprefix("/dev/") or None
     username = data.get("username", "").strip()
     password = data.get("password", "")
     hostname = data.get("hostname", "ethos").strip()

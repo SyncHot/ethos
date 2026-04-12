@@ -323,3 +323,12 @@ def test_esp_grub_modules_copied(script):
     # Must copy grub.cfg to both /EFI/BOOT/ and /boot/grub/ on ESP
     assert 'boot/efi/boot/grub/grub.cfg' in script
     assert 'boot/efi/EFI/BOOT/grub.cfg' in script
+
+
+def test_venv_backup_and_restore_for_installer(script):
+    """venv must be backed up before squashfs symlinking and restored after."""
+    assert 'venv-backup' in script
+    assert 'cp -a' in script and 'venv' in script
+    # Restore must use mv from backup, not just mkdir
+    assert 'mv "$VENV_BACKUP"' in script
+    assert 'venv restored for installer' in script

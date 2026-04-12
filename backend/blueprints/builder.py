@@ -1553,11 +1553,16 @@ DEVMONSVC
 ln -sf /etc/systemd/system/devmon@.service "$ROOT/etc/systemd/system/multi-user.target.wants/devmon@devmon.service"
 echo "LOG:devmon USB automount OK"
 
-# NetworkManager config for AP shared mode (dnsmasq) and WiFi scan
+# NetworkManager config — manage ALL devices (Ubuntu server defaults to WiFi-only)
 mkdir -p "$ROOT/etc/NetworkManager/conf.d"
 cat > "$ROOT/etc/NetworkManager/conf.d/00-ethos.conf" <<'NMCFG'
 [main]
 dns=dnsmasq
+
+[keyfile]
+# Override Ubuntu's 10-globally-managed-devices.conf which only manages WiFi.
+# EthOS needs NM to manage ethernet too (no netplan/networkd).
+unmanaged-devices=none
 
 [device]
 wifi.scan-rand-mac-address=no
@@ -1891,6 +1896,7 @@ prereqs() {{ echo "$PREREQ"; }}
 case "$1" in prereqs) prereqs; exit 0 ;; esac
 grep -q "ethos.rootfs=squashfs" /proc/cmdline || exit 0
 [ -f "${{rootmnt}}/root.sqsh" ] || exit 0
+echo "ethos-overlay: starting SquashFS overlay setup"
 modprobe -q squashfs 2>/dev/null || true
 modprobe -q overlay 2>/dev/null || true
 modprobe -q loop 2>/dev/null || true
@@ -1915,6 +1921,7 @@ if [ -n "$DATA_DEV" ]; then
         WORK="$DATA_MNT/ethos/overlay/$SLOT/work"
         mkdir -p "$UPPER" "$WORK"
         DATA_UPPER=1
+        echo "ethos-overlay: using EthOS-Data btrfs for overlay upper=$UPPER"
     fi
 fi
 
@@ -1923,11 +1930,12 @@ if [ -z "$DATA_UPPER" ]; then
     UPPER=/run/ethos-rootfs/overlay/upper
     WORK=/run/ethos-rootfs/overlay/work
     mkdir -p "$UPPER" "$WORK"
+    echo "ethos-overlay: using Root partition for overlay upper=$UPPER"
 fi
 
 # dm-verity integrity check (optional — runs if roothash and verity data exist)
 VERITY_OK=0
-ROOTHASH_FILE="/run/ethos-rootfs/boot/efi/EFI/ethos/roothash"
+ROOTHASH_FILE="/run/ethos-rootfs/root.sqsh.roothash"
 VERITY_FILE="/run/ethos-rootfs/root.sqsh.verity"
 SQSH_FILE="/run/ethos-rootfs/root.sqsh"
 if [ -f "$ROOTHASH_FILE" ] && [ -f "$VERITY_FILE" ] && command -v veritysetup >/dev/null 2>&1; then
@@ -1954,15 +1962,20 @@ fi
 # Standard mount (no verity or verity unavailable)
 if [ "$VERITY_OK" = "0" ]; then
     mkdir -p /run/ethos-sqsh
-    if ! mount -t squashfs -o ro,loop "$SQSH_FILE" /run/ethos-sqsh 2>/dev/null; then
+    echo "ethos-overlay: mounting squashfs from $SQSH_FILE"
+    if ! mount -t squashfs -o ro,loop "$SQSH_FILE" /run/ethos-sqsh; then
+        echo "ethos-overlay: FAILED to mount squashfs — falling back to raw root"
         mount --move /run/ethos-rootfs "${{rootmnt}}"
         exit 0
     fi
+    echo "ethos-overlay: squashfs mounted OK"
 fi
 
+echo "ethos-overlay: mounting overlay lowerdir=/run/ethos-sqsh upperdir=$UPPER workdir=$WORK"
 if ! mount -t overlay overlay \
     -o "lowerdir=/run/ethos-sqsh,upperdir=$UPPER,workdir=$WORK" \
-    "${{rootmnt}}" 2>/dev/null; then
+    "${{rootmnt}}"; then
+    echo "ethos-overlay: FAILED to mount overlay — falling back to raw root"
     umount /run/ethos-sqsh 2>/dev/null
     [ "$VERITY_OK" = "1" ] && veritysetup close ethos-verity 2>/dev/null
     [ -n "$DATA_UPPER" ] && umount /run/ethos-data 2>/dev/null
@@ -1972,6 +1985,11 @@ fi
 mkdir -p "${{rootmnt}}/.squashfs" "${{rootmnt}}/.rootfs"
 mount --move /run/ethos-rootfs "${{rootmnt}}/.rootfs"
 mount --move /run/ethos-sqsh "${{rootmnt}}/.squashfs"
+# Ensure essential mount-point dirs exist (they may be absent from squashfs)
+for _d in dev proc sys run tmp media mnt; do
+    mkdir -p "${{rootmnt}}/$_d"
+done
+echo "ethos-overlay: overlay boot setup COMPLETE"
 # Expose data partition mount inside the new root for runtime use
 if [ -n "$DATA_UPPER" ]; then
     mkdir -p "${{rootmnt}}/run/ethos-data"
@@ -1993,7 +2011,7 @@ for p in /boot/efi /efi; do
     if mountpoint -q "${{rootmnt}}$p" 2>/dev/null; then ESP="${{rootmnt}}$p"; break; fi
 done
 if [ -z "$ESP" ]; then
-    ESP_DEV=$(blkid -t TYPE=vfat -o device 2>/dev/null | head -1)
+    ESP_DEV=$(blkid -t TYPE=vfat -o device 2>/dev/null | sed -n '1p')
     if [ -n "$ESP_DEV" ]; then
         mkdir -p /run/ethos-esp
         mount -t vfat "$ESP_DEV" /run/ethos-esp 2>/dev/null && ESP="/run/ethos-esp"
@@ -2398,6 +2416,12 @@ if command -v mksquashfs >/dev/null 2>&1; then
     echo "STEP:87:Creating SquashFS immutable root image..."
 
     ETHOS_DIR_SQ="$ROOT/opt/ethos"
+    # Back up venv before symlinking (needed for installer on the raw image)
+    VENV_BACKUP="$WORK_DIR/venv-backup"
+    if [ -d "$ETHOS_DIR_SQ/venv/bin" ]; then
+        cp -a "$ETHOS_DIR_SQ/venv" "$VENV_BACKUP"
+        echo "LOG:venv backed up for installer restore"
+    fi
     # Prepare clean installed-system state (squashfs should NOT contain installer artifacts)
     for d in data logs backups uploads venv; do
         rm -rf "$ETHOS_DIR_SQ/$d"
@@ -2407,16 +2431,17 @@ if command -v mksquashfs >/dev/null 2>&1; then
     mkdir -p "$ROOT/mnt/data"
     mkdir -p "$ROOT/mnt/snapshots"
 
+    # Clean virtual-fs directories: keep empty mount-point dirs in squashfs
+    # so the initramfs overlay has /dev, /proc, /sys, /run, /tmp available.
+    for vfs in dev proc sys run tmp media; do
+        rm -rf "$ROOT/$vfs"
+        mkdir -p "$ROOT/$vfs"
+    done
+
     SQSH_OUT="$WORK_DIR/ethos-root.sqsh"
     mksquashfs "$ROOT" "$SQSH_OUT" \
         -comp zstd -Xcompression-level $SQSH_COMPRESSION_LEVEL \
         -noappend -no-progress \
-        -e "$ROOT/proc" \
-        -e "$ROOT/sys" \
-        -e "$ROOT/dev" \
-        -e "$ROOT/run" \
-        -e "$ROOT/tmp" \
-        -e "$ROOT/media" \
         -e "$ROOT/lost+found" \
         -e "$ROOT/swapfile" \
         -e "$ROOT/var/swap" \
@@ -2462,10 +2487,19 @@ print('LOG:Manifest written: ' + p if p else 'LOG:WARNING: manifest signing fail
     fi
 
     # Restore USB/installer state (so the USB can still boot the installer)
-    for d in data logs backups uploads venv; do
+    for d in data logs backups uploads; do
         rm -f "$ETHOS_DIR_SQ/$d"
         mkdir -p "$ETHOS_DIR_SQ/$d"
     done
+    # Restore venv from backup (installer needs working Python + Flask)
+    rm -f "$ETHOS_DIR_SQ/venv"
+    if [ -d "$VENV_BACKUP/bin" ]; then
+        mv "$VENV_BACKUP" "$ETHOS_DIR_SQ/venv"
+        echo "LOG:venv restored for installer"
+    else
+        mkdir -p "$ETHOS_DIR_SQ/venv"
+        echo "LOG:WARNING: venv backup missing — installer may not work"
+    fi
     touch "$ETHOS_DIR_SQ/.installer-mode"
 else
     echo "LOG:WARNING: mksquashfs not found — SquashFS image will not be created"
