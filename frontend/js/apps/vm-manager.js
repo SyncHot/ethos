@@ -678,11 +678,12 @@ function renderVMManager(body) {
                 <span class="vm-vnc-hint">${t('Połącz klientem VNC (np. TigerVNC, Remmina)')}</span>
             </div>` : ''}
             <div class="vm-detail-tabs">
-                ${running && vm.ws_port ? `<div class="vm-dtab ${S.detailTab === 'console' ? 'active' : ''}" data-t="console"><i class="fas fa-tv"></i> Konsola</div>` : ''}
-                <div class="vm-dtab ${S.detailTab === 'info' ? 'active' : ''}" data-t="info">Konfiguracja</div>
-                <div class="vm-dtab ${S.detailTab === 'network' ? 'active' : ''}" data-t="network"><i class="fas fa-network-wired"></i> Sieć</div>
-                <div class="vm-dtab ${S.detailTab === 'snapshots' ? 'active' : ''}" data-t="snapshots">Snapshoty</div>
-                <div class="vm-dtab ${S.detailTab === 'disk' ? 'active' : ''}" data-t="disk">Dysk</div>
+                ${running && vm.ws_port ? `<div class="vm-dtab ${S.detailTab === 'console' ? 'active' : ''}" data-t="console"><i class="fas fa-tv"></i> ${t('Konsola')}</div>` : ''}
+                ${running && vm.serial_ws_port ? `<div class="vm-dtab ${S.detailTab === 'serial' ? 'active' : ''}" data-t="serial"><i class="fas fa-terminal"></i> ${t('Serial')}</div>` : ''}
+                <div class="vm-dtab ${S.detailTab === 'info' ? 'active' : ''}" data-t="info">${t('Konfiguracja')}</div>
+                <div class="vm-dtab ${S.detailTab === 'network' ? 'active' : ''}" data-t="network"><i class="fas fa-network-wired"></i> ${t('Sieć')}</div>
+                <div class="vm-dtab ${S.detailTab === 'snapshots' ? 'active' : ''}" data-t="snapshots">${t('Snapshoty')}</div>
+                <div class="vm-dtab ${S.detailTab === 'disk' ? 'active' : ''}" data-t="disk">${t('Dysk')}</div>
             </div>
             <div id="vm-detail-content"></div>
         `;
@@ -724,8 +725,11 @@ function renderVMManager(body) {
     function renderDetailContent() {
         const dc = main.querySelector('#vm-detail-content');
         if (!dc) return;
+        // Cleanup serial terminal when switching away
+        if (S.detailTab !== 'serial') _cleanupSerial();
         switch (S.detailTab) {
             case 'console': renderConsolePanel(dc); break;
+            case 'serial': renderSerialPanel(dc); break;
             case 'info': renderInfoPanel(dc); break;
             case 'network': renderNetworkPanel(dc); break;
             case 'snapshots': renderSnapshotsPanel(dc); break;
@@ -760,6 +764,104 @@ function renderVMManager(body) {
             if (frame.requestFullscreen) frame.requestFullscreen();
             else if (frame.webkitRequestFullscreen) frame.webkitRequestFullscreen();
         });
+    }
+
+    // Serial console panel (xterm.js via websockify)
+    let _serialTerm = null;
+    let _serialWs = null;
+
+    function _cleanupSerial() {
+        if (_serialWs) { try { _serialWs.close(); } catch(e) {} _serialWs = null; }
+        if (_serialTerm) { try { _serialTerm.dispose(); } catch(e) {} _serialTerm = null; }
+    }
+
+    function renderSerialPanel(dc) {
+        const vm = S.selectedVM;
+        if (!vm || vm.status !== 'running' || !vm.serial_ws_port) {
+            dc.innerHTML = `<div class="vm-empty">${t('Konsola szeregowa dostępna tylko dla działających maszyn.')}</div>`;
+            return;
+        }
+        dc.innerHTML = `
+            <div class="vm-serial-wrap">
+                <div class="vm-console-toolbar">
+                    <span><i class="fas fa-terminal"></i> Serial Console — ${esc(vm.name)}</span>
+                    <button class="vm-btn vm-btn-sm" id="vm-serial-reconnect" title="${t('Połącz ponownie')}"><i class="fas fa-sync"></i></button>
+                    <button class="vm-btn vm-btn-sm" id="vm-serial-fullscreen" title="${t('Pełny ekran')}"><i class="fas fa-expand"></i></button>
+                </div>
+                <div id="vm-serial-terminal" class="vm-serial-terminal"></div>
+            </div>
+        `;
+
+        _connectSerial(vm);
+
+        dc.querySelector('#vm-serial-reconnect')?.addEventListener('click', () => _connectSerial(vm));
+        const termEl = dc.querySelector('#vm-serial-terminal');
+        dc.querySelector('#vm-serial-fullscreen')?.addEventListener('click', () => {
+            if (termEl.requestFullscreen) termEl.requestFullscreen();
+            else if (termEl.webkitRequestFullscreen) termEl.webkitRequestFullscreen();
+        });
+    }
+
+    function _connectSerial(vm) {
+        _cleanupSerial();
+
+        const el = main.querySelector('#vm-serial-terminal');
+        if (!el) return;
+        el.innerHTML = '';
+
+        const term = new Terminal({
+            cursorBlink: true,
+            cursorStyle: 'bar',
+            fontSize: 14,
+            fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace",
+            theme: { background: '#1a1a2e', foreground: '#e0e0e0', cursor: '#4fc3f7' },
+            scrollback: 10000,
+            convertEol: true,
+        });
+
+        const fitAddon = new FitAddon.FitAddon();
+        term.loadAddon(fitAddon);
+        term.open(el);
+        setTimeout(() => fitAddon.fit(), 50);
+
+        const ro = new ResizeObserver(() => { try { fitAddon.fit(); } catch(e) {} });
+        ro.observe(el);
+
+        term.writeln('\x1b[36m── Serial Console connecting... ──\x1b[0m');
+
+        const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
+        const wsUrl = `${wsProto}://${_vmHost}:${vm.serial_ws_port}`;
+        const ws = new WebSocket(wsUrl);
+        ws.binaryType = 'arraybuffer';
+
+        ws.onopen = () => {
+            term.writeln('\x1b[32m── Connected ──\x1b[0m\r\n');
+            // Send Enter to get a fresh prompt/output
+            ws.send(new Uint8Array([13]));
+        };
+        ws.onmessage = (evt) => {
+            if (evt.data instanceof ArrayBuffer) {
+                term.write(new Uint8Array(evt.data));
+            } else {
+                term.write(evt.data);
+            }
+        };
+        ws.onclose = () => {
+            term.writeln('\r\n\x1b[31m── Disconnected ──\x1b[0m');
+        };
+        ws.onerror = () => {
+            term.writeln('\r\n\x1b[31m── Connection error ──\x1b[0m');
+        };
+
+        term.onData((data) => {
+            if (ws.readyState === WebSocket.OPEN) {
+                const encoder = new TextEncoder();
+                ws.send(encoder.encode(data));
+            }
+        });
+
+        _serialTerm = term;
+        _serialWs = ws;
     }
 
     // Info / Config panel

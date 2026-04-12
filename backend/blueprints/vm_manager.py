@@ -72,7 +72,7 @@ def _iso_root():
 # ─── State ───────────────────────────────────────────────────
 
 _STATE_FILE = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'vm_state.json')
-_running_vms = {}  # vm_id -> { 'proc': Popen, 'pid': int, 'started': float, 'vnc_port': int }
+_running_vms = {}  # vm_id -> { 'proc': Popen, 'pid': int, 'started': float, 'vnc_port': int, 'serial_port': int }
 
 
 def _load_vms():
@@ -610,6 +610,24 @@ def _next_ws_port():
     return 6179
 
 
+def _next_serial_port():
+    """Find the next available TCP port for serial console (4000+)."""
+    used = {v.get('serial_port', 0) for v in _running_vms.values()}
+    for p in range(4000, 4100):
+        if p not in used:
+            return p
+    return 4099
+
+
+def _next_serial_ws_port():
+    """Find the next available WebSocket port for serial console (6180+)."""
+    used = {v.get('serial_ws_port', 0) for v in _running_vms.values()}
+    for p in range(6180, 6280):
+        if p not in used:
+            return p
+    return 6279
+
+
 _NOVNC_DIR = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'novnc')
 _WEBSOCKIFY_BIN = os.path.join(os.path.dirname(__file__), '..', '..', 'venv', 'bin', 'websockify')
 
@@ -647,6 +665,42 @@ def _stop_websockify(info):
                 ws_proc.wait(timeout=3)
             except subprocess.TimeoutExpired:
                 ws_proc.kill()
+        except Exception:
+            pass
+
+
+def _start_serial_websockify(serial_port, serial_ws_port):
+    """Start websockify to proxy WebSocket→serial TCP for xterm.js browser client."""
+    ws_bin = os.path.abspath(_WEBSOCKIFY_BIN)
+    if not os.path.isfile(ws_bin):
+        return None
+    try:
+        proc = subprocess.Popen(
+            [ws_bin, str(serial_ws_port), f'localhost:{serial_port}'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        time.sleep(1.0)
+        if proc.poll() is not None:
+            out = proc.stderr.read().decode('utf-8', errors='replace')[:300]
+            log.error("serial websockify exited early: %s", out)
+            return None
+        return proc
+    except Exception:
+        return None
+
+
+def _stop_serial_websockify(info):
+    """Stop the serial websockify process associated with a VM."""
+    proc = info.get('serial_ws_proc')
+    if proc:
+        try:
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
         except Exception:
             pass
 
@@ -730,6 +784,7 @@ def _check_vm_process(vm_id):
         return True
     # Process is dead, clean up websockify and socat proxies too
     _stop_websockify(info)
+    _stop_serial_websockify(info)
     _stop_socat_proxies(info)
     _running_vms.pop(vm_id, None)
     return False
@@ -780,6 +835,7 @@ def list_vms():
             'vnc_port': info.get('vnc_port') if is_running else None,
             'vnc_display': info.get('vnc_display') if is_running else None,
             'ws_port': info.get('ws_port') if is_running else None,
+            'serial_ws_port': info.get('serial_ws_port') if is_running else None,
             'pid': info.get('pid') if is_running else None,
             'started': info.get('started') if is_running else None,
             'created': vm.get('created', ''),
@@ -1278,6 +1334,7 @@ def start_vm(vm_id):
         return jsonify({'error': 'VM not found'}), 404
 
     vnc_display, vnc_port = _next_vnc_port()
+    serial_port = _next_serial_port()
     kvm = _kvm_available()
 
     boot_image = vm.get('boot_image', '')
@@ -1432,6 +1489,7 @@ def start_vm(vm_id):
         cmd += ['-vnc', f':{vnc_display}']
         cmd += ['-device', 'virtio-gpu-pci']
         cmd += ['-device', 'usb-ehci', '-device', 'usb-tablet']
+        cmd += ['-serial', f'tcp:127.0.0.1:{serial_port},server=on,wait=off']
         cmd += ['-monitor', 'none']
 
     # ── x86_64 VM ─────────────────────────────────────────────
@@ -1558,6 +1616,9 @@ def start_vm(vm_id):
         # VGA adapter — virtio-gpu for best performance in VNC/noVNC
         cmd += ['-vga', 'virtio']
 
+        # Serial console on TCP for browser-based terminal (xterm.js via websockify)
+        cmd += ['-serial', f'tcp:127.0.0.1:{serial_port},server=on,wait=off']
+
         # Daemonize — no, we manage the process ourselves
         cmd += ['-monitor', 'none']
 
@@ -1583,8 +1644,11 @@ def start_vm(vm_id):
             'started': time.time(),
             'vnc_port': vnc_port,
             'vnc_display': vnc_display,
+            'serial_port': serial_port,
             'ws_proc': None,
             'ws_port': None,
+            'serial_ws_proc': None,
+            'serial_ws_port': None,
             'tap_dev': tap_dev,
             'socat_procs': [],
         }
@@ -1600,12 +1664,20 @@ def start_vm(vm_id):
             _running_vms[vm_id]['ws_proc'] = ws_proc
             _running_vms[vm_id]['ws_port'] = ws_port
 
+        # Start websockify for serial console (xterm.js)
+        serial_ws_port = _next_serial_ws_port()
+        serial_ws_proc = _start_serial_websockify(serial_port, serial_ws_port)
+        if serial_ws_proc:
+            _running_vms[vm_id]['serial_ws_proc'] = serial_ws_proc
+            _running_vms[vm_id]['serial_ws_port'] = serial_ws_port
+
         return jsonify({
             'ok': True,
             'pid': proc.pid,
             'vnc_port': vnc_port,
             'vnc_display': vnc_display,
             'ws_port': _running_vms[vm_id].get('ws_port'),
+            'serial_ws_port': _running_vms[vm_id].get('serial_ws_port'),
             'kvm': kvm,
             'message': f'VM started (VNC: :{vnc_display})',
         })
@@ -1643,6 +1715,7 @@ def stop_vm(vm_id):
         pass
 
     _stop_websockify(info)
+    _stop_serial_websockify(info)
     _stop_socat_proxies(info)
     _destroy_tap(info.get('tap_dev'))
     _running_vms.pop(vm_id, None)
@@ -1665,6 +1738,7 @@ def restart_vm(vm_id):
             except subprocess.TimeoutExpired:
                 proc.kill()
             _stop_websockify(info)
+            _stop_serial_websockify(info)
             _stop_socat_proxies(info)
             _destroy_tap(info.get('tap_dev'))
         _running_vms.pop(vm_id, None)
@@ -2336,6 +2410,7 @@ def _on_uninstall(wipe):
         try:
             info = _running_vms[vm_id]
             _stop_websockify(info)
+            _stop_serial_websockify(info)
             _stop_socat_proxies(info)
             proc = info.get('proc')
             if proc:

@@ -1676,12 +1676,12 @@ insmod ext2
 insmod gzio
 menuentry "EthOS v${{VERSION}}" {{
     search --no-floppy --fs-uuid --set=root ${{ROOT_UUID}}
-    linux ${{KERN}} root=UUID=${{ROOT_UUID}} ro quiet loglevel=3 rd.systemd.show_status=auto vt.global_cursor_default=0 splash net.ifnames=0 biosdevname=0 fsck.repair=preen console=ttyS0,115200n8
+    linux ${{KERN}} root=UUID=${{ROOT_UUID}} ro quiet loglevel=3 rd.systemd.show_status=auto vt.global_cursor_default=0 splash net.ifnames=0 biosdevname=0 fsck.repair=preen console=tty0 console=ttyS0,115200n8
     initrd ${{INITRD}}
 }}
 menuentry "EthOS v${{VERSION}} (recovery)" {{
     search --no-floppy --fs-uuid --set=root ${{ROOT_UUID}}
-    linux ${{KERN}} root=UUID=${{ROOT_UUID}} ro single nomodeset fsck.repair=preen
+    linux ${{KERN}} root=UUID=${{ROOT_UUID}} ro single nomodeset fsck.repair=preen console=tty0 console=ttyS0,115200n8
     initrd ${{INITRD}}
 }}
 GRUBCFG
@@ -1806,12 +1806,12 @@ insmod ext2
 insmod gzio
 menuentry "EthOS v${{VERSION}}" {{
     search --no-floppy --fs-uuid --set=root ${{ROOT_UUID}}
-    linux ${{KERN}} root=UUID=${{ROOT_UUID}} ro quiet loglevel=3 rd.systemd.show_status=auto vt.global_cursor_default=0 splash net.ifnames=0 biosdevname=0 fsck.repair=preen console=ttyS0,115200n8
+    linux ${{KERN}} root=UUID=${{ROOT_UUID}} ro quiet loglevel=3 rd.systemd.show_status=auto vt.global_cursor_default=0 splash net.ifnames=0 biosdevname=0 fsck.repair=preen console=tty0 console=ttyS0,115200n8
     initrd ${{INITRD}}
 }}
 menuentry "EthOS v${{VERSION}} (recovery)" {{
     search --no-floppy --fs-uuid --set=root ${{ROOT_UUID}}
-    linux ${{KERN}} root=UUID=${{ROOT_UUID}} ro single nomodeset fsck.repair=preen
+    linux ${{KERN}} root=UUID=${{ROOT_UUID}} ro single nomodeset fsck.repair=preen console=tty0 console=ttyS0,115200n8
     initrd ${{INITRD}}
 }}
 GRUBCFG
