@@ -69,7 +69,7 @@ DEFAULT_SPEC = {
         'apt_extra': [
             'python3-pip', 'python3-venv', 'python3-dev', 'gcc',
             'ufw', 'samba', 'nfs-kernel-server',
-            'nginx', 'net-tools', 'wget', 'dnsutils',
+            'net-tools', 'wget', 'dnsutils',
         ],
         'pip': [
             'flask==3.1.0', 'gevent==24.11.1', 'gunicorn',

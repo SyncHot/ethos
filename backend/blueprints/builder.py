@@ -1327,6 +1327,19 @@ cat > "$ROOT/etc/logrotate.d/ethos" <<'LOGROTATE'
     maxsize 100M
 }}
 LOGROTATE
+
+# ── Persistent journald (survive reboots — critical for NAS debugging) ──
+mkdir -p "$ROOT/etc/systemd/journald.conf.d"
+cat > "$ROOT/etc/systemd/journald.conf.d/ethos.conf" <<'JOURNALD'
+[Journal]
+Storage=persistent
+SystemMaxUse=100M
+SystemKeepFree=200M
+MaxRetentionSec=2week
+Compress=yes
+JOURNALD
+mkdir -p "$ROOT/var/log/journal"
+
 cat > "$ROOT/etc/hosts" <<HOSTS
 127.0.0.1   localhost
 127.0.1.1   $DEFAULT_HOSTNAME
@@ -1609,7 +1622,7 @@ cat > "$ROOT/etc/default/grub" <<GRUBDEF
 GRUB_DEFAULT=0
 GRUB_TIMEOUT=3
 GRUB_DISTRIBUTOR="EthOS"
-GRUB_CMDLINE_LINUX_DEFAULT="quiet net.ifnames=0 biosdevname=0"
+GRUB_CMDLINE_LINUX_DEFAULT="quiet loglevel=3 rd.systemd.show_status=auto vt.global_cursor_default=0 splash net.ifnames=0 biosdevname=0"
 GRUB_CMDLINE_LINUX=""
 GRUBDEF
 
@@ -1641,8 +1654,13 @@ if [ "$GRUB_RC" -ne 0 ] || [ ! -f "$GRUB_EFI_BIN" ]; then
     exit 1
 fi
 
-KERN=$(ls "$ROOT/boot/vmlinuz-"* 2>/dev/null | sort -V | tail -1 | sed "s|$ROOT||")
-INITRD=$(ls "$ROOT/boot/initrd.img-"* 2>/dev/null | sort -V | tail -1 | sed "s|$ROOT||")
+KERN=$(ls "$ROOT/boot/vmlinuz-"* 2>/dev/null | sort -V | tail -1 | sed "s|$ROOT||") || true
+INITRD=$(ls "$ROOT/boot/initrd.img-"* 2>/dev/null | sort -V | tail -1 | sed "s|$ROOT||") || true
+
+# If kernel not found at this stage (e.g. initrd not yet generated), use symlinks as fallback
+if [ -z "$KERN" ] && [ -L "$ROOT/boot/vmlinuz" ]; then
+    KERN="/boot/vmlinuz"
+fi
 
 mkdir -p "$ROOT/boot/grub"
 cat > "$ROOT/boot/grub/grub.cfg" <<GRUBCFG
@@ -1653,7 +1671,7 @@ insmod ext2
 insmod gzio
 menuentry "EthOS v${{VERSION}}" {{
     search --no-floppy --fs-uuid --set=root ${{ROOT_UUID}}
-    linux ${{KERN}} root=UUID=${{ROOT_UUID}} ro quiet net.ifnames=0 biosdevname=0 fsck.repair=preen console=ttyS0,115200n8
+    linux ${{KERN}} root=UUID=${{ROOT_UUID}} ro quiet loglevel=3 rd.systemd.show_status=auto vt.global_cursor_default=0 splash net.ifnames=0 biosdevname=0 fsck.repair=preen console=ttyS0,115200n8
     initrd ${{INITRD}}
 }}
 menuentry "EthOS v${{VERSION}} (recovery)" {{
@@ -1664,6 +1682,16 @@ menuentry "EthOS v${{VERSION}} (recovery)" {{
 GRUBCFG
 
 cp "$ROOT/boot/grub/grub.cfg" "$ROOT/boot/efi/EFI/BOOT/grub.cfg"
+
+# GRUB's embedded prefix is /boot/grub — create that path on the ESP too,
+# so insmod ext2 and grub.cfg are found regardless of which device GRUB sees as root
+mkdir -p "$ROOT/boot/efi/boot/grub/x86_64-efi"
+cp "$ROOT/boot/grub/grub.cfg" "$ROOT/boot/efi/boot/grub/grub.cfg"
+for _mod in ext2 part_gpt part_msdos gzio linux normal search search_fs_uuid \
+            search_label configfile all_video boot fat efi_gop video video_fb; do
+    cp "$ROOT/boot/grub/x86_64-efi/${{_mod}}.mod" \
+       "$ROOT/boot/efi/boot/grub/x86_64-efi/" 2>/dev/null || true
+done
 
 # Copy kernel + initrd to ESP recovery directory
 mkdir -p "$ROOT/boot/efi/EFI/recovery"
@@ -1692,13 +1720,30 @@ chroot "$ROOT" apt-get install -y -qq \
     gnupg age \
     2>&1 | tail -10 || echo "LOG:Some packages skipped"
 
+echo "LOG:Installing Plymouth for boot splash..."
+chroot "$ROOT" apt-get install -y -qq plymouth plymouth-themes 2>&1 | tail -5 || echo "LOG:Plymouth skipped"
+# Set Plymouth theme without -R (initramfs is rebuilt later in the script)
+chroot "$ROOT" plymouth-set-default-theme spinner 2>/dev/null || echo "LOG:Plymouth theme alternatives skipped"
+mkdir -p "$ROOT/etc/plymouth"
+cat > "$ROOT/etc/plymouth/plymouthd.conf" <<PLYCFG
+[Daemon]
+Theme=spinner
+ShowDelay=0
+PLYCFG
+echo "LOG:Plymouth theme set to spinner"
+
 echo "LOG:Installing firmware..."
 if [ "$BASE_DISTRO" = "ubuntu" ]; then
-    chroot "$ROOT" apt-get install -y -qq linux-firmware bluez 2>&1 | tail -5 || echo "LOG:Some firmware skipped"
+    # Selective firmware: WiFi + NIC essentials only (~50MB vs ~800MB for full linux-firmware)
+    chroot "$ROOT" apt-get install -y -qq \
+        linux-firmware \
+        2>&1 | tail -5 || echo "LOG:Some firmware skipped"
+    # NOTE: linux-firmware is needed for now (Ubuntu bundles all firmware in one package).
+    # When Ubuntu provides granular firmware packages, switch to selective.
 else
     chroot "$ROOT" apt-get install -y -qq \
         firmware-atheros firmware-realtek firmware-brcm80211 \
-        firmware-misc-nonfree firmware-linux-nonfree bluez firmware-intel-sound \
+        firmware-misc-nonfree firmware-linux-nonfree firmware-intel-sound \
         2>&1 | tail -10 || echo "LOG:Some firmware skipped"
 fi
 
@@ -1756,7 +1801,7 @@ insmod ext2
 insmod gzio
 menuentry "EthOS v${{VERSION}}" {{
     search --no-floppy --fs-uuid --set=root ${{ROOT_UUID}}
-    linux ${{KERN}} root=UUID=${{ROOT_UUID}} ro quiet net.ifnames=0 biosdevname=0 fsck.repair=preen console=ttyS0,115200n8
+    linux ${{KERN}} root=UUID=${{ROOT_UUID}} ro quiet loglevel=3 rd.systemd.show_status=auto vt.global_cursor_default=0 splash net.ifnames=0 biosdevname=0 fsck.repair=preen console=ttyS0,115200n8
     initrd ${{INITRD}}
 }}
 menuentry "EthOS v${{VERSION}} (recovery)" {{
@@ -1772,6 +1817,14 @@ cp "$ROOT/boot/${{INITRD##*/}}" "$ROOT/boot/efi/EFI/recovery/initrd.img" 2>/dev/
 # Re-run grub-install to refresh BOOTX64.EFI modules
 chroot "$ROOT" grub-install --target=x86_64-efi --efi-directory=/boot/efi \
     --boot-directory=/boot --removable --no-nvram 2>/dev/null || echo "LOG:grub-install refresh skipped"
+# grub-install overwrites ESP grub.cfg — re-copy everything to ESP
+cp "$ROOT/boot/grub/grub.cfg" "$ROOT/boot/efi/EFI/BOOT/grub.cfg"
+cp "$ROOT/boot/grub/grub.cfg" "$ROOT/boot/efi/boot/grub/grub.cfg"
+for _mod in ext2 part_gpt part_msdos gzio linux normal search search_fs_uuid \
+            search_label configfile all_video boot fat efi_gop video video_fb; do
+    cp "$ROOT/boot/grub/x86_64-efi/${{_mod}}.mod" \
+       "$ROOT/boot/efi/boot/grub/x86_64-efi/" 2>/dev/null || true
+done
 echo "LOG:GRUB refreshed for latest kernel"
 
 if [ "$BASE_DISTRO" = "ubuntu" ]; then
@@ -1926,6 +1979,32 @@ if [ -n "$DATA_UPPER" ]; then
 fi
 OVERLAYEOF
 chmod +x "$ROOT/etc/initramfs-tools/scripts/local-bottom/ethos-overlay"
+
+# ── Emergency boot diagnostics: dump dmesg to ESP ──
+cat > "$ROOT/etc/initramfs-tools/scripts/local-bottom/ethos-bootlog" <<'BOOTLOGEOF'
+#!/bin/sh
+# Emergency dmesg dump to ESP — accessible even if root fails to mount.
+# Saved to FAT32 EFI partition which is always mountable from rescue USB.
+PREREQ=""
+prereqs() {{ echo "$PREREQ"; }}
+case "$1" in prereqs) prereqs; exit 0 ;; esac
+ESP=""
+for p in /boot/efi /efi; do
+    if mountpoint -q "${{rootmnt}}$p" 2>/dev/null; then ESP="${{rootmnt}}$p"; break; fi
+done
+if [ -z "$ESP" ]; then
+    ESP_DEV=$(blkid -t TYPE=vfat -o device 2>/dev/null | head -1)
+    if [ -n "$ESP_DEV" ]; then
+        mkdir -p /run/ethos-esp
+        mount -t vfat "$ESP_DEV" /run/ethos-esp 2>/dev/null && ESP="/run/ethos-esp"
+    fi
+fi
+if [ -n "$ESP" ]; then
+    mkdir -p "$ESP/EFI/ethos/logs"
+    dmesg > "$ESP/EFI/ethos/logs/last-dmesg.log" 2>/dev/null || true
+fi
+BOOTLOGEOF
+chmod +x "$ROOT/etc/initramfs-tools/scripts/local-bottom/ethos-bootlog"
 
 # Rebuild initramfs with firmware + overlay hooks (only for the new kernel)
 echo "LOG:Przebudowa initramfs..."

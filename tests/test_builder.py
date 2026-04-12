@@ -250,3 +250,76 @@ def test_logrotate_config(script):
     """logrotate config for EthOS logs."""
     assert "logrotate" in script
     assert "/opt/ethos/logs" in script
+
+
+# ── Audit fixes: journald, boot UX, Plymouth, diagnostics ──
+
+def test_journald_persistent(script):
+    """journald must be configured with Storage=persistent for NAS debugging."""
+    assert "Storage=persistent" in script
+    assert "SystemMaxUse=100M" in script
+    assert "journald.conf.d/ethos.conf" in script
+    assert "/var/log/journal" in script
+
+
+def test_grub_loglevel(script):
+    """GRUB cmdline should have loglevel=3 for clean boot."""
+    assert "loglevel=3" in script
+
+
+def test_grub_cursor_hidden(script):
+    """GRUB cmdline should hide VT cursor for professional boot."""
+    assert "vt.global_cursor_default=0" in script
+
+
+def test_grub_systemd_status_auto(script):
+    """GRUB should use rd.systemd.show_status=auto."""
+    assert "rd.systemd.show_status=auto" in script
+
+
+def test_grub_splash(script):
+    """GRUB cmdline should include splash for Plymouth."""
+    assert "splash" in script
+
+
+def test_plymouth_installed(script):
+    """Plymouth should be installed for graphical boot splash."""
+    assert "plymouth" in script
+    assert "plymouth-themes" in script
+    assert "spinner" in script
+
+
+def test_emergency_dmesg_hook(script):
+    """Emergency dmesg dump to ESP should be in initramfs hooks."""
+    assert "ethos-bootlog" in script
+    assert "last-dmesg.log" in script
+
+
+def test_no_bluez_in_image(script):
+    """bluez (Bluetooth) should not be in the base NAS image."""
+    # bluez should not appear as a standalone install target
+    lines = script.split('\n')
+    for line in lines:
+        if 'apt-get install' in line and 'bluez' in line:
+            pytest.fail(f"bluez found in apt install: {line.strip()}")
+
+
+def test_no_nginx_in_spec():
+    """nginx should not be in default apt_extra spec."""
+    from builder_spec import DEFAULT_SPEC
+    apt_extra = DEFAULT_SPEC['packages']['apt_extra']
+    assert 'nginx' not in apt_extra, "nginx should not be in base image"
+
+
+def test_firmware_distro_conditional(script):
+    """Firmware packages must be conditional on distro."""
+    assert 'if [ "$BASE_DISTRO" = "ubuntu" ]' in script
+
+
+def test_esp_grub_modules_copied(script):
+    """Essential GRUB modules must be copied to ESP /boot/grub/ so GRUB can load them."""
+    assert '/boot/efi/boot/grub/x86_64-efi' in script
+    assert 'ext2' in script
+    # Must copy grub.cfg to both /EFI/BOOT/ and /boot/grub/ on ESP
+    assert 'boot/efi/boot/grub/grub.cfg' in script
+    assert 'boot/efi/EFI/BOOT/grub.cfg' in script
