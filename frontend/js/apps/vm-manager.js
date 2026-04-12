@@ -322,6 +322,15 @@ function renderVMManager(body) {
                     </div>
                     <div class="vm-form-row">
                         <div class="vm-form-group">
+                            <label>${t('Magistrala dysku')}</label>
+                            <select id="vm-new-diskbus" class="vm-input">
+                                <option value="virtio" selected>VirtIO (najszybszy)</option>
+                                <option value="scsi">SCSI</option>
+                                <option value="sata">SATA</option>
+                                <option value="ide">IDE</option>
+                            </select>
+                        </div>
+                        <div class="vm-form-group">
                             <label>Typ systemu</label>
                             <select id="vm-new-os" class="vm-input">
                                 <option value="linux">Linux</option>
@@ -382,6 +391,7 @@ function renderVMManager(body) {
                 ram: parseInt(overlay.querySelector('#vm-new-ram').value) || 2048,
                 disk_size: overlay.querySelector('#vm-new-disk').value || '20G',
                 disk_format: overlay.querySelector('#vm-new-diskfmt').value || 'qcow2',
+                disk_bus: overlay.querySelector('#vm-new-diskbus').value || 'virtio',
                 os_type: overlay.querySelector('#vm-new-os').value || 'linux',
                 boot_image: overlay.querySelector('#vm-new-image').value || '',
                 description: overlay.querySelector('#vm-new-desc').value || '',
@@ -1177,6 +1187,7 @@ function renderVMManager(body) {
                     <thead><tr>
                         <th>${t('ID')}</th>
                         <th>${t('Format')}</th>
+                        <th>${t('Magistrala')}</th>
                         <th>${t('Rozmiar wirtualny')}</th>
                         <th>${t('Rozmiar na dysku')}</th>
                         <th>${t('Plik')}</th>
@@ -1188,6 +1199,7 @@ function renderVMManager(body) {
             html += `<tr>
                 <td>${esc(d.id)}${isBoot ? ' <i class="fas fa-boot" title="Boot"></i>' : ''}</td>
                 <td>${esc(d.format || '-')}</td>
+                <td>${esc(d.bus || 'virtio')}</td>
                 <td>${esc(d.virtual_size_human || '-')}</td>
                 <td>${esc(d.actual_size_human || '-')}</td>
                 <td class="vm-mono" style="font-size:11px">${esc(d.filename || '-')}</td>
@@ -1233,13 +1245,57 @@ function renderVMManager(body) {
 
         // Add disk
         dc.querySelector('#vm-disk-add')?.addEventListener('click', async () => {
-            const sizeStr = await promptDialog(t('Dodaj dysk'), t('Rozmiar nowego dysku (np. 20G, 500M):'), '20G');
-            if (!sizeStr) return;
-            try {
-                const r = await api(`/vm/machines/${vm.id}/disks`, { method: 'POST', body: { size: sizeStr, format: 'qcow2' } });
-                toast(r.message || t('Dysk dodany'), 'success');
-                renderDiskPanel(dc);
-            } catch (e) { toast(e.message || t('Błąd'), 'error'); }
+            const overlay = document.createElement('div');
+            overlay.className = 'vm-modal-overlay';
+            overlay.innerHTML = `
+                <div class="vm-modal" style="max-width:400px">
+                    <div class="vm-modal-header"><span>${t('Dodaj dysk')}</span><button class="vm-modal-close">&times;</button></div>
+                    <div class="vm-modal-body">
+                        <div class="vm-form-group">
+                            <label>${t('Rozmiar')}</label>
+                            <input type="text" id="vda-size" class="vm-input" value="20G" placeholder="np. 20G, 512M">
+                        </div>
+                        <div class="vm-form-row">
+                            <div class="vm-form-group">
+                                <label>${t('Format')}</label>
+                                <select id="vda-fmt" class="vm-input">
+                                    <option value="qcow2" selected>QCOW2</option>
+                                    <option value="raw">RAW</option>
+                                </select>
+                            </div>
+                            <div class="vm-form-group">
+                                <label>${t('Magistrala')}</label>
+                                <select id="vda-bus" class="vm-input">
+                                    <option value="virtio" selected>VirtIO</option>
+                                    <option value="scsi">SCSI</option>
+                                    <option value="sata">SATA</option>
+                                    <option value="ide">IDE</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="vm-modal-footer">
+                        <button class="vm-btn" id="vda-cancel">${t('Anuluj')}</button>
+                        <button class="vm-btn vm-btn-primary" id="vda-ok">${t('Dodaj')}</button>
+                    </div>
+                </div>`;
+            body.appendChild(overlay);
+            const close = () => overlay.remove();
+            overlay.querySelector('.vm-modal-close').addEventListener('click', close);
+            overlay.querySelector('#vda-cancel').addEventListener('click', close);
+            overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+            overlay.querySelector('#vda-ok').addEventListener('click', async () => {
+                const sizeStr = overlay.querySelector('#vda-size').value.trim();
+                const fmt = overlay.querySelector('#vda-fmt').value;
+                const bus = overlay.querySelector('#vda-bus').value;
+                if (!sizeStr) return;
+                close();
+                try {
+                    const r = await api(`/vm/machines/${vm.id}/disks`, { method: 'POST', body: { size: sizeStr, format: fmt, bus } });
+                    toast(r.message || t('Dysk dodany'), 'success');
+                    renderDiskPanel(dc);
+                } catch (e) { toast(e.message || t('Błąd'), 'error'); }
+            });
         });
     }
 

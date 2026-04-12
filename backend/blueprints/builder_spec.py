@@ -201,4 +201,7 @@ def spec_to_shell_vars(spec):
     pkgs = spec.get('packages', {}).get('debootstrap', DEFAULT_SPEC['packages']['debootstrap'])
     lines.append(f'DEBOOTSTRAP_INCLUDE="{",".join(pkgs)}"')
 
+    apt_extra = spec.get('packages', {}).get('apt_extra', DEFAULT_SPEC['packages']['apt_extra'])
+    lines.append(f'APT_EXTRA_PKGS="{" ".join(apt_extra)}"')
+
     return '\n'.join(lines)

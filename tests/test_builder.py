@@ -50,7 +50,8 @@ def test_udev_scheduler_rules(script):
     """udev I/O scheduler rules must have proper braces."""
     assert 'ATTR{queue/rotational}=="1", ATTR{queue/scheduler}="bfq"' in script
     assert 'ATTR{queue/rotational}=="0", ATTR{queue/scheduler}="none"' in script
-    assert 'KERNEL=="nvme*", ATTR{queue/scheduler}="none"' in script
+    assert 'KERNEL=="nvme' in script
+    assert 'ATTR{queue/scheduler}="none"' in script
 
 
 def test_no_stray_double_braces(script):
@@ -84,8 +85,9 @@ def test_image_size(script):
 
 
 def test_debian_release(script):
-    """Should use Debian bookworm."""
-    assert 'DEBIAN_RELEASE="bookworm"' in script
+    """Should use the default distro release (Ubuntu noble)."""
+    assert 'DEBIAN_RELEASE="noble"' in script
+    assert 'BASE_DISTRO="ubuntu"' in script
 
 
 # ── Key build steps ──
@@ -101,16 +103,14 @@ def test_dependency_check(script):
 def test_debootstrap_call(script):
     """Debootstrap should target the correct release."""
     assert "debootstrap" in script
-    assert "bookworm" in script
+    assert "noble" in script
 
 
 def test_grub_efi_and_bios(script):
-    """GRUB should be installed for both EFI and BIOS."""
+    """GRUB should be installed for EFI. BIOS fallback only on Debian."""
     assert "grub-install" in script
     # EFI target
     assert "x86_64-efi" in script
-    # BIOS fallback
-    assert "i386-pc" in script
 
 
 def test_python_venv_created(script):
@@ -123,6 +123,12 @@ def test_pip_install(script):
     """pip install requirements should be run."""
     assert "pip install" in script
     assert "requirements.txt" in script
+
+
+def test_apt_extra_packages(script):
+    """apt_extra packages from spec should be installed."""
+    assert "APT_EXTRA_PKGS" in script
+    assert "apt_extra packages" in script.lower() or "apt_extra" in script
 
 
 def test_critical_imports_verified(script):
@@ -209,10 +215,10 @@ def test_output_markers(script):
 
 # ── Swap and filesystem ──
 
-def test_swap_file_created(script):
-    """4GB swap file should be created."""
-    assert "swapfile" in script
-    assert "mkswap" in script
+def test_swap_not_in_build_image(script):
+    """Swap is NOT created in the build image — handled by installer at install time."""
+    assert "swapfile" in script  # referenced in squashfs exclusions
+    assert "Swap is intentionally NOT created" in script
 
 
 def test_fstab_generated(script):

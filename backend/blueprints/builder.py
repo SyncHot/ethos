@@ -1711,6 +1711,13 @@ chroot "$ROOT" apt-get install -y -qq \
     parted dosfstools e2fsprogs btrfs-progs mtools \
     2>&1 | tail -5 || echo "LOG:Some builder tools skipped"
 
+# Install spec-defined extra packages (from build-spec.yaml packages.apt_extra)
+if [ -n "$APT_EXTRA_PKGS" ]; then
+    echo "LOG:Installing spec apt_extra packages: $APT_EXTRA_PKGS"
+    chroot "$ROOT" apt-get install -y -qq $APT_EXTRA_PKGS \
+        2>&1 | tail -10 || echo "LOG:Some apt_extra packages skipped"
+fi
+
 echo "STEP:73:Installing kernel and firmware updates..."
 
 # First clean apt cache to free space before big installs

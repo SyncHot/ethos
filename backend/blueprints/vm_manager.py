@@ -759,6 +759,7 @@ def create_vm():
     boot_image = data.get('boot_image', '')  # ISO/IMG file to boot from
     description = data.get('description', '')
     disk_format = data.get('disk_format', 'qcow2')  # qcow2, raw
+    disk_bus = data.get('disk_bus', 'virtio')  # virtio, scsi, sata, ide
 
     # Network configuration
     network = data.get('network')
@@ -772,6 +773,8 @@ def create_vm():
         return jsonify({'error': 'RAM: 256 MB - 64 GB'}), 400
     if not re.match(r'^\d+[GMK]?$', disk_size):
         return jsonify({'error': 'Invalid disk size (e.g. 20G, 512M)'}), 400
+    if disk_bus not in ('virtio', 'scsi', 'sata', 'ide'):
+        return jsonify({'error': 'Disk bus must be virtio, scsi, sata, or ide'}), 400
     if boot_image:
         boot_image_real = os.path.realpath(boot_image)
         if not _is_allowed_image_path(boot_image_real):
@@ -812,7 +815,7 @@ def create_vm():
             'file': disk_file,
             'format': disk_format,
             'size': disk_size,
-            'bus': 'virtio',
+            'bus': disk_bus,
         }],
         'os_type': os_type,
         'boot_image': boot_image,
@@ -1286,18 +1289,39 @@ def start_vm(vm_id):
         if not disks and vm.get('disk_file'):
             disks = [{'id': 'disk0', 'file': vm['disk_file'],
                        'format': vm.get('disk_format', 'qcow2')}]
+
+        # Track which controller types are needed for non-virtio buses
+        need_scsi_ctrl = any(d.get('bus') == 'scsi' for d in disks)
+        need_sata_ctrl = any(d.get('bus') == 'sata' for d in disks)
+        if need_scsi_ctrl:
+            cmd += ['-device', 'virtio-scsi-pci,id=scsi0']
+        if need_sata_ctrl:
+            cmd += ['-device', 'ich9-ahci,id=sata0']
+
+        scsi_idx = 0
+        sata_idx = 0
         for i, disk in enumerate(disks):
             df = disk.get('file', '')
             if not df or not os.path.exists(df):
                 continue
             dfmt = disk.get('format', 'qcow2')
             did = disk.get('id', f'disk{i}')
+            bus = disk.get('bus', 'virtio')
             cmd += ['-drive', f'file={df},format={dfmt},if=none,id={did}']
+            boot_str = ''
             if i == 0:
                 boot_idx = 1 if has_disk_boot_image else 0
-                cmd += ['-device', f'virtio-blk-pci,drive={did},bootindex={boot_idx}']
+                boot_str = f',bootindex={boot_idx}'
+            if bus == 'scsi':
+                cmd += ['-device', f'scsi-hd,bus=scsi0.0,drive={did},lun={scsi_idx}{boot_str}']
+                scsi_idx += 1
+            elif bus == 'sata':
+                cmd += ['-device', f'ide-hd,bus=sata0.{sata_idx},drive={did}{boot_str}']
+                sata_idx += 1
+            elif bus == 'ide':
+                cmd += ['-device', f'ide-hd,drive={did}{boot_str}']
             else:
-                cmd += ['-device', f'virtio-blk-pci,drive={did}']
+                cmd += ['-device', f'virtio-blk-pci,drive={did}{boot_str}']
 
         # ISO boot image (CD-ROM)
         if boot_image and os.path.exists(boot_image):
@@ -1848,8 +1872,11 @@ def add_disk(vm_id):
     data = request.get_json(force=True) if request.data else {}
     size = data.get('size', '20G')
     fmt = data.get('format', 'qcow2')
+    bus = data.get('bus', 'virtio')
     if fmt not in ('qcow2', 'raw'):
         return jsonify({'error': 'Format must be qcow2 or raw'}), 400
+    if bus not in ('virtio', 'scsi', 'sata', 'ide'):
+        return jsonify({'error': 'Bus must be virtio, scsi, sata, or ide'}), 400
     if not re.match(r'^\d+[GMK]$', size):
         return jsonify({'error': 'Invalid size (e.g. 20G, 512M)'}), 400
 
@@ -1864,7 +1891,7 @@ def add_disk(vm_id):
         return jsonify({'error': str(e)}), 500
 
     new_disk = {'id': disk_id, 'file': disk_file, 'format': fmt,
-                'size': size, 'bus': 'virtio'}
+                'size': size, 'bus': bus}
     vm.setdefault('disks', []).append(new_disk)
     _save_vms(vms)
     return jsonify({'status': 'ok', 'disk': new_disk})

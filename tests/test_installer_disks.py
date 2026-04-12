@@ -38,7 +38,7 @@ SAMPLE_LSBLK = json.dumps({
             "children": [],
         },
         {
-            "name": "mmcblk0", "size": 2147483648, "type": "disk",
+            "name": "mmcblk0", "size": 536870912, "type": "disk",
             "model": "", "serial": "", "tran": "", "rota": False,
             "hotplug": False, "mountpoint": None, "children": [],
         },

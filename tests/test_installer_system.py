@@ -14,11 +14,16 @@ import system_ops
 @patch("system_ops._run")
 def test_create_user_new(mock_run):
     mock_run.side_effect = [
-        ("", "", 1),   # id — not found
-        ("", "", 0),   # useradd
-        ("", "", 0),   # chpasswd
+        ("", "", 0),   # chroot getent group ethos-admin
+        ("", "", 0),   # chroot getent group ethos-user
+        ("", "", 0),   # chroot getent group ethos-family
+        ("", "", 0),   # chroot useradd
+        ("", "", 0),   # chroot chpasswd
+        ("", "", 0),   # chroot userdel default user
     ]
-    assert system_ops.create_user("testuser", "pass123") is True
+    with tempfile.TemporaryDirectory() as tmp:
+        os.makedirs(os.path.join(tmp, "etc", "sudoers.d"), exist_ok=True)
+        assert system_ops.create_user("testuser", "pass123", root_dir=tmp) is True
     calls = [str(c) for c in mock_run.call_args_list]
     assert any("useradd" in c for c in calls)
 
