@@ -2431,6 +2431,15 @@ if command -v mksquashfs >/dev/null 2>&1; then
     mkdir -p "$ROOT/mnt/data"
     mkdir -p "$ROOT/mnt/snapshots"
 
+    # Unmount bind-mounted pseudo-filesystems BEFORE cleaning/squashing.
+    # These were bind-mounted for chroot operations (apt, grub-install, etc.)
+    # and if left mounted, mksquashfs would include host /proc, /sys, /dev content.
+    for m in boot/efi run sys proc dev/shm dev/pts dev; do
+        umount "$ROOT/$m" 2>/dev/null || \
+            umount -l "$ROOT/$m" 2>/dev/null || true
+    done
+    sleep 1
+
     # Clean virtual-fs directories: keep empty mount-point dirs in squashfs
     # so the initramfs overlay has /dev, /proc, /sys, /run, /tmp available.
     for vfs in dev proc sys run tmp media; do
