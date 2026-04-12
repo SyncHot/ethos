@@ -347,6 +347,7 @@ function renderVMManager(body) {
                                 </select>
                                 <button class="vm-btn" id="vm-new-browse-iso" title="${t('Przeglądaj dyski')}" style="padding:6px 10px"><i class="fas fa-folder-open"></i></button>
                             </div>
+                            <div id="vm-new-ethos-hint" class="vm-ethos-port-hint" style="display:none"></div>
                         </div>
                     </div>
                     <div class="vm-form-group">
@@ -367,6 +368,21 @@ function renderVMManager(body) {
         overlay.querySelector('#vm-modal-cancel').addEventListener('click', close);
         overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
 
+        const ethosHint = overlay.querySelector('#vm-new-ethos-hint');
+        const imageSel = overlay.querySelector('#vm-new-image');
+        function updateEthosHint() {
+            const val = imageSel.value || '';
+            const name = val.split('/').pop().toLowerCase();
+            if (name.includes('ethos')) {
+                ethosHint.innerHTML = `<i class="fas fa-info-circle"></i> ${t('Obraz EthOS wykryty — porty 9000 (Web UI) i SSH zostaną automatycznie zmapowane na wolne porty hosta.')}`;
+                ethosHint.style.display = '';
+            } else {
+                ethosHint.style.display = 'none';
+            }
+        }
+        imageSel.addEventListener('change', updateEthosHint);
+        updateEthosHint();
+
         overlay.querySelector('#vm-new-browse-iso').addEventListener('click', () => {
             openIsoPicker('/media', (filePath, fileName) => {
                 const sel = overlay.querySelector('#vm-new-image');
@@ -379,6 +395,7 @@ function renderVMManager(body) {
                     sel.appendChild(opt);
                 }
                 sel.value = filePath;
+                updateEthosHint();
             });
         });
 

@@ -3491,6 +3491,12 @@ a.dkr-port-link:hover {
 }
 .vm-toggle input:checked + .vm-toggle-slider { background: #8b5cf6; }
 .vm-toggle input:checked + .vm-toggle-slider::after { transform: translateX(16px); }
+.vm-ethos-port-hint {
+    margin-top: 6px; padding: 8px 10px; font-size: 12px;
+    background: rgba(139,92,246,.12); color: var(--text-secondary);
+    border-radius: 6px; border-left: 3px solid #8b5cf6;
+}
+.vm-ethos-port-hint i { margin-right: 6px; color: #8b5cf6; }
 
 
 /* ═══════════════════════════════════════════════════════════

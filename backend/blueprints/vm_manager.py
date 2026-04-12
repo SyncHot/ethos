@@ -122,10 +122,64 @@ def _get_disk(vm, disk_id):
     return None
 
 
-def _default_network(os_type='linux'):
-    """Return sensible default network config based on OS type."""
+def _is_ethos_image(boot_image):
+    """Check if a boot image filename looks like an EthOS image."""
+    if not boot_image:
+        return False
+    name = os.path.basename(boot_image).lower()
+    return 'ethos' in name
+
+
+def _used_host_ports():
+    """Collect all host ports already mapped by existing VMs."""
+    used = set()
+    try:
+        vms = _load_vms()
+    except Exception:
+        vms = {}
+    for vm in vms.values():
+        net = vm.get('network') or {}
+        for pf in net.get('port_forwards', []):
+            hp = int(pf.get('host', 0))
+            if hp > 0:
+                used.add(hp)
+    return used
+
+
+def _find_free_host_port(preferred, used_ports):
+    """Find a free host port starting from preferred, skipping used and busy ports."""
+    import socket
+    candidate = preferred
+    for _ in range(200):
+        if candidate in used_ports:
+            candidate += 1
+            continue
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            s.bind(('', candidate))
+            s.close()
+            return candidate
+        except OSError:
+            candidate += 1
+        finally:
+            s.close()
+    return 0
+
+
+def _default_network(os_type='linux', boot_image=''):
+    """Return sensible default network config based on OS type.
+    When boot_image looks like an EthOS image, auto-maps ports 9000 and 22
+    to free host ports that don't conflict with the host or other VMs.
+    """
     pf = []
-    if os_type == 'linux':
+    if _is_ethos_image(boot_image):
+        used = _used_host_ports()
+        ethos_port = _find_free_host_port(9000, used)
+        used.add(ethos_port)
+        ssh_port = _find_free_host_port(2222, used)
+        pf.append({'proto': 'tcp', 'host': ethos_port, 'guest': 9000, 'label': 'EthOS Web'})
+        pf.append({'proto': 'tcp', 'host': ssh_port, 'guest': 22, 'label': 'SSH'})
+    elif os_type == 'linux':
         pf.append({'proto': 'tcp', 'host': 0, 'guest': 22, 'label': 'SSH'})
     elif os_type == 'windows':
         pf.append({'proto': 'tcp', 'host': 0, 'guest': 3389, 'label': 'RDP'})
@@ -764,7 +818,7 @@ def create_vm():
     # Network configuration
     network = data.get('network')
     if network is None:
-        network = _default_network(os_type)
+        network = _default_network(os_type, boot_image)
 
     # Validate
     if cpu < 1 or cpu > 32:
@@ -825,7 +879,15 @@ def create_vm():
     }
     _save_vms(vms)
 
-    return jsonify({'status': 'ok', 'id': vm_id, 'name': name})
+    # Build a user-friendly message with port info for EthOS images
+    msg = 'VM utworzona'
+    pf_list = network.get('port_forwards', [])
+    active_pf = [p for p in pf_list if p.get('host')]
+    if active_pf:
+        ports_str = ', '.join(f"{p['label']}: {p['host']}\u2192{p['guest']}" for p in active_pf)
+        msg = f"VM utworzona. Porty: {ports_str}"
+
+    return jsonify({'status': 'ok', 'id': vm_id, 'name': name, 'message': msg})
 
 
 @vm_bp.route('/machines/<vm_id>', methods=['PUT'])
