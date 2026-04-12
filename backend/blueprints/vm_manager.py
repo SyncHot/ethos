@@ -22,6 +22,7 @@ Endpoints:
   POST   /api/vm/machines/<id>/snapshots                 — create snapshot
   POST   /api/vm/machines/<id>/snapshots/<tag>           — restore snapshot
   DELETE /api/vm/machines/<id>/snapshots/<tag>           — delete snapshot
+  POST   /api/vm/quick-create-ethos                      — quick-create EthOS VM
   POST   /api/vm/import-disk                             — import disk image
   POST   /api/vm/convert                                 — convert disk format
 """
@@ -888,6 +889,132 @@ def create_vm():
         msg = f"VM utworzona. Porty: {ports_str}"
 
     return jsonify({'status': 'ok', 'id': vm_id, 'name': name, 'message': msg})
+
+
+@vm_bp.route('/quick-create-ethos', methods=['POST'])
+@admin_required
+@_require_qemu
+def quick_create_ethos():
+    """Quick-create an EthOS VM with optimal defaults.
+
+    Automatically finds the best EthOS image from VM images and builder
+    images, generates a unique name, and creates the VM with EthOS-optimized
+    settings (2 CPU, 2 GB RAM, 20 GB virtio/qcow2 disk, auto-mapped ports).
+    Optionally auto-starts the VM.
+    """
+    err = require_tools('qemu-img')
+    if err:
+        return err
+
+    data = request.get_json(force=True) if request.data else {}
+
+    # ── Find best EthOS image (prefer VM images dir, then builder images) ──
+    def _find_ethos_images():
+        candidates = []
+        valid_exts = {'.iso', '.img', '.raw', '.qcow2'}
+        # VM images directory
+        iso_dir = _iso_root()
+        if os.path.isdir(iso_dir):
+            for entry in os.listdir(iso_dir):
+                if 'ethos' in entry.lower() and os.path.splitext(entry)[1].lower() in valid_exts:
+                    fpath = os.path.join(iso_dir, entry)
+                    candidates.append(('images', fpath, os.path.getmtime(fpath)))
+        # Builder images directory
+        builder_dir = _app_path('installer/images')
+        if builder_dir and os.path.isdir(builder_dir):
+            for entry in os.listdir(builder_dir):
+                if 'ethos' in entry.lower() and os.path.splitext(entry)[1].lower() in valid_exts:
+                    fpath = os.path.join(builder_dir, entry)
+                    candidates.append(('builder', fpath, os.path.getmtime(fpath)))
+        # Sort by modification time (newest first)
+        candidates.sort(key=lambda c: c[2], reverse=True)
+        return candidates
+
+    candidates = _find_ethos_images()
+    if not candidates:
+        return jsonify({
+            'error': 'Nie znaleziono obrazu EthOS. Zbuduj obraz w aplikacji Builder lub prześlij go w zakładce Obrazy.'
+        }), 404
+
+    source, boot_image, _ = candidates[0]
+
+    # ── Generate unique name ──
+    vms = _load_vms()
+    existing_names = {vm.get('name', '').lower() for vm in vms.values()}
+    name = 'EthOS VM'
+    if name.lower() in existing_names:
+        for i in range(2, 100):
+            candidate_name = f'EthOS VM {i}'
+            if candidate_name.lower() not in existing_names:
+                name = candidate_name
+                break
+
+    # ── Create VM with optimal EthOS defaults ──
+    cpu = 2
+    ram = 2048
+    disk_size = '20G'
+    disk_format = 'qcow2'
+    disk_bus = 'virtio'
+    os_type = 'linux'
+
+    network = _default_network(os_type, boot_image)
+
+    vm_id = _sanitize_name(name).lower().replace(' ', '-')
+    vm_id = re.sub(r'-+', '-', vm_id)
+    ts = str(int(time.time()))[-6:]
+    vm_id = f'{vm_id}-{ts}'
+
+    vm_path = _vm_dir(vm_id)
+    os.makedirs(vm_path, exist_ok=True)
+
+    disk_file = os.path.join(vm_path, f'disk0.{disk_format}')
+    try:
+        r = host_run(f'qemu-img create -f {disk_format} "{disk_file}" {disk_size}', timeout=60)
+        if r.returncode != 0:
+            return jsonify({'error': f'Disk creation error: {r.stderr}'}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+    vms[vm_id] = {
+        'name': name,
+        'cpu': cpu,
+        'ram': ram,
+        'disk_size': disk_size,
+        'disk_format': disk_format,
+        'disk_file': disk_file,
+        'disks': [{
+            'id': 'disk0',
+            'file': disk_file,
+            'format': disk_format,
+            'size': disk_size,
+            'bus': disk_bus,
+        }],
+        'os_type': os_type,
+        'boot_image': boot_image,
+        'description': f'Quick-created EthOS VM (image: {os.path.basename(boot_image)})',
+        'network': network,
+        'created': time.strftime('%Y-%m-%d %H:%M:%S'),
+    }
+    _save_vms(vms)
+
+    # Port info for the response
+    pf_list = network.get('port_forwards', [])
+    active_pf = [p for p in pf_list if p.get('host')]
+    ports_str = ', '.join(f"{p['label']}: {p['host']}\u2192{p['guest']}" for p in active_pf) if active_pf else ''
+
+    msg = f'EthOS VM utworzona ({os.path.basename(boot_image)})'
+    if ports_str:
+        msg += f'. Porty: {ports_str}'
+
+    return jsonify({
+        'status': 'ok',
+        'id': vm_id,
+        'name': name,
+        'image': os.path.basename(boot_image),
+        'image_source': source,
+        'ports': [{'label': p['label'], 'host': p['host'], 'guest': p['guest']} for p in active_pf],
+        'message': msg,
+    })
 
 
 @vm_bp.route('/machines/<vm_id>', methods=['PUT'])

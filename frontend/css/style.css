@@ -3498,6 +3498,25 @@ a.dkr-port-link:hover {
 }
 .vm-ethos-port-hint i { margin-right: 6px; color: #8b5cf6; }
 
+/* Quick Create EthOS button */
+.vm-btn-ethos {
+    background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
+    color: #fff; border-color: #7c3aed; font-weight: 600;
+}
+.vm-btn-ethos:hover { background: linear-gradient(135deg, #6d28d9 0%, #5b21b6 100%); }
+.vm-btn-ethos i { margin-right: 4px; }
+
+/* Quick Create result dialog */
+.vm-qc-summary { display: flex; flex-direction: column; gap: 10px; }
+.vm-qc-row { display: flex; align-items: baseline; gap: 10px; font-size: 13px; }
+.vm-qc-row-ports { align-items: flex-start; }
+.vm-qc-label { min-width: 72px; font-weight: 600; color: var(--text-muted); flex-shrink: 0; }
+.vm-qc-source { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: rgba(139,92,246,.15); color: #8b5cf6; margin-left: 6px; }
+.vm-qc-ports { display: flex; flex-direction: column; gap: 4px; }
+.vm-qc-port { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.vm-qc-port-label { font-weight: 500; min-width: 70px; }
+.vm-qc-port-map { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text-secondary); }
+
 
 /* ═══════════════════════════════════════════════════════════
    IFRAME APP CONTAINER

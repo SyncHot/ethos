@@ -160,6 +160,7 @@ function renderVMManager(body) {
         main.innerHTML = `
             <div class="vm-toolbar">
                 <span class="vm-toolbar-title"><i class="fas fa-desktop"></i> Wirtualne maszyny <span class="vm-badge" id="vm-cnt">0</span></span>
+                <button class="vm-btn vm-btn-ethos" id="vm-quick-ethos-btn"><i class="fas fa-bolt"></i> Quick EthOS</button>
                 <button class="vm-btn vm-btn-primary" id="vm-create-btn"><i class="fas fa-plus"></i> Nowa VM</button>
                 <button class="vm-btn" id="vm-import-btn" title="${t('Importuj istniejący dysk qcow2/vmdk/vdi/raw')}"><i class="fas fa-file-import"></i> Importuj dysk</button>
                 <button class="vm-btn" id="vm-refresh-btn"><i class="fas fa-sync-alt"></i></button>
@@ -181,6 +182,7 @@ function renderVMManager(body) {
             </div>
         `;
         main.querySelector('#vm-create-btn').addEventListener('click', showCreateModal);
+        main.querySelector('#vm-quick-ethos-btn').addEventListener('click', quickCreateEthOS);
         main.querySelector('#vm-import-btn').addEventListener('click', showImportDiskModal);
         main.querySelector('#vm-refresh-btn').addEventListener('click', async () => {
             await loadMachines(); fillMachinesTable();
@@ -422,6 +424,65 @@ function renderVMManager(body) {
                 toast(e.message || t('Błąd tworzenia VM'), 'error');
             }
         });
+    }
+
+
+    // ─── QUICK CREATE ETHOS ───
+
+    async function quickCreateEthOS() {
+        const btn = main.querySelector('#vm-quick-ethos-btn');
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Tworzenie...'; }
+        try {
+            const r = await api('/vm/quick-create-ethos', { method: 'POST', body: {} });
+            if (r.error) { toast(r.error, 'error'); return; }
+
+            // Show success dialog with port info and option to start
+            const ports = (r.ports || []).map(p => `<div class="vm-qc-port"><span class="vm-qc-port-label">${esc(p.label)}</span><span class="vm-qc-port-map">${_vmHost}:${p.host} → :${p.guest}</span></div>`).join('');
+            const overlay = document.createElement('div');
+            overlay.className = 'vm-modal-overlay';
+            overlay.innerHTML = `
+                <div class="vm-modal" style="max-width:460px">
+                    <div class="vm-modal-header">
+                        <span><i class="fas fa-check-circle" style="color:#10b981;margin-right:8px"></i>${t('EthOS VM utworzona')}</span>
+                        <button class="vm-modal-close">&times;</button>
+                    </div>
+                    <div class="vm-modal-body">
+                        <div class="vm-qc-summary">
+                            <div class="vm-qc-row"><span class="vm-qc-label">${t('Nazwa')}</span><span>${esc(r.name)}</span></div>
+                            <div class="vm-qc-row"><span class="vm-qc-label">${t('Obraz')}</span><span>${esc(r.image)} <span class="vm-qc-source">${r.image_source === 'builder' ? 'Builder' : 'Obrazy VM'}</span></span></div>
+                            <div class="vm-qc-row"><span class="vm-qc-label">${t('Parametry')}</span><span>2 vCPU · 2 GB RAM · 20 GB VirtIO</span></div>
+                            ${ports ? `<div class="vm-qc-row vm-qc-row-ports"><span class="vm-qc-label">${t('Porty')}</span><div class="vm-qc-ports">${ports}</div></div>` : ''}
+                        </div>
+                    </div>
+                    <div class="vm-modal-footer">
+                        <button class="vm-btn" id="vm-qc-close">${t('Zamknij')}</button>
+                        <button class="vm-btn vm-btn-success" id="vm-qc-start"><i class="fas fa-play"></i> ${t('Uruchom teraz')}</button>
+                    </div>
+                </div>
+            `;
+            body.appendChild(overlay);
+
+            const close = () => { overlay.remove(); loadMachines().then(fillMachinesTable); };
+            overlay.querySelector('.vm-modal-close').addEventListener('click', close);
+            overlay.querySelector('#vm-qc-close').addEventListener('click', close);
+            overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
+            overlay.querySelector('#vm-qc-start').addEventListener('click', async () => {
+                const startBtn = overlay.querySelector('#vm-qc-start');
+                startBtn.disabled = true;
+                startBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Uruchamianie...';
+                try {
+                    const sr = await api(`/vm/machines/${r.id}/start`, { method: 'POST' });
+                    if (sr && sr.error) { toast(sr.error, 'error'); }
+                    else { toast(sr.message || 'VM uruchomiona', 'success'); }
+                } catch (e) { toast(e.message || t('Błąd uruchomienia'), 'error'); }
+                close();
+            });
+        } catch (e) {
+            toast(e.message || t('Błąd tworzenia EthOS VM'), 'error');
+        } finally {
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-bolt"></i> Quick EthOS'; }
+        }
     }
 
 
