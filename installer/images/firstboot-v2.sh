@@ -49,12 +49,23 @@ echo "[3/8] Checking Python venv..."
 VENV="$ETHOS_DIR/venv"
 if [ ! -f "$VENV/bin/python" ]; then
     echo "  Creating venv..."
-    python3 -m venv "$VENV"
+    # venv may be a symlink to /mnt/data/ethos/venv.  Python's venv module
+    # chokes on dangling symlinks (EEXIST), so resolve the real target path
+    # and create the venv there directly.
+    VENV_TARGET="$VENV"
+    if [ -L "$VENV" ]; then
+        VENV_TARGET="$(readlink "$VENV")"
+        mkdir -p "$(dirname "$VENV_TARGET")"
+        rm -rf "$VENV_TARGET"
+    elif [ -d "$VENV" ]; then
+        rm -rf "$VENV"
+    fi
+    python3 -m venv "$VENV_TARGET"
     "$VENV/bin/pip" install --quiet --upgrade pip
     if [ -f "$ETHOS_DIR/backend/requirements.txt" ]; then
         "$VENV/bin/pip" install --quiet -r "$ETHOS_DIR/backend/requirements.txt"
     fi
-    echo "  Venv created."
+    echo "  Venv created at $VENV_TARGET"
 else
     echo "  Venv exists."
 fi

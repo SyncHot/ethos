@@ -1506,10 +1506,30 @@ def _write_overlay_fstab(dev, mount_dir, same_disk, data_dev=None):
 
     fstab = "\n".join(lines) + "\n"
 
-    # Write to overlay upper directory (overrides squashfs fstab on boot)
+    # Write to root partition overlay upper (fallback if EthOS-Data is missing)
     overlay_etc = os.path.join(mount_dir, "overlay/upper/etc")
     os.makedirs(overlay_etc, exist_ok=True)
     fstab_path = os.path.join(overlay_etc, "fstab")
     with open(fstab_path, "w") as f:
         f.write(fstab)
-    log.info("Wrote overlay fstab: %s", fstab_path)
+    log.info("Wrote overlay fstab (root fallback): %s", fstab_path)
+
+    # Write to data partition overlay upper (primary — initramfs prefers this)
+    if data_part:
+        tmp_mount = "/tmp/data-fstab"
+        os.makedirs(tmp_mount, exist_ok=True)
+        _, _, rc = _run(f"mount -o subvol=@data {data_part} {tmp_mount}", timeout=30)
+        if rc == 0:
+            try:
+                data_overlay_etc = os.path.join(
+                    tmp_mount, "ethos/overlay/a/upper/etc"
+                )
+                os.makedirs(data_overlay_etc, exist_ok=True)
+                data_fstab = os.path.join(data_overlay_etc, "fstab")
+                with open(data_fstab, "w") as f:
+                    f.write(fstab)
+                log.info("Wrote overlay fstab (data primary): %s", data_fstab)
+            finally:
+                _run(f"umount {tmp_mount} 2>/dev/null", timeout=15)
+        else:
+            log.warning("Could not mount data partition for fstab — root fallback only")

@@ -86,7 +86,11 @@ def start_install():
 
     def worker():
         mount_dir = "/mnt/ethos-target"
+        sqsh_mount = "/tmp/sqsh-postinst"
+        overlay_dir = "/mnt/ethos-overlay"
         bind_mounted = False
+        squashfs_mode = False
+        overlay_mounted = False
         try:
             def progress_cb(phase, pct, msg):
                 _set_state(phase=phase, percent=pct, message=msg)
@@ -118,34 +122,83 @@ def start_install():
             _, merr, mrc = _run(f"mount -o subvol=@data {data_part} /mnt/data", timeout=30)
             if mrc != 0:
                 log.warning("Data partition mount failed (%s), creating dirs directly", merr)
-                # Broken symlinks from data separation would cause EEXIST
-                # in later makedirs calls.  Resolve by creating the target dirs.
                 for d in ("data", "logs", "backups", "uploads"):
                     tgt = f"/mnt/data/ethos/{d}"
                     os.makedirs(tgt, exist_ok=True)
                 os.makedirs("/mnt/data/homes", exist_ok=True)
-            # Bind-mount /dev for chroot operations (chpasswd, ssh-keygen, systemctl)
-            _run(f"mount --bind /dev {mount_dir}/dev")
-            _run(f"mount --bind /dev/pts {mount_dir}/dev/pts 2>/dev/null")
-            _run(f"mount -t proc proc {mount_dir}/proc 2>/dev/null")
-            _run(f"mount -t sysfs sysfs {mount_dir}/sys 2>/dev/null")
-            bind_mounted = True
+
+            # Detect SquashFS mode — root partition has root.sqsh instead of
+            # a full filesystem, so chroot into the raw partition won't work.
+            # Set up a proper overlay mount (squashfs lower + data upper).
+            sqsh_path = os.path.join(mount_dir, "root.sqsh")
+            squashfs_mode = os.path.isfile(sqsh_path)
+
+            if squashfs_mode:
+                _add_log("[86%] Setting up SquashFS overlay for post-install...")
+                os.makedirs(sqsh_mount, exist_ok=True)
+                os.makedirs(overlay_dir, exist_ok=True)
+
+                # Mount squashfs as read-only lower layer
+                _, serr, src = _run(
+                    f"mount -t squashfs -o ro,loop {sqsh_path} {sqsh_mount}",
+                    timeout=30,
+                )
+                if src != 0:
+                    raise RuntimeError(f"Cannot mount squashfs: {serr}")
+
+                # Set up overlay: squashfs (lower) + data partition (upper)
+                overlay_upper = "/mnt/data/ethos/overlay/a/upper"
+                overlay_work = "/mnt/data/ethos/overlay/a/work"
+                os.makedirs(overlay_upper, exist_ok=True)
+                os.makedirs(overlay_work, exist_ok=True)
+
+                _, oerr, orc = _run(
+                    f"mount -t overlay overlay "
+                    f"-o lowerdir={sqsh_mount},upperdir={overlay_upper},"
+                    f"workdir={overlay_work} {overlay_dir}",
+                    timeout=30,
+                )
+                if orc != 0:
+                    raise RuntimeError(f"Cannot mount overlay: {oerr}")
+                overlay_mounted = True
+
+                # Use overlay as the effective root for chroot
+                effective_root = overlay_dir
+
+                # Bind-mount /dev, /proc, /sys for chroot
+                _run(f"mount --bind /dev {effective_root}/dev")
+                _run(f"mount --bind /dev/pts {effective_root}/dev/pts 2>/dev/null")
+                _run(f"mount -t proc proc {effective_root}/proc 2>/dev/null")
+                _run(f"mount -t sysfs sysfs {effective_root}/sys 2>/dev/null")
+                bind_mounted = True
+
+                # Bind-mount /mnt/data inside overlay so symlinks resolve
+                os.makedirs(f"{effective_root}/mnt/data", exist_ok=True)
+                _run(f"mount --bind /mnt/data {effective_root}/mnt/data")
+            else:
+                effective_root = mount_dir
+                # Bind-mount /dev for chroot operations (chpasswd, ssh-keygen)
+                _run(f"mount --bind /dev {mount_dir}/dev")
+                _run(f"mount --bind /dev/pts {mount_dir}/dev/pts 2>/dev/null")
+                _run(f"mount -t proc proc {mount_dir}/proc 2>/dev/null")
+                _run(f"mount -t sysfs sysfs {mount_dir}/sys 2>/dev/null")
+                bind_mounted = True
 
             # Step 3: Create user
             _set_state(phase="user", percent=88, message="Creating user account...")
             _add_log("[88%] Creating user account...")
-            system_ops.create_user(username, password, root_dir=mount_dir)
+            system_ops.create_user(username, password, root_dir=effective_root)
 
             # Step 4: Set hostname
             _set_state(phase="hostname", percent=90, message="Setting hostname...")
-            system_ops.set_hostname(hostname, root_dir=mount_dir)
+            system_ops.set_hostname(hostname, root_dir=effective_root)
 
             # Step 5: Write config
             _set_state(phase="config", percent=92, message="Writing configuration...")
-            system_ops.write_install_conf(username, hostname, root_dir=mount_dir)
+            system_ops.write_install_conf(username, hostname, root_dir=effective_root)
 
             # Write ETHOS_USER to ethos.env
-            env_path = os.path.join(mount_dir, "opt/ethos/ethos.env")
+            env_path = os.path.join(effective_root, "opt/ethos/ethos.env")
             if os.path.exists(env_path):
                 with open(env_path, "r") as ef:
                     env_content = ef.read()
@@ -154,20 +207,39 @@ def start_install():
                         ef.write(f"ETHOS_USER={username}\n")
 
             # Step 5b: Mark setup complete (user already configured during install)
-            system_ops.write_setup_done(username, hostname, root_dir=mount_dir)
+            system_ops.write_setup_done(username, hostname, root_dir=effective_root)
 
             # Step 6: Configure services
             _set_state(phase="services", percent=94, message="Configuring services...")
             _add_log("[94%] Configuring services...")
-            system_ops.configure_services(root_dir=mount_dir)
+            system_ops.configure_services(root_dir=effective_root)
             _add_log("Regenerating SSH keys...")
-            system_ops.regenerate_ssh_keys(root_dir=mount_dir)
+            system_ops.regenerate_ssh_keys(root_dir=effective_root)
             _add_log("Generating TLS certificate...")
-            system_ops.generate_tls_cert(hostname, root_dir=mount_dir)
+            system_ops.generate_tls_cert(hostname, root_dir=effective_root)
 
-            # Step 7: Mark installed
+            # Step 7: Mark installed (or defer to firstboot for SquashFS)
             _set_state(phase="marker", percent=97, message="Finalizing...")
-            system_ops.mark_installed(root_dir=mount_dir)
+            if squashfs_mode:
+                # SquashFS images ship venv as a symlink to /mnt/data/ethos/venv.
+                # The actual venv (python packages) must be created on first boot
+                # by firstboot-v2.sh.  Re-enable firstboot and skip .installed
+                # so it runs on the first real boot.
+                wants = os.path.join(
+                    effective_root,
+                    "etc/systemd/system/multi-user.target.wants",
+                )
+                fb_link = os.path.join(wants, "ethos-firstboot.service")
+                try:
+                    os.symlink(
+                        "/etc/systemd/system/ethos-firstboot.service",
+                        fb_link,
+                    )
+                    _add_log("[97%] Firstboot re-enabled for venv creation")
+                except (FileExistsError, OSError) as exc:
+                    _add_log(f"[97%] Firstboot symlink: {exc}")
+            else:
+                system_ops.mark_installed(root_dir=effective_root)
 
             # Get expected IP after reboot
             import wifi_ops
@@ -193,7 +265,15 @@ def start_install():
         finally:
             # Always unmount to prevent stale bind-mounts
             from disk_ops import _run as _drun
-            if bind_mounted:
+            if squashfs_mode and overlay_mounted:
+                # Unmount overlay-specific mounts
+                if bind_mounted:
+                    _drun(f"umount -l {overlay_dir}/mnt/data 2>/dev/null", timeout=10)
+                    for fs in ("sys", "proc", "dev/pts", "dev"):
+                        _drun(f"umount -l {overlay_dir}/{fs} 2>/dev/null", timeout=10)
+                _drun(f"umount {overlay_dir} 2>/dev/null", timeout=15)
+                _drun(f"umount {sqsh_mount} 2>/dev/null", timeout=15)
+            elif bind_mounted:
                 for fs in ("sys", "proc", "dev/pts", "dev"):
                     _drun(f"umount -l {mount_dir}/{fs} 2>/dev/null", timeout=10)
             _drun(f"umount /mnt/data 2>/dev/null", timeout=15)
