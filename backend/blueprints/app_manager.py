@@ -574,6 +574,24 @@ BUILTIN_CATALOG = [
         'uninstall_endpoint': '/api/radio-music/uninstall',
         'status_endpoint': '/api/radio-music/pkg-status',
     },
+    {
+        'id': 'packages', 'name': 'Package Manager', 'version': '1.0.0',
+        'icon': 'fa-store', 'color': '#a855f7', 'category': 'System', 'admin_only': True,
+        'description': 'Menedzer pakietow systemowych (legacy).',
+        'apt_deps': [], 'pip_deps': [],
+    },
+    {
+        'id': 'services', 'name': 'Services', 'version': '1.0.0',
+        'icon': 'fa-cogs', 'color': '#64748b', 'category': 'System', 'admin_only': True,
+        'description': 'Zarzadzanie uslugami systemowymi.',
+        'apt_deps': [], 'pip_deps': [],
+    },
+    {
+        'id': 'naslink', 'name': 'NASLink', 'version': '1.0.0',
+        'icon': 'fa-network-wired', 'color': '#06b6d4', 'category': 'Network', 'admin_only': False,
+        'description': 'Lacznosc i synchronizacja miedzy urzadzeniami NAS.',
+        'apt_deps': [], 'pip_deps': [],
+    },
 ]
 
 # ─── State lock ───────────────────────────────────────────────
@@ -1400,6 +1418,20 @@ def _bg_install(app_id, app_def, task_id):
 
         emit({'stage': 'done', 'percent': 100, 'message': app_def['name'] + ' zainstalowano pomyslnie', 'status': 'done'})
 
+        # Notify all clients — enables hot-load without page refresh
+        if _socketio:
+            fn = _get_frontend_filename(app_id)
+            _socketio.emit('app_installed', {
+                'id': app_id,
+                'name': app_def.get('name', app_id),
+                'icon': app_def.get('icon', 'fa-puzzle-piece'),
+                'color': app_def.get('color', '#6b7280'),
+                'category': app_def.get('category', 'Tools'),
+                'description': app_def.get('description', ''),
+                'admin_only': app_def.get('admin_only', False),
+                'js_file': (fn + '.js') if fn else None,
+            })
+
         if not hot_ok:
             log.warning('[app_manager] Hot-load failed for %s, falling back to restart', app_id)
             _needs_restart = True
@@ -1572,6 +1604,10 @@ def _bg_uninstall(app_id, app_def, task_id, wipe_data=False):
         _sync_frontend_dist()
 
         emit({'stage': 'done', 'percent': 100, 'message': app_def['name'] + ' odinstalowano', 'status': 'done'})
+
+        # Notify all clients — hot-remove from desktop without refresh
+        if _socketio:
+            _socketio.emit('app_uninstalled', {'id': app_id})
 
     except Exception as e:
         log.exception('[app_manager] uninstall error for %s', app_id)

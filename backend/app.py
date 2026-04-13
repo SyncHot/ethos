@@ -124,7 +124,6 @@ from blueprints.firewall import firewall_bp
 from blueprints.fail2ban import fail2ban_bp
 from blueprints.app_manager import (
     app_manager_bp, init_app_manager, migrate_from_ethos_packages,
-    CORE_APPS as _APP_MANAGER_CORE_APPS,
     BUILTIN_CATALOG as _BUILTIN_CATALOG,
     load_installed as _load_app_manager_installed,
     load_optional_blueprints as _load_optional_blueprints,
@@ -8417,493 +8416,44 @@ def _resume_interrupted_transfer():
 
 # ─────────────────────────── Apps Registry ───────────────────────────
 
+# Core apps — always visible on the desktop regardless of install state.
+# Optional apps are managed entirely via App Store (BUILTIN_CATALOG + installed_apps.json).
+_CORE_APP_DEFS = [
+    {'id': 'dashboard',        'name': 'Dashboard',         'icon': 'fa-tachometer-alt',   'color': '#3b82f6', 'category': 'System',   'description': 'System overview'},
+    {'id': 'file-manager',     'name': 'File Manager',      'icon': 'fa-folder-open',      'color': '#f59e0b', 'category': 'System',   'description': 'Browse and manage files'},
+    {'id': 'storage-manager',  'name': 'Storage Manager',   'icon': 'fa-database',         'color': '#10b981', 'category': 'Storage',  'description': 'Disks, RAID, volumes, sharing and diagnostics'},
+    {'id': 'backup',           'name': 'Backup',            'icon': 'fa-shield-alt',       'color': '#06b6d4', 'category': 'Storage',  'description': 'Create and restore backups'},
+    {'id': 'resource-monitor', 'name': 'Resource Monitor',  'icon': 'fa-chart-area',       'color': '#8b5cf6', 'category': 'System',   'description': 'Detailed monitoring'},
+    {'id': 'terminal',         'name': 'Terminal',          'icon': 'fa-terminal',         'color': '#22c55e', 'category': 'System',   'description': 'Command line (SSH-like)'},
+    {'id': 'users',            'name': 'Users',             'icon': 'fa-users-cog',        'color': '#ec4899', 'category': 'System',   'description': 'User and group management', 'admin_only': True},
+    {'id': 'network',          'name': 'Network',           'icon': 'fa-network-wired',    'color': '#0ea5e9', 'category': 'System',   'description': 'Network interface and WiFi management'},
+    {'id': 'event-log',        'name': 'Event Log',         'icon': 'fa-scroll',           'color': '#64748b', 'category': 'System',   'description': 'Logs and operation history'},
+    {'id': 'notifications',    'name': 'Notifications',     'icon': 'fa-bell',             'color': '#f59e0b', 'category': 'System',   'description': 'System notification channels'},
+    {'id': 'fail2ban',         'name': 'Intrusion Protection', 'icon': 'fa-shield-alt',    'color': '#ef4444', 'category': 'System',   'description': 'Fail2Ban — active bans, whitelist, SSH/Samba/Web protection', 'admin_only': True},
+    {'id': 'firewall',         'name': 'Firewall (UFW)',    'icon': 'fa-fire',             'color': '#e05d44', 'category': 'System',   'description': 'Firewall and rules management', 'admin_only': True},
+    {'id': 'app-store',        'name': 'App Store',         'icon': 'fa-th',               'color': '#f97316', 'category': 'System',   'description': 'EthOS packages and Docker containers', 'admin_only': True},
+    {'id': 'updates',          'name': 'Updates',           'icon': 'fa-cloud-download-alt', 'color': '#8b5cf6', 'category': 'System', 'description': 'Check and install system updates', 'admin_only': True},
+    {'id': 'power',            'name': 'Power Management',  'icon': 'fa-power-off',        'color': '#22c55e', 'category': 'System',   'description': 'Schedule, WOL, power saving', 'admin_only': True},
+    {'id': 'system-settings',  'name': 'Settings',          'icon': 'fa-sliders-h',        'color': '#64748b', 'category': 'System',   'description': 'NAS name, server port, hostname, timezone, password change', 'admin_only': True},
+    {'id': 'ssh-manager',      'name': 'SSH Manager',       'icon': 'fa-key',              'color': '#6366f1', 'category': 'Network',  'description': 'SSH key and trusted host management'},
+    {'id': 'security-advisor', 'name': 'Security Advisor',  'icon': 'fa-user-shield',      'color': '#10b981', 'category': 'Security', 'description': 'Security audit and recommendations', 'admin_only': True},
+]
+
+
 @app.route('/api/apps')
 @require_auth
 def get_apps():
-    apps = [
-        {
-            'id': 'dashboard',
-            'name': 'Dashboard',
-            'icon': 'fa-tachometer-alt',
-            'color': '#3b82f6',
-            'type': 'builtin',
-            'category': 'System',
-            'description': 'System overview'
-        },
-        {
-            'id': 'file-manager',
-            'name': 'File Manager',
-            'icon': 'fa-folder-open',
-            'color': '#f59e0b',
-            'type': 'builtin',
-            'category': 'System',
-            'description': 'Browse and manage files'
-        },
-        {
-            'id': 'docker-manager',
-            'name': 'Docker',
-            'icon': 'fa-cubes',
-            'color': '#2496ed',
-            'type': 'builtin',
-            'category': 'System',
-            'description': 'Container management',
-            'package': 'docker-manager'
-        },
-        {
-            'id': 'vm-manager',
-            'name': 'VM Manager',
-            'icon': 'fa-desktop',
-            'color': '#8b5cf6',
-            'type': 'builtin',
-            'category': 'System',
-            'description': 'Virtual machines (QEMU/KVM)',
-            'admin_only': True,
-            'package': 'vm-manager'
-        },
-        {
-            'id': 'storage-manager',
-            'name': 'Storage Manager',
-            'icon': 'fa-database',
-            'color': '#10b981',
-            'type': 'builtin',
-            'category': 'Storage',
-            'description': 'Disks, RAID, volumes, sharing and diagnostics',
-            'package': 'storage-manager',
-        },
-        {
-            'id': 'backup',
-            'name': 'Backup',
-            'icon': 'fa-shield-alt',
-            'color': '#06b6d4',
-            'type': 'builtin',
-            'category': 'Storage',
-            'description': 'Create and restore backups',
-            'package': 'backup',
-        },
-        {
-            'id': 'cloud-backup',
-            'name': 'Cloud Backup',
-            'icon': 'fa-cloud-upload-alt',
-            'color': '#0ea5e9',
-            'type': 'builtin',
-            'category': 'Storage',
-            'description': 'Cloud backup (S3, B2, Google Drive, WebDAV, SFTP)',
-            'admin_only': True,
-            'package': 'cloud-backup'
-        },
-        {
-            'id': 'rollback',
-            'name': 'Rollback',
-            'icon': 'fa-history',
-            'color': '#f97316',
-            'type': 'builtin',
-            'category': 'System',
-            'description': 'System snapshots and version rollback',
-            'admin_only': True,
-            'package': 'rollback',
-        },
-        {
-            'id': 'resource-monitor',
-            'name': 'Resource Monitor',
-            'icon': 'fa-chart-area',
-            'color': '#8b5cf6',
-            'type': 'builtin',
-            'category': 'System',
-            'description': 'Detailed monitoring',
-            'package': 'resource-monitor',
-        },
-        {
-            'id': 'printer',
-            'name': 'Print Server',
-            'icon': 'fa-print',
-            'color': '#ef4444',
-            'type': 'builtin',
-            'category': 'Tools',
-            'description': 'Document printing',
-            'package': 'printer'
-        },
-        {
-            'id': 'terminal',
-            'name': 'Terminal',
-            'icon': 'fa-terminal',
-            'color': '#22c55e',
-            'type': 'builtin',
-            'category': 'System',
-            'description': 'Command line (SSH-like)',
-            'package': 'terminal',
-        },
-        {
-            'id': 'packages',
-            'name': 'Package Manager',
-            'icon': 'fa-store',
-            'color': '#a855f7',
-            'type': 'builtin',
-            'category': 'System',
-            'description': 'Install and update software'
-        },
-        {
-            'id': 'users',
-            'name': 'Users',
-            'icon': 'fa-users-cog',
-            'color': '#ec4899',
-            'type': 'builtin',
-            'category': 'System',
-            'description': 'User and group management',
-            'admin_only': True
-        },
-        {
-            'id': 'network',
-            'name': 'Network',
-            'icon': 'fa-network-wired',
-            'color': '#0ea5e9',
-            'type': 'builtin',
-            'category': 'System',
-            'description': 'Network interface and WiFi management',
-            'package': 'network',
-        },
-        {
-            'id': 'event-log',
-            'name': 'Event Log',
-            'icon': 'fa-scroll',
-            'color': '#64748b',
-            'type': 'builtin',
-            'category': 'System',
-            'description': 'Logs and operation history'
-        },
-        {
-            'id': 'notifications',
-            'name': 'Notifications',
-            'icon': 'fa-bell',
-            'color': '#f59e0b',
-            'type': 'builtin',
-            'category': 'System',
-            'description': 'System notification channels',
-            'package': 'notifications',
-        },
-        {
-            'id': 'fail2ban',
-            'name': 'Intrusion Protection',
-            'icon': 'fa-shield-alt',
-            'color': '#ef4444',
-            'type': 'builtin',
-            'category': 'System',
-            'description': 'Fail2Ban — active bans, whitelist, SSH/Samba/Web protection',
-            'admin_only': True,
-            'package': 'fail2ban',
-        },
-        {
-            'id': 'firewall',
-            'name': 'Firewall (UFW)',
-            'icon': 'fa-fire',
-            'color': '#e05d44',
-            'type': 'builtin',
-            'category': 'System',
-            'description': 'Firewall and rules management',
-            'admin_only': True,
-            'package': 'firewall',
-        },
-        {
-            'id': 'cron',
-            'name': 'Scheduler',
-            'icon': 'fa-clock',
-            'color': '#6366f1',
-            'type': 'builtin',
-            'category': 'System',
-            'description': 'Cron job management (scheduler)',
-            'admin_only': True,
-            'package': 'cron',
-        },
-        {
-            'id': 'app-store',
-            'name': 'App Store',
-            'icon': 'fa-th',
-            'color': '#f97316',
-            'type': 'builtin',
-            'category': 'System',
-            'description': 'EthOS packages and Docker containers',
-            'admin_only': True
-        },
-        {
-            'id': 'gallery',
-            'name': 'Gallery',
-            'icon': 'fa-images',
-            'color': '#ec4899',
-            'type': 'builtin',
-            'category': 'Tools',
-            'description': 'Photo and video gallery from selected folders',
-            'package': 'gallery'
-        },
-        {
-            'id': 'duplicates',
-            'name': 'Photo Duplicates',
-            'icon': 'fa-clone',
-            'color': '#a78bfa',
-            'type': 'builtin',
-            'category': 'Tools',
-            'description': 'Find identical and similar photos',
-            'package': 'duplicates'
-        },
-        {
-            'id': 'doc-editor',
-            'name': 'Document Editor',
-            'icon': 'fa-file-word',
-            'color': '#2563eb',
-            'type': 'builtin',
-            'category': 'Tools',
-            'description': 'Create and edit Word documents, export to PDF',
-            'package': 'doc-editor'
-        },
-        {
-            'id': 'code-editor',
-            'name': 'Code Editor',
-            'icon': 'fa-code',
-            'color': '#22d3ee',
-            'type': 'builtin',
-            'category': 'Tools',
-            'description': 'Simple code editor with line numbers and formatting',
-            'package': 'code-editor'
-        },
-        {
-            'id': 'download-manager',
-            'name': 'Download Manager',
-            'icon': 'fa-cloud-download-alt',
-            'color': '#10b981',
-            'type': 'builtin',
-            'category': 'Tools',
-            'description': 'Download files with premium services (AllDebrid, Real-Debrid, Premiumize)',
-            'package': 'download-manager'
-        },
-        {
-            'id': 'usb-flasher',
-            'name': 'USB Flasher',
-            'icon': 'fa-usb',
-            'color': '#a855f7',
-            'type': 'builtin',
-            'category': 'Tools',
-            'description': 'Flash ISO/IMG images to USB drives',
-            'admin_only': True,
-            'package': 'usb-flasher'
-        },
-        {
-            'id': 'builder',
-            'name': 'Builder',
-            'icon': 'fa-hammer',
-            'color': '#f97316',
-            'type': 'builtin',
-            'category': 'System',
-            'description': 'Build EthOS releases and system images',
-            'admin_only': True,
-            'package': 'builder'
-        },
-        {
-            'id': 'updates',
-            'name': 'Updates',
-            'icon': 'fa-cloud-download-alt',
-            'color': '#8b5cf6',
-            'type': 'builtin',
-            'category': 'System',
-            'description': 'Check and install system updates',
-            'admin_only': True,
-            'package': 'updates',
-        },
-        {
-            'id': 'power',
-            'name': 'Power Management',
-            'icon': 'fa-power-off',
-            'color': '#22c55e',
-            'type': 'builtin',
-            'category': 'System',
-            'description': 'Schedule, WOL, power saving',
-            'admin_only': True,
-            'package': 'power',
-        },
-        {
-            'id': 'ups',
-            'name': 'UPS',
-            'icon': 'fa-battery-full',
-            'color': '#f59e0b',
-            'type': 'builtin',
-            'category': 'System',
-            'description': 'UPS status and management',
-            'admin_only': True,
-            'package': 'ups',
-        },
-        {
-            'id': 'services',
-            'name': 'Services',
-            'icon': 'fa-cogs',
-            'color': '#64748b',
-            'type': 'builtin',
-            'category': 'System',
-            'description': 'System service management',
-            'admin_only': True,
-            'package': 'services',
-        },
-        {
-            'id': 'remote-log',
-            'name': 'Remote Logs',
-            'icon': 'fa-satellite-dish',
-            'color': '#0891b2',
-            'type': 'builtin',
-            'category': 'System',
-            'description': 'Send diagnostic logs to central server',
-            'admin_only': True,
-            'package': 'remote-log'
-        },
-        {
-            'id': 'surveillance',
-            'name': 'Monitoring',
-            'icon': 'fa-video',
-            'color': '#dc2626',
-            'type': 'builtin',
-            'category': 'Tools',
-            'description': 'IP camera monitoring with detection and recording',
-            'admin_only': True,
-            'package': 'surveillance'
-        },
-        {
-            'id': 'ai-chat',
-            'name': 'AI Chat',
-            'icon': 'fa-robot',
-            'color': '#8b5cf6',
-            'type': 'builtin',
-            'category': 'Tools',
-            'description': 'AI assistant — chat with GPT, Claude and other models',
-            'admin_only': True,
-            'package': 'ai-chat'
-        },
-        {
-            'id': 'system-settings',
-            'name': 'Settings',
-            'icon': 'fa-sliders-h',
-            'color': '#64748b',
-            'type': 'builtin',
-            'category': 'System',
-            'description': 'NAS name, server port, hostname, timezone, password change',
-            'admin_only': True
-        },
-        {
-            'id': 'domains-manager',
-            'name': 'Domains & SSL',
-            'icon': 'fa-globe',
-            'color': '#059669',
-            'type': 'builtin',
-            'category': 'Network',
-            'description': 'Domain, SSL certificate, reverse proxy and Dynamic DNS management',
-            'admin_only': True,
-            'package': 'ddns'
-        },
-        {
-            'id': 'websites',
-            'name': 'Websites',
-            'icon': 'fa-globe-americas',
-            'color': '#14b8a6',
-            'type': 'builtin',
-            'category': 'Tools',
-            'description': 'Create and manage websites with a simple CMS',
-            'package': 'websites'
-        },
-        {
-            'id': 'naslink',
-            'name': 'NASLink',
-            'icon': 'fa-network-wired',
-            'color': '#06b6d4',
-            'type': 'builtin',
-            'category': 'Network',
-            'description': 'Connectivity and sync between NAS devices',
-            'package': 'naslink',
-        },
-        {
-            'id': 'ssh-manager',
-            'name': 'SSH Manager',
-            'icon': 'fa-key',
-            'color': '#6366f1',
-            'type': 'builtin',
-            'category': 'Network',
-            'description': 'SSH key and trusted host management',
-            'package': 'ssh-manager',
-        },
-        {
-            'id': 'sticky-notes',
-            'name': 'Sticky Notes',
-            'icon': 'fa-sticky-note',
-            'color': '#eab308',
-            'type': 'builtin',
-            'category': 'Tools',
-            'description': 'Quick notes — like sticky notes on a desktop',
-            'package': 'sticky-notes',
-        },
-        {
-            'id': 'tickets',
-            'name': 'Tickets',
-            'icon': 'fa-columns',
-            'color': '#8b5cf6',
-            'type': 'builtin',
-            'category': 'Tools',
-            'description': 'Project management — Jira/Trello-style Kanban board',
-            'package': 'tickets',
-        },
-        {
-            'id': 'family-hub',
-            'name': 'Family Hub',
-            'icon': 'fa-house-user',
-            'color': '#f472b6',
-            'type': 'builtin',
-            'category': 'Tools',
-            'description': 'Bulletin board, shopping lists, tasks and family calendar',
-            'package': 'family-hub',
-        },
-        {
-            'id': 'wireguard',
-            'name': 'VPN (WireGuard)',
-            'icon': 'fa-shield-halved',
-            'color': '#7c3aed',
-            'type': 'builtin',
-            'category': 'Network',
-            'description': 'WireGuard VPN server — manage peers, generate QR codes',
-            'admin_only': True,
-            'package': 'wireguard',
-        },
-        {
-            'id': 'antivirus',
-            'name': 'Antivirus (ClamAV)',
-            'icon': 'fa-shield-virus',
-            'color': '#16a34a',
-            'type': 'builtin',
-            'category': 'Security',
-            'description': 'ClamAV antivirus — on-demand and scheduled scans',
-            'admin_only': True,
-            'package': 'antivirus',
-        }
-    ]
+    # Start with core apps (always visible)
+    apps = [dict(a, type='builtin') for a in _CORE_APP_DEFS]
 
-    # Mark package-based apps with install status and hide uninstalled ones
-    pkg_state = _load_packages_state()
-    # Surveillance is installable from App Store only.
-    # If an old image marked it as auto-detected, clear that marker.
-    if pkg_state.get('surveillance', {}).get('installed_at') == 'auto-detected':
-        pkg_state['surveillance'] = {'installed': False, 'installed_at': ''}
-        _save_packages_state(pkg_state)
-    pkg_ids = {p['app_id']: p['id'] for p in _ETHOS_PACKAGES}
-    # 1-to-many: one app_id may map to multiple packages (e.g. sharing → 6 protocols)
-    from collections import defaultdict as _dtd
-    _pkg_by_app = _dtd(list)
-    for _p in _ETHOS_PACKAGES:
-        _pkg_by_app[_p['app_id']].append(_p['id'])
-
-    # Also check installed_apps.json (Package Center state)
+    # Add installed optional apps from Package Center (BUILTIN_CATALOG + installed_apps.json)
     _pm_installed = _load_app_manager_installed()
-
-    apps = [a for a in apps if a['id'] not in _pkg_by_app
-            or a['id'] in _APP_MANAGER_CORE_APPS
-            or a['id'] in _pm_installed
-            or any(pkg_state.get(pid, {}).get('installed') for pid in _pkg_by_app[a['id']])]
-
-    # Auto-discover installed catalog apps not in the hardcoded list
-    _existing_ids = {a['id'] for a in apps}
+    _core_ids = {a['id'] for a in _CORE_APP_DEFS}
     for _cat_app in _BUILTIN_CATALOG:
         _cid = _cat_app['id']
-        if _cid not in _existing_ids and _cid in _pm_installed and not _cat_app.get('hidden'):
+        if _cid in _core_ids or _cat_app.get('hidden'):
+            continue
+        if _cid in _pm_installed:
             apps.append({
                 'id': _cid,
                 'name': _cat_app.get('name', _cid),
@@ -8913,7 +8463,6 @@ def get_apps():
                 'category': _cat_app.get('category', 'Tools'),
                 'description': _cat_app.get('description', ''),
                 'admin_only': _cat_app.get('admin_only', False),
-                'package': _cid,
             })
 
     # Filter by privileges
@@ -8921,14 +8470,9 @@ def get_apps():
     if user and user['role'] != 'admin':
         allowed = _user_allowed_apps(user['username'], user['role'])
         if allowed is not None:
-            # Has restrictions — filter apps
             apps = [a for a in apps if not a.get('admin_only') and a['id'] in allowed]
         else:
-            # No restrictions — show all except admin_only
             apps = [a for a in apps if not a.get('admin_only')]
-    else:
-        # Admin sees all
-        pass
 
     return jsonify(apps)
 

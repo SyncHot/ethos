@@ -6866,7 +6866,7 @@ async function renderSystemSettings(body) {
                     }
                     html += `<div class="ss-msg ss-msg-warn" style="margin-left:0">
                         <i class="fas fa-info-circle"></i>
-                        ${t('Self-signed certyfikat powoduje ostrzeżenie w przeglądarce. Dla produkcji użyj Let\\'s Encrypt poniżej.')}
+                        ${t('Self-signed certyfikat powoduje ostrzeżenie w przeglądarce. Dla produkcji użyj Let\'s Encrypt poniżej.')}
                     </div>`;
                 }
 
@@ -6893,7 +6893,7 @@ async function renderSystemSettings(body) {
                     </div>`;
                     if (!active) {
                         html += `<button class="ss-btn ss-btn-primary" id="ss-ssl-enable" style="margin-bottom:12px">
-                            <i class="fas fa-lock"></i> ${t('Włącz HTTPS (Let\\'s Encrypt)')}
+                            <i class="fas fa-lock"></i> ${t("Włącz HTTPS (Let's Encrypt)")}
                         </button>`;
                     }
                 }
@@ -6911,7 +6911,7 @@ async function renderSystemSettings(body) {
                         </button>
                     </div>`;
                 } else if (!hasCert) {
-                    html += `<div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">${t('Uzyskaj darmowy certyfikat Let\\'s Encrypt:')}</div>
+                    html += `<div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">${t("Uzyskaj darmowy certyfikat Let's Encrypt:")}</div>
                     <div class="ss-row">
                         <label>${t('Domena')}</label>
                         <input type="text" id="ss-ssl-domain" placeholder="nas.example.com" value="${esc(domain)}">
@@ -6929,7 +6929,7 @@ async function renderSystemSettings(body) {
                         <i class="fas fa-certificate"></i> ${t('Uzyskaj certyfikat')}
                     </button>`;
                 } else {
-                    html += `<div style="font-size:12px;color:var(--text-muted)">${t('Certyfikat Let\\'s Encrypt zainstalowany.')}</div>`;
+                    html += `<div style="font-size:12px;color:var(--text-muted)">${t("Certyfikat Let's Encrypt zainstalowany.")}</div>`;
                 }
                 html += `</div>`;
 

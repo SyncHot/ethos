@@ -2317,6 +2317,62 @@ function connectSocket() {
             }
         });
 
+        // ── App hot-load: install/uninstall without page refresh ──
+        NAS.socket.on('app_installed', (data) => {
+            if (!data || !data.id) return;
+            // Skip if already in NAS.apps
+            if (NAS.apps.some(a => a.id === data.id)) return;
+
+            const app = {
+                id: data.id,
+                name: data.name || data.id,
+                icon: data.icon || 'fa-puzzle-piece',
+                color: data.color || '#6b7280',
+                category: data.category || 'Tools',
+                description: data.description || '',
+                admin_only: data.admin_only || false,
+            };
+
+            // Dynamically load the app's JS file
+            if (data.js_file) {
+                const script = document.createElement('script');
+                script.src = 'js/apps/' + data.js_file + '?v=' + Date.now();
+                script.onload = () => {
+                    NAS.apps.push(app);
+                    renderMenuGrid();
+                    toast(t('{name} zainstalowano', { name: t(app.name) }), 'success');
+                };
+                script.onerror = () => {
+                    NAS.apps.push(app);
+                    renderMenuGrid();
+                    toast(t('{name} zainstalowano', { name: t(app.name) }), 'success');
+                };
+                document.body.appendChild(script);
+            } else {
+                NAS.apps.push(app);
+                renderMenuGrid();
+                toast(t('{name} zainstalowano', { name: t(app.name) }), 'success');
+            }
+        });
+
+        NAS.socket.on('app_uninstalled', (data) => {
+            if (!data || !data.id) return;
+            const idx = NAS.apps.findIndex(a => a.id === data.id);
+            if (idx === -1) return;
+            const app = NAS.apps[idx];
+            NAS.apps.splice(idx, 1);
+            renderMenuGrid();
+            // Remove from desktop icons if pinned
+            if (NAS.desktopAppIds) {
+                const dIdx = NAS.desktopAppIds.indexOf(data.id);
+                if (dIdx !== -1) {
+                    NAS.desktopAppIds.splice(dIdx, 1);
+                    renderDesktopIcons();
+                }
+            }
+            toast(t('{name} odinstalowano', { name: t(app.name) }), 'info');
+        });
+
         NAS.socket.on('notification_new', (data) => {
             NAS._notifCount = (NAS._notifCount || 0) + 1;
             _updateNotifBadge();
