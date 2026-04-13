@@ -117,17 +117,36 @@ def _check_fail2ban():
 
 def _check_https():
     env_file = os.path.join(os.path.dirname(__file__), '..', '..', 'ethos.env')
+    env = {}
     try:
         with open(env_file, 'r') as f:
             for line in f:
-                if line.strip().startswith('SSL_ENABLED=') and 'true' in line.lower():
-                    return {'id': 'https', 'severity': 'high', 'title': 'HTTPS wlaczone', 'passed': True}
+                line = line.strip()
+                if '=' in line and not line.startswith('#'):
+                    k, v = line.split('=', 1)
+                    env[k.strip()] = v.strip().strip("'\"")
     except FileNotFoundError:
         pass
+
+    ssl_enabled = env.get('SSL_ENABLED', '') in ('1', 'true')
+    if ssl_enabled:
+        return {'id': 'https', 'severity': 'medium', 'title': 'HTTPS wlaczone (Let\'s Encrypt)', 'passed': True}
+
+    # Check for self-signed cert (auto-generated at firstboot)
+    ssl_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'ssl')
+    has_self_signed = os.path.exists(os.path.join(ssl_dir, 'ethos.crt'))
+    if has_self_signed:
+        return {
+            'id': 'https', 'severity': 'medium',
+            'title': 'HTTPS dostepne (self-signed)',
+            'description': 'HTTPS dostepne na porcie 9443 z certyfikatem self-signed. Dla produkcji rozważ Let\'s Encrypt.',
+            'passed': True,
+        }
+
     return {
-        'id': 'https', 'severity': 'high',
-        'title': 'HTTPS wylaczone',
-        'description': 'Polaczenia nie sa szyfrowane. Skonfiguruj certyfikat SSL/TLS.',
+        'id': 'https', 'severity': 'medium',
+        'title': 'HTTPS niedostepne',
+        'description': 'Brak certyfikatu SSL. Rozważ włączenie HTTPS jesli NAS jest dostepny z internetu.',
         'fixable': False, 'passed': False,
         'link_app': 'system-settings', 'link_label': 'Ustawienia > Siec',
     }
@@ -135,7 +154,7 @@ def _check_https():
 
 def _check_open_ports():
     r = host_run("ss -tlnp 2>/dev/null | tail -n +2", timeout=10)
-    expected = {'22', '80', '443', '9000', '445', '139', '631', '53', '51820', '5353'}
+    expected = {'22', '80', '443', '9000', '9443', '445', '139', '631', '53', '51820', '5353'}
     unexpected = []
     for line in (r.stdout or '').splitlines():
         m = re.search(r':(\d+)\s', line)

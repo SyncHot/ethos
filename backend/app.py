@@ -10670,9 +10670,18 @@ if __name__ == '__main__':
     https_port = int(os.environ.get('HTTPS_PORT', '443'))
     ssl_redirect = os.environ.get('SSL_REDIRECT', '0') == '1'
 
+    # Auto-detect self-signed cert from firstboot (data/ssl/ethos.crt)
+    if not ssl_cert:
+        _auto_cert = os.path.join(ETHOS_ROOT, 'data', 'ssl', 'ethos.crt')
+        _auto_key = os.path.join(ETHOS_ROOT, 'data', 'ssl', 'ethos.key')
+        if os.path.exists(_auto_cert) and os.path.exists(_auto_key):
+            ssl_cert = _auto_cert
+            ssl_key = _auto_key
+
     run_kwargs = dict(host='0.0.0.0', debug=False, allow_unsafe_werkzeug=False)
 
     if ssl_enabled and ssl_cert and ssl_key and os.path.exists(ssl_cert) and os.path.exists(ssl_key):
+        # Full HTTPS mode (Let's Encrypt) — HTTPS as primary
         run_kwargs['port'] = https_port
         run_kwargs['certfile'] = ssl_cert
         run_kwargs['keyfile'] = ssl_key
@@ -10705,7 +10714,31 @@ if __name__ == '__main__':
             t = threading.Thread(target=_run_redirect, daemon=True)
             t.start()
     else:
+        # HTTP primary mode
         run_kwargs['port'] = PORT
-        print(f'\n  EthOS running on http://0.0.0.0:{PORT}\n')
+        print(f'\n  EthOS running on http://0.0.0.0:{PORT}')
+
+        # If self-signed cert exists, also start HTTPS alongside on port 9443
+        _https_side_port = int(os.environ.get('HTTPS_SIDE_PORT', '9443'))
+        if ssl_cert and ssl_key and os.path.exists(ssl_cert) and os.path.exists(ssl_key):
+            import ssl as _ssl_mod
+
+            def _run_https_side():
+                """Run a secondary HTTPS listener using eventlet/gevent WSGIServer."""
+                try:
+                    from gevent.pywsgi import WSGIServer
+                    ctx = _ssl_mod.SSLContext(_ssl_mod.PROTOCOL_TLS_SERVER)
+                    ctx.load_cert_chain(ssl_cert, ssl_key)
+                    ctx.minimum_version = _ssl_mod.TLSVersion.TLSv1_2
+                    server = WSGIServer(('0.0.0.0', _https_side_port), app, ssl_context=ctx, log=None)
+                    print(f'  HTTPS also available on https://0.0.0.0:{_https_side_port}  (self-signed)\n')
+                    server.serve_forever()
+                except Exception as e:
+                    print(f'  [warn] Could not start HTTPS side listener: {e}\n')
+
+            import gevent as _gv
+            _gv.spawn(_run_https_side)
+        else:
+            print()
 
     socketio.run(app, **run_kwargs)

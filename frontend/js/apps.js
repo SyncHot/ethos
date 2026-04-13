@@ -7235,23 +7235,51 @@ async function renderSystemSettings(body) {
                 const s = await api('/settings/ssl/status');
                 const active = s.ssl_active;
                 const hasCert = !!s.cert;
+                const selfSigned = s.self_signed;
                 const certbot = s.certbot_installed;
                 const domain = s.config?.domain || '';
                 const port = s.https_port || 443;
+                const sidePort = s.https_side_port || 9443;
 
                 let html = '';
-                // Status card
-                html += `<div class="ss-ssl-card">
-                    <div class="ss-ssl-status">
-                        <div class="ss-ssl-dot" style="background:${active ? '#22c55e' : '#ef4444'}"></div>
-                        <div>
-                            <div style="font-size:13px;font-weight:600">${active ? t('HTTPS aktywne') : t('HTTPS nieaktywne')}</div>
-                            <div class="ss-ssl-info">${active ? t('Port') + ': ' + port + (domain ? ' — ' + esc(domain) : '') : t('Połączenia nie są szyfrowane')}</div>
+
+                // Self-signed status (always-on HTTPS alongside HTTP)
+                if (selfSigned && !active) {
+                    const ssInfo = s.self_signed_cert;
+                    html += `<div class="ss-ssl-card">
+                        <div class="ss-ssl-status">
+                            <div class="ss-ssl-dot" style="background:#3b82f6"></div>
+                            <div>
+                                <div style="font-size:13px;font-weight:600">${t('HTTPS dostępne')} <span style="font-size:11px;color:var(--text-muted)">(self-signed)</span></div>
+                                <div class="ss-ssl-info">${t('Port')}: ${sidePort} — ${t('certyfikat wygenerowany automatycznie przy instalacji')}</div>
+                            </div>
                         </div>
-                    </div>
-                    ${active ? `<button class="ss-btn ss-btn-danger ss-btn-small" id="ss-ssl-disable"><i class="fas fa-times"></i> ${t('Wyłącz')}</button>`
-                             : (hasCert ? `<button class="ss-btn ss-btn-primary ss-btn-small" id="ss-ssl-enable"><i class="fas fa-lock"></i> ${t('Włącz HTTPS')}</button>` : '')}
-                </div>`;
+                    </div>`;
+                    if (ssInfo) {
+                        html += `<div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
+                            <i class="fas fa-shield-alt" style="margin-right:4px"></i>
+                            ${esc(ssInfo.subject || 'ethos.local')} — ${t('ważny do')} <strong>${esc(ssInfo.not_after || '?')}</strong>
+                        </div>`;
+                    }
+                    html += `<div class="ss-msg ss-msg-warn" style="margin-left:0">
+                        <i class="fas fa-info-circle"></i>
+                        ${t('Self-signed certyfikat powoduje ostrzeżenie w przeglądarce. Dla produkcji użyj Let\\'s Encrypt poniżej.')}
+                    </div>`;
+                }
+
+                // Let's Encrypt status card
+                if (active) {
+                    html += `<div class="ss-ssl-card">
+                        <div class="ss-ssl-status">
+                            <div class="ss-ssl-dot" style="background:#22c55e"></div>
+                            <div>
+                                <div style="font-size:13px;font-weight:600">${t('HTTPS aktywne')} (Let's Encrypt)</div>
+                                <div class="ss-ssl-info">${t('Port')}: ${port}${domain ? ' — ' + esc(domain) : ''}</div>
+                            </div>
+                        </div>
+                        <button class="ss-btn ss-btn-danger ss-btn-small" id="ss-ssl-disable"><i class="fas fa-times"></i> ${t('Wyłącz')}</button>
+                    </div>`;
+                }
 
                 if (hasCert && s.cert) {
                     html += `<div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
@@ -7260,7 +7288,16 @@ async function renderSystemSettings(body) {
                         — ${t('ważny do')} <strong>${esc(s.cert.not_after || '?')}</strong>
                         ${s.cert.issuer ? '('+esc(s.cert.issuer)+')' : ''}
                     </div>`;
+                    if (!active) {
+                        html += `<button class="ss-btn ss-btn-primary" id="ss-ssl-enable" style="margin-bottom:12px">
+                            <i class="fas fa-lock"></i> ${t('Włącz HTTPS (Let\\'s Encrypt)')}
+                        </button>`;
+                    }
                 }
+
+                // Let's Encrypt setup section
+                html += `<div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border,#334155)">
+                    <div style="font-size:13px;font-weight:600;margin-bottom:10px"><i class="fas fa-certificate" style="margin-right:6px;opacity:.6"></i> Let's Encrypt</div>`;
 
                 if (!certbot) {
                     html += `<div class="ss-msg ss-msg-warn" style="margin-left:0">
@@ -7271,26 +7308,27 @@ async function renderSystemSettings(body) {
                         </button>
                     </div>`;
                 } else if (!hasCert) {
-                    html += `<div class="ss-group" style="margin-top:12px">
-                        <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">${t('Uzyskaj darmowy certyfikat Let\\'s Encrypt:')}</div>
-                        <div class="ss-row">
-                            <label>${t('Domena')}</label>
-                            <input type="text" id="ss-ssl-domain" placeholder="nas.example.com" value="${esc(domain)}">
-                        </div>
-                        <div class="ss-row">
-                            <label>${t('E-mail')}</label>
-                            <input type="email" id="ss-ssl-email" placeholder="admin@example.com" value="${esc(s.config?.email || '')}">
-                        </div>
-                        <div class="ss-row">
-                            <label>${t('Port HTTPS')}</label>
-                            <input type="number" id="ss-ssl-port" value="${port}" min="1" max="65535">
-                        </div>
-                        <div class="ss-hint" style="margin-left:0">${t('Domena musi wskazywać na ten serwer (port 80 musi być dostępny)')}</div>
-                        <button class="ss-btn ss-btn-primary" id="ss-ssl-obtain">
-                            <i class="fas fa-certificate"></i> ${t('Uzyskaj certyfikat')}
-                        </button>
-                    </div>`;
+                    html += `<div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">${t('Uzyskaj darmowy certyfikat Let\\'s Encrypt:')}</div>
+                    <div class="ss-row">
+                        <label>${t('Domena')}</label>
+                        <input type="text" id="ss-ssl-domain" placeholder="nas.example.com" value="${esc(domain)}">
+                    </div>
+                    <div class="ss-row">
+                        <label>${t('E-mail')}</label>
+                        <input type="email" id="ss-ssl-email" placeholder="admin@example.com" value="${esc(s.config?.email || '')}">
+                    </div>
+                    <div class="ss-row">
+                        <label>${t('Port HTTPS')}</label>
+                        <input type="number" id="ss-ssl-port" value="${port}" min="1" max="65535">
+                    </div>
+                    <div class="ss-hint" style="margin-left:0">${t('Domena musi wskazywać na ten serwer (port 80 musi być dostępny)')}</div>
+                    <button class="ss-btn ss-btn-primary" id="ss-ssl-obtain">
+                        <i class="fas fa-certificate"></i> ${t('Uzyskaj certyfikat')}
+                    </button>`;
+                } else {
+                    html += `<div style="font-size:12px;color:var(--text-muted)">${t('Certyfikat Let\\'s Encrypt zainstalowany.')}</div>`;
                 }
+                html += `</div>`;
 
                 box.innerHTML = html;
 

@@ -344,10 +344,17 @@ def _cert_info(domain):
     fullchain, privkey = _cert_paths(domain)
     if not os.path.exists(fullchain):
         return None
+    return _cert_info_file(fullchain, privkey=privkey, domain=domain)
+
+
+def _cert_info_file(cert_path, privkey=None, domain=None):
+    """Get certificate info from a file path."""
+    if not os.path.exists(cert_path):
+        return None
     try:
         r = _host_run(
             f'openssl x509 -noout -subject -issuer -dates -serial '
-            f'-in {shlex.quote(fullchain)}',
+            f'-in {shlex.quote(cert_path)}',
             timeout=10)
         if r.returncode != 0:
             return None
@@ -377,9 +384,11 @@ def _cert_info(domain):
                         info['days_left'] = (dt - datetime.utcnow()).days
                 except Exception:
                     pass
-        info['fullchain'] = fullchain
-        info['privkey'] = privkey
-        info['domain'] = domain
+        info['fullchain'] = cert_path
+        if privkey:
+            info['privkey'] = privkey
+        if domain:
+            info['domain'] = domain
         return info
     except Exception:
         return None
@@ -419,6 +428,15 @@ def ssl_status():
     env = _read_env()
     result['ssl_active'] = env.get('SSL_ENABLED', '') == '1'
     result['https_port'] = int(env.get('HTTPS_PORT', cfg.get('https_port', 443)))
+
+    # Check for self-signed cert (auto-generated at firstboot)
+    ssl_dir = _data_path('ssl')
+    self_signed_crt = os.path.join(ssl_dir, 'ethos.crt')
+    self_signed_key = os.path.join(ssl_dir, 'ethos.key')
+    result['self_signed'] = os.path.exists(self_signed_crt) and os.path.exists(self_signed_key)
+    if result['self_signed'] and not result['cert']:
+        result['self_signed_cert'] = _cert_info_file(self_signed_crt)
+    result['https_side_port'] = int(os.environ.get('HTTPS_SIDE_PORT', '9443'))
 
     return jsonify(result)
 
