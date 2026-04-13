@@ -143,7 +143,7 @@ CORE_APPS = frozenset({
     'system-settings', 'users', 'updates', 'app-store', 'packages',
     'event-log', 'network', 'services', 'resource-monitor', 'backup',
     'power', 'notifications', 'ssh-manager', 'naslink',
-    'firewall', 'fail2ban',
+    'firewall', 'fail2ban', 'security-advisor',
 })
 
 # ─── Frontend filename map ────────────────────────────────────
@@ -224,7 +224,6 @@ _OPTIONAL_BLUEPRINTS = {
     'photos-ai':       ('photos_ai',       'photos_ai_bp',      None,                True),
     'video-station':   ('video_station',   'video_station_bp',  '_start_hls_cleanup_loop', True),
     'radio-music':     ('radio_music',     'radio_music_bp',    None,                True),
-    'security-advisor':('security_advisor','security_advisor_bp', None,              False),
 }
 
 # Public alias

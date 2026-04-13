@@ -215,7 +215,8 @@ function renderVMManager(body) {
             if (running && net.net_type === 'user' && net.port_forwards?.length) {
                 quickLinks = net.port_forwards.map(pf => {
                     const lbl = pf.label ? esc(pf.label) : `${pf.guest}`;
-                    return `<a href="http://${_vmHost}:${pf.host}" target="_blank" class="vm-link-chip" style="padding:3px 8px;font-size:11px" title="${pf.proto} :${pf.host}→:${pf.guest}" onclick="event.stopPropagation()"><i class="fas fa-external-link-alt"></i> ${lbl} :${pf.host}</a>`;
+                    const proto = [443, 8443, 9443].includes(pf.guest) ? 'https' : 'http';
+                    return `<a href="${proto}://${_vmHost}:${pf.host}" target="_blank" class="vm-link-chip" style="padding:3px 8px;font-size:11px" title="${pf.proto} :${pf.host}→:${pf.guest}" onclick="event.stopPropagation()"><i class="fas fa-external-link-alt"></i> ${lbl} :${pf.host}</a>`;
                 }).join(' ');
             }
             return `<tr class="vm-row" data-id="${esc(vm.id)}">
@@ -878,7 +879,8 @@ function renderVMManager(body) {
             const links = [];
             if (net.net_type === 'user' && net.port_forwards?.length) {
                 for (const pf of net.port_forwards) {
-                    const url = `http://${host}:${pf.host}`;
+                    const proto = [443, 8443, 9443].includes(pf.guest) ? 'https' : 'http';
+                    const url = `${proto}://${host}:${pf.host}`;
                     const label = pf.label ? esc(pf.label) : `${pf.proto}/${pf.guest}`;
                     links.push(`<a href="${esc(url)}" target="_blank" class="vm-link-chip" title="${esc(pf.proto)} host:${pf.host} → guest:${pf.guest}"><i class="fas fa-external-link-alt"></i> ${label} <span class="vm-link-port">:${pf.host}</span></a>`);
                 }

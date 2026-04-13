@@ -1550,6 +1550,7 @@ def start_vm(vm_id):
 
         scsi_idx = 0
         sata_idx = 0
+        boot_offset = 1 if has_disk_boot_image else 0
         for i, disk in enumerate(disks):
             df = disk.get('file', '')
             if not df or not os.path.exists(df):
@@ -1558,10 +1559,7 @@ def start_vm(vm_id):
             did = disk.get('id', f'disk{i}')
             bus = disk.get('bus', 'virtio')
             cmd += ['-drive', f'file={df},format={dfmt},if=none,id={did}']
-            boot_str = ''
-            if i == 0:
-                boot_idx = 1 if has_disk_boot_image else 0
-                boot_str = f',bootindex={boot_idx}'
+            boot_str = f',bootindex={i + boot_offset}'
             if bus == 'scsi':
                 cmd += ['-device', f'scsi-hd,bus=scsi0.0,drive={did},lun={scsi_idx}{boot_str}']
                 scsi_idx += 1
