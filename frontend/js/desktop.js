@@ -541,13 +541,39 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
     const username = (document.getElementById('login-username')?.value || '').trim();
     const pw = document.getElementById('login-password').value;
     const errEl = document.getElementById('login-error');
+    const totpInput = document.getElementById('login-totp');
+    const totpCode = totpInput ? totpInput.value.trim() : '';
     if (!pw) { errEl.textContent = t('Podaj hasło'); return; }
     try {
+        const loginBody = { username, password: pw };
+        if (totpCode) loginBody.totp_code = totpCode;
         const data = await fetch('/api/auth/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password: pw })
+            body: JSON.stringify(loginBody)
         }).then(r => r.json());
+
+        if (data.totp_required) {
+            // Show 2FA input
+            let totpRow = document.getElementById('login-totp-row');
+            if (!totpRow) {
+                totpRow = document.createElement('div');
+                totpRow.id = 'login-totp-row';
+                totpRow.style.cssText = 'margin-top:10px';
+                totpRow.innerHTML = `<input type="text" id="login-totp" maxlength="8" inputmode="numeric"
+                    placeholder="${t('Kod 2FA lub backup')}" autocomplete="one-time-code"
+                    style="width:100%;box-sizing:border-box;padding:10px 14px;border:1px solid var(--border,#334155);border-radius:8px;
+                    background:var(--bg-input,#0f172a);color:var(--text);font-size:16px;font-weight:600;
+                    letter-spacing:3px;text-align:center;outline:none;font-family:monospace">`;
+                const form = document.getElementById('login-form');
+                const submitBtn = form.querySelector('button[type="submit"]');
+                form.insertBefore(totpRow, submitBtn);
+            }
+            errEl.textContent = t('Wpisz kod z aplikacji Authenticator');
+            errEl.style.color = '#3b82f6';
+            document.getElementById('login-totp').focus();
+            return;
+        }
 
         if (data.token) {
             NAS.token = data.token;
@@ -557,6 +583,8 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
             NAS.csrfToken = data.csrf_token; // Store CSRF token
             localStorage.setItem('nas_token', data.token);
             errEl.textContent = '';
+            // Clean up TOTP row if present
+            document.getElementById('login-totp-row')?.remove();
             if (data.password_change_required) {
                 showPasswordChangeModal();
             } else {
@@ -564,6 +592,7 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
             }
         } else {
             errEl.textContent = data.error || t('Błąd logowania');
+            errEl.style.color = '';
             document.getElementById('login-password').classList.add('shake');
             setTimeout(() => document.getElementById('login-password').classList.remove('shake'), 500);
         }

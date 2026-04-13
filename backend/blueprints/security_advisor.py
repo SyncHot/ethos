@@ -43,8 +43,14 @@ def _check_default_admin_password():
 def _check_2fa_admin():
     r = host_run("getent group sudo ethos-admin 2>/dev/null | cut -d: -f4 | tr ',' '\\n' | sort -u", timeout=5)
     admins = [u.strip() for u in (r.stdout or '').split('\n') if u.strip()]
-    totp_dir = data_path('totp')
-    missing = [a for a in admins if not os.path.exists(os.path.join(totp_dir, f'{a}.json'))]
+    secrets_file = data_path('totp_secrets.json')
+    try:
+        import json as _json
+        with open(secrets_file, 'r') as f:
+            secrets = _json.load(f)
+    except (FileNotFoundError, ValueError):
+        secrets = {}
+    missing = [a for a in admins if not (secrets.get(a, {}).get('enabled'))]
     if missing:
         return {
             'id': '2fa_admin', 'severity': 'high',

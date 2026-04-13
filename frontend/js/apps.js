@@ -6320,6 +6320,20 @@ async function renderSystemSettings(body) {
 
         /* Language selector */
         .ss-lang-select { flex:1; position:relative; }
+
+        /* 2FA Setup */
+        .ss-2fa-setup { padding:4px 0; }
+        .ss-2fa-step { font-size:13px; font-weight:600; color:var(--text-primary); margin:8px 0 6px; }
+        .ss-2fa-qr { text-align:center; padding:8px 0; }
+        .ss-2fa-input { width:120px; padding:10px 14px; border:1px solid var(--border,#334155); border-radius:8px;
+                   background:var(--bg-input,#0f172a); color:var(--text); font-size:18px; font-weight:600;
+                   letter-spacing:4px; text-align:center; outline:none; font-family:monospace; }
+        .ss-2fa-input:focus { border-color:#3b82f6; }
+        .ss-2fa-input::placeholder { letter-spacing:2px; font-weight:400; opacity:.4; }
+        .ss-2fa-backup { display:flex; flex-wrap:wrap; gap:6px; padding:8px 0; }
+        .ss-2fa-backup-code { display:inline-block; background:var(--bg-hover,#1e293b); border:1px solid var(--border,#334155);
+                   border-radius:6px; padding:5px 10px; font-family:monospace; font-size:13px; font-weight:600;
+                   color:var(--text-primary); user-select:all; letter-spacing:1px; }
         .ss-lang-btn { width:100%; padding:8px 12px; border:1px solid var(--border,#334155); border-radius:8px;
                    background:var(--bg-input,#0f172a); color:var(--text); font-size:13px; cursor:pointer;
                    display:flex; align-items:center; gap:8px; transition:border .15s; }
@@ -6507,6 +6521,14 @@ async function renderSystemSettings(body) {
                     <button class="ss-btn ss-btn-warn" id="ss-change-pw">
                         <i class="fas fa-key"></i> ${t('Zmień hasło')}
                     </button>
+                </div>
+
+                <div class="ss-group" style="margin-top:24px">
+                    <div class="ss-group-title">${t('Uwierzytelnianie dwuskładnikowe (2FA)')}</div>
+                    <div id="ss-2fa-msg"></div>
+                    <div id="ss-2fa-content">
+                        <div style="text-align:center;padding:12px;color:var(--text-muted)"><i class="fas fa-spinner fa-spin"></i></div>
+                    </div>
                 </div>
             </div>
         `;
@@ -7203,6 +7225,119 @@ async function renderSystemSettings(body) {
             btn.disabled = false;
             btn.innerHTML = `<i class="fas fa-key"></i> ${t('Zmień hasło')}`;
         });
+
+        // -- 2FA Setup --
+        const _2faContent = wrap.querySelector('#ss-2fa-content');
+        const _2faMsg = wrap.querySelector('#ss-2fa-msg');
+
+        async function _2faLoad() {
+            try {
+                const st = await api('/totp/status');
+                if (st.enabled) {
+                    _2faContent.innerHTML = `
+                        <div style="display:flex;align-items:center;gap:12px;padding:10px 0">
+                            <i class="fas fa-check-circle" style="font-size:22px;color:#22c55e"></i>
+                            <div>
+                                <div style="font-weight:600;font-size:14px;color:var(--text-primary)">${t('2FA jest włączone')}</div>
+                                <div style="font-size:12px;color:var(--text-secondary);margin-top:2px">${t('Twoje konto jest chronione kodem jednorazowym z aplikacji Authenticator')}</div>
+                            </div>
+                        </div>
+                        <div class="ss-actions">
+                            <button class="ss-btn ss-btn-danger" id="ss-2fa-disable"><i class="fas fa-times-circle"></i> ${t('Wyłącz 2FA')}</button>
+                        </div>`;
+                    wrap.querySelector('#ss-2fa-disable').onclick = () => _2faDisableFlow();
+                } else {
+                    _2faContent.innerHTML = `
+                        <div style="display:flex;align-items:center;gap:12px;padding:10px 0">
+                            <i class="fas fa-shield-alt" style="font-size:22px;color:var(--text-muted)"></i>
+                            <div>
+                                <div style="font-weight:600;font-size:14px;color:var(--text-primary)">${t('2FA nie jest włączone')}</div>
+                                <div style="font-size:12px;color:var(--text-secondary);margin-top:2px">${t('Dodaj dodatkową warstwę ochrony za pomocą aplikacji Google Authenticator, Authy itp.')}</div>
+                            </div>
+                        </div>
+                        <div class="ss-actions">
+                            <button class="ss-btn ss-btn-primary" id="ss-2fa-enable"><i class="fas fa-qrcode"></i> ${t('Włącz 2FA')}</button>
+                        </div>`;
+                    wrap.querySelector('#ss-2fa-enable').onclick = () => _2faSetupFlow();
+                }
+            } catch {
+                _2faContent.innerHTML = `<div class="ss-msg ss-msg-err"><i class="fas fa-exclamation-circle"></i> ${t('Nie udało się sprawdzić statusu 2FA')}</div>`;
+            }
+        }
+
+        async function _2faSetupFlow() {
+            _2faMsg.innerHTML = '';
+            _2faContent.innerHTML = `<div style="text-align:center;padding:16px;color:var(--text-muted)"><i class="fas fa-spinner fa-spin"></i> ${t('Generowanie klucza...')}</div>`;
+            try {
+                const setup = await api('/totp/setup', { method: 'POST' });
+                if (setup.error) { _2faMsg.innerHTML = `<div class="ss-msg ss-msg-err"><i class="fas fa-exclamation-circle"></i> ${esc(setup.error)}</div>`; _2faLoad(); return; }
+                _2faContent.innerHTML = `
+                    <div class="ss-2fa-setup">
+                        <div class="ss-2fa-step">${t('1. Zeskanuj kod QR w aplikacji Authenticator')}</div>
+                        <div class="ss-2fa-qr"><img src="${setup.qr_code_base64}" alt="QR" style="max-width:200px;border-radius:8px;background:#fff;padding:8px"></div>
+                        <div class="ss-hint" style="text-align:center;margin:4px 0 12px">${t('Lub wpisz ręcznie klucz:')} <code style="font-size:12px;background:var(--bg-hover);padding:2px 6px;border-radius:4px;user-select:all">${esc(setup.secret)}</code></div>
+                        <div class="ss-2fa-step">${t('2. Wpisz 6-cyfrowy kod z aplikacji')}</div>
+                        <div style="display:flex;gap:8px;align-items:center;margin:8px 0">
+                            <input type="text" id="ss-2fa-code" class="ss-2fa-input" maxlength="6" inputmode="numeric" pattern="[0-9]*" placeholder="000000" autocomplete="one-time-code">
+                            <button class="ss-btn ss-btn-primary" id="ss-2fa-verify"><i class="fas fa-check"></i> ${t('Weryfikuj')}</button>
+                            <button class="ss-btn" id="ss-2fa-cancel">${t('Anuluj')}</button>
+                        </div>
+                        <div class="ss-2fa-step" style="margin-top:16px">${t('3. Zapisz kody awaryjne (backup)')}</div>
+                        <div class="ss-2fa-backup">${setup.backup_codes.map(c => `<span class="ss-2fa-backup-code">${c}</span>`).join('')}</div>
+                        <div class="ss-hint" style="margin-top:6px"><i class="fas fa-exclamation-triangle" style="color:#f59e0b"></i> ${t('Każdy kod można użyć tylko raz. Zapisz je w bezpiecznym miejscu.')}</div>
+                    </div>`;
+                const codeInput = wrap.querySelector('#ss-2fa-code');
+                codeInput.focus();
+                codeInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') wrap.querySelector('#ss-2fa-verify').click(); });
+                wrap.querySelector('#ss-2fa-cancel').onclick = () => _2faLoad();
+                wrap.querySelector('#ss-2fa-verify').onclick = async () => {
+                    const code = codeInput.value.trim();
+                    if (!/^\d{6}$/.test(code)) { _2faMsg.innerHTML = `<div class="ss-msg ss-msg-err"><i class="fas fa-exclamation-circle"></i> ${t('Wpisz 6-cyfrowy kod')}</div>`; return; }
+                    _2faMsg.innerHTML = '';
+                    const r = await api('/totp/verify', { method: 'POST', body: { code } });
+                    if (r.ok) {
+                        _2faMsg.innerHTML = `<div class="ss-msg ss-msg-ok"><i class="fas fa-check-circle"></i> ${t('2FA zostało włączone!')}</div>`;
+                        _2faLoad();
+                    } else {
+                        _2faMsg.innerHTML = `<div class="ss-msg ss-msg-err"><i class="fas fa-exclamation-circle"></i> ${esc(r.error || t('Nieprawidłowy kod'))}</div>`;
+                    }
+                };
+            } catch (e) {
+                _2faMsg.innerHTML = `<div class="ss-msg ss-msg-err"><i class="fas fa-exclamation-circle"></i> ${esc(e.message)}</div>`;
+                _2faLoad();
+            }
+        }
+
+        async function _2faDisableFlow() {
+            _2faMsg.innerHTML = '';
+            _2faContent.innerHTML = `
+                <div style="padding:10px 0">
+                    <div style="font-size:13px;color:var(--text-secondary);margin-bottom:10px">${t('Wpisz kod z aplikacji Authenticator lub kod awaryjny, aby wyłączyć 2FA.')}</div>
+                    <div style="display:flex;gap:8px;align-items:center">
+                        <input type="text" id="ss-2fa-dis-code" class="ss-2fa-input" maxlength="8" inputmode="numeric" placeholder="${t('Kod 2FA lub backup')}" autocomplete="one-time-code">
+                        <button class="ss-btn ss-btn-danger" id="ss-2fa-dis-confirm"><i class="fas fa-times-circle"></i> ${t('Wyłącz')}</button>
+                        <button class="ss-btn" id="ss-2fa-dis-cancel">${t('Anuluj')}</button>
+                    </div>
+                </div>`;
+            const inp = wrap.querySelector('#ss-2fa-dis-code');
+            inp.focus();
+            inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') wrap.querySelector('#ss-2fa-dis-confirm').click(); });
+            wrap.querySelector('#ss-2fa-dis-cancel').onclick = () => _2faLoad();
+            wrap.querySelector('#ss-2fa-dis-confirm').onclick = async () => {
+                const val = inp.value.trim();
+                if (!val) { _2faMsg.innerHTML = `<div class="ss-msg ss-msg-err"><i class="fas fa-exclamation-circle"></i> ${t('Wpisz kod')}</div>`; return; }
+                const body = val.length === 6 ? { code: val } : { backup_code: val };
+                const r = await api('/totp/disable', { method: 'POST', body });
+                if (r.ok) {
+                    _2faMsg.innerHTML = `<div class="ss-msg ss-msg-ok"><i class="fas fa-check-circle"></i> ${t('2FA zostało wyłączone')}</div>`;
+                    _2faLoad();
+                } else {
+                    _2faMsg.innerHTML = `<div class="ss-msg ss-msg-err"><i class="fas fa-exclamation-circle"></i> ${esc(r.error || t('Nieprawidłowy kod'))}</div>`;
+                }
+            };
+        }
+
+        _2faLoad();
 
         // -- Event: Factory Reset confirm input --
         const resetInput = wrap.querySelector('#ss-reset-input');
