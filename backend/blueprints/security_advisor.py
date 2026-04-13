@@ -36,6 +36,7 @@ def _check_default_admin_password():
             'title': 'Domyslne haslo administratora',
             'description': 'Haslo administratora nie zostalo zmienione od instalacji. Zmien je natychmiast.',
             'fixable': False, 'passed': False,
+            'link_app': 'system-settings', 'link_label': 'Ustawienia > Bezpieczenstwo',
         }
     return {'id': 'default_password', 'severity': 'critical', 'title': 'Haslo administratora zmienione', 'passed': True}
 
@@ -57,6 +58,7 @@ def _check_2fa_admin():
             'title': '2FA nie wlaczone dla administratorow',
             'description': f'Administratorzy bez 2FA: {", ".join(missing)}.',
             'fixable': False, 'passed': False,
+            'link_app': 'system-settings', 'link_label': 'Ustawienia > Bezpieczenstwo',
         }
     return {'id': '2fa_admin', 'severity': 'high', 'title': '2FA wlaczone dla administratorow', 'passed': True}
 

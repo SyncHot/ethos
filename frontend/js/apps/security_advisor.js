@@ -94,13 +94,16 @@ function _saRenderResults(body, data) {
         const fixBtn = (!c.passed && c.fixable && c.fix_action)
             ? `<button class="btn btn-small btn-primary sa-fix-btn" data-action="${c.fix_action}"><i class="fas fa-wrench"></i> ${t('Napraw')}</button>`
             : '';
+        const linkBtn = (!c.passed && c.link_app)
+            ? `<button class="btn btn-small sa-link-btn" data-app="${c.link_app}"><i class="fas fa-external-link-alt"></i> ${c.link_label || t('Otwórz')}</button>`
+            : '';
         html += `<div class="sa-check ${c.passed ? 'sa-passed' : 'sa-failed'}">
             <i class="fas ${icon}" style="color:${color}"></i>
             <div class="sa-check-content">
                 <div class="sa-check-title">${c.title} ${badge}</div>
                 ${desc}
             </div>
-            ${fixBtn}
+            ${fixBtn}${linkBtn}
         </div>`;
     }
     container.innerHTML = html;
@@ -127,6 +130,14 @@ function _saRenderResults(body, data) {
                 btn.disabled = false;
                 btn.innerHTML = `<i class="fas fa-wrench"></i> ${t('Napraw')}`;
             }
+        };
+    });
+
+    container.querySelectorAll('.sa-link-btn').forEach(btn => {
+        btn.onclick = () => {
+            const appId = btn.dataset.app;
+            const appDef = (NAS.apps || []).find(a => a.id === appId);
+            if (appDef) openApp(appDef);
         };
     });
 }
