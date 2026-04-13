@@ -129,6 +129,7 @@ def _check_https():
         'title': 'HTTPS wylaczone',
         'description': 'Polaczenia nie sa szyfrowane. Skonfiguruj certyfikat SSL/TLS.',
         'fixable': False, 'passed': False,
+        'link_app': 'system-settings', 'link_label': 'Ustawienia > Siec',
     }
 
 
@@ -235,6 +236,7 @@ def _check_auto_updates():
         'id': 'auto_update', 'severity': 'low',
         'title': 'Auto-aktualizacje wylaczone',
         'fixable': False, 'passed': False,
+        'link_app': 'system-settings', 'link_label': 'Ustawienia > Ogolne',
     }
 
 

@@ -6360,6 +6360,23 @@ async function renderSystemSettings(body) {
             .ss-info-grid { grid-template-columns:1fr; }
             .ss-pw-strength { margin-left:0; }
         }
+
+        /* Toggle switch */
+        .ss-toggle { position:relative; width:44px; height:24px; flex-shrink:0; }
+        .ss-toggle input { opacity:0; width:0; height:0; }
+        .ss-toggle-slider { position:absolute; cursor:pointer; top:0; left:0; right:0; bottom:0;
+                   background:var(--border,#334155); border-radius:24px; transition:.2s; }
+        .ss-toggle-slider:before { content:''; position:absolute; height:18px; width:18px; left:3px; bottom:3px;
+                   background:#fff; border-radius:50%; transition:.2s; }
+        .ss-toggle input:checked + .ss-toggle-slider { background:#3b82f6; }
+        .ss-toggle input:checked + .ss-toggle-slider:before { transform:translateX(20px); }
+
+        /* SSL card */
+        .ss-ssl-card { background:var(--bg-card,#1e293b); border-radius:10px; padding:16px 20px; margin-bottom:12px;
+                   display:flex; align-items:center; justify-content:space-between; gap:14px; }
+        .ss-ssl-status { display:flex; align-items:center; gap:10px; }
+        .ss-ssl-dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+        .ss-ssl-info { font-size:12px; color:var(--text-muted); margin-top:2px; }
     `;
     body.appendChild(style);
 
@@ -6467,6 +6484,20 @@ async function renderSystemSettings(body) {
                         <i class="fas fa-save"></i> ${t('Zapisz zmiany')}
                     </button>
                 </div>
+
+                <div class="ss-group" style="margin-top:24px">
+                    <div class="ss-group-title">${t('Automatyczne aktualizacje')}</div>
+                    <div style="display:flex;align-items:center;gap:14px;">
+                        <label class="ss-toggle">
+                            <input type="checkbox" id="ss-auto-update" ${settings.auto_update ? 'checked' : ''}>
+                            <span class="ss-toggle-slider"></span>
+                        </label>
+                        <div>
+                            <div style="font-size:13px;font-weight:500">${t('Aktualizuj system automatycznie')}</div>
+                            <div style="font-size:11px;color:var(--text-muted);margin-top:2px">${t('System będzie automatycznie pobierał i instalował aktualizacje bezpieczeństwa')}</div>
+                        </div>
+                    </div>
+                </div>
             </div>
         `;
 
@@ -6484,6 +6515,13 @@ async function renderSystemSettings(body) {
                     <div class="ss-msg ss-msg-warn app-ml-0">
                         <i class="fas fa-exclamation-triangle"></i>
                         ${t('Zmiana portu wymaga restartu serwera. Po restarcie otwórz')} <strong>http://&lt;adres-ip&gt;:&lt;nowy-port&gt;</strong>
+                    </div>
+                </div>
+
+                <div class="ss-group" style="margin-top:24px">
+                    <div class="ss-group-title"><i class="fas fa-lock" style="margin-right:6px;opacity:.6"></i> HTTPS / SSL</div>
+                    <div id="ss-ssl-content">
+                        <div style="text-align:center;padding:12px;color:var(--text-muted)"><i class="fas fa-spinner fa-spin"></i></div>
                     </div>
                 </div>
 
@@ -7115,6 +7153,24 @@ async function renderSystemSettings(body) {
             btn.innerHTML = `<i class="fas fa-save"></i> ${t('Zapisz zmiany')}`;
         });
 
+        // -- Event: Auto-update toggle --
+        wrap.querySelector('#ss-auto-update')?.addEventListener('change', async (e) => {
+            const enabled = e.target.checked;
+            try {
+                const r = await api('/settings/auto-update', { method: 'POST', body: { enabled } });
+                if (r.ok) {
+                    settings.auto_update = r.auto_update;
+                    toast(enabled ? t('Auto-aktualizacje włączone') : t('Auto-aktualizacje wyłączone'), 'success');
+                } else {
+                    e.target.checked = !enabled;
+                    toast(r.error || t('Błąd'), 'error');
+                }
+            } catch (err) {
+                e.target.checked = !enabled;
+                toast(t('Błąd: ') + err.message, 'error');
+            }
+        });
+
         // -- Event: Save network --
         wrap.querySelector('#ss-save-network')?.addEventListener('click', async (e) => {
             const btn = e.currentTarget;
@@ -7170,6 +7226,124 @@ async function renderSystemSettings(body) {
                 btn.innerHTML = `<i class="fas fa-save"></i> ${t('Zapisz zmiany')}`;
             }
         });
+
+        // -- SSL section loader --
+        async function _sslLoad() {
+            const box = wrap.querySelector('#ss-ssl-content');
+            if (!box) return;
+            try {
+                const s = await api('/settings/ssl/status');
+                const active = s.ssl_active;
+                const hasCert = !!s.cert;
+                const certbot = s.certbot_installed;
+                const domain = s.config?.domain || '';
+                const port = s.https_port || 443;
+
+                let html = '';
+                // Status card
+                html += `<div class="ss-ssl-card">
+                    <div class="ss-ssl-status">
+                        <div class="ss-ssl-dot" style="background:${active ? '#22c55e' : '#ef4444'}"></div>
+                        <div>
+                            <div style="font-size:13px;font-weight:600">${active ? t('HTTPS aktywne') : t('HTTPS nieaktywne')}</div>
+                            <div class="ss-ssl-info">${active ? t('Port') + ': ' + port + (domain ? ' — ' + esc(domain) : '') : t('Połączenia nie są szyfrowane')}</div>
+                        </div>
+                    </div>
+                    ${active ? `<button class="ss-btn ss-btn-danger ss-btn-small" id="ss-ssl-disable"><i class="fas fa-times"></i> ${t('Wyłącz')}</button>`
+                             : (hasCert ? `<button class="ss-btn ss-btn-primary ss-btn-small" id="ss-ssl-enable"><i class="fas fa-lock"></i> ${t('Włącz HTTPS')}</button>` : '')}
+                </div>`;
+
+                if (hasCert && s.cert) {
+                    html += `<div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
+                        <i class="fas fa-certificate" style="margin-right:4px"></i>
+                        ${t('Certyfikat')}: <strong>${esc(s.cert.subject || domain)}</strong>
+                        — ${t('ważny do')} <strong>${esc(s.cert.not_after || '?')}</strong>
+                        ${s.cert.issuer ? '('+esc(s.cert.issuer)+')' : ''}
+                    </div>`;
+                }
+
+                if (!certbot) {
+                    html += `<div class="ss-msg ss-msg-warn" style="margin-left:0">
+                        <i class="fas fa-info-circle"></i>
+                        ${t('Certbot nie jest zainstalowany.')}
+                        <button class="ss-btn ss-btn-primary" id="ss-ssl-install-certbot" style="margin-left:auto;padding:6px 12px;font-size:11px">
+                            <i class="fas fa-download"></i> ${t('Zainstaluj Certbot')}
+                        </button>
+                    </div>`;
+                } else if (!hasCert) {
+                    html += `<div class="ss-group" style="margin-top:12px">
+                        <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">${t('Uzyskaj darmowy certyfikat Let\\'s Encrypt:')}</div>
+                        <div class="ss-row">
+                            <label>${t('Domena')}</label>
+                            <input type="text" id="ss-ssl-domain" placeholder="nas.example.com" value="${esc(domain)}">
+                        </div>
+                        <div class="ss-row">
+                            <label>${t('E-mail')}</label>
+                            <input type="email" id="ss-ssl-email" placeholder="admin@example.com" value="${esc(s.config?.email || '')}">
+                        </div>
+                        <div class="ss-row">
+                            <label>${t('Port HTTPS')}</label>
+                            <input type="number" id="ss-ssl-port" value="${port}" min="1" max="65535">
+                        </div>
+                        <div class="ss-hint" style="margin-left:0">${t('Domena musi wskazywać na ten serwer (port 80 musi być dostępny)')}</div>
+                        <button class="ss-btn ss-btn-primary" id="ss-ssl-obtain">
+                            <i class="fas fa-certificate"></i> ${t('Uzyskaj certyfikat')}
+                        </button>
+                    </div>`;
+                }
+
+                box.innerHTML = html;
+
+                // Handlers
+                box.querySelector('#ss-ssl-install-certbot')?.addEventListener('click', async (btn_e) => {
+                    const b = btn_e.currentTarget;
+                    b.disabled = true; b.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Instalowanie…');
+                    try {
+                        const r = await api('/settings/ssl/install-certbot', { method: 'POST' });
+                        if (r.error) { toast(r.error, 'error'); } else { toast(t('Certbot zainstalowany'), 'success'); _sslLoad(); }
+                    } catch (e) { toast(e.message, 'error'); }
+                });
+
+                box.querySelector('#ss-ssl-obtain')?.addEventListener('click', async (btn_e) => {
+                    const b = btn_e.currentTarget;
+                    const dm = box.querySelector('#ss-ssl-domain')?.value.trim();
+                    const em = box.querySelector('#ss-ssl-email')?.value.trim();
+                    const pt = parseInt(box.querySelector('#ss-ssl-port')?.value) || 443;
+                    if (!dm) { toast(t('Podaj domenę'), 'error'); return; }
+                    if (!em) { toast(t('Podaj e-mail'), 'error'); return; }
+                    b.disabled = true; b.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Uzyskiwanie…');
+                    try {
+                        const r = await api('/settings/ssl/obtain', { method: 'POST', body: { domain: dm, email: em, https_port: pt } });
+                        if (r.error) { toast(r.error, 'error'); } else { toast(r.message || t('Certyfikat uzyskany'), 'success'); _sslLoad(); }
+                    } catch (e) { toast(e.message, 'error'); }
+                    b.disabled = false; b.innerHTML = `<i class="fas fa-certificate"></i> ${t('Uzyskaj certyfikat')}`;
+                });
+
+                box.querySelector('#ss-ssl-enable')?.addEventListener('click', async () => {
+                    try {
+                        const r = await api('/settings/ssl/enable', { method: 'POST', body: { enable: true, https_port: port } });
+                        if (r.error) { toast(r.error, 'error'); } else {
+                            toast(r.message || t('HTTPS włączone — wymagany restart'), 'success');
+                            _sslLoad();
+                        }
+                    } catch (e) { toast(e.message, 'error'); }
+                });
+
+                box.querySelector('#ss-ssl-disable')?.addEventListener('click', async () => {
+                    try {
+                        const r = await api('/settings/ssl/enable', { method: 'POST', body: { enable: false } });
+                        if (r.error) { toast(r.error, 'error'); } else {
+                            toast(r.message || t('HTTPS wyłączone — wymagany restart'), 'success');
+                            _sslLoad();
+                        }
+                    } catch (e) { toast(e.message, 'error'); }
+                });
+
+            } catch (e) {
+                box.innerHTML = `<div class="ss-msg ss-msg-err" style="margin-left:0"><i class="fas fa-exclamation-circle"></i> ${esc(e.message)}</div>`;
+            }
+        }
+        _sslLoad();
 
         // -- Event: Password strength indicator --
         wrap.querySelector('#ss-pw-new')?.addEventListener('input', (e) => {

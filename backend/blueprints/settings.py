@@ -128,6 +128,7 @@ def get_settings():
         'uptime': uptime,
         'kernel': kernel,
         'arch': arch,
+        'auto_update': env.get('AUTO_UPDATE', '') in ('true', '1'),
     })
 
 
@@ -284,6 +285,18 @@ def restart_app():
 
     gevent.spawn_later(1, _do_restart)
     return jsonify({'status': 'ok'})
+
+
+@settings_bp.route('/auto-update', methods=['POST'])
+def toggle_auto_update():
+    """Toggle automatic system updates."""
+    if g.role != 'admin':
+        return jsonify({'error': 'Admin only'}), 403
+    data = request.json or {}
+    enabled = bool(data.get('enabled', False))
+    _write_env_key('AUTO_UPDATE', 'true' if enabled else 'false')
+    audit_log('system.settings.change', f'Auto-update {"enabled" if enabled else "disabled"}')
+    return jsonify({'ok': True, 'auto_update': enabled})
 
 
 # ═══════════════════════════════════════════════════════════════
