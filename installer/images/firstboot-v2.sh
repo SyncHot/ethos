@@ -181,5 +181,7 @@ echo "=========================================="
 echo " First boot complete! Starting EthOS..."
 echo "=========================================="
 
-# Start main service
-systemctl start ethos.service 2>/dev/null || true
+# Start main service (--no-block avoids deadlock: ethos.service has
+# After=ethos-firstboot.service, so a blocking start would wait for
+# this very script to exit first)
+systemctl start --no-block ethos.service 2>/dev/null || true
