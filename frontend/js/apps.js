@@ -5864,7 +5864,7 @@ function renderPackageCenter(body) {
             if (data.error) { toast(data.error, 'error'); return; }
             S.otaUpdates = data.updates || [];
             const updBtn = $('#pm-btn-ota-update');
-            const src = data.source === 'github' ? `GitHub (${data.repo || ''})` : 'OTA';
+            const src = data.repo ? `GitHub (${data.repo})` : 'GitHub';
             if (S.otaUpdates.length) {
                 toast(t('{n} aktualizacji dostępnych', { n: S.otaUpdates.length }) + ` [${src}]`, 'info');
                 if (updBtn) updBtn.style.display = '';
@@ -6089,13 +6089,9 @@ function renderPackageCenter(body) {
     $('#pm-btn-src-config')?.addEventListener('click', () => showSourceConfig());
 
     async function showSourceConfig() {
-        const [srcRes, cfgRes] = await Promise.all([
-            api('/app-manager/catalog-sources'),
-            api('/app-manager/app-update-config'),
-        ]);
+        const srcRes = await api('/app-manager/catalog-sources');
         if (srcRes.error) { toast(srcRes.error, 'error'); return; }
         const sources = srcRes.sources || [];
-        const cfg = cfgRes.error ? { source: 'github' } : cfgRes;
 
         const overlay = $('#pm-detail-overlay');
         overlay.style.display = 'flex';
@@ -6128,14 +6124,7 @@ function renderPackageCenter(body) {
                 <div class="pm-src-add-row">
                   <button class="pm-ota-btn" id="pm-src-add"><i class="fas fa-plus"></i> ${t('Dodaj źródło')}</button>
                 </div>
-                <div class="pm-src-separator"></div>
-                <div class="pm-src-update-section">
-                  <div class="pm-src-section-title">${t('Źródło sprawdzania aktualizacji')}</div>
-                  <div style="display:flex;gap:12px;margin-top:8px">
-                    <label class="pm-src-radio"><input type="radio" name="pm-upd-src" value="github" ${cfg.source === 'github' ? 'checked' : ''}> <i class="fab fa-github"></i> GitHub</label>
-                    <label class="pm-src-radio"><input type="radio" name="pm-upd-src" value="ota" ${cfg.source === 'ota' ? 'checked' : ''}> <i class="fas fa-satellite-dish"></i> OTA</label>
-                  </div>
-                </div>
+
               </div>
             </div>`;
 
@@ -6166,11 +6155,7 @@ function renderPackageCenter(body) {
                 };
             });
 
-            overlay.querySelectorAll('input[name="pm-upd-src"]').forEach(r => {
-                r.onchange = async () => {
-                    await api('/app-manager/app-update-config', { method: 'PUT', body: { source: r.value } });
-                };
-            });
+
         }
 
         function showAddForm() {
