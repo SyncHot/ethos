@@ -28,6 +28,35 @@ def _ensure_dir():
     os.makedirs(SSH_KEYS_DIR, mode=0o700, exist_ok=True)
 
 
+def _ensure_default_key():
+    """Generate a default ed25519 keypair if none exist yet."""
+    _ensure_dir()
+    # Check if any private key exists
+    for fname in os.listdir(SSH_KEYS_DIR):
+        fpath = os.path.join(SSH_KEYS_DIR, fname)
+        if os.path.isfile(fpath) and not fname.endswith('.pub') and os.path.isfile(fpath + '.pub'):
+            return  # at least one keypair exists
+    # No keys — generate default
+    hostname = _socket.gethostname()
+    key_name = f'ethos_{hostname}'
+    key_path = os.path.join(SSH_KEYS_DIR, key_name)
+    if os.path.exists(key_path):
+        return
+    try:
+        comment = f'ethos@{hostname}'
+        subprocess.run(
+            ['ssh-keygen', '-t', 'ed25519', '-f', key_path, '-N', '', '-C', comment],
+            capture_output=True, timeout=30, check=False,
+        )
+        if os.path.isfile(key_path):
+            os.chmod(key_path, 0o600)
+        if os.path.isfile(key_path + '.pub'):
+            os.chmod(key_path + '.pub', 0o644)
+        log.info('Auto-generated default SSH keypair: %s', key_name)
+    except Exception as e:
+        log.warning('Failed to auto-generate SSH key: %s', e)
+
+
 # ══════════════════════════════════════════════════════════════════
 #  Key listing (shared helper — also used by legacy settings routes)
 # ══════════════════════════════════════════════════════════════════
@@ -93,6 +122,7 @@ def _safe_keys(keys):
 @ssh_bp.route('/keys', methods=['GET'])
 def api_list_keys():
     try:
+        _ensure_default_key()
         return jsonify({'keys': _safe_keys(list_ssh_keys_data())})
     except Exception as e:
         log.exception('Error listing SSH keys')
