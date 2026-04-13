@@ -2344,6 +2344,24 @@ def setup_complete():
     except Exception:
         pass
 
+    # Generate default SSH keypair for the admin user
+    try:
+        from blueprints.ssh_manager import SSH_KEYS_DIR
+        os.makedirs(SSH_KEYS_DIR, mode=0o700, exist_ok=True)
+        default_key = os.path.join(SSH_KEYS_DIR, f'ethos_{hostname}')
+        if not os.path.exists(default_key):
+            _comment = f'{username}@{hostname}'
+            subprocess.run(
+                ['ssh-keygen', '-t', 'ed25519', '-f', default_key, '-N', '', '-C', _comment],
+                capture_output=True, timeout=30, check=False,
+            )
+            if os.path.isfile(default_key):
+                os.chmod(default_key, 0o600)
+            if os.path.isfile(default_key + '.pub'):
+                os.chmod(default_key + '.pub', 0o644)
+    except Exception as e:
+        log.warning('Auto SSH keygen failed: %s', e)
+
     # Remove tty1 auto-login override (no longer needed after setup)
     try:
         override_dir = '/etc/systemd/system/getty@tty1.service.d'
