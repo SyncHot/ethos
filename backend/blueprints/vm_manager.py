@@ -169,7 +169,7 @@ def _find_free_host_port(preferred, used_ports):
 
 def _default_network(os_type='linux', boot_image=''):
     """Return sensible default network config based on OS type.
-    When boot_image looks like an EthOS image, auto-maps ports 9000 and 22
+    When boot_image looks like an EthOS image, auto-maps ports 9000, 9443 and 22
     to free host ports that don't conflict with the host or other VMs.
     """
     pf = []
@@ -177,8 +177,11 @@ def _default_network(os_type='linux', boot_image=''):
         used = _used_host_ports()
         ethos_port = _find_free_host_port(9000, used)
         used.add(ethos_port)
+        https_port = _find_free_host_port(9443, used)
+        used.add(https_port)
         ssh_port = _find_free_host_port(2222, used)
         pf.append({'proto': 'tcp', 'host': ethos_port, 'guest': 9000, 'label': 'EthOS Web'})
+        pf.append({'proto': 'tcp', 'host': https_port, 'guest': 9443, 'label': 'EthOS HTTPS'})
         pf.append({'proto': 'tcp', 'host': ssh_port, 'guest': 22, 'label': 'SSH'})
     elif os_type == 'linux':
         pf.append({'proto': 'tcp', 'host': 0, 'guest': 22, 'label': 'SSH'})
