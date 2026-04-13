@@ -6405,12 +6405,8 @@ async function renderSystemSettings(body) {
             { id: 'general', icon: 'fa-cog', label: t('Ogólne') },
             { id: 'network', icon: 'fa-network-wired', label: t('Sieć') },
             { id: 'security', icon: 'fa-shield-alt', label: t('Bezpieczeństwo') },
-            { id: 'firewall', icon: 'fa-fire', label: t('Firewall') },
-            { id: 'about', icon: 'fa-info-circle', label: t('O systemie') },
-            { id: 'performance', icon: 'fa-tachometer-alt', label: t('Wydajność') },
-            { id: 'maintenance', icon: 'fa-tools', label: t('Konserwacja') },
             { id: 'thermal', icon: 'fa-thermometer-half', label: t('Termika') },
-            { id: 'hardware', icon: 'fa-microchip', label: t('Sprzęt') },
+            { id: 'maintenance', icon: 'fa-tools', label: t('Konserwacja') },
         ];
         const tabBar = document.createElement('div');
         tabBar.className = 'ss-tabs';
@@ -6571,86 +6567,9 @@ async function renderSystemSettings(body) {
             </div>
         `;
 
-        // === About Section ===
-        const uptimeStr = _ssFormatUptime(settings.uptime || 0);
-        const aboutHtml = `
-            <div class="ss-section" data-section="about">
-                <div class="ss-section-title"><i class="fas fa-info-circle"></i> ${t('Informacje o systemie')}</div>
-                <div class="ss-info-grid">
-                    <div class="ss-info-card">
-                        <div class="ss-info-label">${t('Nazwa NAS')}</div>
-                        <div class="ss-info-value">${esc(settings.nas_name)}</div>
-                    </div>
-                    <div class="ss-info-card">
-                        <div class="ss-info-label">Hostname</div>
-                        <div class="ss-info-value">${esc(settings.hostname)}</div>
-                    </div>
-                    <div class="ss-info-card">
-                        <div class="ss-info-label">Port</div>
-                        <div class="ss-info-value">${settings.port}</div>
-                    </div>
-                    <div class="ss-info-card">
-                        <div class="ss-info-label">${t('Strefa czasowa')}</div>
-                        <div class="ss-info-value">${esc(settings.timezone)}</div>
-                    </div>
-                    <div class="ss-info-card">
-                        <div class="ss-info-label">${t('Czas pracy')}</div>
-                        <div class="ss-info-value">${uptimeStr}</div>
-                    </div>
-                    <div class="ss-info-card">
-                        <div class="ss-info-label">Kernel</div>
-                        <div class="ss-info-value app-text-sm">${esc(settings.kernel)}</div>
-                    </div>
-                    <div class="ss-info-card">
-                        <div class="ss-info-label">${t('Architektura')}</div>
-                        <div class="ss-info-value">${esc(settings.arch)}</div>
-                    </div>
-                    <div class="ss-info-card">
-                        <div class="ss-info-label">${t('Katalog główny')}</div>
-                        <div class="ss-info-value app-text-xs">${esc(settings.ethos_root)}</div>
-                    </div>
-                </div>
-            </div>
-        `;
+        // (About section removed — info available in Resource Monitor)
 
-        // === Performance Section ===
-        const performanceHtml = `
-            <div class="ss-section" data-section="performance">
-                <div class="ss-section-title"><i class="fas fa-tachometer-alt"></i> ${t('Wydajność')}</div>
-                <div class="ss-group">
-                    <div class="ss-group-title">${t('Ustawienia sysctl')}</div>
-                    <div class="ss-msg ss-msg-ok" style="margin-bottom:14px">
-                        <i class="fas fa-check-circle"></i> ${t('Zoptymalizowane dla NAS')}
-                    </div>
-
-                    <div class="ss-info-grid" style="margin-bottom:14px">
-                        <div class="ss-info-card">
-                             <div class="ss-info-label">Swappiness</div>
-                             <div class="ss-info-value" id="ss-sysctl-swappiness">-</div>
-                        </div>
-                        <div class="ss-info-card">
-                             <div class="ss-info-label">Dirty Ratio</div>
-                             <div class="ss-info-value" id="ss-sysctl-dirty">-</div>
-                        </div>
-                        <div class="ss-info-card">
-                             <div class="ss-info-label">Cache Pressure</div>
-                             <div class="ss-info-value" id="ss-sysctl-cache">-</div>
-                        </div>
-                         <div class="ss-info-card">
-                             <div class="ss-info-label">TCP Read Max</div>
-                             <div class="ss-info-value" id="ss-sysctl-tcp-rmem">-</div>
-                        </div>
-                    </div>
-
-                    <div class="ss-actions">
-                        <button class="ss-btn ss-btn-warn" id="ss-sysctl-reload">
-                            <i class="fas fa-sync-alt"></i> ${t('Przeładuj ustawienia (sysctl)')}
-                        </button>
-                    </div>
-                    <div class="ss-hint" style="margin:8px 0 0 0">${t('Użyj po ręcznej edycji plików w /etc/sysctl.d/')}</div>
-                </div>
-            </div>
-        `;
+        // (Performance section removed — sysctl is read-only, low value)
 
         // === Maintenance Section ===
         const maintenanceHtml = `
@@ -6707,83 +6626,7 @@ async function renderSystemSettings(body) {
             </div>
         `;
 
-        // === Firewall Section ===
-        const firewallHtml = `
-            <div class="ss-section" data-section="firewall">
-                <div class="ss-section-title"><i class="fas fa-fire"></i> ${t('Firewall (UFW)')}</div>
-
-                <div class="ss-group">
-                    <div class="ss-group-title">${t('Status')}</div>
-                    <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px">
-                        <div id="fw-status-badge" style="font-size:13px; color:var(--text-muted)"><i class="fas fa-spinner fa-spin"></i> ${t('Ładowanie...')}</div>
-                        <div style="display:flex; gap:8px">
-                            <button class="ss-btn" id="fw-enable-btn"><i class="fas fa-play"></i> ${t('Włącz')}</button>
-                            <button class="ss-btn ss-btn-warn" id="fw-disable-btn"><i class="fas fa-stop"></i> ${t('Wyłącz')}</button>
-                            <button class="ss-btn" id="fw-refresh-btn"><i class="fas fa-sync-alt"></i></button>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="ss-group" style="margin-top:14px">
-                    <div class="ss-group-title" style="display:flex; justify-content:space-between; align-items:center">
-                        <span>${t('Aktywne reguły')}</span>
-                    </div>
-                    <div id="fw-rules-list" style="font-size:13px; color:var(--text-muted)"><i class="fas fa-spinner fa-spin"></i></div>
-                </div>
-
-                <div class="ss-group" style="margin-top:14px">
-                    <div class="ss-group-title">${t('Szybkie reguły')}</div>
-                    <div style="display:flex; gap:8px; flex-wrap:wrap">
-                        <button class="ss-btn" data-fw-quick="ssh"><i class="fas fa-terminal"></i> Allow SSH (22)</button>
-                        <button class="ss-btn" data-fw-quick="samba"><i class="fas fa-folder-open"></i> Allow Samba (445)</button>
-                        <button class="ss-btn" data-fw-quick="plex"><i class="fas fa-film"></i> Allow Plex (32400)</button>
-                        <button class="ss-btn" data-fw-quick="ethos"><i class="fas fa-server"></i> Allow EthOS (9000)</button>
-                    </div>
-                </div>
-
-                <div class="ss-group" style="margin-top:14px">
-                    <div class="ss-group-title">${t('Dodaj regułę')}</div>
-                    <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end">
-                        <div>
-                            <div style="font-size:11px; color:var(--text-muted); margin-bottom:4px">${t('Port')}</div>
-                            <input type="text" id="fw-port" placeholder="22" style="width:80px">
-                        </div>
-                        <div>
-                            <div style="font-size:11px; color:var(--text-muted); margin-bottom:4px">${t('Protokół')}</div>
-                            <select id="fw-proto" style="padding:8px 10px; background:var(--bg-input); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:13px">
-                                <option value="tcp">TCP</option>
-                                <option value="udp">UDP</option>
-                                <option value="">TCP+UDP</option>
-                            </select>
-                        </div>
-                        <div>
-                            <div style="font-size:11px; color:var(--text-muted); margin-bottom:4px">${t('Źródło IP (opcjonalne)')}</div>
-                            <input type="text" id="fw-from" placeholder="any / 192.168.1.0/24" style="width:180px">
-                        </div>
-                        <button class="ss-btn" id="fw-add-rule-btn"><i class="fas fa-plus"></i> ${t('Dodaj')}</button>
-                    </div>
-                    <div id="fw-rule-msg" style="margin-top:8px"></div>
-                </div>
-
-                <div class="ss-group" style="margin-top:14px">
-                    <div class="ss-group-title" style="display:flex; justify-content:space-between; align-items:center">
-                        <span>${t('Domyślne reguły EthOS')}</span>
-                    </div>
-                    <div style="font-size:12px; color:var(--text-muted); margin-bottom:10px">
-                        SSH, EthOS Web, Samba, Plex — ${t('deny incoming, allow outgoing')}
-                    </div>
-                    <button class="ss-btn ss-btn-warn" id="fw-defaults-btn"><i class="fas fa-undo-alt"></i> ${t('Zastosuj domyślne reguły')}</button>
-                </div>
-
-                <div class="ss-group" style="margin-top:14px">
-                    <div class="ss-group-title"><i class="fas fa-ban"></i> ${t('Zbanowane IP (Fail2Ban)')}</div>
-                    <div id="fw-banned-list" style="font-size:13px; color:var(--text-muted)"><i class="fas fa-spinner fa-spin"></i></div>
-                    <div class="ss-actions" style="margin-top:8px">
-                        <button class="ss-btn" id="fw-banned-refresh"><i class="fas fa-sync-alt"></i> ${t('Odśwież')}</button>
-                    </div>
-                </div>
-            </div>
-        `;
+        // (Firewall section removed — dedicated Firewall app is more complete)
 
         // === Thermal Section ===
         const thermalHtml = `
@@ -6817,59 +6660,11 @@ async function renderSystemSettings(body) {
             </div>
         `;
 
-        // === Hardware Section ===
-        const hardwareHtml = `
-            <div class="ss-section" data-section="hardware">
-                <div class="ss-section-title"><i class="fas fa-microchip"></i> ${t('Sprzęt')}</div>
-                <div id="ss-hw-content"><div class="net-loading"><i class="fas fa-spinner fa-spin"></i> ${t('Ładowanie...')}</div></div>
-                <div class="ss-actions" style="margin-top:12px">
-                    <button class="ss-btn" id="ss-hw-refresh"><i class="fas fa-sync-alt"></i> ${t('Odśwież')}</button>
-                    <button class="ss-btn ss-btn-primary" id="ss-hw-recs"><i class="fas fa-lightbulb"></i> ${t('Rekomendacje')}</button>
-                </div>
-            </div>
-        `;
+        // (Hardware section removed — Resource Monitor provides same info + live monitoring)
 
         const container = document.createElement('div');
-        container.innerHTML = generalHtml + networkHtml + securityHtml + firewallHtml + aboutHtml + performanceHtml + maintenanceHtml + thermalHtml + hardwareHtml;
+        container.innerHTML = generalHtml + networkHtml + securityHtml + maintenanceHtml + thermalHtml;
         wrap.appendChild(container);
-
-        // -- Performance Logic --
-        const reloadBtn = wrap.querySelector('#ss-sysctl-reload');
-        if (reloadBtn) {
-            reloadBtn.addEventListener('click', async () => {
-                reloadBtn.disabled = true;
-                const origHtml = reloadBtn.innerHTML;
-                reloadBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
-                try {
-                    const r = await api('/settings/sysctl/restart', { method: 'POST' });
-                    toast(r.message || 'OK');
-                } catch (e) {
-                    toast(e.message, 'error');
-                } finally {
-                    reloadBtn.disabled = false;
-                    reloadBtn.innerHTML = origHtml;
-                    loadSysctl();
-                }
-            });
-        }
-
-        async function loadSysctl() {
-            try {
-                const data = await api('/settings/sysctl');
-                const set = (id, val) => {
-                    const el = wrap.querySelector(id);
-                    if (el) el.innerText = val || '-';
-                };
-                set('#ss-sysctl-swappiness', data['vm.swappiness']);
-                set('#ss-sysctl-dirty', data['vm.dirty_ratio']);
-                set('#ss-sysctl-cache', data['vm.vfs_cache_pressure']);
-                if (data['net.core.rmem_max']) {
-                    const val = parseInt(data['net.core.rmem_max']);
-                    set('#ss-sysctl-tcp-rmem', (val / 1024 / 1024).toFixed(0) + ' MB');
-                }
-            } catch (e) { console.error(e); }
-        }
-        loadSysctl();
 
         // -- Event: Language selector --
         const langBtn = wrap.querySelector('#ss-lang-btn');
@@ -6921,198 +6716,6 @@ async function renderSystemSettings(body) {
                 `<option value="${esc(tz)}" ${tz === cur ? 'selected' : ''}>${esc(tz)}</option>`
             ).join('');
             toast(t('Załadowano ') + timezones.length + ' stref czasowych', 'info');
-        });
-
-        // Initial load when switching to firewall tab
-        wrap.querySelectorAll('.ss-tab').forEach(t => {
-            t.addEventListener('click', () => {
-                if (t.dataset.tab === 'firewall') { loadFirewallStatus(); loadBannedIPs(); }
-            });
-        });
-
-        // -- Firewall Logic --
-        async function loadFirewallStatus() {
-            const badge = wrap.querySelector('#fw-status-badge');
-            const list = wrap.querySelector('#fw-rules-list');
-            if (!badge) return;
-            badge.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${t('Ładowanie...')}`;
-            if (list) list.innerHTML = `<i class="fas fa-spinner fa-spin"></i>`;
-            try {
-                const r = await api('/firewall/status');
-                const active = r.status === 'active';
-                badge.innerHTML = active
-                    ? `<span style="color:#22c55e"><i class="fas fa-check-circle"></i> ${t('Aktywny')}</span>`
-                    : `<span style="color:#ef4444"><i class="fas fa-times-circle"></i> ${t('Nieaktywny')}</span>`;
-                if (list) {
-                    if (!r.rules || r.rules.length === 0) {
-                        list.innerHTML = `<div style="color:var(--text-muted); font-size:12px; padding:8px 0">${t('Brak reguł')}</div>`;
-                    } else {
-                        list.innerHTML = `
-                            <table style="width:100%; border-collapse:collapse; font-size:12px">
-                                <thead>
-                                    <tr style="color:var(--text-muted); border-bottom:1px solid var(--border)">
-                                        <th style="text-align:left; padding:6px 8px">#</th>
-                                        <th style="text-align:left; padding:6px 8px">${t('Port/Cel')}</th>
-                                        <th style="text-align:left; padding:6px 8px">${t('Akcja')}</th>
-                                        <th style="text-align:left; padding:6px 8px">${t('Kierunek')}</th>
-                                        <th style="text-align:left; padding:6px 8px">${t('Źródło')}</th>
-                                        <th style="padding:6px 4px"></th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    ${r.rules.map(rule => `
-                                        <tr style="border-bottom:1px solid var(--border)">
-                                            <td style="padding:6px 8px; color:var(--text-muted)">${rule.id}</td>
-                                            <td style="padding:6px 8px; font-weight:500">${esc(rule.to)}</td>
-                                            <td style="padding:6px 8px">
-                                                <span style="color:${rule.action==='ALLOW'?'#22c55e':rule.action==='DENY'?'#ef4444':'#f59e0b'}">${esc(rule.action)}</span>
-                                            </td>
-                                            <td style="padding:6px 8px; color:var(--text-muted)">${esc(rule.direction)}</td>
-                                            <td style="padding:6px 8px">${esc(rule.from)}</td>
-                                            <td style="padding:6px 4px; text-align:right">
-                                                <i class="fas fa-trash" style="cursor:pointer; color:#ef4444; opacity:0.7" title="${t('Usuń regułę')}" data-fw-delete="${rule.id}"></i>
-                                            </td>
-                                        </tr>
-                                    `).join('')}
-                                </tbody>
-                            </table>`;
-                        list.querySelectorAll('[data-fw-delete]').forEach(el => {
-                            el.addEventListener('click', async () => {
-                                const id = el.dataset.fwDelete;
-                                if (!await confirmDialog(t('Usunąć regułę #') + id + '?')) return;
-                                try {
-                                    await api('/firewall/rules', { method: 'POST', body: { action: 'delete', id: parseInt(id) } });
-                                    toast(t('Reguła usunięta'), 'success');
-                                    loadFirewallStatus();
-                                } catch(e) { toast(t('Błąd: ') + e.message, 'error'); }
-                            });
-                        });
-                    }
-                }
-            } catch(e) {
-                badge.innerHTML = `<span style="color:#ef4444"><i class="fas fa-exclamation-circle"></i> ${t('Błąd:')} ${e.message}</span>`;
-                if (list) list.innerHTML = '';
-            }
-        }
-
-        async function loadBannedIPs() {
-            const el = wrap.querySelector('#fw-banned-list');
-            if (!el) return;
-            el.innerHTML = `<i class="fas fa-spinner fa-spin"></i>`;
-            try {
-                const r = await api('/firewall/banned');
-                if (r.error) {
-                    el.innerHTML = `<div style="color:var(--text-muted); font-size:12px">${t('Fail2Ban niedostępny')}: ${esc(r.error)}</div>`;
-                    return;
-                }
-                if (!r.jails || r.jails.length === 0) {
-                    el.innerHTML = `<div style="color:var(--text-muted); font-size:12px">${t('Brak danych Fail2Ban')}</div>`;
-                    return;
-                }
-                let html = '';
-                for (const jail of r.jails) {
-                    html += `<div style="margin-bottom:10px">
-                        <div style="font-size:11px; font-weight:600; color:var(--text-muted); margin-bottom:6px; text-transform:uppercase">${esc(jail.name)} (${jail.banned_ips.length})</div>`;
-                    if (jail.banned_ips.length === 0) {
-                        html += `<div style="font-size:12px; color:var(--text-muted)">${t('Brak zbanowanych IP')}</div>`;
-                    } else {
-                        html += `<div style="display:flex; flex-wrap:wrap; gap:6px">`;
-                        jail.banned_ips.forEach(ip => {
-                            html += `<span style="background:var(--bg-input); border:1px solid var(--border); padding:3px 8px; border-radius:4px; font-size:12px; display:flex; align-items:center; gap:6px">
-                                ${esc(ip)}
-                                <i class="fas fa-times" style="cursor:pointer; color:#ef4444; opacity:0.8" title="${t('Odblokuj')}" data-fw-unban-jail="${esc(jail.name)}" data-fw-unban-ip="${esc(ip)}"></i>
-                            </span>`;
-                        });
-                        html += `</div>`;
-                    }
-                    html += `</div>`;
-                }
-                el.innerHTML = html;
-                el.querySelectorAll('[data-fw-unban-ip]').forEach(btn => {
-                    btn.addEventListener('click', async () => {
-                        const ip = btn.dataset.fwUnbanIp;
-                        const jail = btn.dataset.fwUnbanJail;
-                        if (!await confirmDialog(t('Odblokować IP ') + ip + '?')) return;
-                        try {
-                            await api('/firewall/unban', { method: 'POST', body: { jail, ip } });
-                            toast(t('Odblokowano ') + ip, 'success');
-                            loadBannedIPs();
-                        } catch(e) { toast(t('Błąd: ') + e.message, 'error'); }
-                    });
-                });
-            } catch(e) {
-                el.innerHTML = `<div style="color:var(--text-muted); font-size:12px">${t('Błąd: ')} ${e.message}</div>`;
-            }
-        }
-
-        // Firewall toggle
-        wrap.querySelector('#fw-enable-btn')?.addEventListener('click', async () => {
-            if (!await confirmDialog(t('Włączyć firewall?'))) return;
-            try {
-                await api('/firewall/toggle', { method: 'POST', body: { enable: true } });
-                toast(t('Firewall włączony'), 'success');
-                loadFirewallStatus();
-            } catch(e) { toast(t('Błąd: ') + e.message, 'error'); }
-        });
-
-        wrap.querySelector('#fw-disable-btn')?.addEventListener('click', async () => {
-            if (!await confirmDialog(t('Wyłączyć firewall? Ruch sieciowy będzie niezabezpieczony.'))) return;
-            try {
-                await api('/firewall/toggle', { method: 'POST', body: { enable: false } });
-                toast(t('Firewall wyłączony'), 'warn');
-                loadFirewallStatus();
-            } catch(e) { toast(t('Błąd: ') + e.message, 'error'); }
-        });
-
-        wrap.querySelector('#fw-refresh-btn')?.addEventListener('click', () => { loadFirewallStatus(); loadBannedIPs(); });
-        wrap.querySelector('#fw-banned-refresh')?.addEventListener('click', loadBannedIPs);
-
-        // Quick rules
-        const quickRules = {
-            ssh:   { port: '22',    proto: 'tcp', label: 'SSH' },
-            samba: { port: '139,445', proto: 'tcp', label: 'Samba TCP' },
-            plex:  { port: '32400', proto: 'tcp', label: 'Plex' },
-            ethos: { port: '9000',  proto: 'tcp', label: 'EthOS Web' },
-        };
-        wrap.querySelectorAll('[data-fw-quick]').forEach(btn => {
-            btn.addEventListener('click', async () => {
-                const key = btn.dataset.fwQuick;
-                const rule = quickRules[key];
-                if (!rule) return;
-                btn.disabled = true;
-                try {
-                    await api('/firewall/rules', { method: 'POST', body: { action: 'add', port: rule.port, proto: rule.proto } });
-                    toast(t('Reguła dodana: ') + rule.label, 'success');
-                    loadFirewallStatus();
-                } catch(e) { toast(t('Błąd: ') + e.message, 'error'); }
-                finally { btn.disabled = false; }
-            });
-        });
-
-        // Add custom rule
-        wrap.querySelector('#fw-add-rule-btn')?.addEventListener('click', async () => {
-            const port = wrap.querySelector('#fw-port')?.value.trim();
-            const proto = wrap.querySelector('#fw-proto')?.value;
-            const from = wrap.querySelector('#fw-from')?.value.trim() || 'any';
-            const msgEl = wrap.querySelector('#fw-rule-msg');
-            if (!port) { if (msgEl) msgEl.innerHTML = `<span style="color:#ef4444">${t('Podaj port')}</span>`; return; }
-            try {
-                await api('/firewall/rules', { method: 'POST', body: { action: 'add', port, proto: proto || undefined, from } });
-                if (msgEl) msgEl.innerHTML = `<span style="color:#22c55e">${t('Reguła dodana')}</span>`;
-                wrap.querySelector('#fw-port').value = '';
-                wrap.querySelector('#fw-from').value = '';
-                loadFirewallStatus();
-            } catch(e) { if (msgEl) msgEl.innerHTML = `<span style="color:#ef4444">${t('Błąd: ')} ${e.message}</span>`; }
-        });
-
-        // Apply defaults
-        wrap.querySelector('#fw-defaults-btn')?.addEventListener('click', async () => {
-            if (!await confirmDialog(t('Zastosować domyślne reguły EthOS? Obecne reguły zostaną zachowane.'))) return;
-            try {
-                await api('/firewall/rules', { method: 'POST', body: { action: 'reset_defaults' } });
-                toast(t('Domyślne reguły zastosowane'), 'success');
-                loadFirewallStatus();
-            } catch(e) { toast(t('Błąd: ') + e.message, 'error'); }
         });
 
         // -- Event: Save general --
@@ -7660,17 +7263,6 @@ async function renderSystemSettings(body) {
     //  (domains.js, /api/domains-mgr/*)
     // ═══════════════════════════════════════════════════════════
 
-    function _ssFormatUptime(secs) {
-        const d = Math.floor(secs / 86400);
-        const h = Math.floor((secs % 86400) / 3600);
-        const m = Math.floor((secs % 3600) / 60);
-        let parts = [];
-        if (d > 0) parts.push(d + 'd');
-        if (h > 0) parts.push(h + 'h');
-        parts.push(m + 'min');
-        return parts.join(' ');
-    }
-
     // -- Thermal Logic --
     async function loadThermal() {
         try {
@@ -7725,106 +7317,11 @@ async function renderSystemSettings(body) {
         });
     }
 
-    // -- Hardware Logic --
-    async function loadHardware() {
-        const el = wrap.querySelector('#ss-hw-content');
-        if (!el) return;
-        el.innerHTML = '<div class="net-loading"><i class="fas fa-spinner fa-spin"></i></div>';
-        try {
-            const p = await api('/hardware/profile');
-            const sys = p.system || {};
-            const cpu = p.cpu || {};
-            const mem = p.memory || {};
-            const disks = p.disks || [];
-            const nics = p.network || [];
-            const gpus = p.gpus || [];
-
-            el.innerHTML = `
-                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px">
-                    <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:14px">
-                        <div style="font-weight:700;margin-bottom:8px"><i class="fas fa-server" style="margin-right:6px"></i>${t('System')}</div>
-                        <div style="font-size:13px;line-height:1.8">
-                            ${sys.manufacturer ? `<div>${t('Producent:')} <b>${esc(sys.manufacturer)}</b></div>` : ''}
-                            ${sys.product_name ? `<div>${t('Model:')} <b>${esc(sys.product_name)}</b></div>` : ''}
-                            ${sys.serial_number && sys.serial_number !== 'Not Specified' ? `<div>S/N: <b>${esc(sys.serial_number)}</b></div>` : ''}
-                            ${sys.bios ? `<div>BIOS: <b>${esc(sys.bios.vendor || '')} ${esc(sys.bios.version || '')}</b></div>` : ''}
-                        </div>
-                    </div>
-                    <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:14px">
-                        <div style="font-weight:700;margin-bottom:8px"><i class="fas fa-microchip" style="margin-right:6px"></i>CPU</div>
-                        <div style="font-size:13px;line-height:1.8">
-                            <div><b>${esc(cpu.model || '?')}</b></div>
-                            <div>${cpu.cores || 0} ${t('rdzeni')} / ${(cpu.cores || 0) * (cpu.threads_per_core || 1)} ${t('wątków')}</div>
-                            ${cpu.freq_max_mhz ? `<div>${t('Max:')} ${(cpu.freq_max_mhz/1000).toFixed(2)} GHz</div>` : ''}
-                            ${cpu.notable_flags?.length ? `<div>${t('Flagi:')} ${cpu.notable_flags.join(', ')}</div>` : ''}
-                        </div>
-                    </div>
-                    <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:14px">
-                        <div style="font-weight:700;margin-bottom:8px"><i class="fas fa-memory" style="margin-right:6px"></i>RAM</div>
-                        <div style="font-size:13px;line-height:1.8">
-                            <div><b>${esc(mem.total_human || '?')}</b></div>
-                            <div>${mem.slots_used || 0} / ${mem.slots_total || 0} ${t('slotów')}</div>
-                            ${(mem.dimms || []).map(d => `<div style="font-size:12px;color:var(--text-muted)">${esc(d.size || '')} ${esc(d.type || '')} ${esc(d.speed || '')}</div>`).join('')}
-                        </div>
-                    </div>
-                </div>
-                <div style="margin-top:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px">
-                    <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:14px">
-                        <div style="font-weight:700;margin-bottom:8px"><i class="fas fa-hdd" style="margin-right:6px"></i>${t('Dyski')} (${disks.length})</div>
-                        <div style="font-size:13px;line-height:1.8">
-                            ${disks.map(d => `<div>${esc(d.name)} — <b>${esc(d.type)}</b> ${esc(d.size_human)} ${d.model ? '(' + esc(d.model) + ')' : ''}</div>`).join('')}
-                        </div>
-                    </div>
-                    <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:14px">
-                        <div style="font-weight:700;margin-bottom:8px"><i class="fas fa-ethernet" style="margin-right:6px"></i>${t('Sieć')} (${nics.length})</div>
-                        <div style="font-size:13px;line-height:1.8">
-                            ${nics.map(n => `<div>${esc(n.name)} — ${esc(n.type)} ${n.speed_mbps ? n.speed_mbps + ' Mb/s' : ''} ${n.driver ? '<span style="color:var(--text-muted)">(' + esc(n.driver) + ')</span>' : ''}</div>`).join('')}
-                        </div>
-                    </div>
-                    ${gpus.length ? `<div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:14px">
-                        <div style="font-weight:700;margin-bottom:8px"><i class="fas fa-tv" style="margin-right:6px"></i>GPU (${gpus.length})</div>
-                        <div style="font-size:13px;line-height:1.8">
-                            ${gpus.map(g => `<div>${esc(g.device)}</div>`).join('')}
-                        </div>
-                    </div>` : ''}
-                </div>
-            `;
-        } catch(e) {
-            el.innerHTML = `<div style="color:var(--text-muted)">${t('Błąd:')} ${esc(e.message)}</div>`;
-        }
-    }
-
-    const hwRefreshBtn = wrap.querySelector('#ss-hw-refresh');
-    if (hwRefreshBtn) hwRefreshBtn.addEventListener('click', async () => {
-        try { await api('/hardware/refresh', {method:'POST'}); } catch(e) { /* ignore */ }
-        loadHardware();
-    });
-
-    const hwRecsBtn = wrap.querySelector('#ss-hw-recs');
-    if (hwRecsBtn) hwRecsBtn.addEventListener('click', async () => {
-        try {
-            const data = await api('/hardware/recommendations');
-            const recs = data.recommendations || [];
-            if (!recs.length) { toast(t('Brak rekomendacji'), 'info'); return; }
-            const icons = {info:'fa-info-circle', warning:'fa-exclamation-triangle'};
-            const colors = {info:'#3b82f6', warning:'#eab308'};
-            showModal(t('Rekomendacje sprzętowe'), `
-                <div style="max-height:400px;overflow-y:auto">
-                    ${recs.map(r => `<div style="display:flex;align-items:start;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
-                        <i class="fas ${icons[r.level]||'fa-info-circle'}" style="color:${colors[r.level]||'#3b82f6'};margin-top:2px"></i>
-                        <div><span style="font-weight:600;text-transform:uppercase;font-size:11px;color:var(--text-muted)">${esc(r.category)}</span><div style="font-size:13px">${esc(r.message)}</div></div>
-                    </div>`).join('')}
-                </div>
-            `, [{label:t('Zamknij'), class:'secondary'}]);
-        } catch(e) { toast(e.message,'error'); }
-    });
-
-    // Load thermal & hardware on tab switch (lazy)
+    // Load thermal on tab switch (lazy)
     const origTabClick = wrap.querySelectorAll('.ss-tab');
     origTabClick.forEach(tab => {
         tab.addEventListener('click', () => {
             if (tab.dataset.tab === 'thermal') loadThermal();
-            if (tab.dataset.tab === 'hardware') loadHardware();
         });
     });
 
