@@ -2397,6 +2397,11 @@ async function initDesktop() {
             loadNotifications();
         }
     });
+
+    // First-login Security Advisor — show once after first real login
+    if (!localStorage.getItem('sa_welcome_shown')) {
+        setTimeout(() => showSecurityWelcome(), 1500);
+    }
 }
 
 
@@ -2611,6 +2616,8 @@ function showPasswordChangeModal() {
                 win.close();
                 toast(t('Hasło zmienione pomyślnie'), 'success');
                 showDesktop();
+                // Show Security Advisor on first password change (new installation)
+                setTimeout(() => showSecurityWelcome(), 1200);
             } catch (e) {
                 errEl.textContent = e.message || t('Błąd zmiany hasła');
                 submitBtn.disabled = false;
@@ -2618,4 +2625,156 @@ function showPasswordChangeModal() {
             }
         };
     }, 100);
+}
+
+
+// ─────────────────── First-Login Security Advisor Welcome ───────────────────
+
+async function showSecurityWelcome() {
+    if (localStorage.getItem('sa_welcome_shown')) return;
+    // Only for admins
+    if (!NAS.user || NAS.user.role !== 'admin') return;
+
+    localStorage.setItem('sa_welcome_shown', '1');
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay saw-overlay';
+    overlay.innerHTML = `
+    <div class="saw-card">
+      <div class="saw-header">
+        <div class="saw-icon"><i class="fas fa-shield-alt"></i></div>
+        <h2>${t('Witaj w EthOS!')}</h2>
+        <p>${t('Sprawdźmy bezpieczeństwo Twojego systemu')}</p>
+      </div>
+      <div class="saw-body">
+        <div class="saw-loading">
+          <i class="fas fa-spinner fa-spin"></i> ${t('Skanowanie systemu...')}
+        </div>
+      </div>
+      <div class="saw-footer">
+        <button class="btn btn-secondary saw-skip" id="saw-skip">${t('Pomiń')}</button>
+        <button class="btn btn-primary saw-open" id="saw-open" style="display:none">
+          <i class="fas fa-external-link-alt"></i> ${t('Otwórz Security Advisor')}
+        </button>
+      </div>
+    </div>`;
+
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('saw-visible'));
+
+    const close = () => {
+        overlay.classList.remove('saw-visible');
+        setTimeout(() => overlay.remove(), 300);
+    };
+
+    overlay.querySelector('#saw-skip').onclick = close;
+
+    // Run scan
+    try {
+        const data = await api('/security-advisor/scan');
+        if (!data || data.error) throw new Error(data?.error || 'scan failed');
+
+        const score = data.score || 0;
+        const failed = (data.checks || []).filter(c => !c.passed);
+        const fixable = failed.filter(c => c.fixable && c.fix_action);
+
+        const scoreColor = score >= 80 ? '#22c55e' : score >= 50 ? '#f59e0b' : '#ef4444';
+        const scoreLabel = score >= 80 ? t('Dobry poziom bezpieczeństwa')
+                         : score >= 50 ? t('Wymaga poprawy')
+                         : t('Niski poziom — zalecane działanie');
+
+        const circumference = 2 * Math.PI * 42;
+        const offset = circumference * (1 - score / 100);
+
+        let checksHtml = '';
+        const sevOrder = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
+        const sorted = failed.sort((a, b) => (sevOrder[a.severity] || 4) - (sevOrder[b.severity] || 4));
+        const shown = sorted.slice(0, 5);
+
+        for (const c of shown) {
+            const color = c.severity === 'critical' ? '#dc2626' : c.severity === 'high' ? '#ea580c' : '#d97706';
+            const fixBtn = (c.fixable && c.fix_action)
+                ? `<button class="btn btn-small btn-primary saw-fix" data-action="${c.fix_action}"><i class="fas fa-wrench"></i> ${t('Napraw')}</button>`
+                : '';
+            checksHtml += `
+            <div class="saw-check">
+              <i class="fas fa-exclamation-triangle" style="color:${color};flex-shrink:0;margin-top:2px"></i>
+              <div style="flex:1;min-width:0">
+                <div style="font-weight:500;font-size:13px">${c.title}</div>
+                ${c.description ? `<div style="font-size:11px;color:var(--text-secondary);margin-top:2px">${c.description}</div>` : ''}
+              </div>
+              ${fixBtn}
+            </div>`;
+        }
+        if (failed.length > 5) {
+            checksHtml += `<div style="text-align:center;font-size:12px;color:var(--text-muted);padding:8px">
+              ${t('...i {n} więcej', { n: failed.length - 5 })}
+            </div>`;
+        }
+
+        const bodyEl = overlay.querySelector('.saw-body');
+        bodyEl.innerHTML = `
+          <div class="saw-score-row">
+            <div class="saw-score-mini">
+              <svg viewBox="0 0 100 100" style="width:90px;height:90px;transform:rotate(-90deg)">
+                <circle cx="50" cy="50" r="42" fill="none" stroke="var(--bg-tertiary,#333)" stroke-width="6"/>
+                <circle cx="50" cy="50" r="42" fill="none" stroke="${scoreColor}" stroke-width="6"
+                  stroke-linecap="round" stroke-dasharray="${circumference}" stroke-dashoffset="${offset}"
+                  style="transition:stroke-dashoffset .8s ease"/>
+              </svg>
+              <div class="saw-score-num" style="color:${scoreColor}">${score}</div>
+            </div>
+            <div>
+              <div style="font-size:18px;font-weight:600;color:var(--text-primary)">${scoreLabel}</div>
+              <div style="font-size:13px;color:var(--text-secondary);margin-top:4px">
+                ${data.passed}/${data.total} ${t('testów zaliczonych')}
+                ${fixable.length > 0 ? ` · <b>${fixable.length}</b> ${t('do naprawienia jednym kliknięciem')}` : ''}
+              </div>
+            </div>
+          </div>
+          ${checksHtml ? `<div class="saw-checks">${checksHtml}</div>` : `<div style="text-align:center;padding:16px;color:var(--success)"><i class="fas fa-check-circle"></i> ${t('Wszystko wygląda dobrze!')}</div>`}
+        `;
+
+        // Fix buttons
+        bodyEl.querySelectorAll('.saw-fix').forEach(btn => {
+            btn.onclick = async () => {
+                const action = btn.dataset.action;
+                btn.disabled = true;
+                btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i>`;
+                try {
+                    const r = await api('/security-advisor/fix', { method: 'POST', body: JSON.stringify({ action }) });
+                    if (r.ok) {
+                        toast(r.message || t('Naprawiono'), 'success');
+                        btn.closest('.saw-check').style.opacity = '0.4';
+                        btn.innerHTML = `<i class="fas fa-check"></i>`;
+                    } else {
+                        toast(r.error || t('Błąd'), 'error');
+                        btn.innerHTML = `<i class="fas fa-wrench"></i> ${t('Napraw')}`;
+                        btn.disabled = false;
+                    }
+                } catch {
+                    toast(t('Błąd naprawy'), 'error');
+                    btn.innerHTML = `<i class="fas fa-wrench"></i> ${t('Napraw')}`;
+                    btn.disabled = false;
+                }
+            };
+        });
+
+        // Show "Open full app" button
+        overlay.querySelector('#saw-open').style.display = '';
+        overlay.querySelector('#saw-open').onclick = () => {
+            close();
+            const appDef = (NAS.apps || []).find(a => a.id === 'security-advisor');
+            if (appDef) openApp(appDef);
+        };
+        overlay.querySelector('#saw-skip').textContent = t('Zamknij');
+
+    } catch (e) {
+        // Security Advisor not available (optional blueprint) — just close
+        overlay.querySelector('.saw-body').innerHTML = `
+          <div style="text-align:center;padding:20px;color:var(--text-secondary)">
+            <i class="fas fa-info-circle" style="font-size:24px;margin-bottom:8px"></i><br>
+            ${t('Security Advisor nie jest dostępny. Możesz go zainstalować w Package Center.')}
+          </div>`;
+    }
 }

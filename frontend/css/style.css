@@ -3770,6 +3770,23 @@ a.dkr-port-link:hover {
 }
 .modal-box .modal-close:hover { color: var(--text-primary); }
 
+/* ── Security Advisor Welcome (first-login scan) ── */
+.saw-overlay { opacity:0; transition:opacity .3s ease; }
+.saw-overlay.saw-visible { opacity:1; }
+.saw-card { background:var(--bg-elevated); border:1px solid var(--border); border-radius:16px; box-shadow:var(--shadow-xl); max-width:520px; width:92%; animation:menuIn .25s ease; overflow:hidden; }
+.saw-header { text-align:center; padding:28px 24px 16px; }
+.saw-header .saw-icon { font-size:44px; color:var(--accent); margin-bottom:12px; }
+.saw-header h2 { margin:0 0 6px; font-size:22px; font-weight:700; color:var(--text-primary); }
+.saw-header p { margin:0; font-size:14px; color:var(--text-secondary); }
+.saw-body { padding:0 24px 16px; max-height:50vh; overflow-y:auto; }
+.saw-loading { text-align:center; padding:32px; font-size:14px; color:var(--text-secondary); }
+.saw-score-row { display:flex; align-items:center; gap:20px; padding:16px 0; }
+.saw-score-mini { position:relative; width:90px; height:90px; flex-shrink:0; }
+.saw-score-num { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:28px; font-weight:700; }
+.saw-checks { display:flex; flex-direction:column; gap:8px; margin-top:12px; }
+.saw-check { display:flex; align-items:flex-start; gap:10px; padding:10px 12px; background:var(--bg-default); border-radius:8px; border:1px solid var(--border); }
+.saw-footer { display:flex; justify-content:flex-end; gap:8px; padding:16px 24px; border-top:1px solid var(--border); }
+
 .btn {
     padding: 8px 20px;
     border: 1px solid var(--border);
