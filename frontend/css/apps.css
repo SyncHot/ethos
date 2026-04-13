@@ -5801,6 +5801,13 @@ textarea.app-input { resize: vertical; line-height: 1.5; }
 .sa-failed { border-left:3px solid #ef4444; }
 .sa-passed { opacity:0.7; }
 .sa-fix-btn { flex-shrink:0; align-self:center; }
+.sa-confirm-overlay { position:absolute; inset:0; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; z-index:200; border-radius:8px; }
+.sa-confirm-dialog { background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:12px; padding:28px; max-width:420px; text-align:center; box-shadow:0 8px 32px rgba(0,0,0,.4); }
+.sa-confirm-icon { font-size:36px; color:#f59e0b; margin-bottom:12px; }
+.sa-confirm-title { font-size:16px; font-weight:700; margin-bottom:8px; color:var(--text-primary); }
+.sa-confirm-msg { font-size:13px; color:var(--text-secondary); line-height:1.5; margin-bottom:20px; }
+.sa-confirm-btns { display:flex; gap:10px; justify-content:center; }
+.sa-confirm-btns .btn { min-width:100px; }
 
 
 /* ── Photos AI (pai-*) ── */

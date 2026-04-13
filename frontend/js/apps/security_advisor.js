@@ -108,10 +108,42 @@ function _saRenderResults(body, data) {
     }
     container.innerHTML = html;
 
+    // Dangerous actions that need user confirmation before applying
+    const _CONFIRM_ACTIONS = {
+        disable_ssh_password: {
+            title: t('Wyłączyć logowanie hasłem SSH?'),
+            message: t('Upewnij się, że masz skonfigurowany klucz SSH, zanim wyłączysz logowanie hasłem — w przeciwnym razie stracisz dostęp SSH do tego serwera.'),
+            confirm: t('Tak, wyłącz'),
+        },
+    };
+
     // Fix button handlers
     container.querySelectorAll('.sa-fix-btn').forEach(btn => {
         btn.onclick = async () => {
             const action = btn.dataset.action;
+
+            // Show confirmation dialog for dangerous actions
+            const warn = _CONFIRM_ACTIONS[action];
+            if (warn) {
+                const confirmed = await new Promise(resolve => {
+                    const overlay = document.createElement('div');
+                    overlay.className = 'sa-confirm-overlay';
+                    overlay.innerHTML = `<div class="sa-confirm-dialog">
+                        <div class="sa-confirm-icon"><i class="fas fa-exclamation-triangle"></i></div>
+                        <div class="sa-confirm-title">${warn.title}</div>
+                        <div class="sa-confirm-msg">${warn.message}</div>
+                        <div class="sa-confirm-btns">
+                            <button class="btn btn-small sa-confirm-cancel">${t('Anuluj')}</button>
+                            <button class="btn btn-small btn-danger sa-confirm-ok">${warn.confirm}</button>
+                        </div>
+                    </div>`;
+                    body.appendChild(overlay);
+                    overlay.querySelector('.sa-confirm-cancel').onclick = () => { overlay.remove(); resolve(false); };
+                    overlay.querySelector('.sa-confirm-ok').onclick = () => { overlay.remove(); resolve(true); };
+                });
+                if (!confirmed) return;
+            }
+
             btn.disabled = true;
             btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i>`;
             try {
