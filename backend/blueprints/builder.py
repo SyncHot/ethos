@@ -205,6 +205,25 @@ _load_build_state()
 _HOST_NASOS_DIR = None
 
 # ── Optional app JS files (excluded from base image; installed via Package Center) ──
+
+def _get_published_app_ids():
+    """Return set of app IDs that are published to GitHub (available for download).
+    Only strip files from the image for apps that can be re-downloaded.
+    Returns None if GitHub is unreachable (caller should keep all files)."""
+    try:
+        import importlib, sys as _sys
+        _bp_dir = os.path.join(os.path.dirname(__file__))
+        _sys.path.insert(0, os.path.join(_bp_dir, '..'))
+        am = importlib.import_module('blueprints.app_manager')
+        url = am.GITHUB_CATALOG_URL
+        req = urllib.request.Request(url, headers={'User-Agent': 'EthOS-Builder/1.0'})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+        apps = data if isinstance(data, list) else data.get('apps', [])
+        return {a['id'] for a in apps if isinstance(a, dict) and 'id' in a}
+    except Exception:
+        return None  # if can't reach GitHub, don't strip anything
+
 def _compute_optional_js():
     try:
         import importlib, sys as _sys
@@ -216,12 +235,20 @@ def _compute_optional_js():
             fn = am._get_frontend_filename(aid)
             if fn:
                 core_js.add(fn + '.js')
+        # Only strip apps that are published to GitHub (downloadable after install)
+        published = _get_published_app_ids()
+        if published is None:
+            return []  # can't verify what's downloadable — keep all files
         optional = set()
         for app in am.BUILTIN_CATALOG:
-            if app['id'] not in am.CORE_APPS:
-                fn = am._get_frontend_filename(app['id'])
-                if fn and fn + '.js' not in core_js:
-                    optional.add(fn + '.js')
+            aid = app['id']
+            if aid in am.CORE_APPS:
+                continue
+            if aid not in published:
+                continue  # keep bundled — not yet published for download
+            fn = am._get_frontend_filename(aid)
+            if fn and fn + '.js' not in core_js:
+                optional.add(fn + '.js')
         return sorted(optional)
     except Exception:
         return []
@@ -235,12 +262,16 @@ def _compute_optional_py():
         _bp_dir = os.path.join(os.path.dirname(__file__))
         _sys.path.insert(0, os.path.join(_bp_dir, '..'))
         am = importlib.import_module('blueprints.app_manager')
+        published = _get_published_app_ids()
+        if published is None:
+            return []  # can't verify what's downloadable — keep all files
         seen = set()
         result = []
         for app_id, (module_name, _, _, _) in am._OPTIONAL_BLUEPRINTS.items():
-            # Don't strip core app backends — they must stay on disk
             if app_id in am.CORE_APPS:
                 continue
+            if app_id not in published:
+                continue  # keep bundled — not yet published for download
             if module_name not in seen:
                 seen.add(module_name)
                 result.append(module_name + '.py')

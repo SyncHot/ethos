@@ -31,6 +31,8 @@ from host import data_path, user_data_path, NATIVE_MODE
 from utils import safe_path as _safe_path_util, get_username as _utils_get_username, sio_emit, DATA_ROOT, register_pkg_routes, \
     require_tools, check_tool
 
+log = logging.getLogger(__name__)
+
 # Native OS thread pool for blocking file I/O on slow disks (HDD).
 # gevent monkey-patches threading.Thread → greenlets, so f.write() in a
 # download "thread" actually blocks the whole event loop when the kernel

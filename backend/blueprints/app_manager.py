@@ -183,6 +183,9 @@ _FRONTEND_FILENAME = {
     'photos-ai':        'photos_ai',
     'video-station':    'video_station',
     'radio-music':      'radio_music',
+    'packages':         'packages',
+    'services':         'services',
+    'naslink':          'naslink',
 }
 
 # Maps app_id → (module_filename, blueprint_var, init_func_or_None, socketio_attr_needed)
@@ -223,6 +226,7 @@ _OPTIONAL_BLUEPRINTS = {
     'photos-ai':       ('photos_ai',       'photos_ai_bp',      None,                True),
     'video-station':   ('video_station',   'video_station_bp',  '_start_hls_cleanup_loop', True),
     'radio-music':     ('radio_music',     'radio_music_bp',    None,                True),
+    'packages':        ('packages',        'packages_bp',       None,                False),
 }
 
 # Public alias
