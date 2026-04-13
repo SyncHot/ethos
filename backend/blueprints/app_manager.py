@@ -365,6 +365,7 @@ BUILTIN_CATALOG = [
         'install_endpoint': '/api/diskrepair/install',
         'uninstall_endpoint': '/api/diskrepair/uninstall',
         'status_endpoint': '/api/diskrepair/pkg-status',
+        'hidden': True,
     },
     {
         'id': 'remote-log', 'name': 'Remote Logs', 'version': '1.0.2',
@@ -383,6 +384,7 @@ BUILTIN_CATALOG = [
         'install_endpoint': '/api/storage/samba/pkg-install',
         'uninstall_endpoint': '/api/storage/samba/pkg-uninstall',
         'status_endpoint': '/api/storage/samba/pkg-status',
+        'hidden': True,
     },
     {
         'id': 'sharing-nfs', 'name': 'NFS', 'version': '1.0.13',
@@ -392,6 +394,7 @@ BUILTIN_CATALOG = [
         'install_endpoint': '/api/storage/nfs/pkg-install',
         'uninstall_endpoint': '/api/storage/nfs/pkg-uninstall',
         'status_endpoint': '/api/storage/nfs/pkg-status',
+        'hidden': True,
     },
     {
         'id': 'sharing-dlna', 'name': 'DLNA (MiniDLNA)', 'version': '1.0.14',
@@ -401,6 +404,7 @@ BUILTIN_CATALOG = [
         'install_endpoint': '/api/storage/dlna/pkg-install',
         'uninstall_endpoint': '/api/storage/dlna/pkg-uninstall',
         'status_endpoint': '/api/storage/dlna/pkg-status',
+        'hidden': True,
     },
     {
         'id': 'sharing-webdav', 'name': 'WebDAV', 'version': '1.0.13',
@@ -410,6 +414,7 @@ BUILTIN_CATALOG = [
         'install_endpoint': '/api/storage/webdav/pkg-install',
         'uninstall_endpoint': '/api/storage/webdav/pkg-uninstall',
         'status_endpoint': '/api/storage/webdav/pkg-status',
+        'hidden': True,
     },
     {
         'id': 'sharing-sftp', 'name': 'SFTP', 'version': '1.0.13',
@@ -419,6 +424,7 @@ BUILTIN_CATALOG = [
         'install_endpoint': '/api/storage/sftp/pkg-install',
         'uninstall_endpoint': '/api/storage/sftp/pkg-uninstall',
         'status_endpoint': '/api/storage/sftp/pkg-status',
+        'hidden': True,
     },
     {
         'id': 'sharing-ftp', 'name': 'FTP', 'version': '1.0.13',
@@ -428,6 +434,7 @@ BUILTIN_CATALOG = [
         'install_endpoint': '/api/storage/ftp/pkg-install',
         'uninstall_endpoint': '/api/storage/ftp/pkg-uninstall',
         'status_endpoint': '/api/storage/ftp/pkg-status',
+        'hidden': True,
     },
     {
         'id': 'domains-manager', 'name': 'Domains & SSL', 'version': '1.0.2',
@@ -464,6 +471,7 @@ BUILTIN_CATALOG = [
         'install_endpoint': '/api/raid/install',
         'uninstall_endpoint': '/api/raid/uninstall',
         'status_endpoint': '/api/raid/pkg-status',
+        'hidden': True,
     },
     {
         'id': 'wireguard', 'name': 'VPN (WireGuard)', 'version': '1.0.2',

@@ -8773,26 +8773,6 @@ def get_apps():
             'package': 'ai-chat'
         },
         {
-            'id': 'doc-anonymizer',
-            'name': 'Document Anonymizer',
-            'icon': 'fa-user-shield',
-            'color': '#0ea5e9',
-            'type': 'builtin',
-            'category': 'Tools',
-            'description': 'Anonymize medical PDF/DOCX documents using Bielik LLM',
-            'package': 'doc-anonymizer'
-        },
-        {
-            'id': 'med-assistant',
-            'name': 'Medical Assistant',
-            'icon': 'fa-user-md',
-            'color': '#06b6d4',
-            'type': 'builtin',
-            'category': 'Tools',
-            'description': 'Medical document analysis with Bielik LLM - timelines, drug interactions, ESC guidelines',
-            'package': 'med-assistant'
-        },
-        {
             'id': 'system-settings',
             'name': 'Settings',
             'icon': 'fa-sliders-h',
