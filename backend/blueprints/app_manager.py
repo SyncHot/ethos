@@ -2,7 +2,7 @@
 EthOS - App Manager (Package Center)
 
 Zarządza opcjonalnymi paczkami EthOS: install/uninstall/update z GitHub catalog.
-Pobiera katalog z: https://raw.githubusercontent.com/SyncHot/ethos-os-ethos-apps/main/catalog.json
+Obsługuje wiele źródeł katalogu (GitHub repos + custom URLs).
 
 Endpoints:
   GET  /api/app-manager/catalog            -> pelny katalog z statusem instalacji
@@ -10,6 +10,10 @@ Endpoints:
   GET  /api/app-manager/installed          -> tylko zainstalowane apki
   GET  /api/app-manager/core               -> lista core apps
   GET  /api/app-manager/check-updates      -> sprawdz aktualizacje (catalog/GitHub)
+  GET  /api/app-manager/catalog-sources    -> lista zrodel katalogu
+  POST /api/app-manager/catalog-sources    -> dodaj nowe zrodlo
+  PUT  /api/app-manager/catalog-sources/<id> -> edytuj zrodlo
+  DELETE /api/app-manager/catalog-sources/<id> -> usun zrodlo
   GET  /api/app-manager/app-update-config  -> pobierz konfiguracje zrodla aktualizacji apek
   PUT  /api/app-manager/app-update-config  -> zapisz konfiguracje (source, github_repo)
   POST /api/app-manager/check-app-updates  -> sprawdz aktualizacje (GitHub lub OTA)
@@ -124,6 +128,7 @@ _BLUEPRINTS_DIR = os.path.join(_ETHOS_ROOT, 'backend', 'blueprints')
 
 INSTALLED_FILE = data_path('installed_apps.json')
 APP_UPDATE_CONFIG_FILE = data_path('app_update_config.json')
+CATALOG_SOURCES_FILE = data_path('catalog_sources.json')
 CATALOG_CACHE_FILE = '/tmp/ethos_app_catalog.json'
 CATALOG_CACHE_TTL = 3600 * 6
 
@@ -753,29 +758,124 @@ def _fetch_github_catalog():
     return None
 
 
+# ─── Multi-source catalog ────────────────────────────────────
+
+_DEFAULT_CATALOG_SOURCE = {
+    'id': 'official',
+    'name': 'EthOS Official',
+    'type': 'github',
+    'repo': DEFAULT_GITHUB_REPO,
+    'enabled': True,
+}
+
+
+def _load_catalog_sources():
+    """Load catalog sources list. Auto-creates default if missing."""
+    try:
+        if os.path.isfile(CATALOG_SOURCES_FILE):
+            with open(CATALOG_SOURCES_FILE) as f:
+                sources = json.load(f)
+            if isinstance(sources, list) and sources:
+                for s in sources:
+                    s.setdefault('id', s.get('name', 'src').lower().replace(' ', '-'))
+                    s.setdefault('enabled', True)
+                return sources
+    except Exception as e:
+        log.warning('[app_manager] Error loading catalog sources: %s', e)
+    return [dict(_DEFAULT_CATALOG_SOURCE)]
+
+
+def _save_catalog_sources(sources):
+    """Save catalog sources list."""
+    tmp = CATALOG_SOURCES_FILE + '.tmp'
+    with open(tmp, 'w') as f:
+        json.dump(sources, f, indent=2)
+    os.replace(tmp, CATALOG_SOURCES_FILE)
+
+
+def _fetch_catalog_from_source(source):
+    """Fetch catalog.json from a single source. Returns list of app dicts or None."""
+    src_type = source.get('type', 'github')
+    try:
+        if src_type == 'github':
+            repo = source.get('repo', DEFAULT_GITHUB_REPO)
+            url = f'https://raw.githubusercontent.com/{repo}/main/catalog.json'
+        else:
+            url = source.get('url', '')
+            if not url:
+                return None
+            # Ensure URL points to catalog.json
+            if not url.endswith('/catalog.json') and not url.endswith('.json'):
+                url = url.rstrip('/') + '/catalog.json'
+
+        req = urllib.request.Request(url, headers={'User-Agent': 'EthOS-AppManager/1.0'})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+
+        apps = data.get('apps', data) if isinstance(data, dict) else data
+        if not isinstance(apps, list):
+            return None
+
+        # Tag each app with its source info for download routing
+        src_id = source.get('id', 'unknown')
+        for app in apps:
+            if isinstance(app, dict):
+                app['_source_id'] = src_id
+                if src_type == 'github':
+                    app['_source_type'] = 'github'
+                    app['_source_repo'] = source.get('repo', DEFAULT_GITHUB_REPO)
+                else:
+                    app['_source_type'] = 'url'
+                    app['_source_url'] = url.rsplit('/catalog.json', 1)[0] if url.endswith('/catalog.json') else url.rsplit('/', 1)[0]
+        return apps
+    except Exception as e:
+        log.debug('[app_manager] Catalog source %s (%s) unavailable: %s', source.get('name', '?'), src_type, e)
+        return None
+
+
+def _get_app_base_for_source(app):
+    """Return the base URL for downloading app files, based on per-app source tags."""
+    src_type = app.get('_source_type', 'github')
+    if src_type == 'github':
+        repo = app.get('_source_repo', DEFAULT_GITHUB_REPO)
+        return f'https://raw.githubusercontent.com/{repo}/main/apps'
+    elif src_type == 'url':
+        return app.get('_source_url', '').rstrip('/') + '/apps'
+    return GITHUB_APP_BASE
+
+
 def _get_catalog(force_refresh=False):
     with _catalog_lock:
         cached = None if force_refresh else _load_catalog_cache()
         if cached is not None:
             return cached.get('apps', BUILTIN_CATALOG)
 
-        github_apps = _fetch_github_catalog()
-        if github_apps is not None:
-            builtin_by_id = {a['id']: a for a in BUILTIN_CATALOG}
-            merged = []
-            for app in github_apps:
-                base = builtin_by_id.get(app['id'], {}).copy()
-                base.update(app)
-                merged.append(base)
-            github_ids = {a['id'] for a in github_apps}
-            for app in BUILTIN_CATALOG:
-                if app['id'] not in github_ids:
-                    merged.append(app)
-            _save_catalog_cache({'apps': merged, 'source': 'github', 'fetched_at': time.time()})
-            return merged
+        sources = _load_catalog_sources()
+        enabled = [s for s in sources if s.get('enabled', True)]
+        builtin_by_id = {a['id']: a for a in BUILTIN_CATALOG}
+        merged_by_id = {}
 
-        _save_catalog_cache({'apps': BUILTIN_CATALOG, 'source': 'builtin', 'fetched_at': time.time()})
-        return BUILTIN_CATALOG
+        # Start with builtin catalog as baseline
+        for app in BUILTIN_CATALOG:
+            merged_by_id[app['id']] = dict(app)
+
+        # Layer each enabled source on top — later sources override earlier ones
+        any_fetched = False
+        for src in enabled:
+            apps = _fetch_catalog_from_source(src)
+            if apps is not None:
+                any_fetched = True
+                for app in apps:
+                    if not isinstance(app, dict) or 'id' not in app:
+                        continue
+                    base = merged_by_id.get(app['id'], {}).copy()
+                    base.update(app)
+                    merged_by_id[app['id']] = base
+
+        merged = list(merged_by_id.values())
+        source_label = 'multi-source' if any_fetched else 'builtin'
+        _save_catalog_cache({'apps': merged, 'source': source_label, 'fetched_at': time.time()})
+        return merged
 
 
 # ─── Install helpers ─────────────────────────────────────────
@@ -819,10 +919,12 @@ def _repair_missing_app_files():
             fn = _get_frontend_filename(app_id)
             if fn is None:
                 continue
+            app_def = catalog_map.get(app_id, {})
+            base_url = _get_app_base_for_source(app_def)
             # Check frontend JS
             js_path = os.path.join(_FRONTEND_APPS_DIR, fn + '.js')
             if not os.path.isfile(js_path):
-                url = _get_github_app_base() + '/' + app_id + '/frontend.js'
+                url = base_url + '/' + app_id + '/frontend.js'
                 if _download_file(url, js_path):
                     repaired.append(app_id + '/frontend.js')
                     # Also sync to frontend_dist
@@ -838,7 +940,7 @@ def _repair_missing_app_files():
             if bp_info:
                 bp_path = os.path.join(_BLUEPRINTS_DIR, bp_info[0] + '.py')
                 if not os.path.isfile(bp_path):
-                    url = _get_github_app_base() + '/' + app_id + '/backend.py'
+                    url = base_url + '/' + app_id + '/backend.py'
                     if _download_file(url, bp_path):
                         repaired.append(app_id + '/backend.py')
 
@@ -851,7 +953,7 @@ def _repair_missing_app_files():
 
 
 def _get_github_app_base():
-    """Get the GitHub base URL, respecting custom repo config."""
+    """Get the GitHub base URL, respecting custom repo config. Fallback for non-sourced apps."""
     try:
         cfg = json.load(open(APP_UPDATE_CONFIG_FILE))
         repo = cfg.get('github_repo', DEFAULT_GITHUB_REPO)
@@ -1199,13 +1301,14 @@ def _bg_install(app_id, app_def, task_id):
 
         # Determine source before downloading — was the app already on disk?
         _was_bundled = _is_bundled(app_id)
+        app_base_url = _get_app_base_for_source(app_def)
 
         # Pobierz pliki z GitHub jesli nie ma na dysku
         if not _was_bundled:
             emit({'stage': 'download', 'percent': 10, 'message': 'Pobieranie pliku frontend...', 'status': 'running'})
             fn = _get_frontend_filename(app_id)
             if fn:
-                url = _get_github_app_base() + '/' + app_id + '/frontend.js'
+                url = app_base_url + '/' + app_id + '/frontend.js'
                 dest = os.path.join(_FRONTEND_APPS_DIR, fn + '.js')
                 if not _download_file(url, dest):
                     emit({'stage': 'error', 'percent': 0, 'message': 'Bląd pobierania frontend', 'status': 'error'})
@@ -1221,7 +1324,7 @@ def _bg_install(app_id, app_def, task_id):
             module_name = bp_info[0]
             bp_dest = os.path.join(_BLUEPRINTS_DIR, module_name + '.py')
             if not os.path.isfile(bp_dest):
-                bp_url = _get_github_app_base() + '/' + app_id + '/backend.py'
+                bp_url = app_base_url + '/' + app_id + '/backend.py'
                 emit({'stage': 'download_backend', 'percent': 20, 'message': 'Pobieranie backend...', 'status': 'running'})
                 if not _download_file(bp_url, bp_dest):
                     emit({'stage': 'error', 'percent': 0, 'message': 'Bład pobierania backend — sprawdz połaczenie z internetem', 'status': 'error'})
@@ -1773,6 +1876,126 @@ def set_app_update_config():
         cfg['github_repo'] = repo
     _save_app_update_config(cfg)
     return jsonify({'ok': True, **cfg})
+
+
+# ═══════════════════════════════════════════════════════════
+#  Catalog sources — multi-source app catalog
+# ═══════════════════════════════════════════════════════════
+
+@app_manager_bp.route('/catalog-sources', methods=['GET'])
+def get_catalog_sources():
+    err = _require_admin()
+    if err:
+        return err
+    return jsonify({'ok': True, 'sources': _load_catalog_sources()})
+
+
+@app_manager_bp.route('/catalog-sources', methods=['POST'])
+def add_catalog_source():
+    err = _require_admin()
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    src_type = body.get('type', 'github')
+    name = body.get('name', '').strip()
+    if not name:
+        return jsonify({'error': 'Nazwa źródła jest wymagana'}), 400
+    if src_type not in ('github', 'url'):
+        return jsonify({'error': 'Typ musi być "github" lub "url"'}), 400
+
+    if src_type == 'github':
+        repo = body.get('repo', '').strip()
+        if not repo or '/' not in repo:
+            return jsonify({'error': 'Format repozytorium: owner/name'}), 400
+    else:
+        url = body.get('url', '').strip()
+        if not url or not (url.startswith('http://') or url.startswith('https://')):
+            return jsonify({'error': 'Podaj poprawny URL (http:// lub https://)'}), 400
+
+    sources = _load_catalog_sources()
+    src_id = name.lower().replace(' ', '-').replace('/', '-')[:32]
+    # Ensure unique ID
+    existing_ids = {s['id'] for s in sources}
+    base_id = src_id
+    counter = 2
+    while src_id in existing_ids:
+        src_id = f'{base_id}-{counter}'
+        counter += 1
+
+    new_src = {
+        'id': src_id,
+        'name': name,
+        'type': src_type,
+        'enabled': True,
+    }
+    if src_type == 'github':
+        new_src['repo'] = body['repo'].strip()
+    else:
+        new_src['url'] = body['url'].strip()
+
+    sources.append(new_src)
+    _save_catalog_sources(sources)
+    # Invalidate cache so next catalog load picks up new source
+    try:
+        os.unlink(CATALOG_CACHE_FILE)
+    except OSError:
+        pass
+    return jsonify({'ok': True, 'source': new_src, 'sources': sources})
+
+
+@app_manager_bp.route('/catalog-sources/<src_id>', methods=['PUT'])
+def update_catalog_source(src_id):
+    err = _require_admin()
+    if err:
+        return err
+    sources = _load_catalog_sources()
+    target = None
+    for s in sources:
+        if s['id'] == src_id:
+            target = s
+            break
+    if not target:
+        return jsonify({'error': 'Źródło nie znalezione'}), 404
+
+    body = request.get_json(silent=True) or {}
+    if 'name' in body and body['name'].strip():
+        target['name'] = body['name'].strip()
+    if 'enabled' in body:
+        target['enabled'] = bool(body['enabled'])
+    if target.get('type') == 'github' and 'repo' in body:
+        repo = body['repo'].strip()
+        if repo and '/' in repo:
+            target['repo'] = repo
+    if target.get('type') == 'url' and 'url' in body:
+        url = body['url'].strip()
+        if url and (url.startswith('http://') or url.startswith('https://')):
+            target['url'] = url
+
+    _save_catalog_sources(sources)
+    try:
+        os.unlink(CATALOG_CACHE_FILE)
+    except OSError:
+        pass
+    return jsonify({'ok': True, 'sources': sources})
+
+
+@app_manager_bp.route('/catalog-sources/<src_id>', methods=['DELETE'])
+def delete_catalog_source(src_id):
+    err = _require_admin()
+    if err:
+        return err
+    sources = _load_catalog_sources()
+    new_sources = [s for s in sources if s['id'] != src_id]
+    if len(new_sources) == len(sources):
+        return jsonify({'error': 'Źródło nie znalezione'}), 404
+    if not new_sources:
+        return jsonify({'error': 'Musi pozostać co najmniej jedno źródło'}), 400
+    _save_catalog_sources(new_sources)
+    try:
+        os.unlink(CATALOG_CACHE_FILE)
+    except OSError:
+        pass
+    return jsonify({'ok': True, 'sources': new_sources})
 
 
 def _get_update_url():

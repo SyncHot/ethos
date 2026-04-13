@@ -6089,48 +6089,152 @@ function renderPackageCenter(body) {
     $('#pm-btn-src-config')?.addEventListener('click', () => showSourceConfig());
 
     async function showSourceConfig() {
-        const cfg = await api('/app-manager/app-update-config');
-        if (cfg.error) { toast(cfg.error, 'error'); return; }
+        const [srcRes, cfgRes] = await Promise.all([
+            api('/app-manager/catalog-sources'),
+            api('/app-manager/app-update-config'),
+        ]);
+        if (srcRes.error) { toast(srcRes.error, 'error'); return; }
+        const sources = srcRes.sources || [];
+        const cfg = cfgRes.error ? { source: 'github' } : cfgRes;
 
         const overlay = $('#pm-detail-overlay');
         overlay.style.display = 'flex';
-        overlay.innerHTML = `
-        <div class="pm-detail-card" style="max-width:500px">
-          <div class="pm-detail-header">
-            <span class="pm-detail-name"><i class="fas fa-cog"></i> ${t('Źródło aktualizacji aplikacji')}</span>
-            <button class="pm-detail-close" id="pm-src-close"><i class="fas fa-times"></i></button>
-          </div>
-          <div class="pm-detail-body" style="padding:20px">
-            <div style="margin-bottom:16px">
-              <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;cursor:pointer">
-                <input type="radio" name="pm-src" value="github" ${cfg.source === 'github' ? 'checked' : ''}>
-                <i class="fab fa-github" style="font-size:18px"></i>
-                <span><b>GitHub</b> — ${t('publiczny katalog aplikacji')}</span>
-              </label>
-              <div style="margin-left:30px;margin-bottom:12px">
-                <label style="font-size:12px;color:var(--text-secondary)">${t('Repozytorium (owner/repo)')}</label>
-                <input type="text" id="pm-src-repo" class="pm-search" style="width:100%;margin-top:4px"
-                  value="${cfg.github_repo || 'SyncHot/ethos-os-ethos-apps'}" placeholder="SyncHot/ethos-os-ethos-apps">
-              </div>
-              <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-                <input type="radio" name="pm-src" value="ota" ${cfg.source === 'ota' ? 'checked' : ''}>
-                <i class="fas fa-satellite-dish" style="font-size:18px"></i>
-                <span><b>OTA Server</b> — ${t('serwer aktualizacji EthOS')}</span>
-              </label>
-            </div>
-            <button class="pm-install-btn" id="pm-src-save" style="width:100%"><i class="fas fa-save"></i> ${t('Zapisz')}</button>
-          </div>
-        </div>`;
 
-        overlay.querySelector('#pm-src-close').onclick = () => { overlay.style.display = 'none'; };
-        overlay.querySelector('#pm-src-save').onclick = async () => {
-            const source = overlay.querySelector('input[name="pm-src"]:checked')?.value || 'github';
-            const github_repo = overlay.querySelector('#pm-src-repo')?.value?.trim() || 'SyncHot/ethos-os-ethos-apps';
-            const res = await api('/app-manager/app-update-config', { method: 'PUT', body: { source, github_repo } });
-            if (res.error) { toast(res.error, 'error'); return; }
-            toast(t('Źródło zapisane:') + ' ' + (source === 'github' ? `GitHub (${github_repo})` : 'OTA Server'), 'success');
-            overlay.style.display = 'none';
-        };
+        function renderSources() {
+            const listHtml = sources.map((s, i) => `
+              <div class="pm-src-item" data-idx="${i}">
+                <div class="pm-src-item-left">
+                  <label class="pm-src-toggle">
+                    <input type="checkbox" ${s.enabled ? 'checked' : ''} data-action="toggle" data-idx="${i}">
+                    <span class="pm-src-slider"></span>
+                  </label>
+                  <i class="${s.type === 'github' ? 'fab fa-github' : 'fas fa-globe'}" style="font-size:16px;opacity:0.7"></i>
+                  <div>
+                    <div class="pm-src-name">${escHtml(s.name)}</div>
+                    <div class="pm-src-url">${escHtml(s.type === 'github' ? s.repo : s.url)}</div>
+                  </div>
+                </div>
+                <button class="pm-src-del" data-action="delete" data-idx="${i}" title="${t('Usuń')}"><i class="fas fa-trash"></i></button>
+              </div>`).join('');
+
+            overlay.innerHTML = `
+            <div class="pm-detail-card" style="max-width:560px">
+              <div class="pm-detail-header">
+                <span class="pm-detail-name"><i class="fas fa-layer-group"></i> ${t('Źródła katalogu aplikacji')}</span>
+                <button class="pm-detail-close" id="pm-src-close"><i class="fas fa-times"></i></button>
+              </div>
+              <div class="pm-detail-body" style="padding:20px">
+                <div class="pm-src-list">${listHtml || `<div class="pm-src-empty">${t('Brak źródeł')}</div>`}</div>
+                <div class="pm-src-add-row">
+                  <button class="pm-ota-btn" id="pm-src-add"><i class="fas fa-plus"></i> ${t('Dodaj źródło')}</button>
+                </div>
+                <div class="pm-src-separator"></div>
+                <div class="pm-src-update-section">
+                  <div class="pm-src-section-title">${t('Źródło sprawdzania aktualizacji')}</div>
+                  <div style="display:flex;gap:12px;margin-top:8px">
+                    <label class="pm-src-radio"><input type="radio" name="pm-upd-src" value="github" ${cfg.source === 'github' ? 'checked' : ''}> <i class="fab fa-github"></i> GitHub</label>
+                    <label class="pm-src-radio"><input type="radio" name="pm-upd-src" value="ota" ${cfg.source === 'ota' ? 'checked' : ''}> <i class="fas fa-satellite-dish"></i> OTA</label>
+                  </div>
+                </div>
+              </div>
+            </div>`;
+
+            overlay.querySelector('#pm-src-close').onclick = () => { overlay.style.display = 'none'; };
+            overlay.querySelector('#pm-src-add').onclick = () => showAddForm();
+
+            overlay.querySelectorAll('[data-action="toggle"]').forEach(cb => {
+                cb.onchange = async () => {
+                    const idx = parseInt(cb.dataset.idx);
+                    const s = sources[idx];
+                    s.enabled = cb.checked;
+                    await api(`/app-manager/catalog-sources/${encodeURIComponent(s.id)}`, {
+                        method: 'PUT', body: { enabled: s.enabled }
+                    });
+                };
+            });
+
+            overlay.querySelectorAll('[data-action="delete"]').forEach(btn => {
+                btn.onclick = async () => {
+                    const idx = parseInt(btn.dataset.idx);
+                    const s = sources[idx];
+                    if (sources.length <= 1) { toast(t('Musi pozostać co najmniej jedno źródło'), 'warning'); return; }
+                    const res = await api(`/app-manager/catalog-sources/${encodeURIComponent(s.id)}`, { method: 'DELETE' });
+                    if (res.error) { toast(res.error, 'error'); return; }
+                    sources.splice(idx, 1);
+                    renderSources();
+                    toast(t('Źródło usunięte'), 'success');
+                };
+            });
+
+            overlay.querySelectorAll('input[name="pm-upd-src"]').forEach(r => {
+                r.onchange = async () => {
+                    await api('/app-manager/app-update-config', { method: 'PUT', body: { source: r.value } });
+                };
+            });
+        }
+
+        function showAddForm() {
+            overlay.innerHTML = `
+            <div class="pm-detail-card" style="max-width:480px">
+              <div class="pm-detail-header">
+                <span class="pm-detail-name"><i class="fas fa-plus-circle"></i> ${t('Dodaj źródło katalogu')}</span>
+                <button class="pm-detail-close" id="pm-src-back"><i class="fas fa-arrow-left"></i></button>
+              </div>
+              <div class="pm-detail-body" style="padding:20px">
+                <div style="margin-bottom:14px">
+                  <label class="pm-src-label">${t('Nazwa')}</label>
+                  <input type="text" id="pm-src-new-name" class="pm-search" style="width:100%" placeholder="${t('np. Moje aplikacje')}">
+                </div>
+                <div style="margin-bottom:14px">
+                  <label class="pm-src-label">${t('Typ')}</label>
+                  <div style="display:flex;gap:12px;margin-top:6px">
+                    <label class="pm-src-radio"><input type="radio" name="pm-src-type" value="github" checked> <i class="fab fa-github"></i> GitHub</label>
+                    <label class="pm-src-radio"><input type="radio" name="pm-src-type" value="url"> <i class="fas fa-globe"></i> URL</label>
+                  </div>
+                </div>
+                <div id="pm-src-github-field" style="margin-bottom:14px">
+                  <label class="pm-src-label">${t('Repozytorium (owner/repo)')}</label>
+                  <input type="text" id="pm-src-new-repo" class="pm-search" style="width:100%" placeholder="owner/repo">
+                </div>
+                <div id="pm-src-url-field" style="margin-bottom:14px;display:none">
+                  <label class="pm-src-label">${t('URL katalogu')}</label>
+                  <input type="text" id="pm-src-new-url" class="pm-search" style="width:100%" placeholder="https://example.com/apps/catalog.json">
+                </div>
+                <button class="pm-install-btn" id="pm-src-save" style="width:100%"><i class="fas fa-save"></i> ${t('Dodaj')}</button>
+              </div>
+            </div>`;
+
+            overlay.querySelector('#pm-src-back').onclick = () => renderSources();
+
+            overlay.querySelectorAll('input[name="pm-src-type"]').forEach(r => {
+                r.onchange = () => {
+                    const isGh = r.value === 'github';
+                    overlay.querySelector('#pm-src-github-field').style.display = isGh ? '' : 'none';
+                    overlay.querySelector('#pm-src-url-field').style.display = isGh ? 'none' : '';
+                };
+            });
+
+            overlay.querySelector('#pm-src-save').onclick = async () => {
+                const srcType = overlay.querySelector('input[name="pm-src-type"]:checked')?.value || 'github';
+                const name = overlay.querySelector('#pm-src-new-name')?.value?.trim();
+                if (!name) { toast(t('Podaj nazwę źródła'), 'warning'); return; }
+                const body = { type: srcType, name };
+                if (srcType === 'github') {
+                    body.repo = overlay.querySelector('#pm-src-new-repo')?.value?.trim();
+                    if (!body.repo || !body.repo.includes('/')) { toast(t('Format: owner/repo'), 'warning'); return; }
+                } else {
+                    body.url = overlay.querySelector('#pm-src-new-url')?.value?.trim();
+                    if (!body.url) { toast(t('Podaj URL'), 'warning'); return; }
+                }
+                const res = await api('/app-manager/catalog-sources', { method: 'POST', body });
+                if (res.error) { toast(res.error, 'error'); return; }
+                sources.push(res.source);
+                toast(t('Źródło dodane'), 'success');
+                renderSources();
+            };
+        }
+
+        renderSources();
     }
 
     loadCatalog();
