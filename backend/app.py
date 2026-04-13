@@ -120,6 +120,8 @@ from blueprints.admin_required import admin_required
 from blueprints.totp import totp_bp, is_totp_enabled, verify_totp_code, verify_backup_code
 from blueprints.api_docs import api_docs_bp
 from blueprints.security_advisor import security_advisor_bp
+from blueprints.firewall import firewall_bp
+from blueprints.fail2ban import fail2ban_bp
 from blueprints.app_manager import (
     app_manager_bp, init_app_manager, migrate_from_ethos_packages,
     CORE_APPS as _APP_MANAGER_CORE_APPS,
@@ -469,6 +471,8 @@ app.register_blueprint(totp_bp)
 app.register_blueprint(dashboard_bp)
 app.register_blueprint(api_docs_bp)
 app.register_blueprint(security_advisor_bp)
+app.register_blueprint(firewall_bp)
+app.register_blueprint(fail2ban_bp)
 app.register_blueprint(app_manager_bp)
 init_app_manager(socketio)
 _load_optional_blueprints(app, socketio)

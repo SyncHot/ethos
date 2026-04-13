@@ -140,9 +140,9 @@ GITHUB_APP_BASE    = f'https://raw.githubusercontent.com/{DEFAULT_GITHUB_REPO}/m
 
 CORE_APPS = frozenset({
     'dashboard', 'file-manager', 'storage-manager', 'terminal',
-    'system-settings', 'users', 'updates', 'app-store', 'packages',
-    'event-log', 'network', 'services', 'resource-monitor', 'backup',
-    'power', 'notifications', 'ssh-manager', 'naslink',
+    'system-settings', 'users', 'updates', 'app-store',
+    'event-log', 'network', 'resource-monitor', 'backup',
+    'power', 'notifications', 'ssh-manager',
     'firewall', 'fail2ban', 'security-advisor',
 })
 
@@ -214,8 +214,7 @@ _OPTIONAL_BLUEPRINTS = {
     'wireguard':       ('wireguard',       'wireguard_bp',      None,                True),
     'antivirus':       ('antivirus',       'antivirus_bp',      None,                True),
     'rollback':        ('rollback',        'rollback_bp',       None,                False),
-    'firewall':        ('firewall',        'firewall_bp',       None,                True),
-    'fail2ban':        ('fail2ban',        'fail2ban_bp',       None,                True),
+
     'cron':            ('cron_manager',    'cron_bp',           None,                False),
     'ups':             ('ups',             'ups_bp',           'init_ups',          False),
     'family-hub':      ('familyhub',       'familyhub_bp',      None,                False),
