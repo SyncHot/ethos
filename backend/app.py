@@ -95,7 +95,6 @@ from blueprints.storage import storage_bp, init_storage, get_usb_notifications, 
 from blueprints.resources import resources_bp, resources_background_collector
 from blueprints.resources_db import init_db as init_resources_db
 from blueprints.backup import backup_bp, init_backup, get_backup_notifications
-from blueprints.packages import packages_bp
 from blueprints.users import users_bp, _load_privileges
 from blueprints.network import network_bp
 from blueprints.eventlog import eventlog_bp, init_eventlog, log as elog
@@ -450,7 +449,6 @@ app.register_blueprint(storage_bp)
 init_storage(socketio)
 app.register_blueprint(resources_bp)
 app.register_blueprint(backup_bp)
-app.register_blueprint(packages_bp)
 app.register_blueprint(users_bp)
 app.register_blueprint(network_bp)
 app.register_blueprint(eventlog_bp)
