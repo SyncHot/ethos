@@ -1081,8 +1081,92 @@ WantedBy=multi-user.target
         log.info("Created setup_done + .password_changed (wizard=%s)", setup_wizard)
 
 
+# ── GRUB bootloader helpers ──
+
+# Modules needed on ESP for A/B boot with ext4 + GPT + UUID search
+_GRUB_ESSENTIAL_MODS = (
+    "normal ext2 part_gpt part_msdos search search_fs_uuid "
+    "search_label linux configfile all_video boot fat efi_gop "
+    "gzio video video_fb loadenv"
+)
+
+
+def _find_source_bootx64():
+    """Find BOOTX64.EFI on the installer's own filesystem.
+
+    The installer boots from the Builder image which has a working EFI binary
+    on its ESP.  This is the most reliable source for SquashFS installs.
+    """
+    for src in [
+        "/boot/efi/EFI/BOOT/BOOTX64.EFI",
+        "/boot/efi/EFI/BOOT/bootx64.efi",
+        "/boot/efi/EFI/debian/grubx64.efi",
+        "/boot/efi/EFI/ubuntu/grubx64.efi",
+    ]:
+        if os.path.isfile(src):
+            return src
+    return None
+
+
+def _find_grub_mod_dir():
+    """Find the GRUB x86_64-efi module directory."""
+    for d in ["/usr/lib/grub/x86_64-efi", "/usr/share/grub/x86_64-efi"]:
+        if os.path.isdir(d):
+            return d
+    return None
+
+
+def _copy_grub_modules_to_esp(efi_dir):
+    """Copy essential GRUB .mod files to ESP so insmod commands work."""
+    esp_mod_dir = os.path.join(efi_dir, "boot/grub/x86_64-efi")
+    if os.path.isdir(esp_mod_dir) and os.listdir(esp_mod_dir):
+        return  # already populated
+    mod_dir = _find_grub_mod_dir()
+    if not mod_dir:
+        log.warning("No GRUB x86_64-efi module directory found on host")
+        return
+    os.makedirs(esp_mod_dir, exist_ok=True)
+    copied = 0
+    for mod in _GRUB_ESSENTIAL_MODS.split():
+        src = os.path.join(mod_dir, f"{mod}.mod")
+        if os.path.isfile(src):
+            shutil.copy2(src, esp_mod_dir)
+            copied += 1
+    log.info("Copied %d GRUB modules to ESP /boot/grub/x86_64-efi/", copied)
+
+
+def _grub_mkimage_fallback(bootx64, efi_dir):
+    """Build BOOTX64.EFI with grub-mkimage as a last resort."""
+    mod_dir = _find_grub_mod_dir()
+    if not mod_dir:
+        log.error("Cannot build BOOTX64.EFI: no GRUB module directory found")
+        return
+    os.makedirs(os.path.dirname(bootx64), exist_ok=True)
+    _, err, rc = _run(
+        f"PATH=/usr/sbin:/usr/bin:/sbin:/bin:$PATH "
+        f"grub-mkimage -O x86_64-efi "
+        f"-o {bootx64} -p /boot/grub "
+        f"-d {mod_dir} {_GRUB_ESSENTIAL_MODS} 2>&1",
+        timeout=60,
+    )
+    if rc != 0:
+        log.error("grub-mkimage failed (rc=%d): %s", rc, err)
+    else:
+        log.info("BOOTX64.EFI created via grub-mkimage (%d bytes)",
+                 os.path.getsize(bootx64))
+        _copy_grub_modules_to_esp(efi_dir)
+
+
 def _install_grub(dev, mount_dir, progress_cb=None, squashfs_mode=False, data_dev=None):
-    """Install UEFI GRUB bootloader with sub-step progress reporting."""
+    """Install UEFI GRUB bootloader with sub-step progress reporting.
+
+    Strategy:
+      - SquashFS mode: copy BOOTX64.EFI + modules from the installer's own
+        ESP.  The installer booted from the Builder image, so its bootloader
+        is guaranteed to work on this architecture.
+      - Ext4 mode: chroot grub-install (target has full filesystem).
+      - Both: if BOOTX64.EFI is still missing, fall back to grub-mkimage.
+    """
     import platform
     arch = platform.machine()
 
@@ -1094,12 +1178,27 @@ def _install_grub(dev, mount_dir, progress_cb=None, squashfs_mode=False, data_de
     if arch == "x86_64":
         efi_dir = os.path.join(mount_dir, "boot/efi")
         bootx64 = os.path.join(efi_dir, "EFI/BOOT/BOOTX64.EFI")
+        os.makedirs(os.path.join(efi_dir, "EFI/BOOT"), exist_ok=True)
 
-        # Ensure PATH includes /usr/sbin (grub-install lives there)
-        _grub_env = f"PATH=/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+        if squashfs_mode:
+            # ── SquashFS mode: copy bootloader from installer's own ESP ──
+            # The installer booted from the Builder image which already has
+            # a working BOOTX64.EFI.  Just copy it — no grub-install needed.
+            _p(75, "Copying bootloader from installer ESP...")
+            _src_efi = _find_source_bootx64()
+            if _src_efi:
+                shutil.copy2(_src_efi, bootx64)
+                log.info("Copied BOOTX64.EFI from installer: %s (%d bytes)",
+                         _src_efi, os.path.getsize(bootx64))
+                _p(76, "BOOTX64.EFI copied from installer")
+            else:
+                log.warning("No BOOTX64.EFI found on installer ESP")
 
-        if not squashfs_mode:
-            # Traditional (ext4) install: chroot has full filesystem
+            # Copy GRUB modules to target ESP so insmod commands work
+            _copy_grub_modules_to_esp(efi_dir)
+
+        else:
+            # ── Ext4 mode: chroot grub-install (traditional) ──
             _p(75, "Mounting filesystems for chroot...")
             for fs in ("dev", "proc", "sys"):
                 _, err, rc = _run(f"mount --bind /{fs} {mount_dir}/{fs}", timeout=10)
@@ -1128,73 +1227,11 @@ def _install_grub(dev, mount_dir, progress_cb=None, squashfs_mode=False, data_de
             _p(79, "Unmounting chroot filesystems...")
             for fs in ("dev/pts", "sys", "proc", "dev"):
                 _run(f"umount {mount_dir}/{fs} 2>/dev/null")
-        else:
-            log.info("SquashFS mode: skipping chroot grub-install (target has no binaries)")
 
-        # Fallback 1: grub-install from the host (installer) targeting the mounted ESP.
+        # ── Fallback: grub-mkimage if BOOTX64.EFI is still missing ──
         if not os.path.isfile(bootx64):
-            _p(76, "Installing GRUB UEFI from host system...")
-            _, err, rc = _run(
-                f"{_grub_env} grub-install --target=x86_64-efi "
-                f"--efi-directory={efi_dir} "
-                f"--boot-directory={os.path.join(mount_dir, 'boot')} "
-                f"--removable --no-nvram 2>&1",
-                timeout=120,
-            )
-            if rc != 0:
-                log.error("Host grub-install failed (rc=%d): %s", rc, err)
-                _p(77, f"grub-install failed, trying grub-mkimage...")
-            else:
-                _p(77, "GRUB UEFI installed from host system")
-
-        # Fallback 2: build BOOTX64.EFI with grub-mkimage directly
-        if not os.path.isfile(bootx64):
-            _p(77, "Building GRUB EFI binary via grub-mkimage...")
-            os.makedirs(os.path.join(efi_dir, "EFI/BOOT"), exist_ok=True)
-            # Modules needed for A/B boot with ext4 + GPT + UUID search
-            _grub_mods = (
-                "normal ext2 part_gpt part_msdos search search_fs_uuid "
-                "search_label linux configfile all_video boot fat efi_gop "
-                "gzio video video_fb loadenv"
-            )
-            # Find grub modules directory
-            _mod_dir = ""
-            for d in ["/usr/lib/grub/x86_64-efi", "/usr/share/grub/x86_64-efi"]:
-                if os.path.isdir(d):
-                    _mod_dir = d
-                    break
-            if _mod_dir:
-                _, err, rc = _run(
-                    f"{_grub_env} grub-mkimage -O x86_64-efi "
-                    f"-o {bootx64} -p /boot/grub "
-                    f"-d {_mod_dir} {_grub_mods} 2>&1",
-                    timeout=60,
-                )
-                if rc != 0:
-                    log.error("grub-mkimage failed (rc=%d): %s", rc, err)
-                else:
-                    log.info("BOOTX64.EFI created via grub-mkimage")
-                    # Copy essential modules to ESP so insmod works at runtime
-                    esp_mod_dir = os.path.join(efi_dir, "boot/grub/x86_64-efi")
-                    os.makedirs(esp_mod_dir, exist_ok=True)
-                    for mod in _grub_mods.split():
-                        src = os.path.join(_mod_dir, f"{mod}.mod")
-                        if os.path.isfile(src):
-                            shutil.copy2(src, esp_mod_dir)
-            else:
-                log.error("No GRUB x86_64-efi module directory found")
-
-        # Fallback 3: copy BOOTX64.EFI from the running host system
-        if not os.path.isfile(bootx64):
-            _p(77, "Searching for existing BOOTX64.EFI on host...")
-            os.makedirs(os.path.join(efi_dir, "EFI/BOOT"), exist_ok=True)
-            for src in ["/boot/efi/EFI/BOOT/BOOTX64.EFI",
-                        "/boot/efi/EFI/BOOT/bootx64.efi",
-                        "/boot/grub/x86_64-efi/core.efi"]:
-                if os.path.isfile(src):
-                    shutil.copy2(src, bootx64)
-                    log.info("Copied BOOTX64.EFI from host: %s", src)
-                    break
+            _p(77, "Building GRUB EFI binary via grub-mkimage (fallback)...")
+            _grub_mkimage_fallback(bootx64, efi_dir)
 
         if os.path.isfile(bootx64):
             log.info("BOOTX64.EFI confirmed at %s (%d bytes)",
@@ -1385,24 +1422,8 @@ menuentry "EthOS Recovery Shell (ESP)" {{
     log.info("Copied grub.cfg to ESP /boot/grub/grub.cfg (GRUB $prefix location)")
 
     # ── 1b) Ensure GRUB modules on ESP for insmod commands in grub.cfg ──
-    esp_mod_dir = os.path.join(boot_grub_dir, "x86_64-efi")
-    if not os.path.isdir(esp_mod_dir) or not os.listdir(esp_mod_dir):
-        _essential_mods = [
-            "ext2", "part_gpt", "part_msdos", "fat", "gzio", "loadenv",
-            "search", "search_fs_uuid", "search_label", "linux", "normal",
-            "all_video", "boot", "efi_gop", "video", "video_fb", "configfile",
-        ]
-        for src_dir in ["/usr/lib/grub/x86_64-efi", "/usr/share/grub/x86_64-efi"]:
-            if os.path.isdir(src_dir):
-                os.makedirs(esp_mod_dir, exist_ok=True)
-                for mod in _essential_mods:
-                    src = os.path.join(src_dir, f"{mod}.mod")
-                    if os.path.isfile(src):
-                        shutil.copy2(src, esp_mod_dir)
-                log.info("Copied %d GRUB modules to ESP /boot/grub/x86_64-efi/",
-                         len([m for m in _essential_mods
-                              if os.path.isfile(os.path.join(esp_mod_dir, f"{m}.mod"))]))
-                break
+    efi_dir = os.path.join(mount_dir, "boot/efi")
+    _copy_grub_modules_to_esp(efi_dir)
 
     # ── 2) Initialize grubenv with default boot state ──
     # GRUB's $prefix varies by distro/firmware: EFI/debian (Debian GRUB 2.12),
