@@ -37,6 +37,7 @@ import sys
 import uuid
 import urllib.request
 import urllib.error
+import gevent
 
 from flask import Blueprint, request, jsonify, g
 
@@ -74,7 +75,10 @@ def _on_register(state):
 
 def _emit(event_data):
     if _socketio:
-        _socketio.emit('app_manager_progress', event_data)
+        try:
+            _socketio.emit('app_manager_progress', event_data)
+        except Exception as exc:
+            log.error('[_emit] emit failed: %s', exc)
     # Track last known state per task for reconnect recovery
     task_id = event_data.get('task_id')
     if task_id:
@@ -285,7 +289,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/gallery/pkg-status',
     },
     {
-        'id': 'download-manager', 'name': 'Download Manager', 'version': '1.0.2',
+        'id': 'download-manager', 'name': 'Download Manager', 'version': '1.0.3',
         'icon': 'fa-cloud-download-alt', 'color': '#10b981', 'category': 'Tools', 'admin_only': False,
         'description': 'Pobieranie plikow z HTTP, torrent, magnet i serwisow premium.',
         'apt_deps': [], 'pip_deps': [],
@@ -312,7 +316,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/docker/pkg-status',
     },
     {
-        'id': 'vm-manager', 'name': 'VM Manager', 'version': '1.0.3',
+        'id': 'vm-manager', 'name': 'VM Manager', 'version': '1.0.4',
         'icon': 'fa-desktop', 'color': '#8b5cf6', 'category': 'System', 'admin_only': True,
         'description': 'Maszyny wirtualne QEMU/KVM z migawkami i dostepem VNC.',
         'apt_deps': ['qemu-system-x86', 'qemu-utils', 'ovmf'], 'pip_deps': [],
@@ -353,7 +357,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/flasher/pkg-status',
     },
     {
-        'id': 'builder', 'name': 'Builder', 'version': '1.0.6',
+        'id': 'builder', 'name': 'Builder', 'version': '1.0.8',
         'icon': 'fa-hammer', 'color': '#f97316', 'category': 'System', 'admin_only': True,
         'description': 'Budowanie wydan EthOS i obrazow systemowych przez interfejs webowy.',
         'apt_deps': ['squashfs-tools', 'genisoimage', 'rsync'], 'pip_deps': [],
@@ -362,7 +366,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/builder/pkg-status',
     },
     {
-        'id': 'disk-repair', 'name': 'Disk Repair', 'version': '1.0.13',
+        'id': 'disk-repair', 'name': 'Disk Repair', 'version': '1.0.14',
         'icon': 'fa-wrench', 'color': '#ef4444', 'category': 'Storage', 'admin_only': True,
         'description': 'Diagnostyka SMART i sprawdzanie systemu plikow z narzedziami naprawczymi.',
         'apt_deps': ['smartmontools', 'e2fsprogs'], 'pip_deps': [],
@@ -381,7 +385,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/remote-log/pkg-status',
     },
     {
-        'id': 'sharing-samba', 'name': 'File Sharing (Samba)', 'version': '1.0.13',
+        'id': 'sharing-samba', 'name': 'File Sharing (Samba)', 'version': '1.0.14',
         'icon': 'fa-windows', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Udostepnianie plikow przez siec (Windows, Mac, Linux).',
         'apt_deps': ['samba'], 'pip_deps': [],
@@ -391,7 +395,7 @@ BUILTIN_CATALOG = [
         'hidden': True,
     },
     {
-        'id': 'sharing-nfs', 'name': 'NFS', 'version': '1.0.13',
+        'id': 'sharing-nfs', 'name': 'NFS', 'version': '1.0.14',
         'icon': 'fa-network-wired', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Szybkie udostepnianie plikow dla Linux/Unix przez NFS.',
         'apt_deps': ['nfs-kernel-server'], 'pip_deps': [],
@@ -401,7 +405,7 @@ BUILTIN_CATALOG = [
         'hidden': True,
     },
     {
-        'id': 'sharing-dlna', 'name': 'DLNA (MiniDLNA)', 'version': '1.0.14',
+        'id': 'sharing-dlna', 'name': 'DLNA (MiniDLNA)', 'version': '1.0.15',
         'icon': 'fa-photo-video', 'color': '#6366f1', 'category': 'Media', 'admin_only': True,
         'description': 'Serwer DLNA do strumieniowania multimediow na TV i odtwarzacze.',
         'apt_deps': ['minidlna'], 'pip_deps': [],
@@ -411,7 +415,7 @@ BUILTIN_CATALOG = [
         'hidden': True,
     },
     {
-        'id': 'sharing-webdav', 'name': 'WebDAV', 'version': '1.0.13',
+        'id': 'sharing-webdav', 'name': 'WebDAV', 'version': '1.0.14',
         'icon': 'fa-globe', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Serwer WebDAV z dostepem do plikow przez HTTP.',
         'apt_deps': ['lighttpd'], 'pip_deps': [],
@@ -421,7 +425,7 @@ BUILTIN_CATALOG = [
         'hidden': True,
     },
     {
-        'id': 'sharing-sftp', 'name': 'SFTP', 'version': '1.0.13',
+        'id': 'sharing-sftp', 'name': 'SFTP', 'version': '1.0.14',
         'icon': 'fa-lock', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Bezpieczny transfer plikow przez SSH.',
         'apt_deps': ['openssh-server'], 'pip_deps': [],
@@ -431,7 +435,7 @@ BUILTIN_CATALOG = [
         'hidden': True,
     },
     {
-        'id': 'sharing-ftp', 'name': 'FTP', 'version': '1.0.13',
+        'id': 'sharing-ftp', 'name': 'FTP', 'version': '1.0.14',
         'icon': 'fa-upload', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Klasyczny serwer FTP z obsługa vsftpd.',
         'apt_deps': ['vsftpd'], 'pip_deps': [],
@@ -468,7 +472,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/cloud-backup/pkg-status',
     },
     {
-        'id': 'raid-lvm', 'name': 'RAID / LVM', 'version': '1.0.13',
+        'id': 'raid-lvm', 'name': 'RAID / LVM', 'version': '1.0.14',
         'icon': 'fa-layer-group', 'color': '#f59e0b', 'category': 'Storage', 'admin_only': True,
         'description': 'Macierze RAID z mdadm i wolumeny LVM.',
         'apt_deps': ['mdadm', 'lvm2'], 'pip_deps': [],
@@ -1169,13 +1173,14 @@ def _sync_frontend_dist():
     frontend = os.path.join(_ETHOS_ROOT, 'frontend')
     dist = os.path.join(_ETHOS_ROOT, 'frontend_dist')
     if os.path.isdir(dist):
-        host_run('rsync -av --delete ' + q(frontend + '/') + ' ' + q(dist + '/'), timeout=60)
+        host_run('rsync -a --delete ' + q(frontend + '/') + ' ' + q(dist + '/'), timeout=60)
     # Invalidate the index.html cache so new/removed scripts are picked up
-    try:
-        from app import _INDEX_CACHE
-        _INDEX_CACHE['html'] = None
-    except Exception:
-        pass
+    import sys
+    app_mod = sys.modules.get('app')
+    if app_mod:
+        cache = getattr(app_mod, '_INDEX_CACHE', None)
+        if cache:
+            cache['html'] = None
 
 
 _active_tasks = 0
@@ -1395,7 +1400,6 @@ def _bg_install(app_id, app_def, task_id):
         if install_ep and not app_def.get('simple') and _flask_app:
             emit({'stage': 'configure', 'percent': 75, 'message': 'Konfigurowanie apki...', 'status': 'running'})
             try:
-                import gevent
                 with gevent.Timeout(60, False):
                     with _flask_app.app_context():
                         with _flask_app.test_client() as tc:
@@ -1406,14 +1410,7 @@ def _bg_install(app_id, app_def, task_id):
                 log.warning('[app_manager] install_endpoint %s failed: %s', install_ep, e)
             emit({'stage': 'configure', 'percent': 80, 'message': 'Konfiguracja zakonczona', 'status': 'running'})
 
-        # Synchronizacja frontend_dist
-        emit({'stage': 'sync', 'percent': 85, 'message': 'Synchronizacja plikow frontend...', 'status': 'running'})
-        try:
-            _sync_frontend_dist()
-        except Exception as e:
-            log.warning('[app_manager] frontend sync error: %s', e)
-        emit({'stage': 'sync', 'percent': 90, 'message': 'Synchronizacja zakonczona', 'status': 'running'})
-
+        # Mark installed BEFORE frontend sync — rsync can disrupt SocketIO
         version = app_def.get('version', 'bundled')
         source = 'bundled' if _was_bundled else 'github'
         _set_installed(app_id, version, source,
@@ -1435,6 +1432,13 @@ def _bg_install(app_id, app_def, task_id):
                 'admin_only': app_def.get('admin_only', False),
                 'js_file': (fn + '.js') if fn else None,
             })
+
+        # Sync frontend_dist — non-critical cache sync, done after completion events
+        gevent.sleep(0.1)
+        try:
+            _sync_frontend_dist()
+        except Exception as e:
+            log.warning('[app_manager] frontend sync error: %s', e)
 
         if not hot_ok:
             log.warning('[app_manager] Hot-load failed for %s, falling back to restart', app_id)
@@ -1552,7 +1556,6 @@ def _bg_uninstall(app_id, app_def, task_id, wipe_data=False):
         if uninstall_ep and not app_def.get('simple') and _flask_app:
             emit({'stage': 'cleanup', 'percent': 30, 'message': 'Czyszczenie danych apki...', 'status': 'running'})
             try:
-                import gevent
                 with gevent.Timeout(60, False):
                     with _flask_app.app_context():
                         with _flask_app.test_client() as tc:
@@ -1604,14 +1607,18 @@ def _bg_uninstall(app_id, app_def, task_id, wipe_data=False):
 
         _set_uninstalled(app_id)
 
-        emit({'stage': 'sync', 'percent': 85, 'message': 'Synchronizacja...', 'status': 'running'})
-        _sync_frontend_dist()
-
         emit({'stage': 'done', 'percent': 100, 'message': app_def['name'] + ' odinstalowano', 'status': 'done'})
 
         # Notify all clients — hot-remove from desktop without refresh
         if _socketio:
             _socketio.emit('app_uninstalled', {'id': app_id})
+
+        # Sync frontend_dist — cache sync after events flushed
+        gevent.sleep(0.1)
+        try:
+            _sync_frontend_dist()
+        except Exception as e:
+            log.warning('[app_manager] frontend sync error: %s', e)
 
     except Exception as e:
         log.exception('[app_manager] uninstall error for %s', app_id)
@@ -2422,16 +2429,19 @@ def _bg_update_apps(app_ids, base_url, task_id, source='ota'):
             else:
                 failed.append(app_id)
 
-        if updated:
-            emit({'stage': 'sync', 'percent': 92, 'status': 'running',
-                  'message': 'Synchronizacja frontend...'})
-            _sync_frontend_dist()
-
         msg = f'Zaktualizowano {len(updated)} aplikacji'
         if failed:
             msg += f', {len(failed)} błędów'
         emit({'stage': 'done', 'percent': 100, 'status': 'done',
               'message': msg, 'updated': updated, 'failed': failed})
+
+        # Sync frontend_dist after events flushed
+        if updated:
+            gevent.sleep(0.1)
+            try:
+                _sync_frontend_dist()
+            except Exception as e:
+                log.warning('[app_manager] frontend sync error: %s', e)
 
     except Exception as e:
         log.exception('[app_manager] App update error')
