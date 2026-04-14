@@ -35,7 +35,7 @@ const _SH_ALL_PROTOS = [
 /* ── main render ────────────────────────────── */
 
 /* ── App Registration ────────────────────────────────────── */
-AppRegistry['storage-manager'] = function (appDef) {
+AppRegistry['storage-manager'] = function (appDef, launchOpts) {
     const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
         ? NAS.logClient('storage-manager', level, msg, details) : console.log('[storage-manager]', msg, details || '');
 
@@ -45,11 +45,11 @@ AppRegistry['storage-manager'] = function (appDef) {
         iconColor: appDef.color,
         width: 1200,
         height: 800,
-        onRender: (body) => _smRender(body),
+        onRender: (body) => _smRender(body, launchOpts),
     });
 };
 
-function _smRender(body) {
+function _smRender(body, launchOpts) {
     const sections = [
         { id: 'overview',     icon: 'fa-chart-pie',    label: t('Przegląd') },
         { id: 'pools',        icon: 'fa-layer-group',  label: t('Pule storage') },
@@ -109,7 +109,7 @@ function _smRender(body) {
     }
 
     body.querySelectorAll('.sm-nav-item').forEach(n => n.onclick = () => switchSection(n.dataset.section));
-    switchSection('overview');
+    switchSection((launchOpts && launchOpts.section) || 'overview');
 }
 
 /* ═══════════════════════════════════════════════════════════
