@@ -1095,6 +1095,9 @@ def _install_grub(dev, mount_dir, progress_cb=None, squashfs_mode=False, data_de
         efi_dir = os.path.join(mount_dir, "boot/efi")
         bootx64 = os.path.join(efi_dir, "EFI/BOOT/BOOTX64.EFI")
 
+        # Ensure PATH includes /usr/sbin (grub-install lives there)
+        _grub_env = f"PATH=/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+
         if not squashfs_mode:
             # Traditional (ext4) install: chroot has full filesystem
             _p(75, "Mounting filesystems for chroot...")
@@ -1128,25 +1131,74 @@ def _install_grub(dev, mount_dir, progress_cb=None, squashfs_mode=False, data_de
         else:
             log.info("SquashFS mode: skipping chroot grub-install (target has no binaries)")
 
-        # Fallback: if BOOTX64.EFI is missing (SquashFS mode, or chroot failed),
-        # run grub-install from the host (installer) targeting the mounted ESP.
+        # Fallback 1: grub-install from the host (installer) targeting the mounted ESP.
         if not os.path.isfile(bootx64):
             _p(76, "Installing GRUB UEFI from host system...")
             _, err, rc = _run(
-                f"grub-install --target=x86_64-efi "
+                f"{_grub_env} grub-install --target=x86_64-efi "
                 f"--efi-directory={efi_dir} "
                 f"--boot-directory={os.path.join(mount_dir, 'boot')} "
                 f"--removable --no-nvram 2>&1",
                 timeout=120,
             )
             if rc != 0:
-                log.error("Host grub-install also failed (rc=%d): %s", rc, err)
-                _p(77, f"GRUB install failed: {err}")
+                log.error("Host grub-install failed (rc=%d): %s", rc, err)
+                _p(77, f"grub-install failed, trying grub-mkimage...")
             else:
                 _p(77, "GRUB UEFI installed from host system")
 
+        # Fallback 2: build BOOTX64.EFI with grub-mkimage directly
+        if not os.path.isfile(bootx64):
+            _p(77, "Building GRUB EFI binary via grub-mkimage...")
+            os.makedirs(os.path.join(efi_dir, "EFI/BOOT"), exist_ok=True)
+            # Modules needed for A/B boot with ext4 + GPT + UUID search
+            _grub_mods = (
+                "normal ext2 part_gpt part_msdos search search_fs_uuid "
+                "search_label linux configfile all_video boot fat efi_gop "
+                "gzio video video_fb loadenv"
+            )
+            # Find grub modules directory
+            _mod_dir = ""
+            for d in ["/usr/lib/grub/x86_64-efi", "/usr/share/grub/x86_64-efi"]:
+                if os.path.isdir(d):
+                    _mod_dir = d
+                    break
+            if _mod_dir:
+                _, err, rc = _run(
+                    f"{_grub_env} grub-mkimage -O x86_64-efi "
+                    f"-o {bootx64} -p /boot/grub "
+                    f"-d {_mod_dir} {_grub_mods} 2>&1",
+                    timeout=60,
+                )
+                if rc != 0:
+                    log.error("grub-mkimage failed (rc=%d): %s", rc, err)
+                else:
+                    log.info("BOOTX64.EFI created via grub-mkimage")
+                    # Copy essential modules to ESP so insmod works at runtime
+                    esp_mod_dir = os.path.join(efi_dir, "boot/grub/x86_64-efi")
+                    os.makedirs(esp_mod_dir, exist_ok=True)
+                    for mod in _grub_mods.split():
+                        src = os.path.join(_mod_dir, f"{mod}.mod")
+                        if os.path.isfile(src):
+                            shutil.copy2(src, esp_mod_dir)
+            else:
+                log.error("No GRUB x86_64-efi module directory found")
+
+        # Fallback 3: copy BOOTX64.EFI from the running host system
+        if not os.path.isfile(bootx64):
+            _p(77, "Searching for existing BOOTX64.EFI on host...")
+            os.makedirs(os.path.join(efi_dir, "EFI/BOOT"), exist_ok=True)
+            for src in ["/boot/efi/EFI/BOOT/BOOTX64.EFI",
+                        "/boot/efi/EFI/BOOT/bootx64.efi",
+                        "/boot/grub/x86_64-efi/core.efi"]:
+                if os.path.isfile(src):
+                    shutil.copy2(src, bootx64)
+                    log.info("Copied BOOTX64.EFI from host: %s", src)
+                    break
+
         if os.path.isfile(bootx64):
-            log.info("BOOTX64.EFI confirmed at %s", bootx64)
+            log.info("BOOTX64.EFI confirmed at %s (%d bytes)",
+                     bootx64, os.path.getsize(bootx64))
         else:
             log.error("BOOTX64.EFI MISSING — system will not boot!")
 
@@ -1331,6 +1383,26 @@ menuentry "EthOS Recovery Shell (ESP)" {{
     boot_grub_cfg = os.path.join(boot_grub_dir, "grub.cfg")
     shutil.copy2(esp_grub_cfg, boot_grub_cfg)
     log.info("Copied grub.cfg to ESP /boot/grub/grub.cfg (GRUB $prefix location)")
+
+    # ── 1b) Ensure GRUB modules on ESP for insmod commands in grub.cfg ──
+    esp_mod_dir = os.path.join(boot_grub_dir, "x86_64-efi")
+    if not os.path.isdir(esp_mod_dir) or not os.listdir(esp_mod_dir):
+        _essential_mods = [
+            "ext2", "part_gpt", "part_msdos", "fat", "gzio", "loadenv",
+            "search", "search_fs_uuid", "search_label", "linux", "normal",
+            "all_video", "boot", "efi_gop", "video", "video_fb", "configfile",
+        ]
+        for src_dir in ["/usr/lib/grub/x86_64-efi", "/usr/share/grub/x86_64-efi"]:
+            if os.path.isdir(src_dir):
+                os.makedirs(esp_mod_dir, exist_ok=True)
+                for mod in _essential_mods:
+                    src = os.path.join(src_dir, f"{mod}.mod")
+                    if os.path.isfile(src):
+                        shutil.copy2(src, esp_mod_dir)
+                log.info("Copied %d GRUB modules to ESP /boot/grub/x86_64-efi/",
+                         len([m for m in _essential_mods
+                              if os.path.isfile(os.path.join(esp_mod_dir, f"{m}.mod"))]))
+                break
 
     # ── 2) Initialize grubenv with default boot state ──
     # GRUB's $prefix varies by distro/firmware: EFI/debian (Debian GRUB 2.12),
