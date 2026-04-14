@@ -4499,8 +4499,10 @@ function _smWizard(el, switchSectionFn) {
 
         state.disks.forEach(d => {
             const selected = state.selectedDisks.includes(d.name);
+            const isUsb = d.tran === 'usb' || d.removable;
             const tranIcon = d.tran === 'usb' ? 'fa-usb' : (d.tran === 'nvme' ? 'fa-bolt' : 'fa-hdd');
-            html += `<div class="spw-disk-card ${selected ? 'spw-disk-selected' : ''}" data-disk="${d.name}">` +
+            const usbWarn = isUsb ? `<div class="spw-usb-warn"><i class="fas fa-exclamation-triangle"></i> ${t('USB — wolniejszy, może zostać odłączony. Nie zalecany do RAID.')}</div>` : '';
+            html += `<div class="spw-disk-card ${selected ? 'spw-disk-selected' : ''} ${isUsb ? 'spw-disk-usb' : ''}" data-disk="${d.name}">` +
                 `<div class="spw-disk-check"><i class="fas ${selected ? 'fa-check-square' : 'fa-square'}"></i></div>` +
                 `<div class="spw-disk-info">` +
                     `<div class="spw-disk-name"><i class="fas ${tranIcon}"></i> /dev/${d.name}</div>` +
@@ -4508,6 +4510,7 @@ function _smWizard(el, switchSectionFn) {
                     `${d.tran ? ' · ' + d.tran.toUpperCase() : ''}` +
                     `${d.fstype ? ' · ' + d.fstype : ''}` +
                     `${d.label ? ' · "' + d.label + '"' : ''}</div>` +
+                    usbWarn +
                 `</div>` +
                 `<div class="spw-disk-size">${d.size}</div>` +
             `</div>`;
@@ -4530,6 +4533,28 @@ function _smWizard(el, switchSectionFn) {
             state.raidLevel = null;
             state.step = 2;
             return renderStep2();
+        }
+
+        // Block RAID if any selected disk is USB/removable
+        const hasUsb = state.selectedDisks.some(name => {
+            const d = state.disks.find(x => x.name === name);
+            return d && (d.tran === 'usb' || d.removable);
+        });
+        if (hasUsb) {
+            state.raidLevel = null;
+            let html = '<h3><i class="fas fa-exclamation-triangle" style="color:var(--warn)"></i> ' + t('RAID niedostępny') + '</h3>' +
+                '<div class="spw-usb-raid-block">' +
+                '<p>' + t('Wybrane dyski zawierają dysk USB/wymienny. RAID wymaga stałych, niezawodnych dysków.') + '</p>' +
+                '<p>' + t('Aby kontynuować:') + '</p>' +
+                '<ul>' +
+                '<li>' + t('Odznacz dyski USB i użyj tylko dysków wewnętrznych do RAID') + '</li>' +
+                '<li>' + t('Lub utwórz osobną pulę single-disk dla każdego dysku USB') + '</li>' +
+                '</ul></div>';
+
+            html += '<div class="spw-actions">' +
+                `<button class="spw-btn spw-btn-secondary" id="spw-back"><i class="fas fa-arrow-left"></i> ` + t('Wstecz') + '</button>' +
+                '</div>';
+            return html;
         }
 
         const n = state.selectedDisks.length;

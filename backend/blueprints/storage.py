@@ -3139,6 +3139,7 @@ def pool_available_disks():
             'type': dtype,
             'model': model or None,
             'tran': tran,
+            'removable': bool(p.get('hotplug') or dev.get('hotplug')),
             'fstype': dev.get('fstype'),
             'label': dev.get('label'),
         })
@@ -3187,6 +3188,24 @@ def pool_create():
     min_devs = {'0': 2, '1': 2, '5': 3, '6': 4, '10': 4}
     if raid_level and len(disks) < min_devs.get(raid_level, 2):
         return jsonify({"error": f"RAID {raid_level} requires at least {min_devs[raid_level]} disks"}), 400
+
+    # Block USB/removable disks in RAID arrays
+    if raid_level:
+        r_chk = host_run(
+            "lsblk -J -o NAME,TRAN,HOTPLUG "
+            + " ".join(f"/dev/{Q(d)}" for d in disks)
+        )
+        if r_chk.returncode == 0:
+            try:
+                chk_data = json.loads(r_chk.stdout)
+                for bdev in chk_data.get("blockdevices", []):
+                    if bdev.get("tran") == "usb" or bdev.get("hotplug"):
+                        return jsonify({
+                            "error": f"USB/removable disk /dev/{bdev['name']} cannot be used in RAID. "
+                                     "Create a single-disk pool instead."
+                        }), 400
+            except (json.JSONDecodeError, KeyError):
+                pass
 
     def _sse(msg_type, message, **extra):
         payload = {'type': msg_type, 'message': message}

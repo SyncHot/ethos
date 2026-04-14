@@ -5636,6 +5636,13 @@ textarea.app-input { resize: vertical; line-height: 1.5; }
 .spw-disk-name i { margin-right:4px; color:var(--text-muted); }
 .spw-disk-detail { font-size:12px; color:var(--text-muted); margin-top:2px; }
 .spw-disk-size { font-weight:600; font-size:14px; color:var(--text-primary); flex-shrink:0; }
+.spw-disk-usb { border-color:rgba(245,158,11,0.3); }
+.spw-usb-warn { font-size:11px; color:var(--warn,#f59e0b); margin-top:4px; padding:3px 8px; background:rgba(245,158,11,0.1); border-radius:var(--r-sm,4px); display:inline-block; }
+.spw-usb-warn i { margin-right:4px; }
+.spw-usb-raid-block { background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.25); border-radius:var(--r-md); padding:20px; margin:16px 0; color:var(--text-secondary); }
+.spw-usb-raid-block p { margin:0 0 10px; }
+.spw-usb-raid-block ul { margin:0; padding-left:20px; }
+.spw-usb-raid-block li { margin:4px 0; }
 
 /* RAID level cards */
 .spw-raid-list { display:flex; flex-direction:column; gap:8px; margin-bottom:16px; }

@@ -185,10 +185,13 @@ const Installer = {
         const c = document.getElementById(containerId);
         c.innerHTML = this.disks.map(d => {
             const isBoot = d.is_boot;
-            const disabled = isBoot;
+            const isUsb = (d.transport === 'usb' || d.removable) && !isBoot;
+            const disabled = isBoot || (role === 'os' && isUsb);
             const selected = role === 'os' ? this.osDisk === d.name : this.dataDisk === d.name;
             let badges = '';
             if (isBoot) badges += `<span class="disk-badge boot">${this.t('Dysk startowy (USB)')}</span> `;
+            if (isUsb && role === 'os') badges += `<span class="disk-badge usb-warn">${this.t('USB — nie można użyć jako systemowy')}</span> `;
+            if (isUsb && role === 'data') badges += `<span class="disk-badge usb-warn">⚠ ${this.t('USB — wolniejszy, może zostać odłączony')}</span> `;
             if (d.smart_status === 'failed') badges += '<span class="disk-badge smart-fail">SMART FAIL</span> ';
             return `<div class="disk-item${selected ? ' selected' : ''}${disabled ? ' disabled' : ''}" data-disk="${d.name}" data-role="${role}">` +
                 `<div class="disk-radio"></div>` +

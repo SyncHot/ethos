@@ -116,6 +116,24 @@ def _smart_temp(dev_path):
     return None
 
 
+def _disk_info(disk_name):
+    """Get transport and removable info for a disk via lsblk."""
+    out, _, rc = _run(
+        f"lsblk -J -o NAME,TRAN,HOTPLUG /dev/{shlex.quote(disk_name)} 2>/dev/null",
+        timeout=5,
+    )
+    if rc != 0 or not out:
+        return None
+    try:
+        data = json.loads(out)
+        for dev in data.get("blockdevices", []):
+            if dev.get("name") == disk_name:
+                return {"transport": dev.get("tran") or "", "removable": bool(dev.get("hotplug"))}
+    except (json.JSONDecodeError, KeyError):
+        pass
+    return None
+
+
 def discover():
     """
     Discover block devices suitable for installation.
@@ -206,6 +224,12 @@ def validate(os_disk, data_disk, boot_device):
         errors.append("Cannot install on the boot device (USB)")
         return False, errors, warnings
 
+    # Block USB/removable disks as OS disk — too slow and unstable
+    os_info = _disk_info(os_disk)
+    if os_info and (os_info.get("transport") == "usb" or os_info.get("removable")):
+        errors.append("Cannot use a USB/removable disk as the system disk")
+        return False, errors, warnings
+
     same_disk = data_disk is None or data_disk == "same" or data_disk == os_disk
     if not same_disk and data_disk == boot_device:
         errors.append("Cannot use boot device as data disk")
@@ -240,6 +264,15 @@ def validate(os_disk, data_disk, boot_device):
         smart_d = _smart_status(f"/dev/{data_disk}")
         if smart_d == "failed":
             warnings.append(f"SMART failure detected on /dev/{data_disk}")
+
+    # Warn about USB/removable data disk
+    if not same_disk:
+        data_info = _disk_info(data_disk)
+        if data_info and (data_info.get("transport") == "usb" or data_info.get("removable")):
+            warnings.append(
+                "Data disk is USB/removable — slower and may be disconnected. "
+                "Not recommended for critical data without backups."
+            )
 
     return True, errors, warnings
 

@@ -249,6 +249,7 @@ body {
 }
 .disk-badge.boot { background: rgba(245,158,11,0.2); color: var(--warn); }
 .disk-badge.smart-fail { background: rgba(239,68,68,0.2); color: var(--error); }
+.disk-badge.usb-warn { background: rgba(245,158,11,0.15); color: var(--warn); }
 
 /* ── WiFi list ── */
 .wifi-toolbar {

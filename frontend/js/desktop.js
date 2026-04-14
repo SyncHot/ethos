@@ -2763,9 +2763,10 @@ async function showStorageWelcome() {
         </div>`;
     }
 
-    const raidHint = availableDisks.length >= 3
+    const raidEligible = availableDisks.filter(d => d.tran !== 'usb' && !d.removable);
+    const raidHint = raidEligible.length >= 3
         ? t('Mo\u017cesz skonfigurowa\u0107 RAID 5 dla ochrony danych.')
-        : availableDisks.length === 2
+        : raidEligible.length === 2
             ? t('Mo\u017cesz skonfigurowa\u0107 RAID 1 (mirror) dla ochrony danych.')
             : '';
 
