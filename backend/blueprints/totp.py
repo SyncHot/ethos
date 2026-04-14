@@ -65,7 +65,7 @@ def verify_totp_code(username, code):
     if not secret:
         return False
     totp = pyotp.TOTP(secret)
-    return totp.verify(code, valid_window=1)
+    return totp.verify(code, valid_window=2)
 
 
 def verify_backup_code(username, code):
@@ -161,7 +161,7 @@ def totp_verify():
             return jsonify({'error': 'Run /api/totp/setup first'}), 400
 
         totp = pyotp.TOTP(entry['secret'])
-        if not totp.verify(code, valid_window=1):
+        if not totp.verify(code, valid_window=2):
             return jsonify({'error': 'Invalid code'}), 401
 
         # Enable 2FA
@@ -194,7 +194,7 @@ def totp_disable():
         valid = False
         if code:
             totp = pyotp.TOTP(entry['secret'])
-            valid = totp.verify(code, valid_window=1)
+            valid = totp.verify(code, valid_window=2)
         if not valid and backup_code:
             if backup_code in entry.get('backup_codes', []):
                 entry['backup_codes'].remove(backup_code)
