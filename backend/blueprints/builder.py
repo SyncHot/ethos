@@ -1752,7 +1752,7 @@ chroot "$ROOT" apt-get install -y -qq \
     wpasupplicant dnsmasq rfkill \
     cloud-guest-utils \
     udevil udisks2 \
-    zstd cron \
+    zstd cron systemd-timesyncd \
     gnupg age \
     2>&1 | tail -10 || echo "LOG:Some packages skipped"
 
