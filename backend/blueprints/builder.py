@@ -211,7 +211,7 @@ def _get_published_app_ids():
     Only strip files from the image for apps that can be re-downloaded.
     Returns None if GitHub is unreachable (caller should keep all files)."""
     try:
-        import importlib, sys as _sys
+        import importlib, urllib.request, sys as _sys
         _bp_dir = os.path.join(os.path.dirname(__file__))
         _sys.path.insert(0, os.path.join(_bp_dir, '..'))
         am = importlib.import_module('blueprints.app_manager')
@@ -253,9 +253,6 @@ def _compute_optional_js():
     except Exception:
         return []
 
-_OPTIONAL_JS = _compute_optional_js()
-
-
 def _compute_optional_py():
     try:
         import importlib, sys as _sys
@@ -279,7 +276,14 @@ def _compute_optional_py():
     except Exception:
         return []
 
-_OPTIONAL_PY = _compute_optional_py()
+
+def _get_optional_files():
+    """Compute optional JS/PY lists at call time (not import time).
+    This ensures GitHub reachability is checked when a build actually runs,
+    not when the server starts."""
+    js = _compute_optional_js()
+    py = _compute_optional_py()
+    return js, py
 
 
 def _get_host_nasos_dir():
@@ -689,8 +693,9 @@ def build_release():
             pkg_name = f"ethos-{new_ver}"
             build_dir = f"/tmp/ethos-release-web-$$"
             releases_dir = f"{nasos}/installer/releases"
-            optional_js = ' '.join(_OPTIONAL_JS)
-            optional_py = ' '.join(_OPTIONAL_PY)
+            _opt_js, _opt_py = _get_optional_files()
+            optional_js = ' '.join(_opt_js)
+            optional_py = ' '.join(_opt_py)
 
             # The build-release.sh is interactive. We run equivalent steps directly.
             script = f"""
@@ -951,8 +956,9 @@ def _build_image_worker(nasos, resume=False):
 
 def _x86_wrapper_script(nasos: str) -> str:
     """Return bash wrapper script for building x86 image."""
-    optional_js_list = ' '.join(_OPTIONAL_JS)
-    optional_py_list = ' '.join(_OPTIONAL_PY)
+    _opt_js, _opt_py = _get_optional_files()
+    optional_js_list = ' '.join(_opt_js)
+    optional_py_list = ' '.join(_opt_py)
 
     # Load declarative build spec
     spec = load_spec()
