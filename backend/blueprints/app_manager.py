@@ -357,7 +357,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/flasher/pkg-status',
     },
     {
-        'id': 'builder', 'name': 'Builder', 'version': '1.0.8',
+        'id': 'builder', 'name': 'Builder', 'version': '1.0.9',
         'icon': 'fa-hammer', 'color': '#f97316', 'category': 'System', 'admin_only': True,
         'description': 'Budowanie wydan EthOS i obrazow systemowych przez interfejs webowy.',
         'apt_deps': ['squashfs-tools', 'genisoimage', 'rsync'], 'pip_deps': [],
@@ -491,10 +491,10 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/wireguard/pkg-status',
     },
     {
-        'id': 'antivirus', 'name': 'Antivirus (ClamAV)', 'version': '1.0.4',
+        'id': 'antivirus', 'name': 'Antivirus (ClamAV)', 'version': '1.1.0',
         'icon': 'fa-shield-virus', 'color': '#16a34a', 'category': 'Security', 'admin_only': True,
-        'description': 'ClamAV antywirus — skanowanie na zadanie i zaplanowane.',
-        'apt_deps': ['clamav', 'clamav-freshclam'], 'pip_deps': [],
+        'description': 'ClamAV antywirus — skanowanie na zadanie i zaplanowane (tryb daemon).',
+        'apt_deps': ['clamav', 'clamav-freshclam', 'clamav-daemon', 'clamdscan'], 'pip_deps': [],
         'install_endpoint': '/api/antivirus/install',
         'uninstall_endpoint': '/api/antivirus/uninstall',
         'status_endpoint': '/api/antivirus/pkg-status',

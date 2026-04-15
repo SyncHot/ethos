@@ -40,6 +40,10 @@ AppRegistry['antivirus'] = function (appDef) {
                 <i class="fas fa-spinner fa-spin" style="color:#16a34a"></i>
                 <span>${t('Skanowanie...')}</span>
             </div>
+            <div class="pwr-status-chip" id="av-daemon-chip" style="display:none">
+                <i class="fas fa-server" id="av-daemon-icon"></i>
+                <span id="av-daemon-text"></span>
+            </div>
         </div>
 
         <!-- Scrollable body -->
@@ -269,6 +273,22 @@ AppRegistry['antivirus'] = function (appDef) {
         }
         if (data.scanning) {
             scanningChip.style.display = 'flex';
+        }
+        // Daemon status chip
+        const daemonChip = body.querySelector('#av-daemon-chip');
+        if (data.daemon_mode) {
+            daemonChip.style.display = 'flex';
+            const icon = body.querySelector('#av-daemon-icon');
+            const text = body.querySelector('#av-daemon-text');
+            if (data.daemon_running) {
+                icon.style.color = '#16a34a';
+                text.textContent = t('Daemon aktywny');
+                text.style.color = '#16a34a';
+            } else {
+                icon.style.color = '#f59e0b';
+                text.textContent = t('Daemon nieaktywny');
+                text.style.color = '#f59e0b';
+            }
         }
 
         // Engine card

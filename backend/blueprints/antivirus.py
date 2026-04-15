@@ -1,12 +1,17 @@
 """
-EthOS — Antivirus (ClamAV)
+EthOS — Antivirus (ClamAV) — daemon mode
+
+Uses clamd daemon + clamdscan client for efficient scanning.
+The virus database is loaded once into clamd's memory; clamdscan sends
+files to the daemon, enabling --multiscan (parallel) scanning and
+avoiding the ~400 MB DB reload that standalone clamscan incurs per scan.
 
 Endpoints:
   GET  /api/antivirus/pkg-status         — check if clamav installed
   POST /api/antivirus/install            — install clamav (SocketIO: antivirus_install)
   POST /api/antivirus/uninstall          — remove clamav
   POST /api/antivirus/migrate-db         — migrate virus DB from /var/lib to /mnt/data
-  GET  /api/antivirus/status             — engine version, DB date, active scan info
+  GET  /api/antivirus/status             — engine version, DB date, daemon status, active scan
   POST /api/antivirus/scan               — start on-demand scan (SocketIO: antivirus_scan)
   POST /api/antivirus/scan/cancel        — cancel running scan
   GET  /api/antivirus/results            — scan history (last 50)
@@ -170,17 +175,46 @@ def _append_result(result):
 # ─── ClamAV helpers ───────────────────────────────────────────────────────────
 
 def _is_installed():
-    return bool(shutil.which('clamscan'))
+    return bool(shutil.which('clamdscan') or shutil.which('clamscan'))
 
 
 def _clamav_version():
     try:
-        r = host_run('clamscan --version', timeout=10)
+        r = host_run('clamdscan --version 2>/dev/null || clamscan --version', timeout=10)
         if r.returncode == 0:
             return r.stdout.strip().split('\n')[0]
     except Exception:
         pass
     return None
+
+
+def _daemon_running():
+    """Check if clamd is running and accepting connections."""
+    try:
+        r = host_run('clamdscan --ping 1 2>/dev/null', timeout=10)
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+def _ensure_daemon():
+    """Start clamd daemon if not already running. Returns True if ready."""
+    if _daemon_running():
+        return True
+    try:
+        host_run('systemctl start clamav-daemon', timeout=30)
+        for _ in range(20):
+            time.sleep(1)
+            if _daemon_running():
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _use_daemon():
+    """Return True if we should use clamdscan (daemon mode) for scanning."""
+    return bool(shutil.which('clamdscan')) and _ensure_daemon()
 
 
 def _db_info():
@@ -196,7 +230,7 @@ def _db_info():
         except Exception:
             pass
     try:
-        r = host_run('clamscan --version', timeout=10)
+        r = host_run('clamdscan --version 2>/dev/null || clamscan --version', timeout=10)
         if r.returncode == 0:
             m = re.search(r'/(\d+)/', r.stdout)
             if m:
@@ -270,9 +304,14 @@ def _sync_schedule_to_cron(schedule):
 
     if enabled:
         new_lines.append(marker)
+        # Prefer clamdscan (daemon mode, multiscan) with ionice + nice
+        if shutil.which('clamdscan'):
+            scan_cmd = 'ionice -c3 nice -n 15 clamdscan --multiscan --infected --fdpass'
+        else:
+            scan_cmd = 'ionice -c3 nice -n 15 clamscan -r --infected'
         new_lines.append(
-            cron_expr + '  nice -n 15 clamscan -r --infected'
-            ' --log=' + q(log_file) + ' ' + q(scan_path) + ' > /dev/null 2>&1'
+            cron_expr + '  ' + scan_cmd
+            + ' --log=' + q(log_file) + ' ' + q(scan_path) + ' > /dev/null 2>&1'
         )
     _write_crontab(new_lines)
 
@@ -368,6 +407,8 @@ def get_status():
         'installed': True,
         'version': _clamav_version(),
         'db_info': _db_info(),
+        'daemon_running': _daemon_running(),
+        'daemon_mode': bool(shutil.which('clamdscan')),
         'last_scan': results[0] if results else None,
         'scanning': bool(_active_scan),
         'active_scan': {
@@ -424,9 +465,18 @@ def start_scan():
         except Exception:
             total_estimate = 0
 
+        # Build scan command: prefer clamdscan (daemon) over clamscan (standalone)
+        use_daemon = _use_daemon()
+        if use_daemon:
+            cmd = ['ionice', '-c3', 'nice', '-n', '15',
+                   'clamdscan', '--multiscan', '--infected', '--fdpass', scan_path]
+        else:
+            cmd = ['ionice', '-c3', 'nice', '-n', '15',
+                   'clamscan', '-r', '--infected', scan_path]
+
         try:
             proc = subprocess.Popen(
-                ['nice', '-n', '15', 'clamscan', '-r', '--infected', scan_path],
+                cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -627,6 +677,11 @@ def update_db():
             if r.returncode not in (0, 1):
                 _emit('error', 0, ((r.stderr or r.stdout or 'Update error')[:300]))
                 return
+            # Restart clamd so it picks up the new signatures
+            try:
+                host_run('systemctl restart clamav-daemon', timeout=30)
+            except Exception:
+                pass
             _emit('done', 100, 'Virus database updated!')
         except Exception as e:
             host_run('systemctl start clamav-freshclam', timeout=15)
@@ -634,6 +689,52 @@ def update_db():
 
     threading.Thread(target=_bg, daemon=True).start()
     return jsonify({'ok': True, 'task_id': task_id})
+
+
+_APPARMOR_LOCAL = '/etc/apparmor.d/local/usr.sbin.clamd'
+_APPARMOR_RULES = """\
+# EthOS: allow clamd to read virus DB and scan files on data/media partitions
+/media/devmon/**/  r,
+/media/devmon/**   kr,
+/mnt/data/         r,
+/mnt/data/**       kr,
+/mnt/data/clamav/** krw,
+"""
+
+_SYSTEMD_OVERRIDE_DIR  = '/etc/systemd/system/clamav-daemon.service.d'
+_SYSTEMD_OVERRIDE_CONF = """\
+[Unit]
+# Clear default conditions — DB may live on data partition
+ConditionPathExistsGlob=
+
+[Service]
+ExecStartPre=-/bin/mkdir -p /run/clamav
+ExecStartPre=/bin/chown clamav /run/clamav
+"""
+
+
+def _configure_apparmor():
+    """Add AppArmor rules so clamd can access data partition paths."""
+    try:
+        if os.path.isfile('/etc/apparmor.d/usr.sbin.clamd'):
+            os.makedirs(os.path.dirname(_APPARMOR_LOCAL), exist_ok=True)
+            with open(_APPARMOR_LOCAL, 'w') as f:
+                f.write(_APPARMOR_RULES)
+            host_run('apparmor_parser -r /etc/apparmor.d/usr.sbin.clamd 2>/dev/null', timeout=15)
+    except Exception:
+        pass
+
+
+def _override_systemd_conditions():
+    """Remove ConditionPathExistsGlob for /var/lib/clamav so clamd starts
+    when the virus DB lives on the data partition."""
+    try:
+        os.makedirs(_SYSTEMD_OVERRIDE_DIR, exist_ok=True)
+        with open(os.path.join(_SYSTEMD_OVERRIDE_DIR, 'extend.conf'), 'w') as f:
+            f.write(_SYSTEMD_OVERRIDE_CONF)
+        host_run('systemctl daemon-reload', timeout=10)
+    except Exception:
+        pass
 
 
 @antivirus_bp.route('/install', methods=['POST'])
@@ -651,7 +752,7 @@ def install():
 
         _emit('start', 5, 'Installing ClamAV...')
         try:
-            r = apt_install('clamav clamav-freshclam', timeout=300)
+            r = apt_install('clamav clamav-freshclam clamav-daemon clamdscan', timeout=300)
             if r.returncode != 0:
                 _emit('error', 0, 'Install error: ' + (r.stderr or '')[:300])
                 return
@@ -659,14 +760,12 @@ def install():
             # Redirect virus database to data partition if available
             db_dir = _clamav_db_dir()
             if db_dir != _CLAMAV_DEFAULT_DB:
-                _emit('progress', 60, f'Konfigurowanie bazy wirusów → {db_dir}')
+                _emit('progress', 40, f'Konfigurowanie bazy wirusów → {db_dir}')
                 try:
-                    # Update freshclam.conf and clamd.conf to use data partition
                     for conf_file in ('/etc/clamav/freshclam.conf', '/etc/clamav/clamd.conf'):
                         if os.path.isfile(conf_file):
                             with open(conf_file) as _f:
                                 content = _f.read()
-                            # Replace or add DatabaseDirectory line
                             import re as _re
                             if _re.search(r'^DatabaseDirectory\s', content, _re.MULTILINE):
                                 content = _re.sub(r'^DatabaseDirectory\s.*$',
@@ -676,16 +775,31 @@ def install():
                                 content += f'\nDatabaseDirectory {db_dir}\n'
                             with open(conf_file, 'w') as _f:
                                 _f.write(content)
-                    # Ensure directory owned by clamav user
                     host_run(f'chown -R clamav:clamav {q(db_dir)}', timeout=10)
                 except Exception as _e:
-                    _emit('progress', 65, f'Uwaga: konfiguracja db_dir nie powiodła się: {_e}')
+                    _emit('progress', 45, f'Uwaga: konfiguracja db_dir nie powiodła się: {_e}')
 
-            _emit('progress', 70, 'Downloading virus database...')
+            # AppArmor: allow clamd to access data partition paths
+            _configure_apparmor()
+
+            # Override systemd conditions — DB may live outside /var/lib/clamav
+            _override_systemd_conditions()
+
+            _emit('progress', 50, 'Downloading virus database...')
             host_run('systemctl stop clamav-freshclam', timeout=15)
             host_run('freshclam --stdout --no-warnings', timeout=300)
             host_run('systemctl enable --now clamav-freshclam', timeout=15)
-            _emit('done', 100, 'ClamAV installed!')
+
+            # Start and enable the clamd daemon
+            _emit('progress', 85, 'Starting ClamAV daemon...')
+            host_run('systemctl enable --now clamav-daemon', timeout=30)
+            # Wait for daemon to be ready (it loads the DB into memory)
+            for _ in range(30):
+                time.sleep(1)
+                if _daemon_running():
+                    break
+
+            _emit('done', 100, 'ClamAV installed! (daemon mode)')
         except Exception as e:
             _emit('error', 0, str(e))
 
@@ -709,7 +823,20 @@ def uninstall():
     for s in _load_schedules():
         _remove_schedule_from_cron(s['id'])
     try:
-        host_run('apt-get remove -y clamav clamav-freshclam', timeout=120)
+        host_run('systemctl stop clamav-daemon 2>/dev/null', timeout=15)
+        host_run('systemctl disable clamav-daemon 2>/dev/null', timeout=10)
+    except Exception:
+        pass
+    try:
+        host_run('apt-get remove -y clamav clamav-freshclam clamav-daemon clamdscan', timeout=120)
     except Exception:
         pass
     return jsonify({'ok': True})
+
+
+# ─── Resync scheduled scans to use clamdscan on module load ───────────────────
+try:
+    for _sched in _load_json(SCHEDULES_FILE, []):
+        _sync_schedule_to_cron(_sched)
+except Exception:
+    pass
