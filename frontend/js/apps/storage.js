@@ -2703,14 +2703,6 @@ async function _smSharing(el) {
         </div>
         <div id="sh-smb-list"></div>
         <div id="sh-smb-form" style="display:none"></div>
-        <div class="shr-pw-section">
-            <h4 class="shr-form-title"><i class="fas fa-key shr-icon-warn"></i> ${t('Hasło Samba')}</h4>
-            <div class="shr-pw-row">
-                <input type="text" id="sh-smb-pwu" class="fm-input" placeholder="${t('Użytkownik')}" style="width:140px">
-                <input type="password" id="sh-smb-pwp" class="fm-input" placeholder="${t('Hasło')}" style="width:160px">
-                <button class="fm-toolbar-btn btn-green" id="sh-smb-pwb"><i class="fas fa-save"></i> ${t('Ustaw')}</button>
-            </div>
-        </div>
         <div id="sh-wsdd-section"></div>`;
 
         async function load() {
@@ -2852,15 +2844,6 @@ async function _smSharing(el) {
 
         panel.querySelector('#sh-smb-add').onclick = () => showForm(null);
         panel.querySelector('#sh-smb-ref').onclick = () => load();
-        panel.querySelector('#sh-smb-pwb').onclick = async () => {
-            const u = panel.querySelector('#sh-smb-pwu').value.trim(), p = panel.querySelector('#sh-smb-pwp').value;
-            if (!u || !p) { toast(t('Podaj użytkownika i hasło'), 'warning'); return; }
-            try {
-                const resp = await api('/storage/samba/password', { method: 'POST', body: { username: u, password: p } });
-                if (resp.error) { toast(t('Błąd: ') + resp.error, 'error'); return; }
-                toast(t('Hasło ustawione'), 'success'); panel.querySelector('#sh-smb-pwp').value = '';
-            } catch(e) { toast(t('Błąd ustawiania hasła: ') + e.message, 'error'); }
-        };
         load();
     }
 
