@@ -128,6 +128,11 @@ def _log_change(username, action, path, size=0, xxhash='', device_id=''):
 
 def _get_current_user():
     try:
+        # Prefer g.username set by app.py auth guard (most reliable)
+        from flask import g as _g
+        if getattr(_g, 'username', None):
+            return _g.username
+        # Fallback to token-based lookup
         from app import get_current_user
         user = get_current_user()
         return user.get('username', '') if user else ''
@@ -523,10 +528,15 @@ def move_file():
 
 @sync_drive_bp.route('/api/sync-drive/browse', methods=['GET'])
 def browse():
+    username = _get_current_user()
+    if not username:
+        return jsonify(error='Not authenticated'), 401
     path = request.args.get('path', '/')
     resolved = _safe_path(path)
-    if not resolved or not os.path.isdir(resolved):
-        return jsonify(error='Invalid directory'), 400
+    if not resolved:
+        return jsonify(error='Cannot resolve user home directory'), 400
+    if not os.path.isdir(resolved):
+        return jsonify(error=f'Directory not found: {path}'), 404
     entries = []
     try:
         for entry in sorted(os.scandir(resolved), key=lambda e: e.name.lower()):
