@@ -976,6 +976,30 @@ def _detect_lan_subnet():
         return '192.168.0.0/16'
 
 
+def _detect_lan_interfaces():
+    """Return space-separated list of physical LAN interface names (excluding docker/veth)."""
+    try:
+        r = host_run("ip -4 -o addr show scope global | awk '{print $2}' | grep -v '^docker\\|^br-\\|^veth' | sort -u")
+        ifaces = [i.strip() for i in r.stdout.strip().split('\n') if i.strip()]
+        return ' '.join(ifaces) if ifaces else 'eth0'
+    except Exception:
+        return 'eth0'
+
+
+def _detect_primary_user():
+    """Return the primary non-root user and group for Samba force user/group."""
+    try:
+        r = host_run("awk -F: '$3 >= 1000 && $3 < 60000 {print $1; exit}' /etc/passwd")
+        user = r.stdout.strip()
+        if user:
+            r2 = host_run(f"id -gn {Q(user)}")
+            group = r2.stdout.strip() or user
+            return user, group
+    except Exception:
+        pass
+    return 'nobody', 'nogroup'
+
+
 @storage_bp.route('/samba/status')
 def samba_status():
     r = host_run("command -v smbd")
@@ -995,6 +1019,7 @@ def samba_install():
         return jsonify({"status": "ok", "installed": True}), 200
 
     subnet = _detect_lan_subnet()
+    ifaces = _detect_lan_interfaces()
 
     def generate():
         install_script = f"""
@@ -1012,13 +1037,12 @@ if [ ! -f /etc/samba/smb.conf ] || ! grep -q 'map to guest' /etc/samba/smb.conf 
     workgroup = WORKGROUP
     server string = EthOS NAS
     security = user
-    map to guest = never
+    map to guest = Bad User
     guest account = nobody
-    restrict anonymous = 2
     server min protocol = SMB3
     server signing = mandatory
-    smb encrypt = desired
-    interfaces = 127.0.0.0/8 {subnet}
+    smb encrypt = if_required
+    interfaces = 127.0.0.0/8 {ifaces}
     bind interfaces only = yes
     hosts allow = 127.0.0.1 {subnet}
     hosts deny = 0.0.0.0/0
@@ -1135,14 +1159,12 @@ def samba_share_add():
         return jsonify({"error": f"Cannot share system path: {share_path}"}), 403
 
     uid_r = host_run("id -un")
-    gid_r = host_run("id -gn")
     user = uid_r.stdout.strip() or "nobody"
+    gid_r = host_run("id -gn")
     group = gid_r.stdout.strip() or "nogroup"
-    # Security: never allow root as forced user
+    # Service runs as root — detect the actual primary user
     if user == "root":
-        user = "nasadmin"
-    if group == "root":
-        group = "nasadmin"
+        user, group = _detect_primary_user()
 
     writable = data.get("writable", True)
     guest_str = "yes" if guest_ok else "no"
@@ -1150,6 +1172,7 @@ def samba_share_add():
 
     # Use safe temp-file approach to avoid shell/Python injection
     subnet = _detect_lan_subnet()
+    ifaces = _detect_lan_interfaces()
     share_conf = {
         "name": share_name,
         "path": share_path,
@@ -1158,6 +1181,7 @@ def samba_share_add():
         "user": user,
         "group": group,
         "subnet": subnet,
+        "ifaces": ifaces,
     }
     script = """import json, re
 NL = chr(10)
@@ -1168,6 +1192,7 @@ guest = params['guest_ok']
 user = params['user']
 group = params['group']
 subnet = params['subnet']
+ifaces = params.get('ifaces', 'eth0')
 try:
     conf = open('/etc/samba/smb.conf').read()
 except FileNotFoundError:
@@ -1178,14 +1203,13 @@ GLOBAL_DEFAULTS = {
     'workgroup': 'WORKGROUP',
     'server string': 'EthOS NAS',
     'security': 'user',
-    'map to guest': 'never',
+    'map to guest': 'Bad User',
     'guest account': 'nobody',
-    'restrict anonymous': '2',
     'server min protocol': 'SMB3',
     'server signing': 'mandatory',
-    'smb encrypt': 'desired',
+    'smb encrypt': 'if_required',
     'dns proxy': 'no',
-    'interfaces': f'127.0.0.0/8 {subnet}',
+    'interfaces': f'127.0.0.0/8 {ifaces}',
     'bind interfaces only': 'yes',
     'hosts allow': f'127.0.0.1 {subnet}',
     'hosts deny': '0.0.0.0/0',
@@ -1209,6 +1233,11 @@ else:
     if additions:
         insert_pos = conf.index(NL, gstart) + 1
         conf = conf[:insert_pos] + additions + conf[insert_pos:]
+
+# Update guest/interface settings in existing global (use [^\\n]+ to match full value)
+conf = re.sub(r'(?im)^(\\s*map to guest\\s*=\\s*).*$', r'\\1Bad User', conf)
+conf = re.sub(r'(?im)^(\\s*interfaces\\s*=\\s*).*$', f'\\\\1127.0.0.0/8 {ifaces}', conf)
+conf = re.sub(r'(?im)^(\\s*smb encrypt\\s*=\\s*).*$', r'\\1if_required', conf)
 
 pattern = r'\\[' + re.escape(name) + r'\\][^\\[]*'
 conf = re.sub(pattern, '', conf, flags=re.IGNORECASE)
@@ -3426,15 +3455,14 @@ def pool_create():
             else:
                 safe_samba = re.sub(r'[^a-zA-Z0-9 _\-]', '_', samba_name)[:64]
                 uid_r2 = host_run("id -un")
+                user = uid_r2.stdout.strip() or "nobody"
                 gid_r2 = host_run("id -gn")
-                user = uid_r2.stdout.strip() or "nasadmin"
-                group = gid_r2.stdout.strip() or "nasadmin"
+                group = gid_r2.stdout.strip() or "nogroup"
                 if user == "root":
-                    user = "nasadmin"
-                if group == "root":
-                    group = "nasadmin"
+                    user, group = _detect_primary_user()
 
                 subnet = _detect_lan_subnet()
+                ifaces = _detect_lan_interfaces()
                 share_conf = {
                     "name": safe_samba,
                     "path": mount_path,
@@ -3443,6 +3471,7 @@ def pool_create():
                     "user": user,
                     "group": group,
                     "subnet": subnet,
+                    "ifaces": ifaces,
                 }
                 _host_write_json('/tmp/_samba_params.json', share_conf)
 
@@ -3455,6 +3484,7 @@ guest = params['guest_ok']
 user = params['user']
 group = params['group']
 subnet = params['subnet']
+ifaces = params.get('ifaces', 'eth0')
 try:
     conf = open('/etc/samba/smb.conf').read()
 except FileNotFoundError:
@@ -3464,14 +3494,13 @@ GLOBAL_DEFAULTS = {
     'workgroup': 'WORKGROUP',
     'server string': 'EthOS NAS',
     'security': 'user',
-    'map to guest': 'never',
+    'map to guest': 'Bad User',
     'guest account': 'nobody',
-    'restrict anonymous': '2',
     'server min protocol': 'SMB3',
     'server signing': 'mandatory',
-    'smb encrypt': 'desired',
+    'smb encrypt': 'if_required',
     'dns proxy': 'no',
-    'interfaces': f'127.0.0.0/8 {subnet}',
+    'interfaces': f'127.0.0.0/8 {ifaces}',
     'bind interfaces only': 'yes',
     'hosts allow': f'127.0.0.1 {subnet}',
     'hosts deny': '0.0.0.0/0',
@@ -3493,6 +3522,10 @@ else:
     if additions:
         insert_pos = conf.index(NL, gstart) + 1
         conf = conf[:insert_pos] + additions + conf[insert_pos:]
+
+conf = re.sub(r'(?im)^(\\s*map to guest\\s*=\\s*).*$', r'\\1Bad User', conf)
+conf = re.sub(r'(?im)^(\\s*interfaces\\s*=\\s*).*$', f'\\\\1127.0.0.0/8 {ifaces}', conf)
+conf = re.sub(r'(?im)^(\\s*smb encrypt\\s*=\\s*).*$', r'\\1if_required', conf)
 
 pattern = r'\\[' + re.escape(name) + r'\\][^\\[]*'
 conf = re.sub(pattern, '', conf, flags=re.IGNORECASE)
