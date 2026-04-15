@@ -1571,12 +1571,14 @@ def start_vm(vm_id):
             else:
                 cmd += ['-device', f'virtio-blk-pci,drive={did}{boot_str}']
 
-        # ISO boot image (CD-ROM)
+        # ISO boot image (CD-ROM) — no forced boot order; UEFI uses
+        # bootindex (disks=0,1,… before CD) and NVRAM for boot priority.
+        # On first boot empty disks are skipped so the ISO boots naturally.
+        # After OS installation disk has EFI → boots before CD-ROM.
         if boot_image and os.path.exists(boot_image):
             ext = os.path.splitext(boot_image)[1].lower()
             if ext in ('.iso',):
                 cmd += ['-cdrom', boot_image]
-                cmd += ['-boot', 'd']
 
         # Network — configurable per-VM
         try:
@@ -1720,6 +1722,21 @@ def stop_vm(vm_id):
     _stop_socat_proxies(info)
     _destroy_tap(info.get('tap_dev'))
     _running_vms.pop(vm_id, None)
+
+    # Auto-eject ISO after stop — installation is assumed complete.
+    # This ensures next boot goes to disk instead of re-booting the ISO.
+    # Also reset NVRAM so stale CD-ROM boot entries are cleared.
+    vms = _load_vms()
+    vm_def = vms.get(vm_id, {})
+    boot_img = vm_def.get('boot_image', '')
+    if boot_img and os.path.splitext(boot_img)[1].lower() in ('.iso',):
+        vm_def['boot_image'] = ''
+        vm_vars = os.path.join(_vm_dir(vm_id), 'OVMF_VARS.fd')
+        if os.path.exists(vm_vars):
+            os.remove(vm_vars)
+        _save_vms(vms)
+        log.info('Auto-ejected ISO from VM %s and reset NVRAM', vm_id)
+
     return jsonify({'status': 'ok'})
 
 
