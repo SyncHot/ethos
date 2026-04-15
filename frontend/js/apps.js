@@ -829,6 +829,9 @@ function renderFM(body, state) {
         const activeId = state.focusedIndex >= 0 ? `fm-item-${state.focusedIndex}` : '';
         list.setAttribute('aria-activedescendant', activeId);
 
+        // Initialize drag & drop on newly rendered items
+        _initDragOnItems();
+
     }
 
     /* ─── Lightweight selection update (no DOM rebuild) ─── */
@@ -3887,11 +3890,16 @@ function renderFM(body, state) {
         renderFileList();
     });
 
-    // Drag & drop upload
+    // ── Drag & drop MIME type for internal file moves ──
+    const _FM_DRAG_MIME = 'application/x-ethos-fm-paths';
+
+    // Drag & drop upload (external files only — skip internal FM drags)
     const main = body.querySelector('.fm-main');
     let dropOverlay = null;
 
     main.addEventListener('dragover', (e) => {
+        // Skip overlay for internal FM drag (file move/copy between folders)
+        if (e.dataTransfer.types.includes(_FM_DRAG_MIME)) return;
         e.preventDefault();
         if (!dropOverlay) {
             dropOverlay = document.createElement('div');
@@ -3910,6 +3918,9 @@ function renderFM(body, state) {
         e.preventDefault();
         dropOverlay?.remove();
         dropOverlay = null;
+
+        // Skip external upload handling for internal FM drags
+        if (e.dataTransfer.types.includes(_FM_DRAG_MIME)) return;
 
         // Check if any dropped items are directories (use DataTransferItem API)
         const items = e.dataTransfer.items;
@@ -3971,6 +3982,187 @@ function renderFM(body, state) {
             _doUpload(files);
         }
     });
+
+    // ── Drag & drop: move/copy files between folders ──
+    let _dragGhost = null;
+
+    function _initDragOnItems() {
+        const list = body.querySelector('#fm-file-list');
+        if (!list) return;
+        const itemSel = '.fm-file-item, .fm-grid-item, .fm-thumb-item';
+
+        // Make all items draggable
+        list.querySelectorAll(itemSel).forEach(el => {
+            el.draggable = true;
+
+            el.addEventListener('dragstart', (e) => {
+                const name = el.dataset.name;
+                if (!name) return;
+
+                // If the dragged item is not selected, select only it
+                if (!state.selected.has(name)) {
+                    state.selected.clear();
+                    state.selected.add(name);
+                }
+
+                const paths = getSelectedPaths();
+                e.dataTransfer.setData(_FM_DRAG_MIME, JSON.stringify(paths));
+                e.dataTransfer.setData('text/plain', paths.join('\n'));
+                e.dataTransfer.effectAllowed = 'copyMove';
+
+                // Custom drag ghost
+                _dragGhost = document.createElement('div');
+                _dragGhost.style.cssText = 'position:fixed;left:-9999px;top:-9999px;background:var(--accent);color:#fff;padding:4px 12px;border-radius:8px;font-size:12px;font-weight:600;z-index:99999;pointer-events:none';
+                _dragGhost.textContent = paths.length > 1 ? `${paths.length} ${t('elementów')}` : name;
+                document.body.appendChild(_dragGhost);
+                e.dataTransfer.setDragImage(_dragGhost, 0, 0);
+
+                el.classList.add('fm-dragging');
+            });
+
+            el.addEventListener('dragend', () => {
+                el.classList.remove('fm-dragging');
+                if (_dragGhost) { _dragGhost.remove(); _dragGhost = null; }
+                // Remove all drag-over highlights
+                list.querySelectorAll('.fm-drag-over').forEach(d => d.classList.remove('fm-drag-over'));
+            });
+
+            // Drop targets: only folders
+            if (el.dataset.isdir === 'true') {
+                el.addEventListener('dragover', (e) => {
+                    // Only accept internal FM drags
+                    if (!e.dataTransfer.types.includes(_FM_DRAG_MIME)) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = e.ctrlKey ? 'copy' : 'move';
+                    el.classList.add('fm-drag-over');
+                });
+
+                el.addEventListener('dragleave', () => {
+                    el.classList.remove('fm-drag-over');
+                });
+
+                el.addEventListener('drop', async (e) => {
+                    el.classList.remove('fm-drag-over');
+                    const raw = e.dataTransfer.getData(_FM_DRAG_MIME);
+                    if (!raw) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+
+                    const paths = JSON.parse(raw);
+                    const dest = itemFullPath(el.dataset.name);
+                    const isCopy = e.ctrlKey;
+
+                    // Don't drop onto itself
+                    if (paths.includes(dest)) return;
+
+                    try {
+                        let onConflict = 'rename';
+                        const check = await api('/files/check-conflicts', { method: 'POST', body: { sources: paths, dest } });
+                        if (check.conflicts && check.conflicts.length > 0) {
+                            onConflict = await showConflictDialog(check.conflicts, isCopy ? 'copy' : 'cut');
+                            if (onConflict === null) return;
+                        }
+                        if (isCopy) {
+                            const r = await api('/files/copy', { method: 'POST', body: { sources: paths, dest, on_conflict: onConflict } });
+                            if (r.error) { toast(r.error, 'error'); return; }
+                            if (r.async) { toast(r.message || t('Kopiowanie w tle…'), 'info'); return; }
+                            toast(t('Copied') + ' ' + (r.copied || []).length + ' ' + t('item(s)'), 'success');
+                        } else {
+                            const r = await api('/files/move-multi', { method: 'POST', body: { sources: paths, dest, on_conflict: onConflict } });
+                            if (r.error) { toast(r.error, 'error'); return; }
+                            if (r.async) { toast(r.message || t('Przenoszenie w tle…'), 'info'); return; }
+                            toast(t('Moved') + ' ' + (r.moved || []).length + ' ' + t('item(s)'), 'success');
+                        }
+                        navigateTo(state.path);
+                    } catch (err) {
+                        toast(t('Błąd operacji') + (err?.message ? ': ' + err.message : ''), 'error');
+                    }
+                });
+            }
+        });
+    }
+
+    // Also allow drop on breadcrumb segments
+    const breadcrumb = body.querySelector('#fm-breadcrumb');
+    if (breadcrumb) {
+        breadcrumb.addEventListener('dragover', (e) => {
+            if (!e.dataTransfer.types.includes(_FM_DRAG_MIME)) return;
+            const btn = e.target.closest('.fm-breadcrumb-item');
+            if (!btn) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = e.ctrlKey ? 'copy' : 'move';
+            btn.classList.add('fm-drag-over');
+        });
+        breadcrumb.addEventListener('dragleave', (e) => {
+            const btn = e.target.closest('.fm-breadcrumb-item');
+            if (btn) btn.classList.remove('fm-drag-over');
+        });
+        breadcrumb.addEventListener('drop', async (e) => {
+            const btn = e.target.closest('.fm-breadcrumb-item');
+            if (btn) btn.classList.remove('fm-drag-over');
+            const raw = e.dataTransfer.getData(_FM_DRAG_MIME);
+            if (!raw || !btn) return;
+            e.preventDefault();
+            e.stopPropagation();
+
+            const paths = JSON.parse(raw);
+            const dest = btn.dataset.path;
+            if (!dest || dest === state.path) return;
+            const isCopy = e.ctrlKey;
+
+            try {
+                const endpoint = isCopy ? '/files/copy' : '/files/move-multi';
+                const r = await api(endpoint, { method: 'POST', body: { sources: paths, dest, on_conflict: 'rename' } });
+                if (r.error) { toast(r.error, 'error'); return; }
+                if (r.async) { toast(r.message || (isCopy ? t('Kopiowanie w tle…') : t('Przenoszenie w tle…')), 'info'); return; }
+                toast((isCopy ? t('Copied') : t('Moved')) + ' ' + (r.copied || r.moved || []).length + ' ' + t('item(s)'), 'success');
+                navigateTo(state.path);
+            } catch (err) {
+                toast(t('Błąd operacji') + (err?.message ? ': ' + err.message : ''), 'error');
+            }
+        });
+    }
+
+    // Also allow drop on sidebar favorites
+    const sidebar = body.querySelector('#fm-sidebar');
+    if (sidebar) {
+        sidebar.addEventListener('dragover', (e) => {
+            if (!e.dataTransfer.types.includes(_FM_DRAG_MIME)) return;
+            const btn = e.target.closest('.fm-tree-item');
+            if (!btn || !btn.dataset.path) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = e.ctrlKey ? 'copy' : 'move';
+            btn.classList.add('fm-drag-over');
+        });
+        sidebar.addEventListener('dragleave', (e) => {
+            const btn = e.target.closest('.fm-tree-item');
+            if (btn) btn.classList.remove('fm-drag-over');
+        });
+        sidebar.addEventListener('drop', async (e) => {
+            const btn = e.target.closest('.fm-tree-item');
+            if (btn) btn.classList.remove('fm-drag-over');
+            const raw = e.dataTransfer.getData(_FM_DRAG_MIME);
+            if (!raw || !btn) return;
+            e.preventDefault();
+            e.stopPropagation();
+
+            const paths = JSON.parse(raw);
+            const dest = btn.dataset.path;
+            if (!dest || dest === state.path || dest.startsWith('/__')) return;
+            const isCopy = e.ctrlKey;
+
+            try {
+                const endpoint = isCopy ? '/files/copy' : '/files/move-multi';
+                const r = await api(endpoint, { method: 'POST', body: { sources: paths, dest, on_conflict: 'rename' } });
+                if (r.error) { toast(r.error, 'error'); return; }
+                if (r.async) { toast(r.message || (isCopy ? t('Kopiowanie w tle…') : t('Przenoszenie w tle…')), 'info'); return; }
+                toast((isCopy ? t('Copied') : t('Moved')) + ' ' + (r.copied || r.moved || []).length + ' ' + t('item(s)'), 'success');
+                navigateTo(state.path);
+            } catch (err) {
+                toast(t('Błąd operacji') + (err?.message ? ': ' + err.message : ''), 'error');
+            }
+        });
+    }
 
     // Keyboard shortcuts
     body.closest('.window').addEventListener('keydown', (e) => {

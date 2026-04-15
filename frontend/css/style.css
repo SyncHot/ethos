@@ -2273,6 +2273,22 @@ input[type="checkbox"]:hover {
     pointer-events: none;
 }
 
+/* Drag & drop move/copy visual feedback */
+.fm-drag-over {
+    outline: 2px solid var(--accent) !important;
+    outline-offset: -2px;
+    background: rgba(59, 130, 246, 0.12) !important;
+    border-radius: var(--r-sm);
+}
+.fm-dragging {
+    opacity: 0.5;
+}
+.fm-breadcrumb-item.fm-drag-over,
+.fm-tree-item.fm-drag-over {
+    background: rgba(59, 130, 246, 0.15) !important;
+    outline: 2px solid var(--accent) !important;
+}
+
 /* Empty state */
 .fm-empty {
     display: flex;
