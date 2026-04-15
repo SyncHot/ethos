@@ -233,6 +233,7 @@ _OPTIONAL_BLUEPRINTS = {
     'packages':        ('packages',        'packages_bp',       None,                False),
     'ldap':            ('ldap_auth',       'ldap_bp',           None,                False),
     'sync-drive':      ('sync_drive',      'sync_drive_bp',    'init_sync_drive',   True),
+    'mail-server':     ('mail_server',     'mail_bp',          'init_mail_server',  True),
 }
 
 # Public alias
@@ -576,7 +577,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/video-station/pkg-status',
     },
     {
-        'id': 'radio-music', 'name': 'Radio & Music', 'version': '0.0.5',
+        'id': 'radio-music', 'name': 'Radio & Music', 'version': '0.0.6',
         'icon': 'fa-broadcast-tower', 'color': '#10b981', 'category': 'Media', 'admin_only': False,
         'description': 'Radio internetowe z całego świata, podcasty i odtwarzacz muzyki.',
         'apt_deps': ['ffmpeg'], 'pip_deps': ['yt-dlp'],
@@ -608,9 +609,14 @@ BUILTIN_CATALOG = [
         'description': 'Integracja z LDAP i Active Directory dla centralnego zarzadzania uzytkownikami.',
         'apt_deps': [], 'pip_deps': ['ldap3'],
     },
+    {
+        'id': 'mail-server', 'name': 'Mail Server', 'version': '1.0.0',
+        'icon': 'fa-envelope', 'color': '#3b82f6', 'category': 'Network', 'admin_only': True,
+        'description': 'Serwer poczty (Postfix + Dovecot) z obsluga IMAP/SMTP, DKIM, relay i certyfikatow SSL.',
+        'apt_deps': ['postfix', 'dovecot-core', 'dovecot-imapd', 'dovecot-pop3d', 'opendkim', 'opendkim-tools'],
+        'pip_deps': [],
+    },
 ]
-
-# ─── State lock ───────────────────────────────────────────────
 
 _state_lock = threading.RLock()
 _catalog_lock = threading.RLock()
