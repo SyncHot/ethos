@@ -1255,14 +1255,20 @@ def music_download():
 
     def _do_download():
         try:
-            # Organize: Artist/Album/Title.mp3
-            # YouTube always has uploader; album may be missing
-            out_tmpl = os.path.join(
-                dest,
-                '%(uploader|Unknown Artist)s',
-                '%(album|Singles)s',
-                '%(title)s.%(ext)s'
-            )
+            if not playlist:
+                # Single track → flat file in Various Artists folder
+                out_tmpl = os.path.join(
+                    dest, _VARIOUS_ARTISTS_PLAYLIST,
+                    '%(title)s.%(ext)s'
+                )
+            else:
+                # Playlist context → Artist/Album/Title.mp3
+                out_tmpl = os.path.join(
+                    dest,
+                    '%(uploader|Unknown Artist)s',
+                    '%(album|Singles)s',
+                    '%(title)s.%(ext)s'
+                )
             cmd = (
                 f'{shq(ytdlp)} -f bestaudio -x --audio-format mp3 --audio-quality 0 '
                 f'--embed-thumbnail --embed-metadata --no-playlist --no-warnings '
