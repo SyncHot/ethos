@@ -335,30 +335,28 @@ def get_data_disk():
 def get_user_home(username):
     """Return a user's home directory path.
 
-    When a data disk is configured, always prefer ``{data_disk}/home/{user}``
-    (creating it if needed).  Falls back to ``getent passwd`` or
-    ``/home/{username}``.
+    Priority order:
+    1. System ``getent passwd`` entry (authoritative — set at user-create time).
+    2. Data-disk ``{data_disk}/home/{user}`` (for users created on the data
+       partition by the EthOS users blueprint).
+    3. Fallback ``/home/{username}``.
     """
     import shlex as _shlex
 
-    # If a data disk is configured, that's the canonical home location
-    dd = get_data_disk()
-    if dd:
-        dd_home = os.path.join(dd, 'home', username)
-        # Create the directory if it doesn't exist yet
-        try:
-            os.makedirs(dd_home, mode=0o750, exist_ok=True)
-        except OSError:
-            pass
-        if os.path.isdir(dd_home):
-            return dd_home
-
-    # No data disk — use system home from getent passwd
+    # 1. System home from getent passwd — authoritative if it exists on disk
     r = host_run(f"getent passwd {_shlex.quote(username)} 2>/dev/null", timeout=5)
     if r.returncode == 0 and r.stdout.strip():
         parts = r.stdout.strip().split(':')
         if len(parts) >= 6 and parts[5] and os.path.isdir(parts[5]):
             return parts[5]
+
+    # 2. Data-disk home (user was created there but passwd entry is missing/stale)
+    dd = get_data_disk()
+    if dd:
+        dd_home = os.path.join(dd, 'home', username)
+        if os.path.isdir(dd_home):
+            return dd_home
+
     return f'/home/{username}'
 
 
