@@ -56,7 +56,8 @@ def safe_path(path, base=None):
         base = ETHOS_ROOT
     base = os.path.realpath(base)
     resolved = os.path.realpath(os.path.join(base, path) if not os.path.isabs(path) else path)
-    if not resolved.startswith(base + os.sep) and resolved != base:
+    prefix = base if base.endswith(os.sep) else base + os.sep
+    if not resolved.startswith(prefix) and resolved != base:
         raise ValueError(f"Path traversal attempt: {path!r} escapes {base!r}")
     return resolved
 

@@ -747,6 +747,9 @@ def save_playback_state():
     pfile = _user_file('playback_state.json')
     _save_json(pfile, data)
     return jsonify({'ok': True})
+
+
+@radio_music_bp.route('/lyrics', methods=['GET'])
 def lyrics_search():
     """Fetch song lyrics from lrclib.net (free, no API key needed)."""
     title = request.args.get('title', '').strip()
@@ -1029,7 +1032,7 @@ def local_delete_folder():
     return jsonify({'ok': True})
 
 
-
+@radio_music_bp.route('/local/stream', methods=['GET'])
 def local_stream():
     """Stream a local audio file."""
     fpath = request.args.get('path', '').lstrip()
