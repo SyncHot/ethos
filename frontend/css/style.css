@@ -3987,6 +3987,122 @@ a.dkr-port-link:hover {
 }
 .fm-shortcut-row span { color: var(--text-muted); }
 
+/* ─── File Manager — Network Drives ─── */
+.fm-net-drive-row { display: flex; align-items: center; gap: 2px; }
+.fm-net-drive-row .fm-tree-item { flex: 1; min-width: 0; }
+.fm-net-item.fm-net-offline { opacity: 0.5; cursor: default; }
+.fm-net-add-btn {
+    background: none; border: none; color: var(--text-muted); cursor: pointer;
+    padding: 2px 6px; border-radius: 4px; font-size: 11px; margin-left: auto;
+}
+.fm-net-add-btn:hover { color: var(--accent); background: var(--surface-hover); }
+.fm-net-action-btn {
+    background: none; border: none; color: var(--text-muted); cursor: pointer;
+    padding: 4px 6px; border-radius: 4px; font-size: 12px; flex-shrink: 0;
+}
+.fm-net-action-btn:hover { color: var(--accent); background: var(--surface-hover); }
+.fm-net-empty { color: var(--text-muted); font-size: 12px; padding: 4px 12px; font-style: italic; }
+
+/* Network drive context menu */
+.fm-net-ctx-menu {
+    background: var(--surface-elevated); border: 1px solid var(--border);
+    border-radius: 8px; padding: 4px; min-width: 160px; z-index: 100;
+    box-shadow: 0 8px 24px rgba(0,0,0,.3);
+}
+.fm-net-ctx-item {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    background: none; border: none; color: var(--text-primary); cursor: pointer;
+    padding: 8px 12px; border-radius: 6px; font-size: 13px; text-align: left;
+}
+.fm-net-ctx-item:hover { background: var(--surface-hover); }
+.fm-net-ctx-item i { width: 16px; text-align: center; color: var(--text-muted); }
+.fm-net-ctx-danger { color: var(--danger) !important; }
+.fm-net-ctx-danger i { color: var(--danger) !important; }
+
+/* Network drive modal */
+.fm-net-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 9999;
+    display: flex; align-items: center; justify-content: center;
+}
+.fm-net-modal {
+    background: var(--surface-elevated); border: 1px solid var(--border);
+    border-radius: 12px; width: 480px; max-width: 95vw; max-height: 85vh;
+    display: flex; flex-direction: column; box-shadow: 0 16px 48px rgba(0,0,0,.4);
+}
+.fm-net-modal-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 20px; border-bottom: 1px solid var(--border);
+}
+.fm-net-modal-header h3 { margin: 0; font-size: 16px; font-weight: 600; }
+.fm-net-modal-header h3 i { margin-right: 8px; color: #60a5fa; }
+.fm-net-modal-close {
+    background: none; border: none; color: var(--text-muted); cursor: pointer;
+    padding: 4px 8px; border-radius: 6px; font-size: 16px;
+}
+.fm-net-modal-close:hover { color: var(--text-primary); background: var(--surface-hover); }
+.fm-net-modal-body { padding: 16px 20px; overflow-y: auto; flex: 1; }
+.fm-net-modal-footer {
+    display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+    padding: 12px 20px; border-top: 1px solid var(--border);
+}
+.fm-net-error { color: var(--danger); font-size: 13px; margin-right: auto; }
+.fm-net-connect-btn { background: var(--accent) !important; color: #fff !important; font-weight: 600; }
+.fm-net-connect-btn:hover { filter: brightness(1.1); }
+
+/* Tabs */
+.fm-net-tabs { display: flex; gap: 4px; margin-bottom: 16px; }
+.fm-net-tab {
+    flex: 1; padding: 8px; border: 1px solid var(--border); background: var(--surface);
+    color: var(--text-muted); border-radius: 8px; cursor: pointer; font-size: 13px;
+    text-align: center; transition: all .15s;
+}
+.fm-net-tab:hover { background: var(--surface-hover); }
+.fm-net-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* Fields */
+.fm-net-field { margin-bottom: 12px; }
+.fm-net-field label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 4px; color: var(--text-secondary); }
+.fm-net-field .fm-input { width: 100%; box-sizing: border-box; }
+.fm-net-optional { font-weight: 400; color: var(--text-muted); font-size: 11px; }
+.fm-net-host-row { display: flex; gap: 6px; }
+.fm-net-host-row .fm-input { flex: 1; }
+.fm-net-check-row label { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; }
+
+/* Share browse list */
+.fm-net-shares-list {
+    margin-top: 6px; border: 1px solid var(--border); border-radius: 8px;
+    max-height: 150px; overflow-y: auto; background: var(--surface);
+}
+.fm-net-share-option {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    background: none; border: none; border-bottom: 1px solid var(--border);
+    color: var(--text-primary); cursor: pointer; padding: 8px 12px; font-size: 13px;
+    text-align: left;
+}
+.fm-net-share-option:last-child { border-bottom: none; }
+.fm-net-share-option:hover { background: var(--surface-hover); }
+.fm-net-share-option i { color: #f59e0b; }
+.fm-net-share-comment { color: var(--text-muted); font-size: 12px; }
+.fm-net-loading { padding: 12px; text-align: center; color: var(--text-muted); font-size: 13px; }
+.fm-net-loading i { margin-right: 6px; }
+
+/* Network scan results */
+.fm-net-scan-status { padding: 8px 0; color: var(--text-muted); font-size: 13px; margin-bottom: 8px; }
+.fm-net-scan-status i { margin-right: 6px; }
+.fm-net-scan-results { display: flex; flex-direction: column; gap: 4px; }
+.fm-net-scan-item {
+    display: flex; align-items: center; gap: 12px; width: 100%;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    color: var(--text-primary); cursor: pointer; padding: 10px 14px; text-align: left;
+    transition: all .15s;
+}
+.fm-net-scan-item:hover { background: var(--surface-hover); border-color: var(--accent); }
+.fm-net-scan-item > i:first-child { color: #60a5fa; font-size: 18px; }
+.fm-net-scan-item > i:last-child { color: var(--text-muted); margin-left: auto; font-size: 12px; }
+.fm-net-scan-info { flex: 1; min-width: 0; }
+.fm-net-scan-host { font-weight: 500; font-size: 14px; }
+.fm-net-scan-addr { font-size: 12px; color: var(--text-muted); }
+
 @media (max-width: 768px) {
     .taskbar-stats { display: none; }
     .fm-sidebar { width: 160px; }

@@ -50,6 +50,7 @@ AppRegistry['file-manager'] = function (appDef, launchOpts) {
         selectMode: false,     // mobile select mode
         sambaShares: [],       // [{ name, path, ... }] loaded from backend
         storagePools: [],      // [{ name, mount_path, usage, ... }] from pool/list
+        networkMounts: [],     // [{ id, name, protocol, host, share, mount_path, mounted }]
         favorites: [],         // [{ path, label }]
         photoFavorites: [],    // ['/path/to/img.jpg', ...]
         gallerySources: [],    // [{ path, label }] gallery folders
@@ -427,6 +428,27 @@ function renderFM(body, state) {
                 </div>
             ` : ''}
             <div class="fm-sidebar-divider"></div>
+            <div class="fm-sidebar-section">
+                <div class="fm-sidebar-label">
+                    <i class="fas fa-network-wired" style="color:#60a5fa"></i> ${t('Dyski sieciowe')}
+                    ${isAdmin ? `<button class="fm-net-add-btn" id="fm-add-network-drive" title="${t('Dodaj dysk sieciowy')}"><i class="fas fa-plus"></i></button>` : ''}
+                </div>
+                ${state.networkMounts.map(m => `
+                    <div class="fm-net-drive-row${m.mounted && state.path.startsWith(m.mount_path) ? ' active' : ''}">
+                        <button class="fm-tree-item fm-net-item${m.mounted && state.path.startsWith(m.mount_path) ? ' active' : ''}${!m.mounted ? ' fm-net-offline' : ''}" ${m.mounted ? `data-path="${m.mount_path}"` : ''} title="${m.protocol.toUpperCase()}: //${m.host}/${m.share}${m.usage ? ' — ' + Math.round(m.usage.percent) + '% ' + t('zajęte') : ''}${!m.mounted ? ' (' + t('rozłączony') + ')' : ''}">
+                            <i class="fas ${m.mounted ? 'fa-server' : 'fa-unlink'}" style="color:${m.mounted ? '#60a5fa' : '#6b7280'}"></i>
+                            <span class="fm-pool-label">${m.name}${m.mounted && m.usage ? _fmUsageBar(m.usage) : ''}</span>
+                        </button>
+                        ${isAdmin ? `<button class="fm-net-action-btn" data-net-id="${m.id}" data-net-action="${m.mounted ? 'menu' : 'reconnect'}" title="${m.mounted ? t('Opcje') : t('Połącz')}">
+                            <i class="fas ${m.mounted ? 'fa-ellipsis-v' : 'fa-plug'}"></i>
+                        </button>` : ''}
+                    </div>
+                `).join('')}
+                ${state.networkMounts.length === 0 && isAdmin ? `
+                    <div class="fm-net-empty">${t('Brak dysków sieciowych')}</div>
+                ` : ''}
+            </div>
+            <div class="fm-sidebar-divider"></div>
             <button class="fm-tree-item fm-trash-btn${state.path === '/__trash__' ? ' active' : ''}" data-path="/__trash__">
                 <i class="fas fa-trash-alt app-icon-danger"></i> ${t('Kosz')}
             </button>
@@ -449,6 +471,23 @@ function renderFM(body, state) {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 removeFavorite(btn.dataset.favPath);
+            });
+        });
+        // Network drives
+        sidebar.querySelector('#fm-add-network-drive')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            showNetworkDriveModal();
+        });
+        sidebar.querySelectorAll('.fm-net-action-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const id = btn.dataset.netId;
+                const action = btn.dataset.netAction;
+                if (action === 'reconnect') {
+                    reconnectNetworkDrive(id);
+                } else {
+                    showNetDriveMenu(btn, id);
+                }
             });
         });
     }
@@ -599,6 +638,17 @@ function renderFM(body, state) {
         }
     }
 
+    async function loadNetworkMounts() {
+        if (NAS.user?.role !== 'admin') return;
+        try {
+            const data = await api('/storage/network/mounts');
+            state.networkMounts = data?.mounts || [];
+            renderSidebar();
+        } catch (e) {
+            state.networkMounts = [];
+        }
+    }
+
     async function _fmLoadGallerySources() {
         try {
             const data = await api('/gallery/folders');
@@ -606,6 +656,260 @@ function renderFM(body, state) {
         } catch (e) {
             state.gallerySources = [];
         }
+    }
+
+    // ─── Network Drive functions ───
+
+    async function showNetworkDriveModal(prefill) {
+        const overlay = document.createElement('div');
+        overlay.className = 'fm-net-overlay';
+        overlay.innerHTML = `
+            <div class="fm-net-modal">
+                <div class="fm-net-modal-header">
+                    <h3><i class="fas fa-network-wired"></i> ${t('Dodaj dysk sieciowy')}</h3>
+                    <button class="fm-net-modal-close" id="fm-net-close"><i class="fas fa-times"></i></button>
+                </div>
+                <div class="fm-net-modal-body">
+                    <div class="fm-net-tabs">
+                        <button class="fm-net-tab active" data-tab="manual">${t('Ręcznie')}</button>
+                        <button class="fm-net-tab" data-tab="scan">${t('Skanuj sieć')}</button>
+                    </div>
+                    <div class="fm-net-tab-content" id="fm-net-tab-manual">
+                        <div class="fm-net-field">
+                            <label>${t('Protokół')}</label>
+                            <select id="fm-net-protocol" class="fm-input">
+                                <option value="smb" ${prefill?.protocol === 'nfs' ? '' : 'selected'}>SMB / CIFS (Windows)</option>
+                                <option value="nfs" ${prefill?.protocol === 'nfs' ? 'selected' : ''}>NFS (Linux/Unix)</option>
+                            </select>
+                        </div>
+                        <div class="fm-net-field">
+                            <label>${t('Adres serwera')}</label>
+                            <div class="fm-net-host-row">
+                                <input type="text" id="fm-net-host" class="fm-input" placeholder="192.168.1.100" value="${prefill?.host || ''}">
+                                <button class="fm-toolbar-btn" id="fm-net-browse-shares" title="${t('Przeglądaj udziały')}"><i class="fas fa-search"></i></button>
+                            </div>
+                        </div>
+                        <div class="fm-net-field">
+                            <label>${t('Nazwa udziału / ścieżka eksportu')}</label>
+                            <input type="text" id="fm-net-share" class="fm-input" placeholder="${t('np. Photos lub /volume1/data')}" value="${prefill?.share || ''}">
+                            <div class="fm-net-shares-list" id="fm-net-shares-list" style="display:none"></div>
+                        </div>
+                        <div class="fm-net-field" id="fm-net-creds-section">
+                            <label>${t('Użytkownik')} <span class="fm-net-optional">(${t('opcjonalne')})</span></label>
+                            <input type="text" id="fm-net-user" class="fm-input" placeholder="guest" value="${prefill?.username || ''}">
+                        </div>
+                        <div class="fm-net-field" id="fm-net-pass-section">
+                            <label>${t('Hasło')}</label>
+                            <input type="password" id="fm-net-pass" class="fm-input" value="${prefill?.password || ''}">
+                        </div>
+                        <div class="fm-net-field">
+                            <label>${t('Nazwa wyświetlana')} <span class="fm-net-optional">(${t('opcjonalne')})</span></label>
+                            <input type="text" id="fm-net-name" class="fm-input" placeholder="${t('np. NAS Photos')}" value="${prefill?.name || ''}">
+                        </div>
+                        <div class="fm-net-field fm-net-check-row">
+                            <label><input type="checkbox" id="fm-net-automount" checked> ${t('Montuj automatycznie przy starcie')}</label>
+                        </div>
+                    </div>
+                    <div class="fm-net-tab-content" id="fm-net-tab-scan" style="display:none">
+                        <div class="fm-net-scan-status" id="fm-net-scan-status">
+                            <i class="fas fa-spinner fa-spin"></i> ${t('Skanowanie sieci...')}
+                        </div>
+                        <div class="fm-net-scan-results" id="fm-net-scan-results"></div>
+                    </div>
+                </div>
+                <div class="fm-net-modal-footer">
+                    <div class="fm-net-error" id="fm-net-error"></div>
+                    <button class="fm-toolbar-btn" id="fm-net-cancel">${t('Anuluj')}</button>
+                    <button class="fm-toolbar-btn fm-net-connect-btn" id="fm-net-connect"><i class="fas fa-plug"></i> ${t('Połącz')}</button>
+                </div>
+            </div>
+        `;
+        body.appendChild(overlay);
+
+        const close = () => overlay.remove();
+        overlay.querySelector('#fm-net-close').addEventListener('click', close);
+        overlay.querySelector('#fm-net-cancel').addEventListener('click', close);
+        overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
+        // Tab switching
+        overlay.querySelectorAll('.fm-net-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                overlay.querySelectorAll('.fm-net-tab').forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+                const manual = overlay.querySelector('#fm-net-tab-manual');
+                const scan = overlay.querySelector('#fm-net-tab-scan');
+                if (tab.dataset.tab === 'scan') {
+                    manual.style.display = 'none';
+                    scan.style.display = '';
+                    startNetworkScan(overlay);
+                } else {
+                    manual.style.display = '';
+                    scan.style.display = 'none';
+                }
+            });
+        });
+
+        // Protocol toggle — hide creds for NFS
+        overlay.querySelector('#fm-net-protocol').addEventListener('change', (e) => {
+            const isNfs = e.target.value === 'nfs';
+            overlay.querySelector('#fm-net-creds-section').style.display = isNfs ? 'none' : '';
+            overlay.querySelector('#fm-net-pass-section').style.display = isNfs ? 'none' : '';
+            overlay.querySelector('#fm-net-share').placeholder = isNfs ? t('np. /volume1/data') : t('np. Photos');
+        });
+
+        // Browse shares on server
+        overlay.querySelector('#fm-net-browse-shares').addEventListener('click', async () => {
+            const host = overlay.querySelector('#fm-net-host').value.trim();
+            if (!host) { toast(t('Podaj adres serwera'), 'warning'); return; }
+            const user = overlay.querySelector('#fm-net-user').value.trim();
+            const pass = overlay.querySelector('#fm-net-pass').value;
+            const list = overlay.querySelector('#fm-net-shares-list');
+            list.innerHTML = `<div class="fm-net-loading"><i class="fas fa-spinner fa-spin"></i> ${t('Szukam udziałów...')}</div>`;
+            list.style.display = '';
+            const data = await api('/storage/network/browse', { method: 'POST', body: JSON.stringify({ host, username: user, password: pass }) });
+            if (data?.shares?.length) {
+                list.innerHTML = data.shares.map(s => `
+                    <button class="fm-net-share-option" data-share="${s.name}">
+                        <i class="fas fa-folder"></i> ${s.name}${s.comment ? ` <span class="fm-net-share-comment">${s.comment}</span>` : ''}
+                    </button>
+                `).join('');
+                list.querySelectorAll('.fm-net-share-option').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        overlay.querySelector('#fm-net-share').value = btn.dataset.share;
+                        list.style.display = 'none';
+                    });
+                });
+            } else {
+                list.innerHTML = `<div class="fm-net-loading">${t('Nie znaleziono udziałów')}</div>`;
+            }
+        });
+
+        // Connect
+        overlay.querySelector('#fm-net-connect').addEventListener('click', async () => {
+            const protocol = overlay.querySelector('#fm-net-protocol').value;
+            const host = overlay.querySelector('#fm-net-host').value.trim();
+            const share = overlay.querySelector('#fm-net-share').value.trim();
+            const username = overlay.querySelector('#fm-net-user').value.trim();
+            const password = overlay.querySelector('#fm-net-pass').value;
+            const name = overlay.querySelector('#fm-net-name').value.trim();
+            const autoMount = overlay.querySelector('#fm-net-automount').checked;
+            const errEl = overlay.querySelector('#fm-net-error');
+            errEl.textContent = '';
+
+            if (!host) { errEl.textContent = t('Podaj adres serwera'); return; }
+            if (!share) { errEl.textContent = t('Podaj nazwę udziału'); return; }
+
+            const btn = overlay.querySelector('#fm-net-connect');
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${t('Łączenie...')}`;
+
+            const data = await api('/storage/network/mount', {
+                method: 'POST',
+                body: JSON.stringify({ protocol, host, share, username, password, name, auto_mount: autoMount }),
+            });
+            if (data?.ok) {
+                close();
+                toast(t('Dysk sieciowy podłączony'), 'success');
+                await loadNetworkMounts();
+                if (data.mount_path) navigateTo(data.mount_path);
+            } else {
+                errEl.textContent = data?.error || t('Połączenie nieudane');
+                btn.disabled = false;
+                btn.innerHTML = `<i class="fas fa-plug"></i> ${t('Połącz')}`;
+            }
+        });
+    }
+
+    async function startNetworkScan(overlay) {
+        const status = overlay.querySelector('#fm-net-scan-status');
+        const results = overlay.querySelector('#fm-net-scan-results');
+        status.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${t('Skanowanie sieci...')}`;
+        results.innerHTML = '';
+
+        const data = await api('/storage/network/scan');
+        const servers = data?.servers || [];
+        if (servers.length === 0) {
+            status.innerHTML = `<i class="fas fa-info-circle"></i> ${t('Nie znaleziono serwerów w sieci')}`;
+            return;
+        }
+        status.innerHTML = `<i class="fas fa-check"></i> ${t('Znaleziono')} ${servers.length} ${t('serwerów')}`;
+        results.innerHTML = servers.map(s => `
+            <button class="fm-net-scan-item" data-host="${s.host}">
+                <i class="fas fa-server"></i>
+                <div class="fm-net-scan-info">
+                    <div class="fm-net-scan-host">${s.hostname || s.host}</div>
+                    <div class="fm-net-scan-addr">${s.host} · ${s.protocols.join(', ').toUpperCase()}</div>
+                </div>
+                <i class="fas fa-chevron-right"></i>
+            </button>
+        `).join('');
+        results.querySelectorAll('.fm-net-scan-item').forEach(btn => {
+            btn.addEventListener('click', () => {
+                overlay.querySelector('#fm-net-host').value = btn.dataset.host;
+                overlay.querySelectorAll('.fm-net-tab').forEach(t => t.classList.remove('active'));
+                overlay.querySelector('[data-tab="manual"]').classList.add('active');
+                overlay.querySelector('#fm-net-tab-manual').style.display = '';
+                overlay.querySelector('#fm-net-tab-scan').style.display = 'none';
+            });
+        });
+    }
+
+    async function reconnectNetworkDrive(id) {
+        toast(t('Łączenie...'), 'info');
+        const data = await api('/storage/network/reconnect', { method: 'POST', body: JSON.stringify({ id }) });
+        if (data?.ok) {
+            toast(t('Połączono'), 'success');
+            await loadNetworkMounts();
+        } else {
+            toast(data?.error || t('Nie udało się połączyć'), 'error');
+        }
+    }
+
+    function showNetDriveMenu(anchorBtn, id) {
+        // Close any existing menu
+        body.querySelectorAll('.fm-net-ctx-menu').forEach(m => m.remove());
+        const mount = state.networkMounts.find(m => m.id === id);
+        if (!mount) return;
+
+        const menu = document.createElement('div');
+        menu.className = 'fm-net-ctx-menu';
+        menu.innerHTML = `
+            ${mount.mounted ? `<button class="fm-net-ctx-item" data-action="open"><i class="fas fa-folder-open"></i> ${t('Otwórz')}</button>` : ''}
+            ${mount.mounted ? `<button class="fm-net-ctx-item" data-action="disconnect"><i class="fas fa-eject"></i> ${t('Rozłącz')}</button>` : `<button class="fm-net-ctx-item" data-action="reconnect"><i class="fas fa-plug"></i> ${t('Połącz')}</button>`}
+            <button class="fm-net-ctx-item fm-net-ctx-danger" data-action="remove"><i class="fas fa-trash"></i> ${t('Usuń')}</button>
+        `;
+        const rect = anchorBtn.getBoundingClientRect();
+        const sidebar = body.querySelector('#fm-sidebar');
+        const sRect = sidebar.getBoundingClientRect();
+        menu.style.position = 'absolute';
+        menu.style.top = (rect.bottom - sRect.top) + 'px';
+        menu.style.left = (rect.left - sRect.left) + 'px';
+        sidebar.style.position = 'relative';
+        sidebar.appendChild(menu);
+
+        const dismiss = (e) => { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('click', dismiss); } };
+        setTimeout(() => document.addEventListener('click', dismiss), 0);
+
+        menu.querySelectorAll('.fm-net-ctx-item').forEach(item => {
+            item.addEventListener('click', async () => {
+                const action = item.dataset.action;
+                menu.remove();
+                if (action === 'open' && mount.mount_path) {
+                    navigateTo(mount.mount_path);
+                } else if (action === 'disconnect') {
+                    const data = await api('/storage/network/unmount', { method: 'POST', body: JSON.stringify({ id }) });
+                    if (data?.ok) { toast(t('Rozłączono'), 'success'); await loadNetworkMounts(); }
+                    else toast(data?.error || t('Błąd'), 'error');
+                } else if (action === 'reconnect') {
+                    await reconnectNetworkDrive(id);
+                } else if (action === 'remove') {
+                    if (!confirm(t('Usunąć dysk sieciowy') + ` "${mount.name}"?`)) return;
+                    const data = await api('/storage/network/remove', { method: 'POST', body: JSON.stringify({ id }) });
+                    if (data?.ok) { toast(t('Usunięto'), 'success'); await loadNetworkMounts(); }
+                    else toast(data?.error || t('Błąd'), 'error');
+                }
+            });
+        });
     }
 
     function renderFileList() {
@@ -5136,6 +5440,7 @@ function renderFM(body, state) {
     loadPhotoFavorites();
     loadSambaShares();
     loadStoragePools();
+    loadNetworkMounts();
     _fmLoadGallerySources();
     navigateTo(state.path).then(() => {
         if (state.initialSelect) {

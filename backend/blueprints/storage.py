@@ -1,7 +1,7 @@
 """
 EthOS — Storage Manager Blueprint
 Drive mounting/unmounting, file sharing (Samba, NFS, DLNA, WebDAV, SFTP),
-WS-Discovery (wsdd), USB hotplug monitoring.
+WS-Discovery (wsdd), USB hotplug monitoring, network drive mounts.
 """
 
 import json
@@ -222,6 +222,7 @@ def init_storage(sio):
     _socketio = sio
     _load_keepalive()
     sio.start_background_task(_health_monitor_loop)
+    sio.start_background_task(_auto_mount_network_drives)
 
 
 def get_usb_notifications():
@@ -4544,3 +4545,442 @@ def app_usage():
     # Sort by size descending
     results.sort(key=lambda x: x['bytes'], reverse=True)
     return jsonify({'items': results})
+
+
+# ---------------------------------------------------------------------------
+# Network Drive Mounts (SMB / NFS / WebDAV client-side mounts)
+# ---------------------------------------------------------------------------
+
+_NETMOUNT_DIR = '/mnt/network'
+_NETMOUNT_CONF = data_path('network_mounts.json')
+
+
+def _load_network_mounts():
+    """Load saved network mount configurations."""
+    try:
+        with open(_NETMOUNT_CONF, 'r') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+
+def _save_network_mounts(mounts):
+    """Persist network mount configurations."""
+    _host_write_json(_NETMOUNT_CONF, mounts)
+
+
+def _netmount_path(mount_id):
+    """Return the mount point path for a given network mount ID."""
+    return os.path.join(_NETMOUNT_DIR, mount_id)
+
+
+def _is_mounted(path):
+    """Check if a path is currently a mount point."""
+    r = host_run(f"findmnt -n -o TARGET {Q(path)} 2>/dev/null", timeout=5)
+    return r.returncode == 0 and path in r.stdout.strip()
+
+
+def _mount_smb(cfg):
+    """Mount an SMB/CIFS share. Returns (ok, error_msg)."""
+    mp = _netmount_path(cfg['id'])
+    host_run(f"mkdir -p {Q(mp)}")
+
+    host_addr = cfg['host']
+    share = cfg['share']
+    username = cfg.get('username', 'guest')
+    password = cfg.get('password', '')
+    domain = cfg.get('domain', '')
+
+    opts = ['rw', 'iocharset=utf8', 'file_mode=0777', 'dir_mode=0777', 'noperm']
+    if username and username.lower() != 'guest':
+        opts.append(f'username={username}')
+        if password:
+            opts.append(f'password={password}')
+        if domain:
+            opts.append(f'domain={domain}')
+    else:
+        opts.extend(['guest', 'username=guest'])
+
+    # vers=3.0 first, fallback to auto
+    for ver in ('3.0', '2.1', '1.0'):
+        cmd = f"mount -t cifs //{Q(host_addr)}/{Q(share)} {Q(mp)} -o {','.join(opts)},vers={ver}"
+        r = host_run(cmd, timeout=15)
+        if r.returncode == 0:
+            return True, ''
+    return False, r.stderr.strip() if r else 'Mount failed'
+
+
+def _mount_nfs(cfg):
+    """Mount an NFS share. Returns (ok, error_msg)."""
+    mp = _netmount_path(cfg['id'])
+    host_run(f"mkdir -p {Q(mp)}")
+
+    host_addr = cfg['host']
+    export_path = cfg['share']
+
+    opts = 'rw,soft,timeo=30,retrans=3'
+    cmd = f"mount -t nfs {Q(host_addr)}:{Q(export_path)} {Q(mp)} -o {opts}"
+    r = host_run(cmd, timeout=15)
+    if r.returncode == 0:
+        return True, ''
+    # Fallback: nfs4
+    cmd = f"mount -t nfs4 {Q(host_addr)}:{Q(export_path)} {Q(mp)} -o {opts}"
+    r = host_run(cmd, timeout=15)
+    if r.returncode == 0:
+        return True, ''
+    return False, r.stderr.strip()
+
+
+@storage_bp.route('/network/mounts')
+@admin_required
+def network_mount_list():
+    """List all saved network mounts with their current status."""
+    mounts = _load_network_mounts()
+    result = []
+    for m in mounts:
+        mp = _netmount_path(m['id'])
+        mounted = _is_mounted(mp)
+        usage = None
+        if mounted:
+            r = host_run(f"df -B1 {Q(mp)} 2>/dev/null | tail -1", timeout=5)
+            parts = r.stdout.split()
+            if len(parts) >= 5:
+                try:
+                    total = int(parts[1])
+                    used = int(parts[2])
+                    usage = {
+                        'total': total,
+                        'used': used,
+                        'percent': round(used / total * 100, 1) if total > 0 else 0,
+                    }
+                except (ValueError, IndexError):
+                    pass
+        result.append({
+            'id': m['id'],
+            'name': m.get('name', ''),
+            'protocol': m.get('protocol', 'smb'),
+            'host': m.get('host', ''),
+            'share': m.get('share', ''),
+            'mount_path': mp,
+            'mounted': mounted,
+            'auto_mount': m.get('auto_mount', False),
+            'usage': usage,
+        })
+    return jsonify({'mounts': result})
+
+
+@storage_bp.route('/network/mount', methods=['POST'])
+@admin_required
+def network_mount_add():
+    """Add and mount a new network drive."""
+    data = request.json or {}
+    protocol = data.get('protocol', 'smb').lower()
+    host_addr = data.get('host', '').strip()
+    share = data.get('share', '').strip().strip('/')
+    name = data.get('name', '').strip()
+    username = data.get('username', '').strip()
+    password = data.get('password', '')
+    domain = data.get('domain', '').strip()
+    auto_mount = bool(data.get('auto_mount', True))
+
+    if not host_addr:
+        return jsonify({'error': 'Host address is required'}), 400
+    if not share:
+        return jsonify({'error': 'Share name / export path is required'}), 400
+    if protocol not in ('smb', 'nfs'):
+        return jsonify({'error': 'Protocol must be smb or nfs'}), 400
+
+    # Ensure cifs-utils or nfs-common is installed
+    if protocol == 'smb':
+        if not check_tool('mount.cifs'):
+            r = _apt_install('cifs-utils', timeout=60)
+            if r.returncode != 0:
+                return jsonify({'error': 'Failed to install cifs-utils'}), 500
+    else:
+        if not check_tool('mount.nfs'):
+            r = _apt_install('nfs-common', timeout=60)
+            if r.returncode != 0:
+                return jsonify({'error': 'Failed to install nfs-common'}), 500
+
+    # Generate ID
+    safe_host = re.sub(r'[^a-zA-Z0-9._-]', '_', host_addr)
+    safe_share = re.sub(r'[^a-zA-Z0-9._-]', '_', share)
+    mount_id = f"{protocol}_{safe_host}_{safe_share}"
+
+    if not name:
+        name = f"{share} on {host_addr}"
+
+    cfg = {
+        'id': mount_id,
+        'name': name,
+        'protocol': protocol,
+        'host': host_addr,
+        'share': share,
+        'username': username,
+        'password': password,
+        'domain': domain,
+        'auto_mount': auto_mount,
+    }
+
+    # Check for duplicate
+    mounts = _load_network_mounts()
+    mounts = [m for m in mounts if m['id'] != mount_id]
+
+    # Try to mount
+    mp = _netmount_path(mount_id)
+    if _is_mounted(mp):
+        host_run(f"umount -l {Q(mp)}", timeout=10)
+
+    if protocol == 'smb':
+        ok, err = _mount_smb(cfg)
+    else:
+        ok, err = _mount_nfs(cfg)
+
+    if not ok:
+        host_run(f"rmdir {Q(mp)} 2>/dev/null", timeout=3)
+        return jsonify({'error': f'Mount failed: {err}'}), 500
+
+    # Save (without password in plain text — encode it)
+    save_cfg = dict(cfg)
+    if password:
+        save_cfg['password'] = base64.b64encode(password.encode()).decode()
+        save_cfg['_pw_enc'] = True
+    mounts.append(save_cfg)
+    _save_network_mounts(mounts)
+
+    # Add to fstab if auto_mount
+    if auto_mount:
+        _netmount_fstab_add(cfg)
+
+    return jsonify({
+        'ok': True,
+        'id': mount_id,
+        'mount_path': mp,
+        'name': name,
+    })
+
+
+@storage_bp.route('/network/unmount', methods=['POST'])
+@admin_required
+def network_mount_unmount():
+    """Unmount a network drive (keep config)."""
+    data = request.json or {}
+    mount_id = data.get('id', '').strip()
+    if not mount_id:
+        return jsonify({'error': 'id is required'}), 400
+
+    mp = _netmount_path(mount_id)
+    if _is_mounted(mp):
+        r = host_run(f"umount -l {Q(mp)}", timeout=15)
+        if r.returncode != 0:
+            return jsonify({'error': f'Unmount failed: {r.stderr.strip()}'}), 500
+
+    return jsonify({'ok': True})
+
+
+@storage_bp.route('/network/reconnect', methods=['POST'])
+@admin_required
+def network_mount_reconnect():
+    """Reconnect (re-mount) a saved network drive."""
+    data = request.json or {}
+    mount_id = data.get('id', '').strip()
+    if not mount_id:
+        return jsonify({'error': 'id is required'}), 400
+
+    mounts = _load_network_mounts()
+    cfg = next((m for m in mounts if m['id'] == mount_id), None)
+    if not cfg:
+        return jsonify({'error': 'Network mount not found'}), 404
+
+    # Decode password if encoded
+    if cfg.get('_pw_enc') and cfg.get('password'):
+        try:
+            cfg['password'] = base64.b64decode(cfg['password']).decode()
+        except Exception:
+            pass
+
+    mp = _netmount_path(mount_id)
+    if _is_mounted(mp):
+        host_run(f"umount -l {Q(mp)}", timeout=10)
+
+    protocol = cfg.get('protocol', 'smb')
+    if protocol == 'smb':
+        ok, err = _mount_smb(cfg)
+    else:
+        ok, err = _mount_nfs(cfg)
+
+    if not ok:
+        return jsonify({'error': f'Mount failed: {err}'}), 500
+
+    return jsonify({'ok': True, 'mount_path': mp})
+
+
+@storage_bp.route('/network/remove', methods=['POST'])
+@admin_required
+def network_mount_remove():
+    """Remove a network drive — unmount and delete config."""
+    data = request.json or {}
+    mount_id = data.get('id', '').strip()
+    if not mount_id:
+        return jsonify({'error': 'id is required'}), 400
+
+    mp = _netmount_path(mount_id)
+    if _is_mounted(mp):
+        host_run(f"umount -l {Q(mp)}", timeout=15)
+    host_run(f"rmdir {Q(mp)} 2>/dev/null", timeout=3)
+
+    mounts = _load_network_mounts()
+    mounts = [m for m in mounts if m['id'] != mount_id]
+    _save_network_mounts(mounts)
+
+    _netmount_fstab_remove(mount_id)
+
+    return jsonify({'ok': True})
+
+
+@storage_bp.route('/network/browse', methods=['POST'])
+@admin_required
+def network_browse():
+    """Browse available SMB shares on a remote host."""
+    data = request.json or {}
+    host_addr = data.get('host', '').strip()
+    username = data.get('username', '').strip()
+    password = data.get('password', '')
+
+    if not host_addr:
+        return jsonify({'error': 'Host address is required'}), 400
+
+    # Try smbclient -L to list shares
+    if not check_tool('smbclient'):
+        _apt_install('smbclient', timeout=60)
+
+    auth_part = ''
+    if username:
+        auth_part = f"-U {Q(username + ('%' + password if password else '%'))}"
+    else:
+        auth_part = '-N'
+
+    r = host_run(f"smbclient -L {Q(host_addr)} {auth_part} --no-pass 2>/dev/null || smbclient -L {Q(host_addr)} {auth_part} 2>&1", timeout=10)
+    shares = []
+    for line in r.stdout.splitlines():
+        line = line.strip()
+        # Parse smbclient output: "ShareName   Disk   Comment"
+        if '\tDisk' in line or '  Disk  ' in line:
+            parts = re.split(r'\s{2,}|\t', line.strip())
+            if parts:
+                share_name = parts[0].strip()
+                comment = parts[2].strip() if len(parts) > 2 else ''
+                if not share_name.endswith('$'):
+                    shares.append({'name': share_name, 'comment': comment})
+
+    return jsonify({'shares': shares})
+
+
+@storage_bp.route('/network/scan')
+@admin_required
+def network_scan():
+    """Scan local network for SMB/NFS servers."""
+    servers = []
+
+    # Use avahi-browse for mDNS discovery
+    r = host_run("avahi-browse -t -r _smb._tcp 2>/dev/null | grep -E '^\\s+address|hostname' || true", timeout=8)
+    seen = set()
+    current_host = ''
+    for line in r.stdout.splitlines():
+        line = line.strip()
+        if 'hostname' in line.lower():
+            match = re.search(r'\[(.+?)\]', line)
+            if match:
+                current_host = match.group(1).rstrip('.')
+        elif 'address' in line.lower():
+            match = re.search(r'\[(.+?)\]', line)
+            if match:
+                addr = match.group(1)
+                key = addr
+                if key not in seen:
+                    seen.add(key)
+                    servers.append({
+                        'host': addr,
+                        'hostname': current_host or addr,
+                        'protocols': ['smb'],
+                    })
+
+    # Fallback: nmap ping scan + SMB port check on local subnet
+    if not servers:
+        subnet = _detect_lan_subnet()
+        if subnet:
+            r = host_run(f"nmap -sn {Q(subnet)} --open -oG - 2>/dev/null | grep 'Status: Up' | awk '{{print $2}}' | head -20", timeout=15)
+            for ip in r.stdout.strip().splitlines():
+                ip = ip.strip()
+                if ip and ip not in seen:
+                    # Quick SMB port check
+                    r2 = host_run(f"timeout 2 bash -c 'echo >/dev/tcp/{Q(ip)}/445' 2>/dev/null", timeout=5)
+                    protocols = []
+                    if r2.returncode == 0:
+                        protocols.append('smb')
+                    r3 = host_run(f"timeout 2 bash -c 'echo >/dev/tcp/{Q(ip)}/2049' 2>/dev/null", timeout=5)
+                    if r3.returncode == 0:
+                        protocols.append('nfs')
+                    if protocols:
+                        seen.add(ip)
+                        servers.append({'host': ip, 'hostname': ip, 'protocols': protocols})
+
+    return jsonify({'servers': servers})
+
+
+def _netmount_fstab_add(cfg):
+    """Add a network mount to fstab for auto-mount on boot."""
+    mp = _netmount_path(cfg['id'])
+    protocol = cfg.get('protocol', 'smb')
+
+    if protocol == 'smb':
+        creds_file = os.path.join(_NETMOUNT_DIR, f".{cfg['id']}.creds")
+        username = cfg.get('username', 'guest')
+        password = cfg.get('password', '')
+        cred_content = f"username={username}\npassword={password}\n"
+        raw = cred_content.encode('utf-8')
+        b64 = base64.b64encode(raw).decode('ascii')
+        host_run(f"mkdir -p {Q(_NETMOUNT_DIR)}")
+        host_run(f"echo '{b64}' | base64 -d > {Q(creds_file)} && chmod 600 {Q(creds_file)}")
+
+        entry = f"//{cfg['host']}/{cfg['share']}  {mp}  cifs  credentials={creds_file},iocharset=utf8,file_mode=0777,dir_mode=0777,noperm,noauto,x-systemd.automount,_netdev  0  0"
+    else:
+        entry = f"{cfg['host']}:{cfg['share']}  {mp}  nfs  rw,soft,timeo=30,retrans=3,noauto,x-systemd.automount,_netdev  0  0"
+
+    # Remove old entry if exists, then append
+    _netmount_fstab_remove(cfg['id'])
+    tag = f"# ethos-netmount:{cfg['id']}"
+    host_run(f"echo {Q(tag)} >> /etc/fstab && echo {Q(entry)} >> /etc/fstab")
+    host_run("systemctl daemon-reload", timeout=10)
+
+
+def _netmount_fstab_remove(mount_id):
+    """Remove a network mount from fstab."""
+    tag = f"ethos-netmount:{mount_id}"
+    host_run(f"sed -i '/{tag}/d' /etc/fstab && sed -i '\\|{_NETMOUNT_DIR}/{mount_id}|d' /etc/fstab")
+    host_run("systemctl daemon-reload", timeout=10)
+
+
+def _auto_mount_network_drives():
+    """Called at startup — mount all network drives flagged auto_mount."""
+    mounts = _load_network_mounts()
+    for cfg in mounts:
+        if not cfg.get('auto_mount', False):
+            continue
+        mp = _netmount_path(cfg['id'])
+        if _is_mounted(mp):
+            continue
+        # Decode password
+        if cfg.get('_pw_enc') and cfg.get('password'):
+            try:
+                cfg['password'] = base64.b64decode(cfg['password']).decode()
+            except Exception:
+                pass
+        protocol = cfg.get('protocol', 'smb')
+        try:
+            if protocol == 'smb':
+                _mount_smb(cfg)
+            else:
+                _mount_nfs(cfg)
+        except Exception as e:
+            logging.getLogger(__name__).warning("Auto-mount %s failed: %s", cfg['id'], e)
