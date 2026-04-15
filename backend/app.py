@@ -1015,7 +1015,7 @@ def _blueprint_auth_guard():
                         '/api/encryption/', '/api/cache/', '/api/hardware/',
                         '/api/security-advisor/', '/api/security/',
                         '/api/photos-ai/', '/api/video-station/',
-                        '/api/sync-drive/')):
+                        '/api/sync-drive/', '/api/radio-music/')):
         # Allow unauthenticated access to user auth validation
         if path == '/api/users/auth/validate':
             return

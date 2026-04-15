@@ -75,7 +75,7 @@ from gevent.lock import BoundedSemaphore as _GeventBoundedSemaphore
 
 from flask import Blueprint, g, jsonify, request, Response, send_file, after_this_request, redirect
 
-from host import data_path, safe_path, q as shq
+from host import data_path, safe_path, q as shq, get_user_home
 
 log = logging.getLogger('ethos.radio_music')
 
@@ -827,13 +827,15 @@ def _music_folders_file():
 def _default_music_dir():
     """User's home Music folder, always included."""
     username = getattr(g, 'username', None) or 'default'
-    return os.path.join('/home', username, 'Music')
+    home = get_user_home(username)
+    return os.path.join(home, 'Music')
 
 
 def _default_audiobooks_dir():
     """User's home Audiobooks folder."""
     username = getattr(g, 'username', None) or 'default'
-    return os.path.join('/home', username, 'Audiobooks')
+    home = get_user_home(username)
+    return os.path.join(home, 'Audiobooks')
 
 
 def _get_music_folders():
@@ -1238,7 +1240,7 @@ def music_download():
 
     username = getattr(g, 'username', None) or 'default'
     if folder:
-        dest = os.path.join('/home', username, folder)
+        dest = os.path.join(get_user_home(username), folder)
     else:
         dest = _music_download_dir()
     os.makedirs(dest, exist_ok=True)
@@ -1983,7 +1985,7 @@ def archive_start():
                         db3[key]['size_bytes'] = os.path.getsize(nas_path)
                         # Also copy to ~/Music/RadioMusic/ for direct file access
                         try:
-                            music_rm_dir = os.path.join('/home', req_username, 'Music', 'RadioMusic')
+                            music_rm_dir = os.path.join(get_user_home(req_username), 'Music', 'RadioMusic')
                             os.makedirs(music_rm_dir, exist_ok=True)
                             safe_title = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', title or key)[:120]
                             music_dest = os.path.join(music_rm_dir, safe_title + '.mp3')
