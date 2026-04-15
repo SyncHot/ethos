@@ -135,12 +135,36 @@ def _get_current_user():
         return ''
 
 
-def _safe_path(path):
-    try:
-        from host import safe_path
-        return safe_path(path)
-    except (ValueError, ImportError):
+def _get_user_root():
+    """Get the home directory of the currently authenticated user."""
+    username = _get_current_user()
+    if not username:
         return None
+    try:
+        from host import get_user_home
+        home = get_user_home(username)
+        if home and os.path.isdir(home):
+            return home
+    except Exception:
+        pass
+    return None
+
+
+def _safe_path(path):
+    """Resolve a sync path relative to the current user's home directory.
+
+    '/' maps to the user's home root. Prevents traversal outside it.
+    """
+    user_root = _get_user_root()
+    if not user_root:
+        return None
+    rel = path.lstrip('/').lstrip('\\')
+    if not rel or rel == '.':
+        return user_root
+    resolved = os.path.normpath(os.path.join(user_root, rel))
+    if not resolved.startswith(user_root):
+        return None
+    return resolved
 
 
 def _compute_xxhash(filepath, chunk_size=1024*1024):
