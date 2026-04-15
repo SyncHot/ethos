@@ -1,7 +1,7 @@
 """
 EthOS — Storage Manager Blueprint
 Drive mounting/unmounting, file sharing (Samba, NFS, DLNA, WebDAV, SFTP),
-USB hotplug monitoring.
+WS-Discovery (wsdd), USB hotplug monitoring.
 """
 
 import json
@@ -1345,9 +1345,14 @@ def samba_pkg_uninstall():
     """Stop Samba services and disable them. Optionally wipe shares config."""
     wipe = (request.json or {}).get('wipe_data', False)
 
-    # 1. Stop services
+    # 1. Stop wsdd (WS-Discovery) — no purpose without Samba
+    host_run("systemctl stop wsdd 2>/dev/null; systemctl disable wsdd 2>/dev/null || true")
+    ufw_delete(3702, 'udp')
+    ufw_delete(5357, 'tcp')
+
+    # 2. Stop Samba services
     host_run("systemctl stop smbd nmbd 2>/dev/null || true")
-    # 2. Disable so they don't restart on reboot
+    # 3. Disable so they don't restart on reboot
     host_run("systemctl disable smbd nmbd 2>/dev/null || true")
 
     ok, dep_msg = release_dep('smbd', 'sharing-samba')
@@ -1375,6 +1380,80 @@ def samba_pkg_status():
     r = host_run("command -v smbd")
     installed = r.returncode == 0
     return jsonify({'status': 'ready' if installed else 'missing', 'samba_installed': installed})
+
+
+# ═══════════════════════════════════════════════════════════
+#  WS-Discovery (wsdd) — Windows 10+ Network browsing
+# ═══════════════════════════════════════════════════════════
+
+def _wsdd_workgroup():
+    """Read workgroup from smb.conf, default to WORKGROUP."""
+    try:
+        with open('/etc/samba/smb.conf') as f:
+            for line in f:
+                m = re.match(r'\s*workgroup\s*=\s*(\S+)', line, re.IGNORECASE)
+                if m:
+                    return m.group(1)
+    except Exception:
+        pass
+    return 'WORKGROUP'
+
+
+@storage_bp.route('/samba/wsdd/status', methods=['GET'])
+@admin_required
+def wsdd_status():
+    """Check if wsdd is installed and running."""
+    r = host_run("command -v wsdd")
+    installed = r.returncode == 0
+    running = False
+    enabled = False
+    if installed:
+        r2 = host_run("systemctl is-active wsdd 2>/dev/null")
+        running = r2.stdout.strip() == 'active'
+        r3 = host_run("systemctl is-enabled wsdd 2>/dev/null")
+        enabled = r3.stdout.strip() == 'enabled'
+    return jsonify({'installed': installed, 'running': running, 'enabled': enabled})
+
+
+@storage_bp.route('/samba/wsdd/toggle', methods=['POST'])
+@admin_required
+def wsdd_toggle():
+    """Enable or disable WS-Discovery for Windows network browsing."""
+    enable = (request.json or {}).get('enable', True)
+
+    if enable:
+        # Install wsdd if not present
+        r = host_run("command -v wsdd")
+        if r.returncode != 0:
+            r = _apt_install('wsdd', timeout=120)
+            if r.returncode != 0:
+                return jsonify({'ok': False, 'error': 'Failed to install wsdd: ' + r.stderr.strip()}), 500
+
+        # Configure workgroup via /etc/default/wsdd
+        workgroup = _wsdd_workgroup()
+        hostname = host_run("hostname -s").stdout.strip() or 'ethos'
+        wsdd_conf = f'WSDD_PARAMS="-n {_q_imported(hostname)} -w {_q_imported(workgroup)}"\n'
+        try:
+            os.makedirs('/etc/default', exist_ok=True)
+            with open('/etc/default/wsdd', 'w') as f:
+                f.write(wsdd_conf)
+        except Exception as e:
+            logging.warning('wsdd: failed to write /etc/default/wsdd: %s', e)
+
+        # Open firewall ports (WS-Discovery multicast + HTTP)
+        ufw_allow(3702, 'udp', 'WS-Discovery')
+        ufw_allow(5357, 'tcp', 'WS-Discovery HTTP')
+
+        host_run("systemctl unmask wsdd 2>/dev/null; "
+                 "systemctl enable wsdd 2>/dev/null; "
+                 "systemctl restart wsdd 2>/dev/null || true")
+        return jsonify({'ok': True, 'enabled': True})
+    else:
+        host_run("systemctl stop wsdd 2>/dev/null; "
+                 "systemctl disable wsdd 2>/dev/null || true")
+        ufw_delete(3702, 'udp')
+        ufw_delete(5357, 'tcp')
+        return jsonify({'ok': True, 'enabled': False})
 
 
 # ═══════════════════════════════════════════════════════════

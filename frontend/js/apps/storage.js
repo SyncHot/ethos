@@ -2450,15 +2450,48 @@ async function _smSharing(el) {
                 <input type="password" id="sh-smb-pwp" class="fm-input" placeholder="${t('Hasło')}" style="width:160px">
                 <button class="fm-toolbar-btn btn-green" id="sh-smb-pwb"><i class="fas fa-save"></i> ${t('Ustaw')}</button>
             </div>
-        </div>`;
+        </div>
+        <div id="sh-wsdd-section"></div>`;
 
         async function load() {
             try {
-                const [shares, status] = await Promise.all([api('/storage/samba/shares'), api('/storage/samba/status')]);
+                const [shares, status, wsdd] = await Promise.all([
+                    api('/storage/samba/shares'),
+                    api('/storage/samba/status'),
+                    api('/storage/samba/wsdd/status').catch(() => null),
+                ]);
                 st.shares = shares || [];
                 panel.querySelector('#sh-smb-status').innerHTML = _shBadge(status.running);
                 renderList();
+                renderWsdd(wsdd);
             } catch (e) { panel.querySelector('#sh-smb-list').innerHTML = `<div class="shr-error">${t('Błąd')}: ${e.message}</div>`; }
+        }
+
+        function renderWsdd(wsdd) {
+            const sec = panel.querySelector('#sh-wsdd-section');
+            if (!sec) return;
+            const running = wsdd && wsdd.running;
+            sec.innerHTML = `
+                <div class="shr-pw-section">
+                    <h4 class="shr-form-title"><i class="fas fa-broadcast-tower shr-icon-accent"></i> ${t('Wykrywanie w sieci Windows')}</h4>
+                    <label class="shr-toggle">
+                        <input type="checkbox" id="sh-wsdd-en" ${running ? 'checked' : ''}>
+                        <span class="shr-toggle-text">WS-Discovery</span>
+                    </label>
+                    <p class="shr-note">${t('Pozwala Windows 10/11 automatycznie wykryć ten serwer w Eksploratorze plików → Sieć.')}</p>
+                </div>`;
+            const cb = sec.querySelector('#sh-wsdd-en');
+            cb.onchange = async (e) => {
+                cb.disabled = true;
+                try {
+                    const r = await api('/storage/samba/wsdd/toggle', { method: 'POST', body: { enable: e.target.checked } });
+                    if (r.error) { toast(r.error, 'error'); cb.checked = !cb.checked; return; }
+                    toast(e.target.checked ? t('WS-Discovery włączone') : t('WS-Discovery wyłączone'), 'success');
+                    load();
+                } catch (err) {
+                    toast(err.message, 'error'); cb.checked = !cb.checked;
+                } finally { cb.disabled = false; }
+            };
         }
 
         function renderList() {
