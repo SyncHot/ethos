@@ -1,0 +1,26 @@
+# Core GUI
+PySide6>=6.6.0
+
+# HTTP client (async support)
+httpx>=0.27.0
+
+# Real-time communication
+python-socketio[client]>=5.11.0
+
+# File system monitoring
+watchdog>=4.0.0
+
+# Fast hashing for file fingerprints
+xxhash>=3.4.0
+
+# Secure credential storage (Windows Credential Locker)
+keyring>=25.0.0
+
+# Platform-specific directories (AppData, etc.)
+platformdirs>=4.2.0
+
+# Configuration validation
+pydantic>=2.6.0
+
+# SSL certificates
+certifi>=2024.2.2

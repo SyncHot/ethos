@@ -232,6 +232,7 @@ _OPTIONAL_BLUEPRINTS = {
     'radio-music':     ('radio_music',     'radio_music_bp',    None,                True),
     'packages':        ('packages',        'packages_bp',       None,                False),
     'ldap':            ('ldap_auth',       'ldap_bp',           None,                False),
+    'sync-drive':      ('sync_drive',      'sync_drive_bp',    'init_sync_drive',   True),
 }
 
 # Public alias
@@ -317,7 +318,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/docker/pkg-status',
     },
     {
-        'id': 'vm-manager', 'name': 'VM Manager', 'version': '1.0.4',
+        'id': 'vm-manager', 'name': 'VM Manager', 'version': '1.0.5',
         'icon': 'fa-desktop', 'color': '#8b5cf6', 'category': 'System', 'admin_only': True,
         'description': 'Maszyny wirtualne QEMU/KVM z migawkami i dostepem VNC.',
         'apt_deps': ['qemu-system-x86', 'qemu-utils', 'ovmf'], 'pip_deps': [],
