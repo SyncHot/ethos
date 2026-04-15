@@ -366,7 +366,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/builder/pkg-status',
     },
     {
-        'id': 'disk-repair', 'name': 'Disk Repair', 'version': '1.0.14',
+        'id': 'disk-repair', 'name': 'Disk Repair', 'version': '1.0.15',
         'icon': 'fa-wrench', 'color': '#ef4444', 'category': 'Storage', 'admin_only': True,
         'description': 'Diagnostyka SMART i sprawdzanie systemu plikow z narzedziami naprawczymi.',
         'apt_deps': ['smartmontools', 'e2fsprogs'], 'pip_deps': [],
@@ -385,7 +385,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/remote-log/pkg-status',
     },
     {
-        'id': 'sharing-samba', 'name': 'File Sharing (Samba)', 'version': '1.0.14',
+        'id': 'sharing-samba', 'name': 'File Sharing (Samba)', 'version': '1.0.15',
         'icon': 'fa-windows', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Udostepnianie plikow przez siec (Windows, Mac, Linux).',
         'apt_deps': ['samba'], 'pip_deps': [],
@@ -395,7 +395,7 @@ BUILTIN_CATALOG = [
         'hidden': True,
     },
     {
-        'id': 'sharing-nfs', 'name': 'NFS', 'version': '1.0.14',
+        'id': 'sharing-nfs', 'name': 'NFS', 'version': '1.0.15',
         'icon': 'fa-network-wired', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Szybkie udostepnianie plikow dla Linux/Unix przez NFS.',
         'apt_deps': ['nfs-kernel-server'], 'pip_deps': [],
@@ -405,7 +405,7 @@ BUILTIN_CATALOG = [
         'hidden': True,
     },
     {
-        'id': 'sharing-dlna', 'name': 'DLNA (MiniDLNA)', 'version': '1.0.15',
+        'id': 'sharing-dlna', 'name': 'DLNA (MiniDLNA)', 'version': '1.0.16',
         'icon': 'fa-photo-video', 'color': '#6366f1', 'category': 'Media', 'admin_only': True,
         'description': 'Serwer DLNA do strumieniowania multimediow na TV i odtwarzacze.',
         'apt_deps': ['minidlna'], 'pip_deps': [],
@@ -415,7 +415,7 @@ BUILTIN_CATALOG = [
         'hidden': True,
     },
     {
-        'id': 'sharing-webdav', 'name': 'WebDAV', 'version': '1.0.14',
+        'id': 'sharing-webdav', 'name': 'WebDAV', 'version': '1.0.15',
         'icon': 'fa-globe', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Serwer WebDAV z dostepem do plikow przez HTTP.',
         'apt_deps': ['lighttpd'], 'pip_deps': [],
@@ -425,7 +425,7 @@ BUILTIN_CATALOG = [
         'hidden': True,
     },
     {
-        'id': 'sharing-sftp', 'name': 'SFTP', 'version': '1.0.14',
+        'id': 'sharing-sftp', 'name': 'SFTP', 'version': '1.0.15',
         'icon': 'fa-lock', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Bezpieczny transfer plikow przez SSH.',
         'apt_deps': ['openssh-server'], 'pip_deps': [],
@@ -435,7 +435,7 @@ BUILTIN_CATALOG = [
         'hidden': True,
     },
     {
-        'id': 'sharing-ftp', 'name': 'FTP', 'version': '1.0.14',
+        'id': 'sharing-ftp', 'name': 'FTP', 'version': '1.0.15',
         'icon': 'fa-upload', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Klasyczny serwer FTP z obsługa vsftpd.',
         'apt_deps': ['vsftpd'], 'pip_deps': [],
@@ -472,7 +472,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/cloud-backup/pkg-status',
     },
     {
-        'id': 'raid-lvm', 'name': 'RAID / LVM', 'version': '1.0.14',
+        'id': 'raid-lvm', 'name': 'RAID / LVM', 'version': '1.0.15',
         'icon': 'fa-layer-group', 'color': '#f59e0b', 'category': 'Storage', 'admin_only': True,
         'description': 'Macierze RAID z mdadm i wolumeny LVM.',
         'apt_deps': ['mdadm', 'lvm2'], 'pip_deps': [],
@@ -491,7 +491,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/wireguard/pkg-status',
     },
     {
-        'id': 'antivirus', 'name': 'Antivirus (ClamAV)', 'version': '1.1.0',
+        'id': 'antivirus', 'name': 'Antivirus (ClamAV)', 'version': '1.0.4',
         'icon': 'fa-shield-virus', 'color': '#16a34a', 'category': 'Security', 'admin_only': True,
         'description': 'ClamAV antywirus — skanowanie na zadanie i zaplanowane (tryb daemon).',
         'apt_deps': ['clamav', 'clamav-freshclam', 'clamav-daemon', 'clamdscan'], 'pip_deps': [],
@@ -1065,7 +1065,9 @@ def _install_apt_deps(deps, emit_fn):
     pkgs = ' '.join(q(d) for d in missing)
     emit_fn({'stage': 'deps_apt', 'message': 'apt-get update...', 'percent': 25, 'status': 'running'})
 
+    # Auto-recover from interrupted dpkg (common after power loss or killed installs)
     cmd = (
+        f'DEBIAN_FRONTEND=noninteractive dpkg --configure -a 2>/dev/null; '
         f'DEBIAN_FRONTEND=noninteractive apt-get update -y -qq 2>/dev/null; '
         f'DEBIAN_FRONTEND=noninteractive apt-get install -y {pkgs} 2>&1'
     )
