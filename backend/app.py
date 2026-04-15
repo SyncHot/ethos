@@ -4463,6 +4463,204 @@ def files_chown():
         return jsonify({'error': str(e)}), 500
 
 
+# ── Per-folder POSIX ACL management ──────────────────────────────────────────
+import shlex as _shlex_acl
+
+def _parse_getfacl(output):
+    """Parse getfacl output into structured ACL dict.
+    Returns: { 'users': { 'name': 'rwx', ... }, 'groups': { ... },
+               'owner': 'rwx', 'group': 'rwx', 'other': 'rwx',
+               'default_users': { ... }, 'default_groups': { ... },
+               'default_owner': 'rwx', 'default_group': 'rwx', 'default_other': 'rwx' }
+    """
+    acl = {
+        'users': {}, 'groups': {},
+        'owner': '', 'group': '', 'other': '',
+        'default_users': {}, 'default_groups': {},
+        'default_owner': '', 'default_group': '', 'default_other': '',
+        'mask': '', 'default_mask': '',
+    }
+    for line in output.strip().split('\n'):
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        parts = line.split(':')
+        if len(parts) < 3:
+            continue
+        # Standard entries: user::rwx, user:bob:r-x, group::r-x, etc.
+        # Default entries: default:user::rwx, default:user:bob:r-x, etc.
+        is_default = parts[0] == 'default'
+        if is_default:
+            parts = parts[1:]
+        if len(parts) < 3:
+            continue
+        etype = parts[0]   # user, group, mask, other
+        ename = parts[1]   # empty for owner/group/other, or username/groupname
+        eperm = parts[2]   # rwx, r-x, etc.
+        prefix = 'default_' if is_default else ''
+        if etype == 'user':
+            if ename:
+                acl[prefix + 'users'][ename] = eperm
+            else:
+                acl[prefix + 'owner'] = eperm
+        elif etype == 'group':
+            if ename:
+                acl[prefix + 'groups'][ename] = eperm
+            else:
+                acl[prefix + 'group'] = eperm
+        elif etype == 'other':
+            acl[prefix + 'other'] = eperm
+        elif etype == 'mask':
+            acl[prefix + 'mask'] = eperm
+    return acl
+
+
+def _perm_to_simple(perm_str):
+    """Convert rwx string to simple label: 'rw', 'ro', or 'none'."""
+    if not perm_str or perm_str == '---':
+        return 'none'
+    has_w = 'w' in perm_str
+    has_r = 'r' in perm_str
+    if has_w:
+        return 'rw'
+    if has_r:
+        return 'ro'
+    return 'none'
+
+
+def _simple_to_perm(simple, is_dir=True):
+    """Convert simple label to rwx string."""
+    if simple == 'rw':
+        return 'rwx' if is_dir else 'rw-'
+    elif simple == 'ro':
+        return 'r-x' if is_dir else 'r--'
+    return '---'
+
+
+@app.route('/api/files/acl')
+@require_auth
+def files_get_acl():
+    """GET /api/files/acl?path=<path>
+    Returns POSIX ACLs for the given path using getfacl.
+    """
+    cur = get_current_user()
+    if not cur or cur.get('role') != 'admin':
+        return jsonify({'error': 'Administrator privileges required'}), 403
+    path = request.args.get('path', '')
+    if not path:
+        return jsonify({'error': 'Path is required'}), 400
+    real = safe_path(path)
+    if not real or not os.path.exists(real):
+        return jsonify({'error': 'File does not exist'}), 404
+
+    r = _host_run_base(f"getfacl -p {_shlex_acl.quote(real)} 2>/dev/null")
+    if r.returncode != 0:
+        return jsonify({'error': 'Could not read ACL (filesystem may not support ACLs)'}), 500
+
+    acl = _parse_getfacl(r.stdout)
+    # Convert rwx strings to simple labels for the UI
+    entries = []
+    for user, perm in acl['users'].items():
+        entries.append({'type': 'user', 'name': user, 'access': _perm_to_simple(perm)})
+    for grp, perm in acl['groups'].items():
+        entries.append({'type': 'group', 'name': grp, 'access': _perm_to_simple(perm)})
+
+    defaults = []
+    for user, perm in acl['default_users'].items():
+        defaults.append({'type': 'user', 'name': user, 'access': _perm_to_simple(perm)})
+    for grp, perm in acl['default_groups'].items():
+        defaults.append({'type': 'group', 'name': grp, 'access': _perm_to_simple(perm)})
+
+    return jsonify({
+        'ok': True,
+        'path': path,
+        'is_dir': os.path.isdir(real),
+        'entries': entries,
+        'defaults': defaults,
+        'base': {
+            'owner': acl['owner'],
+            'group': acl['group'],
+            'other': acl['other'],
+        }
+    })
+
+
+@app.route('/api/files/acl', methods=['PUT'])
+@require_auth
+def files_set_acl():
+    """PUT /api/files/acl — Set POSIX ACLs on a file/folder.
+    Body: {
+        path: "/some/folder",
+        entries: [ { type: "user"|"group", name: "bob", access: "rw"|"ro"|"none" }, ... ],
+        inherit: true|false,     // if true, set default ACLs too (dirs only)
+        recursive: true|false    // if true, apply -R recursively
+    }
+    """
+    cur = get_current_user()
+    if not cur or cur.get('role') != 'admin':
+        return jsonify({'error': 'Administrator privileges required'}), 403
+
+    data = request.get_json(force=True)
+    path = data.get('path', '')
+    entries = data.get('entries', [])
+    inherit = data.get('inherit', False)
+    recursive = data.get('recursive', False)
+
+    if not path:
+        return jsonify({'error': 'Path is required'}), 400
+
+    blocked = _require_folder_access(path)
+    if blocked is not None:
+        return blocked
+
+    real = safe_path(path)
+    if not real or not os.path.exists(real):
+        return jsonify({'error': 'File does not exist'}), 404
+
+    is_dir = os.path.isdir(real)
+    rflag = '-R ' if recursive else ''
+    username = cur['username']
+
+    # Build setfacl commands
+    cmds = []
+    for entry in entries:
+        etype = entry.get('type', '')
+        ename = entry.get('name', '')
+        access = entry.get('access', 'none')
+        if etype not in ('user', 'group') or not ename:
+            continue
+
+        prefix = 'u' if etype == 'user' else 'g'
+        perm = _simple_to_perm(access, is_dir)
+        _sq = _shlex_acl.quote
+
+        if access == 'none':
+            cmds.append(f"setfacl {rflag}-x {prefix}:{_sq(ename)} {_sq(real)} 2>/dev/null; true")
+            if inherit and is_dir:
+                cmds.append(f"setfacl {rflag}-x d:{prefix}:{_sq(ename)} {_sq(real)} 2>/dev/null; true")
+        else:
+            cmds.append(f"setfacl {rflag}-m {prefix}:{_sq(ename)}:{perm} {_sq(real)}")
+            if inherit and is_dir:
+                cmds.append(f"setfacl {rflag}-m d:{prefix}:{_sq(ename)}:{perm} {_sq(real)}")
+
+    if not cmds:
+        return jsonify({'ok': True, 'message': 'No changes to apply'})
+
+    errors = []
+    for cmd in cmds:
+        r = _host_run_base(cmd, timeout=60)
+        if r.returncode != 0 and 'true' not in cmd:
+            errors.append(r.stderr.strip() if r.stderr else f'Command failed: {cmd}')
+
+    if errors:
+        return jsonify({'error': '; '.join(errors)}), 500
+
+    elog('security', 'info', f'ACL updated: {path}' + (' (recursive)' if recursive else ''),
+         {'user': username, 'path': path, 'entries': len(entries), 'inherit': inherit, 'recursive': recursive})
+
+    return jsonify({'ok': True})
+
+
 @app.route('/api/files/favorites')
 @require_auth
 def files_favorites_list():

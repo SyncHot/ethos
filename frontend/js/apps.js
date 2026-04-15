@@ -3044,6 +3044,14 @@ function renderFM(body, state) {
             </table>
             ${chmodSection}
             ${chownSection}
+            ${isAdmin ? `
+            <div id="fm-acl-section" style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border,#333)">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+                    <div style="font-weight:600;color:var(--text-primary)"><i class="fas fa-shield-alt" style="margin-right:6px;opacity:0.7"></i>${t('Lista kontroli dostępu (ACL)')}</div>
+                </div>
+                <div id="fm-acl-loading" style="text-align:center;padding:12px;color:var(--text-muted)"><i class="fas fa-spinner fa-spin"></i> ${t('Ładowanie...')}</div>
+            </div>
+            ` : ''}
             <div style="margin-top:20px;text-align:right;display:flex;gap:10px;justify-content:flex-end">
                 <button id="fm-props-close" class="app-btn" style="padding:8px 20px">${t('Zamknij')}</button>
                 ${isAdmin ? `<button id="fm-props-save" class="app-btn app-btn-primary" style="padding:8px 20px">${t('Zapisz')}</button>` : ''}
@@ -3099,11 +3107,168 @@ function renderFM(body, state) {
                      if (r.error) { toast(r.error || t('Błąd właściciela'), 'error'); success = false; }
                 }
 
+                // ACL entries
+                const aclSection = overlay.querySelector('#fm-acl-section');
+                if (aclSection) {
+                    const rows = aclSection.querySelectorAll('.fm-acl-row');
+                    const entries = [];
+                    rows.forEach(row => {
+                        const etype = row.dataset.type;
+                        const ename = row.dataset.name;
+                        const sel = row.querySelector('.fm-acl-access');
+                        if (etype && ename && sel) {
+                            entries.push({ type: etype, name: ename, access: sel.value });
+                        }
+                    });
+                    const inheritCb = aclSection.querySelector('#fm-acl-inherit');
+                    const recursiveCb = aclSection.querySelector('#fm-acl-recursive');
+                    if (entries.length > 0) {
+                        const r = await api('/files/acl', {
+                            method: 'PUT',
+                            body: {
+                                path: itemPath,
+                                entries,
+                                inherit: inheritCb ? inheritCb.checked : false,
+                                recursive: recursiveCb ? recursiveCb.checked : false,
+                            }
+                        });
+                        if (r.error) { toast(r.error, 'error'); success = false; }
+                    }
+                }
+
                 if (success) {
                     toast(t('Zapisano zmiany'), 'success');
                     close();
-                    if (state.path) renderFileList(); // refresh list
+                    if (state.path) renderFileList();
                 }
+            });
+
+            // ── Load ACL section asynchronously ──
+            const aclContainer = overlay.querySelector('#fm-acl-section');
+            if (aclContainer) {
+                _loadAclSection(aclContainer, itemPath, item.is_dir);
+            }
+        }
+    }
+
+    async function _loadAclSection(container, itemPath, isDir) {
+        const loadingEl = container.querySelector('#fm-acl-loading');
+        try {
+            const [aclData, usersData, groupsData] = await Promise.all([
+                api(`/files/acl?path=${encodeURIComponent(itemPath)}`),
+                api('/users/list'),
+                api('/users/groups'),
+            ]);
+
+            if (aclData.error) {
+                loadingEl.innerHTML = `<span style="color:var(--text-muted)">${aclData.error}</span>`;
+                return;
+            }
+
+            const users = Array.isArray(usersData) ? usersData.map(u => u.username) : [];
+            const groups = Array.isArray(groupsData) ? groupsData.map(g => g.name) : [];
+            const entries = aclData.entries || [];
+
+            const accessOpts = (val) => `
+                <option value="rw" ${val === 'rw' ? 'selected' : ''}>${t('Pełny dostęp')}</option>
+                <option value="ro" ${val === 'ro' ? 'selected' : ''}>${t('Tylko odczyt')}</option>
+                <option value="none" ${val === 'none' ? 'selected' : ''}>${t('Brak dostępu')}</option>
+            `;
+
+            const renderRow = (e) => `
+                <div class="fm-acl-row" data-type="${e.type}" data-name="${e.name}" style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                    <i class="fas ${e.type === 'user' ? 'fa-user' : 'fa-users'}" style="width:18px;text-align:center;opacity:0.6;font-size:0.85em"></i>
+                    <span style="flex:1;font-size:0.9em;color:var(--text-primary)">${e.name}</span>
+                    <select class="fm-acl-access" style="padding:4px 8px;background:var(--bg-base,#181825);border:1px solid var(--border,#444);border-radius:4px;color:var(--text-primary);font-size:0.85em">
+                        ${accessOpts(e.access)}
+                    </select>
+                    <button class="fm-acl-remove" title="${t('Usuń')}" style="background:none;border:none;color:var(--danger,#ef4444);cursor:pointer;padding:4px"><i class="fas fa-times"></i></button>
+                </div>
+            `;
+
+            const hasDefaults = (aclData.defaults || []).length > 0;
+
+            loadingEl.outerHTML = `
+                <div id="fm-acl-entries">
+                    ${entries.length > 0 ? entries.map(renderRow).join('') : `<div style="color:var(--text-muted);font-size:0.85em;padding:4px 0">${t('Brak dodatkowych reguł ACL')}</div>`}
+                </div>
+                <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                    <select id="fm-acl-add-type" style="padding:4px 8px;background:var(--bg-base,#181825);border:1px solid var(--border,#444);border-radius:4px;color:var(--text-primary);font-size:0.85em">
+                        <option value="user">${t('Użytkownik')}</option>
+                        <option value="group">${t('Grupa')}</option>
+                    </select>
+                    <select id="fm-acl-add-name" style="padding:4px 8px;background:var(--bg-base,#181825);border:1px solid var(--border,#444);border-radius:4px;color:var(--text-primary);font-size:0.85em;min-width:100px">
+                        ${users.map(u => `<option value="${u}">${u}</option>`).join('')}
+                    </select>
+                    <button id="fm-acl-add-btn" class="app-btn" style="padding:4px 12px;font-size:0.85em"><i class="fas fa-plus"></i> ${t('Dodaj')}</button>
+                </div>
+                ${isDir ? `
+                <div style="margin-top:12px;display:flex;flex-direction:column;gap:6px">
+                    <label style="display:flex;align-items:center;gap:8px;font-size:0.85em;color:var(--text-primary);cursor:pointer">
+                        <input type="checkbox" id="fm-acl-inherit" ${hasDefaults ? 'checked' : ''}>
+                        <span>${t('Dziedziczenie — nowe pliki/foldery przejmą te reguły')}</span>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:8px;font-size:0.85em;color:var(--text-primary);cursor:pointer">
+                        <input type="checkbox" id="fm-acl-recursive">
+                        <span>${t('Zastosuj rekurencyjnie do istniejącej zawartości')}</span>
+                    </label>
+                </div>
+                ` : ''}
+            `;
+
+            // Wire up type switcher to change name dropdown
+            const typeSelect = container.querySelector('#fm-acl-add-type');
+            const nameSelect = container.querySelector('#fm-acl-add-name');
+            if (typeSelect && nameSelect) {
+                typeSelect.addEventListener('change', () => {
+                    const opts = typeSelect.value === 'user' ? users : groups;
+                    nameSelect.innerHTML = opts.map(n => `<option value="${n}">${n}</option>`).join('');
+                });
+            }
+
+            // Add entry button
+            const addBtn = container.querySelector('#fm-acl-add-btn');
+            if (addBtn) {
+                addBtn.addEventListener('click', () => {
+                    const etype = typeSelect.value;
+                    const ename = nameSelect.value;
+                    if (!ename) return;
+                    // Check duplicate
+                    const existing = container.querySelector(`.fm-acl-row[data-type="${etype}"][data-name="${ename}"]`);
+                    if (existing) { toast(t('Ta reguła już istnieje'), 'warning'); return; }
+                    const entriesDiv = container.querySelector('#fm-acl-entries');
+                    // Remove "no rules" message if present
+                    const noRules = entriesDiv.querySelector('div[style*="text-muted"]');
+                    if (noRules && !entriesDiv.querySelector('.fm-acl-row')) noRules.remove();
+                    const tmp = document.createElement('div');
+                    tmp.innerHTML = renderRow({ type: etype, name: ename, access: 'rw' });
+                    const newRow = tmp.firstElementChild;
+                    entriesDiv.appendChild(newRow);
+                    _wireAclRemove(newRow);
+                });
+            }
+
+            // Wire remove buttons
+            container.querySelectorAll('.fm-acl-remove').forEach(btn => {
+                _wireAclRemove(btn.closest('.fm-acl-row'));
+            });
+
+        } catch (err) {
+            loadingEl.innerHTML = `<span style="color:var(--danger)">${t('Błąd ładowania ACL')}</span>`;
+        }
+    }
+
+    function _wireAclRemove(row) {
+        if (!row) return;
+        const btn = row.querySelector('.fm-acl-remove');
+        if (btn) {
+            btn.addEventListener('click', () => {
+                // Set access to 'none' instead of removing (so save will remove the ACL)
+                const sel = row.querySelector('.fm-acl-access');
+                if (sel) sel.value = 'none';
+                row.style.opacity = '0.4';
+                row.style.textDecoration = 'line-through';
+                btn.disabled = true;
             });
         }
     }

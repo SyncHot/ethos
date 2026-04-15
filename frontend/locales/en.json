@@ -233,7 +233,7 @@
   "Brak dostępnych folderów": "No available folders",
   "Brak dostępnych pakietów": "No packages available",
   "Brak dostępnych użytkowników": "No users available",
-  "Brak dostępu": "Access denied",
+  "Brak dostępu": "No access",
   "Brak dostępu do schowka": "No clipboard access",
   "Brak drukarek — dodaj w „Zarządzaj\"": "No printers — add in \"Manage\"",
   "Brak duplikatów": "No duplicates",
@@ -1960,5 +1960,13 @@
   "Usuń harmonogram": "Remove schedule",
   "Zaplanuj automatyczny scrub": "Schedule automatic scrub",
   "Zaplanuj": "Schedule",
-  "Harmonogram usunięty": "Schedule removed"
+  "Harmonogram usunięty": "Schedule removed",
+  "Lista kontroli dostępu (ACL)": "Access Control List (ACL)",
+  "Pełny dostęp": "Full access",
+  "Tylko odczyt": "Read only",
+  "Brak dodatkowych reguł ACL": "No additional ACL rules",
+  "Dziedziczenie — nowe pliki/foldery przejmą te reguły": "Inheritance — new files/folders will inherit these rules",
+  "Zastosuj rekurencyjnie do istniejącej zawartości": "Apply recursively to existing contents",
+  "Ta reguła już istnieje": "This rule already exists",
+  "Błąd ładowania ACL": "Error loading ACL"
 }
