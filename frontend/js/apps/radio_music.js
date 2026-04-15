@@ -1871,7 +1871,15 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
     async function _downloadTrack(track, btnEl, folder) {
         if (btnEl) { btnEl.classList.add('rm-downloading'); btnEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i>'; }
-        const body = { url: track.url, title: track.title || track.name };
+        const body = {
+            url: track.url,
+            title: track.title || track.name,
+            artist: track.artist || track.meta || track.channel || '',
+            thumbnail: track.thumbnail || track.image || '',
+            duration: track.duration || 0,
+            source: track.source || 'youtube',
+            type: track.type || 'music',
+        };
         if (folder) body.folder = folder;
         const data = await api('/radio-music/music/download', {
             method: 'POST',
@@ -1891,7 +1899,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             if (!job) { clearInterval(_poll); return; }
             if (job.status === 'done') {
                 clearInterval(_poll);
-                toast(t('Pobrano: ') + (track.title || track.name), 'success');
+                toast(t('Pobrano: ') + (track.title || track.name) + ' → Various Artists', 'success');
                 if (btnEl) { btnEl.classList.remove('rm-downloading'); btnEl.classList.add('rm-downloaded'); btnEl.innerHTML = '<i class="fas fa-check"></i>'; }
             } else if (job.status === 'error') {
                 clearInterval(_poll);

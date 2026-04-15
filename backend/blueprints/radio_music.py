@@ -1181,6 +1181,37 @@ def _music_download_dir():
     return d
 
 
+_VARIOUS_ARTISTS_PLAYLIST = 'Various Artists'
+
+
+def _add_to_playlist_by_name(track_info, username, playlist_name):
+    """Auto-add a downloaded track to a named playlist (create if missing)."""
+    try:
+        user_dir = os.path.join(_DATA_DIR, 'users', username)
+        os.makedirs(user_dir, exist_ok=True)
+        pfile = os.path.join(user_dir, 'playlists.json')
+        pls = _load_json(pfile, [])
+        pl = next((p for p in pls if p.get('name') == playlist_name), None)
+        if not pl:
+            pl = {
+                'id': str(int(time.time() * 1000)),
+                'name': playlist_name,
+                'tracks': [],
+                'created_at': time.time(),
+                'updated_at': time.time(),
+            }
+            pls.append(pl)
+        # Skip if track URL already in this playlist
+        if any(t.get('url') == track_info.get('url') for t in pl.get('tracks', [])):
+            return
+        track_info['added_at'] = time.time()
+        pl['tracks'].append(track_info)
+        pl['updated_at'] = time.time()
+        _save_json(pfile, pls)
+    except Exception:
+        pass
+
+
 @radio_music_bp.route('/music/download', methods=['POST'])
 def music_download():
     """Download a track to the user's music folder using yt-dlp."""
@@ -1188,6 +1219,16 @@ def music_download():
     url = body.get('url', '').strip()
     title = body.get('title', 'Unknown')
     folder = body.get('folder', '').strip()
+    playlist = body.get('playlist', '').strip()
+    track_meta = {
+        'type': body.get('type', 'music'),
+        'url': url,
+        'title': title,
+        'artist': body.get('artist', ''),
+        'thumbnail': body.get('thumbnail', ''),
+        'duration': body.get('duration', 0),
+        'source': body.get('source', 'youtube'),
+    }
     if not url:
         return jsonify({'error': 'Brak URL'}), 400
 
@@ -1195,8 +1236,8 @@ def music_download():
     if not ytdlp:
         return jsonify({'error': 'yt-dlp nie jest zainstalowane'}), 503
 
+    username = getattr(g, 'username', None) or 'default'
     if folder:
-        username = getattr(g, 'username', None) or 'default'
         dest = os.path.join('/home', username, folder)
     else:
         dest = _music_download_dir()
@@ -1207,6 +1248,8 @@ def music_download():
             'status': 'downloading', 'progress': 0,
             'title': title, 'error': None, 'path': None,
         }
+
+    target_playlist = playlist or _VARIOUS_ARTISTS_PLAYLIST
 
     from host import host_run
 
@@ -1243,9 +1286,13 @@ def music_download():
                     _DOWNLOAD_JOBS[job_id]['status'] = 'done'
                     _DOWNLOAD_JOBS[job_id]['progress'] = 100
                     _DOWNLOAD_JOBS[job_id]['path'] = out_file or dest
+                    success = True
                 else:
                     _DOWNLOAD_JOBS[job_id]['status'] = 'error'
                     _DOWNLOAD_JOBS[job_id]['error'] = (r.stderr or 'Nieznany błąd')[:200]
+                    success = False
+            if success:
+                _add_to_playlist_by_name(track_meta, username, target_playlist)
         except Exception as e:
             with _DOWNLOAD_LOCK:
                 _DOWNLOAD_JOBS[job_id]['status'] = 'error'
