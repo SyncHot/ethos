@@ -4476,15 +4476,25 @@ function _smWizard(el, switchSectionFn) {
 
     // ── Step 0: Select disks ──
     function renderStep0() {
-        if (!state.disks.length && !state._loadingDisks) {
+        if (!state.disks.length && !state._loadingDisks && !state._loadError) {
             state._loadingDisks = true;
             api('/storage/pool/available-disks').then(data => {
                 state._loadingDisks = false;
-                if (data.error) { toast(data.error, 'error'); return; }
-                state.disks = data.disks || [];
+                if (data.error) { state._loadError = data.error; }
+                else { state.disks = data.disks || []; }
+                render();
+            }).catch(() => {
+                state._loadingDisks = false;
+                state._loadError = t('Nie udało się pobrać listy dysków.');
                 render();
             });
             return '<div class="spw-loading"><i class="fas fa-spinner fa-spin fa-2x"></i><div>' + t('Szukam dostępnych dysków...') + '</div></div>';
+        }
+
+        if (state._loadError) {
+            return '<div class="spw-empty"><i class="fas fa-exclamation-triangle fa-2x" style="color:#ef4444"></i>' +
+                '<div style="margin-top:12px">' + state._loadError + '</div>' +
+                '<div style="margin-top:16px"><button class="spw-btn spw-btn-primary" id="spw-retry-disks"><i class="fas fa-redo"></i> ' + t('Spróbuj ponownie') + '</button></div></div>';
         }
 
         if (!state.disks.length) {
@@ -4804,6 +4814,13 @@ function _smWizard(el, switchSectionFn) {
     }
 
     function attachHandlers() {
+        // Retry disk loading
+        const retryBtn = el.querySelector('#spw-retry-disks');
+        if (retryBtn) retryBtn.addEventListener('click', () => {
+            state._loadError = null;
+            render();
+        });
+
         // Disk selection
         el.querySelectorAll('.spw-disk-card').forEach(card => {
             card.addEventListener('click', () => {
