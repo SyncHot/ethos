@@ -2033,16 +2033,28 @@ def archive_batch():
     with _ARCHIVE_LOCK:
         db = _load_archive()
     results = {}
+    changed = False
     for url in urls:
         k = _archive_key(url)
         entry = db.get(k, {})
+        status = entry.get('status', 'none')
+        # If marked done but file was deleted from disk, reset to allow re-download
+        if status == 'done':
+            nas_path = entry.get('nas_path', '')
+            if not nas_path or not os.path.isfile(nas_path):
+                status = 'none'
+                db.pop(k, None)
+                changed = True
         results[url] = {
             'key': k,
-            'status': entry.get('status', 'none'),
+            'status': status,
             'progress': entry.get('progress', 0),
             'size_bytes': entry.get('size_bytes', 0),
             'title': entry.get('title', ''),
         }
+    if changed:
+        with _ARCHIVE_LOCK:
+            _save_archive(db)
     return jsonify({'results': results})
 
 
@@ -2097,7 +2109,12 @@ def archive_file(key):
         return jsonify({'error': 'Not found'}), 404
     nas_path = entry.get('nas_path')
     if not nas_path or not os.path.isfile(nas_path):
-        return jsonify({'error': 'File missing on NAS — was it deleted?'}), 404
+        # File deleted from disk — purge stale DB entry so UI resets to "not archived"
+        with _ARCHIVE_LOCK:
+            db2 = _load_archive()
+            db2.pop(key, None)
+            _save_archive(db2)
+        return jsonify({'error': 'File missing on NAS — re-archive to download again'}), 404
     resp = send_file(nas_path, mimetype='audio/mpeg', conditional=True)
     resp.headers['Access-Control-Allow-Origin'] = '*'
     resp.headers['Cache-Control'] = 'no-cache'
