@@ -1948,5 +1948,17 @@
   "Podaj nazwę i wybierz folder": "Enter a name and choose a folder",
   "Wybierz przynajmniej jedno urządzenie": "Select at least one device",
   "Telefon": "Phone",
-  "Otwórz aplikację multimedialną na TV (np. „Media”, „DLNA”)": "Open the media app on your TV (e.g. \"Media\", \"DLNA\")"
+  "Otwórz aplikację multimedialną na TV (np. „Media”, „DLNA”)": "Open the media app on your TV (e.g. \"Media\", \"DLNA\")",
+  "Weryfikacja integralności danych": "Data integrity verification",
+  "W trakcie...": "In progress...",
+  "Wykryto błędy": "Errors detected",
+  "Nigdy": "Never",
+  "Przerwany": "Aborted",
+  "Ostatni scrub": "Last scrub",
+  "Czas trwania": "Duration",
+  "Prędkość": "Speed",
+  "Usuń harmonogram": "Remove schedule",
+  "Zaplanuj automatyczny scrub": "Schedule automatic scrub",
+  "Zaplanuj": "Schedule",
+  "Harmonogram usunięty": "Schedule removed"
 }

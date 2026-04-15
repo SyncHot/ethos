@@ -4255,12 +4255,15 @@ function _smMaintenance(el) {
     let pollTimer = null;
 
     async function load() {
-        const [poolsRes, raidRes, statusRes, histRes, rootfsRes, appUsageRes] = await Promise.allSettled([
+        const [poolsRes, raidRes, statusRes, histRes, rootfsRes, appUsageRes, scrubInfoRes, schedsRes] = await Promise.allSettled([
             api('/storage/pool/list'),
             api('/raid/arrays'),
             api('/storage/maintenance/status'),
             api('/storage/maintenance/history?limit=20'),
             api('/update/rootfs-info'),
+            api('/storage/app-usage'),
+            api('/storage/maintenance/scrub-info'),
+            api('/storage/maintenance/schedules'),
             api('/storage/app-usage'),
         ]);
 
@@ -4270,9 +4273,17 @@ function _smMaintenance(el) {
         const history = ((histRes.status === 'fulfilled' ? histRes.value : {}).history || []);
         const rootfs = (rootfsRes.status === 'fulfilled' ? rootfsRes.value : {});
         const appUsageItems = (appUsageRes.status === 'fulfilled' ? appUsageRes.value : {}).items || [];
+        const scrubPools = (scrubInfoRes.status === 'fulfilled' ? scrubInfoRes.value : {}).pools || [];
+        const schedules = (schedsRes.status === 'fulfilled' ? schedsRes.value : {}).schedules || [];
 
         const btrfsPools = pools.filter(p => p.fstype === 'btrfs' && p.mounted);
         const raidArrays = Array.isArray(arrays) ? arrays : [];
+        // Merge scrub info from btrfs scrub status with pool list
+        const scrubByMount = {};
+        for (const si of scrubPools) scrubByMount[si.mount] = si;
+        // Build schedule lookup: key = "type|target"
+        const schedByKey = {};
+        for (const s of schedules) schedByKey[s.type + '|' + s.target] = s;
 
         // Get all mounted non-system mounts for TRIM
         const mountsForTrim = pools.filter(p => p.mounted).map(p => ({ name: p.name, path: p.mount_path }));
@@ -4382,33 +4393,86 @@ function _smMaintenance(el) {
             html += `</div></div>`;
         }
 
-        // Active tasks
+        // Active tasks with progress bars
         if (active.length) {
             html += `<div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:10px;padding:16px;margin-bottom:16px;border-left:3px solid var(--accent)">
                 <div style="font-size:13px;font-weight:600;margin-bottom:10px"><i class="fas fa-cog fa-spin" style="color:var(--accent);margin-right:6px"></i>${t('Aktywne zadania')}</div>`;
             for (const task of active) {
-                const pct = task.progress != null ? task.progress : null;
-                html += `<div style="display:flex;align-items:center;gap:10px;padding:8px;background:var(--bg-primary);border-radius:6px;margin-bottom:6px;font-size:13px">
-                    <i class="fas fa-spinner fa-spin" style="color:var(--accent)"></i>
-                    <span style="flex:1"><strong>${task.type}</strong> — ${escHtml(task.target)}</span>
-                    ${pct != null ? `<span style="font-weight:600;color:var(--accent)">${pct}%</span>` : ''}
+                const pct = task.progress != null ? Math.round(task.progress) : null;
+                html += `<div style="padding:10px;background:var(--bg-primary);border-radius:6px;margin-bottom:6px;font-size:13px">
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:${pct != null ? '8' : '0'}px">
+                        <i class="fas fa-spinner fa-spin" style="color:var(--accent)"></i>
+                        <span style="flex:1"><strong>${task.type}</strong> — ${escHtml(task.target)}</span>
+                        ${pct != null ? `<span style="font-weight:600;color:var(--accent)">${pct}%</span>` : ''}
+                        ${task.rate ? `<span style="color:var(--text-muted);font-size:11px">${escHtml(task.rate)}</span>` : ''}
+                    </div>
+                    ${pct != null ? `<div style="background:var(--bg-secondary);border-radius:4px;height:6px;overflow:hidden">
+                        <div style="width:${pct}%;height:100%;background:var(--accent);border-radius:4px;transition:width .5s"></div>
+                    </div>` : ''}
                 </div>`;
             }
             html += '</div>';
         }
 
-        // Btrfs Scrub section
+        // Btrfs Scrub section — enhanced with last scrub info and schedules
         html += `<div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:10px;padding:16px;margin-bottom:16px">
             <div style="font-size:13px;font-weight:700;margin-bottom:12px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.3px">
                 <i class="fas fa-search" style="margin-right:6px"></i>Btrfs Scrub
+                <span style="font-weight:400;font-size:11px;text-transform:none;margin-left:8px;color:var(--text-muted)">${t('Weryfikacja integralności danych')}</span>
             </div>`;
         if (btrfsPools.length) {
             for (const p of btrfsPools) {
-                html += `<div style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--bg-primary);border-radius:6px;margin-bottom:6px">
-                    <i class="fas fa-layer-group" style="color:#3b82f6;width:20px;text-align:center"></i>
-                    <span style="flex:1;font-size:13px"><strong>${escHtml(p.name)}</strong> <span style="color:var(--text-muted)">${escHtml(p.mount_path)}</span></span>
-                    <button class="dr-btn dr-btn-sm" data-scrub="${escHtml(p.mount_path)}"><i class="fas fa-play"></i> ${t('Uruchom')}</button>
-                    <button class="dr-btn dr-btn-sm dr-btn-outline" data-sched-scrub="${escHtml(p.mount_path)}"><i class="fas fa-calendar"></i></button>
+                const mount = p.mount_path;
+                const si = scrubByMount[mount] || {};
+                const sched = schedByKey['scrub|' + mount];
+                const isRunning = active.some(t2 => t2.type === 'scrub' && t2.target === mount);
+                const hasErrors = si.errors && si.errors !== 'no errors found';
+                const lastDate = si.started || null;
+                const statusColor = isRunning ? 'var(--accent)' : hasErrors ? '#ef4444' : si.status === 'finished' ? '#10b981' : 'var(--text-muted)';
+                const statusIcon = isRunning ? 'fa-spinner fa-spin' : hasErrors ? 'fa-exclamation-triangle' : si.status === 'finished' ? 'fa-check-circle' : 'fa-minus-circle';
+                const statusText = isRunning ? t('W trakcie...') : hasErrors ? t('Wykryto błędy') : si.status === 'finished' ? t('OK') : si.status === 'aborted' ? t('Przerwany') : t('Nigdy');
+
+                html += `<div style="background:var(--bg-primary);border-radius:8px;padding:14px;margin-bottom:8px;border-left:3px solid ${statusColor}">
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+                        <i class="fas fa-layer-group" style="color:#3b82f6;width:20px;text-align:center"></i>
+                        <span style="flex:1;font-size:13px;font-weight:600">${escHtml(p.name)} <span style="color:var(--text-muted);font-weight:400">${escHtml(mount)}</span></span>
+                        ${sched ? `<span style="background:#3b82f620;color:#3b82f6;font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600"><i class="fas fa-calendar-check" style="margin-right:3px"></i>${sched.frequency}</span>` : ''}
+                    </div>
+                    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;font-size:12px;margin-bottom:10px">
+                        <div>
+                            <div style="color:var(--text-muted);margin-bottom:2px">Status</div>
+                            <div style="color:${statusColor};font-weight:600"><i class="fas ${statusIcon}" style="margin-right:4px"></i>${statusText}</div>
+                        </div>
+                        <div>
+                            <div style="color:var(--text-muted);margin-bottom:2px">${t('Ostatni scrub')}</div>
+                            <div style="font-weight:500">${lastDate || '—'}</div>
+                        </div>
+                        ${si.duration ? `<div>
+                            <div style="color:var(--text-muted);margin-bottom:2px">${t('Czas trwania')}</div>
+                            <div style="font-weight:500">${si.duration}</div>
+                        </div>` : ''}
+                        ${si.rate ? `<div>
+                            <div style="color:var(--text-muted);margin-bottom:2px">${t('Prędkość')}</div>
+                            <div style="font-weight:500">${si.rate}</div>
+                        </div>` : ''}
+                        ${si.total_str ? `<div>
+                            <div style="color:var(--text-muted);margin-bottom:2px">${t('Rozmiar')}</div>
+                            <div style="font-weight:500">${si.total_str}</div>
+                        </div>` : ''}
+                        ${si.errors ? `<div>
+                            <div style="color:var(--text-muted);margin-bottom:2px">${t('Błędy')}</div>
+                            <div style="font-weight:600;color:${hasErrors ? '#ef4444' : '#10b981'}">${hasErrors ? '<i class="fas fa-exclamation-triangle"></i> ' : '<i class="fas fa-check"></i> '}${escHtml(si.errors)}</div>
+                        </div>` : ''}
+                    </div>
+                    <div style="display:flex;gap:6px;align-items:center">
+                        <button class="dr-btn dr-btn-sm" data-scrub="${escHtml(mount)}" ${isRunning ? 'disabled' : ''}>
+                            <i class="fas ${isRunning ? 'fa-spinner fa-spin' : 'fa-play'}"></i> ${isRunning ? t('W trakcie...') : t('Uruchom')}
+                        </button>
+                        ${sched
+                            ? `<button class="dr-btn dr-btn-sm dr-btn-outline" data-unsched-scrub="${escHtml(mount)}" title="${t('Usuń harmonogram')}"><i class="fas fa-calendar-times"></i> ${t('Wyłącz')}</button>`
+                            : `<button class="dr-btn dr-btn-sm dr-btn-outline" data-sched-scrub="${escHtml(mount)}" title="${t('Zaplanuj automatyczny scrub')}"><i class="fas fa-calendar-plus"></i> ${t('Zaplanuj')}</button>`
+                        }
+                    </div>
                 </div>`;
             }
         } else {
@@ -4425,11 +4489,17 @@ function _smMaintenance(el) {
             for (const a of raidArrays) {
                 const name = a.name || a.device;
                 const mdName = (name || '').replace('/dev/', '');
+                const raidSched = schedByKey['raid-check|' + mdName];
+                const isRunning = active.some(t2 => t2.type === 'raid-check' && t2.target === mdName);
                 html += `<div style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--bg-primary);border-radius:6px;margin-bottom:6px">
                     <i class="fas fa-server" style="color:#8b5cf6;width:20px;text-align:center"></i>
                     <span style="flex:1;font-size:13px"><strong>${escHtml(mdName)}</strong> <span style="color:var(--text-muted)">${escHtml(a.level || '')} — ${(a.members || []).length} ${t('dysków')}</span></span>
-                    <button class="dr-btn dr-btn-sm" data-raidcheck="${escHtml(mdName)}"><i class="fas fa-play"></i> ${t('Sprawdź')}</button>
-                    <button class="dr-btn dr-btn-sm dr-btn-outline" data-sched-raid="${escHtml(mdName)}"><i class="fas fa-calendar"></i></button>
+                    ${raidSched ? `<span style="background:#8b5cf620;color:#8b5cf6;font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600"><i class="fas fa-calendar-check" style="margin-right:3px"></i>${raidSched.frequency}</span>` : ''}
+                    <button class="dr-btn dr-btn-sm" data-raidcheck="${escHtml(mdName)}" ${isRunning ? 'disabled' : ''}><i class="fas ${isRunning ? 'fa-spinner fa-spin' : 'fa-play'}"></i> ${t('Sprawdź')}</button>
+                    ${raidSched
+                        ? `<button class="dr-btn dr-btn-sm dr-btn-outline" data-unsched-raid="${escHtml(mdName)}"><i class="fas fa-calendar-times"></i></button>`
+                        : `<button class="dr-btn dr-btn-sm dr-btn-outline" data-sched-raid="${escHtml(mdName)}"><i class="fas fa-calendar-plus"></i></button>`
+                    }
                 </div>`;
             }
         } else {
@@ -4444,11 +4514,17 @@ function _smMaintenance(el) {
             </div>`;
         if (mountsForTrim.length) {
             for (const m of mountsForTrim) {
+                const trimSched = schedByKey['trim|' + m.path];
+                const isRunning = active.some(t2 => t2.type === 'trim' && t2.target === m.path);
                 html += `<div style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--bg-primary);border-radius:6px;margin-bottom:6px">
                     <i class="fas fa-hdd" style="color:#f59e0b;width:20px;text-align:center"></i>
                     <span style="flex:1;font-size:13px"><strong>${escHtml(m.name)}</strong> <span style="color:var(--text-muted)">${escHtml(m.path)}</span></span>
-                    <button class="dr-btn dr-btn-sm" data-trim="${escHtml(m.path)}"><i class="fas fa-play"></i> TRIM</button>
-                    <button class="dr-btn dr-btn-sm dr-btn-outline" data-sched-trim="${escHtml(m.path)}"><i class="fas fa-calendar"></i></button>
+                    ${trimSched ? `<span style="background:#f59e0b20;color:#f59e0b;font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600"><i class="fas fa-calendar-check" style="margin-right:3px"></i>${trimSched.frequency}</span>` : ''}
+                    <button class="dr-btn dr-btn-sm" data-trim="${escHtml(m.path)}" ${isRunning ? 'disabled' : ''}><i class="fas ${isRunning ? 'fa-spinner fa-spin' : 'fa-play'}"></i> TRIM</button>
+                    ${trimSched
+                        ? `<button class="dr-btn dr-btn-sm dr-btn-outline" data-unsched-trim="${escHtml(m.path)}"><i class="fas fa-calendar-times"></i></button>`
+                        : `<button class="dr-btn dr-btn-sm dr-btn-outline" data-sched-trim="${escHtml(m.path)}"><i class="fas fa-calendar-plus"></i></button>`
+                    }
                 </div>`;
             }
         } else {
@@ -4534,6 +4610,23 @@ function _smMaintenance(el) {
         root.querySelectorAll('[data-sched-scrub]').forEach(b => b.onclick = () => scheduleMaint('scrub', b.dataset.schedScrub));
         root.querySelectorAll('[data-sched-raid]').forEach(b => b.onclick = () => scheduleMaint('raid-check', b.dataset.schedRaid));
         root.querySelectorAll('[data-sched-trim]').forEach(b => b.onclick = () => scheduleMaint('trim', b.dataset.schedTrim));
+
+        // Unschedule buttons
+        root.querySelectorAll('[data-unsched-scrub]').forEach(b => b.onclick = async () => {
+            const res = await api('/storage/maintenance/schedule', { method: 'DELETE', body: JSON.stringify({ type: 'scrub', target: b.dataset.unschedScrub }) });
+            if (res.error) toast(res.error, 'error');
+            else { toast(t('Harmonogram usunięty'), 'success'); load(); }
+        });
+        root.querySelectorAll('[data-unsched-raid]').forEach(b => b.onclick = async () => {
+            const res = await api('/storage/maintenance/schedule', { method: 'DELETE', body: JSON.stringify({ type: 'raid-check', target: b.dataset.unschedRaid }) });
+            if (res.error) toast(res.error, 'error');
+            else { toast(t('Harmonogram usunięty'), 'success'); load(); }
+        });
+        root.querySelectorAll('[data-unsched-trim]').forEach(b => b.onclick = async () => {
+            const res = await api('/storage/maintenance/schedule', { method: 'DELETE', body: JSON.stringify({ type: 'trim', target: b.dataset.unschedTrim }) });
+            if (res.error) toast(res.error, 'error');
+            else { toast(t('Harmonogram usunięty'), 'success'); load(); }
+        });
     }
 
     function startPoll() {

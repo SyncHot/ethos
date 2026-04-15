@@ -366,7 +366,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/builder/pkg-status',
     },
     {
-        'id': 'disk-repair', 'name': 'Disk Repair', 'version': '1.0.15',
+        'id': 'disk-repair', 'name': 'Disk Repair', 'version': '1.0.17',
         'icon': 'fa-wrench', 'color': '#ef4444', 'category': 'Storage', 'admin_only': True,
         'description': 'Diagnostyka SMART i sprawdzanie systemu plikow z narzedziami naprawczymi.',
         'apt_deps': ['smartmontools', 'e2fsprogs'], 'pip_deps': [],
@@ -385,7 +385,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/remote-log/pkg-status',
     },
     {
-        'id': 'sharing-samba', 'name': 'File Sharing (Samba)', 'version': '1.0.15',
+        'id': 'sharing-samba', 'name': 'File Sharing (Samba)', 'version': '1.0.17',
         'icon': 'fa-windows', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Udostepnianie plikow przez siec (Windows, Mac, Linux).',
         'apt_deps': ['samba'], 'pip_deps': [],
@@ -395,7 +395,7 @@ BUILTIN_CATALOG = [
         'hidden': True,
     },
     {
-        'id': 'sharing-nfs', 'name': 'NFS', 'version': '1.0.15',
+        'id': 'sharing-nfs', 'name': 'NFS', 'version': '1.0.17',
         'icon': 'fa-network-wired', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Szybkie udostepnianie plikow dla Linux/Unix przez NFS.',
         'apt_deps': ['nfs-kernel-server'], 'pip_deps': [],
@@ -405,7 +405,7 @@ BUILTIN_CATALOG = [
         'hidden': True,
     },
     {
-        'id': 'sharing-dlna', 'name': 'DLNA (MiniDLNA)', 'version': '1.0.16',
+        'id': 'sharing-dlna', 'name': 'DLNA (MiniDLNA)', 'version': '1.0.18',
         'icon': 'fa-photo-video', 'color': '#6366f1', 'category': 'Media', 'admin_only': True,
         'description': 'Serwer DLNA do strumieniowania multimediow na TV i odtwarzacze.',
         'apt_deps': ['minidlna'], 'pip_deps': [],
@@ -415,7 +415,7 @@ BUILTIN_CATALOG = [
         'hidden': True,
     },
     {
-        'id': 'sharing-webdav', 'name': 'WebDAV', 'version': '1.0.15',
+        'id': 'sharing-webdav', 'name': 'WebDAV', 'version': '1.0.17',
         'icon': 'fa-globe', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Serwer WebDAV z dostepem do plikow przez HTTP.',
         'apt_deps': ['lighttpd'], 'pip_deps': [],
@@ -425,7 +425,7 @@ BUILTIN_CATALOG = [
         'hidden': True,
     },
     {
-        'id': 'sharing-sftp', 'name': 'SFTP', 'version': '1.0.15',
+        'id': 'sharing-sftp', 'name': 'SFTP', 'version': '1.0.17',
         'icon': 'fa-lock', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Bezpieczny transfer plikow przez SSH.',
         'apt_deps': ['openssh-server'], 'pip_deps': [],
@@ -435,7 +435,7 @@ BUILTIN_CATALOG = [
         'hidden': True,
     },
     {
-        'id': 'sharing-ftp', 'name': 'FTP', 'version': '1.0.15',
+        'id': 'sharing-ftp', 'name': 'FTP', 'version': '1.0.17',
         'icon': 'fa-upload', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Klasyczny serwer FTP z obsługa vsftpd.',
         'apt_deps': ['vsftpd'], 'pip_deps': [],
@@ -472,7 +472,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/cloud-backup/pkg-status',
     },
     {
-        'id': 'raid-lvm', 'name': 'RAID / LVM', 'version': '1.0.15',
+        'id': 'raid-lvm', 'name': 'RAID / LVM', 'version': '1.0.17',
         'icon': 'fa-layer-group', 'color': '#f59e0b', 'category': 'Storage', 'admin_only': True,
         'description': 'Macierze RAID z mdadm i wolumeny LVM.',
         'apt_deps': ['mdadm', 'lvm2'], 'pip_deps': [],

@@ -4292,6 +4292,16 @@ def maintenance_status():
                 task['status'] = 'completed'
                 entry['status'] = 'completed'
 
+        # For scrub, get live progress from btrfs scrub status
+        if task['type'] == 'scrub' and task['status'] == 'running':
+            r = _host_run_base(f"btrfs scrub status {_q_imported(task['target'])} 2>/dev/null", timeout=5)
+            if r.returncode == 0:
+                info = _parse_scrub_status(r.stdout or '')
+                if info['pct'] > 0:
+                    entry['progress'] = info['pct']
+                if info['rate']:
+                    entry['rate'] = info['rate']
+
         tasks.append(entry)
 
     return jsonify({'tasks': tasks})
@@ -4342,6 +4352,141 @@ def maintenance_schedule():
 
     _register_cron_job(cron, cmd, f'Storage maintenance: {mtype} on {target}')
     return jsonify({'ok': True, 'message': f'{mtype} scheduled {frequency} on {target}'})
+
+
+@storage_bp.route('/maintenance/schedules')
+@admin_required
+def maintenance_schedules():
+    """List active maintenance cron schedules."""
+    r = _host_run_base("sudo -n crontab -l 2>/dev/null || true")
+    if not r.stdout:
+        return jsonify({'schedules': []})
+
+    schedules = []
+    lines = r.stdout.splitlines()
+    for i, line in enumerate(lines):
+        if 'Storage maintenance:' not in line and not (i + 1 < len(lines) and 'Storage maintenance:' in lines[i]):
+            continue
+        if line.startswith('# DESC: Storage maintenance:'):
+            if i + 1 < len(lines):
+                cron_line = lines[i + 1]
+                desc = line.replace('# DESC: Storage maintenance: ', '')
+                parts = cron_line.split(None, 5)
+                if len(parts) >= 6:
+                    minute, hour, dom, month, dow = parts[:5]
+                    cmd = parts[5]
+                    # Determine frequency
+                    if dom == '1' and dow == '*':
+                        freq = 'monthly'
+                    elif dow in ('0', '7') and dom == '*':
+                        freq = 'weekly'
+                    else:
+                        freq = 'daily'
+                    # Determine type and target from desc or command
+                    mtype = 'scrub' if 'scrub' in desc else 'raid-check' if 'raid' in desc else 'trim'
+                    target = desc.split(' on ')[-1] if ' on ' in desc else ''
+                    schedules.append({
+                        'type': mtype, 'target': target, 'frequency': freq,
+                        'cron': f'{minute} {hour} {dom} {month} {dow}',
+                        'command': cmd,
+                    })
+    return jsonify({'schedules': schedules})
+
+
+@storage_bp.route('/maintenance/schedule', methods=['DELETE'])
+@admin_required
+def maintenance_schedule_delete():
+    """Remove a maintenance schedule."""
+    data = request.get_json(force=True)
+    mtype = data.get('type', '').strip()
+    target = data.get('target', '').strip()
+    if not mtype or not target:
+        return jsonify({'error': 'type and target required'}), 400
+
+    if mtype == 'scrub':
+        cmd = f"btrfs scrub start {target}"
+    elif mtype == 'raid-check':
+        cmd = f"echo check > /sys/block/{target}/md/sync_action"
+    elif mtype == 'trim':
+        cmd = f"fstrim {target}"
+    else:
+        return jsonify({'error': 'Invalid type'}), 400
+
+    _unregister_cron_job(cmd)
+    return jsonify({'ok': True, 'message': f'Schedule removed for {mtype} on {target}'})
+
+
+def _parse_scrub_status(output):
+    """Parse btrfs scrub status output into a dict."""
+    info = {'status': 'unknown', 'errors': None, 'started': None,
+            'duration': None, 'total_bytes': 0, 'scrubbed_bytes': 0, 'rate': None, 'pct': 0}
+    if not output:
+        return info
+    for line in output.splitlines():
+        line = line.strip()
+        if line.startswith('Scrub started:'):
+            info['started'] = line.split(':', 1)[1].strip()
+        elif line.startswith('Status:'):
+            info['status'] = line.split(':', 1)[1].strip()
+        elif line.startswith('Duration:'):
+            info['duration'] = line.split(':', 1)[1].strip()
+        elif line.startswith('Total to scrub:'):
+            raw = line.split(':', 1)[1].strip()
+            info['total_str'] = raw
+            info['total_bytes'] = _parse_size_to_bytes(raw)
+        elif line.startswith('Bytes scrubbed:'):
+            raw = line.split(':', 1)[1].strip()
+            m = re.match(r'([\d.]+\s*\S+)', raw)
+            if m:
+                info['scrubbed_bytes'] = _parse_size_to_bytes(m.group(1))
+            pct_m = re.search(r'\(([\d.]+)%\)', raw)
+            if pct_m:
+                info['pct'] = float(pct_m.group(1))
+        elif line.startswith('Rate:'):
+            info['rate'] = line.split(':', 1)[1].strip()
+        elif line.startswith('Error summary:'):
+            info['errors'] = line.split(':', 1)[1].strip()
+        elif 'no errors found' in line.lower():
+            info['errors'] = 'no errors found'
+    # Calculate pct from bytes if not parsed
+    if info['pct'] == 0 and info['total_bytes'] > 0 and info['scrubbed_bytes'] > 0:
+        info['pct'] = round(info['scrubbed_bytes'] / info['total_bytes'] * 100, 1)
+    # Finished scrub = 100%
+    if info['status'] == 'finished':
+        info['pct'] = 100
+    return info
+
+
+def _parse_size_to_bytes(s):
+    """Parse '107.38GiB' or '42.15MiB' etc. to bytes."""
+    s = s.strip()
+    m = re.match(r'([\d.]+)\s*(GiB|MiB|KiB|TiB|GB|MB|KB|TB|B)', s, re.IGNORECASE)
+    if not m:
+        return 0
+    val = float(m.group(1))
+    unit = m.group(2).lower()
+    multipliers = {'b': 1, 'kib': 1024, 'kb': 1000, 'mib': 1024**2, 'mb': 10**6,
+                   'gib': 1024**3, 'gb': 10**9, 'tib': 1024**4, 'tb': 10**12}
+    return int(val * multipliers.get(unit, 1))
+
+
+@storage_bp.route('/maintenance/scrub-info')
+@admin_required
+def maintenance_scrub_info():
+    """Get btrfs scrub status for all mounted btrfs pools."""
+    # Get btrfs mount points from findmnt (reliable)
+    r = _host_run_base("findmnt -t btrfs -n -o TARGET 2>/dev/null")
+    mounts = [p.strip() for p in (r.stdout or '').splitlines() if p.strip()]
+
+    results = []
+    for mount in mounts:
+        r = _host_run_base(f"btrfs scrub status {_q_imported(mount)} 2>/dev/null", timeout=10)
+        info = _parse_scrub_status(r.stdout or '')
+        info['mount'] = mount
+        info['name'] = os.path.basename(mount) or mount
+        results.append(info)
+
+    return jsonify({'pools': results})
 
 
 @storage_bp.route('/app-usage')
