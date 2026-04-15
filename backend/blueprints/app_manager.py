@@ -231,6 +231,7 @@ _OPTIONAL_BLUEPRINTS = {
     'video-station':   ('video_station',   'video_station_bp',  '_start_hls_cleanup_loop', True),
     'radio-music':     ('radio_music',     'radio_music_bp',    None,                True),
     'packages':        ('packages',        'packages_bp',       None,                False),
+    'ldap':            ('ldap_auth',       'ldap_bp',           None,                False),
 }
 
 # Public alias
@@ -599,6 +600,12 @@ BUILTIN_CATALOG = [
         'icon': 'fa-network-wired', 'color': '#06b6d4', 'category': 'Network', 'admin_only': False,
         'description': 'Lacznosc i synchronizacja miedzy urzadzeniami NAS.',
         'apt_deps': [], 'pip_deps': [],
+    },
+    {
+        'id': 'ldap', 'name': 'LDAP / Active Directory', 'version': '1.0.0',
+        'icon': 'fa-sitemap', 'color': '#7c3aed', 'category': 'System', 'admin_only': True,
+        'description': 'Integracja z LDAP i Active Directory dla centralnego zarzadzania uzytkownikami.',
+        'apt_deps': [], 'pip_deps': ['ldap3'],
     },
 ]
 

@@ -27,6 +27,9 @@ AppRegistry['users'] = function (appDef) {
                 <button class="usr-nav-btn" data-tab="privileges">
                     <i class="fas fa-key"></i><span>${t('Uprawnienia')}</span>
                 </button>
+                <button class="usr-nav-btn" data-tab="ldap">
+                    <i class="fas fa-sitemap"></i><span>LDAP / AD</span>
+                </button>
             </nav>
         </div>
         <div class="usr-main">
@@ -69,6 +72,15 @@ AppRegistry['users'] = function (appDef) {
                     </button>
                 </div>
             </div>
+
+            <!-- LDAP / Active Directory Tab -->
+            <div class="usr-tab" id="usr-tab-ldap">
+                <div class="usr-header">
+                    <h2>LDAP / Active Directory</h2>
+                    <p class="usr-header-sub">${t('Centralne zarządzanie użytkownikami przez LDAP lub Active Directory')}</p>
+                </div>
+                <div id="usr-ldap-content"></div>
+            </div>
         </div>
     `;
 
@@ -96,6 +108,7 @@ AppRegistry['users'] = function (appDef) {
             if (btn.dataset.tab === 'users') loadUsers();
             else if (btn.dataset.tab === 'groups') loadGroups();
             else if (btn.dataset.tab === 'privileges') loadPrivileges();
+            else if (btn.dataset.tab === 'ldap') loadLdap();
         });
     });
 
@@ -534,6 +547,208 @@ AppRegistry['users'] = function (appDef) {
             loadPrivileges();
         } catch (e) { toast(e.message, 'error'); }
     });
+
+    /* ─── LDAP / AD Tab ─── */
+    async function loadLdap() {
+        const wrap = root.querySelector('#usr-ldap-content');
+        if (!wrap) return;
+
+        // Check if LDAP app is installed
+        let status;
+        try {
+            status = await api('/ldap/status');
+        } catch (e) {
+            wrap.innerHTML = `
+                <div class="usr-ldap-not-installed">
+                    <i class="fas fa-info-circle" style="font-size:2rem;color:var(--accent)"></i>
+                    <h3>${t('LDAP / AD nie jest zainstalowany')}</h3>
+                    <p>${t('Zainstaluj aplikację LDAP / Active Directory z App Store, aby włączyć integrację.')}</p>
+                </div>`;
+            return;
+        }
+        if (status && status.error && status.error.includes('not installed')) {
+            wrap.innerHTML = `
+                <div class="usr-ldap-not-installed">
+                    <i class="fas fa-info-circle" style="font-size:2rem;color:var(--accent)"></i>
+                    <h3>${t('LDAP / AD nie jest zainstalowany')}</h3>
+                    <p>${t('Zainstaluj aplikację LDAP / Active Directory z App Store, aby włączyć integrację.')}</p>
+                </div>`;
+            return;
+        }
+
+        // Load config
+        let cfg;
+        try {
+            cfg = await api('/ldap/config');
+            if (cfg.error) { wrap.innerHTML = `<div class="usr-error">${cfg.error}</div>`; return; }
+            cfg = cfg.config || {};
+        } catch (e) {
+            wrap.innerHTML = `<div class="usr-error">${e.message}</div>`;
+            return;
+        }
+
+        const en = cfg.enabled ? 'checked' : '';
+        const ssl = cfg.use_ssl ? 'checked' : '';
+        const tls = cfg.use_starttls ? 'checked' : '';
+
+        wrap.innerHTML = `
+            <div class="usr-ldap-form">
+                <div class="usr-ldap-toggle-row">
+                    <label class="usr-ldap-toggle">
+                        <input type="checkbox" id="ldap-enabled" ${en}>
+                        <span class="usr-toggle-slider"></span>
+                    </label>
+                    <span class="usr-ldap-toggle-label">${t('Włącz LDAP / Active Directory')}</span>
+                    <span class="usr-ldap-status" id="ldap-status-badge"></span>
+                </div>
+
+                <div class="usr-ldap-section">
+                    <h4><i class="fas fa-server"></i> ${t('Serwer')}</h4>
+                    <div class="usr-ldap-grid">
+                        <label>${t('Adres serwera')}</label>
+                        <input type="text" id="ldap-server" class="fm-input" value="${cfg.server || ''}" placeholder="ldap.example.com">
+
+                        <label>${t('Port')}</label>
+                        <input type="number" id="ldap-port" class="fm-input" value="${cfg.port || 389}" style="width:100px">
+
+                        <label>SSL</label>
+                        <label class="usr-ldap-toggle"><input type="checkbox" id="ldap-ssl" ${ssl}><span class="usr-toggle-slider"></span></label>
+
+                        <label>StartTLS</label>
+                        <label class="usr-ldap-toggle"><input type="checkbox" id="ldap-starttls" ${tls}><span class="usr-toggle-slider"></span></label>
+                    </div>
+                </div>
+
+                <div class="usr-ldap-section">
+                    <h4><i class="fas fa-link"></i> ${t('Bind (konto serwisowe)')}</h4>
+                    <div class="usr-ldap-grid">
+                        <label>Bind DN</label>
+                        <input type="text" id="ldap-bind-dn" class="fm-input" value="${cfg.bind_dn || ''}" placeholder="cn=admin,dc=example,dc=com">
+
+                        <label>${t('Hasło')}</label>
+                        <input type="password" id="ldap-bind-pw" class="fm-input" value="${cfg.bind_password || ''}" placeholder="••••••••">
+                    </div>
+                </div>
+
+                <div class="usr-ldap-section">
+                    <h4><i class="fas fa-search"></i> ${t('Wyszukiwanie użytkowników')}</h4>
+                    <div class="usr-ldap-grid">
+                        <label>Base DN</label>
+                        <input type="text" id="ldap-base-dn" class="fm-input" value="${cfg.base_dn || ''}" placeholder="dc=example,dc=com">
+
+                        <label>${t('Filtr')}</label>
+                        <input type="text" id="ldap-filter" class="fm-input" value="${cfg.user_filter || '(&(objectClass=person)(sAMAccountName={username}))'}" placeholder="(&(objectClass=person)(sAMAccountName={username}))">
+
+                        <label>${t('Atrybut login')}</label>
+                        <input type="text" id="ldap-attr-user" class="fm-input" value="${cfg.user_attr || 'sAMAccountName'}" style="width:200px">
+                    </div>
+                </div>
+
+                <div class="usr-ldap-section">
+                    <h4><i class="fas fa-users-cog"></i> ${t('Mapowanie ról (grupy LDAP → EthOS)')}</h4>
+                    <div class="usr-ldap-grid">
+                        <label>${t('Grupy admin')}</label>
+                        <input type="text" id="ldap-grp-admin" class="fm-input" value="${(cfg.admin_groups || []).join(', ')}" placeholder="Domain Admins, IT-Admins">
+
+                        <label>${t('Grupy użytkowników')}</label>
+                        <input type="text" id="ldap-grp-user" class="fm-input" value="${(cfg.user_groups || []).join(', ')}" placeholder="Domain Users">
+
+                        <label>${t('Grupy rodzina')}</label>
+                        <input type="text" id="ldap-grp-family" class="fm-input" value="${(cfg.family_groups || []).join(', ')}" placeholder="Family">
+                    </div>
+                </div>
+
+                <div class="usr-ldap-actions">
+                    <button class="usr-btn primary" id="ldap-save"><i class="fas fa-save"></i> ${t('Zapisz')}</button>
+                    <button class="usr-btn" id="ldap-test"><i class="fas fa-plug"></i> ${t('Test połączenia')}</button>
+                    <button class="usr-btn" id="ldap-sync"><i class="fas fa-sync-alt"></i> ${t('Synchronizuj teraz')}</button>
+                    <button class="usr-btn danger" id="ldap-remove" style="margin-left:auto"><i class="fas fa-trash"></i> ${t('Usuń konfigurację')}</button>
+                </div>
+                <div id="ldap-test-result" class="usr-ldap-test-result" style="display:none"></div>
+            </div>
+        `;
+
+        // Update status badge
+        const badge = wrap.querySelector('#ldap-status-badge');
+        if (status && status.enabled) {
+            badge.innerHTML = `<span class="usr-badge-ok"><i class="fas fa-check-circle"></i> ${t('Aktywny')}</span>`;
+        } else {
+            badge.innerHTML = `<span class="usr-badge-off"><i class="fas fa-minus-circle"></i> ${t('Wyłączony')}</span>`;
+        }
+
+        // SSL toggle auto-adjusts port
+        wrap.querySelector('#ldap-ssl').addEventListener('change', (e) => {
+            const portInput = wrap.querySelector('#ldap-port');
+            if (e.target.checked) {
+                portInput.value = 636;
+                wrap.querySelector('#ldap-starttls').checked = false;
+            } else {
+                portInput.value = 389;
+            }
+        });
+
+        // Save
+        wrap.querySelector('#ldap-save').addEventListener('click', async () => {
+            const body = {
+                enabled: wrap.querySelector('#ldap-enabled').checked,
+                server: wrap.querySelector('#ldap-server').value.trim(),
+                port: parseInt(wrap.querySelector('#ldap-port').value) || 389,
+                use_ssl: wrap.querySelector('#ldap-ssl').checked,
+                use_starttls: wrap.querySelector('#ldap-starttls').checked,
+                bind_dn: wrap.querySelector('#ldap-bind-dn').value.trim(),
+                bind_password: wrap.querySelector('#ldap-bind-pw').value,
+                base_dn: wrap.querySelector('#ldap-base-dn').value.trim(),
+                user_filter: wrap.querySelector('#ldap-filter').value.trim(),
+                user_attr: wrap.querySelector('#ldap-attr-user').value.trim(),
+                admin_groups: wrap.querySelector('#ldap-grp-admin').value.split(',').map(s => s.trim()).filter(Boolean),
+                user_groups: wrap.querySelector('#ldap-grp-user').value.split(',').map(s => s.trim()).filter(Boolean),
+                family_groups: wrap.querySelector('#ldap-grp-family').value.split(',').map(s => s.trim()).filter(Boolean),
+            };
+            try {
+                const res = await api('/ldap/config', { method: 'PUT', body });
+                if (res.error) { toast(res.error, 'error'); return; }
+                toast(t('Konfiguracja LDAP zapisana'), 'success');
+                loadLdap();
+            } catch (e) { toast(e.message, 'error'); }
+        });
+
+        // Test connection
+        wrap.querySelector('#ldap-test').addEventListener('click', async () => {
+            const resultDiv = wrap.querySelector('#ldap-test-result');
+            resultDiv.style.display = 'block';
+            resultDiv.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${t('Testowanie połączenia...')}`;
+            try {
+                const res = await api('/ldap/test', { method: 'POST' });
+                if (res.error) {
+                    resultDiv.innerHTML = `<i class="fas fa-times-circle" style="color:var(--danger)"></i> ${res.error}`;
+                } else if (res.ok) {
+                    resultDiv.innerHTML = `<i class="fas fa-check-circle" style="color:var(--success)"></i> ${t('Połączenie udane!')} ${res.user_count != null ? t('{count} użytkowników znaleziono', { count: res.user_count }) : ''}`;
+                }
+            } catch (e) {
+                resultDiv.innerHTML = `<i class="fas fa-times-circle" style="color:var(--danger)"></i> ${e.message}`;
+            }
+        });
+
+        // Sync
+        wrap.querySelector('#ldap-sync').addEventListener('click', async () => {
+            try {
+                const res = await api('/ldap/sync', { method: 'POST' });
+                if (res.error) { toast(res.error, 'error'); return; }
+                toast(t('Synchronizacja zakończona: {synced} użytkowników', { synced: res.synced || 0 }), 'success');
+            } catch (e) { toast(e.message, 'error'); }
+        });
+
+        // Remove
+        wrap.querySelector('#ldap-remove').addEventListener('click', async () => {
+            if (!confirm(t('Czy na pewno chcesz usunąć konfigurację LDAP?'))) return;
+            try {
+                const res = await api('/ldap/config', { method: 'DELETE' });
+                if (res.error) { toast(res.error, 'error'); return; }
+                toast(t('Konfiguracja LDAP usunięta'), 'success');
+                loadLdap();
+            } catch (e) { toast(e.message, 'error'); }
+        });
+    }
 
     /* ─── Initial load ─── */
     loadUsers();

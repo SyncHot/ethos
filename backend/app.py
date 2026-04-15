@@ -1244,6 +1244,47 @@ def login():
 
     r = _host_run_base(f"getent shadow {shlex.quote(safe_user)}", timeout=10)
     if r.returncode != 0 or not r.stdout.strip():
+        # User not in shadow — try LDAP/AD if configured
+        _ldap_role = None
+        try:
+            from blueprints.ldap_auth import try_ldap_auth
+            _ldap_role = try_ldap_auth(safe_user, password)
+        except ImportError:
+            pass
+        except Exception:
+            pass
+
+        if _ldap_role:
+            # LDAP auth succeeded — create token directly
+            _login_attempts.pop(client_ip, None)
+            with _login_lock:
+                _user_login_attempts.pop(safe_user, None)
+            _rate_limiter.reset(f'login:{client_ip}')
+            token = generate_token(safe_user, _ldap_role)
+            home_path = _get_user_home(safe_user)
+            _ensure_user_home_structure(safe_user)
+            elog('system', 'info', f'Logowanie LDAP: {safe_user} (rola: {_ldap_role})')
+            audit_log('auth.login.success', f'LDAP user "{safe_user}" logged in (role: {_ldap_role}) from {client_ip}', username=safe_user)
+            _check_login_notification(safe_user, client_ip, request.headers.get('User-Agent', ''))
+            csrf_token = secrets.token_hex(32)
+            gr = _host_run_base(f"id -Gn {shlex.quote(safe_user)}", timeout=5)
+            groups = gr.stdout.strip().split() if gr.returncode == 0 else []
+            resp = jsonify({
+                'token': token, 'nas_name': NAS_NAME, 'brand_name': BRAND_NAME,
+                'user': {'username': safe_user, 'role': _ldap_role, 'groups': groups,
+                         'home_path': home_path},
+                'sudo_mode': _ldap_role == 'admin',
+                'password_change_required': False,
+                'csrf_token': csrf_token,
+                'ldap_user': True,
+            })
+            _secure = request.headers.get('X-Forwarded-Proto') == 'https' or request.is_secure
+            resp.set_cookie('nas_token', token, max_age=7 * 24 * 3600,
+                            httponly=True, samesite='Strict', secure=_secure)
+            resp.set_cookie('csrf_token', csrf_token, max_age=7 * 24 * 3600,
+                            httponly=False, samesite='Strict', secure=_secure)
+            return resp
+
         _record_failed_login(client_ip, safe_user)
         _log_auth_failure(safe_user, client_ip)
         audit_log('auth.login.failure', f'Unknown user "{safe_user}" from {client_ip}', username=safe_user)
@@ -1256,10 +1297,21 @@ def login():
         return jsonify({'error': 'Account locked'}), 401
 
     if not _verify_shadow_hash(password, stored_hash):
-        _record_failed_login(client_ip, safe_user)
-        _log_auth_failure(safe_user, client_ip)
-        audit_log('auth.login.failure', f'Bad password for "{safe_user}" from {client_ip}', username=safe_user)
-        return jsonify({'error': 'Invalid username or password'}), 401
+        # Shadow auth failed — try LDAP/AD if configured
+        _ldap_role = None
+        try:
+            from blueprints.ldap_auth import try_ldap_auth
+            _ldap_role = try_ldap_auth(safe_user, password)
+        except ImportError:
+            pass
+        except Exception:
+            pass
+
+        if not _ldap_role:
+            _record_failed_login(client_ip, safe_user)
+            _log_auth_failure(safe_user, client_ip)
+            audit_log('auth.login.failure', f'Bad password for "{safe_user}" from {client_ip}', username=safe_user)
+            return jsonify({'error': 'Invalid username or password'}), 401
 
     # Clear login attempts on success (both IP and per-user)
     _login_attempts.pop(client_ip, None)
