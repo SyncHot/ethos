@@ -18,6 +18,7 @@ Endpoints:
     POST  /api/sync-drive/mkdir                 - Create directory
     POST  /api/sync-drive/move                  - Move/rename
     GET   /api/sync-drive/browse                - Browse directory tree
+    GET   /api/sync-drive/roots                 - List available root locations
     GET   /api/sync-drive/versions              - Get file version history
     POST  /api/sync-drive/versions/restore      - Restore a version
 
@@ -155,11 +156,83 @@ def _get_user_root():
     return None
 
 
-def _safe_path(path):
-    """Resolve a sync path relative to the current user's home directory.
+def _get_allowed_roots():
+    """Return list of root paths the current user may browse/sync.
 
-    '/' maps to the user's home root. Prevents traversal outside it.
+    Always includes the user's home directory.
+    Admin users also get storage pool mount points and network mounts.
     """
+    roots = []
+
+    # User's home — always available
+    home = _get_user_root()
+    if home:
+        roots.append({'id': 'home', 'name': 'Home', 'path': home})
+
+    # Storage pools and network mounts — admin only
+    try:
+        from flask import g as _g
+        role = getattr(_g, 'role', None) or 'user'
+    except Exception:
+        role = 'user'
+
+    if role == 'admin':
+        try:
+            from host import host_run, data_path, Q
+            # Storage pools: /mnt/data, /mnt/pool*
+            df_r = host_run("df -B1 --output=target 2>/dev/null", timeout=5)
+            if df_r.returncode == 0:
+                for line in df_r.stdout.strip().split('\n')[1:]:
+                    mp = line.strip()
+                    if mp == '/mnt/data':
+                        roots.append({'id': 'volume1', 'name': 'Volume 1', 'path': mp})
+                    elif mp.startswith('/mnt/pool'):
+                        pool_name = os.path.basename(mp)
+                        roots.append({'id': pool_name, 'name': pool_name.replace('pool', 'Pool '), 'path': mp})
+
+            # Network mounts from /mnt/network/*
+            net_dir = '/mnt/network'
+            if os.path.isdir(net_dir):
+                for entry in sorted(os.scandir(net_dir), key=lambda e: e.name.lower()):
+                    if entry.is_dir():
+                        roots.append({
+                            'id': f'net_{entry.name}',
+                            'name': f'Network: {entry.name}',
+                            'path': entry.path,
+                        })
+        except Exception:
+            pass
+
+    return roots
+
+
+def _safe_path(path):
+    """Resolve a sync path to a real filesystem path.
+
+    Supports two formats:
+      - '/'              → user home root
+      - '/some/folder'   → relative to user home
+      - '/__root/<id>/…' → path relative to a named allowed root
+    Prevents traversal outside allowed roots.
+    """
+    # Named root format: /__root/<root_id>/sub/path
+    if path.startswith('/__root/'):
+        parts = path[len('/__root/'):].split('/', 1)
+        root_id = parts[0]
+        sub_path = parts[1] if len(parts) > 1 else ''
+
+        allowed = {r['id']: r['path'] for r in _get_allowed_roots()}
+        base = allowed.get(root_id)
+        if not base:
+            return None
+        if not sub_path or sub_path == '.':
+            return base
+        resolved = os.path.normpath(os.path.join(base, sub_path))
+        if not resolved.startswith(base):
+            return None
+        return resolved
+
+    # Default: relative to user home (backward compatible)
     user_root = _get_user_root()
     if not user_root:
         return None
@@ -521,9 +594,26 @@ def move_file():
     shutil.move(src_resolved, dst_resolved)
     username = _get_current_user()
     _log_change(username, 'moved', f'{src} -> {dst}')
-    _emit_change('deleted', src, username=username)
-    _emit_change('created', dst, username=username)
+    _emit_change('moved', dst, username=username, src_path=src)
     return jsonify(ok=True)
+
+
+@sync_drive_bp.route('/api/sync-drive/roots', methods=['GET'])
+def list_roots():
+    """List available root locations the user can browse/sync."""
+    username = _get_current_user()
+    if not username:
+        return jsonify(error='Not authenticated'), 401
+    roots = _get_allowed_roots()
+    # Return safe info — don't expose server filesystem paths to the client
+    result = []
+    for r in roots:
+        result.append({
+            'id': r['id'],
+            'name': r['name'],
+            'path': f"/__root/{r['id']}",
+        })
+    return jsonify(ok=True, roots=result)
 
 
 @sync_drive_bp.route('/api/sync-drive/browse', methods=['GET'])
@@ -534,7 +624,7 @@ def browse():
     path = request.args.get('path', '/')
     resolved = _safe_path(path)
     if not resolved:
-        return jsonify(error='Cannot resolve user home directory'), 400
+        return jsonify(error='Invalid path'), 400
     if not os.path.isdir(resolved):
         return jsonify(error=f'Directory not found: {path}'), 404
     entries = []
