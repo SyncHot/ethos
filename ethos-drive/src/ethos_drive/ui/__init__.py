@@ -1,1 +1,0 @@
-"""EthOS Drive UI package."""

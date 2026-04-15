@@ -1,1 +1,0 @@
-"""EthOS Drive sync package."""
