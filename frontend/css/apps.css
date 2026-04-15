@@ -2065,6 +2065,49 @@ select.fm-input {
 .shr-dlna-ctypes { display: inline-flex; gap: 3px; margin-left: var(--space-sm); }
 .shr-dlna-toggle-label { display: flex; align-items: center; gap: var(--space-sm); cursor: pointer; font-size: 13px; }
 
+/* ── Easy Share Wizard ── */
+.esh-sidebar-sep { border-top: 1px solid var(--border); margin: 6px 12px; }
+.esh-step-bar { display: flex; align-items: center; justify-content: center; padding: 16px 8px; margin-bottom: 8px; border-bottom: 1px solid var(--border); gap: 0; }
+.esh-step { display: flex; align-items: center; gap: 5px; }
+.esh-step-num { width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; background: var(--overlay-1); color: var(--text-muted); flex-shrink: 0; }
+.esh-step-active .esh-step-num { background: var(--accent); color: #fff; }
+.esh-step-done .esh-step-num { background: var(--success); color: #fff; }
+.esh-step-label { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.esh-step-active .esh-step-label { color: var(--text); font-weight: 600; }
+.esh-step-line { flex: 0 0 32px; height: 2px; background: var(--border); margin: 0 6px; }
+.esh-content { padding: 4px 12px 8px; flex: 1; overflow-y: auto; }
+.esh-title { font-size: 17px; font-weight: 600; margin: 0 0 4px; }
+.esh-subtitle { font-size: 13px; color: var(--text-muted); margin: 0 0 14px; }
+.esh-label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 5px; color: var(--text-secondary); }
+.esh-nav { display: flex; align-items: center; padding: 12px; border-top: 1px solid var(--border); gap: 8px; }
+.esh-devices { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; margin-top: 12px; }
+.esh-device-card { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 18px 10px 14px; border: 2px solid var(--border); border-radius: 12px; cursor: pointer; transition: border-color .15s, background .15s; background: var(--overlay-1); user-select: none; }
+.esh-device-card:hover:not(.esh-disabled) { border-color: var(--accent); background: rgba(99,102,241,.04); }
+.esh-device-card.esh-selected { border-color: var(--accent); background: rgba(99,102,241,.08); box-shadow: 0 0 0 1px var(--accent); }
+.esh-device-card.esh-disabled { opacity: .35; cursor: not-allowed; }
+.esh-device-icon { font-size: 30px; }
+.esh-device-name { font-size: 13px; font-weight: 600; }
+.esh-device-proto { font-size: 11px; color: var(--text-muted); background: var(--overlay-1); padding: 1px 8px; border-radius: 10px; border: 1px solid var(--border); }
+.esh-device-missing { font-size: 10px; color: var(--warning); margin-top: 2px; }
+.esh-access-options { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+.esh-access-card { display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 10px; cursor: pointer; background: var(--overlay-1); transition: border-color .15s; }
+.esh-access-card:hover { border-color: var(--accent); }
+.esh-access-info { display: flex; flex-direction: column; gap: 3px; }
+.esh-access-name { font-size: 14px; font-weight: 500; display: flex; align-items: center; gap: 6px; }
+.esh-access-desc { font-size: 12px; color: var(--text-muted); }
+.esh-creating { display: flex; align-items: center; gap: 10px; padding: 20px 0; color: var(--text-muted); font-size: 14px; }
+.esh-conn-card { border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 10px; background: var(--overlay-1); }
+.esh-conn-card.esh-conn-err { border-color: var(--danger); opacity: .6; }
+.esh-conn-header { font-size: 14px; font-weight: 600; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+.esh-conn-steps { display: flex; flex-direction: column; gap: 6px; }
+.esh-conn-step { font-size: 13px; display: flex; align-items: center; gap: 8px; }
+.esh-conn-num { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 11px; font-weight: 600; flex-shrink: 0; }
+.esh-conn-url { display: flex; align-items: center; gap: 8px; background: var(--bg); border-radius: 8px; padding: 8px 12px; margin: 4px 0 0 28px; border: 1px solid var(--border); }
+.esh-conn-url code { font-size: 13px; font-weight: 600; flex: 1; word-break: break-all; }
+.esh-copy-btn { background: none; border: none; cursor: pointer; color: var(--text-muted); padding: 4px 8px; border-radius: var(--r-sm); transition: color .15s; }
+.esh-copy-btn:hover { color: var(--accent); }
+.esh-done-icon { font-size: 40px; color: var(--success); margin-bottom: 8px; }
+
 /* ── Backup App: extracted inline styles ── */
 
 .bak-icon-accent { color:var(--accent); }

@@ -2373,10 +2373,11 @@ async function _smSharing(el) {
 
     /* Fetch installed packages to determine which tabs to show */
     let installedProtos;
+    let installedPkgIds = new Set();
     try {
         const pkgs = await api('/ethos-packages');
-        const installed = new Set(pkgs.filter(p => p.installed).map(p => p.id));
-        installedProtos = _SH_ALL_PROTOS.filter(p => installed.has(p.pkgId));
+        installedPkgIds = new Set(pkgs.filter(p => p.installed).map(p => p.id));
+        installedProtos = _SH_ALL_PROTOS.filter(p => installedPkgIds.has(p.pkgId));
     } catch (e) {
         installedProtos = _SH_ALL_PROTOS; /* fallback: show all */
     }
@@ -2404,6 +2405,8 @@ async function _smSharing(el) {
     body.style.cssText = 'display:flex;flex-direction:row;overflow:hidden;padding:0';
     body.innerHTML = `
         <div class="sh-sidebar shr-sidebar">
+            <button class="sh-tab shr-tab-btn" data-tab="easy-share"><i class="fas fa-magic shr-tab-icon" style="color:var(--accent)"></i><span>${t('Szybki udział')}</span></button>
+            <div class="esh-sidebar-sep"></div>
             ${installedProtos.map(p => `
                 <button class="sh-tab shr-tab-btn" data-tab="${p.id}"><i class="fas ${p.icon} shr-tab-icon"></i><span>${p.label}</span></button>
             `).join('')}
@@ -2421,12 +2424,269 @@ async function _smSharing(el) {
             b.style.fontWeight = active ? '600' : '400';
             b.style.background = active ? 'rgba(99,102,241,.06)' : 'none';
         });
-        const render = { samba: renderSamba, nfs: renderNFS, dlna: renderDLNA, webdav: renderWebDAV, sftp: renderSFTP, ftp: renderFTP };
-        (render[id] || render.samba)($('#sh-panel'));
+        const render = { 'easy-share': (p) => renderEasyShare(p, installedPkgIds), samba: renderSamba, nfs: renderNFS, dlna: renderDLNA, webdav: renderWebDAV, sftp: renderSFTP, ftp: renderFTP };
+        (render[id] || render['easy-share'])($('#sh-panel'));
     }
 
     body.querySelectorAll('.sh-tab').forEach(b => b.onclick = () => switchTab(b.dataset.tab));
-    switchTab(installedProtos[0].id);
+    switchTab('easy-share');
+
+    body.querySelectorAll('.sh-tab').forEach(b => b.onclick = () => switchTab(b.dataset.tab));
+    switchTab('easy-share');
+
+    /* ══════════════════════════════════════════
+       Easy Share Wizard
+       ══════════════════════════════════════════ */
+    function renderEasyShare(panel, pkgIds) {
+        let step = 0;
+        const d = { name: '', path: '', devices: new Set(), guest: true, writable: true };
+        const host = window.location.hostname;
+
+        const DEVS = [
+            { id: 'windows', icon: 'fab fa-windows',    name: 'Windows',        proto: 'Samba (SMB)', pkg: 'sharing-samba',  color: '#0078d4' },
+            { id: 'mac',     icon: 'fab fa-apple',      name: 'macOS',          proto: 'Samba (SMB)', pkg: 'sharing-samba',  color: '#888' },
+            { id: 'linux',   icon: 'fab fa-linux',      name: 'Linux',          proto: 'NFS',         pkg: 'sharing-nfs',    color: '#e95420' },
+            { id: 'mobile',  icon: 'fas fa-mobile-alt', name: t('Telefon'),     proto: 'WebDAV',      pkg: 'sharing-webdav', color: '#10b981' },
+            { id: 'tv',      icon: 'fas fa-tv',         name: 'Smart TV',       proto: 'DLNA',        pkg: 'sharing-dlna',   color: '#ef4444' },
+        ];
+
+        function stepBar(cur) {
+            const labels = [t('Folder'), t('Urządzenia'), t('Dostęp'), t('Gotowe')];
+            return `<div class="esh-step-bar">${labels.map((l, i) =>
+                `<div class="esh-step ${i === cur ? 'esh-step-active' : ''} ${i < cur ? 'esh-step-done' : ''}">` +
+                `<span class="esh-step-num">${i < cur ? '✓' : i + 1}</span><span class="esh-step-label">${l}</span></div>`
+            ).join('<div class="esh-step-line"></div>')}</div>`;
+        }
+
+        function nav(s, last) {
+            let h = '';
+            if (s > 0) h += `<button class="fm-toolbar-btn" id="esh-back"><i class="fas fa-arrow-left"></i> ${t('Wstecz')}</button>`;
+            h += '<div style="flex:1"></div>';
+            h += last
+                ? `<button class="fm-toolbar-btn btn-green" id="esh-create"><i class="fas fa-check"></i> ${t('Utwórz udział')}</button>`
+                : `<button class="fm-toolbar-btn btn-green" id="esh-next">${t('Dalej')} <i class="fas fa-arrow-right"></i></button>`;
+            return `<div class="esh-nav">${h}</div>`;
+        }
+
+        function render() { [renderStep0, renderStep1, renderStep2, renderStep3][step](); }
+
+        /* ── Step 0: Name + Folder ── */
+        function renderStep0() {
+            panel.innerHTML = `${stepBar(0)}<div class="esh-content">
+                <h3 class="esh-title">${t('Co chcesz udostępnić?')}</h3>
+                <p class="esh-subtitle">${t('Nadaj nazwę i wybierz folder, który ma być widoczny w sieci.')}</p>
+                <label class="esh-label">${t('Nazwa udziału')}</label>
+                <input type="text" id="esh-name" class="fm-input" value="${_shEscAttr(d.name)}" placeholder="${t('np. Filmy, Zdjęcia, Dokumenty')}" style="max-width:300px">
+                <label class="esh-label" style="margin-top:14px">${t('Folder do udostępnienia')}</label>
+                <div class="shr-input-group" style="max-width:400px">
+                    <input type="text" id="esh-path" class="fm-input" value="${_shEscAttr(d.path)}" placeholder="/home/media" readonly style="border-radius:6px 0 0 6px">
+                    <button class="fm-toolbar-btn shr-input-group-btn" id="esh-browse"><i class="fas fa-folder-open"></i></button>
+                </div></div>${nav(0)}`;
+            panel.querySelector('#esh-browse').onclick = () => {
+                openDirPicker(d.path || '/home', t('Wybierz folder'), p => {
+                    d.path = p;
+                    panel.querySelector('#esh-path').value = p;
+                    if (!d.name) {
+                        const auto = p.split('/').pop() || '';
+                        d.name = auto.charAt(0).toUpperCase() + auto.slice(1);
+                        panel.querySelector('#esh-name').value = d.name;
+                    }
+                });
+            };
+            panel.querySelector('#esh-next').onclick = () => {
+                d.name = panel.querySelector('#esh-name').value.trim();
+                if (!d.name || !d.path) { toast(t('Podaj nazwę i wybierz folder'), 'warning'); return; }
+                step = 1; render();
+            };
+        }
+
+        /* ── Step 1: Device selection ── */
+        function renderStep1() {
+            panel.innerHTML = `${stepBar(1)}<div class="esh-content">
+                <h3 class="esh-title">${t('Z jakich urządzeń będziesz korzystać?')}</h3>
+                <p class="esh-subtitle">${t('Wybierz urządzenia, które mają widzieć ten folder w sieci.')}</p>
+                <div class="esh-devices">${DEVS.map(v => {
+                    const ok = pkgIds.has(v.pkg);
+                    const sel = d.devices.has(v.id);
+                    return `<div class="esh-device-card ${sel ? 'esh-selected' : ''} ${!ok ? 'esh-disabled' : ''}" data-id="${v.id}">
+                        <i class="${v.icon} esh-device-icon" style="color:${v.color}"></i>
+                        <span class="esh-device-name">${v.name}</span>
+                        <span class="esh-device-proto">${v.proto}</span>
+                        ${!ok ? `<span class="esh-device-missing">${t('Zainstaluj w App Store')}</span>` : ''}
+                    </div>`;
+                }).join('')}</div></div>${nav(1)}`;
+            panel.querySelectorAll('.esh-device-card:not(.esh-disabled)').forEach(c => {
+                c.onclick = () => {
+                    const id = c.dataset.id;
+                    if (d.devices.has(id)) { d.devices.delete(id); c.classList.remove('esh-selected'); }
+                    else { d.devices.add(id); c.classList.add('esh-selected'); }
+                };
+            });
+            panel.querySelector('#esh-back').onclick = () => { step = 0; render(); };
+            panel.querySelector('#esh-next').onclick = () => {
+                if (!d.devices.size) { toast(t('Wybierz przynajmniej jedno urządzenie'), 'warning'); return; }
+                step = 2; render();
+            };
+        }
+
+        /* ── Step 2: Access settings ── */
+        function renderStep2() {
+            panel.innerHTML = `${stepBar(2)}<div class="esh-content">
+                <h3 class="esh-title">${t('Kto i jak ma mieć dostęp?')}</h3>
+                <div class="esh-access-options">
+                    <label class="esh-access-card">
+                        <input type="checkbox" id="esh-guest" ${d.guest ? 'checked' : ''}>
+                        <div class="esh-access-info">
+                            <span class="esh-access-name"><i class="fas fa-unlock" style="color:var(--accent)"></i> ${t('Dostęp bez hasła')}</span>
+                            <span class="esh-access-desc">${t('Każdy w sieci domowej może przeglądać pliki')}</span>
+                        </div>
+                    </label>
+                    <label class="esh-access-card">
+                        <input type="checkbox" id="esh-write" ${d.writable ? 'checked' : ''}>
+                        <div class="esh-access-info">
+                            <span class="esh-access-name"><i class="fas fa-pen" style="color:var(--warning)"></i> ${t('Pozwól na zapis')}</span>
+                            <span class="esh-access-desc">${t('Użytkownicy mogą dodawać, edytować i usuwać pliki')}</span>
+                        </div>
+                    </label>
+                </div></div>${nav(2, true)}`;
+            panel.querySelector('#esh-back').onclick = () => { step = 1; render(); };
+            panel.querySelector('#esh-create').onclick = async () => {
+                d.guest = panel.querySelector('#esh-guest').checked;
+                d.writable = panel.querySelector('#esh-write').checked;
+                step = 3; render();
+                await doCreate();
+            };
+        }
+
+        /* ── Step 3: Creating + Results ── */
+        function renderStep3() {
+            panel.innerHTML = `${stepBar(3)}<div class="esh-content">
+                <div class="esh-creating" id="esh-spinner"><i class="fas fa-spinner fa-spin"></i> ${t('Tworzenie udziałów...')}</div>
+                <div id="esh-results"></div></div>
+                <div class="esh-nav"><div style="flex:1"></div>
+                    <button class="fm-toolbar-btn btn-green" id="esh-done" style="display:none"><i class="fas fa-check"></i> ${t('Gotowe')}</button>
+                </div>`;
+            panel.querySelector('#esh-done').onclick = () => { step = 0; d.name = ''; d.path = ''; d.devices.clear(); render(); };
+            panel.addEventListener('click', e => {
+                const btn = e.target.closest('.esh-copy-btn');
+                if (btn && btn.dataset.url) navigator.clipboard.writeText(btn.dataset.url).then(() => toast(t('Skopiowano'), 'success'));
+            });
+        }
+
+        async function doCreate() {
+            const res = {};
+            const tasks = [];
+            const smb = d.devices.has('windows') || d.devices.has('mac');
+            const nfs = d.devices.has('linux');
+            const dlna = d.devices.has('tv');
+            const dav = d.devices.has('mobile');
+
+            if (smb) tasks.push((async () => {
+                try {
+                    const r = await api('/storage/samba/share', { method: 'POST', body: { name: d.name, path: d.path, guest_ok: d.guest, writable: d.writable } });
+                    res.samba = !r.error; res.sambaErr = r.error;
+                } catch (e) { res.samba = false; res.sambaErr = e.message; }
+            })());
+
+            if (nfs) tasks.push((async () => {
+                try {
+                    const opts = d.writable ? 'rw,async,no_subtree_check,no_root_squash,insecure' : 'ro,async,no_subtree_check,insecure';
+                    const r = await api('/storage/nfs/export', { method: 'POST', body: { path: d.path, options: opts } });
+                    res.nfs = !r.error; res.nfsErr = r.error;
+                } catch (e) { res.nfs = false; res.nfsErr = e.message; }
+            })());
+
+            if (dlna) tasks.push((async () => {
+                try {
+                    const cfg = await api('/storage/dlna/config');
+                    const dirs = (cfg.dirs || []).map(x => typeof x === 'string' ? x : x.path);
+                    if (!dirs.includes(d.path)) dirs.push(d.path);
+                    const r = await api('/storage/dlna/config', { method: 'POST', body: { dirs, friendly_name: cfg.friendly_name || 'EthOS Media' } });
+                    res.dlna = !r.error; res.dlnaErr = r.error;
+                } catch (e) { res.dlna = false; res.dlnaErr = e.message; }
+            })());
+
+            if (dav) tasks.push((async () => {
+                try {
+                    const urlPath = '/' + d.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+                    const r = await api('/storage/webdav/share', { method: 'POST', body: { path: d.path, url_path: urlPath } });
+                    res.webdav = !r.error; res.webdavErr = r.error; res.webdavPort = r.port || 8888; res.webdavUrl = urlPath;
+                } catch (e) { res.webdav = false; res.webdavErr = e.message; }
+            })());
+
+            await Promise.all(tasks);
+            showResults(res, smb, nfs, dlna, dav);
+        }
+
+        function connCard(icon, label, ok, err, steps, url) {
+            return `<div class="esh-conn-card ${ok ? '' : 'esh-conn-err'}">
+                <div class="esh-conn-header"><i class="${icon}"></i> ${label} ${ok ? '<i class="fas fa-check-circle" style="color:var(--success);font-size:12px"></i>' : '<i class="fas fa-times-circle" style="color:var(--danger);font-size:12px"></i>'}</div>
+                ${ok ? `<div class="esh-conn-steps">
+                    ${steps.map((s, i) => `<p class="esh-conn-step"><span class="esh-conn-num">${i + 1}</span> ${s}</p>`).join('')}
+                    ${url ? `<div class="esh-conn-url"><code>${_shEsc(url)}</code>
+                        <button class="esh-copy-btn" data-url="${_shEscAttr(url)}" title="${t('Kopiuj')}"><i class="fas fa-copy"></i></button></div>` : ''}
+                </div>` : `<p class="esh-conn-step" style="color:var(--danger)"><i class="fas fa-exclamation-triangle"></i> ${_shEsc(err || t('Błąd'))}</p>`}
+            </div>`;
+        }
+
+        function showResults(res, smb, nfs, dlna, dav) {
+            const el = panel.querySelector('#esh-results');
+            const spinner = panel.querySelector('#esh-spinner');
+            if (spinner) spinner.style.display = 'none';
+            panel.querySelector('#esh-done').style.display = '';
+
+            let html = `<div style="text-align:center;padding:8px 0"><i class="fas fa-check-circle esh-done-icon"></i>
+                <h3 class="esh-title">${t('Udział')} "${_shEsc(d.name)}" ${t('utworzony!')}</h3>
+                <p class="esh-subtitle">${t('Połącz się z dowolnego urządzenia:')}</p></div>`;
+
+            if (smb) {
+                const smbName = d.name;
+                if (d.devices.has('windows')) {
+                    const winUrl = `\\\\${host}\\${smbName}`;
+                    html += connCard('fab fa-windows', 'Windows', res.samba, res.sambaErr, [
+                        t('Otwórz Eksplorator plików') + ' (Win+E)',
+                        t('W pasku adresu wpisz:'),
+                    ], winUrl);
+                }
+                if (d.devices.has('mac')) {
+                    const macUrl = `smb://${host}/${smbName}`;
+                    html += connCard('fab fa-apple', 'macOS', res.samba, res.sambaErr, [
+                        'Finder → ' + t('Idź') + ' → ' + t('Połącz z serwerem') + ' (⌘K)',
+                        t('Wpisz adres:'),
+                    ], macUrl);
+                }
+            }
+
+            if (nfs) {
+                const nfsUrl = `${host}:${d.path}`;
+                html += connCard('fab fa-linux', 'Linux', res.nfs, res.nfsErr, [
+                    t('W terminalu wpisz:'),
+                ], `sudo mount -t nfs ${nfsUrl} /mnt/share`);
+            }
+
+            if (dav) {
+                const davUrl = `http://${host}:${res.webdavPort || 8888}${res.webdavUrl || '/' + d.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+                html += connCard('fas fa-mobile-alt', t('Telefon / Tablet'), res.webdav, res.webdavErr, [
+                    t('Zainstaluj aplikację WebDAV (np. Solid Explorer, Documents)'),
+                    t('Dodaj serwer z adresem:'),
+                ], davUrl);
+            }
+
+            if (dlna) {
+                html += `<div class="esh-conn-card ${res.dlna ? '' : 'esh-conn-err'}">
+                    <div class="esh-conn-header"><i class="fas fa-tv"></i> Smart TV / DLNA ${res.dlna ? '<i class="fas fa-check-circle" style="color:var(--success);font-size:12px"></i>' : ''}</div>
+                    ${res.dlna
+                        ? `<p class="esh-conn-step"><span class="esh-conn-num">1</span> ${t('Otwórz aplikację multimedialną na TV (np. „Media", „DLNA")')}</p>
+                           <p class="esh-conn-step"><span class="esh-conn-num">2</span> ${t('Serwer EthOS pojawi się automatycznie')}</p>`
+                        : `<p class="esh-conn-step" style="color:var(--danger)"><i class="fas fa-exclamation-triangle"></i> ${_shEsc(res.dlnaErr || t('Błąd'))}</p>`}
+                </div>`;
+            }
+
+            el.innerHTML = html;
+        }
+
+        render();
+    }
 
     /* ══════════════════════════════════════════
        SAMBA tab
