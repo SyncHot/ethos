@@ -160,7 +160,8 @@ def _get_allowed_roots():
     """Return list of root paths the current user may browse/sync.
 
     Always includes the user's home directory.
-    Admin users also get storage pool mount points and network mounts.
+    Also includes storage pools, devmon mounts, and network mounts visible
+    to the user (matching what File Manager shows).
     """
     roots = []
 
@@ -169,39 +170,43 @@ def _get_allowed_roots():
     if home:
         roots.append({'id': 'home', 'name': 'Home', 'path': home})
 
-    # Storage pools and network mounts — admin only
     try:
-        from flask import g as _g
-        role = getattr(_g, 'role', None) or 'user'
+        from host import host_run
+        # Storage pools: /mnt/data, /mnt/pool*
+        df_r = host_run("df -B1 --output=target 2>/dev/null", timeout=5)
+        if df_r.returncode == 0:
+            for line in df_r.stdout.strip().split('\n')[1:]:
+                mp = line.strip()
+                if mp == '/mnt/data':
+                    roots.append({'id': 'volume1', 'name': 'Volume 1', 'path': mp})
+                elif mp.startswith('/mnt/pool'):
+                    pool_name = os.path.basename(mp)
+                    roots.append({'id': pool_name, 'name': pool_name.replace('pool', 'Pool '), 'path': mp})
+
+        # Devmon auto-mounts: /media/devmon/*  (e.g. SharedDrive)
+        devmon_dir = '/media/devmon'
+        if os.path.isdir(devmon_dir):
+            for entry in sorted(os.scandir(devmon_dir), key=lambda e: e.name.lower()):
+                if entry.is_dir() and os.path.ismount(entry.path):
+                    disk_id = f'disk_{entry.name}'
+                    roots.append({
+                        'id': disk_id,
+                        'name': entry.name,
+                        'path': entry.path,
+                    })
+
+        # Network mounts from /mnt/network/*
+        net_dir = '/mnt/network'
+        if os.path.isdir(net_dir):
+            for entry in sorted(os.scandir(net_dir), key=lambda e: e.name.lower()):
+                if entry.is_dir():
+                    roots.append({
+                        'id': f'net_{entry.name}',
+                        'name': f'Network: {entry.name}',
+                        'path': entry.path,
+                    })
     except Exception:
-        role = 'user'
-
-    if role == 'admin':
-        try:
-            from host import host_run, data_path, Q
-            # Storage pools: /mnt/data, /mnt/pool*
-            df_r = host_run("df -B1 --output=target 2>/dev/null", timeout=5)
-            if df_r.returncode == 0:
-                for line in df_r.stdout.strip().split('\n')[1:]:
-                    mp = line.strip()
-                    if mp == '/mnt/data':
-                        roots.append({'id': 'volume1', 'name': 'Volume 1', 'path': mp})
-                    elif mp.startswith('/mnt/pool'):
-                        pool_name = os.path.basename(mp)
-                        roots.append({'id': pool_name, 'name': pool_name.replace('pool', 'Pool '), 'path': mp})
-
-            # Network mounts from /mnt/network/*
-            net_dir = '/mnt/network'
-            if os.path.isdir(net_dir):
-                for entry in sorted(os.scandir(net_dir), key=lambda e: e.name.lower()):
-                    if entry.is_dir():
-                        roots.append({
-                            'id': f'net_{entry.name}',
-                            'name': f'Network: {entry.name}',
-                            'path': entry.path,
-                        })
-        except Exception:
-            pass
+        pass
 
     return roots
 
