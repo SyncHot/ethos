@@ -362,6 +362,7 @@ def get_state():
     data = request.get_json(force=True)
     remote_path = data.get('path', '')
     recursive = data.get('recursive', True)
+    include_hash = data.get('include_hash', False)
     resolved = _safe_path(remote_path)
     if not resolved:
         return jsonify(error='Invalid path'), 400
@@ -389,7 +390,7 @@ def get_state():
                             'path': rel, 'is_dir': False,
                             'size': st.st_size, 'mtime_ns': int(st.st_mtime_ns),
                         }
-                        if st.st_size < 100 * 1024 * 1024:
+                        if include_hash and st.st_size < 100 * 1024 * 1024:
                             entry['xxhash'] = _compute_xxhash(fpath)
                         files.append(entry)
                     except (OSError, PermissionError):
