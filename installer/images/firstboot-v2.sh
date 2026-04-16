@@ -72,13 +72,21 @@ fi
 # Always ensure requirements are installed (handles interrupted first-boot)
 echo "  Installing/verifying Python requirements..."
 "$VENV/bin/pip" install --quiet --upgrade pip 2>&1 | tail -3 || true
+PIP_CACHE="$ETHOS_DIR/.pip-cache"
 if [ -f "$ETHOS_DIR/backend/requirements.txt" ]; then
-    "$VENV/bin/pip" install --quiet -r "$ETHOS_DIR/backend/requirements.txt" 2>&1 | tail -5
+    if [ -d "$PIP_CACHE" ] && ls "$PIP_CACHE"/*.whl &>/dev/null; then
+        echo "  Using cached wheels (offline install)..."
+        "$VENV/bin/pip" install --quiet --no-index --find-links "$PIP_CACHE" \
+            -r "$ETHOS_DIR/backend/requirements.txt" 2>&1 | tail -5
+    else
+        echo "  No wheel cache — installing from network..."
+        "$VENV/bin/pip" install --quiet -r "$ETHOS_DIR/backend/requirements.txt" 2>&1 | tail -5
+    fi
 fi
 
 # Verify critical modules are importable
 if ! "$VENV/bin/python" -c "import flask; import gevent; import psutil" 2>/dev/null; then
-    echo "  WARNING: Critical modules missing, retrying install..."
+    echo "  WARNING: Critical modules missing, retrying from network..."
     "$VENV/bin/pip" install --no-cache-dir -r "$ETHOS_DIR/backend/requirements.txt" 2>&1 | tail -10
     # Final verification
     if ! "$VENV/bin/python" -c "import flask; import gevent" 2>/dev/null; then

@@ -2173,6 +2173,14 @@ chroot "$ROOT" /opt/ethos/venv/bin/pip install --no-cache-dir -r /opt/ethos/back
 # Verify critical imports work
 chroot "$ROOT" /opt/ethos/venv/bin/python -c "import flask; import psutil; import gevent; import pyudev; print('OK: all imports')" 2>&1 || echo "LOG:WARNING: Some Python modules missing!"
 
+# Cache pip wheels so firstboot can install offline (no internet required)
+echo "LOG:Caching pip wheels for offline firstboot..."
+PIP_CACHE="$ETHOS_DIR/.pip-cache"
+mkdir -p "$PIP_CACHE"
+chroot "$ROOT" /opt/ethos/venv/bin/pip download -d /opt/ethos/.pip-cache -r /opt/ethos/backend/requirements.txt 2>&1 | tail -5 || echo "LOG:WARNING: pip wheel cache failed"
+WHEEL_COUNT=$(ls "$PIP_CACHE"/*.whl 2>/dev/null | wc -l)
+echo "LOG:Cached $WHEEL_COUNT wheel files ($(du -sh "$PIP_CACHE" 2>/dev/null | awk '{{print $1}}'))"
+
 # Remove build deps no longer needed (saves ~50MB)
 chroot "$ROOT" apt-get remove -y --purge libudev-dev libffi-dev 2>&1 | tail -3 || true
 chroot "$ROOT" apt-get autoremove -y -qq 2>&1 | tail -3 || true
