@@ -1149,7 +1149,7 @@ def domain_dns_check(domain):
         pass
 
     all_ok = all(r['ok'] for r in results)
-    return jsonify(ok=True, results=results, all_ok=all_ok)
+    return jsonify(ok=True, results=results, all_ok=all_ok, hostname=hostname, ip=my_ip)
 
 
 # ─── Accounts ─────────────────────────────────────────────────
