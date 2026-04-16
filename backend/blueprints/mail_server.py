@@ -1979,12 +1979,23 @@ def webmail_status():
             'active': os.path.exists(vhost_path),
         })
 
+    # Read actual admin password from SnappyMail's file (authoritative source)
+    admin_pw = None
+    if sm_installed:
+        pw_file = os.path.join(_snappymail_dir(), 'data', '_data_', '_default_',
+                               'admin_password.txt')
+        try:
+            with open(pw_file) as f:
+                admin_pw = f.read().strip()
+        except Exception:
+            admin_pw = cfg.get('snappymail_admin_pw', '')
+
     return jsonify(ok=True, data={
         'installed': sm_installed and php_installed,
         'php_installed': php_installed,
         'snappymail_installed': sm_installed,
         'version': _SNAPPYMAIL_VERSION if sm_installed else None,
-        'admin_password': cfg.get('snappymail_admin_pw', '') if sm_installed else None,
+        'admin_password': admin_pw,
         'domains': domains_status,
     })
 
@@ -2069,15 +2080,17 @@ def webmail_install():
 
 
 def _write_snappymail_admin_pw(sm_dir, password):
-    """Write admin password to SnappyMail's _data_/_default_/admin_password.txt."""
+    """Write plaintext admin password to SnappyMail's admin_password.txt.
+
+    SnappyMail reads this file as the plaintext admin password on first setup,
+    then stores a bcrypt hash in application.ini.
+    """
     data_dir = os.path.join(sm_dir, 'data', '_data_', '_default_')
     os.makedirs(data_dir, exist_ok=True)
 
-    import hashlib
-    pw_hash = hashlib.sha256(password.encode()).hexdigest()
     pw_file = os.path.join(data_dir, 'admin_password.txt')
     with open(pw_file, 'w') as f:
-        f.write(pw_hash)
+        f.write(password)
     host_run(f'chown www-data:www-data {q(pw_file)}', timeout=5)
 
 
