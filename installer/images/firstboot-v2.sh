@@ -47,28 +47,46 @@ done
 
 echo "[3/8] Checking Python venv..."
 VENV="$ETHOS_DIR/venv"
+VENV_TARGET="$VENV"
+if [ -L "$VENV" ]; then
+    VENV_TARGET="$(readlink "$VENV")"
+fi
+
 if [ ! -f "$VENV/bin/python" ]; then
     echo "  Creating venv..."
     # venv may be a symlink to /mnt/data/ethos/venv.  Python's venv module
     # chokes on dangling symlinks (EEXIST), so resolve the real target path
     # and create the venv there directly.
-    VENV_TARGET="$VENV"
     if [ -L "$VENV" ]; then
-        VENV_TARGET="$(readlink "$VENV")"
         mkdir -p "$(dirname "$VENV_TARGET")"
         rm -rf "$VENV_TARGET"
     elif [ -d "$VENV" ]; then
         rm -rf "$VENV"
     fi
     python3 -m venv "$VENV_TARGET"
-    "$VENV/bin/pip" install --quiet --upgrade pip
-    if [ -f "$ETHOS_DIR/backend/requirements.txt" ]; then
-        "$VENV/bin/pip" install --quiet -r "$ETHOS_DIR/backend/requirements.txt"
-    fi
     echo "  Venv created at $VENV_TARGET"
 else
-    echo "  Venv exists."
+    echo "  Venv exists at $VENV_TARGET"
 fi
+
+# Always ensure requirements are installed (handles interrupted first-boot)
+echo "  Installing/verifying Python requirements..."
+"$VENV/bin/pip" install --quiet --upgrade pip 2>&1 | tail -3 || true
+if [ -f "$ETHOS_DIR/backend/requirements.txt" ]; then
+    "$VENV/bin/pip" install --quiet -r "$ETHOS_DIR/backend/requirements.txt" 2>&1 | tail -5
+fi
+
+# Verify critical modules are importable
+if ! "$VENV/bin/python" -c "import flask; import gevent; import psutil" 2>/dev/null; then
+    echo "  WARNING: Critical modules missing, retrying install..."
+    "$VENV/bin/pip" install --no-cache-dir -r "$ETHOS_DIR/backend/requirements.txt" 2>&1 | tail -10
+    # Final verification
+    if ! "$VENV/bin/python" -c "import flask; import gevent" 2>/dev/null; then
+        echo "  ERROR: Python requirements install failed!"
+        exit 1
+    fi
+fi
+echo "  Python environment ready."
 
 echo "[4/8] Creating EthOS groups..."
 getent group ethos-admin &>/dev/null || groupadd ethos-admin
