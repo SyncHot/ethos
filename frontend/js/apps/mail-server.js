@@ -525,10 +525,8 @@ AppRegistry['mail-server'] = function (appDef) {
             </div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
                 ${Object.keys(DNS_GUIDES).map(p => `<button class="btn btn-xs ${PREFIX}-dns-guide" data-provider="${p}">${p}</button>`).join('')}
-                <button class="btn btn-xs btn-primary ${PREFIX}-dns-verify" data-domain="${esc(domain)}" style="margin-left:auto"><i class="fas fa-check-circle"></i> ${t('Sprawdź DNS')}</button>
             </div>
             <div id="${PREFIX}-dns-guide-steps" style="display:none;margin-bottom:12px;padding:10px;border-radius:6px;background:var(--bg-secondary);font-size:12px"></div>
-            <div id="${PREFIX}-dns-verify-results" style="display:none;margin-bottom:12px"></div>
         </div>
         <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:8px">
             <thead><tr style="border-bottom:1px solid var(--border-color)">
@@ -574,61 +572,6 @@ AppRegistry['mail-server'] = function (appDef) {
                     </a>`;
             };
         });
-
-        const verifyBtn = panel.querySelector(`.${PREFIX}-dns-verify`);
-        if (verifyBtn) {
-            verifyBtn.onclick = async () => {
-                const dom = verifyBtn.dataset.domain;
-                const resDiv = panel.querySelector(`#${PREFIX}-dns-verify-results`);
-                resDiv.style.display = 'block';
-                resDiv.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${t('Sprawdzanie rekordów DNS...')}`;
-                verifyBtn.disabled = true;
-
-                const data = await api(`/mail-server/domains/${encodeURIComponent(dom)}/dns-check`);
-                verifyBtn.disabled = false;
-
-                if (data.error) { resDiv.innerHTML = `<span style="color:#dc2626">${esc(data.error)}</span>`; return; }
-
-                const results = data.results || [];
-                const allOk = data.all_ok;
-                const summaryColor = allOk ? '#16a34a' : '#dc2626';
-                const summaryIcon = allOk ? 'check-circle' : 'exclamation-triangle';
-                const summaryText = allOk ? t('Wszystkie rekordy DNS poprawne!') : t('Niektóre rekordy wymagają poprawek');
-
-                let rhtml = `<div style="padding:10px;border-radius:6px;background:var(--bg-secondary);font-size:12px">
-                    <div style="font-weight:600;margin-bottom:4px;color:${summaryColor}">
-                        <i class="fas fa-${summaryIcon}"></i> ${summaryText}
-                    </div>
-                    <div style="color:var(--text-muted);font-size:11px;margin-bottom:8px">
-                        ${t('Hostname')}: <code style="background:var(--bg-tertiary);padding:1px 5px;border-radius:3px">${esc(data.hostname || '')}</code>
-                        &nbsp; IP: <code style="background:var(--bg-tertiary);padding:1px 5px;border-radius:3px">${esc(data.ip || '')}</code>
-                    </div>
-                    <table style="width:100%;border-collapse:collapse">
-                    <thead><tr style="border-bottom:1px solid var(--border-color)">
-                        <th style="padding:4px 6px;text-align:left;color:var(--text-muted)">${t('Rekord')}</th>
-                        <th style="padding:4px 6px;text-align:left;color:var(--text-muted)">${t('Status')}</th>
-                        <th style="padding:4px 6px;text-align:left;color:var(--text-muted)">${t('Oczekiwano')}</th>
-                        <th style="padding:4px 6px;text-align:left;color:var(--text-muted)">${t('Znaleziono')}</th>
-                    </tr></thead><tbody>`;
-
-                for (const r of results) {
-                    const icon = r.ok
-                        ? '<i class="fas fa-check-circle" style="color:#16a34a"></i>'
-                        : '<i class="fas fa-times-circle" style="color:#dc2626"></i>';
-                    const label = r.type === 'PORT' ? r.dns_name : `${r.type} — ${r.dns_name || r.name}`;
-                    const foundStr = r.found || `<span style="color:var(--text-muted)">${t('brak')}</span>`;
-                    const expectedShort = (r.expected || '').length > 60 ? r.expected.substring(0, 57) + '…' : (r.expected || '');
-                    rhtml += `<tr style="border-bottom:1px solid var(--border-color)">
-                        <td style="padding:4px 6px;color:var(--text-primary)">${esc(label)}</td>
-                        <td style="padding:4px 6px">${icon} ${r.ok ? 'OK' : t('Brak / Błąd')}</td>
-                        <td style="padding:4px 6px;font-family:monospace;font-size:11px;word-break:break-all;max-width:200px;color:var(--text-muted)">${esc(expectedShort)}</td>
-                        <td style="padding:4px 6px;font-family:monospace;font-size:11px;word-break:break-all;max-width:250px">${r.found ? esc(r.found) : foundStr}</td>
-                    </tr>`;
-                }
-                rhtml += `</tbody></table></div>`;
-                resDiv.innerHTML = rhtml;
-            };
-        }
     }
 
     // ─── Aliases tab ─────────────────────────────────────
