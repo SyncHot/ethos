@@ -230,24 +230,19 @@ AppRegistry['mail-server'] = function (appDef) {
     }
 
     // ─── Dashboard (main view after setup) ────────────────
-    const TAB_DEFS = [
-        { id: 'dashboard', icon: 'fa-tachometer-alt',     label: 'Panel' },
-        { id: 'webmail',   icon: 'fa-envelope-open-text', label: 'Poczta' },
-        { id: 'accounts',  icon: 'fa-users',              label: 'Konta' },
-        { id: 'domains',   icon: 'fa-globe',              label: 'Domeny' },
-        { id: 'aliases',   icon: 'fa-share',              label: 'Aliasy' },
-        { id: 'relay',     icon: 'fa-paper-plane',        label: 'Relay' },
-        { id: 'logs',      icon: 'fa-file-alt',           label: 'Logi' },
-    ];
-
     function renderDashboard() {
         body.innerHTML = `
         <div class="${PREFIX}-tabs" style="display:flex;border-bottom:1px solid var(--border-color);padding:0 12px;background:var(--bg-secondary);gap:0">
-            ${TAB_DEFS.map(td => `
-                <button class="${PREFIX}-tab ${_currentTab===td.id?PREFIX+'-tab-active':''}" data-tab="${td.id}"
-                    style="padding:10px 16px;background:none;border:none;cursor:pointer;color:${_currentTab===td.id?'var(--accent)':'var(--text-secondary)'};
-                    border-bottom:2px solid ${_currentTab===td.id?'var(--accent)':'transparent'};font-size:13px;font-weight:500;transition:all .15s">
-                    <i class="fas ${td.icon}"></i> ${t(td.label)}
+            ${['dashboard','accounts','domains','aliases','relay','logs'].map(t_id => `
+                <button class="${PREFIX}-tab ${_currentTab===t_id?PREFIX+'-tab-active':''}" data-tab="${t_id}"
+                    style="padding:10px 16px;background:none;border:none;cursor:pointer;color:${_currentTab===t_id?'var(--accent)':'var(--text-secondary)'};
+                    border-bottom:2px solid ${_currentTab===t_id?'var(--accent)':'transparent'};font-size:13px;font-weight:500;transition:all .15s">
+                    ${t_id === 'dashboard' ? '<i class="fas fa-tachometer-alt"></i> '+t('Panel') : ''}
+                    ${t_id === 'accounts' ? '<i class="fas fa-users"></i> '+t('Konta') : ''}
+                    ${t_id === 'domains' ? '<i class="fas fa-globe"></i> '+t('Domeny') : ''}
+                    ${t_id === 'aliases' ? '<i class="fas fa-share"></i> '+t('Aliasy') : ''}
+                    ${t_id === 'relay' ? '<i class="fas fa-paper-plane"></i> '+t('Relay') : ''}
+                    ${t_id === 'logs' ? '<i class="fas fa-file-alt"></i> '+t('Logi') : ''}
                 </button>
             `).join('')}
         </div>
@@ -262,7 +257,6 @@ AppRegistry['mail-server'] = function (appDef) {
 
         const content = body.querySelector(`#${PREFIX}-tab-content`);
         if (_currentTab === 'dashboard') renderDashboardTab(content);
-        else if (_currentTab === 'webmail') renderWebmailTab(content);
         else if (_currentTab === 'accounts') renderAccountsTab(content);
         else if (_currentTab === 'domains') renderDomainsTab(content);
         else if (_currentTab === 'aliases') renderAliasesTab(content);
@@ -717,157 +711,6 @@ AppRegistry['mail-server'] = function (appDef) {
         }
         loadLogs();
         el.querySelector(`#${PREFIX}-refresh-logs`).onclick = loadLogs;
-    }
-
-    // ─── Webmail Tab (SnappyMail) ──────────────────────────
-    async function renderWebmailTab(el) {
-        const resp = await api('/mail-server/webmail/status');
-        const info = resp.data || {};
-        const installed = info.installed;
-        const domains = info.domains || [];
-        const firstUrl = domains.find(d => d.active)?.url || '';
-
-        if (!installed) {
-            // SnappyMail not installed yet
-            el.innerHTML = `
-            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:16px;text-align:center">
-                <i class="fas fa-envelope-open-text" style="font-size:48px;color:var(--accent);opacity:.5"></i>
-                <h3 style="margin:0;color:var(--text-primary)">${t('Webmail (SnappyMail)')}</h3>
-                <p style="color:var(--text-secondary);max-width:500px">
-                    ${t('SnappyMail to nowoczesny klient webmail. Po zainstalowaniu będzie dostępny pod adresem mail.twojadomena.pl')}
-                </p>
-                <button class="btn btn-primary" id="${PREFIX}-install-webmail">
-                    <i class="fas fa-download"></i> ${t('Zainstaluj SnappyMail')}
-                </button>
-                <div id="${PREFIX}-webmail-progress" style="display:none;width:100%;max-width:400px">
-                    <div class="set-progress-bar" style="height:8px;border-radius:4px;overflow:hidden;background:var(--bg-tertiary)">
-                        <div id="${PREFIX}-wm-progress-fill" style="height:100%;width:0;background:#3b82f6;transition:width .3s"></div>
-                    </div>
-                    <div id="${PREFIX}-wm-progress-msg" style="text-align:center;margin-top:8px;color:var(--text-secondary);font-size:13px"></div>
-                </div>
-            </div>`;
-
-            el.querySelector(`#${PREFIX}-install-webmail`).onclick = async () => {
-                const btn = el.querySelector(`#${PREFIX}-install-webmail`);
-                btn.disabled = true;
-                btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${t('Instalowanie...')}`;
-                el.querySelector(`#${PREFIX}-webmail-progress`).style.display = 'block';
-
-                if (NAS.socket) {
-                    NAS.socket.on('snappymail_install', (d) => {
-                        const fill = el.querySelector(`#${PREFIX}-wm-progress-fill`);
-                        const msg = el.querySelector(`#${PREFIX}-wm-progress-msg`);
-                        if (fill) fill.style.width = (d.percent || 0) + '%';
-                        if (msg) msg.textContent = d.message || '';
-                        if (d.stage === 'done') {
-                            NAS.socket.off('snappymail_install');
-                            setTimeout(() => renderWebmailTab(el), 1000);
-                        }
-                        if (d.stage === 'error') {
-                            NAS.socket.off('snappymail_install');
-                            btn.disabled = false;
-                            btn.innerHTML = `<i class="fas fa-download"></i> ${t('Spróbuj ponownie')}`;
-                            if (msg) msg.style.color = 'var(--error)';
-                        }
-                    });
-                }
-                await api('/mail-server/webmail/install', { method: 'POST' });
-            };
-            return;
-        }
-
-        // SnappyMail installed — load mail domains to see which need webmail setup
-        const mailDomains = await api('/mail-server/domains');
-        const mailDomainList = (mailDomains.items || []).map(d => d.domain || d.name || d);
-        const configuredMailDomains = new Set(domains.map(d => d.mail_domain));
-        const unconfigured = mailDomainList.filter(d => !configuredMailDomains.has(d));
-        const activeDomains = domains.filter(d => d.active);
-
-        el.innerHTML = `
-        <div style="max-width:600px;margin:0 auto">
-            <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
-                <div style="width:48px;height:48px;border-radius:12px;background:linear-gradient(135deg,#3b82f6,#8b5cf6);display:flex;align-items:center;justify-content:center">
-                    <i class="fas fa-envelope-open-text" style="font-size:22px;color:#fff"></i>
-                </div>
-                <div>
-                    <div style="font-size:16px;font-weight:600;color:var(--text-primary)">SnappyMail</div>
-                    <div style="font-size:13px;color:var(--text-secondary)">
-                        <i class="fas fa-circle" style="font-size:8px;color:#16a34a"></i> ${t('Zainstalowany')}
-                    </div>
-                </div>
-            </div>
-
-            ${activeDomains.length ? activeDomains.map(d => `
-            <div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:10px;padding:20px;margin-bottom:16px">
-                <div style="font-size:13px;color:var(--text-secondary);margin-bottom:10px">${esc(d.domain)}:</div>
-                <div style="display:flex;align-items:center;gap:10px">
-                    <a href="${esc(d.url)}" target="_blank" rel="noopener" class="btn btn-primary" style="flex:1;text-align:center;text-decoration:none">
-                        <i class="fas fa-external-link-alt"></i> ${t('Otwórz Webmail')}
-                    </a>
-                    <button class="btn btn-sm" onclick="navigator.clipboard.writeText('${esc(d.url)}');toast('${t('Skopiowano')}','success')" title="${t('Kopiuj link')}">
-                        <i class="fas fa-copy"></i>
-                    </button>
-                </div>
-                <div style="margin-top:10px;font-size:12px;color:var(--text-muted);font-family:monospace">${esc(d.url)}</div>
-            </div>`).join('') : ''}
-
-            ${unconfigured.length ? `
-            <div style="background:rgba(234,179,8,.08);border:1px solid rgba(234,179,8,.2);border-radius:10px;padding:16px;margin-bottom:16px">
-                <div style="display:flex;align-items:center;gap:8px;color:#eab308;font-weight:600;margin-bottom:8px">
-                    <i class="fas fa-exclamation-triangle"></i> ${t('Skonfiguruj subdomenę')}
-                </div>
-                <p style="font-size:13px;color:var(--text-secondary);margin:0 0 10px">
-                    ${t('Dodaj rekord DNS typu A dla subdomeny mail. wskazujący na IP tego serwera, a następnie kliknij "Konfiguruj".')}
-                </p>
-                <div style="display:flex;flex-direction:column;gap:6px">
-                    ${unconfigured.map(d => `
-                        <div style="display:flex;align-items:center;gap:8px">
-                            <code style="font-size:12px;color:var(--text-primary);flex:1">mail.${esc(d)}</code>
-                            <button class="btn btn-sm btn-primary ms-setup-webmail-btn" data-domain="${esc(d)}">
-                                <i class="fas fa-cog"></i> ${t('Konfiguruj')}
-                            </button>
-                        </div>
-                    `).join('')}
-                </div>
-            </div>` : ''}
-
-            ${!activeDomains.length && !unconfigured.length ? `
-            <div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:10px;padding:16px;text-align:center">
-                <p style="color:var(--text-secondary);font-size:13px">
-                    ${t('Najpierw dodaj domenę w zakładce Domeny, aby skonfigurować dostęp do webmail.')}
-                </p>
-            </div>` : ''}
-
-            <div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:10px;padding:16px;margin-top:16px">
-                <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:8px">
-                    <i class="fas fa-cog"></i> ${t('Administracja')}
-                </div>
-                <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px">
-                    ${t('Panel administracyjny SnappyMail pozwala zarządzać domenami, pluginami i ustawieniami.')}
-                </p>
-                ${activeDomains.length ? `<a href="${esc(activeDomains[0].url)}?admin" target="_blank" rel="noopener" style="font-size:12px;color:var(--accent);text-decoration:none">
-                    <i class="fas fa-external-link-alt"></i> ${t('Panel admina')} →
-                </a>` : ''}
-                ${info.admin_password ? `<div style="margin-top:8px;font-size:11px;color:var(--text-muted)">
-                    ${t('Hasło admina')}: <code style="cursor:pointer" onclick="navigator.clipboard.writeText('${esc(info.admin_password)}');toast('${t('Skopiowano')}','success')">${esc(info.admin_password)}</code>
-                </div>` : ''}
-            </div>
-        </div>`;
-
-        // Setup buttons for configuring webmail on a domain
-        el.querySelectorAll('.ms-setup-webmail-btn').forEach(btn => {
-            btn.onclick = async () => {
-                btn.disabled = true;
-                btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i>`;
-                const res = await api('/mail-server/webmail/setup-domain', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ mail_domain: btn.dataset.domain, ssl: true })
-                });
-                if (res.error) { toast(res.error, 'error'); btn.disabled = false; btn.innerHTML = `<i class="fas fa-cog"></i> ${t('Konfiguruj')}`; }
-                else { toast(t('Webmail skonfigurowany'), 'success'); renderWebmailTab(el); }
-            };
-        });
     }
 
     // ─── Init ────────────────────────────────────────────
