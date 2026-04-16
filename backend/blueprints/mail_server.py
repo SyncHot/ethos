@@ -476,10 +476,12 @@ def _generate_dkim_key(domain):
     if os.path.isfile(pubkey_txt):
         with open(pubkey_txt) as f:
             raw = f.read()
-        # Extract the p= value from the TXT file
-        match = re.search(r'\(\s*"(.+?)"\s*\)', raw, re.DOTALL)
-        if match:
-            return match.group(1).replace('"\n\t"', '').replace('" "', '')
+        # opendkim-genkey splits the value across multiple quoted strings;
+        # extract all quoted fragments and join them into one clean value
+        paren = re.search(r'\((.*?)\)', raw, re.DOTALL)
+        if paren:
+            parts = re.findall(r'"([^"]*)"', paren.group(1))
+            return ''.join(parts).strip()
         return raw.strip()
     return ''
 
@@ -585,14 +587,31 @@ def _get_vmail_gid():
 # ─── DNS record helpers ───────────────────────────────────────
 
 def _dns_records_for_domain(domain, cfg):
-    """Return list of DNS records needed for a domain."""
+    """Return list of DNS records needed for a domain.
+
+    Each record includes:
+      - name:     FQDN (e.g. '_dmarc.example.com')
+      - dns_name: relative name to enter in the DNS panel (e.g. '_dmarc', '@')
+      - dns_hint: human-readable explanation of what to type in the Name field
+    """
     hostname = cfg.get('hostname', f'mail.{domain}')
     records = []
+
+    # A record for mail hostname
+    records.append({
+        'type': 'A',
+        'name': hostname,
+        'dns_name': hostname.replace(f'.{domain}', '') if hostname.endswith(f'.{domain}') else hostname,
+        'value': cfg.get('ip', _get_public_ip()),
+        'description': 'Adres IP serwera pocztowego.',
+        'description_en': 'IP address of the mail server.',
+    })
 
     # MX record
     records.append({
         'type': 'MX',
         'name': domain,
+        'dns_name': '@',
         'value': f'10 {hostname}.',
         'description': 'Kieruje pocztę do Twojego serwera.',
         'description_en': 'Routes incoming email to your server.',
@@ -602,6 +621,7 @@ def _dns_records_for_domain(domain, cfg):
     records.append({
         'type': 'TXT',
         'name': domain,
+        'dns_name': '@',
         'value': f'v=spf1 mx a:{hostname} ~all',
         'description': 'Informuje inne serwery, że Twój serwer może wysyłać maile z tej domeny.',
         'description_en': 'Tells other servers your server is authorized to send email for this domain.',
@@ -613,6 +633,7 @@ def _dns_records_for_domain(domain, cfg):
         records.append({
             'type': 'TXT',
             'name': f'ethos._domainkey.{domain}',
+            'dns_name': 'ethos._domainkey',
             'value': dkim_pub,
             'description': 'Podpis cyfrowy — potwierdza, że maile nie zostały sfałszowane.',
             'description_en': 'Digital signature — proves emails were not forged.',
@@ -622,12 +643,25 @@ def _dns_records_for_domain(domain, cfg):
     records.append({
         'type': 'TXT',
         'name': f'_dmarc.{domain}',
+        'dns_name': '_dmarc',
         'value': f'v=DMARC1; p=quarantine; rua=mailto:postmaster@{domain}; pct=100',
         'description': 'Polityka co robić z mailami które nie przejdą SPF/DKIM.',
         'description_en': 'Policy for handling emails that fail SPF/DKIM checks.',
     })
 
     return records
+
+
+def _get_public_ip():
+    """Best-effort public IP detection."""
+    try:
+        r = host_run('curl -4s --max-time 5 ifconfig.me 2>/dev/null', timeout=8)
+        ip = r.stdout.strip()
+        if r.returncode == 0 and ip:
+            return ip
+    except Exception:
+        pass
+    return '???'
 
 
 # ─── Certbot renewal hook ─────────────────────────────────────

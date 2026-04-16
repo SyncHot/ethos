@@ -360,7 +360,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/flasher/pkg-status',
     },
     {
-        'id': 'builder', 'name': 'Builder', 'version': '1.0.9',
+        'id': 'builder', 'name': 'Builder', 'version': '1.0.10',
         'icon': 'fa-hammer', 'color': '#f97316', 'category': 'System', 'admin_only': True,
         'description': 'Budowanie wydan EthOS i obrazow systemowych przez interfejs webowy.',
         'apt_deps': ['squashfs-tools', 'genisoimage', 'rsync'], 'pip_deps': [],
@@ -610,7 +610,7 @@ BUILTIN_CATALOG = [
         'apt_deps': [], 'pip_deps': ['ldap3'],
     },
     {
-        'id': 'mail-server', 'name': 'Mail Server', 'version': '1.0.0',
+        'id': 'mail-server', 'name': 'Mail Server', 'version': '0.0.2',
         'icon': 'fa-envelope', 'color': '#3b82f6', 'category': 'Network', 'admin_only': True,
         'description': 'Serwer poczty (Postfix + Dovecot) z obsluga IMAP/SMTP, DKIM, relay i certyfikatow SSL.',
         'apt_deps': ['postfix', 'dovecot-core', 'dovecot-imapd', 'dovecot-pop3d', 'opendkim', 'opendkim-tools'],

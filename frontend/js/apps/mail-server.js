@@ -515,8 +515,13 @@ AppRegistry['mail-server'] = function (appDef) {
 
         let html = `
         <div style="margin:12px 0 8px">
-            <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:8px">
+            <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:4px">
                 <i class="fas fa-info-circle" style="color:#3b82f6"></i> ${t('Dodaj te rekordy DNS u swojego dostawcy domeny:')}
+            </div>
+            <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">
+                <i class="fas fa-lightbulb" style="color:#f59e0b"></i>
+                ${t('Kolumna „Nazwa w DNS" pokazuje co wpisać w polu Name/Host u providera.')}
+                ${t('{at} oznacza domenę główną (root).', { at: '<code style="background:var(--bg-tertiary);padding:1px 5px;border-radius:3px;font-size:11px">@</code>' })}
             </div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
                 ${Object.keys(DNS_GUIDES).map(p => `<button class="btn btn-xs ${PREFIX}-dns-guide" data-provider="${p}">${p}</button>`).join('')}
@@ -526,7 +531,7 @@ AppRegistry['mail-server'] = function (appDef) {
         <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:8px">
             <thead><tr style="border-bottom:1px solid var(--border-color)">
                 <th style="padding:6px;text-align:left;color:var(--text-muted)">${t('Typ')}</th>
-                <th style="padding:6px;text-align:left;color:var(--text-muted)">${t('Nazwa')}</th>
+                <th style="padding:6px;text-align:left;color:var(--text-muted)">${t('Nazwa w DNS')}</th>
                 <th style="padding:6px;text-align:left;color:var(--text-muted)">${t('Wartość')}</th>
                 <th style="padding:6px;text-align:left;color:var(--text-muted)">${t('Co to jest?')}</th>
                 <th style="padding:6px"></th>
@@ -534,10 +539,13 @@ AppRegistry['mail-server'] = function (appDef) {
             <tbody>${records.map(r => `
                 <tr style="border-bottom:1px solid var(--border-color)">
                     <td style="padding:6px"><span style="background:#3b82f6;color:#fff;padding:2px 6px;border-radius:3px;font-size:11px;font-weight:600">${esc(r.type)}</span></td>
-                    <td style="padding:6px;color:var(--text-primary);word-break:break-all;max-width:150px">${esc(r.name)}</td>
+                    <td style="padding:6px;color:var(--text-primary);word-break:break-all;max-width:160px">
+                        <code style="background:var(--bg-tertiary);padding:2px 6px;border-radius:3px;font-weight:600">${esc(r.dns_name || r.name)}</code>
+                        <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${esc(r.name)}</div>
+                    </td>
                     <td style="padding:6px;color:var(--text-primary);word-break:break-all;max-width:250px;font-family:monospace;font-size:11px">${esc(r.value)}</td>
                     <td style="padding:6px;color:var(--text-muted);font-size:11px">${esc(r.description)}</td>
-                    <td style="padding:6px"><button class="btn btn-xs ${PREFIX}-copy-dns" data-value="${esc(r.value)}" title="${t('Kopiuj')}"><i class="fas fa-copy"></i></button></td>
+                    <td style="padding:6px"><button class="btn btn-xs ${PREFIX}-copy-dns" data-value="${esc(r.value).replace(/"/g,'&quot;')}" title="${t('Kopiuj')}"><i class="fas fa-copy"></i></button></td>
                 </tr>
             `).join('')}</tbody>
         </table>`;
