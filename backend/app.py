@@ -478,6 +478,13 @@ app.register_blueprint(fail2ban_bp)
 app.register_blueprint(app_manager_bp)
 init_app_manager(socketio)
 _load_optional_blueprints(app, socketio)
+
+# Init VM WebSocket proxy (must run after vm_manager blueprint is registered)
+try:
+    from blueprints.vm_manager import _init_ws_proxy
+    _init_ws_proxy(app)
+except ImportError:
+    pass
 migrate_from_ethos_packages()
 init_update(socketio)
 

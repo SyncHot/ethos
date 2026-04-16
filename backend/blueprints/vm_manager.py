@@ -1319,6 +1319,149 @@ def novnc_static(filename):
     return send_from_directory(novnc_dir, filename)
 
 
+# ─── WebSocket proxy (same-origin, no extra ports) ────────
+#
+# Browser connects WebSocket to Flask (/api/vm/ws/vnc/<id> or
+# /api/vm/ws/serial/<id>). Flask relays raw bytes to QEMU's
+# VNC/serial TCP port. No need for the browser to reach external
+# ports — works with HTTPS, reverse proxies, and firewalls.
+
+def _init_ws_proxy(app):
+    """Wrap the Flask app with a WSGI middleware that proxies WebSocket
+    connections for VNC and serial consoles directly to QEMU TCP ports.
+
+    Uses gevent-websocket (already present for Flask-SocketIO).  The
+    middleware intercepts ``/api/vm/ws/vnc/<id>`` and
+    ``/api/vm/ws/serial/<id>`` *before* Flask routing, so there is no
+    conflict with Werkzeug's WebSocket-aware URL map.
+    """
+    import re
+    from http.cookies import SimpleCookie
+    from urllib.parse import parse_qs
+
+    _WS_RE = re.compile(r'^/api/vm/ws/(vnc|serial)/([A-Za-z0-9._-]+)$')
+
+    def _parse_token(environ):
+        """Extract auth token from cookie / query string / Authorization."""
+        # Cookie
+        cookie_str = environ.get('HTTP_COOKIE', '')
+        if cookie_str:
+            sc = SimpleCookie()
+            sc.load(cookie_str)
+            morsel = sc.get('nas_token')
+            if morsel and morsel.value:
+                return morsel.value
+        # Query param
+        qs = parse_qs(environ.get('QUERY_STRING', ''))
+        qt = qs.get('token', [''])[0]
+        if qt:
+            return qt
+        # Authorization header
+        auth_h = environ.get('HTTP_AUTHORIZATION', '')
+        if auth_h.startswith('Bearer '):
+            return auth_h[7:]
+        return ''
+
+    def _validate_token(token):
+        import sys
+        from datetime import datetime
+        # App runs as __main__ when started directly (python app.py)
+        app_mod = sys.modules.get('__main__')
+        if not app_mod:
+            return False
+        tok_store = getattr(app_mod, 'tokens', None)
+        if not tok_store:
+            return False
+        info = tok_store.get(token)
+        if not info:
+            return False
+        expires = info.get('expires', datetime.min)
+        return expires > datetime.now()
+
+    def _relay(ws, target_port):
+        """Relay gevent-websocket frames ↔ raw TCP bytes."""
+        import gevent
+        from gevent import socket as gsock
+
+        try:
+            upstream = gsock.create_connection(('127.0.0.1', target_port), timeout=5)
+        except Exception as exc:
+            log.warning('WS proxy: cannot connect to port %s: %s', target_port, exc)
+            ws.close()
+            return
+
+        closed = [False]
+
+        def _ws_to_tcp():
+            try:
+                while not closed[0]:
+                    msg = ws.receive()
+                    if msg is None:
+                        break
+                    if isinstance(msg, str):
+                        upstream.sendall(msg.encode('utf-8'))
+                    else:
+                        upstream.sendall(msg)
+            except Exception:
+                pass
+            finally:
+                closed[0] = True
+                try:
+                    upstream.close()
+                except Exception:
+                    pass
+
+        def _tcp_to_ws():
+            try:
+                while not closed[0]:
+                    data = upstream.recv(65536)
+                    if not data:
+                        break
+                    ws.send(data)
+            except Exception:
+                pass
+            finally:
+                closed[0] = True
+                try:
+                    ws.close()
+                except Exception:
+                    pass
+
+        g1 = gevent.spawn(_ws_to_tcp)
+        g2 = gevent.spawn(_tcp_to_ws)
+        gevent.joinall([g1, g2])
+
+    inner = app.wsgi_app
+
+    def _ws_middleware(environ, start_response):
+        path = environ.get('PATH_INFO', '')
+        ws = environ.get('wsgi.websocket')
+        if ws:
+            m = _WS_RE.match(path)
+            if m:
+                kind, vm_id = m.group(1), m.group(2)
+                token = _parse_token(environ)
+                if not token or not _validate_token(token):
+                    log.info('WS proxy: auth failed for %s/%s', kind, vm_id)
+                    ws.close()
+                    start_response('401 Unauthorized', [])
+                    return [b'']
+                info = _running_vms.get(vm_id)
+                port_key = 'vnc_port' if kind == 'vnc' else 'serial_port'
+                port = info.get(port_key) if info else None
+                if not port:
+                    log.info('WS proxy: VM %s not found or no %s', vm_id, port_key)
+                    ws.close()
+                    start_response('404 Not Found', [])
+                    return [b'']
+                log.info('WS %s proxy: vm=%s → port %s', kind, vm_id, port)
+                _relay(ws, port)
+                return [b'']
+        return inner(environ, start_response)
+
+    app.wsgi_app = _ws_middleware
+
+
 # ═══════════════════════════════════════════════════════════
 #  VM POWER CONTROL
 # ═══════════════════════════════════════════════════════════

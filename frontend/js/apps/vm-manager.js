@@ -745,11 +745,10 @@ function renderVMManager(body) {
             dc.innerHTML = `<div class="vm-empty">${t('Konsola dostępna tylko dla działających maszyn z aktywnym WebSocket.')}</div>`;
             return;
         }
-        const wsHost = _vmHost;
-        // Serve noVNC through Flask (same-origin) so iframe isn't blocked by CSP.
-        // WebSocket connects directly to websockify port.
-        const novncUrl = `/api/vm/novnc/vnc_lite.html?host=${wsHost}&port=${vm.ws_port}&autoconnect=true&resize=scale&reconnect=true&path=websockify`;
-        const directUrl = `http://${wsHost}:${vm.ws_port}/vnc_lite.html?host=${wsHost}&port=${vm.ws_port}&autoconnect=true&resize=scale&reconnect=true`;
+        // Route WebSocket through Flask proxy (same-origin) — works with HTTPS,
+        // reverse proxies, and firewalls without needing extra ports.
+        const novncUrl = `/api/vm/novnc/vnc_lite.html?host=${location.hostname}&port=${location.port}&autoconnect=true&resize=scale&reconnect=true&path=api/vm/ws/vnc/${vm.id}`;
+        const directUrl = `http://${_vmHost}:${vm.ws_port}/vnc_lite.html?host=${_vmHost}&port=${vm.ws_port}&autoconnect=true&resize=scale&reconnect=true`;
         dc.innerHTML = `
             <div class="vm-console-wrap">
                 <div class="vm-console-toolbar">
@@ -830,8 +829,9 @@ function renderVMManager(body) {
 
         term.writeln('\x1b[36m── Serial Console connecting... ──\x1b[0m');
 
+        // Route through Flask proxy (same-origin) — no extra ports needed
         const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
-        const wsUrl = `${wsProto}://${_vmHost}:${vm.serial_ws_port}`;
+        const wsUrl = `${wsProto}://${location.host}/api/vm/ws/serial/${vm.id}?token=${NAS.token}`;
         const ws = new WebSocket(wsUrl);
         ws.binaryType = 'arraybuffer';
 
