@@ -1582,44 +1582,57 @@ document.getElementById('power-btn').addEventListener('click', (e) => {
 document.querySelectorAll('.pm-action').forEach(btn => {
     btn.addEventListener('click', async () => {
         const action = btn.dataset.action;
-        const labels = {
-            'restart-app': t('Restart aplikacji (kontener nasos)'),
-            'reboot': t('Restart całego systemu Linux'),
-            'shutdown': t('Wyłączenie systemu Linux')
-        };
-        const icons = {
-            'restart-app': 'fa-sync-alt',
-            'reboot': 'fa-redo',
-            'shutdown': 'fa-power-off'
-        };
-        const colors = {
-            'restart-app': '#22c55e',
-            'reboot': '#f59e0b',
-            'shutdown': '#ef4444'
-        };
         closePowerMenu();
-
-        // Show confirmation modal
-        const confirmed = await showPowerConfirm(labels[action], icons[action], colors[action]);
-        if (!confirmed) return;
-
-        try {
-            const resp = await api('/power/action', {
-                method: 'POST',
-                body: { action }
-            });
-            if (action === 'reboot' || action === 'restart-app') {
-                showRestartOverlay(action === 'reboot' ? t('Restart systemu…') : t('Restart aplikacji…'));
-            } else if (action === 'shutdown') {
-                showRestartOverlay(t('Wyłączanie systemu…'), true);
-            } else {
-                showToast(resp.message || t('Wykonano'), 'success');
-            }
-        } catch (err) {
-            showToast(t('Błąd:') + ' ' + (err.message || t('nieznany')), 'error');
-        }
+        await executePowerAction(action);
     });
 });
+
+document.querySelectorAll('.notif-power-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+        const action = btn.dataset.action;
+        notifPanelOpen = false;
+        document.getElementById('notif-panel').classList.add('hidden');
+        document.getElementById('notifications-btn').classList.remove('active');
+        await executePowerAction(action);
+    });
+});
+
+async function executePowerAction(action) {
+    const labels = {
+        'restart-app': t('Restart aplikacji (kontener nasos)'),
+        'reboot': t('Restart całego systemu Linux'),
+        'shutdown': t('Wyłączenie systemu Linux')
+    };
+    const icons = {
+        'restart-app': 'fa-sync-alt',
+        'reboot': 'fa-redo',
+        'shutdown': 'fa-power-off'
+    };
+    const colors = {
+        'restart-app': '#22c55e',
+        'reboot': '#f59e0b',
+        'shutdown': '#ef4444'
+    };
+
+    const confirmed = await showPowerConfirm(labels[action], icons[action], colors[action]);
+    if (!confirmed) return;
+
+    try {
+        const resp = await api('/power/action', {
+            method: 'POST',
+            body: { action }
+        });
+        if (action === 'reboot' || action === 'restart-app') {
+            showRestartOverlay(action === 'reboot' ? t('Restart systemu…') : t('Restart aplikacji…'));
+        } else if (action === 'shutdown') {
+            showRestartOverlay(t('Wyłączanie systemu…'), true);
+        } else {
+            showToast(resp.message || t('Wykonano'), 'success');
+        }
+    } catch (err) {
+        showToast(t('Błąd:') + ' ' + (err.message || t('nieznany')), 'error');
+    }
+}
 
 function showPowerConfirm(label, icon, color) {
     return new Promise(resolve => {
