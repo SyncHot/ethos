@@ -1,4 +1,4 @@
-/* EthOS — Notification Channels App */
+/* EthOS — Notification Channels App (prefix: nch-) */
 
 AppRegistry['notifications'] = function (appDef) {
     const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
@@ -77,24 +77,24 @@ AppRegistry['notifications'] = function (appDef) {
 
     const render = () => {
         body.innerHTML = `
-            <div class="notif-wrap">
-                <div class="notif-sidebar">
+            <div class="nch-wrap">
+                <div class="nch-sidebar">
                     ${tabs.map(t => `
-                        <button class="notif-tab-btn ${activeTab === t.id ? 'active' : ''}" data-tab="${t.id}">
-                            <i class="fas ${t.icon} notif-tab-icon"></i>
+                        <button class="nch-tab-btn ${activeTab === t.id ? 'active' : ''}" data-tab="${t.id}">
+                            <i class="fas ${t.icon} nch-tab-icon"></i>
                             <span>${t.label}</span>
                         </button>
                     `).join('')}
                 </div>
-                <div class="notif-panel" id="notif-panel"></div>
+                <div class="nch-panel" id="nch-panel"></div>
             </div>
         `;
 
-        body.querySelectorAll('.notif-tab-btn').forEach(btn => {
+        body.querySelectorAll('.nch-tab-btn').forEach(btn => {
             btn.onclick = () => { activeTab = btn.dataset.tab; render(); };
         });
 
-        const panel = body.querySelector('#notif-panel');
+        const panel = body.querySelector('#nch-panel');
         if (activeTab === 'channels')  renderChannels(panel);
         else if (activeTab === 'triggers') renderTriggers(panel);
         else if (activeTab === 'history')  renderHistory(panel);
@@ -104,50 +104,50 @@ AppRegistry['notifications'] = function (appDef) {
 
     const renderChannels = (panel) => {
         panel.innerHTML = `
-            <div class="notif-header">
-                <span class="notif-title"><i class="fas fa-satellite-dish notif-icon-accent"></i> ${t('Kanały powiadomień')}</span>
-                <span class="notif-spacer"></span>
-                <button class="btn btn-sm btn-primary" id="notif-save-ch">
+            <div class="nch-header">
+                <span class="nch-title"><i class="fas fa-satellite-dish nch-icon-accent"></i> ${t('Kanały powiadomień')}</span>
+                <span class="nch-spacer"></span>
+                <button class="btn btn-sm btn-primary" id="nch-save-ch">
                     <i class="fas fa-save"></i> Zapisz
                 </button>
             </div>
-            <div class="notif-desc">${t('Skonfiguruj kanały, na które będą wysyłane powiadomienia systemowe.')}</div>
-            <div class="notif-cards" id="notif-cards"></div>
+            <div class="nch-desc">${t('Skonfiguruj kanały, na które będą wysyłane powiadomienia systemowe.')}</div>
+            <div class="nch-cards" id="nch-cards"></div>
         `;
 
-        const container = panel.querySelector('#notif-cards');
+        const container = panel.querySelector('#nch-cards');
         for (const [chName, chDef] of Object.entries(CHANNELS)) {
             const chState = state.channels[chName] || {};
             const card = document.createElement('div');
-            card.className = 'notif-card';
+            card.className = 'nch-card';
             const isSmtp = chName === 'smtp';
             card.innerHTML = `
-                <div class="notif-card-head">
+                <div class="nch-card-head">
                     <i class="fas ${chDef.icon}" style="color:${chDef.color}"></i>
-                    <span class="notif-card-title">${chDef.label}</span>
-                    ${isSmtp ? '<span class="notif-local-badge" id="notif-local-badge" style="display:none"><i class="fas fa-server"></i> ' + t('Lokalny serwer') + '</span>' : ''}
-                    <span class="notif-spacer"></span>
-                    <label class="notif-toggle">
+                    <span class="nch-card-title">${chDef.label}</span>
+                    ${isSmtp ? '<span class="nch-local-badge" id="nch-local-badge" style="display:none"><i class="fas fa-server"></i> ' + t('Lokalny serwer') + '</span>' : ''}
+                    <span class="nch-spacer"></span>
+                    <label class="nch-toggle">
                         <input type="checkbox" data-ch="${chName}" data-field="enabled"
                             ${chState.enabled ? 'checked' : ''}>
-                        <span class="notif-toggle-slider"></span>
+                        <span class="nch-toggle-slider"></span>
                     </label>
                 </div>
-                <div class="notif-card-body ${chState.enabled ? '' : 'notif-disabled'}">
-                    ${isSmtp ? `<div class="notif-local-smtp" id="notif-local-smtp-box" style="display:none">
-                        <button class="btn btn-sm btn-success" id="notif-use-local-smtp">
+                <div class="nch-card-body ${chState.enabled ? '' : 'nch-disabled'}">
+                    ${isSmtp ? `<div class="nch-local-smtp" id="nch-local-smtp-box" style="display:none">
+                        <button class="btn btn-sm btn-success" id="nch-use-local-smtp">
                             <i class="fas fa-magic"></i> ${t('Użyj lokalnego serwera poczty')}
                         </button>
-                        <span class="notif-local-hint">${t('Wykryto działający serwer poczty — kliknij aby skonfigurować automatycznie')}</span>
+                        <span class="nch-local-hint">${t('Wykryto działający serwer poczty — kliknij aby skonfigurować automatycznie')}</span>
                     </div>` : ''}
                     ${chDef.fields.map(f => fieldHtml(chName, f, chState)).join('')}
-                    <div class="notif-card-actions">
-                        <button class="btn btn-sm btn-outline notif-test-btn" data-ch="${chName}"
+                    <div class="nch-card-actions">
+                        <button class="btn btn-sm btn-outline nch-test-btn" data-ch="${chName}"
                             ${!chState.enabled ? 'disabled' : ''}>
                             <i class="fas ${state.testing[chName] ? 'fa-spinner fa-spin' : 'fa-vial'}"></i>
                             Test
                         </button>
-                        <span class="notif-test-result" id="notif-result-${chName}"></span>
+                        <span class="nch-test-result" id="nch-result-${chName}"></span>
                     </div>
                 </div>
             `;
@@ -158,21 +158,21 @@ AppRegistry['notifications'] = function (appDef) {
         _detectLocalSmtp(panel);
 
         // Bind toggle → show/hide fields
-        container.querySelectorAll('.notif-toggle input').forEach(inp => {
+        container.querySelectorAll('.nch-toggle input').forEach(inp => {
             inp.onchange = () => {
                 const ch = inp.dataset.ch;
                 if (!state.channels[ch]) state.channels[ch] = {};
                 state.channels[ch].enabled = inp.checked;
-                const cardBody = inp.closest('.notif-card').querySelector('.notif-card-body');
-                cardBody.classList.toggle('notif-disabled', !inp.checked);
-                const testBtn = inp.closest('.notif-card').querySelector('.notif-test-btn');
+                const cardBody = inp.closest('.nch-card').querySelector('.nch-card-body');
+                cardBody.classList.toggle('nch-disabled', !inp.checked);
+                const testBtn = inp.closest('.nch-card').querySelector('.nch-test-btn');
                 testBtn.disabled = !inp.checked;
             };
         });
 
         // Bind field inputs
         container.querySelectorAll('[data-ch][data-field]').forEach(el => {
-            if (el.closest('.notif-toggle')) return; // skip toggle
+            if (el.closest('.nch-toggle')) return; // skip toggle
             const ch = el.dataset.ch;
             const field = el.dataset.field;
             const update = () => {
@@ -188,25 +188,25 @@ AppRegistry['notifications'] = function (appDef) {
         });
 
         // Test buttons
-        container.querySelectorAll('.notif-test-btn').forEach(btn => {
+        container.querySelectorAll('.nch-test-btn').forEach(btn => {
             btn.onclick = async () => {
                 const ch = btn.dataset.ch;
                 state.testing[ch] = true;
                 btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Wysyłanie…');
                 btn.disabled = true;
-                const resultEl = panel.querySelector(`#notif-result-${ch}`);
+                const resultEl = panel.querySelector(`#nch-result-${ch}`);
                 resultEl.textContent = '';
-                resultEl.className = 'notif-test-result';
+                resultEl.className = 'nch-test-result';
                 try {
                     await saveConfig();
                     const resp = await api('/notifications/test', {
                         method: 'POST', body: { channel: ch }
                     });
                     resultEl.textContent = t('✓ Wysłano');
-                    resultEl.classList.add('notif-ok');
+                    resultEl.classList.add('nch-ok');
                 } catch (e) {
                     resultEl.textContent = '✗ ' + (e.message || t('Błąd'));
-                    resultEl.classList.add('notif-err');
+                    resultEl.classList.add('nch-err');
                 } finally {
                     state.testing[ch] = false;
                     btn.innerHTML = '<i class="fas fa-vial"></i> Test';
@@ -216,7 +216,7 @@ AppRegistry['notifications'] = function (appDef) {
         });
 
         // Save button
-        panel.querySelector('#notif-save-ch').onclick = async () => {
+        panel.querySelector('#nch-save-ch').onclick = async () => {
             await saveConfig();
             toast('Zapisano konfigurację kanałów', 'success');
         };
@@ -226,24 +226,24 @@ AppRegistry['notifications'] = function (appDef) {
         const val = chState[f.key] ?? '';
         if (f.type === 'checkbox') {
             return `
-                <label class="notif-field-row notif-checkbox-label">
+                <label class="nch-field-row nch-checkbox-label">
                     <input type="checkbox" data-ch="${chName}" data-field="${f.key}" ${val ? 'checked' : ''}>
                     <span>${f.label}</span>
                 </label>`;
         }
         if (f.type === 'select') {
             return `
-                <div class="notif-field-row">
-                    <label class="notif-field-label">${f.label}</label>
-                    <select class="form-control notif-input" data-ch="${chName}" data-field="${f.key}">
+                <div class="nch-field-row">
+                    <label class="nch-field-label">${f.label}</label>
+                    <select class="form-control nch-input" data-ch="${chName}" data-field="${f.key}">
                         ${f.options.map(o => `<option value="${o}" ${val === o ? 'selected' : ''}>${o}</option>`).join('')}
                     </select>
                 </div>`;
         }
         return `
-            <div class="notif-field-row">
-                <label class="notif-field-label">${f.label}</label>
-                <input class="form-control notif-input" type="${f.type === 'password' ? 'text' : f.type}"
+            <div class="nch-field-row">
+                <label class="nch-field-label">${f.label}</label>
+                <input class="form-control nch-input" type="${f.type === 'password' ? 'text' : f.type}"
                     data-ch="${chName}" data-field="${f.key}"
                     value="${_esc(String(val))}"
                     placeholder="${f.placeholder || ''}"
@@ -255,29 +255,29 @@ AppRegistry['notifications'] = function (appDef) {
 
     const renderTriggers = (panel) => {
         panel.innerHTML = `
-            <div class="notif-header">
-                <span class="notif-title"><i class="fas fa-bolt notif-icon-accent"></i> Wyzwalacze</span>
-                <span class="notif-spacer"></span>
-                <button class="btn btn-sm btn-primary" id="notif-save-tr">
+            <div class="nch-header">
+                <span class="nch-title"><i class="fas fa-bolt nch-icon-accent"></i> Wyzwalacze</span>
+                <span class="nch-spacer"></span>
+                <button class="btn btn-sm btn-primary" id="nch-save-tr">
                     <i class="fas fa-save"></i> Zapisz
                 </button>
             </div>
-            <div class="notif-desc">${t('Wybierz, które zdarzenia mają generować powiadomienia.')}</div>
-            <div class="notif-trigger-list" id="notif-triggers"></div>
+            <div class="nch-desc">${t('Wybierz, które zdarzenia mają generować powiadomienia.')}</div>
+            <div class="nch-trigger-list" id="nch-triggers"></div>
         `;
 
-        const list = panel.querySelector('#notif-triggers');
+        const list = panel.querySelector('#nch-triggers');
         for (const [trKey, trDef] of Object.entries(TRIGGERS)) {
             const enabled = state.triggers[trKey] ?? false;
             const row = document.createElement('div');
-            row.className = 'notif-trigger-row';
+            row.className = 'nch-trigger-row';
             row.innerHTML = `
-                <i class="fas ${trDef.icon} notif-trigger-icon"></i>
-                <span class="notif-trigger-label">${trDef.label}</span>
-                <span class="notif-spacer"></span>
-                <label class="notif-toggle">
+                <i class="fas ${trDef.icon} nch-trigger-icon"></i>
+                <span class="nch-trigger-label">${trDef.label}</span>
+                <span class="nch-spacer"></span>
+                <label class="nch-toggle">
                     <input type="checkbox" data-trigger="${trKey}" ${enabled ? 'checked' : ''}>
-                    <span class="notif-toggle-slider"></span>
+                    <span class="nch-toggle-slider"></span>
                 </label>
             `;
             list.appendChild(row);
@@ -289,7 +289,7 @@ AppRegistry['notifications'] = function (appDef) {
             };
         });
 
-        panel.querySelector('#notif-save-tr').onclick = async () => {
+        panel.querySelector('#nch-save-tr').onclick = async () => {
             await saveConfig();
             toast('Zapisano wyzwalacze', 'success');
         };
@@ -299,37 +299,37 @@ AppRegistry['notifications'] = function (appDef) {
 
     const renderHistory = (panel) => {
         panel.innerHTML = `
-            <div class="notif-header">
-                <span class="notif-title"><i class="fas fa-history notif-icon-accent"></i> ${t('Historia powiadomień')}</span>
-                <span class="notif-spacer"></span>
-                <button class="btn btn-sm btn-outline" id="notif-refresh-hist">
+            <div class="nch-header">
+                <span class="nch-title"><i class="fas fa-history nch-icon-accent"></i> ${t('Historia powiadomień')}</span>
+                <span class="nch-spacer"></span>
+                <button class="btn btn-sm btn-outline" id="nch-refresh-hist">
                     <i class="fas fa-sync-alt"></i> ${t('Odśwież')}
                 </button>
             </div>
-            <div class="notif-history-wrap" id="notif-hist-body"></div>
+            <div class="nch-history-wrap" id="nch-hist-body"></div>
         `;
 
-        panel.querySelector('#notif-refresh-hist').onclick = async () => {
+        panel.querySelector('#nch-refresh-hist').onclick = async () => {
             await loadHistory();
             renderHistory(panel);
         };
 
-        const wrap = panel.querySelector('#notif-hist-body');
+        const wrap = panel.querySelector('#nch-hist-body');
 
         if (!state.history.length) {
-            wrap.innerHTML = '<div class="notif-empty">' + t('Brak wysłanych powiadomień.') + '</div>';
+            wrap.innerHTML = '<div class="nch-empty">' + t('Brak wysłanych powiadomień.') + '</div>';
             return;
         }
 
-        let html = `<table class="notif-table">
+        let html = `<table class="nch-table">
             <thead><tr>
                 <th>${t('Czas')}</th><th>${t('Kanał')}</th><th>${t('Tytuł')}</th><th>${t('Status')}</th>
             </tr></thead><tbody>`;
         for (const h of state.history) {
-            const cls = h.success ? 'notif-ok' : 'notif-err';
+            const cls = h.success ? 'nch-ok' : 'nch-err';
             const status = h.success ? '✓ OK' : `✗ ${h.error || t('Błąd')}`;
             html += `<tr>
-                <td class="notif-td-mono">${_esc(h.time)}</td>
+                <td class="nch-td-mono">${_esc(h.time)}</td>
                 <td>${_esc(h.channel)}</td>
                 <td>${_esc(h.title)}</td>
                 <td class="${cls}">${_esc(status)}</td>
@@ -361,7 +361,7 @@ AppRegistry['notifications'] = function (appDef) {
 
     const saveConfig = async () => {
         // Collect current field values from DOM before saving
-        const cards = body.querySelectorAll('#notif-cards [data-ch][data-field]');
+        const cards = body.querySelectorAll('#nch-cards [data-ch][data-field]');
         cards.forEach(el => {
             const ch = el.dataset.ch;
             const field = el.dataset.field;
@@ -392,12 +392,12 @@ AppRegistry['notifications'] = function (appDef) {
             if (!data || !data.available) return;
             state._localSmtp = data;
 
-            const badge = panel.querySelector('#notif-local-badge');
-            const box = panel.querySelector('#notif-local-smtp-box');
+            const badge = panel.querySelector('#nch-local-badge');
+            const box = panel.querySelector('#nch-local-smtp-box');
             if (badge) badge.style.display = '';
             if (box) box.style.display = '';
 
-            const btn = panel.querySelector('#notif-use-local-smtp');
+            const btn = panel.querySelector('#nch-use-local-smtp');
             if (btn) {
                 btn.onclick = () => {
                     if (!state.channels.smtp) state.channels.smtp = {};
@@ -419,7 +419,7 @@ AppRegistry['notifications'] = function (appDef) {
     /* ── Init ───────────────────────────────────────────────── */
 
     const init = async () => {
-        body.innerHTML = '<div class="notif-loading"><i class="fas fa-spinner fa-spin"></i> ' + t('Ładowanie…') + '</div>';
+        body.innerHTML = '<div class="nch-loading"><i class="fas fa-spinner fa-spin"></i> ' + t('Ładowanie…') + '</div>';
         await Promise.all([loadConfig(), loadHistory()]);
         render();
     };
