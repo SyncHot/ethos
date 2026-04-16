@@ -2418,12 +2418,18 @@ def setup_complete():
     except Exception as e:
         log.warning('Auto SSH keygen failed: %s', e)
 
-    # Remove tty1 auto-login override (no longer needed after setup)
+    # Replace tty1 auto-login with read-only info console (Synology-style)
     try:
-        override_dir = '/etc/systemd/system/getty@tty1.service.d'
-        override_file = os.path.join(override_dir, 'override.conf')
-        if os.path.exists(override_file):
-            _host_run_base(f'rm -f {override_file} && rmdir {override_dir} 2>/dev/null; systemctl daemon-reload', timeout=10)
+        console_svc = '/opt/ethos/tools/ethos-console@.service'
+        if os.path.isfile(console_svc):
+            _host_run_base(
+                'cp /opt/ethos/tools/ethos-console@.service /etc/systemd/system/ && '
+                'systemctl daemon-reload && '
+                'systemctl disable --now getty@tty1.service 2>/dev/null; '
+                'rm -rf /etc/systemd/system/getty@tty1.service.d 2>/dev/null; '
+                'systemctl enable --now ethos-console@tty1.service',
+                timeout=15
+            )
     except Exception:
         pass  # non-critical
 

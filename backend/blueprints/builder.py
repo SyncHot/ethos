@@ -2367,7 +2367,8 @@ SVCETHOS
 # NOTE: Do NOT enable here — firstboot.sh enables after stopping preboot (port 9000 conflict)
 
 # ── Auto-login on tty1 as nasadmin (NOT root) during first boot ──
-# After setup wizard completes, firstboot removes this override
+# After setup wizard completes, setup_complete() replaces this with
+# ethos-console@tty1 (read-only Synology-style info screen).
 mkdir -p "$ROOT/etc/systemd/system/getty@tty1.service.d"
 cat > "$ROOT/etc/systemd/system/getty@tty1.service.d/override.conf" <<AUTOLOGIN
 [Service]
@@ -2417,6 +2418,11 @@ if [ ! -f /opt/ethos/.installed ]; then
 fi
 USERPROFILE
 chown $(chroot "$ROOT" id -u $DEFAULT_USER):$(chroot "$ROOT" id -g $DEFAULT_USER) "$ROOT/home/$DEFAULT_USER/.bash_profile"
+
+# ── Pre-install console info screen service (activated after setup) ──
+cp "$ETHOS_DIR/tools/ethos-console.sh"      "$ROOT/opt/ethos/tools/ethos-console.sh"
+cp "$ETHOS_DIR/tools/ethos-console@.service" "$ROOT/etc/systemd/system/ethos-console@.service"
+chmod 755 "$ROOT/opt/ethos/tools/ethos-console.sh"
 
 echo "STEP:85:EthOS injected"
 _ckpt_set "06_inject_ethos"

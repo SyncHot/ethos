@@ -1,0 +1,36 @@
+[Unit]
+Description=EthOS Console Info Screen on %I
+Documentation=https://github.com/SyncHot/ethos
+After=systemd-user-sessions.service ethos.service
+Conflicts=getty@%i.service
+
+[Service]
+Type=simple
+ExecStart=/opt/ethos/tools/ethos-console.sh /dev/%I
+Restart=always
+RestartSec=5
+
+# No input — read-only display, no shell escape possible
+StandardInput=null
+StandardOutput=tty
+StandardError=journal
+TTYPath=/dev/%I
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+
+# Run as root to read hardware sensors
+User=root
+
+# Hardening
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=/opt/ethos
+PrivateTmp=yes
+NoNewPrivileges=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target
