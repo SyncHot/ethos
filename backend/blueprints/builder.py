@@ -2497,6 +2497,81 @@ if command -v mksquashfs >/dev/null 2>&1; then
     SQSH_SIZE=$(stat -c%s "$SQSH_OUT" 2>/dev/null || echo 0)
     echo "LOG:SquashFS image: $((SQSH_SIZE / 1048576))MB"
 
+    # ── SquashFS sanity checks ──
+    # Mount the freshly-created squashfs and verify critical files are present.
+    # These checks catch structural issues that would cause firstboot or boot
+    # failures on the installed system (e.g. missing initramfs scripts, missing
+    # firstboot, broken symlinks).
+    echo "LOG:Running SquashFS sanity checks..."
+    SQSH_CHECK="/tmp/sqsh-sanity-$$"
+    mkdir -p "$SQSH_CHECK"
+    SANITY_FAIL=0
+    if mount -t squashfs -o ro,loop "$SQSH_OUT" "$SQSH_CHECK" 2>/dev/null; then
+        # 1. Firstboot script must exist
+        if [ ! -f "$SQSH_CHECK/opt/ethos-firstboot.sh" ]; then
+            echo "LOG:SANITY FAIL: /opt/ethos-firstboot.sh missing from squashfs"
+            SANITY_FAIL=1
+        fi
+        # 2. Requirements file must exist (firstboot needs it to install venv)
+        if [ ! -f "$SQSH_CHECK/opt/ethos/backend/requirements.txt" ]; then
+            echo "LOG:SANITY FAIL: requirements.txt missing from squashfs"
+            SANITY_FAIL=1
+        else
+            # Verify critical packages are listed
+            for _pkg in flask gevent psutil; do
+                if ! grep -qi "$_pkg" "$SQSH_CHECK/opt/ethos/backend/requirements.txt"; then
+                    echo "LOG:SANITY FAIL: $_pkg not in requirements.txt"
+                    SANITY_FAIL=1
+                fi
+            done
+        fi
+        # 3. Initramfs overlay script must exist
+        if [ ! -f "$SQSH_CHECK/etc/initramfs-tools/scripts/local-bottom/ethos-overlay" ]; then
+            echo "LOG:SANITY FAIL: ethos-overlay initramfs script missing"
+            SANITY_FAIL=1
+        fi
+        # 4. Systemd services must exist
+        for _svc in ethos.service ethos-firstboot.service; do
+            if [ ! -f "$SQSH_CHECK/etc/systemd/system/$_svc" ]; then
+                echo "LOG:SANITY FAIL: $_svc missing from squashfs"
+                SANITY_FAIL=1
+            fi
+        done
+        # 5. Firstboot must be enabled (symlink in multi-user.target.wants)
+        if [ ! -L "$SQSH_CHECK/etc/systemd/system/multi-user.target.wants/ethos-firstboot.service" ]; then
+            echo "LOG:SANITY FAIL: ethos-firstboot.service not enabled"
+            SANITY_FAIL=1
+        fi
+        # 6. Data dirs must be symlinks (not real dirs) in the squashfs
+        for _d in data logs backups uploads venv; do
+            _p="$SQSH_CHECK/opt/ethos/$_d"
+            if [ -d "$_p" ] && [ ! -L "$_p" ]; then
+                echo "LOG:SANITY FAIL: /opt/ethos/$_d is a directory, expected symlink to /mnt/data"
+                SANITY_FAIL=1
+            fi
+        done
+        # 7. app.py must exist
+        if [ ! -f "$SQSH_CHECK/opt/ethos/backend/app.py" ]; then
+            echo "LOG:SANITY FAIL: backend/app.py missing from squashfs"
+            SANITY_FAIL=1
+        fi
+        # 8. Initramfs hook must exist (adds squashfs/overlay modules to initrd)
+        if [ ! -f "$SQSH_CHECK/etc/initramfs-tools/hooks/ethos-overlay" ]; then
+            echo "LOG:SANITY FAIL: ethos-overlay initramfs hook missing"
+            SANITY_FAIL=1
+        fi
+        umount "$SQSH_CHECK" 2>/dev/null || true
+    else
+        echo "LOG:SANITY FAIL: cannot mount squashfs for verification"
+        SANITY_FAIL=1
+    fi
+    rmdir "$SQSH_CHECK" 2>/dev/null || true
+    if [ "$SANITY_FAIL" = "0" ]; then
+        echo "LOG:SquashFS sanity checks PASSED (8/8)"
+    else
+        echo "LOG:WARNING: SquashFS sanity checks FAILED — image may not boot correctly"
+    fi
+
     # Generate dm-verity hash tree for integrity verification
     if command -v veritysetup >/dev/null 2>&1; then
         echo "LOG:Generating dm-verity hash tree..."
@@ -2591,6 +2666,12 @@ if /opt/ethos/venv/bin/python -c "import flask" 2>/dev/null; then
     echo "PREFLIGHT:FLASK:OK"
 else
     echo "PREFLIGHT:FLASK:FAIL"
+fi
+# Critical dependencies (gevent, psutil — most common firstboot pip failures)
+if /opt/ethos/venv/bin/python -c "import gevent; import psutil; import flask_socketio" 2>/dev/null; then
+    echo "PREFLIGHT:DEPS:OK"
+else
+    echo "PREFLIGHT:DEPS:FAIL"
 fi
 echo "PREFLIGHT:DONE"
 systemctl disable ethos-preflight.service 2>/dev/null || true
