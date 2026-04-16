@@ -116,7 +116,7 @@ def _save_config(cfg):
 def _get_db():
     db = sqlite3.connect(_mail_db_path())
     db.row_factory = sqlite3.Row
-    db.execute('PRAGMA journal_mode=WAL')
+    db.execute('PRAGMA journal_mode=DELETE')
     db.execute('PRAGMA foreign_keys=ON')
     return db
 
@@ -265,14 +265,14 @@ def _generate_postfix_config(cfg):
         'mailbox_size_limit = 0',
     ]
 
-    # DKIM milter
-    if os.path.isfile('/var/run/opendkim/opendkim.sock') or _service_active('opendkim'):
+    # DKIM milter (socket inside Postfix chroot)
+    if os.path.isfile('/var/spool/postfix/opendkim/opendkim.sock') or _service_active('opendkim'):
         main_cf_lines += [
             '',
             '# DKIM signing via OpenDKIM',
             'milter_default_action = accept',
             'milter_protocol = 6',
-            'smtpd_milters = unix:/var/run/opendkim/opendkim.sock',
+            'smtpd_milters = unix:opendkim/opendkim.sock',
             'non_smtpd_milters = $smtpd_milters',
         ]
 
@@ -304,6 +304,8 @@ def _generate_postfix_config(cfg):
 
     # Enable submission port (587) in master.cf
     _enable_submission_port()
+    # Disable chroot for services that need access to SQLite DB on data partition
+    _disable_postfix_chroot()
 
 
 def _write_postfix_sqlite_cf(filename, query):
@@ -337,6 +339,36 @@ def _enable_submission_port():
     )
     with open(master_cf, 'a') as f:
         f.write(submission_block)
+
+
+def _disable_postfix_chroot():
+    """Disable chroot for Postfix services that access the SQLite DB on the data drive.
+
+    The cleanup and smtpd processes need access to virtual_alias/mailbox SQLite
+    lookups which reside on the data partition — unreachable from inside chroot.
+    """
+    master_cf = os.path.join(_POSTFIX_DIR, 'master.cf')
+    if not os.path.isfile(master_cf):
+        return
+    with open(master_cf) as f:
+        lines = f.readlines()
+
+    changed = False
+    new_lines = []
+    for line in lines:
+        # Match service lines like:  smtp      inet  n  -  y  -  -  smtpd
+        # Fields: service type private unpriv chroot wakeup maxproc command
+        if not line.startswith(' ') and not line.startswith('#') and not line.startswith('\t'):
+            parts = line.split()
+            if len(parts) >= 5 and parts[-1] in ('smtpd', 'cleanup') and parts[4] == 'y':
+                parts[4] = 'n'
+                line = '  '.join(parts[:5]) + '  ' + '  '.join(parts[5:]) + '\n'
+                changed = True
+        new_lines.append(line)
+
+    if changed:
+        with open(master_cf, 'w') as f:
+            f.writelines(new_lines)
 
 
 # ─── Dovecot config generation ─────────────────────────────────
@@ -540,7 +572,7 @@ SigningTable            refile:{_OPENDKIM_DIR}/SigningTable
 ExternalIgnoreList      {_OPENDKIM_DIR}/TrustedHosts
 InternalHosts           {_OPENDKIM_DIR}/TrustedHosts
 
-Socket                  local:/var/run/opendkim/opendkim.sock
+Socket                  local:/var/spool/postfix/opendkim/opendkim.sock
 PidFile                 /var/run/opendkim/opendkim.pid
 
 OversignHeaders         From
@@ -552,8 +584,12 @@ UserID                  opendkim:opendkim
     with open(os.path.join(_OPENDKIM_DIR, 'opendkim.conf'), 'w') as f:
         f.write(opendkim_conf)
 
-    # Ensure socket dir
-    host_run('mkdir -p /var/run/opendkim && chown opendkim:opendkim /var/run/opendkim', timeout=5)
+    # Ensure socket dir inside Postfix chroot so milter is reachable
+    host_run('mkdir -p /var/spool/postfix/opendkim && '
+             'chown opendkim:postfix /var/spool/postfix/opendkim && '
+             'chmod 750 /var/spool/postfix/opendkim', timeout=5)
+    # Add postfix user to opendkim group for socket access
+    host_run('usermod -aG opendkim postfix', timeout=5)
     # Fix permissions
     host_run(f'chown -R opendkim:opendkim {q(keys_dir)}', timeout=5)
 
