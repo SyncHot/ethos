@@ -4496,6 +4496,19 @@ select.tk-input {
 .notif-test-result.notif-ok { color: var(--success); }
 .notif-test-result.notif-err { color: var(--danger); }
 
+/* Local mail server auto-detect */
+.notif-local-badge {
+    font-size: 11px; font-weight: 600; color: var(--success);
+    background: rgba(16, 185, 129, 0.12); border-radius: var(--r-sm);
+    padding: 2px 8px; margin-left: 8px;
+}
+.notif-local-smtp {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px; border-radius: var(--r-md);
+    background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.2);
+}
+.notif-local-hint { font-size: 12px; color: var(--text-secondary); }
+
 /* Toggle switch */
 .notif-toggle {
     position: relative; display: inline-block; width: 36px; height: 20px; cursor: pointer;
@@ -6537,4 +6550,5 @@ textarea.app-input { resize: vertical; line-height: 1.5; }
     border-radius:20px; font-size:11px; font-weight:600; cursor:default; }
 .vs-codec-pill-ok   { background:rgba(74,222,128,.15); color:#4ade80; border:1px solid rgba(74,222,128,.3); }
 .vs-codec-pill-fail { background:rgba(239,68,68,.1); color:#f87171; border:1px solid rgba(239,68,68,.3); }
+
 

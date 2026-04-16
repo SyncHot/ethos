@@ -1068,9 +1068,11 @@ function renderDesktopIcons() {
     desktopApps.forEach(app => {
         const el = document.createElement('div');
         el.className = 'desktop-icon';
+        el.dataset.appId = app.id;
         el.innerHTML = `
             <div class="desktop-icon-img" style="background:${app.color || '#3b82f6'}">
                 <i class="fas ${app.icon}"></i>
+                <span class="desktop-icon-badge hidden" data-badge-app="${app.id}"></span>
             </div>
             <div class="desktop-icon-label">${t(app.name)}</div>
         `;
@@ -1082,6 +1084,20 @@ function renderDesktopIcons() {
         container.appendChild(el);
     });
 }
+
+/**
+ * Set a numeric badge on a desktop icon. count=0 hides the badge.
+ */
+NAS.setAppBadge = function(appId, count) {
+    const badge = document.querySelector(`.desktop-icon-badge[data-badge-app="${appId}"]`);
+    if (!badge) return;
+    if (count > 0) {
+        badge.textContent = count > 99 ? '99+' : count;
+        badge.classList.remove('hidden');
+    } else {
+        badge.classList.add('hidden');
+    }
+};
 
 
 /* ── Desktop right-click context menu ── */

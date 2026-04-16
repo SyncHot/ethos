@@ -573,6 +573,13 @@ input[type="checkbox"]:hover {
     font-size: 20px;
     color: white;
     box-shadow: var(--shadow-sm);
+    position: relative;
+}
+.desktop-icon-badge {
+    position: absolute; top: -4px; right: -4px;
+    background: #ef4444; color: #fff; font-size: 9px; font-weight: 700;
+    min-width: 16px; height: 16px; line-height: 16px; text-align: center;
+    border-radius: 8px; padding: 0 4px; box-shadow: 0 1px 3px rgba(0,0,0,.3);
 }
 
 .desktop-icon-label {

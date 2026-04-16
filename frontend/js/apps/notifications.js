@@ -120,10 +120,12 @@ AppRegistry['notifications'] = function (appDef) {
             const chState = state.channels[chName] || {};
             const card = document.createElement('div');
             card.className = 'notif-card';
+            const isSmtp = chName === 'smtp';
             card.innerHTML = `
                 <div class="notif-card-head">
                     <i class="fas ${chDef.icon}" style="color:${chDef.color}"></i>
                     <span class="notif-card-title">${chDef.label}</span>
+                    ${isSmtp ? '<span class="notif-local-badge" id="notif-local-badge" style="display:none"><i class="fas fa-server"></i> ' + t('Lokalny serwer') + '</span>' : ''}
                     <span class="notif-spacer"></span>
                     <label class="notif-toggle">
                         <input type="checkbox" data-ch="${chName}" data-field="enabled"
@@ -132,6 +134,12 @@ AppRegistry['notifications'] = function (appDef) {
                     </label>
                 </div>
                 <div class="notif-card-body ${chState.enabled ? '' : 'notif-disabled'}">
+                    ${isSmtp ? `<div class="notif-local-smtp" id="notif-local-smtp-box" style="display:none">
+                        <button class="btn btn-sm btn-success" id="notif-use-local-smtp">
+                            <i class="fas fa-magic"></i> ${t('Użyj lokalnego serwera poczty')}
+                        </button>
+                        <span class="notif-local-hint">${t('Wykryto działający serwer poczty — kliknij aby skonfigurować automatycznie')}</span>
+                    </div>` : ''}
                     ${chDef.fields.map(f => fieldHtml(chName, f, chState)).join('')}
                     <div class="notif-card-actions">
                         <button class="btn btn-sm btn-outline notif-test-btn" data-ch="${chName}"
@@ -145,6 +153,9 @@ AppRegistry['notifications'] = function (appDef) {
             `;
             container.appendChild(card);
         }
+
+        // Detect local mail server for SMTP auto-fill
+        _detectLocalSmtp(panel);
 
         // Bind toggle → show/hide fields
         container.querySelectorAll('.notif-toggle input').forEach(inp => {
@@ -371,6 +382,38 @@ AppRegistry['notifications'] = function (appDef) {
         const d = document.createElement('div');
         d.textContent = s;
         return d.innerHTML;
+    };
+
+    /* ── Local SMTP auto-detect ────────────────────────────── */
+
+    const _detectLocalSmtp = async (panel) => {
+        try {
+            const data = await api('/notifications/local-smtp');
+            if (!data || !data.available) return;
+            state._localSmtp = data;
+
+            const badge = panel.querySelector('#notif-local-badge');
+            const box = panel.querySelector('#notif-local-smtp-box');
+            if (badge) badge.style.display = '';
+            if (box) box.style.display = '';
+
+            const btn = panel.querySelector('#notif-use-local-smtp');
+            if (btn) {
+                btn.onclick = () => {
+                    if (!state.channels.smtp) state.channels.smtp = {};
+                    state.channels.smtp.enabled = true;
+                    state.channels.smtp.host = data.host;
+                    state.channels.smtp.port = data.port;
+                    state.channels.smtp.username = data.username;
+                    state.channels.smtp.password = data.password;
+                    state.channels.smtp.from_addr = data.from_addr;
+                    state.channels.smtp.to_addr = data.to_addr;
+                    state.channels.smtp.use_tls = data.use_tls;
+                    toast(t('Konfiguracja SMTP wypełniona automatycznie'), 'success');
+                    render();
+                };
+            }
+        } catch (_) { /* mail server not installed — ignore */ }
     };
 
     /* ── Init ───────────────────────────────────────────────── */

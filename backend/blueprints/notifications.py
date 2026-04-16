@@ -9,6 +9,7 @@ Inbox endpoints:
   POST /api/notifications/read      — Mark notification(s) as read
   POST /api/notifications/read-all  — Mark all as read
   POST /api/notifications/subscribe — Accept Web Push subscription (stub)
+  GET  /api/notifications/local-smtp — Auto-detect local mail server for SMTP relay
 """
 
 import json
@@ -580,3 +581,88 @@ def subscribe_push():
     notifications.  Currently a no-op — notifications use SocketIO.
     """
     return jsonify({'ok': True})
+
+
+# ── Local mail server auto-detect ─────────────────────────────────────────
+
+def _detect_local_mail_server():
+    """Check if local Postfix mail server is running with accounts configured.
+
+    Returns dict with suggested SMTP config or None if unavailable.
+    """
+    import shutil
+    import subprocess
+    import sqlite3 as _sqlite3
+
+    if not shutil.which('postfix'):
+        return None
+
+    # Check if Postfix is active
+    try:
+        r = subprocess.run(
+            ['systemctl', 'is-active', 'postfix'],
+            capture_output=True, text=True, timeout=5)
+        if r.returncode != 0:
+            return None
+    except Exception:
+        return None
+
+    # Find mail DB and get first account + hostname
+    mail_data_dir = os.environ.get('ETHOS_DATA', '/opt/ethos/data')
+    # Check data partition first, then local data/
+    from host import get_data_disk
+    dd = get_data_disk()
+    db_path = None
+    for candidate in [
+        os.path.join(dd, 'mail', 'mail.db') if dd else None,
+        os.path.join(mail_data_dir, 'mail', 'mail.db'),
+    ]:
+        if candidate and os.path.isfile(candidate):
+            db_path = candidate
+            break
+
+    if not db_path:
+        return None
+
+    try:
+        conn = _sqlite3.connect(db_path, timeout=3)
+        conn.row_factory = _sqlite3.Row
+        row = conn.execute(
+            'SELECT email FROM accounts WHERE enabled = 1 ORDER BY id LIMIT 1'
+        ).fetchone()
+        conn.close()
+        if not row:
+            return None
+        first_email = row['email']
+    except Exception:
+        return None
+
+    # Read hostname from mail config
+    config_path = os.path.join(os.path.dirname(db_path), 'config.json')
+    hostname = 'localhost'
+    try:
+        with open(config_path) as f:
+            cfg = json.load(f)
+            hostname = cfg.get('hostname', hostname)
+    except Exception:
+        pass
+
+    return {
+        'available': True,
+        'host': '127.0.0.1',
+        'port': 25,
+        'username': '',
+        'password': '',
+        'from_addr': f'noreply@{hostname.replace("mail.", "", 1) if hostname.startswith("mail.") else hostname}',
+        'to_addr': first_email,
+        'use_tls': False,
+    }
+
+
+@notifications_bp.route('/local-smtp', methods=['GET'])
+def detect_local_smtp():
+    """Auto-detect local Postfix mail server for notification relay."""
+    result = _detect_local_mail_server()
+    if result:
+        return jsonify(result)
+    return jsonify({'available': False})
