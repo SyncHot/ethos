@@ -13,6 +13,7 @@ Endpoints:
   POST  /api/mail-server/domains             — add domain
   DELETE /api/mail-server/domains/<domain>   — remove domain
   GET   /api/mail-server/domains/<d>/dns     — DNS records helper for domain
+  GET   /api/mail-server/domains/<d>/dns-check — verify DNS records via live lookup
   GET   /api/mail-server/accounts            — list accounts
   POST  /api/mail-server/accounts            — create account
   PUT   /api/mail-server/accounts/<email>    — update account (password, quota, enabled)
@@ -1051,6 +1052,104 @@ def domain_dns(domain):
     cfg = _load_config()
     records = _dns_records_for_domain(domain, cfg)
     return jsonify(items=records)
+
+
+@mail_bp.route('/domains/<domain>/dns-check', methods=['GET'])
+@admin_required
+def domain_dns_check(domain):
+    """Verify DNS records for a domain by performing real lookups."""
+    import socket
+    cfg = _load_config()
+    expected = _dns_records_for_domain(domain, cfg)
+    my_ip = cfg.get('ip') or _get_public_ip()
+    hostname = cfg.get('hostname', f'mail.{domain}')
+    results = []
+
+    for rec in expected:
+        check = {
+            'type': rec['type'],
+            'name': rec['name'],
+            'dns_name': rec.get('dns_name', ''),
+            'expected': rec['value'],
+            'found': '',
+            'ok': False,
+        }
+
+        try:
+            if rec['type'] == 'A':
+                r = host_run(f'dig +short A {q(rec["name"])} 2>/dev/null', timeout=10)
+                found = [l.strip() for l in r.stdout.strip().splitlines() if l.strip()]
+                check['found'] = ', '.join(found) if found else ''
+                check['ok'] = my_ip in found
+
+            elif rec['type'] == 'MX':
+                r = host_run(f'dig +short MX {q(domain)} 2>/dev/null', timeout=10)
+                found = r.stdout.strip()
+                check['found'] = found
+                # MX expected format: "10 mail.example.com."
+                hn_dot = hostname if hostname.endswith('.') else hostname + '.'
+                check['ok'] = hn_dot in found or hostname in found
+
+            elif rec['type'] == 'TXT':
+                lookup_name = rec['name']
+                r = host_run(f'dig +short TXT {q(lookup_name)} 2>/dev/null', timeout=10)
+                raw = r.stdout.strip()
+                # dig returns quoted strings — normalize
+                found_records = [l.strip().strip('"') for l in raw.splitlines() if l.strip()]
+                # TXT records can be split across multiple strings — join fragments
+                joined = ' '.join(found_records)
+                check['found'] = joined[:300] if joined else ''
+
+                expected_val = rec['value']
+                if 'v=spf1' in expected_val:
+                    check['ok'] = any('v=spf1' in f for f in found_records)
+                elif 'v=DMARC1' in expected_val:
+                    check['ok'] = any('v=DMARC1' in f for f in found_records)
+                elif 'v=DKIM1' in expected_val or '_domainkey' in rec['name']:
+                    check['ok'] = any('v=DKIM1' in f or 'p=' in f for f in found_records)
+                else:
+                    check['ok'] = expected_val in joined
+
+        except Exception as e:
+            check['found'] = f'error: {e}'
+
+        results.append(check)
+
+    # Bonus: check rDNS (PTR) for the IP
+    try:
+        r = host_run(f'dig +short -x {q(my_ip)} 2>/dev/null', timeout=10)
+        ptr = r.stdout.strip().rstrip('.')
+        ptr_ok = ptr.lower() == hostname.lower()
+        results.append({
+            'type': 'PTR',
+            'name': my_ip,
+            'dns_name': t('rDNS (odwrotny DNS)') if False else 'rDNS (reverse DNS)',
+            'expected': hostname,
+            'found': ptr or '',
+            'ok': ptr_ok,
+        })
+    except Exception:
+        pass
+
+    # Bonus: check if port 25 is reachable (common ISP block)
+    try:
+        r = host_run(
+            f'timeout 5 bash -c "echo QUIT | nc -w3 {q(my_ip)} 25" 2>/dev/null',
+            timeout=8)
+        port_25_ok = '220' in r.stdout or r.returncode == 0
+        results.append({
+            'type': 'PORT',
+            'name': f'{my_ip}:25',
+            'dns_name': 'SMTP port 25',
+            'expected': 'open',
+            'found': 'open' if port_25_ok else 'blocked/closed',
+            'ok': port_25_ok,
+        })
+    except Exception:
+        pass
+
+    all_ok = all(r['ok'] for r in results)
+    return jsonify(ok=True, results=results, all_ok=all_ok)
 
 
 # ─── Accounts ─────────────────────────────────────────────────
