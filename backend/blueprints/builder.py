@@ -1735,6 +1735,9 @@ INITRD=$(ls "$ROOT/boot/initrd.img-"* 2>/dev/null | sort -V | tail -1 | sed "s|$
 if [ -z "$KERN" ] && [ -L "$ROOT/boot/vmlinuz" ]; then
     KERN="/boot/vmlinuz"
 fi
+if [ -z "$INITRD" ] && [ -L "$ROOT/boot/initrd.img" ]; then
+    INITRD="/boot/initrd.img"
+fi
 
 mkdir -p "$ROOT/boot/grub"
 cat > "$ROOT/boot/grub/grub.cfg" <<GRUBCFG
@@ -1866,7 +1869,11 @@ fi
 # Refresh grub.cfg + BOOTX64.EFI now that the latest kernel is active
 KERN=$(ls "$ROOT/boot/vmlinuz-"* 2>/dev/null | sort -V | tail -1 | sed "s|$ROOT||")
 INITRD=$(ls "$ROOT/boot/initrd.img-"* 2>/dev/null | sort -V | tail -1 | sed "s|$ROOT||")
-echo "LOG:Refreshing GRUB config for kernel: $KERN"
+# Fallback: initrd may not exist yet (generated later by update-initramfs)
+if [[ -z "$INITRD" && -L "$ROOT/boot/initrd.img" ]]; then
+    INITRD="/boot/initrd.img"
+fi
+echo "LOG:Refreshing GRUB config for kernel: $KERN initrd: $INITRD"
 cat > "$ROOT/boot/grub/grub.cfg" <<GRUBCFG
 set timeout=3
 set default=0
@@ -2099,6 +2106,39 @@ if [[ -n "$NEW_KERN" ]]; then
     chroot "$ROOT" update-initramfs -u -k "$NEW_KERN" 2>&1 | tail -5 || echo "LOG:initramfs update failed"
 else
     chroot "$ROOT" update-initramfs -u -k all 2>/dev/null || echo "LOG:initramfs update failed"
+fi
+
+# ── Final GRUB refresh — initrd now exists after update-initramfs ──
+KERN=$(ls "$ROOT/boot/vmlinuz-"* 2>/dev/null | sort -V | tail -1 | sed "s|$ROOT||") || true
+INITRD=$(ls "$ROOT/boot/initrd.img-"* 2>/dev/null | sort -V | tail -1 | sed "s|$ROOT||") || true
+if [[ -z "$INITRD" && -L "$ROOT/boot/initrd.img" ]]; then
+    INITRD="/boot/initrd.img"
+fi
+if [[ -n "$KERN" && -n "$INITRD" ]]; then
+    echo "LOG:Final GRUB refresh: kernel=$KERN initrd=$INITRD"
+    cat > "$ROOT/boot/grub/grub.cfg" <<GRUBCFG
+set timeout=3
+set default=0
+insmod part_gpt
+insmod ext2
+insmod gzio
+menuentry "EthOS v${{VERSION}}" {{
+    search --no-floppy --fs-uuid --set=root ${{ROOT_UUID}}
+    linux ${{KERN}} root=UUID=${{ROOT_UUID}} ro quiet loglevel=3 rd.systemd.show_status=auto vt.global_cursor_default=0 splash net.ifnames=0 biosdevname=0 fsck.repair=preen console=tty0 console=ttyS0,115200n8
+    initrd ${{INITRD}}
+}}
+menuentry "EthOS v${{VERSION}} (recovery)" {{
+    search --no-floppy --fs-uuid --set=root ${{ROOT_UUID}}
+    linux ${{KERN}} root=UUID=${{ROOT_UUID}} ro single nomodeset fsck.repair=preen console=tty0 console=ttyS0,115200n8
+    initrd ${{INITRD}}
+}}
+GRUBCFG
+    cp "$ROOT/boot/grub/grub.cfg" "$ROOT/boot/efi/EFI/BOOT/grub.cfg"
+    cp "$ROOT/boot/grub/grub.cfg" "$ROOT/boot/efi/boot/grub/grub.cfg"
+    cp "$ROOT/boot/${{INITRD##*/}}" "$ROOT/boot/efi/EFI/recovery/initrd.img" 2>/dev/null || true
+    echo "LOG:GRUB config updated with initrd"
+else
+    echo "LOG:WARNING: kernel=$KERN initrd=$INITRD — grub.cfg may be incomplete!"
 fi
 
 echo "STEP:75:Dependencies installed"
