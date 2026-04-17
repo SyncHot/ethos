@@ -4587,7 +4587,9 @@ def clean_tmp():
     """Clean /tmp files older than specified max_age_minutes (default 60).
     Skips system sockets (.X11-unix, .ICE-unix, etc.) and systemd private dirs."""
     import shutil as _shutil
-    data = request.get_json(force=True) if request.is_json else {}
+    data = request.get_json(force=True, silent=True) if request.is_json else {}
+    if not isinstance(data, dict):
+        data = {}
     max_age = max(0, int(data.get('max_age_minutes', 60)))
     cutoff = time.time() - max_age * 60
 
@@ -4762,6 +4764,8 @@ def network_mount_list():
 def network_mount_add():
     """Add and mount a new network drive."""
     data = request.json or {}
+    if not isinstance(data, dict):
+        data = {}
     protocol = data.get('protocol', 'smb').lower()
     host_addr = data.get('host', '').strip()
     share = data.get('share', '').strip().strip('/')

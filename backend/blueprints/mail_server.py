@@ -871,7 +871,9 @@ def uninstall():
 @admin_required
 def setup_wizard():
     """Wizard endpoint — configure hostname, first domain, first account."""
-    data = request.get_json(force=True)
+    data = request.get_json(force=True, silent=True) or {}
+    if not isinstance(data, dict):
+        data = {}
     hostname = data.get('hostname', '').strip()
     domain = data.get('domain', '').strip()
     email = data.get('email', '').strip()

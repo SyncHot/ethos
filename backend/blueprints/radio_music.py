@@ -106,7 +106,7 @@ _meta_cache_dirty = False
 def _meta_cache_path():
     global _meta_cache_file
     if not _meta_cache_file:
-        _meta_cache_file = data_path('radio_music', 'meta_cache.json')
+        _meta_cache_file = os.path.join(data_path('radio_music'), 'meta_cache.json')
         os.makedirs(os.path.dirname(_meta_cache_file), exist_ok=True)
     return _meta_cache_file
 

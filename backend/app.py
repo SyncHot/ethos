@@ -3923,6 +3923,8 @@ def fileop_status():
 def cancel_fileop():
     """Cancel the currently active file operation on a specific channel."""
     data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        data = {}
     ch = data.get('channel', None)
     # Auto-detect channel if not provided
     if not ch:
@@ -3960,6 +3962,8 @@ def cancel_fileop():
 def pause_fileop():
     """Pause or resume the currently active file operation on a specific channel."""
     data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        data = {}
     ch = data.get('channel', None)
     # Auto-detect channel if not provided
     if not ch:
@@ -10244,17 +10248,17 @@ if __name__ == '__main__':
         """Free space on root partition: apt cache, pip cache, old /tmp files, old logs.
         Returns human-readable string of freed space (e.g. '120 MB') or '' if nothing freed."""
         import shutil as _shutil
-        before = shutil.disk_usage('/').free
+        before = _shutil.disk_usage('/').free
         try:
-            host_run('apt-get clean -y 2>/dev/null || true', timeout=60)
+            _host_run_base('apt-get clean -y 2>/dev/null || true', timeout=60)
         except Exception:
             pass
         try:
-            host_run('find /var/cache/apt/archives -name "*.deb" -delete 2>/dev/null || true', timeout=30)
+            _host_run_base('find /var/cache/apt/archives -name "*.deb" -delete 2>/dev/null || true', timeout=30)
         except Exception:
             pass
         try:
-            host_run('find /root/.cache/pip /home/*/.cache/pip -maxdepth 0 -exec rm -rf {} + 2>/dev/null || true', timeout=30)
+            _host_run_base('find /root/.cache/pip /home/*/.cache/pip -maxdepth 0 -exec rm -rf {} + 2>/dev/null || true', timeout=30)
         except Exception:
             pass
         try:
@@ -10284,7 +10288,7 @@ if __name__ == '__main__':
                     pass
         except Exception:
             pass
-        after = shutil.disk_usage('/').free
+        after = _shutil.disk_usage('/').free
         freed = after - before
         if freed > 1024 * 1024:
             mb = freed // (1024 * 1024)
