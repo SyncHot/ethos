@@ -1017,7 +1017,7 @@ _cleanup_stale_loops() {{
     done
     umount "$WORK_DIR/efi" 2>/dev/null || true
     # Detach all loop devices referencing our img (including deleted inodes)
-    losetup -a 2>/dev/null | grep "ethos-x86-build-web" | cut -d: -f1 | while read _ld; do
+    losetup -a 2>/dev/null | {{ grep "ethos-x86-build-web" || true; }} | cut -d: -f1 | while read _ld; do
         losetup -d "$_ld" 2>/dev/null || true
     done
     # If WORK_DIR was a tmpfs mount from prior build, unmount it
@@ -1081,7 +1081,7 @@ cleanup() {{
     umount "$WORK_DIR/efi" 2>/dev/null || true
     sleep 1
     # Detach ALL loop devices associated with our build image (not just $LOOP_DEV)
-    losetup -a 2>/dev/null | grep "ethos-x86-build-web" | cut -d: -f1 | while read _ld; do
+    losetup -a 2>/dev/null | {{ grep "ethos-x86-build-web" || true; }} | cut -d: -f1 | while read _ld; do
         losetup -d "$_ld" 2>/dev/null || true
     done
     if [ "$BUILD_DONE" = "1" ]; then
@@ -2952,7 +2952,7 @@ if [ "$PREFLIGHT_ENABLED" = "1" ]; then
         if [ "$PFLIGHT_OK" = "1" ]; then
             echo "LOG:Pre-flight: PASSED — image booted and services verified"
             if [ -f "$PFLOG" ]; then
-                grep "^PREFLIGHT:" "$PFLOG" 2>/dev/null | while IFS= read -r _line; do
+                {{ grep "^PREFLIGHT:" "$PFLOG" 2>/dev/null || true; }} | while IFS= read -r _line; do
                     echo "LOG:VM> $_line"
                 done
             fi
