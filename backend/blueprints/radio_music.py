@@ -92,6 +92,52 @@ _AUDIO_EXTS = {'.mp3', '.m4a', '.flac', '.ogg', '.opus', '.wav', '.wma', '.aac',
 _DOWNLOAD_JOBS = {}  # job_id -> {status, progress, path, title, error, finished_at}
 _DOWNLOAD_LOCK = threading.Lock()
 
+# Metadata cache: avoids re-running ffprobe for unchanged files
+_meta_cache = {}  # {path: {mtime: float, meta: dict}}
+_meta_cache_file = None
+_meta_cache_dirty = False
+
+
+def _meta_cache_path():
+    global _meta_cache_file
+    if not _meta_cache_file:
+        _meta_cache_file = data_path('radio_music', 'meta_cache.json')
+        os.makedirs(os.path.dirname(_meta_cache_file), exist_ok=True)
+    return _meta_cache_file
+
+
+def _load_meta_cache():
+    global _meta_cache
+    try:
+        with open(_meta_cache_path(), 'r') as f:
+            _meta_cache = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        _meta_cache = {}
+
+
+def _save_meta_cache():
+    global _meta_cache_dirty
+    if not _meta_cache_dirty:
+        return
+    try:
+        with open(_meta_cache_path(), 'w') as f:
+            json.dump(_meta_cache, f)
+        _meta_cache_dirty = False
+    except OSError:
+        pass
+
+
+def _probe_audio_cached(fpath, mtime):
+    """Return cached ffprobe result if file unchanged, else probe and cache."""
+    global _meta_cache_dirty
+    cached = _meta_cache.get(fpath)
+    if cached and abs(cached.get('mtime', 0) - mtime) < 0.01:
+        return cached['meta']
+    meta = _probe_audio(fpath)
+    _meta_cache[fpath] = {'mtime': mtime, 'meta': meta}
+    _meta_cache_dirty = True
+    return meta
+
 
 def _safe_int(val, default, lo=1, hi=200):
     """Parse an integer from a request arg, clamping to [lo, hi]."""
@@ -317,9 +363,11 @@ def radio_search():
     country = request.args.get('country', '').strip()
     tag = request.args.get('tag', '').strip()
     limit = _safe_int(request.args.get('limit', 50), 50, hi=200)
+    offset = _safe_int(request.args.get('offset', 0), 0, lo=0, hi=10000)
 
     params = {
         'limit': limit * 3,  # fetch extra to aggregate duplicates
+        'offset': offset * 3,
         'hidebroken': 'true',
         'order': 'clickcount',
         'reverse': 'true',
@@ -334,7 +382,7 @@ def radio_search():
 
     raw = _radio_api('/json/stations/search', params)
     items = _aggregate_stations(raw)
-    return jsonify({'items': items[:limit]})
+    return jsonify({'items': items[:limit], 'hasMore': len(items) >= limit})
 
 
 @radio_music_bp.route('/radio/countries', methods=['GET'])
@@ -955,6 +1003,8 @@ def local_scan():
         folders = _get_audiobook_folders()
     else:
         folders = _get_music_folders()
+    if not _meta_cache:
+        _load_meta_cache()
     items = []
     for base in folders:
         if not os.path.isdir(base):
@@ -970,7 +1020,7 @@ def local_scan():
                 except OSError:
                     continue
                 rel = os.path.relpath(fpath, base)
-                meta = _probe_audio(fpath)
+                meta = _probe_audio_cached(fpath, stat.st_mtime)
                 display_name = meta.get('title') or os.path.splitext(fname)[0]
                 items.append({
                     'name': display_name,
@@ -989,6 +1039,7 @@ def local_scan():
                     'modified': stat.st_mtime,
                     'type': 'local',
                 })
+    _save_meta_cache()
     items.sort(key=lambda x: x['modified'], reverse=True)
     return jsonify({'items': items, 'folders': folders})
 
