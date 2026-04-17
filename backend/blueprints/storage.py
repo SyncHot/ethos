@@ -4548,6 +4548,94 @@ def app_usage():
 
 
 # ---------------------------------------------------------------------------
+# /tmp cleanup
+# ---------------------------------------------------------------------------
+
+@storage_bp.route('/clean-tmp', methods=['GET'])
+@admin_required
+def clean_tmp_info():
+    """Return /tmp usage stats: total, used, free, file count, and list of top items."""
+    import shutil
+    usage = shutil.disk_usage('/tmp')
+    items = []
+    try:
+        for name in os.listdir('/tmp'):
+            p = os.path.join('/tmp', name)
+            try:
+                r = _host_run_base(f'du -sb {_q_imported(p)} 2>/dev/null | cut -f1', timeout=10)
+                size = int(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else 0
+                mtime = os.path.getmtime(p)
+                items.append({'name': name, 'bytes': size, 'mtime': mtime, 'is_dir': os.path.isdir(p)})
+            except (OSError, ValueError):
+                pass
+    except OSError:
+        pass
+    items.sort(key=lambda x: x['bytes'], reverse=True)
+    return jsonify({
+        'ok': True,
+        'total': usage.total,
+        'used': usage.used,
+        'free': usage.free,
+        'pct': round(usage.used * 100 / usage.total) if usage.total else 0,
+        'items': items[:50],
+    })
+
+
+@storage_bp.route('/clean-tmp', methods=['POST'])
+@admin_required
+def clean_tmp():
+    """Clean /tmp files older than specified max_age_minutes (default 60).
+    Skips system sockets (.X11-unix, .ICE-unix, etc.) and systemd private dirs."""
+    import shutil as _shutil
+    data = request.get_json(force=True) if request.is_json else {}
+    max_age = max(0, int(data.get('max_age_minutes', 60)))
+    cutoff = time.time() - max_age * 60
+
+    # Protected prefixes — never remove these
+    protected = {'.X11-unix', '.ICE-unix', '.XIM-unix', '.font-unix'}
+
+    before_free = _shutil.disk_usage('/tmp').free
+    removed = 0
+    errors = []
+
+    try:
+        for name in os.listdir('/tmp'):
+            if name in protected or name.startswith('systemd-private-'):
+                continue
+            p = os.path.join('/tmp', name)
+            try:
+                mtime = os.path.getmtime(p)
+                if mtime >= cutoff:
+                    continue
+                if os.path.isdir(p):
+                    _shutil.rmtree(p, ignore_errors=True)
+                else:
+                    os.unlink(p)
+                removed += 1
+            except OSError as e:
+                errors.append(f'{name}: {e}')
+    except OSError as e:
+        return jsonify({'error': f'Cannot read /tmp: {e}'}), 500
+
+    after_free = _shutil.disk_usage('/tmp').free
+    freed = after_free - before_free
+
+    try:
+        from blueprints.eventlog import elog
+        elog('storage', 'info', f'/tmp cleanup: removed {removed} items, freed {freed // (1024*1024)} MB')
+    except Exception:
+        pass
+
+    return jsonify({
+        'ok': True,
+        'removed': removed,
+        'freed': freed,
+        'errors': errors[:10],
+        'free_after': after_free,
+    })
+
+
+# ---------------------------------------------------------------------------
 # Network Drive Mounts (SMB / NFS / WebDAV client-side mounts)
 # ---------------------------------------------------------------------------
 
