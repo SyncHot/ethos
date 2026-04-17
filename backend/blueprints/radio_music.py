@@ -89,8 +89,16 @@ _ITUNES_API = 'https://itunes.apple.com/search'
 _MAX_HISTORY = 100
 
 _AUDIO_EXTS = {'.mp3', '.m4a', '.flac', '.ogg', '.opus', '.wav', '.wma', '.aac', '.webm', '.mp4', '.wv', '.ape'}
-_DOWNLOAD_JOBS = {}  # job_id -> {status, progress, path, title, error}
+_DOWNLOAD_JOBS = {}  # job_id -> {status, progress, path, title, error, finished_at}
 _DOWNLOAD_LOCK = threading.Lock()
+
+
+def _safe_int(val, default, lo=1, hi=200):
+    """Parse an integer from a request arg, clamping to [lo, hi]."""
+    try:
+        return max(lo, min(int(val), hi))
+    except (ValueError, TypeError):
+        return default
 
 # ── Offline Archive ──────────────────────────────────────────
 _ARCHIVE_LOCK = threading.Lock()
@@ -308,7 +316,7 @@ def radio_search():
     q_str = request.args.get('q', '').strip()
     country = request.args.get('country', '').strip()
     tag = request.args.get('tag', '').strip()
-    limit = min(int(request.args.get('limit', 50)), 200)
+    limit = _safe_int(request.args.get('limit', 50), 50, hi=200)
 
     params = {
         'limit': limit * 3,  # fetch extra to aggregate duplicates
@@ -347,7 +355,7 @@ def radio_tags():
 
 @radio_music_bp.route('/radio/top', methods=['GET'])
 def radio_top():
-    limit = min(int(request.args.get('limit', 50)), 200)
+    limit = _safe_int(request.args.get('limit', 50), 50, hi=200)
     raw = _radio_api('/json/stations/topvote', {'limit': limit * 3, 'hidebroken': 'true'})
     items = _aggregate_stations(raw)
     return jsonify({'items': items[:limit]})
@@ -443,7 +451,7 @@ def podcasts_top():
     """Top podcasts by genre and country via iTunes RSS."""
     country = request.args.get('country', 'pl').strip().lower()
     genre_key = request.args.get('genre', '').strip().lower()
-    limit = min(int(request.args.get('limit', 30)), 100)
+    limit = _safe_int(request.args.get('limit', 30), 30, hi=100)
     genre_id = _PODCAST_GENRES.get(genre_key, 0)
 
     rss_url = f'https://itunes.apple.com/{country}/rss/toppodcasts/limit={limit}'
@@ -716,7 +724,7 @@ def history_add():
 @radio_music_bp.route('/most-played', methods=['GET'])
 def most_played():
     """Return history items sorted by play_count descending."""
-    limit = min(int(request.args.get('limit', 30)), 100)
+    limit = _safe_int(request.args.get('limit', 30), 30, hi=100)
     hfile = _user_file('history.json')
     hist = _load_json(hfile, [])
     if _fix_history_types(hist):
@@ -1196,7 +1204,7 @@ def _add_to_playlist_by_name(track_info, username, playlist_name):
         pl = next((p for p in pls if p.get('name') == playlist_name), None)
         if not pl:
             pl = {
-                'id': str(int(time.time() * 1000)),
+                'id': str(int(time.time() * 1000)) + '_' + os.urandom(3).hex(),
                 'name': playlist_name,
                 'tracks': [],
                 'created_at': time.time(),
@@ -1244,7 +1252,7 @@ def music_download():
     else:
         dest = _music_download_dir()
     os.makedirs(dest, exist_ok=True)
-    job_id = str(int(time.time() * 1000))
+    job_id = str(int(time.time() * 1000)) + '_' + os.urandom(3).hex()
     with _DOWNLOAD_LOCK:
         _DOWNLOAD_JOBS[job_id] = {
             'status': 'downloading', 'progress': 0,
@@ -1294,10 +1302,12 @@ def music_download():
                     _DOWNLOAD_JOBS[job_id]['status'] = 'done'
                     _DOWNLOAD_JOBS[job_id]['progress'] = 100
                     _DOWNLOAD_JOBS[job_id]['path'] = out_file or dest
+                    _DOWNLOAD_JOBS[job_id]['finished_at'] = time.time()
                     success = True
                 else:
                     _DOWNLOAD_JOBS[job_id]['status'] = 'error'
                     _DOWNLOAD_JOBS[job_id]['error'] = (r.stderr or 'Nieznany błąd')[:200]
+                    _DOWNLOAD_JOBS[job_id]['finished_at'] = time.time()
                     success = False
             if success:
                 _add_to_playlist_by_name(track_meta, username, target_playlist)
@@ -1305,6 +1315,7 @@ def music_download():
             with _DOWNLOAD_LOCK:
                 _DOWNLOAD_JOBS[job_id]['status'] = 'error'
                 _DOWNLOAD_JOBS[job_id]['error'] = str(e)[:200]
+                _DOWNLOAD_JOBS[job_id]['finished_at'] = time.time()
 
     gevent.spawn(_do_download)
     return jsonify({'ok': True, 'job_id': job_id})
@@ -1326,7 +1337,7 @@ def music_download_playlist():
     dest = os.path.join(_music_download_dir(), playlist_name.replace('/', '_'))
     os.makedirs(dest, exist_ok=True)
 
-    job_id = str(int(time.time() * 1000))
+    job_id = str(int(time.time() * 1000)) + '_' + os.urandom(3).hex()
     with _DOWNLOAD_LOCK:
         _DOWNLOAD_JOBS[job_id] = {
             'status': 'downloading', 'progress': 0,
@@ -1367,6 +1378,7 @@ def music_download_playlist():
         with _DOWNLOAD_LOCK:
             _DOWNLOAD_JOBS[job_id]['status'] = 'done' if not errors else 'done_partial'
             _DOWNLOAD_JOBS[job_id]['progress'] = 100
+            _DOWNLOAD_JOBS[job_id]['finished_at'] = time.time()
             if errors:
                 _DOWNLOAD_JOBS[job_id]['error'] = f'Błędy: {", ".join(errors[:5])}'
         _cleanup_intermediates(dest)
@@ -1379,10 +1391,13 @@ def music_download_playlist():
 def music_downloads_status():
     """Return status of active/recent download jobs."""
     with _DOWNLOAD_LOCK:
-        # Clean up old completed jobs (>5 min)
+        # Clean up completed jobs older than 5 minutes
         now = time.time()
         to_remove = [jid for jid, j in _DOWNLOAD_JOBS.items()
-                     if j['status'] in ('done', 'done_partial', 'error')]
+                     if j['status'] in ('done', 'done_partial', 'error')
+                     and now - j.get('finished_at', now) > 300]
+        for jid in to_remove:
+            del _DOWNLOAD_JOBS[jid]
         jobs = dict(_DOWNLOAD_JOBS)
     return jsonify({'jobs': jobs})
 
@@ -1406,7 +1421,7 @@ def playlists_create():
         return jsonify({'error': 'Brak nazwy playlisty.'}), 400
 
     pls = _load_json(_playlists_file(), [])
-    pl_id = str(int(time.time() * 1000))
+    pl_id = str(int(time.time() * 1000)) + '_' + os.urandom(3).hex()
     pl = {
         'id': pl_id,
         'name': name,
@@ -1549,7 +1564,7 @@ def music_install_deps():
 def music_search():
     """Search for music via yt-dlp (YouTube by default)."""
     q_str = request.args.get('q', '').strip()
-    limit = min(int(request.args.get('limit', 20)), 50)
+    limit = _safe_int(request.args.get('limit', 20), 20, hi=50)
     if not q_str:
         return jsonify({'items': []})
 
@@ -2032,28 +2047,26 @@ def archive_batch():
     urls = [u for u in urls if isinstance(u, str)][:200]
     with _ARCHIVE_LOCK:
         db = _load_archive()
-    results = {}
-    changed = False
-    for url in urls:
-        k = _archive_key(url)
-        entry = db.get(k, {})
-        status = entry.get('status', 'none')
-        # If marked done but file was deleted from disk, reset to allow re-download
-        if status == 'done':
-            nas_path = entry.get('nas_path', '')
-            if not nas_path or not os.path.isfile(nas_path):
-                status = 'none'
-                db.pop(k, None)
-                changed = True
-        results[url] = {
-            'key': k,
-            'status': status,
-            'progress': entry.get('progress', 0),
-            'size_bytes': entry.get('size_bytes', 0),
-            'title': entry.get('title', ''),
-        }
-    if changed:
-        with _ARCHIVE_LOCK:
+        results = {}
+        changed = False
+        for url in urls:
+            k = _archive_key(url)
+            entry = db.get(k, {})
+            status = entry.get('status', 'none')
+            if status == 'done':
+                nas_path = entry.get('nas_path', '')
+                if not nas_path or not os.path.isfile(nas_path):
+                    status = 'none'
+                    db.pop(k, None)
+                    changed = True
+            results[url] = {
+                'key': k,
+                'status': status,
+                'progress': entry.get('progress', 0),
+                'size_bytes': entry.get('size_bytes', 0),
+                'title': entry.get('title', ''),
+            }
+        if changed:
             _save_archive(db)
     return jsonify({'results': results})
 

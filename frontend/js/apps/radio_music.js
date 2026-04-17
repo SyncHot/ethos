@@ -29,6 +29,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     let _nasSpinTimer = null;  // detect slow NAS wake (>3s)
     let _queueContent = null;  // DOM node of the queue panel (null when not visible)
     let _renderNpQueueFn = null; // ref to _renderNpQueue inside the overlay closure
+    let _activePolls = [];       // download poll intervals to clear on close
 
     // ── Local radio logo cache (UUID → /img/radio-logos/filename) ──
     let _logoManifest = null;
@@ -1051,6 +1052,13 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             stopPlayback();
             _hideLockScreen();
             window.removeEventListener('popstate', _onPopState, true);
+            document.removeEventListener('visibilitychange', _onVisWakeLock);
+            document.removeEventListener('visibilitychange', _onVisFocusLoss);
+            if (_onDeviceChange && navigator.mediaDevices) {
+                navigator.mediaDevices.removeEventListener('devicechange', _onDeviceChange);
+            }
+            _activePolls.forEach(p => clearInterval(p));
+            _activePolls = [];
             document.body.classList.remove('app-fullscreen-active');
             if (_bc) { _bc.close(); _bc = null; }
         },
@@ -1896,17 +1904,18 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         const _poll = setInterval(async () => {
             const st = await api('/radio-music/music/downloads');
             const job = (st.jobs || {})[jobId];
-            if (!job) { clearInterval(_poll); return; }
+            if (!job) { clearInterval(_poll); _activePolls = _activePolls.filter(p => p !== _poll); return; }
             if (job.status === 'done') {
-                clearInterval(_poll);
+                clearInterval(_poll); _activePolls = _activePolls.filter(p => p !== _poll);
                 toast(t('Pobrano: ') + (track.title || track.name) + ' → Various Artists', 'success');
                 if (btnEl) { btnEl.classList.remove('rm-downloading'); btnEl.classList.add('rm-downloaded'); btnEl.innerHTML = '<i class="fas fa-check"></i>'; }
             } else if (job.status === 'error') {
-                clearInterval(_poll);
+                clearInterval(_poll); _activePolls = _activePolls.filter(p => p !== _poll);
                 toast(t('Błąd pobierania: ') + (job.error || ''), 'error');
                 if (btnEl) { btnEl.classList.remove('rm-downloading'); btnEl.innerHTML = '<i class="fas fa-download"></i>'; }
             }
         }, 2000);
+        _activePolls.push(_poll);
     }
 
     async function _downloadPlaylist(name, tracks) {
@@ -1920,18 +1929,19 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         const _poll = setInterval(async () => {
             const st = await api('/radio-music/music/downloads');
             const job = (st.jobs || {})[jobId];
-            if (!job) { clearInterval(_poll); return; }
+            if (!job) { clearInterval(_poll); _activePolls = _activePolls.filter(p => p !== _poll); return; }
             if (job.status === 'done' || job.status === 'done_partial') {
-                clearInterval(_poll);
+                clearInterval(_poll); _activePolls = _activePolls.filter(p => p !== _poll);
                 const msg = job.status === 'done'
                     ? t('Playlista pobrana: ') + name
                     : t('Playlista pobrana częściowo: ') + name + (job.error ? ' — ' + job.error : '');
                 toast(msg, job.status === 'done' ? 'success' : 'warning');
             } else if (job.status === 'error') {
-                clearInterval(_poll);
+                clearInterval(_poll); _activePolls = _activePolls.filter(p => p !== _poll);
                 toast(t('Błąd pobierania: ') + (job.error || ''), 'error');
             }
         }, 3000);
+        _activePolls.push(_poll);
     }
 
     /* ── Local Music ───────────────────────────────── */
@@ -3768,22 +3778,24 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         if (_wakeLock) { _wakeLock.release(); _wakeLock = null; }
     }
 
-    // Re-acquire wake lock when page becomes visible again (system releases on screen-off)
-    document.addEventListener('visibilitychange', () => {
+    // Named handlers for cleanup in onClose
+    function _onVisWakeLock() {
         if (document.visibilityState === 'visible' && _audio && !_audio.paused) {
             _acquireWakeLock();
         }
-    });
+    }
+    document.addEventListener('visibilitychange', _onVisWakeLock);
 
     // E-11: Bluetooth / audio output device disconnect — auto-pause to avoid music
     // blaring from phone speaker when headphones are pulled out in public
+    let _onDeviceChange = null;
     if ('mediaDevices' in navigator && 'enumerateDevices' in navigator.mediaDevices) {
         let _lastOutputCount = 0;
         navigator.mediaDevices.enumerateDevices().then(devs => {
             _lastOutputCount = devs.filter(d => d.kind === 'audiooutput').length;
         }).catch(() => {});
 
-        navigator.mediaDevices.addEventListener('devicechange', async () => {
+        _onDeviceChange = async () => {
             if (!_audio || _audio.paused) return;
             try {
                 const devs = await navigator.mediaDevices.enumerateDevices();
@@ -3795,19 +3807,18 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 }
                 _lastOutputCount = outputs.length;
             } catch(e) { _cl('debug', 'devicechange check failed', { msg: e.message }); }
-        });
+        };
+        navigator.mediaDevices.addEventListener('devicechange', _onDeviceChange);
     }
 
     // E-12: Audio focus loss — another app/tab takes audio focus.
     // Web has no explicit AudioFocus API; we use two signals:
     // 1. MediaSession 'pause' action fired by Android system (already wired above via onpause)
     // 2. Page visibility hidden while playing (tab backgrounded by another media app)
-    document.addEventListener('visibilitychange', () => {
-        // When page hides we check again a moment later; if still paused it was system-initiated
+    function _onVisFocusLoss() {
         if (document.visibilityState === 'hidden') {
             const audioRef = _audio;
             if (!audioRef || audioRef.paused) return;
-            // Store the moment we hid; if audio is paused when we come back, show a resume prompt
             audioRef._hiddenAt = Date.now();
         } else if (document.visibilityState === 'visible' && _audio) {
             if (_audio.paused && _audio._hiddenAt) {
@@ -3818,7 +3829,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 _audio._hiddenAt = null;
             }
         }
-    });
+    }
+    document.addEventListener('visibilitychange', _onVisFocusLoss);
 
     // Toast for system-initiated pause events (BT disconnect, audio focus loss)
     function _showSystemInterruptToast(msg, withResumeBtn = false) {
