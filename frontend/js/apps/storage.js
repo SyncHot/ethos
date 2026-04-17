@@ -4254,6 +4254,11 @@ function _smMaintenance(el) {
     const root = el.querySelector('#mnt-root');
     let pollTimer = null;
 
+    function escHtml(s) {
+        if (!s) return '';
+        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
     async function load() {
         const [poolsRes, raidRes, statusRes, histRes, rootfsRes, appUsageRes, scrubInfoRes, schedsRes] = await Promise.allSettled([
             api('/storage/pool/list'),
