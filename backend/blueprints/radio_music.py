@@ -794,6 +794,7 @@ def lyrics_search():
             if display:
                 return {
                     'ok': True, 'lyrics': display,
+                    'syncedLyrics': synced,
                     'title': best.get('trackName', track),
                     'artist': best.get('artistName', art),
                 }

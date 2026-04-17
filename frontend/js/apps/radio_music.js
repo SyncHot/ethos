@@ -34,6 +34,10 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     let _sleepEnd = 0;           // timestamp when sleep timer fires (0 = off)
     let _sleepMode = '';         // 'time' or 'track'
     let _playbackRate = 1;       // current playback speed (0.5–2)
+    let _crossfadeDuration = 1500; // crossfade ms, user-configurable 0–12000
+    let _syncedLyrics = null;    // parsed LRC lines: [{time: ms, text: ''}, ...]
+    let _lyrSyncInterval = null; // lyrics auto-scroll timer
+    let _epProgress = {};        // podcast episode progress: {url: {pos: sec, dur: sec, done: bool}}
 
     // ── Local radio logo cache (UUID → /img/radio-logos/filename) ──
     let _logoManifest = null;
@@ -88,6 +92,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         { id: 'music', label: 'Muzyka', items: [
             { key: 'music', icon: 'fab fa-youtube', label: 'Szukaj' },
             { key: 'local', icon: 'fas fa-folder-open', label: 'Lokalna muzyka' },
+            { key: 'recently-added', icon: 'fas fa-clock', label: 'Ostatnio dodane' },
             { key: 'local-audiobooks', icon: 'fas fa-book-reader', label: 'Lok. audiobooki' },
             { key: 'playlists', icon: 'fas fa-list', label: 'Playlisty' },
             { key: 'queue', icon: 'fas fa-list-ol', label: 'Kolejka' },
@@ -107,6 +112,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             { key: 'most-played', icon: 'fas fa-fire', label: 'Najczęściej grane' },
             { key: 'audiobooks', icon: 'fas fa-book-open', label: 'Audiobooki' },
             { key: 'history', icon: 'fas fa-history', label: 'Historia' },
+            { key: 'settings', icon: 'fas fa-cog', label: 'Ustawienia' },
         ]},
     ];
 
@@ -813,6 +819,28 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-content{transition:opacity .15s ease}',
 '.rm-content.rm-fade-out{opacity:0}',
 
+/* synced lyrics */
+'.rm-lyrics-line{padding:4px 0;transition:all .25s ease;opacity:.35;transform:scale(.95)}',
+'.rm-lyrics-line.rm-lyr-active{opacity:1;color:#fff;font-weight:600;font-size:17px;transform:scale(1)}',
+'.rm-lyrics-line.rm-lyr-near{opacity:.6}',
+
+/* queue drag & drop */
+'.rm-np-q-item-drag{width:20px;text-align:center;color:rgba(255,255,255,.2);font-size:14px;cursor:grab;flex-shrink:0;touch-action:none}',
+'.rm-np-q-item-drag:active{cursor:grabbing}',
+'.rm-np-q-item.rm-q-dragging{opacity:.4;background:rgba(29,185,84,.08)}',
+'.rm-np-q-item.rm-q-drag-over{box-shadow:inset 0 -2px 0 #1DB954}',
+
+/* podcast episode progress */
+'.rm-ep-progress{width:100%;height:3px;background:rgba(255,255,255,.08);border-radius:2px;margin-top:4px;overflow:hidden}',
+'.rm-ep-progress-bar{height:100%;background:#1DB954;border-radius:2px;transition:width .3s}',
+'.rm-ep-done{color:#1DB954;font-size:11px;margin-left:auto;flex-shrink:0}',
+
+/* crossfade setting */
+'.rm-crossfade-wrap{display:flex;align-items:center;gap:12px;padding:12px 0}',
+'.rm-crossfade-slider{flex:1;height:4px;-webkit-appearance:none;appearance:none;background:rgba(255,255,255,.15);border-radius:2px;outline:none}',
+'.rm-crossfade-slider::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:#1DB954;cursor:pointer}',
+'.rm-crossfade-val{color:rgba(255,255,255,.5);font-size:12px;min-width:28px;text-align:right}',
+
 /* exit fullscreen toggle (mobile only) */
 '.rm-exit-fs{display:none;position:absolute;top:8px;right:8px;z-index:200;width:40px;height:40px;border-radius:50%;background:rgba(0,0,0,.55);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.12);color:rgba(255,255,255,.7);font-size:15px;cursor:pointer;align-items:center;justify-content:center;transition:all .2s}',
 '.rm-exit-fs:active{transform:scale(.9);background:rgba(0,0,0,.8)}',
@@ -1056,6 +1084,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
             // Restore previous playback state (paused, showing last track)
             _restoreAndShowLastTrack(body);
+            _loadCrossfadeSetting();
+            _loadEpProgress();
 
             // Android back button: minimize NP overlay instead of navigating away
             window.addEventListener('popstate', _onPopState, true);
@@ -1281,6 +1311,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             case 'audiobooks': loadAudiobooks(toolbar, content); break;
             case 'discovery': loadDiscovery(toolbar, content); break;
             case 'pod-queue': loadPodQueue(content); break;
+            case 'settings': loadSettings(content); break;
+            case 'recently-added': loadRecentlyAdded(content); break;
         }
     }
 
@@ -1668,11 +1700,15 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         html += '<div class="rm-ep-list">';
         eps.forEach(ep => {
             if (!ep.audio_url) return;
+            const pct = _getEpProgressPct(ep.audio_url);
+            const prog = _epProgress[ep.audio_url];
+            const doneIcon = prog && prog.done ? '<i class="fas fa-check-circle" style="color:#1db954;margin-right:6px"></i>' : '';
             html += `<div class="rm-ep-item" data-url="${escH(ep.audio_url)}">
                 <div class="rm-ep-play"><i class="fas fa-play-circle"></i></div>
                 <div class="rm-ep-info">
-                    <div class="rm-ep-title">${escH(ep.title)}</div>
+                    <div class="rm-ep-title">${doneIcon}${escH(ep.title)}</div>
                     <div class="rm-ep-meta">${escH([ep.pub_date, ep.duration_fmt].filter(Boolean).join(' · '))}</div>
+                    ${pct > 0 ? '<div class="rm-ep-progress"><div class="rm-ep-progress-bar" style="width:' + pct + '%"></div></div>' : ''}
                 </div>
             </div>`;
         });
@@ -1700,6 +1736,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                     name: title,
                     url: url,
                     type: 'podcast',
+                    _podcast: true,
                     meta: pod.title || podcast.name,
                     image: pod.image || podcast.artwork || '',
                 };
@@ -3112,6 +3149,92 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         content.appendChild(clearBtn);
     }
 
+    /* ── Recently Added (Local) ────────────────────── */
+
+    async function loadRecentlyAdded(content) {
+        content.innerHTML = '<div class="rm-empty"><i class="fas fa-spinner fa-spin"></i></div>';
+        const scanData = await api('/radio-music/local/scan');
+        const items = (scanData.items || []).slice(); // copy before sorting
+        if (!items.length) {
+            content.innerHTML = '<div class="rm-empty"><i class="fas fa-clock"></i><p>'
+                + t('Brak plików audio') + '</p><p style="font-size:12px;color:rgba(255,255,255,.4)">'
+                + t('Dodaj foldery w sekcji Lokalna muzyka') + '</p>'
+                + '<button class="rm-chip" style="margin-top:12px" id="rm-ra-go-local"><i class="fas fa-folder-open"></i> ' + t('Lokalna muzyka') + '</button></div>';
+            content.querySelector('#rm-ra-go-local')?.addEventListener('click', () => _navTo('local'));
+            return;
+        }
+        items.sort((a, b) => (b.modified || 0) - (a.modified || 0));
+        const recent = items.slice(0, 50);
+        let html = '<div class="rm-section-title"><i class="fas fa-clock"></i> ' + t('Ostatnio dodane') + '</div>';
+        recent.forEach(file => {
+            const artUrl = file.has_art ? '/api/radio-music/local/artwork?path=' + encodeURIComponent(file.path) + '&token=' + (NAS.token || '') : '';
+            const durStr = file.duration ? _fmtSecs(file.duration) : '';
+            const metaParts = [];
+            if (file.artist) metaParts.push(file.artist);
+            if (file.album) metaParts.push(file.album);
+            const meta = metaParts.join(' · ') || file.filename;
+            html += '<div class="rm-track rm-local-track" data-path="' + escH(file.path) + '">'
+                + (artUrl ? '<img class="rm-track-thumb" src="' + escH(artUrl) + '" onerror="this.style.display=\'none\'">' : '<div class="rm-track-thumb" style="background:rgba(255,255,255,.06);display:flex;align-items:center;justify-content:center"><i class="fas fa-music" style="color:rgba(255,255,255,.2)"></i></div>')
+                + '<div class="rm-track-info"><div class="rm-track-name">' + escH(file.name) + '</div>'
+                + '<div class="rm-track-meta">' + escH(meta) + (durStr ? ' · ' + durStr : '') + '</div></div>'
+                + '<button class="rm-track-btn rm-track-play"><i class="fas fa-play"></i></button>'
+                + '</div>';
+        });
+        content.innerHTML = html;
+        content.querySelectorAll('.rm-track.rm-local-track').forEach(el => {
+            const path = el.dataset.path;
+            const file = recent.find(f => f.path === path);
+            if (!file) return;
+            const playItem = {
+                name: file.name, path: file.path, type: 'local',
+                image: file.has_art ? '/api/radio-music/local/artwork?path=' + encodeURIComponent(file.path) + '&token=' + (NAS.token || '') : '',
+                meta: file.artist || file.filename, folder: file.folder
+            };
+            el.querySelector('.rm-track-play').onclick = (e) => { e.stopPropagation(); playAudio(playItem); };
+            el.onclick = () => playAudio(playItem);
+        });
+    }
+
+    /* ── Settings ───────────────────────────────────── */
+
+    function loadSettings(content) {
+        const cfSec = Math.round(_crossfadeDuration / 1000);
+        content.innerHTML = `
+            <div class="rm-section-title"><i class="fas fa-cog"></i> ${t('Ustawienia')}</div>
+            <div style="max-width:480px;display:flex;flex-direction:column;gap:24px;padding:8px 0">
+                <div>
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                        <span style="font-size:14px;color:rgba(255,255,255,.85)">${t('Przenikanie (crossfade)')}</span>
+                        <span id="rm-cf-val" style="font-size:13px;color:#1db954;min-width:28px;text-align:right">${cfSec}s</span>
+                    </div>
+                    <input type="range" id="rm-cf-slider" class="rm-crossfade-slider" min="0" max="12" step="1" value="${cfSec}">
+                    <div style="display:flex;justify-content:space-between;font-size:11px;color:rgba(255,255,255,.35);margin-top:4px">
+                        <span>${t('Wył.')}</span><span>12s</span>
+                    </div>
+                </div>
+                <div>
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                        <span style="font-size:14px;color:rgba(255,255,255,.85)">${t('Prędkość odtwarzania')}</span>
+                        <span style="font-size:13px;color:rgba(255,255,255,.5)">${(_audio?.playbackRate || 1).toFixed(1)}x</span>
+                    </div>
+                    <div style="font-size:12px;color:rgba(255,255,255,.4)">${t('Zmień przyciskiem prędkości w panelu odtwarzacza')}</div>
+                </div>
+                <div>
+                    <button class="rm-chip" id="rm-clear-ep-progress" style="margin-top:8px"><i class="fas fa-trash"></i> ${t('Wyczyść postępy podcastów')}</button>
+                </div>
+            </div>`;
+        content.querySelector('#rm-cf-slider').oninput = (e) => {
+            const sec = parseInt(e.target.value, 10);
+            content.querySelector('#rm-cf-val').textContent = sec + 's';
+            _saveCrossfadeSetting(sec * 1000);
+        };
+        content.querySelector('#rm-clear-ep-progress').onclick = () => {
+            _epProgress = {};
+            _saveEpProgress();
+            toast(t('Postępy podcastów wyczyszczone'), 'success');
+        };
+    }
+
     /* ── Audiobooks for Kids ───────────────────────── */
 
     async function loadAudiobooks(toolbar, content) {
@@ -3609,6 +3732,10 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             if (now - _seekThrottleTs >= 250) {
                 _seekThrottleTs = now;
                 _updateSeekbar();
+                // Podcast episode progress tracking (throttled with seekbar)
+                if (_playing && _playing._podcast && _audio.duration > 0) {
+                    _updateEpProgress(_playing.url || _playing.stream_url, _audio.currentTime, _audio.duration);
+                }
                 // Update Media Session position state for iOS control center scrubbing
                 if ('mediaSession' in navigator && navigator.mediaSession.setPositionState && _audio
                         && isFinite(_audio.duration) && _audio.duration > 0) {
@@ -3641,7 +3768,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                                 const pctNow = _audio.currentTime / _audio.duration;
                                 if (pctNow >= 0.95) {
                                     _cl('info', 'Gapless crossfade triggered at ' + Math.round(pctNow * 100) + '%', { next: nextItem.name });
-                                    _crossfade(_audio, _preloadAudio, targetVol, 1500, () => {
+                                    _crossfade(_audio, _preloadAudio, targetVol, _crossfadeDuration, () => {
                                         // After crossfade, officially switch to next track
                                         _audio.onended?.(); // trigger queue advance
                                     });
@@ -3672,7 +3799,16 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 }, 1500);
             }
         };
-        _audio.onloadedmetadata = () => { _updateSeekbar(); _savePlaybackState(); };
+        _audio.onloadedmetadata = () => {
+            _updateSeekbar(); _savePlaybackState();
+            // Restore podcast episode position
+            if (item._podcast && _audio.duration > 0) {
+                const prog = _epProgress[item.url || item.stream_url];
+                if (prog && !prog.done && prog.pos > 5 && prog.pos < prog.dur - 5) {
+                    _audio.currentTime = prog.pos;
+                }
+            }
+        };
 
         // Periodic save of playback position
         if (_saveStateInterval) clearInterval(_saveStateInterval);
@@ -3900,6 +4036,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     function stopPlayback() {
         _savePlaybackState();
         _clearSleepTimer();
+        _stopLyricsSync();
         if (_saveStateInterval) { clearInterval(_saveStateInterval); _saveStateInterval = null; }
         clearTimeout(_radioRetryTimer); _radioRetryTimer = null; _radioRetries = 0;
         if (_preloadAudio) { _preloadAudio.src = ''; _preloadAudio = null; }
@@ -4087,6 +4224,127 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 break;
             }
         }
+    }
+
+    /* ── Synced Lyrics (LRC) ───────────────────────────── */
+    function _parseLrc(lrc) {
+        if (!lrc) return null;
+        const lines = [];
+        lrc.split('\n').forEach(line => {
+            const m = line.match(/^\[(\d{2}):(\d{2})\.(\d{2,3})\]\s*(.*)/);
+            if (m) {
+                const ms = parseInt(m[1]) * 60000 + parseInt(m[2]) * 1000 + parseInt(m[3].padEnd(3, '0'));
+                lines.push({ time: ms, text: m[4] });
+            }
+        });
+        return lines.length > 3 ? lines : null;
+    }
+
+    function _renderSyncedLyrics(panel, lines) {
+        panel.innerHTML = lines.map((l, i) =>
+            '<div class="rm-lyrics-line" data-idx="' + i + '">' + escH(l.text || '♪') + '</div>'
+        ).join('');
+    }
+
+    function _startLyricsSync(panel) {
+        _stopLyricsSync();
+        if (!_syncedLyrics || !_audio) return;
+        _lyrSyncInterval = setInterval(() => {
+            if (!_audio || _audio.paused) return;
+            const ms = _audio.currentTime * 1000;
+            let active = 0;
+            for (let i = _syncedLyrics.length - 1; i >= 0; i--) {
+                if (_syncedLyrics[i].time <= ms) { active = i; break; }
+            }
+            panel.querySelectorAll('.rm-lyrics-line').forEach((el, i) => {
+                el.classList.toggle('rm-lyr-active', i === active);
+                el.classList.toggle('rm-lyr-near', i === active - 1 || i === active + 1);
+            });
+            const activeEl = panel.querySelector('.rm-lyr-active');
+            if (activeEl) activeEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        }, 300);
+    }
+
+    function _stopLyricsSync() {
+        if (_lyrSyncInterval) { clearInterval(_lyrSyncInterval); _lyrSyncInterval = null; }
+        _syncedLyrics = null;
+    }
+
+    /* ── Queue Drag & Drop ─────────────────────────────── */
+    function _setupQueueDnD(panel) {
+        let dragIdx = -1;
+        panel.addEventListener('pointerdown', (e) => {
+            const handle = e.target.closest('.rm-np-q-item-drag');
+            if (!handle) return;
+            const item = handle.closest('.rm-np-q-item');
+            if (!item) return;
+            dragIdx = parseInt(item.dataset.idx, 10);
+            if (isNaN(dragIdx)) return;
+            item.classList.add('rm-q-dragging');
+            item.setPointerCapture(e.pointerId);
+
+            const onMove = (ev) => {
+                const el = document.elementFromPoint(ev.clientX, ev.clientY)?.closest('.rm-np-q-item');
+                panel.querySelectorAll('.rm-np-q-item').forEach(q => q.classList.remove('rm-q-drag-over'));
+                if (el && el !== item) el.classList.add('rm-q-drag-over');
+            };
+            const onUp = (ev) => {
+                item.classList.remove('rm-q-dragging');
+                item.releasePointerCapture(ev.pointerId);
+                panel.removeEventListener('pointermove', onMove);
+                panel.removeEventListener('pointerup', onUp);
+                const target = document.elementFromPoint(ev.clientX, ev.clientY)?.closest('.rm-np-q-item');
+                panel.querySelectorAll('.rm-np-q-item').forEach(q => q.classList.remove('rm-q-drag-over'));
+                if (!target) return;
+                const dropIdx = parseInt(target.dataset.idx, 10);
+                if (isNaN(dropIdx) || dropIdx === dragIdx) return;
+                // Reorder _musicQueue
+                const [moved] = _musicQueue.splice(dragIdx, 1);
+                _musicQueue.splice(dropIdx, 0, moved);
+                // Fix current index
+                if (_musicQueueIdx === dragIdx) _musicQueueIdx = dropIdx;
+                else if (dragIdx < _musicQueueIdx && dropIdx >= _musicQueueIdx) _musicQueueIdx--;
+                else if (dragIdx > _musicQueueIdx && dropIdx <= _musicQueueIdx) _musicQueueIdx++;
+                if (_renderNpQueueFn) _renderNpQueueFn();
+            };
+            panel.addEventListener('pointermove', onMove);
+            panel.addEventListener('pointerup', onUp);
+        });
+    }
+
+    /* ── Podcast Episode Progress ──────────────────────── */
+    function _loadEpProgress() {
+        try { _epProgress = JSON.parse(localStorage.getItem('rm_ep_progress') || '{}'); } catch(_) { _epProgress = {}; }
+    }
+
+    function _saveEpProgress() {
+        try { localStorage.setItem('rm_ep_progress', JSON.stringify(_epProgress)); } catch(_) {}
+    }
+
+    function _updateEpProgress(url, pos, dur) {
+        if (!url || !dur) return;
+        const done = pos / dur > 0.95;
+        _epProgress[url] = { pos: Math.floor(pos), dur: Math.floor(dur), done };
+        _saveEpProgress();
+    }
+
+    function _getEpProgressPct(url) {
+        const p = _epProgress[url];
+        if (!p || !p.dur) return 0;
+        return p.done ? 100 : Math.floor(p.pos / p.dur * 100);
+    }
+
+    /* ── Crossfade User Setting ────────────────────────── */
+    function _loadCrossfadeSetting() {
+        try {
+            const v = parseInt(localStorage.getItem('rm_crossfade_ms'), 10);
+            if (v >= 0 && v <= 12000) _crossfadeDuration = v;
+        } catch(_) {}
+    }
+
+    function _saveCrossfadeSetting(ms) {
+        _crossfadeDuration = ms;
+        try { localStorage.setItem('rm_crossfade_ms', String(ms)); } catch(_) {}
     }
 
     /* ── Chromecast / Google Cast SDK ──────────────────── */
@@ -5199,7 +5457,15 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 data = await api('/radio-music/lyrics?title=' + encodeURIComponent(cleanName) + '&artist=');
             }
             if (data.lyrics) {
-                panel.textContent = data.lyrics;
+                _stopLyricsSync();
+                const parsed = _parseLrc(data.syncedLyrics || '');
+                if (parsed) {
+                    _syncedLyrics = parsed;
+                    _renderSyncedLyrics(panel, parsed);
+                    _startLyricsSync(panel);
+                } else {
+                    panel.textContent = data.lyrics;
+                }
             } else {
                 panel.innerHTML = '<div class="rm-lyrics-empty"><i class="fas fa-music"></i> ' + t('Nie znaleziono tekstu') + '</div>';
             }
@@ -5220,6 +5486,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 const meta = tr.meta || tr.channel || '';
                 const art = tr.image || tr.thumbnail || tr.favicon || '';
                 html += '<div class="rm-np-q-item' + (isCurrent ? ' rm-q-current' : '') + '" data-idx="' + idx + '">'
+                    + '<span class="rm-np-q-item-drag"><i class="fas fa-grip-vertical"></i></span>'
                     + '<span class="rm-np-q-item-idx">' + (isCurrent ? '<i class="fas fa-volume-up"></i>' : (idx + 1)) + '</span>'
                     + (art ? '<img class="rm-np-q-item-art" src="' + escH(art) + '" onerror="this.style.display=\'none\'">' : '')
                     + '<div class="rm-np-q-item-info"><div class="rm-np-q-item-title">' + escH(name) + '</div>'
@@ -5263,6 +5530,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             queuePanel.classList.add('rm-np-queue-visible');
             _renderNpQueue();
         };
+        _setupQueueDnD(queuePanel);
 
         // Lock screen — blocks all touches until swipe-up unlock
         ov.querySelector('#rm-np-lock').onclick = () => _showLockScreen();
