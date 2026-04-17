@@ -1795,6 +1795,7 @@ chroot "$ROOT" apt-get install -y -qq \
     udevil udisks2 \
     zstd cron systemd-timesyncd \
     gnupg age \
+    initramfs-tools \
     2>&1 | tail -10 || echo "LOG:Some packages skipped"
 
 echo "LOG:Installing Plymouth for boot splash..."
@@ -2102,6 +2103,10 @@ chmod +x "$ROOT/etc/initramfs-tools/scripts/local-bottom/ethos-bootlog"
 
 # Rebuild initramfs with firmware + overlay hooks (only for the new kernel)
 echo "LOG:Przebudowa initramfs..."
+if ! chroot "$ROOT" which update-initramfs &>/dev/null; then
+    echo "LOG:WARNING: update-initramfs not found — installing initramfs-tools"
+    chroot "$ROOT" apt-get install -y -qq initramfs-tools 2>&1 | tail -3
+fi
 if [[ -n "$NEW_KERN" ]]; then
     chroot "$ROOT" update-initramfs -u -k "$NEW_KERN" 2>&1 | tail -5 || echo "LOG:initramfs update failed"
 else
