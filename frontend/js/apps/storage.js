@@ -4039,7 +4039,7 @@ function _smDiagnostics(el) {
                 const ttype = btn.dataset.trigger;
                 btn.disabled = true;
                 btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ...';
-                const res = await api('/storage/smart/test', { method: 'POST', body: JSON.stringify({ disk: d.name, type: ttype }) });
+                const res = await api('/storage/smart/test', { method: 'POST', body: { disk: d.name, type: ttype } });
                 if (res.error) { toast(res.error, 'error'); }
                 else { toast(res.message || 'Test started', 'success'); }
                 setTimeout(() => renderScheduleTab(el), 2000);
@@ -4092,11 +4092,11 @@ function _smDiagnostics(el) {
             modal.querySelector('#sched-save').onclick = async () => {
                 const res = await api('/storage/smart/schedule', {
                     method: 'POST',
-                    body: JSON.stringify({
+                    body: {
                         disk: d.name,
                         type: modal.querySelector('#sched-type').value,
                         frequency: modal.querySelector('#sched-freq').value,
-                    }),
+                    },
                 });
                 modal.remove();
                 if (res.error) toast(res.error, 'error');
@@ -4591,7 +4591,7 @@ function _smMaintenance(el) {
 
         // Wire up action buttons
         async function startMaint(type, target) {
-            const res = await api('/storage/maintenance/start', { method: 'POST', body: JSON.stringify({ type, target }) });
+            const res = await api('/storage/maintenance/start', { method: 'POST', body: { type, target } });
             if (res.error) { toast(res.error, 'error'); return; }
             toast(res.message || t('Zadanie uruchomione'), 'success');
             startPoll();
@@ -4622,7 +4622,7 @@ function _smMaintenance(el) {
             modal.querySelector('#mnt-save').onclick = async () => {
                 const freq = modal.querySelector('#mnt-freq').value;
                 const res = await api('/storage/maintenance/schedule', {
-                    method: 'POST', body: JSON.stringify({ type, target, frequency: freq }),
+                    method: 'POST', body: { type, target, frequency: freq },
                 });
                 modal.remove();
                 if (res.error) toast(res.error, 'error');
@@ -4639,17 +4639,17 @@ function _smMaintenance(el) {
 
         // Unschedule buttons
         root.querySelectorAll('[data-unsched-scrub]').forEach(b => b.onclick = async () => {
-            const res = await api('/storage/maintenance/schedule', { method: 'DELETE', body: JSON.stringify({ type: 'scrub', target: b.dataset.unschedScrub }) });
+            const res = await api('/storage/maintenance/schedule', { method: 'DELETE', body: { type: 'scrub', target: b.dataset.unschedScrub } });
             if (res.error) toast(res.error, 'error');
             else { toast(t('Harmonogram usunięty'), 'success'); load(); }
         });
         root.querySelectorAll('[data-unsched-raid]').forEach(b => b.onclick = async () => {
-            const res = await api('/storage/maintenance/schedule', { method: 'DELETE', body: JSON.stringify({ type: 'raid-check', target: b.dataset.unschedRaid }) });
+            const res = await api('/storage/maintenance/schedule', { method: 'DELETE', body: { type: 'raid-check', target: b.dataset.unschedRaid } });
             if (res.error) toast(res.error, 'error');
             else { toast(t('Harmonogram usunięty'), 'success'); load(); }
         });
         root.querySelectorAll('[data-unsched-trim]').forEach(b => b.onclick = async () => {
-            const res = await api('/storage/maintenance/schedule', { method: 'DELETE', body: JSON.stringify({ type: 'trim', target: b.dataset.unschedTrim }) });
+            const res = await api('/storage/maintenance/schedule', { method: 'DELETE', body: { type: 'trim', target: b.dataset.unschedTrim } });
             if (res.error) toast(res.error, 'error');
             else { toast(t('Harmonogram usunięty'), 'success'); load(); }
         });

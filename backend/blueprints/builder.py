@@ -1006,6 +1006,30 @@ VERSION=$(python3 -c "import json; print(json.load(open('$NASOS/backend/version.
 FINAL_IMG="$NASOS/installer/images/ethos-x86.img"
 WORK_DIR="/tmp/ethos-x86-build-web"
 
+# ── Clean up stale loop devices / mounts from previous failed builds ──
+# On-disk builds that fail leave loop devices attached to (deleted) img files,
+# each holding ~8GB of phantom space on tmpfs. Clean them all before starting.
+_cleanup_stale_loops() {{
+    local _img="$WORK_DIR/ethos-x86.img"
+    # Unmount any stacked mounts on WORK_DIR/root
+    while mountpoint -q "$WORK_DIR/root" 2>/dev/null; do
+        umount "$WORK_DIR/root" 2>/dev/null || umount -l "$WORK_DIR/root" 2>/dev/null || break
+    done
+    umount "$WORK_DIR/efi" 2>/dev/null || true
+    # Detach all loop devices referencing our img (including deleted inodes)
+    losetup -a 2>/dev/null | grep "ethos-x86-build-web" | cut -d: -f1 | while read _ld; do
+        losetup -d "$_ld" 2>/dev/null || true
+    done
+    # If WORK_DIR was a tmpfs mount from prior build, unmount it
+    if mountpoint -q "$WORK_DIR" 2>/dev/null; then
+        umount "$WORK_DIR" 2>/dev/null || umount -l "$WORK_DIR" 2>/dev/null || true
+    fi
+    # Remove stale files
+    rm -rf "$WORK_DIR" 2>/dev/null || true
+}}
+_cleanup_stale_loops
+echo "LOG:Stale build artifacts cleaned"
+
 # ── Performance: use tmpfs (RAM) for build if enough memory ──
 # VM-aware: subtract RAM already used by running QEMU processes.
 MEM_AVAIL_MB=$(awk '/MemAvailable/{{print int($2/1024)}}' /proc/meminfo 2>/dev/null || echo 0)
@@ -1049,13 +1073,17 @@ cleanup() {{
             umount -l "$WORK_DIR/root/$m" 2>/dev/null || true
     done
     sleep 1
-    umount "$WORK_DIR/root" 2>/dev/null || \
-        umount -l "$WORK_DIR/root" 2>/dev/null || true
+    # Unmount all stacked root mounts (previous builds may leave multiple)
+    while mountpoint -q "$WORK_DIR/root" 2>/dev/null; do
+        umount "$WORK_DIR/root" 2>/dev/null || \
+            umount -l "$WORK_DIR/root" 2>/dev/null || break
+    done
     umount "$WORK_DIR/efi" 2>/dev/null || true
     sleep 1
-    if [[ -n "${{LOOP_DEV:-}}" ]]; then
-        losetup -d "$LOOP_DEV" 2>/dev/null || true
-    fi
+    # Detach ALL loop devices associated with our build image (not just $LOOP_DEV)
+    losetup -a 2>/dev/null | grep "ethos-x86-build-web" | cut -d: -f1 | while read _ld; do
+        losetup -d "$_ld" 2>/dev/null || true
+    done
     if [ "$BUILD_DONE" = "1" ]; then
         # Success — clean up completely
         if [ "$USE_TMPFS" -eq 1 ] && mountpoint -q "$WORK_DIR" 2>/dev/null; then
@@ -1064,10 +1092,14 @@ cleanup() {{
         fi
         rm -rf "$WORK_DIR" 2>/dev/null || true
     else
-        # Failure — preserve WORK_DIR for resume
-        echo "LOG:RESUME_AVAILABLE:$WORK_DIR"
+        # On-disk failure: always clean up (resume from disk wastes /tmp space)
+        # Tmpfs failure: preserve for quick in-session resume (vanishes on reboot)
         if [ "$USE_TMPFS" -eq 1 ]; then
+            echo "LOG:RESUME_AVAILABLE:$WORK_DIR"
             echo "LOG:Note: Build dir is in tmpfs — checkpoints survive crash but not reboot"
+        else
+            echo "LOG:Build failed — cleaning on-disk artifacts to free /tmp"
+            rm -rf "$WORK_DIR" 2>/dev/null || true
         fi
     fi
 }}
