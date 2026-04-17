@@ -4678,7 +4678,7 @@ function _smMaintenance(el) {
                 if (!confirm(t('Czy na pewno wyczyścić /tmp?') + '\n' + label)) return;
                 tmpBtn.disabled = true;
                 tmpBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Czyszczenie...');
-                const res = await api('/storage/clean-tmp', { method: 'POST', body: JSON.stringify({ max_age_minutes: age }) });
+                const res = await api('/storage/clean-tmp', { method: 'POST', body: { max_age_minutes: age } });
                 if (res.error) { toast(res.error, 'error'); }
                 else {
                     const fmtB = b => b >= 1073741824 ? (b/1073741824).toFixed(1)+' GB' : b >= 1048576 ? (b/1048576).toFixed(0)+' MB' : (b/1024).toFixed(0)+' KB';
