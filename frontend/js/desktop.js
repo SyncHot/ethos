@@ -1587,16 +1587,6 @@ document.querySelectorAll('.pm-action').forEach(btn => {
     });
 });
 
-document.querySelectorAll('.notif-power-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
-        const action = btn.dataset.action;
-        notifPanelOpen = false;
-        document.getElementById('notif-panel').classList.add('hidden');
-        document.getElementById('notifications-btn').classList.remove('active');
-        await executePowerAction(action);
-    });
-});
-
 async function executePowerAction(action) {
     const labels = {
         'restart-app': t('Restart aplikacji (kontener nasos)'),

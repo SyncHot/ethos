@@ -3355,14 +3355,16 @@ async function _smSharing(el) {
 /* ═══════════════════════════════════════════════════════════
    Section: Diagnostics (from original diskrepair.js)
    ═══════════════════════════════════════════════════════════ */
+
+function _sto_escHtml(s) {
+    if (!s) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
 function _smDiagnostics(el) {
     const body = el;
+    const escHtml = _sto_escHtml;
     const state = {
-        disks: [],
-        selectedDisk: null,
-        activeTab: 'info',
-        operation: null,
-        pollTimer: null,
         logOffset: 0,
         smartData: null,
         fsDetail: null,
@@ -3536,11 +3538,6 @@ function _smDiagnostics(el) {
 
     function isRunning() {
         return state.operation && (state.operation.status === 'running' || state.operation.status === 'starting');
-    }
-
-    function escHtml(s) {
-        if (!s) return '';
-        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     }
 
     /* ─── Load disks ─── */
@@ -4253,11 +4250,7 @@ function _smMaintenance(el) {
     el.innerHTML = '<div style="padding:20px" id="mnt-root"><div style="color:var(--text-secondary)"><i class="fas fa-spinner fa-spin"></i> ' + t('Ładowanie...') + '</div></div>';
     const root = el.querySelector('#mnt-root');
     let pollTimer = null;
-
-    function escHtml(s) {
-        if (!s) return '';
-        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    }
+    const escHtml = _sto_escHtml;
 
     async function load() {
         const [poolsRes, raidRes, statusRes, histRes, rootfsRes, appUsageRes, scrubInfoRes, schedsRes] = await Promise.allSettled([
