@@ -20,7 +20,7 @@ AppRegistry['resource-monitor'] = function (appDef) {
 function renderResourcesApp(body) {
     // Reboot helper — replaces inline fetch() in onclick attributes
     window._resReboot = function(btn) {
-        api('/power/action', { method: 'POST', body: JSON.stringify({ action: 'reboot' }) })
+        api('/power/action', { method: 'POST', body: { action: 'reboot' } })
             .then(() => {
                 btn.disabled = true;
                 btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Restartowanie…');

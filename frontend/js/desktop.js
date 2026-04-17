@@ -1956,7 +1956,7 @@ function _createBarEl(ch) {
                 xhr.abort();
                 return;
             }
-            const r = await api('/files/cancel-operation', { method: 'POST', body: JSON.stringify({ channel: ch }), headers: { 'Content-Type': 'application/json' } });
+            const r = await api('/files/cancel-operation', { method: 'POST', body: { channel: ch } });
             if (r.ok || r.cancelled) {
                 const btn = el.querySelector('.fileop-cancel-btn');
                 if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>'; }
@@ -1965,7 +1965,7 @@ function _createBarEl(ch) {
     });
     el.querySelector('.fileop-pause-btn').addEventListener('click', async () => {
         try {
-            const r = await api('/files/pause-operation', { method: 'POST', body: JSON.stringify({ channel: ch }), headers: { 'Content-Type': 'application/json' } });
+            const r = await api('/files/pause-operation', { method: 'POST', body: { channel: ch } });
             if (r && typeof r.paused !== 'undefined') {
                 _updatePauseState(r.paused, ch);
             }

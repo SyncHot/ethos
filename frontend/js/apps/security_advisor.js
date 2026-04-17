@@ -147,7 +147,7 @@ function _saRenderResults(body, data) {
             btn.disabled = true;
             btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i>`;
             try {
-                const r = await api('/security-advisor/fix', { method: 'POST', body: JSON.stringify({ action }) });
+                const r = await api('/security-advisor/fix', { method: 'POST', body: { action } });
                 if (r.ok) {
                     toast(r.message || t('Naprawiono'), 'success');
                     // Re-scan

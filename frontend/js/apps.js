@@ -766,7 +766,7 @@ function renderFM(body, state) {
             const list = overlay.querySelector('#fm-net-shares-list');
             list.innerHTML = `<div class="fm-net-loading"><i class="fas fa-spinner fa-spin"></i> ${t('Szukam udziałów...')}</div>`;
             list.style.display = '';
-            const data = await api('/storage/network/browse', { method: 'POST', body: JSON.stringify({ host, username: user, password: pass }) });
+            const data = await api('/storage/network/browse', { method: 'POST', body: { host, username: user, password: pass } });
             if (data?.shares?.length) {
                 list.innerHTML = data.shares.map(s => `
                     <button class="fm-net-share-option" data-share="${s.name}">
@@ -856,7 +856,7 @@ function renderFM(body, state) {
 
     async function reconnectNetworkDrive(id) {
         toast(t('Łączenie...'), 'info');
-        const data = await api('/storage/network/reconnect', { method: 'POST', body: JSON.stringify({ id }) });
+        const data = await api('/storage/network/reconnect', { method: 'POST', body: { id } });
         if (data?.ok) {
             toast(t('Połączono'), 'success');
             await loadNetworkMounts();
@@ -897,14 +897,14 @@ function renderFM(body, state) {
                 if (action === 'open' && mount.mount_path) {
                     navigateTo(mount.mount_path);
                 } else if (action === 'disconnect') {
-                    const data = await api('/storage/network/unmount', { method: 'POST', body: JSON.stringify({ id }) });
+                    const data = await api('/storage/network/unmount', { method: 'POST', body: { id } });
                     if (data?.ok) { toast(t('Rozłączono'), 'success'); await loadNetworkMounts(); }
                     else toast(data?.error || t('Błąd'), 'error');
                 } else if (action === 'reconnect') {
                     await reconnectNetworkDrive(id);
                 } else if (action === 'remove') {
                     if (!confirm(t('Usunąć dysk sieciowy') + ` "${mount.name}"?`)) return;
-                    const data = await api('/storage/network/remove', { method: 'POST', body: JSON.stringify({ id }) });
+                    const data = await api('/storage/network/remove', { method: 'POST', body: { id } });
                     if (data?.ok) { toast(t('Usunięto'), 'success'); await loadNetworkMounts(); }
                     else toast(data?.error || t('Błąd'), 'error');
                 }

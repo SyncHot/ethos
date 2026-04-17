@@ -1516,7 +1516,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             const newName = input.value.trim();
             if (!newName) return;
             try {
-                const res = await api('/video-station/rename/' + vid, { method: 'POST', body: JSON.stringify({ name: newName }) });
+                const res = await api('/video-station/rename/' + vid, { method: 'POST', body: { name: newName } });
                 if (res.error) { toast(res.error, 'error'); return; }
                 toast(t('Zmieniono nazwę na: ') + res.filename, 'success');
                 overlay.remove();

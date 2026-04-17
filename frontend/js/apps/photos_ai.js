@@ -155,7 +155,7 @@ async function _paiPeople(main) {
       var cur = nameEl.textContent;
       var name = prompt(t('Imie osoby:'), cur);
       if (name && name !== cur) {
-        api('/photos-ai/people/' + pid + '/name', { method: 'POST', body: JSON.stringify({name: name}) });
+        api('/photos-ai/people/' + pid + '/name', { method: 'POST', body: {name: name} });
         nameEl.textContent = name;
       }
     });
@@ -315,7 +315,7 @@ async function _paiLoadSettings() {
     + '<input type="checkbox" id="pai-auto-scan" ' + (auto ? 'checked' : '') + '>'
     + '<span>' + t('Auto-skan po restarcie') + '</span></label>';
   document.getElementById('pai-auto-scan').addEventListener('change', async function() {
-    await api('/photos-ai/ai-settings', { method: 'POST', body: JSON.stringify({ auto_scan: this.checked }), headers: { 'Content-Type': 'application/json' } });
+    await api('/photos-ai/ai-settings', { method: 'POST', body: { auto_scan: this.checked } });
     toast(t('Ustawienie zapisane'), 'success');
   });
 }

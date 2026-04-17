@@ -2215,7 +2215,7 @@ function renderBackupApp(body) {
         btrfsCreateBtn.onclick = async function() {
             btrfsCreateBtn.disabled = true;
             try {
-                var r = await api('/backup/btrfs-snapshot', { method: 'POST', body: JSON.stringify({ label: '' }) });
+                var r = await api('/backup/btrfs-snapshot', { method: 'POST', body: { label: '' } });
                 if (r.error) { toast(r.error, 'error'); return; }
                 toast(t('Migawka btrfs utworzona') + ' (' + (r.snapshot?.id || '') + ')', 'success');
                 loadBtrfsSnapshots();
