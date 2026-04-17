@@ -49,6 +49,11 @@ Routes:
   GET  /api/radio-music/playback-state     - get saved playback state (cross-device resume)
   POST /api/radio-music/playback-state     - save playback state
   GET  /api/radio-music/lyrics             - fetch song lyrics (?title=, ?artist=)
+  GET  /api/radio-music/search/all         - unified search across radio+podcasts+local (?q=)
+  GET  /api/radio-music/playlists/<id>/export - export playlist as M3U8
+  POST /api/radio-music/playlists/import   - import M3U/M3U8 playlist
+  GET  /api/radio-music/podcasts/autodownload - get auto-download settings
+  POST /api/radio-music/podcasts/autodownload - toggle auto-download for a feed
 """
 
 import http.client
@@ -709,6 +714,40 @@ def podcasts_subscribe():
 
     _save_json(_user_file('subscriptions.json'), subs)
     return jsonify({'ok': True, 'items': subs})
+
+
+# ── Podcast auto-download ────────────────────────────────────
+
+def _autodownload_file():
+    return _user_file('autodownload.json')
+
+
+@radio_music_bp.route('/podcasts/autodownload', methods=['GET'])
+def podcasts_autodownload_get():
+    """Return auto-download settings: {feeds: {feed_url: {enabled, max_episodes, downloaded}}}"""
+    return jsonify(_load_json(_autodownload_file(), {'feeds': {}}))
+
+
+@radio_music_bp.route('/podcasts/autodownload', methods=['POST'])
+def podcasts_autodownload_set():
+    """Toggle auto-download for a feed_url. Body: {feed_url, enabled?, max_episodes?}"""
+    body = request.get_json(force=True, silent=True) or {}
+    feed_url = body.get('feed_url', '').strip()
+    if not feed_url:
+        return jsonify({'error': 'feed_url required'}), 400
+
+    cfg = _load_json(_autodownload_file(), {'feeds': {}})
+    feeds = cfg.setdefault('feeds', {})
+
+    if 'enabled' in body:
+        entry = feeds.setdefault(feed_url, {'enabled': False, 'max_episodes': 3, 'downloaded': []})
+        entry['enabled'] = bool(body['enabled'])
+    if 'max_episodes' in body:
+        entry = feeds.setdefault(feed_url, {'enabled': False, 'max_episodes': 3, 'downloaded': []})
+        entry['max_episodes'] = max(1, min(50, int(body['max_episodes'])))
+
+    _save_json(_autodownload_file(), cfg)
+    return jsonify({'ok': True, 'feeds': feeds})
 
 
 # ── Play history ─────────────────────────────────────────────
@@ -1555,6 +1594,159 @@ def playlists_remove_track(pl_id, track_idx):
         pl['updated_at'] = time.time()
         _save_json(pfile, pls)
     return jsonify({'ok': True, 'playlist': pl})
+
+
+@radio_music_bp.route('/playlists/<pl_id>/export', methods=['GET'])
+def playlists_export(pl_id):
+    """Export playlist as M3U8."""
+    pls = _load_json(_playlists_file(), [])
+    pl = next((p for p in pls if p['id'] == pl_id), None)
+    if not pl:
+        return jsonify({'error': 'Playlista nie znaleziona'}), 404
+    lines = ['#EXTM3U', '# Playlist: ' + pl.get('name', 'Untitled')]
+    for tr in pl.get('tracks', []):
+        dur = int(tr.get('duration', 0) or 0) if tr.get('duration') else -1
+        title = tr.get('name') or tr.get('title') or ''
+        artist = tr.get('meta') or tr.get('channel') or ''
+        label = (artist + ' - ' + title) if artist else title
+        lines.append('#EXTINF:%d,%s' % (dur, label))
+        url = tr.get('url') or tr.get('path') or ''
+        lines.append(url)
+    body = '\n'.join(lines) + '\n'
+    safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', pl.get('name', 'playlist'))[:80]
+    return Response(body, mimetype='audio/x-mpegurl', headers={
+        'Content-Disposition': 'attachment; filename="%s.m3u8"' % safe_name,
+    })
+
+
+@radio_music_bp.route('/playlists/import', methods=['POST'])
+def playlists_import():
+    """Import an M3U/M3U8 file as a new playlist."""
+    if 'file' not in request.files:
+        return jsonify({'error': 'Brak pliku'}), 400
+    f = request.files['file']
+    text = f.read().decode('utf-8', errors='replace')
+    lines = text.splitlines()
+    name = os.path.splitext(f.filename or 'Import')[0]
+    tracks = []
+    pending_info = {}
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith('#EXTINF:'):
+            parts = line.split(',', 1)
+            pending_info = {'title': parts[1].strip() if len(parts) > 1 else ''}
+        elif line.startswith('#'):
+            continue
+        else:
+            track = {
+                'name': pending_info.get('title') or os.path.basename(line),
+                'url': line,
+                'type': 'local' if line.startswith('/') else 'music',
+                'added_at': time.time(),
+            }
+            if line.startswith('/'):
+                track['path'] = line
+            tracks.append(track)
+            pending_info = {}
+    pls = _load_json(_playlists_file(), [])
+    pl_id = str(int(time.time() * 1000)) + '_' + os.urandom(3).hex()
+    pl = {
+        'id': pl_id, 'name': name, 'tracks': tracks,
+        'created_at': time.time(), 'updated_at': time.time(),
+    }
+    pls.insert(0, pl)
+    _save_json(_playlists_file(), pls)
+    return jsonify({'ok': True, 'playlist': pl, 'items': pls})
+
+
+# ── Unified Search ───────────────────────────────────────────
+
+@radio_music_bp.route('/search/all', methods=['GET'])
+def search_all():
+    """Search across radio, podcasts, and local library in parallel."""
+    q_str = request.args.get('q', '').strip()
+    if not q_str:
+        return jsonify({'error': 'Brak zapytania'}), 400
+    limit = _safe_int(request.args.get('limit', 10), 10, hi=30)
+    results = {'radio': [], 'podcasts': [], 'local': []}
+
+    def _search_radio():
+        try:
+            raw = _radio_api('/json/stations/search', {
+                'name': q_str, 'limit': limit * 2, 'hidebroken': 'true',
+                'order': 'clickcount', 'reverse': 'true',
+            })
+            results['radio'] = _aggregate_stations(raw)[:limit]
+        except Exception:
+            pass
+
+    def _search_podcasts():
+        try:
+            enc = urllib.parse.quote(q_str)
+            url = '%s?term=%s&media=podcast&limit=%d' % (_ITUNES_API, enc, limit)
+            req = urllib.request.Request(url, headers={'User-Agent': 'EthOS/1.0'})
+            resp = urllib.request.urlopen(req, timeout=8)
+            data = json.loads(resp.read())
+            items = []
+            for r in data.get('results', []):
+                items.append({
+                    'name': r.get('collectionName', ''),
+                    'artist': r.get('artistName', ''),
+                    'artwork': r.get('artworkUrl100', ''),
+                    'feed_url': r.get('feedUrl', ''),
+                    'genre': r.get('primaryGenreName', ''),
+                })
+            results['podcasts'] = items[:limit]
+        except Exception:
+            pass
+
+    def _search_local():
+        try:
+            q_low = q_str.lower()
+            if not _meta_cache:
+                _load_meta_cache()
+            folders = _get_music_folders()
+            matched = []
+            for base in folders:
+                if not os.path.isdir(base):
+                    continue
+                for root, _dirs, files in os.walk(base):
+                    for fname in files:
+                        ext = os.path.splitext(fname)[1].lower()
+                        if ext not in _AUDIO_EXTS:
+                            continue
+                        fpath = os.path.join(root, fname)
+                        try:
+                            stat = os.stat(fpath)
+                        except OSError:
+                            continue
+                        meta = _probe_audio_cached(fpath, stat.st_mtime)
+                        display = meta.get('title') or os.path.splitext(fname)[0]
+                        if q_low in display.lower() or q_low in (meta.get('artist') or '').lower() \
+                                or q_low in (meta.get('album') or '').lower() or q_low in fname.lower():
+                            matched.append({
+                                'name': display, 'artist': meta.get('artist', ''),
+                                'album': meta.get('album', ''), 'path': fpath,
+                                'has_art': meta.get('has_art', False),
+                                'duration': meta.get('duration', 0),
+                                'folder': base, 'filename': fname, 'type': 'local',
+                                'modified': stat.st_mtime,
+                            })
+                            if len(matched) >= limit:
+                                break
+                    if len(matched) >= limit:
+                        break
+                if len(matched) >= limit:
+                    break
+            results['local'] = matched
+        except Exception:
+            pass
+
+    jobs = [gevent.spawn(_search_radio), gevent.spawn(_search_podcasts), gevent.spawn(_search_local)]
+    gevent.joinall(jobs, timeout=12)
+    return jsonify(results)
 
 
 # ── Music: YouTube / multi-source (via yt-dlp) ──────────────

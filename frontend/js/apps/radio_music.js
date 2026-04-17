@@ -87,11 +87,13 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     // Sidebar group definitions — order is user-customisable via DnD (saved in localStorage)
     const _SIDEBAR_GROUPS = [
         { id: 'discover', label: 'Odkrywaj', items: [
+            { key: 'search', icon: 'fas fa-search', label: 'Szukaj wszędzie' },
             { key: 'discovery', icon: 'fas fa-compass', label: 'Odkrywaj' },
         ]},
         { id: 'music', label: 'Muzyka', items: [
             { key: 'music', icon: 'fab fa-youtube', label: 'Szukaj' },
             { key: 'local', icon: 'fas fa-folder-open', label: 'Lokalna muzyka' },
+            { key: 'artists', icon: 'fas fa-user-circle', label: 'Artyści' },
             { key: 'recently-added', icon: 'fas fa-clock', label: 'Ostatnio dodane' },
             { key: 'local-audiobooks', icon: 'fas fa-book-reader', label: 'Lok. audiobooki' },
             { key: 'playlists', icon: 'fas fa-list', label: 'Playlisty' },
@@ -1107,6 +1109,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             _restoreAndShowLastTrack(body);
             _loadCrossfadeSetting();
             _loadEpProgress();
+            _loadEqSettings();
 
             // Android back button: minimize NP overlay instead of navigating away
             window.addEventListener('popstate', _onPopState, true);
@@ -1334,6 +1337,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             case 'pod-queue': loadPodQueue(content); break;
             case 'settings': loadSettings(content); break;
             case 'recently-added': loadRecentlyAdded(content); break;
+            case 'artists': loadArtists(content); break;
+            case 'search': loadUnifiedSearch(toolbar, content); break;
         }
     }
 
@@ -1818,8 +1823,13 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     /* ── Subscriptions ─────────────────────────────── */
 
     async function loadSubscriptions(content) {
-        const data = await api('/radio-music/podcasts/subscriptions');
-        _subscriptions = data.items || [];
+        const [subData, adData] = await Promise.all([
+            api('/radio-music/podcasts/subscriptions'),
+            api('/radio-music/podcasts/autodownload')
+        ]);
+        _subscriptions = subData.items || [];
+        const adFeeds = (adData.feeds || {});
+
         if (!_subscriptions.length) {
             content.innerHTML = '<div class="rm-empty"><i class="fas fa-rss"></i><p>' + t('Brak subskrypcji') + '</p></div>';
             return;
@@ -1827,6 +1837,9 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         content.innerHTML = '<div class="rm-grid"></div>';
         const grid = content.querySelector('.rm-grid');
         _subscriptions.forEach(p => {
+            const feedUrl = p.feed_url || '';
+            const adEntry = adFeeds[feedUrl];
+            const adEnabled = adEntry && adEntry.enabled;
             const card = document.createElement('div');
             card.className = 'rm-card';
             card.innerHTML = `
@@ -1834,8 +1847,22 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 <div class="rm-card-info">
                     <div class="rm-card-name">${escH(p.name || p.title)}</div>
                     <div class="rm-card-meta">${escH(p.artist || p.author || '')}</div>
-                </div>`;
-            card.onclick = () => openPodcast(p);
+                </div>
+                <button class="rm-pl-btn rm-sub-autod" title="${t('Auto-pobieranie')}" data-feed="${escH(feedUrl)}"
+                    style="color:${adEnabled ? 'var(--rm-accent)' : 'var(--rm-text-muted)'}">
+                    <i class="fas fa-cloud-download-alt"></i>
+                </button>`;
+            card.querySelector('.rm-sub-autod').onclick = async (e) => {
+                e.stopPropagation();
+                const btn = e.currentTarget;
+                const nowEnabled = btn.style.color.includes('accent');
+                const res = await api('/radio-music/podcasts/autodownload', { method: 'POST', body: { feed_url: feedUrl, enabled: !nowEnabled }});
+                if (res.ok) {
+                    btn.style.color = !nowEnabled ? 'var(--rm-accent)' : 'var(--rm-text-muted)';
+                    toast((!nowEnabled ? t('Auto-pobieranie włączone') : t('Auto-pobieranie wyłączone')), 'success');
+                }
+            };
+            card.onclick = (e) => { if (!e.target.closest('.rm-sub-autod')) openPodcast(p); };
             grid.appendChild(card);
         });
     }
@@ -2467,7 +2494,10 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
         let html = '<div class="rm-pl-header"><h3>' + t('Moje playlisty') + '</h3>'
             + '<div class="rm-pl-create"><input id="rm-pl-name" placeholder="' + t('Nazwa playlisty...') + '">'
-            + '<button id="rm-pl-create-btn"><i class="fas fa-plus"></i> ' + t('Utwórz') + '</button></div></div>';
+            + '<button id="rm-pl-create-btn"><i class="fas fa-plus"></i> ' + t('Utwórz') + '</button>'
+            + '<button id="rm-pl-import-btn" title="' + t('Importuj M3U') + '"><i class="fas fa-file-import"></i></button>'
+            + '<input type="file" id="rm-pl-import-file" accept=".m3u,.m3u8" style="display:none">'
+            + '</div></div>';
 
         if (!_playlists.length) {
             html += '<div class="rm-empty"><i class="fas fa-list"></i><p>' + t('Brak playlist. Utwórz pierwszą!') + '</p></div>';
@@ -2483,6 +2513,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                     </div>
                     <div class="rm-pl-actions">
                         <button class="rm-pl-btn rm-pl-play" title="${t('Odtwórz')}"><i class="fas fa-play"></i></button>
+                        <button class="rm-pl-btn rm-pl-export" title="${t('Eksportuj M3U')}"><i class="fas fa-file-export"></i></button>
                         <button class="rm-pl-btn rm-pl-del" title="${t('Usuń')}"><i class="fas fa-trash"></i></button>
                     </div>
                 </div>`;
@@ -2502,11 +2533,26 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             if (e.key === 'Enter') content.querySelector('#rm-pl-create-btn').click();
         };
 
+        // Import M3U
+        content.querySelector('#rm-pl-import-btn').onclick = () => content.querySelector('#rm-pl-import-file').click();
+        content.querySelector('#rm-pl-import-file').onchange = async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const form = new FormData();
+            form.append('file', file);
+            const res = await fetch('/api/radio-music/playlists/import', {
+                method: 'POST', body: form,
+                headers: { 'Authorization': 'Bearer ' + (NAS.token || '') }
+            }).then(r => r.json());
+            if (res.ok) { toast(t('Zaimportowano: ') + (res.playlist?.name || ''), 'success'); loadPlaylists(toolbar, content); }
+            else toast(res.error || t('Błąd importu'), 'error');
+        };
+
         // Click handlers
         content.querySelectorAll('.rm-pl-card').forEach(card => {
             const plId = card.dataset.plid;
             card.onclick = (e) => {
-                if (e.target.closest('.rm-pl-play') || e.target.closest('.rm-pl-del')) return;
+                if (e.target.closest('.rm-pl-play') || e.target.closest('.rm-pl-del') || e.target.closest('.rm-pl-export')) return;
                 openPlaylist(plId, content);
             };
             const playBtn = card.querySelector('.rm-pl-play');
@@ -2519,6 +2565,11 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                     _playTrackFromPlaylist(pl.tracks[0]);
                     toast(t('Odtwarzam: ') + pl.name, 'success');
                 }
+            };
+            const exportBtn = card.querySelector('.rm-pl-export');
+            if (exportBtn) exportBtn.onclick = (e) => {
+                e.stopPropagation();
+                window.open('/api/radio-music/playlists/' + plId + '/export?token=' + (NAS.token || ''), '_blank');
             };
             const delBtn = card.querySelector('.rm-pl-del');
             if (delBtn) delBtn.onclick = async (e) => {
@@ -3261,7 +3312,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
     function loadSettings(content) {
         const cfSec = Math.round(_crossfadeDuration / 1000);
-        content.innerHTML = `
+        let html = `
             <div class="rm-section-title"><i class="fas fa-cog"></i> ${t('Ustawienia')}</div>
             <div style="max-width:480px;display:flex;flex-direction:column;gap:24px;padding:8px 0">
                 <div>
@@ -3285,6 +3336,9 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                     <button class="rm-chip" id="rm-clear-ep-progress" style="margin-top:8px"><i class="fas fa-trash"></i> ${t('Wyczyść postępy podcastów')}</button>
                 </div>
             </div>`;
+        // Equalizer section
+        html += _renderEqSection();
+        content.innerHTML = html;
         content.querySelector('#rm-cf-slider').oninput = (e) => {
             const sec = parseInt(e.target.value, 10);
             content.querySelector('#rm-cf-val').textContent = sec + 's';
@@ -3295,6 +3349,354 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             _saveEpProgress();
             toast(t('Postępy podcastów wyczyszczone'), 'success');
         };
+        _wireEqHandlers(content);
+    }
+
+    /* ── Unified Search ────────────────────────────── */
+
+    async function loadUnifiedSearch(toolbar, content) {
+        toolbar.innerHTML = `<input class="rm-search" id="rm-usearch" placeholder="${t('Szukaj wszędzie...')}" autofocus>`;
+        content.innerHTML = '<div class="rm-empty"><i class="fas fa-search"></i><p>' + t('Wpisz, aby szukać w radiu, podcastach i lokalnej muzyce') + '</p></div>';
+        const inp = toolbar.querySelector('#rm-usearch');
+        let debounce;
+        inp.onkeyup = () => {
+            clearTimeout(debounce);
+            debounce = setTimeout(() => {
+                const q = inp.value.trim();
+                if (q.length >= 2) _doUnifiedSearch(q, content);
+            }, 400);
+        };
+    }
+
+    async function _doUnifiedSearch(q, content) {
+        content.innerHTML = _skeletonTracks(6);
+        const data = await api('/radio-music/search/all?q=' + encodeURIComponent(q) + '&limit=8');
+        if (data.error) { content.innerHTML = '<div class="rm-empty"><p>' + escH(data.error) + '</p></div>'; return; }
+        let html = '';
+        // Radio results
+        if (data.radio && data.radio.length) {
+            html += '<div class="rm-section-title"><i class="fas fa-broadcast-tower"></i> ' + t('Radio') + ' (' + data.radio.length + ')</div>';
+            html += '<div class="rm-grid rm-usearch-radio">';
+            data.radio.forEach(s => {
+                const isFav = _favorites.some(f => f.uuid === s.uuid);
+                html += `<div class="rm-card rm-usearch-item" data-type="radio" data-uuid="${escH(s.uuid||'')}">
+                    <div class="rm-card-icon">${_stationIconHtml(s)}</div>
+                    <div class="rm-card-info"><div class="rm-card-name">${escH(s.name)}</div>
+                    <div class="rm-card-meta">${escH([s.country, s.tags].filter(Boolean).join(' · '))}</div></div>
+                    <div class="rm-card-actions"><button class="rm-card-btn rm-fav-btn ${isFav?'rm-fav-active':''}" title="${t('Ulubione')}"><i class="fas fa-heart"></i></button></div>
+                </div>`;
+            });
+            html += '</div>';
+        }
+        // Podcast results
+        if (data.podcasts && data.podcasts.length) {
+            html += '<div class="rm-section-title"><i class="fas fa-podcast"></i> ' + t('Podcasty') + ' (' + data.podcasts.length + ')</div>';
+            html += '<div class="rm-grid rm-usearch-podcasts">';
+            data.podcasts.forEach(p => {
+                html += `<div class="rm-card rm-usearch-item" data-type="podcast" data-feed="${escH(p.feed_url||'')}">
+                    <div class="rm-card-icon">${p.artwork ? '<img src="' + escH(p.artwork) + '">' : '<i class="fas fa-podcast"></i>'}</div>
+                    <div class="rm-card-info"><div class="rm-card-name">${escH(p.name)}</div>
+                    <div class="rm-card-meta">${escH(p.artist||'')}</div></div>
+                </div>`;
+            });
+            html += '</div>';
+        }
+        // Local results
+        if (data.local && data.local.length) {
+            html += '<div class="rm-section-title"><i class="fas fa-folder-open"></i> ' + t('Lokalna muzyka') + ' (' + data.local.length + ')</div>';
+            data.local.forEach(f => {
+                const artUrl = f.has_art ? '/api/radio-music/local/artwork?path=' + encodeURIComponent(f.path) + '&token=' + (NAS.token || '') : '';
+                const meta = [f.artist, f.album].filter(Boolean).join(' · ') || f.filename;
+                html += `<div class="rm-track rm-usearch-item rm-local-track" data-type="local" data-path="${escH(f.path)}">
+                    ${artUrl ? '<img class="rm-track-thumb" src="' + escH(artUrl) + '" loading="lazy">' : '<div class="rm-track-thumb" style="background:rgba(255,255,255,.06);display:flex;align-items:center;justify-content:center"><i class="fas fa-music" style="color:rgba(255,255,255,.2)"></i></div>'}
+                    <div class="rm-track-info"><div class="rm-track-name">${escH(f.name)}</div>
+                    <div class="rm-track-meta">${escH(meta)}</div></div>
+                    <button class="rm-track-btn rm-track-play"><i class="fas fa-play"></i></button>
+                </div>`;
+            });
+        }
+        if (!html) {
+            html = '<div class="rm-empty"><i class="fas fa-search"></i><p>' + t('Brak wyników') + '</p></div>';
+        }
+        content.innerHTML = html;
+
+        // Wire up click handlers
+        content.querySelectorAll('.rm-usearch-item').forEach(el => {
+            const type = el.dataset.type;
+            if (type === 'radio') {
+                const s = data.radio.find(r => r.uuid === el.dataset.uuid);
+                if (s) {
+                    el.onclick = (e) => { if (!e.target.closest('.rm-fav-btn')) playStation(s); };
+                    const favBtn = el.querySelector('.rm-fav-btn');
+                    if (favBtn) favBtn.onclick = (e) => { e.stopPropagation(); toggleFavorite(s); };
+                }
+            } else if (type === 'podcast') {
+                const p = data.podcasts.find(r => r.feed_url === el.dataset.feed);
+                if (p) el.onclick = () => openPodcast(p);
+            } else if (type === 'local') {
+                const f = data.local.find(r => r.path === el.dataset.path);
+                if (f) {
+                    const item = {
+                        name: f.name, path: f.path, type: 'local',
+                        image: f.has_art ? '/api/radio-music/local/artwork?path=' + encodeURIComponent(f.path) + '&token=' + (NAS.token || '') : '',
+                        meta: f.artist || f.filename, folder: f.folder
+                    };
+                    el.onclick = () => playAudio(item);
+                    const playBtn = el.querySelector('.rm-track-play');
+                    if (playBtn) playBtn.onclick = (e) => { e.stopPropagation(); playAudio(item); };
+                }
+            }
+        });
+    }
+
+    /* ── Artist / Album Browser ────────────────────── */
+
+    async function loadArtists(content) {
+        content.innerHTML = _skeletonGrid(8);
+        const scanData = await api('/radio-music/local/scan');
+        const items = scanData.items || [];
+        if (!items.length) {
+            content.innerHTML = '<div class="rm-empty"><i class="fas fa-user-circle"></i><p>'
+                + t('Brak plików audio') + '</p><button class="rm-chip" style="margin-top:12px" id="rm-art-go-local"><i class="fas fa-folder-open"></i> '
+                + t('Dodaj foldery') + '</button></div>';
+            content.querySelector('#rm-art-go-local')?.addEventListener('click', () => _navTo('local'));
+            return;
+        }
+        // Group by artist
+        const artistMap = {};
+        items.forEach(f => {
+            const artist = (f.artist || '').trim() || t('Nieznany artysta');
+            if (!artistMap[artist]) artistMap[artist] = [];
+            artistMap[artist].push(f);
+        });
+        const artists = Object.keys(artistMap).sort((a, b) => a.localeCompare(b, undefined, {sensitivity: 'base'}));
+        let html = '<div class="rm-section-title"><i class="fas fa-user-circle"></i> ' + t('Artyści') + ' (' + artists.length + ')</div>';
+        html += '<div class="rm-grid">';
+        artists.forEach(artist => {
+            const tracks = artistMap[artist];
+            const albums = new Set(tracks.map(t => (t.album || '').trim()).filter(Boolean));
+            const artTrack = tracks.find(t => t.has_art);
+            const artUrl = artTrack ? '/api/radio-music/local/artwork?path=' + encodeURIComponent(artTrack.path) + '&token=' + (NAS.token || '') : '';
+            html += `<div class="rm-card rm-artist-card" data-artist="${escH(artist)}">
+                <div class="rm-card-icon">${artUrl ? '<img src="' + escH(artUrl) + '" loading="lazy">' : '<i class="fas fa-user-circle"></i>'}</div>
+                <div class="rm-card-info">
+                    <div class="rm-card-name">${escH(artist)}</div>
+                    <div class="rm-card-meta">${tracks.length} ${t('utworów')}${albums.size ? ' · ' + albums.size + ' ' + t('albumów') : ''}</div>
+                </div>
+            </div>`;
+        });
+        html += '</div>';
+        content.innerHTML = html;
+        content.querySelectorAll('.rm-artist-card').forEach(el => {
+            el.onclick = () => _openArtist(el.dataset.artist, artistMap[el.dataset.artist], content);
+        });
+    }
+
+    function _openArtist(artistName, tracks, content) {
+        // Group by album
+        const albumMap = {};
+        tracks.forEach(f => {
+            const album = (f.album || '').trim() || t('Bez albumu');
+            if (!albumMap[album]) albumMap[album] = [];
+            albumMap[album].push(f);
+        });
+        // Sort albums, then tracks within each album by track number
+        const albumNames = Object.keys(albumMap).sort((a, b) => a.localeCompare(b, undefined, {sensitivity: 'base'}));
+        let html = '<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">'
+            + '<button class="rm-chip" id="rm-art-back"><i class="fas fa-arrow-left"></i> ' + t('Artyści') + '</button>'
+            + '<span style="font-size:18px;font-weight:700">' + escH(artistName) + '</span>'
+            + '<button class="rm-chip rm-artist-playall" style="margin-left:auto"><i class="fas fa-play"></i> ' + t('Odtwórz wszystko') + '</button>'
+            + '</div>';
+        albumNames.forEach(album => {
+            let albumTracks = albumMap[album];
+            albumTracks.sort((a, b) => {
+                const ta = parseInt(a.track) || 999;
+                const tb = parseInt(b.track) || 999;
+                return ta - tb;
+            });
+            const artTrack = albumTracks.find(t => t.has_art);
+            const artUrl = artTrack ? '/api/radio-music/local/artwork?path=' + encodeURIComponent(artTrack.path) + '&token=' + (NAS.token || '') : '';
+            const yearStr = albumTracks[0].year ? ' · ' + albumTracks[0].year : '';
+            html += '<div class="rm-section-title" style="display:flex;align-items:center;gap:8px">'
+                + (artUrl ? '<img src="' + escH(artUrl) + '" style="width:32px;height:32px;border-radius:4px;object-fit:cover" loading="lazy">' : '')
+                + '<span>' + escH(album) + yearStr + '</span></div>';
+            albumTracks.forEach((f, idx) => {
+                const durStr = f.duration ? _fmtSecs(f.duration) : '';
+                const trackNum = f.track ? '<span style="min-width:24px;color:var(--rm-text-muted);font-size:12px">' + escH(f.track) + '</span>' : '';
+                html += `<div class="rm-track rm-artist-track" data-path="${escH(f.path)}" data-album="${escH(album)}" data-idx="${idx}">
+                    ${trackNum}
+                    <div class="rm-track-info"><div class="rm-track-name">${escH(f.name)}</div>
+                    <div class="rm-track-meta">${durStr}</div></div>
+                    <button class="rm-track-btn rm-track-play"><i class="fas fa-play"></i></button>
+                </div>`;
+            });
+        });
+        content.innerHTML = html;
+        content.querySelector('#rm-art-back').onclick = () => loadArtists(content);
+
+        // Build full artist queue for playback
+        const allTracks = albumNames.flatMap(a => albumMap[a]);
+        const allQueue = allTracks.map(f => ({
+            name: f.name, path: f.path, type: 'local',
+            image: f.has_art ? '/api/radio-music/local/artwork?path=' + encodeURIComponent(f.path) + '&token=' + (NAS.token || '') : '',
+            meta: f.artist || f.filename, folder: f.folder
+        }));
+
+        content.querySelector('.rm-artist-playall').onclick = () => {
+            if (!allQueue.length) return;
+            _musicQueue = allQueue;
+            _musicQueueIdx = 0;
+            playAudio(allQueue[0]);
+            toast(t('Odtwarzam: ') + artistName, 'success');
+        };
+
+        content.querySelectorAll('.rm-artist-track').forEach(el => {
+            const path = el.dataset.path;
+            const globalIdx = allTracks.findIndex(f => f.path === path);
+            el.onclick = (e) => {
+                if (e.target.closest('.rm-track-play')) { e.stopPropagation(); }
+                _musicQueue = allQueue;
+                _musicQueueIdx = globalIdx >= 0 ? globalIdx : 0;
+                playAudio(allQueue[_musicQueueIdx]);
+            };
+            const playBtn = el.querySelector('.rm-track-play');
+            if (playBtn) playBtn.onclick = (e) => {
+                e.stopPropagation();
+                _musicQueue = allQueue;
+                _musicQueueIdx = globalIdx >= 0 ? globalIdx : 0;
+                playAudio(allQueue[_musicQueueIdx]);
+            };
+        });
+    }
+
+    /* ── 5-Band Equalizer ──────────────────────────── */
+
+    let _eqEnabled = false;
+    let _eqCtx = null;        // AudioContext
+    let _eqSource = null;     // MediaElementSourceNode
+    let _eqFilters = [];      // BiquadFilterNode[]
+    let _eqBands = [60, 230, 910, 3600, 14000];
+    let _eqGains = [0, 0, 0, 0, 0];
+    const _EQ_PRESETS = {
+        'Flat': [0, 0, 0, 0, 0],
+        'Bass Boost': [6, 4, 0, 0, 0],
+        'Treble Boost': [0, 0, 0, 4, 6],
+        'Rock': [4, 2, -1, 3, 4],
+        'Vocal': [-2, 0, 4, 3, 1],
+        'Dance': [5, 3, 0, 2, 4],
+        'Acoustic': [3, 1, 0, 2, 3],
+    };
+
+    function _initEq() {
+        if (_eqCtx) return;
+        try {
+            _eqCtx = new (window.AudioContext || window.webkitAudioContext)();
+        } catch(e) { return; }
+        _eqFilters = _eqBands.map((freq, i) => {
+            const f = _eqCtx.createBiquadFilter();
+            f.type = i === 0 ? 'lowshelf' : i === _eqBands.length - 1 ? 'highshelf' : 'peaking';
+            f.frequency.value = freq;
+            f.gain.value = _eqGains[i];
+            if (f.type === 'peaking') f.Q.value = 1.4;
+            return f;
+        });
+        // Chain filters
+        for (let i = 0; i < _eqFilters.length - 1; i++) {
+            _eqFilters[i].connect(_eqFilters[i + 1]);
+        }
+        _eqFilters[_eqFilters.length - 1].connect(_eqCtx.destination);
+    }
+
+    function _connectEq() {
+        if (!_eqCtx || !_audio || !_eqEnabled) return;
+        try {
+            if (_eqSource) { try { _eqSource.disconnect(); } catch(_) {} }
+            _eqSource = _eqCtx.createMediaElementSource(_audio);
+            _eqSource.connect(_eqFilters[0]);
+        } catch(e) {
+            // MediaElementSource can only be created once per element
+        }
+    }
+
+    function _disconnectEq() {
+        if (_eqSource) {
+            try { _eqSource.disconnect(); _eqSource.connect(_eqCtx.destination); } catch(_) {}
+        }
+    }
+
+    function _setEqGain(bandIdx, val) {
+        _eqGains[bandIdx] = val;
+        if (_eqFilters[bandIdx]) _eqFilters[bandIdx].gain.value = val;
+        localStorage.setItem('rm_eq_gains', JSON.stringify(_eqGains));
+    }
+
+    function _loadEqSettings() {
+        try {
+            const saved = JSON.parse(localStorage.getItem('rm_eq_gains') || 'null');
+            if (Array.isArray(saved) && saved.length === 5) _eqGains = saved;
+            _eqEnabled = localStorage.getItem('rm_eq_enabled') === '1';
+        } catch(_) {}
+    }
+
+    function _renderEqSection() {
+        const labels = ['60', '230', '910', '3.6k', '14k'];
+        let html = '<div class="rm-section-title"><i class="fas fa-sliders-h"></i> ' + t('Equalizer') + '</div>';
+        html += '<div style="max-width:480px;padding:8px 0">';
+        // Enable toggle
+        html += '<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">'
+            + '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px;color:var(--rm-text-secondary)">'
+            + '<input type="checkbox" id="rm-eq-toggle" ' + (_eqEnabled ? 'checked' : '') + ' style="accent-color:var(--rm-accent);width:18px;height:18px">'
+            + t('Włącz equalizer') + '</label></div>';
+        // Presets
+        html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px">';
+        Object.keys(_EQ_PRESETS).forEach(name => {
+            html += '<button class="rm-chip rm-eq-preset" data-preset="' + name + '">' + name + '</button>';
+        });
+        html += '</div>';
+        // Sliders
+        html += '<div style="display:flex;gap:16px;justify-content:center;padding:8px 0">';
+        _eqBands.forEach((freq, i) => {
+            html += '<div style="display:flex;flex-direction:column;align-items:center;gap:4px">'
+                + '<span id="rm-eq-val-' + i + '" style="font-size:11px;color:var(--rm-accent);min-width:28px;text-align:center">' + (_eqGains[i] > 0 ? '+' : '') + _eqGains[i] + 'dB</span>'
+                + '<input type="range" class="rm-eq-slider" data-band="' + i + '" min="-12" max="12" step="1" value="' + _eqGains[i] + '" '
+                + 'style="writing-mode:vertical-lr;direction:rtl;height:120px;width:28px;accent-color:var(--rm-accent)">'
+                + '<span style="font-size:11px;color:var(--rm-text-muted)">' + labels[i] + '</span></div>';
+        });
+        html += '</div></div>';
+        return html;
+    }
+
+    function _wireEqHandlers(content) {
+        content.querySelector('#rm-eq-toggle').onchange = (e) => {
+            _eqEnabled = e.target.checked;
+            localStorage.setItem('rm_eq_enabled', _eqEnabled ? '1' : '0');
+            if (_eqEnabled) { _initEq(); _connectEq(); _eqFilters.forEach((f, i) => f.gain.value = _eqGains[i]); }
+            else { _disconnectEq(); }
+        };
+        content.querySelectorAll('.rm-eq-slider').forEach(slider => {
+            slider.oninput = (e) => {
+                const band = parseInt(e.target.dataset.band);
+                const val = parseInt(e.target.value);
+                _setEqGain(band, val);
+                const lbl = content.querySelector('#rm-eq-val-' + band);
+                if (lbl) lbl.textContent = (val > 0 ? '+' : '') + val + 'dB';
+            };
+        });
+        content.querySelectorAll('.rm-eq-preset').forEach(btn => {
+            btn.onclick = () => {
+                const gains = _EQ_PRESETS[btn.dataset.preset];
+                if (!gains) return;
+                gains.forEach((g, i) => {
+                    _setEqGain(i, g);
+                    const slider = content.querySelector('.rm-eq-slider[data-band="' + i + '"]');
+                    if (slider) slider.value = g;
+                    const lbl = content.querySelector('#rm-eq-val-' + i);
+                    if (lbl) lbl.textContent = (g > 0 ? '+' : '') + g + 'dB';
+                });
+                content.querySelectorAll('.rm-eq-preset').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            };
+        });
     }
 
     /* ── Audiobooks for Kids ───────────────────────── */
@@ -3512,6 +3914,14 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         if (_playbackRate !== 1) _audio.playbackRate = _playbackRate;
         _playing = item;
         _seekLocked = true; // unlock on onplay/oncanplay — prevents seekbar jumping to 0
+
+        // Connect EQ if enabled
+        if (_eqEnabled && _eqCtx) {
+            try {
+                _eqSource = _eqCtx.createMediaElementSource(_audio);
+                _eqSource.connect(_eqFilters[0]);
+            } catch(_) {}
+        }
 
         // Reset reconnect state and preload on each new playback
         clearTimeout(_radioRetryTimer); _radioRetryTimer = null; _radioRetries = 0;
