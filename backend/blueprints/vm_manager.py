@@ -1866,19 +1866,23 @@ def stop_vm(vm_id):
     _destroy_tap(info.get('tap_dev'))
     _running_vms.pop(vm_id, None)
 
-    # Auto-eject ISO after stop — installation is assumed complete.
-    # This ensures next boot goes to disk instead of re-booting the ISO.
+    # Auto-eject boot media after stop — installation is assumed complete.
+    # This ensures next boot goes to disk instead of re-booting the installer.
     # Also reset NVRAM so stale CD-ROM boot entries are cleared.
     vms = _load_vms()
     vm_def = vms.get(vm_id, {})
     boot_img = vm_def.get('boot_image', '')
-    if boot_img and os.path.splitext(boot_img)[1].lower() in ('.iso',):
+    eject_exts = ('.iso', '.img', '.raw', '.qcow2', '.vdi', '.vmdk')
+    if boot_img and os.path.splitext(boot_img)[1].lower() in eject_exts:
         vm_def['boot_image'] = ''
         vm_vars = os.path.join(_vm_dir(vm_id), 'OVMF_VARS.fd')
-        if os.path.exists(vm_vars):
-            os.remove(vm_vars)
+        try:
+            if os.path.exists(vm_vars):
+                os.remove(vm_vars)
+        except OSError as e:
+            log.warning('Failed to reset NVRAM for VM %s: %s', vm_id, e)
         _save_vms(vms)
-        log.info('Auto-ejected ISO from VM %s and reset NVRAM', vm_id)
+        log.info('Auto-ejected boot media from VM %s and reset NVRAM', vm_id)
 
     return jsonify({'status': 'ok'})
 
