@@ -198,7 +198,23 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     <button class="vs-fs-btn" id="vs-fs-btn" title="${t('Pełny ekran')}"><i class="fas fa-expand"></i></button>
     <button class="vs-player-close" id="vs-player-close"><i class="fas fa-times"></i></button>
   </div>
-  <video id="vs-player-video" controls autoplay playsinline></video>
+  <video id="vs-player-video" autoplay playsinline></video>
+  <div class="vs-player-center" id="vs-player-center">
+    <button class="vs-cc-btn" id="vs-cc-rw"><i class="fas fa-undo-alt"></i><span>10</span></button>
+    <button class="vs-cc-btn vs-cc-play" id="vs-cc-play"><i class="fas fa-pause"></i></button>
+    <button class="vs-cc-btn" id="vs-cc-ff"><i class="fas fa-redo-alt"></i><span>10</span></button>
+  </div>
+  <div class="vs-player-bottom" id="vs-player-bottom">
+    <span class="vs-pb-time" id="vs-pb-cur">0:00</span>
+    <div class="vs-pb-seek-wrap" id="vs-pb-seek-wrap">
+      <div class="vs-pb-seek-track">
+        <div class="vs-pb-seek-buf" id="vs-pb-seek-buf"></div>
+        <div class="vs-pb-seek-fill" id="vs-pb-seek-fill"></div>
+      </div>
+      <input type="range" class="vs-pb-seek" id="vs-pb-seek" min="0" max="100" value="0" step="0.1">
+    </div>
+    <span class="vs-pb-time" id="vs-pb-dur">0:00</span>
+  </div>
   <div class="vs-seek-hint vs-seek-hint-left" id="vs-seek-hint-left"><i class="fas fa-backward"></i><span>-10s</span></div>
   <div class="vs-seek-hint vs-seek-hint-right" id="vs-seek-hint-right"><i class="fas fa-forward"></i><span>+10s</span></div>
   <div class="vs-swipe-hint" id="vs-swipe-hint"></div>
@@ -1904,6 +1920,8 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     let _knownDuration = 0;
     let _startOffset = 0;
     let _heartbeatTimer = null;
+    let _ctrlHideTimer = null;
+    let _ctrlVisible = true;
 
     function _buildStreamUrl(vid) {
         return '/api/video-station/stream/' + vid + '?token=' + NAS.token;
@@ -2050,7 +2068,153 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         _knownDuration = info.duration || 0;
         _startOffset = 0;
 
-        video.controls = true;
+        video.controls = false;
+
+        // Abort previous player event listeners (prevents accumulation across plays)
+        if (overlay._playerAC) overlay._playerAC.abort();
+        const ac = new AbortController();
+        overlay._playerAC = ac;
+        const sig = { signal: ac.signal };
+
+        // Custom control elements
+        const ccPlay   = bodyEl.querySelector('#vs-cc-play');
+        const ccRw     = bodyEl.querySelector('#vs-cc-rw');
+        const ccFf     = bodyEl.querySelector('#vs-cc-ff');
+        const pbCur    = bodyEl.querySelector('#vs-pb-cur');
+        const pbDur    = bodyEl.querySelector('#vs-pb-dur');
+        const pbSeek   = bodyEl.querySelector('#vs-pb-seek');
+        const pbFill   = bodyEl.querySelector('#vs-pb-seek-fill');
+        const pbBuf    = bodyEl.querySelector('#vs-pb-seek-buf');
+        const center   = bodyEl.querySelector('#vs-player-center');
+        const bottom   = bodyEl.querySelector('#vs-player-bottom');
+
+        // Show controls on open
+        overlay.classList.remove('vs-ctrl-hidden');
+        _ctrlVisible = true;
+
+        function _fmtTime(sec) {
+            if (!sec || sec < 0) return '0:00';
+            sec = Math.round(sec);
+            const h = Math.floor(sec / 3600);
+            const m = Math.floor((sec % 3600) / 60);
+            const s = sec % 60;
+            if (h > 0) return h + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+            return m + ':' + String(s).padStart(2, '0');
+        }
+
+        function _getRealPos() {
+            return _transcoding ? (_startOffset + (video.currentTime || 0)) : (video.currentTime || 0);
+        }
+        function _getTotalDur() {
+            return _transcoding ? _knownDuration : (video.duration || _knownDuration || 0);
+        }
+
+        function _updateControls() {
+            const pos = _getRealPos();
+            const dur = _getTotalDur();
+            if (pbCur) pbCur.textContent = _fmtTime(pos);
+            if (pbDur) pbDur.textContent = _fmtTime(dur);
+            if (pbSeek && !pbSeek._dragging) {
+                pbSeek.max = dur || 100;
+                pbSeek.value = pos;
+            }
+            if (pbFill && dur > 0) {
+                pbFill.style.width = (pos / dur * 100) + '%';
+            }
+            // Buffered range
+            if (pbBuf && dur > 0) {
+                const buf = video.buffered;
+                if (buf.length > 0) {
+                    const bufEnd = _transcoding ? (_startOffset + buf.end(buf.length - 1)) : buf.end(buf.length - 1);
+                    pbBuf.style.width = (bufEnd / dur * 100) + '%';
+                }
+            }
+            // Play/pause icon
+            if (ccPlay) {
+                ccPlay.innerHTML = video.paused
+                    ? '<i class="fas fa-play"></i>'
+                    : '<i class="fas fa-pause"></i>';
+            }
+        }
+
+        // Auto-hide controls after 3s
+        function _resetHideTimer() {
+            clearTimeout(_ctrlHideTimer);
+            if (!video.paused) {
+                _ctrlHideTimer = setTimeout(() => {
+                    overlay.classList.add('vs-ctrl-hidden');
+                    _ctrlVisible = false;
+                }, 3000);
+            }
+        }
+
+        function _showControls() {
+            overlay.classList.remove('vs-ctrl-hidden');
+            _ctrlVisible = true;
+            _resetHideTimer();
+        }
+
+        // Tap on video toggles controls
+        video.addEventListener('click', (e) => {
+            if (_ctrlVisible) {
+                overlay.classList.add('vs-ctrl-hidden');
+                _ctrlVisible = false;
+                clearTimeout(_ctrlHideTimer);
+            } else {
+                _showControls();
+            }
+        }, sig);
+
+        // Play/pause
+        if (ccPlay) ccPlay.onclick = () => { video.paused ? video.play() : video.pause(); _showControls(); };
+        if (ccRw) ccRw.onclick = () => { seekPlayer(video, -10); _showControls(); };
+        if (ccFf) ccFf.onclick = () => { seekPlayer(video, 10); _showControls(); };
+
+        // Show controls on pause, auto-hide on play
+        video.addEventListener('play', () => { _updateControls(); _resetHideTimer(); }, sig);
+        video.addEventListener('pause', () => {
+            clearTimeout(_ctrlHideTimer);
+            overlay.classList.remove('vs-ctrl-hidden');
+            _ctrlVisible = true;
+            _updateControls();
+        }, sig);
+
+        // Seekbar interaction
+        if (pbSeek) {
+            pbSeek._dragging = false;
+            pbSeek.addEventListener('input', () => {
+                pbSeek._dragging = true;
+                const target = parseFloat(pbSeek.value);
+                if (pbCur) pbCur.textContent = _fmtTime(target);
+                const dur = _getTotalDur();
+                if (pbFill && dur > 0) pbFill.style.width = (target / dur * 100) + '%';
+                _showControls();
+            }, sig);
+            pbSeek.addEventListener('change', () => {
+                const target = parseFloat(pbSeek.value);
+                pbSeek._dragging = false;
+                if (_transcoding) {
+                    const relTarget = target - _startOffset;
+                    if (relTarget >= 0) {
+                        video.currentTime = relTarget;
+                    } else {
+                        _startHls(vid, target, _currentAudioIdx);
+                    }
+                } else {
+                    video.currentTime = target;
+                }
+                _showControls();
+            }, sig);
+            // Prevent control hide during seek
+            pbSeek.addEventListener('pointerdown', () => { clearTimeout(_ctrlHideTimer); }, sig);
+        }
+
+        // Timeupdate → update controls
+        video.addEventListener('timeupdate', _updateControls, sig);
+        video.addEventListener('loadedmetadata', () => {
+            _updateControls();
+            if (pbSeek) pbSeek.max = _getTotalDur() || 100;
+        }, sig);
 
         title.textContent = info.title || info.filename || '';
         badge.style.display = needsTranscode ? '' : 'none';
@@ -2166,6 +2330,10 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 
         overlay.style.display = 'flex';
         video.focus();
+        // Set initial duration on seekbar
+        if (pbSeek && _knownDuration > 0) pbSeek.max = _knownDuration;
+        if (pbDur && _knownDuration > 0) pbDur.textContent = _fmtTime(_knownDuration);
+        _showControls();
 
         // save position every 10 seconds
         playerInterval = setInterval(() => savePosition(vid, video), 10000);
@@ -2288,11 +2456,12 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
                 e.preventDefault();
                 if (relX < rect.width / 2) { seekPlayer(video, -10); _showSeekHint('left'); }
                 else { seekPlayer(video, 10); _showSeekHint('right'); }
+                _showControls();
                 _lastTapTime = 0;
             } else {
                 _lastTapTime = now; _lastTapX = relX;
             }
-        }, { passive: false });
+        }, { passive: false, signal: ac.signal });
 
         video.addEventListener('touchmove', (e) => {
             const touch = e.changedTouches[0];
@@ -2309,11 +2478,11 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
                 if (swipeHint) { swipeHint.textContent = t('Jasność') + ': ' + Math.round(_swipeBrightness * 100) + '%'; swipeHint.style.display = ''; }
             }
             _swipeStartY = touch.clientY - rect.top;
-        }, { passive: true });
+        }, { passive: true, signal: ac.signal });
 
         video.addEventListener('touchend', () => {
             if (swipeHint) { setTimeout(() => { swipeHint.style.display = 'none'; }, 1200); }
-        });
+        }, sig);
 
         // PiP button
         const pipBtn = bodyEl.querySelector('#vs-pip-btn');
@@ -2335,7 +2504,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
                     overlay.requestFullscreen().catch(() => {});
                 }).catch(() => {});
             }
-        });
+        }, sig);
 
         bodyEl.querySelector('#vs-player-close').onclick = () => closePlayer();
     }
@@ -2575,10 +2744,14 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         _currentAudioIdx = null;
         _startOffset = 0;
         _knownDuration = 0;
+        clearTimeout(_ctrlHideTimer);
+        // Abort all addEventListener handlers from openPlayer
+        if (overlay._playerAC) { overlay._playerAC.abort(); overlay._playerAC = null; }
         overlay.style.display = 'none';
+        overlay.classList.remove('vs-ctrl-hidden');
         if (video) {
             video.pause();
-            video.controls = true;
+            video.controls = false;
             video.onseeking = null;
             video.ontimeupdate = null;
             video.onended = null;

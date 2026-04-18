@@ -48,6 +48,10 @@ Routes:
   GET  /api/radio-music/most-played        - most played items by count
   GET  /api/radio-music/playback-state     - get saved playback state (cross-device resume)
   POST /api/radio-music/playback-state     - save playback state
+  GET  /api/radio-music/music/liked       - user's liked songs
+  POST /api/radio-music/music/liked       - add/remove liked song
+  GET  /api/radio-music/similar-artists   - similar artists via Deezer (?artist=, ?limit=)
+  GET  /api/radio-music/recommendations   - personalized recs from history/favorites/subs
   GET  /api/radio-music/lyrics             - fetch song lyrics (?title=, ?artist=)
   GET  /api/radio-music/search/all         - unified search across radio+podcasts+local (?q=)
   GET  /api/radio-music/playlists/<id>/export - export playlist as M3U8
@@ -439,6 +443,33 @@ def radio_favorites_edit():
 
     _save_json(_user_file('favorites.json'), favs)
     return jsonify({'ok': True, 'items': favs})
+
+
+# ── Music: liked songs ───────────────────────────────────────
+
+@radio_music_bp.route('/music/liked', methods=['GET'])
+def music_liked():
+    return jsonify({'items': _load_json(_user_file('liked_songs.json'), [])})
+
+
+@radio_music_bp.route('/music/liked', methods=['POST'])
+def music_liked_edit():
+    body = request.get_json(force=True, silent=True) or {}
+    action = body.get('action', 'add')
+    track = body.get('track')
+    if not track or not track.get('url'):
+        return jsonify({'error': 'Brak danych utworu.'}), 400
+
+    liked = _load_json(_user_file('liked_songs.json'), [])
+
+    if action == 'remove':
+        liked = [s for s in liked if s.get('url') != track['url']]
+    else:
+        if not any(s.get('url') == track['url'] for s in liked):
+            liked.insert(0, track)
+
+    _save_json(_user_file('liked_songs.json'), liked)
+    return jsonify({'ok': True, 'items': liked})
 
 
 # ── Radio: stream URL resolver ───────────────────────────────
@@ -842,6 +873,140 @@ def save_playback_state():
     pfile = _user_file('playback_state.json')
     _save_json(pfile, data)
     return jsonify({'ok': True})
+
+
+# ── Deezer-based recommendations (free, no API key) ─────────
+
+_DEEZER_API = 'https://api.deezer.com'
+
+
+def _deezer_get(path, params=None):
+    """GET request to Deezer API, returns parsed JSON or empty dict."""
+    url = _DEEZER_API + path
+    if params:
+        url += '?' + urllib.parse.urlencode(params)
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'EthOS-RadioMusic/1.0'})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode('utf-8'))
+    except Exception as e:
+        log.debug('Deezer API error for %s: %s', path, e)
+        return {}
+
+
+@radio_music_bp.route('/similar-artists', methods=['GET'])
+def similar_artists():
+    """Find similar artists via Deezer API (free, no key).
+    Returns similar artists with their top tracks."""
+    artist = request.args.get('artist', '').strip()
+    limit = _safe_int(request.args.get('limit', 8), 8, hi=25)
+    if not artist:
+        return jsonify({'items': []})
+
+    # 1. Find artist on Deezer
+    search = _deezer_get('/search/artist', {'q': artist, 'limit': 1})
+    results = search.get('data', [])
+    if not results:
+        return jsonify({'items': []})
+
+    artist_id = results[0].get('id')
+    artist_name = results[0].get('name', artist)
+    artist_picture = results[0].get('picture_medium', '')
+
+    # 2. Get related artists
+    related = _deezer_get(f'/artist/{artist_id}/related', {'limit': limit})
+    items = []
+    for a in related.get('data', []):
+        items.append({
+            'id': a.get('id'),
+            'name': a.get('name', ''),
+            'picture': a.get('picture_medium', ''),
+            'fans': a.get('nb_fan', 0),
+        })
+
+    return jsonify({
+        'source': {'id': artist_id, 'name': artist_name, 'picture': artist_picture},
+        'items': items[:limit],
+    })
+
+
+@radio_music_bp.route('/recommendations', methods=['GET'])
+def recommendations():
+    """Build personalized recommendations from user's history, favorites and subscriptions."""
+    hfile = _user_file('history.json')
+    hist = _load_json(hfile, [])
+    favs = _load_json(_user_file('favorites.json'), [])
+    subs = _load_json(_user_file('subscriptions.json'), [])
+
+    # ── Extract top tags from favorites (radio stations have 'tags' field) ──
+    tag_counts = {}
+    for fav in favs:
+        for tag in (fav.get('tags') or '').split(','):
+            tag = tag.strip().lower()
+            if tag and len(tag) > 1:
+                tag_counts[tag] = tag_counts.get(tag, 0) + 1
+    top_tags = sorted(tag_counts, key=tag_counts.get, reverse=True)[:5]
+
+    # ── Extract top artists from history ──
+    artist_counts = {}
+    for h in hist:
+        art = (h.get('meta') or h.get('channel') or '').strip()
+        if art and h.get('type') in ('music', 'local'):
+            artist_counts[art] = artist_counts.get(art, 0) + h.get('play_count', 1)
+    top_artists = sorted(artist_counts, key=artist_counts.get, reverse=True)[:5]
+
+    # ── Extract podcast genres from subscriptions ──
+    pod_genres = set()
+    for sub in subs:
+        g = (sub.get('genre') or sub.get('category') or '').strip().lower()
+        if g:
+            pod_genres.add(g)
+
+    # ── Build tag-based radio recommendations (parallel) ──
+    tag_radios = {}
+    country = request.args.get('country', '').strip().upper() or 'PL'
+
+    def _fetch_tag_radio(tag):
+        data = _radio_api('/json/stations/search', {
+            'tag': tag, 'limit': 24, 'hidebroken': 'true',
+            'order': 'clickcount', 'reverse': 'true',
+            'countrycode': country,
+        })
+        items = _aggregate_stations(data)
+        # Exclude stations already in favorites
+        fav_uuids = {f.get('uuid') for f in favs}
+        items = [s for s in items if s.get('uuid') not in fav_uuids]
+        tag_radios[tag] = items[:6]
+
+    threads = [gevent.spawn(_fetch_tag_radio, tag) for tag in top_tags[:3]]
+    gevent.joinall(threads, timeout=12)
+
+    # ── Build artist-based music recommendations ──
+    artist_recs = []
+    if top_artists:
+        # Pick top 2 artists, find similar via Deezer
+        for art_name in top_artists[:2]:
+            search = _deezer_get('/search/artist', {'q': art_name, 'limit': 1})
+            results = search.get('data', [])
+            if not results:
+                continue
+            artist_id = results[0].get('id')
+            related = _deezer_get(f'/artist/{artist_id}/related', {'limit': 4})
+            for a in related.get('data', []):
+                artist_recs.append({
+                    'name': a.get('name', ''),
+                    'picture': a.get('picture_medium', ''),
+                    'because': art_name,
+                })
+
+    return jsonify({
+        'top_tags': top_tags,
+        'tag_radios': tag_radios,
+        'top_artists': top_artists,
+        'artist_recs': artist_recs,
+        'pod_genres': list(pod_genres),
+        'has_data': bool(top_tags or top_artists or pod_genres),
+    })
 
 
 @radio_music_bp.route('/lyrics', methods=['GET'])
