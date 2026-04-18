@@ -2068,7 +2068,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         _knownDuration = info.duration || 0;
         _startOffset = 0;
 
-        video.controls = false;
+        video.controls = true;
 
         // Abort previous player event listeners (prevents accumulation across plays)
         if (overlay._playerAC) overlay._playerAC.abort();
@@ -2076,68 +2076,13 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         overlay._playerAC = ac;
         const sig = { signal: ac.signal };
 
-        // Custom control elements
-        const ccPlay   = bodyEl.querySelector('#vs-cc-play');
-        const ccRw     = bodyEl.querySelector('#vs-cc-rw');
-        const ccFf     = bodyEl.querySelector('#vs-cc-ff');
-        const pbCur    = bodyEl.querySelector('#vs-pb-cur');
-        const pbDur    = bodyEl.querySelector('#vs-pb-dur');
-        const pbSeek   = bodyEl.querySelector('#vs-pb-seek');
-        const pbFill   = bodyEl.querySelector('#vs-pb-seek-fill');
-        const pbBuf    = bodyEl.querySelector('#vs-pb-seek-buf');
-        const center   = bodyEl.querySelector('#vs-player-center');
-        const bottom   = bodyEl.querySelector('#vs-player-bottom');
+        // Hide custom controls — use native browser controls
+        const center = bodyEl.querySelector('#vs-player-center');
+        const bottom = bodyEl.querySelector('#vs-player-bottom');
+        if (center) center.style.display = 'none';
+        if (bottom) bottom.style.display = 'none';
 
-        // Show controls on open
-        overlay.classList.remove('vs-ctrl-hidden');
-        _ctrlVisible = true;
-
-        function _fmtTime(sec) {
-            if (!sec || sec < 0) return '0:00';
-            sec = Math.round(sec);
-            const h = Math.floor(sec / 3600);
-            const m = Math.floor((sec % 3600) / 60);
-            const s = sec % 60;
-            if (h > 0) return h + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
-            return m + ':' + String(s).padStart(2, '0');
-        }
-
-        function _getRealPos() {
-            return _transcoding ? (_startOffset + (video.currentTime || 0)) : (video.currentTime || 0);
-        }
-        function _getTotalDur() {
-            return _transcoding ? _knownDuration : (video.duration || _knownDuration || 0);
-        }
-
-        function _updateControls() {
-            const pos = _getRealPos();
-            const dur = _getTotalDur();
-            if (pbCur) pbCur.textContent = _fmtTime(pos);
-            if (pbDur) pbDur.textContent = _fmtTime(dur);
-            if (pbSeek && !pbSeek._dragging) {
-                pbSeek.max = dur || 100;
-                pbSeek.value = pos;
-            }
-            if (pbFill && dur > 0) {
-                pbFill.style.width = (pos / dur * 100) + '%';
-            }
-            // Buffered range
-            if (pbBuf && dur > 0) {
-                const buf = video.buffered;
-                if (buf.length > 0) {
-                    const bufEnd = _transcoding ? (_startOffset + buf.end(buf.length - 1)) : buf.end(buf.length - 1);
-                    pbBuf.style.width = (bufEnd / dur * 100) + '%';
-                }
-            }
-            // Play/pause icon
-            if (ccPlay) {
-                ccPlay.innerHTML = video.paused
-                    ? '<i class="fas fa-play"></i>'
-                    : '<i class="fas fa-pause"></i>';
-            }
-        }
-
-        // Auto-hide controls after 3s
+        // Auto-hide top bar after 3s
         function _resetHideTimer() {
             clearTimeout(_ctrlHideTimer);
             if (!video.paused) {
@@ -2154,66 +2099,17 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             _resetHideTimer();
         }
 
-        // Tap on video toggles controls
-        video.addEventListener('click', (e) => {
-            if (_ctrlVisible) {
-                overlay.classList.add('vs-ctrl-hidden');
-                _ctrlVisible = false;
-                clearTimeout(_ctrlHideTimer);
-            } else {
-                _showControls();
-            }
-        }, sig);
+        // Show controls on open
+        overlay.classList.remove('vs-ctrl-hidden');
+        _ctrlVisible = true;
 
-        // Play/pause
-        if (ccPlay) ccPlay.onclick = () => { video.paused ? video.play() : video.pause(); _showControls(); };
-        if (ccRw) ccRw.onclick = () => { seekPlayer(video, -10); _showControls(); };
-        if (ccFf) ccFf.onclick = () => { seekPlayer(video, 10); _showControls(); };
-
-        // Show controls on pause, auto-hide on play
-        video.addEventListener('play', () => { _updateControls(); _resetHideTimer(); }, sig);
+        // Mouse move on overlay shows top bar
+        overlay.addEventListener('mousemove', () => { _showControls(); }, sig);
+        video.addEventListener('play', () => { _resetHideTimer(); }, sig);
         video.addEventListener('pause', () => {
             clearTimeout(_ctrlHideTimer);
             overlay.classList.remove('vs-ctrl-hidden');
             _ctrlVisible = true;
-            _updateControls();
-        }, sig);
-
-        // Seekbar interaction
-        if (pbSeek) {
-            pbSeek._dragging = false;
-            pbSeek.addEventListener('input', () => {
-                pbSeek._dragging = true;
-                const target = parseFloat(pbSeek.value);
-                if (pbCur) pbCur.textContent = _fmtTime(target);
-                const dur = _getTotalDur();
-                if (pbFill && dur > 0) pbFill.style.width = (target / dur * 100) + '%';
-                _showControls();
-            }, sig);
-            pbSeek.addEventListener('change', () => {
-                const target = parseFloat(pbSeek.value);
-                pbSeek._dragging = false;
-                if (_transcoding) {
-                    const relTarget = target - _startOffset;
-                    if (relTarget >= 0) {
-                        video.currentTime = relTarget;
-                    } else {
-                        _startHls(vid, target, _currentAudioIdx);
-                    }
-                } else {
-                    video.currentTime = target;
-                }
-                _showControls();
-            }, sig);
-            // Prevent control hide during seek
-            pbSeek.addEventListener('pointerdown', () => { clearTimeout(_ctrlHideTimer); }, sig);
-        }
-
-        // Timeupdate → update controls
-        video.addEventListener('timeupdate', _updateControls, sig);
-        video.addEventListener('loadedmetadata', () => {
-            _updateControls();
-            if (pbSeek) pbSeek.max = _getTotalDur() || 100;
         }, sig);
 
         title.textContent = info.title || info.filename || '';
@@ -2331,8 +2227,6 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         overlay.style.display = 'flex';
         video.focus();
         // Set initial duration on seekbar
-        if (pbSeek && _knownDuration > 0) pbSeek.max = _knownDuration;
-        if (pbDur && _knownDuration > 0) pbDur.textContent = _fmtTime(_knownDuration);
         _showControls();
 
         // save position every 10 seconds
