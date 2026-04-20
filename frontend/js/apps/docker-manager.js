@@ -70,6 +70,7 @@ function renderDockerManager(body) {
                 <div class="dkr-nav-item active" data-tab="containers"><i class="fas fa-box"></i> ${t('Kontenery')}</div>
                 <div class="dkr-nav-item" data-tab="projects"><i class="fas fa-layer-group"></i> ${t('Projekty')}</div>
                 <div class="dkr-nav-item" data-tab="images"><i class="fas fa-clone"></i> ${t('Obrazy')}</div>
+                <div class="dkr-nav-item" data-tab="backups"><i class="fas fa-shield-alt"></i> ${t('Backupy')}</div>
                 <div class="dkr-nav-item" data-tab="system"><i class="fas fa-server"></i> ${t('System')}</div>
             </div>
             <div class="dkr-main" id="dkr-main"></div>
@@ -96,6 +97,7 @@ function renderDockerManager(body) {
             case 'containers': renderContainersTab(); break;
             case 'projects': renderProjectsTab(); break;
             case 'images': renderImagesTab(); break;
+            case 'backups': renderBackupsTab(); break;
             case 'system': renderSystemTab(); break;
         }
     }
@@ -868,6 +870,264 @@ services:
                 });
             });
         }
+    }
+
+    // ─── BACKUPS TAB ───
+    async function loadBackups() {
+        try {
+            const res = await api('/docker/backups');
+            if (!Array.isArray(res)) {
+                if (res?.error) toast(res.error, 'error');
+                return [];
+            }
+            return res;
+        } catch { return []; }
+    }
+
+    function renderBackupsTab() {
+        main.innerHTML = '<div class="dkr-loading"><i class="fas fa-spinner fa-spin"></i></div>';
+        loadBackups().then(backups => {
+            main.innerHTML = `
+                <div class="dkr-toolbar">
+                    <span class="dkr-toolbar-title"><i class="fas fa-shield-alt"></i> ${t('Backupy Docker')}
+                        <span class="dkr-badge">${backups.length}</span></span>
+                    ${isAdmin ? `<button class="dkr-btn primary" id="dkr-bkp-create"><i class="fas fa-plus"></i> ${t('Nowy backup')}</button>` : ''}
+                    <button class="dkr-btn" id="dkr-bkp-refresh"><i class="fas fa-sync-alt"></i></button>
+                </div>
+                <div id="dkr-bkp-progress" style="display:none" class="dkr-bkp-progress-bar"></div>
+                <div class="dkr-table-wrap">
+                    ${backups.length ? `
+                    <table class="dkr-table">
+                        <thead><tr>
+                            <th>${t('Etykieta')}</th><th>${t('Typ')}</th><th>${t('Tryb')}</th>
+                            <th>${t('Data')}</th><th>${t('Rozmiar')}</th><th>${t('Status')}</th>
+                            <th>${t('Wolumeny')}</th><th></th>
+                        </tr></thead>
+                        <tbody>${backups.map(b => {
+                            const typeIcon = b.type === 'project' ? 'fa-layer-group' : 'fa-box';
+                            const typeName = b.type === 'project' ? t('Projekt') : t('Kontener');
+                            const modeBadge = b.mode === 'full'
+                                ? `<span class="dkr-bkp-mode full">${t('Pełny')}</span>`
+                                : `<span class="dkr-bkp-mode light">${t('Lekki')}</span>`;
+                            const statusCls = b.status === 'complete' ? 'success' : b.status === 'running' ? 'info' : 'danger';
+                            const statusText = b.status === 'complete' ? t('Gotowy') : b.status === 'running' ? t('W toku...') : t('Błąd');
+                            const date = b.created ? new Date(b.created).toLocaleString() : '—';
+                            const volCount = (b.volumes || []).length;
+                            return `<tr class="dkr-row" data-id="${esc(b.id)}">
+                                <td><strong>${esc(b.label || b.name)}</strong><br><span class="dkr-muted">${esc(b.name)}</span></td>
+                                <td><i class="fas ${typeIcon}"></i> ${typeName}</td>
+                                <td>${modeBadge}</td>
+                                <td class="dkr-muted">${date}</td>
+                                <td>${b.size_human || '—'}</td>
+                                <td><span class="dkr-project-status ${statusCls}">${statusText}</span></td>
+                                <td>${volCount > 0 ? volCount : '—'}</td>
+                                <td class="dkr-actions">${isAdmin && b.status === 'complete' ? `
+                                    <button class="dkr-act-btn success dkr-bkp-restore" data-id="${esc(b.id)}" title="${t('Przywróć')}"><i class="fas fa-undo"></i></button>
+                                    <button class="dkr-act-btn danger dkr-bkp-delete" data-id="${esc(b.id)}" title="${t('Usuń')}"><i class="fas fa-trash"></i></button>
+                                ` : ''}</td>
+                            </tr>`;
+                        }).join('')}</tbody>
+                    </table>` : `<div class="dkr-empty"><i class="fas fa-shield-alt" style="font-size:2em;margin-bottom:8px;opacity:.3"></i><br>${t('Brak backupów')}</div>`}
+                </div>
+            `;
+
+            // Refresh
+            main.querySelector('#dkr-bkp-refresh')?.addEventListener('click', () => renderBackupsTab());
+
+            // Create backup button
+            main.querySelector('#dkr-bkp-create')?.addEventListener('click', () => showCreateBackupModal());
+
+            // Restore buttons
+            main.querySelectorAll('.dkr-bkp-restore').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    const bid = btn.dataset.id;
+                    if (!await confirmDialog(t('Przywrócić ten backup?'), t('Kontenery z tą samą nazwą zostaną zastąpione. Wolumeny zostaną nadpisane.'))) return;
+                    btn.disabled = true;
+                    showBackupProgress('restore');
+                    const res = await api(`/docker/backups/${bid}/restore`, { method: 'POST', body: { restore_volumes: true } });
+                    if (res?.error) { toast(res.error, 'error'); hideBackupProgress(); btn.disabled = false; }
+                });
+            });
+
+            // Delete buttons
+            main.querySelectorAll('.dkr-bkp-delete').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    const bid = btn.dataset.id;
+                    if (!await confirmDialog(t('Usunąć ten backup?'))) return;
+                    const res = await api(`/docker/backups/${bid}`, { method: 'DELETE' });
+                    if (res?.ok) { toast(t('Backup usunięty'), 'success'); renderBackupsTab(); }
+                    else toast(res?.error || t('Błąd'), 'error');
+                });
+            });
+
+            // SocketIO progress listeners
+            _setupBackupSocketListeners();
+        });
+    }
+
+    function showBackupProgress(type) {
+        const bar = main.querySelector('#dkr-bkp-progress');
+        if (!bar) return;
+        const label = type === 'restore' ? t('Przywracanie...') : t('Tworzenie backupu...');
+        bar.style.display = 'block';
+        bar.innerHTML = `
+            <div class="dkr-bkp-progress-inner">
+                <div class="dkr-bkp-progress-track">
+                    <div class="dkr-bkp-progress-fill" id="dkr-bkp-pbar" style="width:0%"></div>
+                </div>
+                <span class="dkr-bkp-progress-text" id="dkr-bkp-pmsg">${label}</span>
+            </div>
+        `;
+    }
+
+    function updateBackupProgress(pct, msg) {
+        const bar = main.querySelector('#dkr-bkp-pbar');
+        const msgEl = main.querySelector('#dkr-bkp-pmsg');
+        if (bar) bar.style.width = `${pct}%`;
+        if (msgEl) msgEl.textContent = msg || '';
+    }
+
+    function hideBackupProgress() {
+        const bar = main.querySelector('#dkr-bkp-progress');
+        if (bar) bar.style.display = 'none';
+    }
+
+    function _setupBackupSocketListeners() {
+        if (!NAS.socket) return;
+        NAS.socket.off('docker_backup');
+        NAS.socket.off('docker_restore');
+        NAS.socket.on('docker_backup', (d) => {
+            if (S.tab !== 'backups') return;
+            if (d.status === 'done') {
+                hideBackupProgress();
+                toast(d.message || t('Backup gotowy'), 'success');
+                renderBackupsTab();
+            } else if (d.status === 'error') {
+                hideBackupProgress();
+                toast(d.message || t('Błąd backupu'), 'error');
+                renderBackupsTab();
+            } else {
+                updateBackupProgress(d.percent || 0, d.message || '');
+            }
+        });
+        NAS.socket.on('docker_restore', (d) => {
+            if (S.tab !== 'backups') return;
+            if (d.status === 'done') {
+                hideBackupProgress();
+                toast(d.message || t('Przywracanie zakończone'), 'success');
+                renderBackupsTab();
+            } else if (d.status === 'error') {
+                hideBackupProgress();
+                toast(d.message || t('Błąd przywracania'), 'error');
+                renderBackupsTab();
+            } else {
+                updateBackupProgress(d.percent || 0, d.message || '');
+            }
+        });
+    }
+
+    async function showCreateBackupModal() {
+        // Load containers + projects in parallel
+        const [containers, projects] = await Promise.all([
+            api('/docker/containers').catch(() => []),
+            api('/docker/projects').catch(() => []),
+        ]);
+
+        const overlay = document.createElement('div');
+        overlay.className = 'dkr-modal-overlay';
+        overlay.innerHTML = `
+            <div class="dkr-modal" style="max-width:520px">
+                <div class="dkr-modal-header">
+                    <span>${t('Nowy backup Docker')}</span>
+                    <button class="dkr-modal-close">&times;</button>
+                </div>
+                <div class="dkr-modal-body dkr-modal-body-form">
+                    <label style="font-size:13px;font-weight:600">${t('Typ')}</label>
+                    <div style="display:flex;gap:8px">
+                        <button class="dkr-btn primary dkr-bkp-type-btn" data-type="container"><i class="fas fa-box"></i> ${t('Kontener')}</button>
+                        <button class="dkr-btn dkr-bkp-type-btn" data-type="project"><i class="fas fa-layer-group"></i> ${t('Projekt')}</button>
+                    </div>
+                    <label style="font-size:13px;font-weight:600">${t('Cel')}</label>
+                    <select id="dkr-bkp-target" class="dkr-select" style="width:100%;padding:8px">
+                        ${(Array.isArray(containers) ? containers : []).map(c =>
+                            `<option value="${esc(c.id)}" data-type="container">${esc(c.name)} (${esc(c.image)})</option>`
+                        ).join('')}
+                    </select>
+                    <label style="font-size:13px;font-weight:600">${t('Tryb')}</label>
+                    <div style="display:flex;gap:8px">
+                        <button class="dkr-btn dkr-bkp-mode-btn" data-mode="light">
+                            <i class="fas fa-feather"></i> ${t('Lekki')}
+                            <span class="dkr-muted" style="margin-left:4px">${t('(bez obrazów)')}</span>
+                        </button>
+                        <button class="dkr-btn primary dkr-bkp-mode-btn" data-mode="full">
+                            <i class="fas fa-archive"></i> ${t('Pełny')}
+                            <span class="dkr-muted" style="margin-left:4px;color:inherit">${t('(z obrazami)')}</span>
+                        </button>
+                    </div>
+                    <label style="font-size:13px;font-weight:600">${t('Etykieta')} <span class="dkr-muted">(${t('opcjonalna')})</span></label>
+                    <input id="dkr-bkp-label" class="dkr-filter" style="width:100%;box-sizing:border-box" placeholder="${t('np. Przed aktualizacją')}" />
+                </div>
+                <div class="dkr-modal-footer">
+                    <button class="dkr-btn" id="dkr-bkp-cancel">${t('Anuluj')}</button>
+                    <button class="dkr-btn primary" id="dkr-bkp-submit"><i class="fas fa-shield-alt"></i> ${t('Utwórz backup')}</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+
+        let selectedType = 'container';
+        let selectedMode = 'full';
+
+        function updateTargetOptions() {
+            const select = overlay.querySelector('#dkr-bkp-target');
+            if (selectedType === 'container') {
+                select.innerHTML = (Array.isArray(containers) ? containers : []).map(c =>
+                    `<option value="${esc(c.id)}">${esc(c.name)} (${esc(c.image)})</option>`
+                ).join('');
+            } else {
+                select.innerHTML = (Array.isArray(projects) ? projects : []).map(p =>
+                    `<option value="${esc(p.name)}">${esc(p.name)} — ${p.running}/${p.total} ${t('kontenerów')}</option>`
+                ).join('');
+            }
+        }
+
+        // Type toggle
+        overlay.querySelectorAll('.dkr-bkp-type-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                overlay.querySelectorAll('.dkr-bkp-type-btn').forEach(b => b.classList.remove('primary'));
+                btn.classList.add('primary');
+                selectedType = btn.dataset.type;
+                updateTargetOptions();
+            });
+        });
+
+        // Mode toggle
+        overlay.querySelectorAll('.dkr-bkp-mode-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                overlay.querySelectorAll('.dkr-bkp-mode-btn').forEach(b => b.classList.remove('primary'));
+                btn.classList.add('primary');
+                selectedMode = btn.dataset.mode;
+            });
+        });
+
+        const close = () => overlay.remove();
+        overlay.querySelector('.dkr-modal-close').addEventListener('click', close);
+        overlay.querySelector('#dkr-bkp-cancel').addEventListener('click', close);
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+        overlay.querySelector('#dkr-bkp-submit').addEventListener('click', async () => {
+            const target = overlay.querySelector('#dkr-bkp-target').value;
+            const label = overlay.querySelector('#dkr-bkp-label').value.trim();
+            if (!target) { toast(t('Wybierz cel backupu'), 'error'); return; }
+            close();
+            showBackupProgress('backup');
+            const res = await api('/docker/backups', {
+                method: 'POST',
+                body: { type: selectedType, name: target, label, mode: selectedMode }
+            });
+            if (res?.error) { toast(res.error, 'error'); hideBackupProgress(); }
+            else if (res?.ok) { _setupBackupSocketListeners(); }
+        });
     }
 
     // ─── SYSTEM TAB ───
