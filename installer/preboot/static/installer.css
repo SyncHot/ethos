@@ -36,7 +36,7 @@ body {
 /* ── Installer container ── */
 .installer {
     width: 100%;
-    max-width: 520px;
+    max-width: 560px;
     min-height: 100vh;
     display: flex;
     flex-direction: column;
@@ -59,7 +59,7 @@ body {
 
 .steps-indicator {
     display: flex;
-    gap: 8px;
+    gap: 6px;
     justify-content: center;
 }
 
@@ -104,6 +104,14 @@ body {
     font-size: 1.4rem;
     font-weight: 600;
     margin-bottom: 8px;
+}
+
+.step h3 {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+    margin-top: 16px;
 }
 
 .step p {
@@ -177,17 +185,80 @@ body {
     min-height: 1.2em;
 }
 
-.toggle-row {
+/* ── Scenario cards ── */
+.scenario-grid {
     display: flex;
-    align-items: center;
-    gap: 8px;
-    cursor: pointer;
+    flex-direction: column;
+    gap: 10px;
 }
 
-.toggle-row input[type="checkbox"] {
-    width: 18px;
-    height: 18px;
-    accent-color: var(--accent);
+.scenario-card {
+    position: relative;
+    padding: 16px;
+    background: var(--bg-card);
+    border: 2px solid var(--border);
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+}
+
+.scenario-card:hover { border-color: var(--accent); background: var(--bg-hover); }
+.scenario-card.selected { border-color: var(--accent); background: rgba(56,189,248,0.08); }
+.scenario-card.disabled { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
+
+.scenario-card.recommended { border-color: var(--success); }
+.scenario-card.recommended.selected { border-color: var(--accent); }
+
+.scenario-badge {
+    position: absolute;
+    top: -10px;
+    right: 12px;
+    background: var(--success);
+    color: #0f172a;
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 2px 10px;
+    border-radius: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.scenario-icon {
+    font-size: 1.5rem;
+    color: var(--accent);
+    width: 40px;
+    text-align: center;
+    flex-shrink: 0;
+    padding-top: 4px;
+}
+
+.scenario-card.selected .scenario-icon { color: var(--accent); }
+
+.scenario-title {
+    font-weight: 600;
+    font-size: 1rem;
+    margin-bottom: 2px;
+}
+
+.scenario-desc {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.scenario-detail {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    margin-top: 4px;
+    opacity: 0.7;
+}
+
+.scenario-unavail {
+    font-size: 0.75rem;
+    color: var(--warn);
+    margin-top: 4px;
 }
 
 /* ── Disk list ── */
@@ -214,57 +285,189 @@ body {
 .disk-item.selected { border-color: var(--accent); background: rgba(56,189,248,0.1); }
 .disk-item.disabled { opacity: 0.4; cursor: not-allowed; }
 
-.disk-radio {
-    width: 18px;
-    height: 18px;
-    border: 2px solid var(--border);
-    border-radius: 50%;
+.disk-type-icon {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 44px;
     flex-shrink: 0;
-    position: relative;
+    color: var(--accent);
+    font-size: 1.2rem;
 }
 
-.disk-item.selected .disk-radio {
-    border-color: var(--accent);
-}
-
-.disk-item.selected .disk-radio::after {
-    content: '';
-    position: absolute;
-    top: 3px; left: 3px;
-    width: 8px; height: 8px;
-    background: var(--accent);
-    border-radius: 50%;
+.disk-type-label {
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-top: 2px;
 }
 
 .disk-info { flex: 1; }
 .disk-name { font-weight: 600; font-size: 0.95rem; }
 .disk-detail { font-size: 0.8rem; color: var(--text-muted); margin-top: 2px; }
-.disk-size { font-weight: 600; color: var(--accent); white-space: nowrap; }
+.disk-size { font-weight: 600; color: var(--accent); white-space: nowrap; font-size: 1rem; }
 .disk-badge {
     font-size: 0.7rem;
     padding: 2px 8px;
     border-radius: 10px;
     background: var(--bg-hover);
     color: var(--text-muted);
+    display: inline-block;
 }
 .disk-badge.boot { background: rgba(245,158,11,0.2); color: var(--warn); }
 .disk-badge.smart-fail { background: rgba(239,68,68,0.2); color: var(--error); }
 .disk-badge.usb-warn { background: rgba(245,158,11,0.15); color: var(--warn); }
 
-/* ── WiFi list ── */
+/* ── Partition preview ── */
+.partition-preview {
+    margin-top: 16px;
+}
 
+.pv-disk {
+    margin-bottom: 12px;
+}
+
+.pv-disk-label {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+    font-weight: 500;
+}
+
+.pv-disk-label i {
+    margin-right: 6px;
+    color: var(--accent);
+}
+
+.pv-bar {
+    display: flex;
+    height: 36px;
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+}
+
+.pv-seg {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    position: relative;
+    min-width: 24px;
+}
+
+.pv-seg span {
+    font-size: 0.65rem;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding: 0 4px;
+}
+
+.pv-esp {
+    background: #475569;
+    color: #94a3b8;
+}
+
+.pv-root {
+    background: #1e40af;
+    color: #93c5fd;
+}
+
+.pv-root-b {
+    background: #1e3a5f;
+    color: #7dd3fc;
+}
+
+.pv-data {
+    background: #065f46;
+    color: #6ee7b7;
+}
+
+/* ── Security / encryption cards ── */
+.security-options {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.toggle-card {
+    display: block;
+    background: var(--bg-card);
+    border: 2px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.toggle-card:hover { border-color: var(--accent); }
+.toggle-card.readonly { cursor: default; border-color: var(--success); opacity: 0.8; }
+
+.toggle-card-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.toggle-card-header input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    accent-color: var(--accent);
+    flex-shrink: 0;
+}
+
+.toggle-card-check {
+    color: var(--success);
+    font-size: 1.2rem;
+    flex-shrink: 0;
+    width: 20px;
+    text-align: center;
+}
+
+.toggle-card-icon {
+    font-size: 1.3rem;
+    color: var(--accent);
+    width: 32px;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.toggle-card-title {
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+
+.toggle-card-desc {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.encrypt-details {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+}
 
 /* ── Messages ── */
 .msg-info, .msg-ok, .msg-warn, .msg-error {
     padding: 10px 14px;
     border-radius: var(--radius-sm);
-    font-size: 0.9rem;
+    font-size: 0.85rem;
     margin: 8px 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
 }
 
 .msg-info { background: rgba(56,189,248,0.1); color: var(--accent); }
+.msg-info i { margin-top: 2px; flex-shrink: 0; }
 .msg-ok { background: rgba(16,185,129,0.1); color: var(--success); }
 .msg-warn { background: rgba(245,158,11,0.1); color: var(--warn); }
+.msg-warn i { margin-top: 2px; flex-shrink: 0; }
 .msg-error { background: rgba(239,68,68,0.1); color: var(--error); }
 
 .loading { text-align: center; color: var(--text-muted); padding: 20px; }
@@ -283,7 +486,7 @@ body {
 }
 
 .summary-row:last-child { border-bottom: none; }
-.summary-label { color: var(--text-muted); width: 120px; flex-shrink: 0; font-size: 0.85rem; }
+.summary-label { color: var(--text-muted); width: 130px; flex-shrink: 0; font-size: 0.85rem; }
 .summary-value { font-weight: 500; font-size: 0.95rem; }
 
 /* ── Progress ── */
@@ -381,6 +584,8 @@ body {
 
 .btn:hover { background: var(--accent-hover); }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-install { background: var(--success); }
+.btn-install:hover { background: #059669; }
 
 .btn-outline {
     background: transparent;
@@ -414,4 +619,6 @@ body {
     body { padding: 10px; }
     .lang-grid { grid-template-columns: 1fr; }
     .step h2 { font-size: 1.2rem; }
+    .scenario-card { padding: 12px; gap: 10px; }
+    .pv-seg span { font-size: 0.55rem; }
 }

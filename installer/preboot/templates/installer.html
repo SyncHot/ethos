@@ -17,7 +17,7 @@
             <div class="steps-indicator" id="steps-indicator"></div>
         </header>
 
-        <!-- Step 1: Language -->
+        <!-- Step 0: Language -->
         <section class="step" id="step-lang">
             <div class="step-icon"><i class="fas fa-globe"></i></div>
             <h2 data-i18n="Witaj w instalatorze EthOS">Witaj w instalatorze EthOS</h2>
@@ -25,7 +25,7 @@
             <div class="lang-grid" id="lang-grid"></div>
         </section>
 
-        <!-- Step 2: Account -->
+        <!-- Step 1: Account -->
         <section class="step hidden" id="step-account">
             <div class="step-icon"><i class="fas fa-user-plus"></i></div>
             <h2 data-i18n="Utwórz konto">Utwórz konto</h2>
@@ -50,47 +50,97 @@
             </div>
         </section>
 
-        <!-- Step 3: Disks -->
+        <!-- Step 2: Scenario selection -->
+        <section class="step hidden" id="step-scenario">
+            <div class="step-icon"><i class="fas fa-layer-group"></i></div>
+            <h2 data-i18n="Tryb instalacji">Tryb instalacji</h2>
+            <p data-i18n="Wybierz jak zainstalować system">Wybierz jak zainstalować system</p>
+            <div id="scenario-loading" class="loading"><i class="fas fa-spinner fa-spin"></i> <span data-i18n="Analizuję dyski...">Analizuję dyski...</span></div>
+            <div id="scenario-error" class="msg-error hidden"></div>
+            <div id="scenario-cards" class="scenario-grid hidden"></div>
+        </section>
+
+        <!-- Step 3: Disk selection -->
         <section class="step hidden" id="step-disks">
             <div class="step-icon"><i class="fas fa-hdd"></i></div>
             <h2 data-i18n="Wybierz dyski">Wybierz dyski</h2>
-            <div id="disk-loading" class="loading"><i class="fas fa-spinner fa-spin"></i> <span data-i18n="Ładowanie...">Ładowanie...</span></div>
-            <div id="disk-error" class="msg-error hidden"></div>
-
-            <div id="disk-section" class="hidden">
-                <h3 data-i18n="Dysk systemu">Dysk systemu</h3>
-                <div id="disk-list-os" class="disk-list"></div>
-
-                <div class="form-group" style="margin-top:16px">
-                    <label class="toggle-row">
-                        <input type="checkbox" id="chk-same-disk" checked>
-                        <span data-i18n="Ten sam dysk">Ten sam dysk na system i dane</span>
-                    </label>
+            <div id="disk-section">
+                <div id="disk-os-section">
+                    <h3 data-i18n="Dysk systemu">Dysk systemu</h3>
+                    <div id="disk-list-os" class="disk-list"></div>
                 </div>
-
-                <div id="data-disk-section" class="hidden">
+                <div id="disk-data-section" class="hidden">
                     <h3 data-i18n="Dysk danych">Dysk danych</h3>
                     <div id="disk-list-data" class="disk-list"></div>
                 </div>
+            </div>
+            <!-- Partition layout preview -->
+            <div id="partition-preview" class="partition-preview hidden">
+                <h3 data-i18n="Układ partycji">Układ partycji</h3>
+                <div id="partition-viz"></div>
+            </div>
+        </section>
 
-                <div class="msg-warn" data-i18n="UWAGA: Wszystkie dane na wybranych dyskach zostaną usunięte!">
-                    UWAGA: Wszystkie dane na wybranych dyskach zostaną usunięte!
+        <!-- Step 4: Security (encryption) -->
+        <section class="step hidden" id="step-security">
+            <div class="step-icon"><i class="fas fa-shield-alt"></i></div>
+            <h2 data-i18n="Bezpieczeństwo">Bezpieczeństwo</h2>
+            <div class="security-options">
+                <label class="toggle-card" id="toggle-encrypt">
+                    <div class="toggle-card-header">
+                        <input type="checkbox" id="chk-encrypt">
+                        <div class="toggle-card-icon"><i class="fas fa-lock"></i></div>
+                        <div class="toggle-card-text">
+                            <div class="toggle-card-title" data-i18n="Szyfrowanie danych (LUKS)">Szyfrowanie danych (LUKS)</div>
+                            <div class="toggle-card-desc" data-i18n="Chroni dane przed nieautoryzowanym dostępem fizycznym">Chroni dane przed nieautoryzowanym dostępem fizycznym</div>
+                        </div>
+                    </div>
+                    <div class="encrypt-details hidden" id="encrypt-details">
+                        <div class="form-group">
+                            <label data-i18n="Hasło awaryjne">Hasło awaryjne</label>
+                            <input type="password" id="inp-passphrase" placeholder="min. 8 znaków" maxlength="128">
+                            <div class="field-error" id="err-passphrase"></div>
+                        </div>
+                        <div class="form-group">
+                            <label data-i18n="Powtórz hasło awaryjne">Powtórz hasło awaryjne</label>
+                            <input type="password" id="inp-passphrase2" placeholder="min. 8 znaków" maxlength="128">
+                            <div class="field-error" id="err-passphrase2"></div>
+                        </div>
+                        <div class="msg-info">
+                            <i class="fas fa-info-circle"></i>
+                            <span data-i18n="Dysk odblokuje się automatycznie przy starcie. Hasło awaryjne służy do ręcznego odzyskiwania danych.">Dysk odblokuje się automatycznie przy starcie. Hasło awaryjne służy do ręcznego odzyskiwania danych.</span>
+                        </div>
+                    </div>
+                </label>
+                <div class="toggle-card readonly">
+                    <div class="toggle-card-header">
+                        <div class="toggle-card-check"><i class="fas fa-check-circle"></i></div>
+                        <div class="toggle-card-icon"><i class="fas fa-fingerprint"></i></div>
+                        <div class="toggle-card-text">
+                            <div class="toggle-card-title" data-i18n="Weryfikacja integralności">Weryfikacja integralności</div>
+                            <div class="toggle-card-desc" data-i18n="Immutable root (SquashFS) chroni system przed modyfikacją. Zawsze włączone.">Immutable root (SquashFS) chroni system przed modyfikacją. Zawsze włączone.</div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </section>
 
-        <!-- Step 4: Summary -->
+        <!-- Step 5: Summary -->
         <section class="step hidden" id="step-summary">
             <div class="step-icon"><i class="fas fa-clipboard-check"></i></div>
             <h2 data-i18n="Podsumowanie">Podsumowanie</h2>
             <div class="summary-table" id="summary-table"></div>
-            <div class="form-group" style="margin-top:16px">
+            <div class="msg-warn" style="margin-top:12px">
+                <i class="fas fa-exclamation-triangle"></i>
+                <span data-i18n="UWAGA: Wszystkie dane na wybranych dyskach zostaną usunięte!">UWAGA: Wszystkie dane na wybranych dyskach zostaną usunięte!</span>
+            </div>
+            <div class="form-group" style="margin-top:12px">
                 <label id="confirm-label" data-i18n="Wpisz INSTALUJ aby potwierdzić">Wpisz INSTALUJ aby potwierdzić</label>
                 <input type="text" id="inp-confirm" placeholder="INSTALUJ" autocomplete="off">
             </div>
         </section>
 
-        <!-- Step 5: Installation -->
+        <!-- Step 6: Installation -->
         <section class="step hidden" id="step-install">
             <div class="step-icon"><i class="fas fa-cog fa-spin"></i></div>
             <h2 data-i18n="Instaluję system...">Instaluję system...</h2>
@@ -102,7 +152,7 @@
             <div class="install-log" id="install-log"></div>
         </section>
 
-        <!-- Step 6: Done — install complete, reboot button -->
+        <!-- Step 7: Done -->
         <section class="step hidden" id="step-done">
             <div class="step-icon done"><i class="fas fa-check-circle"></i></div>
             <h2 data-i18n="System zainstalowany!">System zainstalowany!</h2>

@@ -17,7 +17,7 @@ async function checkSetupNeeded() {
     } catch { return false; }
 }
 
-function showSetupWizard() {
+async function showSetupWizard() {
     document.getElementById('setup-wizard').classList.remove('hidden');
     document.getElementById('login-screen').classList.add('hidden');
     document.getElementById('desktop').classList.add('hidden');
@@ -31,9 +31,28 @@ function showSetupWizard() {
         }
     } catch (e) { /* ignore */ }
 
-    // Preboot installer already handled disk setup — just render
-    Setup._installerNeeded = false;
-    Setup._installerDone = !!document.cookie; // placeholder; setupCheckInstallerDisk does the real check
+    // Load preboot installer result for handover
+    Setup._installerResult = null;
+    try {
+        var ir = await fetch('/api/installer/result');
+        if (ir.ok) {
+            var ird = await ir.json();
+            if (ird.version >= 2 && ird.success) {
+                Setup._installerResult = ird;
+                // Pre-fill data from preboot
+                if (ird.lang) { Setup.data.language = ird.lang; await setLanguage(ird.lang, false); }
+                if (ird.username) Setup.data.username = ird.username;
+                if (ird.hostname) Setup.data.hostname = ird.hostname;
+            }
+        }
+    } catch (e) { /* ignore — no result means fresh install */ }
+
+    // If preboot handled everything, skip to network or credentials
+    if (Setup._installerResult) {
+        // Language already set — skip lang step, go to welcome
+        Setup.step = 1;
+    }
+
     setupRenderStep();
 }
 
@@ -317,6 +336,15 @@ function setupBindStep() {
                 setupRenderStep();
             });
         });
+
+        // If preboot already created user, show pre-filled info with option to change
+        if (Setup._installerResult && Setup._installerResult.username) {
+            var infoEl = document.getElementById('setup-error');
+            if (infoEl) {
+                infoEl.style.color = '#22c55e';
+                infoEl.innerHTML = '<i class="fas fa-check-circle"></i> ' + t('Konto zostało utworzone w instalatorze. Możesz zmienić hasło lub przejść dalej.');
+            }
+        }
     }
 
     if (Setup.step === 4) setupLoadDisks();

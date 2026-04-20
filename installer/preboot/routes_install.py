@@ -58,6 +58,8 @@ def start_install():
     hostname = data.get("hostname", "ethos").strip()
     lang = data.get("lang", "pl")
     confirm = data.get("confirmation", "").strip()
+    encrypt = bool(data.get("encrypt", False))
+    passphrase = data.get("passphrase", "")
 
     # Validate confirmation token
     i18n = I18N()
@@ -74,6 +76,8 @@ def start_install():
         return jsonify({"ok": False, "error": "Username required"}), 400
     if len(password) < 4:
         return jsonify({"ok": False, "error": "Password too short (min 4)"}), 400
+    if encrypt and len(passphrase) < 8:
+        return jsonify({"ok": False, "error": "Encryption passphrase too short (min 8)"}), 400
 
     _set_state(
         running=True, phase="starting", percent=0,
@@ -97,7 +101,8 @@ def start_install():
                 _add_log(f"[{pct}%] {msg}")
 
             # Step 1: Disk install (partition + clone + GRUB)
-            ok, err = disk_ops.install(os_disk, data_disk, progress_cb)
+            ok, err = disk_ops.install(os_disk, data_disk, progress_cb,
+                                       encrypt=encrypt, passphrase=passphrase)
             if not ok:
                 _add_log(f"ERROR: Disk install failed: {err}")
                 _set_state(running=False, error=f"Disk install failed: {err}")
@@ -119,6 +124,17 @@ def start_install():
                 data_part = _part('/dev/' + os_disk, 4)
             else:
                 data_part = _part('/dev/' + data_disk, 1)
+
+            # If encrypted, LUKS volume was closed during disk_ops cleanup — reopen
+            if encrypt:
+                from disk_ops import _luks_state
+                keyfile = "/tmp/luks-keyfile"
+                mapper = "ethos_data"
+                if os.path.exists(keyfile):
+                    _run(f"cryptsetup luksOpen --key-file {keyfile} {data_part} {mapper}",
+                         timeout=30)
+                    data_part = f"/dev/mapper/{mapper}"
+
             _, merr, mrc = _run(f"mount -o subvol=@data {data_part} /mnt/data", timeout=30)
             if mrc != 0:
                 log.warning("Data partition mount failed (%s), creating dirs directly", merr)
@@ -252,6 +268,42 @@ def start_install():
                 _ip_out = ""
             new_ip = _ip_out or "—"
 
+            # Write installer_result.json handover contract
+            _add_log("[98%] Writing installer result...")
+            import json as _json
+            result_data = {
+                "version": 2,
+                "strategy": "same_disk" if same_disk else "separate_disk",
+                "os_device": os_disk,
+                "data_devices": [] if same_disk else [data_disk],
+                "encrypt": encrypt,
+                "username": username,
+                "hostname": hostname,
+                "lang": lang,
+                "success": True,
+            }
+            # Write to target (data partition or root)
+            result_paths = []
+            data_result = "/mnt/data/ethos/data/installer_result.json"
+            root_result = os.path.join(mount_dir, "opt/ethos/data/installer_result.json")
+            if os.path.isdir("/mnt/data/ethos/data"):
+                result_paths.append(data_result)
+            if os.path.isdir(os.path.dirname(root_result)):
+                result_paths.append(root_result)
+            # Also overlay upper for squashfs mode
+            if squashfs_mode:
+                ovl_result = os.path.join(
+                    mount_dir, "data-part/overlay/upper/opt/ethos/data/installer_result.json"
+                ) if os.path.isdir(os.path.join(mount_dir, "data-part")) else None
+                if ovl_result:
+                    os.makedirs(os.path.dirname(ovl_result), exist_ok=True)
+                    result_paths.append(ovl_result)
+            for rp in result_paths:
+                os.makedirs(os.path.dirname(rp), exist_ok=True)
+                with open(rp, "w") as rf:
+                    _json.dump(result_data, rf, indent=2)
+            _add_log(f"[98%] Wrote installer_result.json to {len(result_paths)} location(s)")
+
             _set_state(
                 running=False, done=True, percent=100,
                 phase="done", message="Installation complete!",
@@ -280,6 +332,9 @@ def start_install():
                     _drun(f"umount -l {mount_dir}/{fs} 2>/dev/null", timeout=10)
             _drun(f"umount /mnt/data 2>/dev/null", timeout=15)
             _drun(f"umount -R {mount_dir} 2>/dev/null", timeout=30)
+            # Close LUKS if still open
+            if encrypt:
+                _drun("cryptsetup close ethos_data 2>/dev/null", timeout=15)
 
     threading.Thread(target=worker, daemon=True, name="installer").start()
     return jsonify({"ok": True}), 202

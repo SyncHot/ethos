@@ -277,12 +277,14 @@ def validate(os_disk, data_disk, boot_device):
     return True, errors, warnings
 
 
-def install(os_disk, data_disk, progress_cb=None):
+def install(os_disk, data_disk, progress_cb=None, encrypt=False, passphrase=""):
     """
     Full installation: partition, clone, install GRUB.
     os_disk: device name ('sda')
     data_disk: device name or None (same disk)
     progress_cb: callable(phase, percent, message)
+    encrypt: bool — enable LUKS encryption on data partition
+    passphrase: str — emergency unlock passphrase (if encrypt=True)
     """
     same_disk = data_disk is None or data_disk == "same" or data_disk == os_disk
     os_dev = f"/dev/{os_disk}"
@@ -311,7 +313,8 @@ def install(os_disk, data_disk, progress_cb=None):
 
         # Phase 2: Format
         _p("partitioning", 20, "Creating filesystems...")
-        _format_partitions(os_dev, same_disk)
+        _format_partitions(os_dev, same_disk,
+                           encrypt=encrypt, passphrase=passphrase)
 
         # Phase 3: Clone root
         _p("cloning", 30, "Mounting target...")
@@ -379,11 +382,11 @@ def install(os_disk, data_disk, progress_cb=None):
         if squashfs_mode:
             if same_disk:
                 _p("configuring", 80, "Writing fstab to overlay...")
-                _write_overlay_fstab(os_dev, mount_dir, same_disk)
+                _write_overlay_fstab(os_dev, mount_dir, same_disk, encrypt=encrypt)
         else:
             if same_disk:
                 _p("bootloader", 80, "Configuring fstab...")
-                _generate_fstab(os_dev, mount_dir, same_disk)
+                _generate_fstab(os_dev, mount_dir, same_disk, encrypt=encrypt)
 
         # Phase 6: Data disk (if separate)
         nvme_pool_part = None
@@ -393,16 +396,23 @@ def install(os_disk, data_disk, progress_cb=None):
             _run(f"parted -s {data_dev} mklabel gpt", timeout=30)
             _run(f"parted -s {data_dev} mkpart primary btrfs 1MiB 100%", timeout=30)
             _run("partprobe 2>/dev/null && sleep 2", timeout=10)
-            _p("data", 82, "Formatting data disk (Btrfs)...")
-            _run(f"mkfs.btrfs -f -L EthOS-Data {_part(data_dev, 1)}", timeout=120)
-            _create_btrfs_subvolumes(_part(data_dev, 1))
+            data_part_dev = _part(data_dev, 1)
+            if encrypt and passphrase:
+                _p("data", 82, "Encrypting data disk (LUKS)...")
+                data_part_dev = _luks_format(data_part_dev, passphrase, "EthOS-Data")
+            else:
+                _p("data", 82, "Formatting data disk (Btrfs)...")
+                _run(f"mkfs.btrfs -f -L EthOS-Data {data_part_dev}", timeout=120)
+            _create_btrfs_subvolumes(data_part_dev)
             if squashfs_mode:
-                _prepare_data_dirs(_part(data_dev, 1))
-                _write_overlay_fstab(os_dev, mount_dir, same_disk, data_dev=data_dev)
+                _prepare_data_dirs(data_part_dev)
+                _write_overlay_fstab(os_dev, mount_dir, same_disk, data_dev=data_dev,
+                                     encrypt=encrypt)
             else:
                 _p("configuring", 82, "Setting up data partition symlinks...")
-                _setup_data_separation(mount_dir, _part(data_dev, 1))
-                _generate_fstab(os_dev, mount_dir, same_disk, data_dev=data_dev)
+                _setup_data_separation(mount_dir, data_part_dev)
+                _generate_fstab(os_dev, mount_dir, same_disk, data_dev=data_dev,
+                                encrypt=encrypt)
 
             # Check if OS disk has NVMe fast-storage partition (p4)
             p4 = _part(os_dev, 4)
@@ -414,16 +424,27 @@ def install(os_disk, data_disk, progress_cb=None):
             _p("data", 83, "Configuring NVMe fast-storage pool...")
             _setup_nvme_pool(nvme_pool_part, mount_dir, squashfs_mode)
 
-        # Phase 7: Cleanup
-        _p("finalizing", 83, "Unmounting...")
-        _run(f"umount -R {mount_dir} 2>/dev/null", timeout=30)
+        # Phase 7: Install LUKS keyfile to target (before unmount)
+        if _luks_state["active"]:
+            _p("configuring", 83, "Installing encryption keyfile...")
+            _install_luks_keyfile(mount_dir, squashfs_mode)
 
-        _p("done", 84, "Disk operations complete")
+        # Phase 8: Cleanup
+        _p("finalizing", 84, "Unmounting...")
+        _run(f"umount -R {mount_dir} 2>/dev/null", timeout=30)
+        if _luks_state["active"]:
+            _run(f"cryptsetup close {_luks_state['mapper']} 2>/dev/null", timeout=15)
+            _luks_state["active"] = False
+
+        _p("done", 85, "Disk operations complete")
         return True, ""
 
     except Exception as e:
         log.error("Installation failed: %s", e, exc_info=True)
         _run(f"umount -R /mnt/ethos-target 2>/dev/null")
+        if _luks_state["active"]:
+            _run(f"cryptsetup close {_luks_state['mapper']} 2>/dev/null", timeout=15)
+            _luks_state["active"] = False
         return False, str(e)
 
 
@@ -490,8 +511,9 @@ def _create_gpt(dev, include_data_part):
     _run("partprobe 2>/dev/null && sleep 2", timeout=10)
 
 
-def _format_partitions(dev, same_disk):
-    """Format A/B partitions: Root-A + Root-B (empty), optionally Data/NVMe-Pool."""
+def _format_partitions(dev, same_disk, encrypt=False, passphrase=""):
+    """Format A/B partitions: Root-A + Root-B (empty), optionally Data/NVMe-Pool.
+    If encrypt=True, data partition is LUKS-encrypted."""
     _, err, rc = _run(f"mkfs.vfat -F32 -n EFI {_part(dev, 1)}", timeout=60)
     if rc != 0:
         raise RuntimeError(f"mkfs.vfat failed: {err}")
@@ -506,9 +528,12 @@ def _format_partitions(dev, same_disk):
 
     p4 = _part(dev, 4)
     if same_disk:
-        _, err, rc = _run(f"mkfs.btrfs -f -L EthOS-Data {p4}", timeout=120)
-        if rc != 0:
-            raise RuntimeError(f"mkfs.btrfs data failed: {err}")
+        if encrypt and passphrase:
+            p4 = _luks_format(p4, passphrase, "EthOS-Data")
+        else:
+            _, err, rc = _run(f"mkfs.btrfs -f -L EthOS-Data {p4}", timeout=120)
+            if rc != 0:
+                raise RuntimeError(f"mkfs.btrfs data failed: {err}")
         _create_btrfs_subvolumes(p4)
     elif os.path.exists(p4):
         # Separate-data mode but p4 created for NVMe fast-storage
@@ -533,7 +558,115 @@ def _create_btrfs_subvolumes(data_part):
         _run(f"umount {tmp_mount} 2>/dev/null", timeout=15)
 
 
-def _clone_root(mount_dir, progress_cb):
+# Track LUKS state for fstab/crypttab generation
+_luks_state = {"active": False, "device": "", "mapper": "ethos_data", "keyfile": ""}
+
+
+def _luks_format(partition, passphrase, label="EthOS-Data"):
+    """LUKS-encrypt a partition, format inner volume as btrfs.
+
+    Creates a random keyfile for auto-unlock at boot and adds the user
+    passphrase as an emergency recovery key.
+
+    Returns the /dev/mapper/<name> device path to use instead of raw partition.
+    """
+    mapper = "ethos_data"
+    keyfile = "/tmp/luks-keyfile"
+
+    # Generate random keyfile (4096 bytes)
+    _run(f"dd if=/dev/urandom of={keyfile} bs=4096 count=1 2>/dev/null", timeout=10)
+    _run(f"chmod 400 {keyfile}", timeout=5)
+
+    # LUKS format with keyfile
+    _, err, rc = _run(
+        f"cryptsetup luksFormat --batch-mode --type luks2 "
+        f"--key-file {keyfile} {partition}",
+        timeout=120
+    )
+    if rc != 0:
+        raise RuntimeError(f"LUKS format failed: {err}")
+
+    # Add user passphrase as secondary key
+    if passphrase:
+        # Write passphrase to temp file for cryptsetup
+        pass_file = "/tmp/luks-passphrase"
+        with open(pass_file, "w") as f:
+            f.write(passphrase)
+        _run(
+            f"cryptsetup luksAddKey --key-file {keyfile} "
+            f"{partition} {pass_file}",
+            timeout=60
+        )
+        os.remove(pass_file)
+
+    # Open LUKS volume
+    _, err, rc = _run(
+        f"cryptsetup luksOpen --key-file {keyfile} {partition} {mapper}",
+        timeout=30
+    )
+    if rc != 0:
+        raise RuntimeError(f"LUKS open failed: {err}")
+
+    # Format inner volume as btrfs
+    mapper_dev = f"/dev/mapper/{mapper}"
+    _, err, rc = _run(f"mkfs.btrfs -f -L {label} {mapper_dev}", timeout=120)
+    if rc != 0:
+        _run(f"cryptsetup close {mapper}", timeout=15)
+        raise RuntimeError(f"mkfs.btrfs on LUKS failed: {err}")
+
+    # Store state for later fstab/crypttab generation
+    _luks_state["active"] = True
+    _luks_state["device"] = partition
+    _luks_state["mapper"] = mapper
+    _luks_state["keyfile"] = keyfile
+
+    log.info("LUKS encrypted %s → /dev/mapper/%s (btrfs, label=%s)",
+             partition, mapper, label)
+    return mapper_dev
+
+
+def _install_luks_keyfile(mount_dir, squashfs_mode):
+    """Copy LUKS keyfile to the target and write /etc/crypttab.
+
+    In squashfs mode, writes to the overlay upper dir.
+    In rsync mode, writes directly to the cloned root.
+    """
+    if not _luks_state["active"]:
+        return
+
+    keyfile_src = _luks_state["keyfile"]
+    mapper = _luks_state["mapper"]
+    device = _luks_state["device"]
+
+    if squashfs_mode:
+        # overlay upper dir
+        etc_dir = os.path.join(mount_dir, "data-part", "overlay", "upper", "etc")
+    else:
+        etc_dir = os.path.join(mount_dir, "etc")
+
+    os.makedirs(etc_dir, exist_ok=True)
+    keyfile_dst = os.path.join(etc_dir, "luks-data.key")
+
+    import shutil
+    shutil.copy2(keyfile_src, keyfile_dst)
+    os.chmod(keyfile_dst, 0o400)
+
+    # Get UUID of LUKS partition for crypttab
+    uuid_out, _, _ = _run(f"blkid -s UUID -o value {device}", timeout=10)
+    uuid = uuid_out.strip()
+
+    # Write crypttab
+    crypttab_path = os.path.join(etc_dir, "crypttab")
+    with open(crypttab_path, "w") as f:
+        if uuid:
+            f.write(f"{mapper} UUID={uuid} /etc/luks-data.key luks,discard\n")
+        else:
+            f.write(f"{mapper} {device} /etc/luks-data.key luks,discard\n")
+
+    log.info("Installed LUKS keyfile and crypttab to target")
+
+
+
     """Clone current root to mount_dir using rsync."""
     excludes = (
         "--exclude=/proc --exclude=/sys --exclude=/dev "
@@ -1563,7 +1696,7 @@ def _setup_recovery_on_esp(mount_dir, esp_grub_dir, kern_name, initrd_name):
     log.info("Recovery system installed on ESP at EFI/recovery/")
 
 
-def _generate_fstab(dev, mount_dir, same_disk, data_dev=None):
+def _generate_fstab(dev, mount_dir, same_disk, data_dev=None, encrypt=False):
     """Write /etc/fstab for the new system (A/B layout: root on p2)."""
     root_uuid, _, _ = _run(f"blkid -s UUID -o value {_part(dev, 2)}")
     esp_uuid, _, _ = _run(f"blkid -s UUID -o value {_part(dev, 1)}")
@@ -1582,7 +1715,11 @@ def _generate_fstab(dev, mount_dir, same_disk, data_dev=None):
         data_part = _part(data_dev, 1)
 
     if data_part:
-        data_uuid, _, _ = _run(f"blkid -s UUID -o value {data_part}")
+        if encrypt and _luks_state["active"]:
+            mapper_dev = f"/dev/mapper/{_luks_state['mapper']}"
+            data_uuid, _, _ = _run(f"blkid -s UUID -o value {mapper_dev}")
+        else:
+            data_uuid, _, _ = _run(f"blkid -s UUID -o value {data_part}")
         if data_uuid:
             lines.append(
                 f"UUID={data_uuid}  /mnt/data  btrfs  subvol=@data,defaults,noatime,compress=zstd:3,space_cache=v2  0  0"
@@ -1599,7 +1736,7 @@ def _generate_fstab(dev, mount_dir, same_disk, data_dev=None):
     log.info("Wrote fstab: %s", fstab_path)
 
 
-def _write_overlay_fstab(dev, mount_dir, same_disk, data_dev=None):
+def _write_overlay_fstab(dev, mount_dir, same_disk, data_dev=None, encrypt=False):
     """Write fstab to overlay upper dir (for SquashFS mode).
 
     In squashfs mode, the root is overlayfs (managed by initramfs).
@@ -1621,7 +1758,11 @@ def _write_overlay_fstab(dev, mount_dir, same_disk, data_dev=None):
         data_part = _part(data_dev, 1)
 
     if data_part:
-        data_uuid, _, _ = _run(f"blkid -s UUID -o value {data_part}")
+        if encrypt and _luks_state["active"]:
+            mapper_dev = f"/dev/mapper/{_luks_state['mapper']}"
+            data_uuid, _, _ = _run(f"blkid -s UUID -o value {mapper_dev}")
+        else:
+            data_uuid, _, _ = _run(f"blkid -s UUID -o value {data_part}")
         if data_uuid:
             lines.append(
                 f"UUID={data_uuid}  /mnt/data  btrfs  subvol=@data,defaults,noatime,compress=zstd:3,space_cache=v2  0  0"

@@ -281,6 +281,252 @@ _TRANSLATIONS = {
         "fr": "Chargement...",
         "es": "Cargando...",
     },
+
+    # ── Scenario selection ──
+    "Tryb instalacji": {
+        "en": "Installation mode",
+        "de": "Installationsmodus",
+        "fr": "Mode d'installation",
+        "es": "Modo de instalación",
+    },
+    "Wybierz jak zainstalować system": {
+        "en": "Choose how to install the system",
+        "de": "Wähle die Installationsart",
+        "fr": "Choisissez comment installer le système",
+        "es": "Elige cómo instalar el sistema",
+    },
+    "Analizuję dyski...": {
+        "en": "Analyzing disks...",
+        "de": "Festplatten werden analysiert...",
+        "fr": "Analyse des disques...",
+        "es": "Analizando discos...",
+    },
+    "Prosty": {
+        "en": "Simple",
+        "de": "Einfach",
+        "fr": "Simple",
+        "es": "Simple",
+    },
+    "System i dane na jednym dysku": {
+        "en": "System and data on one disk",
+        "de": "System und Daten auf einer Festplatte",
+        "fr": "Système et données sur un disque",
+        "es": "Sistema y datos en un disco",
+    },
+    "Jeden dysk na wszystko. Idealne do rozpoczęcia.": {
+        "en": "One disk for everything. Perfect to get started.",
+        "de": "Eine Festplatte für alles. Ideal zum Starten.",
+        "fr": "Un disque pour tout. Idéal pour commencer.",
+        "es": "Un disco para todo. Ideal para empezar.",
+    },
+    "Wydajny": {
+        "en": "Performance",
+        "de": "Leistung",
+        "fr": "Performance",
+        "es": "Rendimiento",
+    },
+    "Szybki SSD na system, HDD na dane": {
+        "en": "Fast SSD for system, HDD for data",
+        "de": "Schnelle SSD fürs System, HDD für Daten",
+        "fr": "SSD rapide pour le système, HDD pour les données",
+        "es": "SSD rápido para el sistema, HDD para los datos",
+    },
+    "System na szybkim dysku, dane na dużym. Najlepsza wydajność.": {
+        "en": "System on fast disk, data on large disk. Best performance.",
+        "de": "System auf schneller Festplatte, Daten auf großer. Beste Leistung.",
+        "fr": "Système sur disque rapide, données sur grand disque. Meilleures performances.",
+        "es": "Sistema en disco rápido, datos en grande. Mejor rendimiento.",
+    },
+    "Zaawansowany": {
+        "en": "Advanced",
+        "de": "Erweitert",
+        "fr": "Avancé",
+        "es": "Avanzado",
+    },
+    "Ręczny wybór dysków": {
+        "en": "Manual disk selection",
+        "de": "Manuelle Festplattenauswahl",
+        "fr": "Sélection manuelle des disques",
+        "es": "Selección manual de discos",
+    },
+    "Pełna kontrola nad przypisaniem dysków do ról.": {
+        "en": "Full control over disk role assignment.",
+        "de": "Volle Kontrolle über die Zuweisung der Festplattenrollen.",
+        "fr": "Contrôle total sur l'attribution des rôles des disques.",
+        "es": "Control total sobre la asignación de roles de disco.",
+    },
+    "Zalecane": {
+        "en": "Recommended",
+        "de": "Empfohlen",
+        "fr": "Recommandé",
+        "es": "Recomendado",
+    },
+    "Potrzeba ≥2 dyski": {
+        "en": "Requires ≥2 disks",
+        "de": "Benötigt ≥2 Festplatten",
+        "fr": "Nécessite ≥2 disques",
+        "es": "Requiere ≥2 discos",
+    },
+    "Wybierz tryb instalacji": {
+        "en": "Select installation mode",
+        "de": "Installationsmodus auswählen",
+        "fr": "Sélectionner le mode d'installation",
+        "es": "Seleccionar modo de instalación",
+    },
+
+    # ── Disk visualization ──
+    "Układ partycji": {
+        "en": "Partition layout",
+        "de": "Partitionslayout",
+        "fr": "Disposition des partitions",
+        "es": "Diseño de particiones",
+    },
+    "Dane": {
+        "en": "Data",
+        "de": "Daten",
+        "fr": "Données",
+        "es": "Datos",
+    },
+    "System": {
+        "en": "System",
+        "de": "System",
+        "fr": "Système",
+        "es": "Sistema",
+    },
+    "partycji": {
+        "en": "partitions",
+        "de": "Partitionen",
+        "fr": "partitions",
+        "es": "particiones",
+    },
+    "Instalator": {
+        "en": "Installer",
+        "de": "Installer",
+        "fr": "Installateur",
+        "es": "Instalador",
+    },
+    "Dysk systemu i danych nie mogą być takie same": {
+        "en": "System and data disk cannot be the same",
+        "de": "System- und Datenfestplatte können nicht identisch sein",
+        "fr": "Le disque système et données ne peuvent pas être identiques",
+        "es": "El disco del sistema y de datos no pueden ser iguales",
+    },
+    "jeden dysk": {
+        "en": "one disk",
+        "de": "eine Festplatte",
+        "fr": "un disque",
+        "es": "un disco",
+    },
+    "SSD + HDD": {
+        "en": "SSD + HDD",
+        "de": "SSD + HDD",
+        "fr": "SSD + HDD",
+        "es": "SSD + HDD",
+    },
+    "Tryb": {
+        "en": "Mode",
+        "de": "Modus",
+        "fr": "Mode",
+        "es": "Modo",
+    },
+
+    # ── Security / encryption ──
+    "Bezpieczeństwo": {
+        "en": "Security",
+        "de": "Sicherheit",
+        "fr": "Sécurité",
+        "es": "Seguridad",
+    },
+    "Szyfrowanie danych (LUKS)": {
+        "en": "Data encryption (LUKS)",
+        "de": "Datenverschlüsselung (LUKS)",
+        "fr": "Chiffrement des données (LUKS)",
+        "es": "Cifrado de datos (LUKS)",
+    },
+    "Chroni dane przed nieautoryzowanym dostępem fizycznym": {
+        "en": "Protects data from unauthorized physical access",
+        "de": "Schützt Daten vor unbefugtem physischem Zugriff",
+        "fr": "Protège les données contre l'accès physique non autorisé",
+        "es": "Protege los datos del acceso físico no autorizado",
+    },
+    "Hasło awaryjne": {
+        "en": "Recovery passphrase",
+        "de": "Notfall-Passwort",
+        "fr": "Mot de passe de récupération",
+        "es": "Contraseña de recuperación",
+    },
+    "Powtórz hasło awaryjne": {
+        "en": "Confirm recovery passphrase",
+        "de": "Notfall-Passwort bestätigen",
+        "fr": "Confirmer le mot de passe de récupération",
+        "es": "Confirmar contraseña de recuperación",
+    },
+    "Hasło musi mieć min. 8 znaków": {
+        "en": "Passphrase must be at least 8 characters",
+        "de": "Passwort muss mindestens 8 Zeichen haben",
+        "fr": "Le mot de passe doit comporter au moins 8 caractères",
+        "es": "La contraseña debe tener al menos 8 caracteres",
+    },
+    "Dysk odblokuje się automatycznie przy starcie. Hasło awaryjne służy do ręcznego odzyskiwania danych.": {
+        "en": "The disk unlocks automatically at boot. The recovery passphrase is for manual data recovery.",
+        "de": "Die Festplatte wird beim Start automatisch entsperrt. Das Notfall-Passwort dient zur manuellen Datenwiederherstellung.",
+        "fr": "Le disque se déverrouille automatiquement au démarrage. Le mot de passe de récupération sert à la récupération manuelle des données.",
+        "es": "El disco se desbloquea automáticamente al arrancar. La contraseña de recuperación es para recuperación manual de datos.",
+    },
+    "Weryfikacja integralności": {
+        "en": "Integrity verification",
+        "de": "Integritätsprüfung",
+        "fr": "Vérification d'intégrité",
+        "es": "Verificación de integridad",
+    },
+    "Immutable root (SquashFS) chroni system przed modyfikacją. Zawsze włączone.": {
+        "en": "Immutable root (SquashFS) protects the system from modification. Always enabled.",
+        "de": "Immutable Root (SquashFS) schützt das System vor Änderungen. Immer aktiviert.",
+        "fr": "Root immuable (SquashFS) protège le système contre les modifications. Toujours activé.",
+        "es": "Root inmutable (SquashFS) protege el sistema contra modificaciones. Siempre activo.",
+    },
+    "Szyfrowanie": {
+        "en": "Encryption",
+        "de": "Verschlüsselung",
+        "fr": "Chiffrement",
+        "es": "Cifrado",
+    },
+    "Wyłączone": {
+        "en": "Disabled",
+        "de": "Deaktiviert",
+        "fr": "Désactivé",
+        "es": "Desactivado",
+    },
+    "System zainstalowany!": {
+        "en": "System installed!",
+        "de": "System installiert!",
+        "fr": "Système installé !",
+        "es": "¡Sistema instalado!",
+    },
+    "Wybierz dysk systemu": {
+        "en": "Select system disk",
+        "de": "Systemfestplatte auswählen",
+        "fr": "Sélectionner le disque système",
+        "es": "Seleccionar disco del sistema",
+    },
+    "Wybierz dysk danych": {
+        "en": "Select data disk",
+        "de": "Datenfestplatte auswählen",
+        "fr": "Sélectionner le disque de données",
+        "es": "Seleccionar disco de datos",
+    },
+    "USB — nie można użyć jako systemowy": {
+        "en": "USB — cannot be used as system disk",
+        "de": "USB — kann nicht als Systemfestplatte verwendet werden",
+        "fr": "USB — ne peut pas être utilisé comme disque système",
+        "es": "USB — no se puede usar como disco del sistema",
+    },
+    "Szukaj EthOS w sieci": {
+        "en": "Look for EthOS on the network",
+        "de": "Suche EthOS im Netzwerk",
+        "fr": "Chercher EthOS sur le réseau",
+        "es": "Buscar EthOS en la red",
+    },
 }
 
 # Confirmation tokens per language
