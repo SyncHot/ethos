@@ -1027,10 +1027,31 @@ def quick_create_ethos():
     os.makedirs(vm_path, exist_ok=True)
 
     disk_file = os.path.join(vm_path, f'disk0.{disk_format}')
+
+    # Convert the builder image directly to qcow2 as the boot disk.
+    # Builder .img files are complete bootable system images — converting them
+    # gives a ready-to-boot VM.  Creating an empty disk + boot_image is wrong
+    # because the auto-eject on stop clears boot_image, leaving empty disks.
+    img_ext = os.path.splitext(boot_image)[1].lower()
+    is_raw_image = img_ext in ('.img', '.raw')
+
     try:
-        r = host_run(f'qemu-img create -f {disk_format} "{disk_file}" {disk_size}', timeout=60)
-        if r.returncode != 0:
-            return jsonify({'error': f'Disk creation error: {r.stderr}'}), 500
+        if is_raw_image:
+            r = host_run(
+                f'qemu-img convert -O {disk_format} "{boot_image}" "{disk_file}"',
+                timeout=600,
+            )
+            if r.returncode != 0:
+                return jsonify({'error': f'Image conversion error: {r.stderr}'}), 500
+            # Resize to target size if larger than the source image
+            r2 = host_run(f'qemu-img resize "{disk_file}" {disk_size}', timeout=60)
+            if r2.returncode != 0:
+                log.warning('Resize after convert failed: %s', r2.stderr)
+        else:
+            # ISO or other format — create empty disk, attach image as boot media
+            r = host_run(f'qemu-img create -f {disk_format} "{disk_file}" {disk_size}', timeout=60)
+            if r.returncode != 0:
+                return jsonify({'error': f'Disk creation error: {r.stderr}'}), 500
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -1049,7 +1070,7 @@ def quick_create_ethos():
             'bus': disk_bus,
         }],
         'os_type': os_type,
-        'boot_image': boot_image,
+        'boot_image': '' if is_raw_image else boot_image,
         'description': f'Quick-created EthOS VM (image: {os.path.basename(boot_image)})',
         'network': network,
         'created': time.strftime('%Y-%m-%d %H:%M:%S'),
