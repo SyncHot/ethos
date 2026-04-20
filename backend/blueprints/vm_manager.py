@@ -41,7 +41,7 @@ from flask import Blueprint, request, jsonify, send_from_directory, abort
 from blueprints.admin_required import admin_required
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from host import host_run, check_dep, ensure_dep, get_data_disk as _get_data_disk, app_path as _app_path
+from host import host_run, check_dep, ensure_dep, get_data_disk as _get_data_disk, app_path as _app_path, q
 from utils import register_pkg_routes, require_tools, check_tool
 
 vm_bp = Blueprint('vm_mgr', __name__, url_prefix='/api/vm')
@@ -999,6 +999,20 @@ def _mark_image_installed(disk_file):
                 os.remove(preboot_link)
             except OSError:
                 pass
+        # 3. Create installer_result.json so the setup wizard skips the
+        #    installer step (OS is already on disk — no need to repartition)
+        import time as _time2
+        result_file = os.path.join(mnt, 'opt/ethos/data/installer_result.json')
+        os.makedirs(os.path.dirname(result_file), exist_ok=True)
+        with open(result_file, 'w') as f:
+            json.dump({
+                'version': 2,
+                'timestamp': _time2.strftime('%Y-%m-%dT%H:%M:%S%z'),
+                'strategy': 'usb',
+                'system_device': '',
+                'data_devices': [],
+                'encrypt': False,
+            }, f, indent=2)
         log.info('Marked image as installed and enabled ethos.service')
     except Exception as e:
         log.warning('Failed to mark image as installed: %s', e)
