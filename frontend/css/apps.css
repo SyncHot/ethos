@@ -2500,6 +2500,7 @@ select.fm-input {
 }
 
 /* ── Docker Backups ── */
+.dkr-select option { background: var(--bg-elevated); color: var(--text-primary); }
 .dkr-bkp-mode {
     display: inline-block; padding: 2px 8px; border-radius: var(--r-sm);
     font-size: 11px; font-weight: 600; white-space: nowrap;

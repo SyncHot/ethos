@@ -1646,13 +1646,93 @@ def get_backup(backup_id):
     return jsonify(meta)
 
 
+def _resolve_all_targets(backup_type):
+    """Return list of (name, label) tuples for all containers or projects."""
+    targets = []
+    if backup_type == 'container':
+        fmt = '{{json .}}'
+        out, _, rc = _run(['docker', 'ps', '-a', '--format', fmt, '--no-trunc'])
+        if rc == 0:
+            for raw in _json_lines(out):
+                cid = raw.get('ID', '')[:12]
+                cname = raw.get('Names', '')
+                cimage = raw.get('Image', '')
+                if cid:
+                    targets.append((cid, f'{cname} ({cimage})'))
+    else:
+        projects = _find_compose_projects()
+        for p in projects:
+            targets.append((p['name'], p['name']))
+    return targets
+
+
+def _bg_create_backup_all(targets, backup_type, mode, label_prefix, bulk_bid):
+    """Background worker: create backups for all targets sequentially."""
+    s = _sio()
+    total = len(targets)
+
+    def emit(pct, msg, status='running'):
+        if s:
+            s.emit('docker_backup', {
+                'id': bulk_bid, 'percent': pct, 'message': msg, 'status': status
+            })
+
+    try:
+        for idx, (name, default_label) in enumerate(targets):
+            progress_base = int((idx / total) * 100)
+            lbl = f'{label_prefix} — {default_label}' if label_prefix else default_label
+            emit(progress_base, f'[{idx + 1}/{total}] {default_label}...')
+
+            bid = _backup_id(backup_type, name)
+            backup_dir = os.path.join(_backup_root(), bid)
+            meta = {
+                'type': backup_type,
+                'name': name,
+                'label': lbl,
+                'mode': mode,
+                'created': _time.strftime('%Y-%m-%dT%H:%M:%S%z'),
+                'status': 'running',
+                'size': 0,
+                'size_human': '0 B',
+                'volumes': [],
+                'images': [],
+            }
+            try:
+                os.makedirs(backup_dir, exist_ok=True)
+                if backup_type == 'container':
+                    _backup_container(backup_dir, meta, name, mode, lambda p, m, s='running': emit(
+                        progress_base + int(p * (1 / total)), m, s))
+                else:
+                    _backup_project(backup_dir, meta, name, mode, lambda p, m, s='running': emit(
+                        progress_base + int(p * (1 / total)), m, s))
+                meta['size'] = _dir_size_bytes(backup_dir)
+                meta['size_human'] = _fmt_size(meta['size'])
+                meta['status'] = 'complete'
+                _write_backup_meta(backup_dir, meta)
+            except Exception as e:
+                meta['status'] = 'error'
+                meta['error'] = str(e)
+                try:
+                    _write_backup_meta(backup_dir, meta)
+                except Exception:
+                    pass
+                emit(progress_base, f'Błąd: {default_label} — {e}')
+
+        emit(100, f'Backup zakończony — {total} elementów.', 'done')
+        audit_log('docker.backup.create', f'Bulk backup: {total} {backup_type}s ({mode})')
+    except Exception as e:
+        emit(0, f'Błąd backupu zbiorczego: {e}', 'error')
+    finally:
+        _backup_running.pop(bulk_bid, None)
+
+
 @docker_bp.route('/backups', methods=['POST'])
 @_require_docker
 @_require_admin
 def create_backup():
     """Create a new Docker backup (runs in background).
 
-    Body: { type: "container"|"project", name: "id_or_name", label: "...", mode: "full"|"light" }
+    Body: { type: "container"|"project", name: "id_or_name"|"__all__", label: "...", mode: "full"|"light" }
     Progress via SocketIO: docker_backup
     """
     data = request.get_json(force=True) if request.data else {}
@@ -1667,6 +1747,22 @@ def create_backup():
         return jsonify({'error': 'Target name is required'}), 400
     if mode not in ('full', 'light'):
         return jsonify({'error': 'Invalid mode — use "full" or "light"'}), 400
+
+    # Bulk backup: resolve __all__ into individual targets
+    if target_name == '__all__':
+        targets = _resolve_all_targets(backup_type)
+        if not targets:
+            return jsonify({'error': 'No targets found for bulk backup'}), 404
+        bid = _backup_id(backup_type, '__all__')
+        if bid in _backup_running:
+            return jsonify({'error': 'Bulk backup already in progress'}), 409
+        _backup_running[bid] = True
+        s = _sio()
+        if s:
+            s.start_background_task(_bg_create_backup_all, targets, backup_type, mode, label, bid)
+        else:
+            _bg_create_backup_all(targets, backup_type, mode, label, bid)
+        return jsonify({'ok': True, 'id': bid, 'status': 'started', 'count': len(targets)})
 
     bid = _backup_id(backup_type, target_name)
     backup_dir = os.path.join(_backup_root(), bid)
@@ -1692,7 +1788,6 @@ def create_backup():
     if s:
         s.start_background_task(_bg_create_backup, backup_dir, meta, backup_type, target_name, mode)
     else:
-        # Fallback: synchronous
         _bg_create_backup(backup_dir, meta, backup_type, target_name, mode)
 
     return jsonify({'ok': True, 'id': bid, 'status': 'started'})

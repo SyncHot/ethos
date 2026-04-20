@@ -1048,10 +1048,7 @@ services:
                         <button class="dkr-btn dkr-bkp-type-btn" data-type="project"><i class="fas fa-layer-group"></i> ${t('Projekt')}</button>
                     </div>
                     <label style="font-size:13px;font-weight:600">${t('Cel')}</label>
-                    <select id="dkr-bkp-target" class="dkr-select" style="width:100%;padding:8px">
-                        ${(Array.isArray(containers) ? containers : []).map(c =>
-                            `<option value="${esc(c.id)}" data-type="container">${esc(c.name)} (${esc(c.image)})</option>`
-                        ).join('')}
+                    <select id="dkr-bkp-target" class="dkr-select" style="width:100%;padding:8px;background:var(--bg-elevated);color:var(--text-primary)">
                     </select>
                     <label style="font-size:13px;font-weight:600">${t('Tryb')}</label>
                     <div style="display:flex;gap:8px">
@@ -1073,21 +1070,26 @@ services:
                 </div>
             </div>
         `;
-        document.body.appendChild(overlay);
+        body.appendChild(overlay);
 
         let selectedType = 'container';
         let selectedMode = 'full';
 
         function updateTargetOptions() {
             const select = overlay.querySelector('#dkr-bkp-target');
+            const optStyle = 'style="background:var(--bg-elevated);color:var(--text-primary)"';
             if (selectedType === 'container') {
-                select.innerHTML = (Array.isArray(containers) ? containers : []).map(c =>
-                    `<option value="${esc(c.id)}">${esc(c.name)} (${esc(c.image)})</option>`
-                ).join('');
+                const cList = Array.isArray(containers) ? containers : [];
+                select.innerHTML = `<option value="__all__" ${optStyle}>⚡ ${t('Wszystkie kontenery')} (${cList.length})</option>`
+                    + cList.map(c =>
+                        `<option value="${esc(c.id)}" ${optStyle}>${esc(c.name)} (${esc(c.image)})</option>`
+                    ).join('');
             } else {
-                select.innerHTML = (Array.isArray(projects) ? projects : []).map(p =>
-                    `<option value="${esc(p.name)}">${esc(p.name)} — ${p.running}/${p.total} ${t('kontenerów')}</option>`
-                ).join('');
+                const pList = Array.isArray(projects) ? projects : [];
+                select.innerHTML = `<option value="__all__" ${optStyle}>⚡ ${t('Wszystkie projekty')} (${pList.length})</option>`
+                    + pList.map(p =>
+                        `<option value="${esc(p.name)}" ${optStyle}>${esc(p.name)} — ${p.running}/${p.total} ${t('kontenerów')}</option>`
+                    ).join('');
             }
         }
 
@@ -1110,6 +1112,9 @@ services:
             });
         });
 
+        // Populate initial targets
+        updateTargetOptions();
+
         const close = () => overlay.remove();
         overlay.querySelector('.dkr-modal-close').addEventListener('click', close);
         overlay.querySelector('#dkr-bkp-cancel').addEventListener('click', close);
@@ -1121,12 +1126,12 @@ services:
             if (!target) { toast(t('Wybierz cel backupu'), 'error'); return; }
             close();
             showBackupProgress('backup');
+            _setupBackupSocketListeners();
             const res = await api('/docker/backups', {
                 method: 'POST',
                 body: { type: selectedType, name: target, label, mode: selectedMode }
             });
             if (res?.error) { toast(res.error, 'error'); hideBackupProgress(); }
-            else if (res?.ok) { _setupBackupSocketListeners(); }
         });
     }
 
