@@ -38,6 +38,7 @@ const Installer = {
 async function checkInstallerNeeded() {
     try {
         var r = await fetch('/api/installer/status');
+        if (!r.ok) return false;
         var d = await r.json();
         // If already done/running, no need to show installer
         if (d.status === 'done') return false;

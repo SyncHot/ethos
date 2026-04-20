@@ -1049,8 +1049,9 @@ def _blueprint_auth_guard():
         # Boot beacon (no auth — freshly booted EthOS VM sends this before having a token)
         if path == '/api/builder/beacon' and request.method == 'POST':
             return
-        # Allow network WiFi/AP endpoints during setup wizard (no auth yet)
-        if not _is_setup_done() and path.startswith(('/api/network/wifi',
+        # Allow installer + network endpoints during setup wizard (no auth yet)
+        if not _is_setup_done() and path.startswith(('/api/installer/',
+                                                      '/api/network/wifi',
                                                       '/api/network/ap',
                                                       '/api/network/interfaces')):
             return
