@@ -1103,36 +1103,31 @@ def quick_create_ethos():
 
     disk_file = os.path.join(vm_path, f'disk0.{disk_format}')
 
-    # Convert the builder image directly to qcow2 as the boot disk.
-    # Builder .img files are complete bootable system images — converting them
-    # gives a ready-to-boot VM.  Creating an empty disk + boot_image is wrong
-    # because the auto-eject on stop clears boot_image, leaving empty disks.
+    # For EthOS builder images (.img/.raw): convert the image to qcow2 and
+    # mark it as installed so it boots directly into the EthOS setup wizard
+    # (skipping the preboot disk installer which is meant for real hardware).
     img_ext = os.path.splitext(boot_image)[1].lower()
     is_raw_image = img_ext in ('.img', '.raw')
 
     try:
         if is_raw_image:
-            r = host_run(
-                f'qemu-img convert -O {disk_format} "{boot_image}" "{disk_file}"',
-                timeout=600,
-            )
-            if r.returncode != 0:
-                return jsonify({'error': f'Image conversion error: {r.stderr}'}), 500
-            # Resize to target size if larger than the source image
-            r2 = host_run(f'qemu-img resize "{disk_file}" {disk_size}', timeout=60)
-            if r2.returncode != 0:
-                log.warning('Resize after convert failed: %s', r2.stderr)
-            # Builder images boot into ethos-preboot.service which provides
-            # the full installer experience (disk selection, user creation,
-            # hostname, etc.).  Do NOT mark as installed — let the preboot
-            # installer run so the user goes through the proper setup flow.
+            src_fmt = 'raw'
+            r = host_run(f'qemu-img convert -f {src_fmt} -O {disk_format} {q(boot_image)} {q(disk_file)}', timeout=300)
         else:
-            # ISO or other format — create empty disk, attach image as boot media
-            r = host_run(f'qemu-img create -f {disk_format} "{disk_file}" {disk_size}', timeout=60)
-            if r.returncode != 0:
-                return jsonify({'error': f'Disk creation error: {r.stderr}'}), 500
+            src_fmt = img_ext.lstrip('.')
+            r = host_run(f'qemu-img convert -f {src_fmt} -O {disk_format} {q(boot_image)} {q(disk_file)}', timeout=300)
+        if r.returncode != 0:
+            return jsonify({'error': f'Disk conversion error: {r.stderr}'}), 500
+        # Resize to target size if the converted image is smaller
+        r2 = host_run(f'qemu-img resize {q(disk_file)} {disk_size}', timeout=60)
+        if r2.returncode != 0:
+            log.warning('Could not resize disk to %s: %s', disk_size, r2.stderr)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+    # Mark image as installed so the VM boots into ethos.service (setup wizard)
+    # instead of ethos-preboot.service (disk installer for real hardware).
+    _mark_image_installed(disk_file)
 
     vms[vm_id] = {
         'name': name,
@@ -1149,7 +1144,7 @@ def quick_create_ethos():
             'bus': disk_bus,
         }],
         'os_type': os_type,
-        'boot_image': '' if is_raw_image else boot_image,
+        'boot_image': '',
         'description': f'Quick-created EthOS VM (image: {os.path.basename(boot_image)})',
         'network': network,
         'created': time.strftime('%Y-%m-%d %H:%M:%S'),
@@ -1775,7 +1770,7 @@ def start_vm(vm_id):
                 # Boot image as primary drive (bootindex=0) — acts like a USB installer
                 # snapshot=on: temp CoW overlay so guest can write without modifying the original
                 cmd += ['-drive', f'file={boot_image},format={img_fmt},if=none,id=bootimg,snapshot=on']
-                cmd += ['-device', 'virtio-blk-pci,drive=bootimg,bootindex=0']
+                cmd += ['-device', f'virtio-blk-pci,drive=bootimg,bootindex=0']
 
         # Disks — loop over all VM disks
         disks = vm.get('disks', [])
@@ -1973,6 +1968,7 @@ def stop_vm(vm_id):
     vm_def = vms.get(vm_id, {})
     boot_img = vm_def.get('boot_image', '')
     eject_exts = ('.iso', '.img', '.raw', '.qcow2', '.vdi', '.vmdk')
+
     if boot_img and os.path.splitext(boot_img)[1].lower() in eject_exts:
         vm_def['boot_image'] = ''
         vm_vars = os.path.join(_vm_dir(vm_id), 'OVMF_VARS.fd')
