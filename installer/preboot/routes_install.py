@@ -242,13 +242,15 @@ def start_install():
                 system_ops.mark_installed(root_dir=effective_root)
 
             # Get expected IP after reboot
-            import wifi_ops
-            net = wifi_ops.status()
-            new_ip = (
-                net.get("ethernet_ip")
-                or net.get("wifi_ip")
-                or "192.168.42.1"
-            )
+            import subprocess as _sp
+            try:
+                _ip_out = _sp.check_output(
+                    "ip -4 -o addr show scope global | awk '{print $4}' | cut -d/ -f1 | head -1",
+                    shell=True, text=True, timeout=5
+                ).strip()
+            except Exception:
+                _ip_out = ""
+            new_ip = _ip_out or "—"
 
             _set_state(
                 running=False, done=True, percent=100,

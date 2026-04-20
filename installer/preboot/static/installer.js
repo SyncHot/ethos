@@ -2,12 +2,11 @@
  * EthOS Installer — Frontend step wizard.
  *
  * Step order:
- *   0 Language → 1 Account → 2 Disks → 3 Summary → 4 Install
- *   → 5 Network (post-install, hotspot stays active) → 6 Done/Reboot
+ *   0 Language → 1 Account → 2 Disks → 3 Summary → 4 Install → 5 Done/Reboot
  */
 
-const STEP_IDS = ['step-lang', 'step-account', 'step-disks', 'step-summary', 'step-install', 'step-network', 'step-done'];
-const STEP_LABELS = ['Wybierz język', 'Utwórz konto', 'Wybierz dyski', 'Podsumowanie', 'Instalacja', 'Sieć', 'Gotowe'];
+const STEP_IDS = ['step-lang', 'step-account', 'step-disks', 'step-summary', 'step-install', 'step-done'];
+const STEP_LABELS = ['Wybierz język', 'Utwórz konto', 'Wybierz dyski', 'Podsumowanie', 'Instalacja', 'Gotowe'];
 
 const FLAGS = { pl: '🇵🇱', en: '🇬🇧', de: '🇩🇪', fr: '🇫🇷', es: '🇪🇸' };
 
@@ -24,8 +23,6 @@ const Installer = {
     sameDisk: true,
     bootDevice: null,
     disks: [],
-    wifiSSID: null,
-    wifiSaved: false,
     networkOk: false,
     pollTimer: null,
     installNewIP: null,
@@ -51,7 +48,6 @@ const Installer = {
         if (n === 2) this.loadDisks();
         if (n === 3) this.buildSummary();
         if (n === 4) this.startInstall();
-        if (n === 5) this.loadNetwork();
     },
 
     next() {
@@ -311,7 +307,7 @@ const Installer = {
                     clearInterval(this.pollTimer);
                     this.pollTimer = null;
                     this.installNewIP = data.new_ip || null;
-                    this.showStep(5); // → Network (post-install)
+                    this.showStep(5); // → Done/Reboot
                 }
                 if (data.error) {
                     clearInterval(this.pollTimer);
@@ -325,115 +321,9 @@ const Installer = {
         }, 1500);
     },
 
-    // ── Step 5: Network (post-install) ──
-
-    async loadNetwork() {
-        const statusDiv = document.getElementById('net-status');
-        const ethDiv = document.getElementById('net-ethernet');
-        const wifiDiv = document.getElementById('net-wifi-section');
-        statusDiv.classList.remove('hidden');
-        ethDiv.classList.add('hidden');
-        wifiDiv.classList.add('hidden');
-
-        try {
-            const r = await fetch('/api/wifi/status');
-            const data = await r.json();
-
-            if (data.ethernet && data.ethernet_ip) {
-                document.getElementById('eth-ip').textContent = data.ethernet_ip;
-                ethDiv.classList.remove('hidden');
-                this.networkOk = true;
-                this.installNewIP = data.ethernet_ip;
-            }
-
-            if (data.has_wifi) {
-                wifiDiv.classList.remove('hidden');
-                this.scanWifi();
-            }
-
-            if (data.ethernet && data.ethernet_ip) {
-                statusDiv.classList.add('hidden');
-            } else if (data.has_wifi) {
-                statusDiv.innerHTML = `<span>${this.t('Wybierz sieć WiFi do użycia po restarcie')}</span>`;
-            } else {
-                statusDiv.innerHTML = `<div class="msg-warn">${this.t('Brak karty WiFi — podłącz kabel Ethernet')}</div>`;
-            }
-        } catch (e) {
-            statusDiv.innerHTML = `<div class="msg-error">${this.t('Błąd')}: ${e.message}</div>`;
-        }
-    },
-
-    async scanWifi() {
-        const list = document.getElementById('wifi-list');
-        list.innerHTML = `<div class="loading"><i class="fas fa-spinner fa-spin"></i> ${this.t('Skanowanie sieci WiFi...')}</div>`;
-        try {
-            const r = await fetch('/api/wifi/scan');
-            const data = await r.json();
-            const nets = data.networks || [];
-            if (nets.length === 0) {
-                list.innerHTML = `<div class="msg-warn">${this.t('Nie znaleziono sieci WiFi')}</div>`;
-                return;
-            }
-            list.innerHTML = nets.map(n => {
-                const bars = n.signal >= 75 ? '▂▄▆█' : n.signal >= 50 ? '▂▄▆' : n.signal >= 25 ? '▂▄' : '▂';
-                const lock = n.security ? '<i class="fas fa-lock"></i>' : '';
-                return `<div class="wifi-item" data-ssid="${this._esc(n.ssid)}">` +
-                    `<span class="wifi-bars">${bars}</span>` +
-                    `<span class="wifi-name">${this._esc(n.ssid)}</span>` +
-                    `<span class="wifi-lock">${lock}</span>` +
-                    `<span class="wifi-signal">${n.signal}%</span></div>`;
-            }).join('');
-
-            list.querySelectorAll('.wifi-item').forEach(item => {
-                item.onclick = () => {
-                    list.querySelectorAll('.wifi-item').forEach(i => i.classList.remove('selected'));
-                    item.classList.add('selected');
-                    this.wifiSSID = item.dataset.ssid;
-                    document.getElementById('wifi-pass-group').classList.remove('hidden');
-                    document.getElementById('btn-wifi-save').classList.remove('hidden');
-                    document.getElementById('inp-wifi-pass').focus();
-                };
-            });
-        } catch (e) {
-            list.innerHTML = `<div class="msg-error">${this.t('Błąd')}: ${e.message}</div>`;
-        }
-    },
-
-    async saveWifi() {
-        const btn = document.getElementById('btn-wifi-save');
-        const result = document.getElementById('wifi-result');
-        const pass = document.getElementById('inp-wifi-pass').value;
-        btn.disabled = true;
-        btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${this.t('Zapisywanie...')}`;
-        result.classList.add('hidden');
-
-        try {
-            const r = await fetch('/api/wifi/save', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ssid: this.wifiSSID, password: pass, os_disk: this.osDisk }),
-            });
-            const data = await r.json();
-            result.classList.remove('hidden');
-            if (data.ok) {
-                result.innerHTML = `<div class="msg-ok"><i class="fas fa-check-circle"></i> ${this.t('Konfiguracja WiFi zapisana')} — ${this._esc(this.wifiSSID)}</div>`;
-                this.wifiSaved = true;
-            } else {
-                result.innerHTML = `<div class="msg-error"><i class="fas fa-times-circle"></i> ${this._esc(data.error || data.message || '')}</div>`;
-            }
-        } catch (e) {
-            result.classList.remove('hidden');
-            result.innerHTML = `<div class="msg-error">${this.t('Błąd')}: ${e.message}</div>`;
-        }
-        btn.disabled = false;
-        btn.innerHTML = `<i class="fas fa-save"></i> <span>${this.t('Zapisz WiFi')}</span>`;
-    },
-
-    // ── Step 6: Done / Reboot ──
+    // ── Step 5: Done / Reboot ──
 
     async reboot() {
-        // Show the rebooting screen
-        this.showStep(6);
         const ip = this.installNewIP || '—';
         const port = 9000;
         const url = ip !== '—' ? `http://${ip}:${port}` : this.t('Szukaj EthOS w sieci');

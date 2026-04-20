@@ -3,7 +3,7 @@
 EthOS Installer — Flask-based pre-boot setup server.
 
 Runs on port 9000 before EthOS is installed.
-Serves a step-wizard UI for: language → user → disks → network → install.
+Serves a step-wizard UI for: language → user → disks → install → reboot.
 """
 
 import os
@@ -13,7 +13,6 @@ import logging
 from flask import Flask
 
 from i18n import I18N
-from routes_wifi import wifi_bp
 from routes_disks import disks_bp
 from routes_install import install_bp
 
@@ -45,7 +44,6 @@ def create_app():
 
     app.config["i18n"] = I18N()
 
-    app.register_blueprint(wifi_bp)
     app.register_blueprint(disks_bp)
     app.register_blueprint(install_bp)
 
@@ -99,17 +97,13 @@ def _get_local_ip():
     import subprocess
     try:
         out = subprocess.check_output(
-            "hostname -I 2>/dev/null || echo '192.168.42.1'",
+            "hostname -I 2>/dev/null || echo '0.0.0.0'",
             shell=True, text=True, timeout=5
         ).strip()
         ips = out.split()
-        # Prefer hotspot IP if present
-        for ip in ips:
-            if ip.startswith("192.168.42."):
-                return ip
-        return ips[0] if ips else "192.168.42.1"
+        return ips[0] if ips else "0.0.0.0"
     except Exception:
-        return "192.168.42.1"
+        return "0.0.0.0"
 
 
 if __name__ == "__main__":

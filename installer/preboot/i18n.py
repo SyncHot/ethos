@@ -154,56 +154,6 @@ _TRANSLATIONS = {
         "es": "Disco de arranque (USB)",
     },
 
-    # ── Network ──
-    "Ethernet podłączony": {
-        "en": "Ethernet connected",
-        "de": "Ethernet verbunden",
-        "fr": "Ethernet connecté",
-        "es": "Ethernet conectado",
-    },
-    "Brak sieci — wybierz WiFi": {
-        "en": "No network — choose WiFi",
-        "de": "Kein Netzwerk — WiFi wählen",
-        "fr": "Pas de réseau — choisissez le WiFi",
-        "es": "Sin red — elige WiFi",
-    },
-    "Skanowanie sieci WiFi...": {
-        "en": "Scanning WiFi networks...",
-        "de": "WiFi-Netzwerke werden gesucht...",
-        "fr": "Recherche des réseaux WiFi...",
-        "es": "Buscando redes WiFi...",
-    },
-    "Hasło WiFi": {
-        "en": "WiFi password",
-        "de": "WiFi-Passwort",
-        "fr": "Mot de passe WiFi",
-        "es": "Contraseña WiFi",
-    },
-    "Łączenie...": {
-        "en": "Connecting...",
-        "de": "Verbindung wird hergestellt...",
-        "fr": "Connexion...",
-        "es": "Conectando...",
-    },
-    "Połączono z": {
-        "en": "Connected to",
-        "de": "Verbunden mit",
-        "fr": "Connecté à",
-        "es": "Conectado a",
-    },
-    "Nie udało się połączyć": {
-        "en": "Failed to connect",
-        "de": "Verbindung fehlgeschlagen",
-        "fr": "Échec de la connexion",
-        "es": "Error al conectar",
-    },
-    "Odśwież": {
-        "en": "Refresh",
-        "de": "Aktualisieren",
-        "fr": "Actualiser",
-        "es": "Actualizar",
-    },
-
     # ── Summary / Install ──
     "Język": {
         "en": "Language",
@@ -216,12 +166,6 @@ _TRANSLATIONS = {
         "de": "Benutzer",
         "fr": "Utilisateur",
         "es": "Usuario",
-    },
-    "Sieć": {
-        "en": "Network",
-        "de": "Netzwerk",
-        "fr": "Réseau",
-        "es": "Red",
     },
     "Rozpocznij instalację": {
         "en": "Start installation",
