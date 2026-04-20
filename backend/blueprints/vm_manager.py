@@ -1122,10 +1122,10 @@ def quick_create_ethos():
             r2 = host_run(f'qemu-img resize "{disk_file}" {disk_size}', timeout=60)
             if r2.returncode != 0:
                 log.warning('Resize after convert failed: %s', r2.stderr)
-            # Create .installed marker so preboot installer is skipped.
-            # Builder images boot into ethos-preboot.service by default;
-            # for quick-created VMs the system is already installed.
-            _mark_image_installed(disk_file)
+            # Builder images boot into ethos-preboot.service which provides
+            # the full installer experience (disk selection, user creation,
+            # hostname, etc.).  Do NOT mark as installed — let the preboot
+            # installer run so the user goes through the proper setup flow.
         else:
             # ISO or other format — create empty disk, attach image as boot media
             r = host_run(f'qemu-img create -f {disk_format} "{disk_file}" {disk_size}', timeout=60)
