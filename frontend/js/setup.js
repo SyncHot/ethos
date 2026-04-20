@@ -31,23 +31,10 @@ function showSetupWizard() {
         }
     } catch (e) { /* ignore */ }
 
-    // Check if system installer needs to run first
-    checkInstallerNeeded().then(function(needed) {
-        if (needed && !Setup.step) {
-            // Show language step first, then installer after language is chosen
-            Setup._installerNeeded = true;
-            Setup._installerDone = false;
-            setupRenderStep();
-        } else {
-            Setup._installerNeeded = false;
-            Setup._installerDone = true;
-            setupRenderStep();
-        }
-    }).catch(function() {
-        Setup._installerNeeded = false;
-        Setup._installerDone = false;
-        setupRenderStep();
-    });
+    // Preboot installer already handled disk setup — just render
+    Setup._installerNeeded = false;
+    Setup._installerDone = !!document.cookie; // placeholder; setupCheckInstallerDisk does the real check
+    setupRenderStep();
 }
 
 function hideSetupWizard() {
@@ -89,20 +76,12 @@ function setupStepLanguage() {
 
 /* ──────────── Step 1: Welcome ──────────── */
 function setupStepWelcome() {
-    var installerReopen = Setup._installerDone
-        ? '<div style="margin-top:12px;padding:10px 12px;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);border-radius:10px;text-align:left;">'
-        + '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;"><i class="fas fa-info-circle" style="color:var(--accent);margin-right:6px;"></i>' + t('Instalator dysków został już ukończony. Możesz go ponownie otworzyć, aby zmienić wybór dysku systemowego lub danych.') + '</div>'
-        + '<button type="button" class="btn-login" id="setup-open-installer" style="margin-top:0;background:var(--bg-tertiary);"><i class="fas fa-sliders-h"></i> <span>' + t('Zmień wybór dysków') + '</span></button>'
-        + '</div>'
-        : '';
-
     return '<div class="login-card" style="max-width:480px;">'
         + '<div class="login-logo"><div class="logo-icon"><i class="fas fa-server"></i></div></div>'
         + '<h1 class="login-hostname">' + t('Witaj w EthOS') + '</h1>'
         + '<p style="color:var(--text-secondary);margin:12px 0 28px;line-height:1.6;">'
         + t('Kreator pomoże Ci skonfigurować system NAS.') + '<br>' + t('Ustawisz nazwę hosta, konto administratora i sieć.') + '</p>'
         + setupProgress(1)
-        + installerReopen
         + '<button class="btn-login" id="setup-next"><span>' + t('Rozpocznij') + '</span> <i class="fas fa-arrow-right"></i></button>'
         + '</div>';
 }
@@ -234,14 +213,6 @@ function setupBindStep() {
     var nextBtn = document.getElementById('setup-next');
     var backBtn = document.getElementById('setup-back');
     var finishBtn = document.getElementById('setup-finish');
-    var reopenInstallerBtn = document.getElementById('setup-open-installer');
-
-    if (reopenInstallerBtn) {
-        reopenInstallerBtn.addEventListener('click', function() {
-            Setup._installerNeeded = true;
-            showInstallerWizard();
-        });
-    }
 
     // Language step
     if (Setup.step === 0) {
@@ -281,12 +252,6 @@ function setupBindStep() {
             }
         }
         if (Setup.step === 3) return; // credentials has form submit
-
-        // After Welcome step (1), launch installer wizard if needed
-        if (Setup.step === 1 && Setup._installerNeeded) {
-            showInstallerWizard();
-            return;
-        }
 
         // Auto-skip network
         if (Setup.step === 1) {
