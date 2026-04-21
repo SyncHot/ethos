@@ -1406,12 +1406,15 @@ def _write_esp_grub(dev, mount_dir, progress_cb=None, squashfs_mode=False, data_
         if progress_cb:
             progress_cb("bootloader", pct, msg)
 
-    # Get UUIDs for both root slots and ESP
+    # Get UUIDs for both root slots and ESP.
+    # Use -p (low-level probe) to bypass any stale blkid cache from
+    # earlier installs on the same device — critical after mkfs.
     root_a_part = _part(dev, 2)
     root_b_part = _part(dev, 3)
-    root_a_uuid, _, rc = _run(f"blkid -s UUID -o value {root_a_part}")
-    root_b_uuid, _, _ = _run(f"blkid -s UUID -o value {root_b_part}")
-    esp_uuid, _, _ = _run(f"blkid -s UUID -o value {_part(dev, 1)}")
+    _run("udevadm settle 2>/dev/null || true", timeout=10)
+    root_a_uuid, _, rc = _run(f"blkid -p -s UUID -o value {root_a_part}")
+    root_b_uuid, _, _ = _run(f"blkid -p -s UUID -o value {root_b_part}")
+    esp_uuid, _, _ = _run(f"blkid -p -s UUID -o value {_part(dev, 1)}")
     if rc != 0 or not root_a_uuid:
         log.warning("Cannot determine Root-A UUID for %s, skipping ESP GRUB", root_a_part)
         return
@@ -1470,6 +1473,7 @@ insmod ext2
 insmod fat
 insmod gzio
 insmod loadenv
+insmod search_fs_uuid
 
 # Load persistent boot state from grubenv
 if [ -s $prefix/grubenv ]; then

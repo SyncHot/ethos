@@ -1746,6 +1746,7 @@ set default=0
 insmod part_gpt
 insmod ext2
 insmod gzio
+insmod search_fs_uuid
 menuentry "EthOS v${{VERSION}}" {{
     search --no-floppy --fs-uuid --set=root ${{ROOT_UUID}}
     linux ${{KERN}} root=UUID=${{ROOT_UUID}} ro quiet loglevel=3 rd.systemd.show_status=auto vt.global_cursor_default=0 splash net.ifnames=0 biosdevname=0 fsck.repair=preen console=tty0 console=ttyS0,115200n8
@@ -1881,6 +1882,7 @@ set default=0
 insmod part_gpt
 insmod ext2
 insmod gzio
+insmod search_fs_uuid
 menuentry "EthOS v${{VERSION}}" {{
     search --no-floppy --fs-uuid --set=root ${{ROOT_UUID}}
     linux ${{KERN}} root=UUID=${{ROOT_UUID}} ro quiet loglevel=3 rd.systemd.show_status=auto vt.global_cursor_default=0 splash net.ifnames=0 biosdevname=0 fsck.repair=preen console=tty0 console=ttyS0,115200n8
@@ -2127,6 +2129,7 @@ set default=0
 insmod part_gpt
 insmod ext2
 insmod gzio
+insmod search_fs_uuid
 menuentry "EthOS v${{VERSION}}" {{
     search --no-floppy --fs-uuid --set=root ${{ROOT_UUID}}
     linux ${{KERN}} root=UUID=${{ROOT_UUID}} ro quiet loglevel=3 rd.systemd.show_status=auto vt.global_cursor_default=0 splash net.ifnames=0 biosdevname=0 fsck.repair=preen console=tty0 console=ttyS0,115200n8

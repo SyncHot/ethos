@@ -971,6 +971,15 @@ def _mark_image_installed(disk_file):
             return
         import time as _time
         _time.sleep(1)  # let kernel discover partitions
+        # Repair backup GPT header — qemu-img resize extends the disk but
+        # leaves the backup GPT at the old end-of-disk position.  sgdisk -e
+        # moves it to the actual end so OVMF and GRUB see a clean GPT.
+        gpt_fix = host_run(f'sgdisk -e {nbd_dev} 2>/dev/null', timeout=15)
+        if gpt_fix.returncode == 0:
+            log.info('Relocated backup GPT to end of resized disk')
+            _time.sleep(0.5)  # let nbd settle after GPT write
+        else:
+            log.warning('sgdisk -e failed (non-fatal): %s', gpt_fix.stderr)
         # Root is partition 2 in standard EthOS layout (1=ESP, 2=root)
         root_part = f'{nbd_dev}p2'
         os.makedirs(mnt, exist_ok=True)
