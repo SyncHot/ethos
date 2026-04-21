@@ -1545,7 +1545,6 @@ def _write_esp_grub(dev, mount_dir, progress_cb=None, squashfs_mode=False, data_
       Always set boot_success = 0 before booting (app must set it to 1)
     """
     import glob as _glob
-    import tempfile
 
     def _p(pct, msg):
         log.info("ESP GRUB [%d%%] %s", pct, msg)

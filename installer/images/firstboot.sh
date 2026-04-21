@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# DEPRECATED: Use firstboot-v2.sh instead. This file will be removed in a future release.
 # ═══════════════════════════════════════════════════════════
 #  EthOS — First Boot Script
 #  Runs once on first startup:

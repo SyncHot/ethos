@@ -149,7 +149,6 @@ def detect_data():
     for e in entries:
         part_dev = e.get("DEVNAME", "")
         disk_name = disk_ops._disk_from_part(part_dev)
-        import os as _os
         size_bytes = disk_ops._disk_size_bytes(part_dev)
         enriched.append({
             "partition": part_dev,

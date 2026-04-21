@@ -28,26 +28,25 @@ Endpoints:
   GET  /api/builder/manifest              -> verify & return manifest JSON
   POST /api/builder/beacon                -> receive "I AM ALIVE" from a freshly booted EthOS VM (no auth)
   GET  /api/builder/beacon                -> return last received beacon info
+  POST /api/builder/resume-image          -> resume an interrupted image build (SSE)
 """
 
 import json
 import logging
 import os
 import re
-import subprocess
 import threading
 import time
-import traceback
 import sys
-from datetime import date, datetime
+from datetime import date
 from flask import Blueprint, jsonify, request, Response, stream_with_context
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from host import host_run as _host_run_base, host_run_stream as _host_run_stream_base, \
     app_path, data_path, log_path, q as _q
 from utils import load_json as _load_json, save_json as _save_json, fmt_bytes, register_pkg_routes, \
-    require_tools, check_tool
-from blueprints.builder_spec import load_spec, save_spec, generate_default_spec, \
+    require_tools
+from blueprints.builder_spec import load_spec, save_spec, \
     spec_to_shell_vars, DEFAULT_SPEC
 from blueprints.admin_required import admin_required
 
@@ -839,7 +838,6 @@ def resume_image():
     if not _build_state.get('resume_available'):
         return jsonify({'error': 'No resumable build found.'}), 400
     build_dir = _build_state.get('build_dir', '/tmp/ethos-x86-build-web')
-    import os
     ckpt_dir = os.path.join(build_dir, '.ckpts')
     if not os.path.isdir(ckpt_dir):
         return jsonify({'error': f'Build directory not found: {build_dir}'}), 400
@@ -3677,7 +3675,7 @@ def _builder_on_uninstall(wipe):
                 'message': '', 'logs': [], 'pid': 0, 'result': None,
             })
             _save_build_state()
-    log.info('[builder] Processes stopped (uninstall, wipe=%s)', wipe)
+    _logger.info('[builder] Processes stopped (uninstall, wipe=%s)', wipe)
 
 
 register_pkg_routes(
