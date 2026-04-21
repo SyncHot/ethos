@@ -5,6 +5,7 @@ Disk operations — discovery, partitioning, cloning, GRUB.
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import shlex
@@ -142,6 +143,14 @@ def discover():
     boot_dev = _get_boot_device()
     log.info("Boot device: %s", boot_dev)
 
+    # Pre-scan for EthOS-Data labels so we can flag disks in the result
+    ethos_data_entries = detect_ethos_data_disks()
+    ethos_data_disk_names = {
+        _disk_from_part(e.get("DEVNAME", ""))
+        for e in ethos_data_entries
+        if e.get("DEVNAME")
+    }
+
     out, _, rc = _run(
         "lsblk -J -b -o NAME,SIZE,TYPE,MODEL,SERIAL,TRAN,ROTA,HOTPLUG,MOUNTPOINT "
         "2>/dev/null"
@@ -190,6 +199,7 @@ def discover():
             "smart_status": _smart_status(dev_path),
             "smart_temp": _smart_temp(dev_path),
             "partitions": len(children),
+            "has_ethos_data": name in ethos_data_disk_names,
         }
         disks.append(disk)
 
@@ -273,6 +283,18 @@ def validate(os_disk, data_disk, boot_device):
                 "Data disk is USB/removable — slower and may be disconnected. "
                 "Not recommended for critical data without backups."
             )
+
+    # Warn when a target disk already carries an EthOS-Data partition
+    if _has_ethos_data_on_disk(f"/dev/{os_disk}"):
+        warnings.append(
+            f"/dev/{os_disk} already has an EthOS-Data partition — "
+            "installing will permanently erase all existing data on it."
+        )
+    if not same_disk and _has_ethos_data_on_disk(f"/dev/{data_disk}"):
+        warnings.append(
+            f"/dev/{data_disk} already has an EthOS-Data partition — "
+            "formatting it will permanently erase all existing data on it."
+        )
 
     return True, errors, warnings
 
@@ -423,6 +445,18 @@ def install(os_disk, data_disk, progress_cb=None, encrypt=False, passphrase=""):
         if nvme_pool_part:
             _p("data", 83, "Configuring NVMe fast-storage pool...")
             _setup_nvme_pool(nvme_pool_part, mount_dir, squashfs_mode)
+
+        # Phase 6c: udev hot-plug rule for USB data partition
+        _udev_data_part = None
+        if same_disk:
+            p4 = _part(os_dev, 4)
+            if os.path.exists(p4):
+                _udev_data_part = p4
+        elif data_dev:
+            _udev_data_part = _part(data_dev, 1)
+        if _udev_data_part and _is_usb_part(_udev_data_part):
+            _p("configuring", 83, "Installing USB hot-plug automount rule...")
+            _install_udev_data_rule(mount_dir, _udev_data_part, squashfs_mode)
 
         # Phase 7: Install LUKS keyfile to target (before unmount)
         if _luks_state["active"]:
@@ -1086,10 +1120,104 @@ def _setup_nvme_pool(nvme_part, mount_dir, squashfs_mode):
              nvme_part, _NVME_POOL_MOUNT, nvme_uuid)
 
 
-def _fixup_installed_system(mount_dir):
-    """Adjust the cloned system for installed-mode operation.
+# ---------------------------------------------------------------------------
+# USB disk helpers — persistent naming, transport detection, hot-plug rules
+# ---------------------------------------------------------------------------
 
-    The source (installer) image carries artifacts that must be removed
+def _disk_from_part(part_path):
+    """Extract disk device name from a partition path.
+
+    Examples: '/dev/sda1' → 'sda', '/dev/nvme0n1p2' → 'nvme0n1'
+    """
+    m = re.match(r"/dev/((?:sd|vd|hd)[a-z]+|nvme\d+n\d+|mmcblk\d+)", part_path)
+    return m.group(1) if m else ""
+
+
+def _is_usb_part(part_path):
+    """Return True if the partition lives on a USB or removable bus."""
+    info = _disk_info(_disk_from_part(part_path))
+    return bool(info and (info.get("transport") == "usb" or info.get("removable")))
+
+
+def _btrfs_opts(part_path, subvol="@data"):
+    """Return btrfs fstab mount options for a data partition.
+
+    USB/removable data disks get nofail + x-systemd.automount so the system
+    boots cleanly when the USB is absent and auto-mounts it on hot-plug.
+    """
+    if subvol == "@data":
+        opts = f"subvol=@data,defaults,noatime,compress=zstd:3,space_cache=v2"
+    else:
+        opts = f"subvol={subvol},defaults,noatime,compress=zstd:3"
+    if _is_usb_part(part_path):
+        opts += ",nofail,x-systemd.device-timeout=30,x-systemd.automount"
+    return opts
+
+
+def detect_ethos_data_disks():
+    """Scan block devices for partitions labeled EthOS-Data.
+
+    Returns a list of dicts with keys: DEVNAME, UUID, TYPE, LABEL.
+    """
+    out, _, _ = _run("blkid -o export -t LABEL=EthOS-Data 2>/dev/null", timeout=15)
+    if not out.strip():
+        return []
+    result = []
+    current = {}
+    for line in out.splitlines():
+        if not line.strip():
+            if current.get("DEVNAME"):
+                result.append(current.copy())
+            current = {}
+        elif "=" in line:
+            k, _, v = line.partition("=")
+            current[k] = v
+    if current.get("DEVNAME"):
+        result.append(current.copy())
+    return result
+
+
+def _has_ethos_data_on_disk(dev_path):
+    """Return True if any partition on dev_path carries the EthOS-Data label."""
+    dev_name = os.path.basename(dev_path)
+    for entry in detect_ethos_data_disks():
+        if _disk_from_part(entry.get("DEVNAME", "")) == dev_name:
+            return True
+    return False
+
+
+def _install_udev_data_rule(mount_dir, data_part, squashfs_mode):
+    """Write 99-ethos-data.rules to the installed system.
+
+    The rule uses TAG+=systemd + SYSTEMD_WANTS to trigger mnt-data.mount the
+    moment the data partition appears — critical for USB hot-plug support.
+    """
+    uuid_out, _, _ = _run(f"blkid -p -s UUID -o value {data_part}", timeout=10)
+    data_uuid = uuid_out.strip()
+    if not data_uuid:
+        log.warning("_install_udev_data_rule: no UUID for %s — skipping", data_part)
+        return
+
+    rule = (
+        "# EthOS data partition hot-plug automount\n"
+        "# Generated by installer — do not edit manually.\n"
+        f'SUBSYSTEM=="block", ACTION=="add", ENV{{ID_FS_UUID}}=="{data_uuid}", '
+        f'TAG+="systemd", ENV{{SYSTEMD_WANTS}}+="mnt-data.mount"\n'
+    )
+
+    if squashfs_mode:
+        rules_dir = os.path.join(mount_dir, "overlay/upper/etc/udev/rules.d")
+    else:
+        rules_dir = os.path.join(mount_dir, "etc/udev/rules.d")
+    os.makedirs(rules_dir, exist_ok=True)
+    rule_path = os.path.join(rules_dir, "99-ethos-data.rules")
+    with open(rule_path, "w") as f:
+        f.write(rule)
+    log.info("Installed udev data automount rule UUID=%s → %s", data_uuid, rule_path)
+
+
+
+    """Adjust the cloned system for installed-mode operation.
     or patched before the target can boot as a normal EthOS instance:
     - .installer-mode flag (would start the preboot installer instead)
     - .installed flag (must be absent so firstboot.sh can run)
@@ -1726,10 +1854,10 @@ def _generate_fstab(dev, mount_dir, same_disk, data_dev=None, encrypt=False):
             data_uuid, _, _ = _run(f"blkid -s UUID -o value {data_part}")
         if data_uuid:
             lines.append(
-                f"UUID={data_uuid}  /mnt/data  btrfs  subvol=@data,defaults,noatime,compress=zstd:3,space_cache=v2  0  0"
+                f"UUID={data_uuid}  /mnt/data  btrfs  {_btrfs_opts(data_part)}  0  0"
             )
             lines.append(
-                f"UUID={data_uuid}  /mnt/snapshots  btrfs  subvol=@snapshots,defaults,noatime,compress=zstd:3  0  0"
+                f"UUID={data_uuid}  /mnt/snapshots  btrfs  {_btrfs_opts(data_part, '@snapshots')}  0  0"
             )
 
     fstab = "\n".join(lines) + "\n"
@@ -1769,10 +1897,10 @@ def _write_overlay_fstab(dev, mount_dir, same_disk, data_dev=None, encrypt=False
             data_uuid, _, _ = _run(f"blkid -s UUID -o value {data_part}")
         if data_uuid:
             lines.append(
-                f"UUID={data_uuid}  /mnt/data  btrfs  subvol=@data,defaults,noatime,compress=zstd:3,space_cache=v2  0  0"
+                f"UUID={data_uuid}  /mnt/data  btrfs  {_btrfs_opts(data_part)}  0  0"
             )
             lines.append(
-                f"UUID={data_uuid}  /mnt/snapshots  btrfs  subvol=@snapshots,defaults,noatime,compress=zstd:3  0  0"
+                f"UUID={data_uuid}  /mnt/snapshots  btrfs  {_btrfs_opts(data_part, '@snapshots')}  0  0"
             )
 
     fstab = "\n".join(lines) + "\n"

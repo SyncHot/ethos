@@ -73,13 +73,14 @@ def recommend():
     # --- Scenario: PERFORMANCE (SSD for OS, HDD/large for data) ---
     ssds = [d for d in os_capable if not d.get("rotational")
             or d.get("transport") == "nvme"]
-    hdds = [d for d in usable if d.get("rotational")
-            and d.get("transport") != "usb"]
+    # Internal HDDs preferred; USB HDDs/SSDs as fallback data candidates
+    internal_hdds = [d for d in usable if d.get("rotational")
+                     and d.get("transport") != "usb"]
     large_disks = [d for d in usable if d not in ssds]
 
-    if ssds and (hdds or large_disks):
+    if ssds and (internal_hdds or large_disks):
         os_pick = max(ssds, key=lambda d: d["size_bytes"])
-        data_candidates = hdds if hdds else large_disks
+        data_candidates = internal_hdds if internal_hdds else large_disks
         data_pick = max(data_candidates, key=lambda d: d["size_bytes"])
         if os_pick["name"] != data_pick["name"]:
             os_remaining = os_pick["size_bytes"] - (9 * 1024**3)
@@ -134,3 +135,28 @@ def recommend():
         "os_capable": [d["name"] for d in os_capable],
         "data_only": [d["name"] for d in data_only],
     })
+
+
+@disks_bp.route("/detect_data", methods=["GET"])
+def detect_data():
+    """Return all block devices currently carrying an EthOS-Data label.
+
+    Used by the installer UI to warn the user before formatting a disk
+    that already holds existing EthOS data.
+    """
+    entries = disk_ops.detect_ethos_data_disks()
+    enriched = []
+    for e in entries:
+        part_dev = e.get("DEVNAME", "")
+        disk_name = disk_ops._disk_from_part(part_dev)
+        import os as _os
+        size_bytes = disk_ops._disk_size_bytes(part_dev)
+        enriched.append({
+            "partition": part_dev,
+            "disk": disk_name,
+            "uuid": e.get("UUID", ""),
+            "fs_type": e.get("TYPE", ""),
+            "size_bytes": size_bytes,
+            "size_human": disk_ops._human_size(size_bytes) if size_bytes else "?",
+        })
+    return jsonify({"items": enriched})
