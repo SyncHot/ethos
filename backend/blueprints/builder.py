@@ -2585,7 +2585,11 @@ if command -v mksquashfs >/dev/null 2>&1; then
         -e "$ROOT/lost+found" \
         -e "$ROOT/swapfile" \
         -e "$ROOT/var/swap" \
-        -e "$ROOT/opt/ethos/installer/images" \
+        -e "$ROOT/opt/ethos/installer/images/ethos-x86.img" \
+        -e "$ROOT/opt/ethos/installer/images/ethos-root.sqsh" \
+        -e "$ROOT/opt/ethos/installer/images/ethos-root.sqsh.verity" \
+        -e "$ROOT/opt/ethos/installer/images/ethos-root.sqsh.roothash" \
+        -e "$ROOT/opt/ethos/installer/images/ethos-manifest.json" \
         2>&1 | tail -10
 
     SQSH_SIZE=$(stat -c%s "$SQSH_OUT" 2>/dev/null || echo 0)
@@ -2928,6 +2932,7 @@ losetup -d "$LOOP_DEV" 2>/dev/null || true
 LOOP_DEV=""
 
 # Move image from tmpfs to persistent storage
+mkdir -p "$(dirname "$FINAL_IMG")"
 if [ "$USE_TMPFS" -eq 1 ] && [ -f "$OUTPUT_IMG" ]; then
     echo "LOG:Copying image from RAM to disk ($FINAL_IMG)..."
     cp "$OUTPUT_IMG" "$FINAL_IMG"
