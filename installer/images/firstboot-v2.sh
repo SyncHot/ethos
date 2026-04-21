@@ -76,11 +76,13 @@ PIP_CACHE="$ETHOS_DIR/.pip-cache"
 if [ -f "$ETHOS_DIR/backend/requirements.txt" ]; then
     if [ -d "$PIP_CACHE" ] && ls "$PIP_CACHE"/*.whl &>/dev/null; then
         echo "  Using cached wheels (offline install)..."
-        "$VENV/bin/pip" install --quiet --no-index --find-links "$PIP_CACHE" \
-            -r "$ETHOS_DIR/backend/requirements.txt" 2>&1 | tail -5
+        # --no-build-isolation: use venv setuptools for sdist packages (e.g. GPUtil)
+        # || true: some optional packages may fail to build offline; critical check below catches real failures
+        "$VENV/bin/pip" install --quiet --no-build-isolation --no-index --find-links "$PIP_CACHE" \
+            -r "$ETHOS_DIR/backend/requirements.txt" 2>&1 | tail -5 || true
     else
         echo "  No wheel cache — installing from network..."
-        "$VENV/bin/pip" install --quiet -r "$ETHOS_DIR/backend/requirements.txt" 2>&1 | tail -5
+        "$VENV/bin/pip" install --quiet -r "$ETHOS_DIR/backend/requirements.txt" 2>&1 | tail -5 || true
     fi
 fi
 

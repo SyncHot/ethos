@@ -25,6 +25,7 @@ Endpoints:
   POST   /api/vm/quick-create-ethos                      — quick-create EthOS VM
   POST   /api/vm/import-disk                             — import disk image
   POST   /api/vm/convert                                 — convert disk format
+  GET    /api/vm/machines/<id>/installer-logs            — proxy installer logs from running VM
 """
 
 import os
@@ -36,6 +37,7 @@ import subprocess
 import sys
 import time
 import threading
+import urllib.request
 from functools import wraps
 from flask import Blueprint, request, jsonify, send_from_directory, abort
 from blueprints.admin_required import admin_required
@@ -2623,6 +2625,55 @@ def delete_snapshot(vm_id, tag):
         if r.returncode == 0:
             return jsonify({'ok': True})
         return jsonify({'error': r.stderr}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+
+# ═══════════════════════════════════════════════════════════
+#  INSTALLER LOGS PROXY
+# ═══════════════════════════════════════════════════════════
+
+@vm_bp.route('/machines/<vm_id>/installer-logs')
+@admin_required
+def get_installer_logs(vm_id):
+    """Proxy installer log entries from a running VM's installer service.
+
+    The EthOS installer inside the VM exposes GET /api/install/logs?since=N
+    on port 9000 (the 'EthOS Web' port forward).  This endpoint fetches those
+    logs from the host-side forwarded port so that Copilot and other tools
+    can access them without needing a direct connection to the VM.
+
+    Query params:
+      since (int, default 0) — return only entries after this index
+    """
+    vms = _load_vms()
+    vm = vms.get(vm_id)
+    if not vm:
+        return jsonify({'error': 'VM not found'}), 404
+
+    if not _check_vm_process(vm_id):
+        return jsonify({'error': 'VM is not running'}), 409
+
+    # Find the host port mapped to guest port 9000 (EthOS Web / installer)
+    network = vm.get('network') or {}
+    host_port = None
+    for pf in network.get('port_forwards', []):
+        if int(pf.get('guest', 0)) == 9000 and pf.get('host'):
+            host_port = int(pf['host'])
+            break
+
+    if not host_port:
+        return jsonify({'error': 'No port forward found for guest port 9000'}), 404
+
+    since = request.args.get('since', 0, type=int)
+    url = f'http://127.0.0.1:{host_port}/api/install/logs?since={since}'
+    try:
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+        return jsonify(data)
+    except urllib.error.URLError as e:
+        return jsonify({'error': f'Cannot reach installer at port {host_port}: {e.reason}'}), 502
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

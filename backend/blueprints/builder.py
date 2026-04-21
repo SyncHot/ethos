@@ -2258,6 +2258,11 @@ echo "LOG:Caching pip wheels for offline firstboot..."
 PIP_CACHE="$ETHOS_DIR/.pip-cache"
 mkdir -p "$PIP_CACHE"
 chroot "$ROOT" /opt/ethos/venv/bin/pip download -d /opt/ethos/.pip-cache -r /opt/ethos/backend/requirements.txt 2>&1 | tail -5 || echo "LOG:WARNING: pip wheel cache failed"
+# Pre-build wheels for sdist-only packages so offline firstboot can install without network
+# (GPUtil 1.4.0 ships only a source tarball — build it into a wheel here using the chroot venv's setuptools)
+echo "LOG:Pre-building wheels for sdist-only packages..."
+chroot "$ROOT" /opt/ethos/venv/bin/pip wheel --no-deps --no-build-isolation \
+    -w /opt/ethos/.pip-cache GPUtil==1.4.0 2>&1 | tail -3 || echo "LOG:WARNING: GPUtil wheel build failed (non-fatal)"
 WHEEL_COUNT=$(ls "$PIP_CACHE"/*.whl 2>/dev/null | wc -l)
 echo "LOG:Cached $WHEEL_COUNT wheel files ($(du -sh "$PIP_CACHE" 2>/dev/null | awk '{{print $1}}'))"
 
