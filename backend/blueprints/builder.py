@@ -2243,8 +2243,6 @@ echo "LOG:Files copied — $(du -sh "$ETHOS_DIR" | awk '{{print $1}}')"
 
 # ── Python venv + environment file ──
 echo "LOG:Creating Python venv..."
-# Install build deps needed by some pip packages (pyudev needs libudev-dev)
-chroot "$ROOT" apt-get install -y -qq libudev-dev libffi-dev 2>&1 | tail -3 || echo "LOG:build deps issue"
 chroot "$ROOT" python3 -m venv /opt/ethos/venv 2>&1 | tail -3 || echo "LOG:venv creation issue"
 echo "LOG:pip install requirements..."
 chroot "$ROOT" /opt/ethos/venv/bin/pip install --no-cache-dir -r /opt/ethos/backend/requirements.txt 2>&1 | tail -15 || echo "LOG:pip install issue"
@@ -2256,17 +2254,14 @@ echo "LOG:Caching pip wheels for offline firstboot..."
 PIP_CACHE="$ETHOS_DIR/.pip-cache"
 mkdir -p "$PIP_CACHE"
 chroot "$ROOT" /opt/ethos/venv/bin/pip download -d /opt/ethos/.pip-cache -r /opt/ethos/backend/requirements.txt 2>&1 | tail -5 || echo "LOG:WARNING: pip wheel cache failed"
-# Pre-build wheels for sdist-only packages so offline firstboot can install without network
-# (GPUtil 1.4.0 ships only a source tarball — build it into a wheel here using the chroot venv's setuptools)
+# Pre-build wheel for GPUtil (ships only as sdist — build it now so offline firstboot can install it)
+# setuptools is needed for the build; install it temporarily then remove.
 echo "LOG:Pre-building wheels for sdist-only packages..."
+chroot "$ROOT" /opt/ethos/venv/bin/pip install --no-cache-dir setuptools 2>&1 | tail -2 || true
 chroot "$ROOT" /opt/ethos/venv/bin/pip wheel --no-deps --no-build-isolation \
     -w /opt/ethos/.pip-cache GPUtil==1.4.0 2>&1 | tail -3 || echo "LOG:WARNING: GPUtil wheel build failed (non-fatal)"
 WHEEL_COUNT=$(ls "$PIP_CACHE"/*.whl 2>/dev/null | wc -l)
 echo "LOG:Cached $WHEEL_COUNT wheel files ($(du -sh "$PIP_CACHE" 2>/dev/null | awk '{{print $1}}'))"
-
-# Remove build deps no longer needed (saves ~50MB)
-chroot "$ROOT" apt-get remove -y --purge libudev-dev libffi-dev 2>&1 | tail -3 || true
-chroot "$ROOT" apt-get autoremove -y -qq 2>&1 | tail -3 || true
 
 cat > "$ETHOS_DIR/ethos.env" <<ENVFILE
 NAS_NAME=EthOS
@@ -2511,8 +2506,8 @@ USERPROFILE
 chown $(chroot "$ROOT" id -u $DEFAULT_USER):$(chroot "$ROOT" id -g $DEFAULT_USER) "$ROOT/home/$DEFAULT_USER/.bash_profile"
 
 # ── Pre-install console info screen service (activated after setup) ──
-cp "$ETHOS_DIR/tools/ethos-console.sh"      "$ROOT/opt/ethos/tools/ethos-console.sh"
-cp "$ETHOS_DIR/tools/ethos-console@.service" "$ROOT/etc/systemd/system/ethos-console@.service"
+cp "$NASOS/tools/ethos-console.sh"       "$ROOT/opt/ethos/tools/ethos-console.sh"
+cp "$NASOS/tools/ethos-console@.service" "$ROOT/etc/systemd/system/ethos-console@.service"
 chmod 755 "$ROOT/opt/ethos/tools/ethos-console.sh"
 
 echo "STEP:85:EthOS injected"

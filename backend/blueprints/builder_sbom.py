@@ -160,7 +160,7 @@ def _scan_packages(rootfs: str) -> list:
     # Use chroot to get accurate package list
     cmd = (
         f'chroot {q(rootfs)} dpkg-query '
-        f'--showformat="{_DPKG_QUERY_FMT}" --show 2>/dev/null'
+        f"--showformat='{_DPKG_QUERY_FMT}' --show 2>/dev/null"
     )
     r = _host_run(cmd, timeout=30)
     if r.returncode != 0 or not r.stdout.strip():
