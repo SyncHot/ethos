@@ -2424,12 +2424,14 @@ mkdir -p "$ROOT/etc/systemd/system/multi-user.target.wants"
 chroot "$ROOT" systemctl set-default multi-user.target 2>/dev/null || true
 
 # ── ethos.service (pre-create — firstboot.sh enables + starts it after stopping preboot) ──
-# NOTE: Do NOT add After=ethos-firstboot.service — it causes deadlock!
-# (firstboot is Type=oneshot and calls systemctl restart ethos from within itself)
+# After=ethos-firstboot.service: prevents race where ethos starts before firstboot
+# creates the venv (which would cause repeated failures + systemd start-rate lock).
+# firstboot uses --no-block so it exits immediately after queuing the start —
+# no deadlock.
 cat > "$ROOT/etc/systemd/system/ethos.service" <<SVCETHOS
 [Unit]
 Description=EthOS NAS
-After=network.target local-fs.target
+After=network.target local-fs.target ethos-firstboot.service
 Wants=network.target
 Conflicts=ethos-preboot.service
 RequiresMountsFor=/mnt/data

@@ -209,7 +209,9 @@ echo "=========================================="
 echo " First boot complete! Starting EthOS..."
 echo "=========================================="
 
-# Start main service (--no-block avoids deadlock: ethos.service has
-# After=ethos-firstboot.service, so a blocking start would wait for
-# this very script to exit first)
+# Start main service (--no-block avoids waiting: ethos.service has
+# After=ethos-firstboot.service, so systemd auto-starts it when firstboot
+# finishes. --no-block returns immediately; reset-failed clears any
+# rate-limit failure from the race window before firstboot completed.)
+systemctl reset-failed ethos.service 2>/dev/null || true
 systemctl start --no-block ethos.service 2>/dev/null || true
