@@ -245,15 +245,21 @@ def validate(os_disk, data_disk, boot_device):
         errors.append("Cannot use boot device as data disk")
         return False, errors, warnings
 
-    # Minimum size check: ESP (512M) + Root-A (4G) + Root-B (4G) = 8.5 GB
-    # Same-disk needs extra space for data partition
-    _MIN_OS_BYTES = 9 * 1024**3       # 9 GB minimum for OS disk
-    _MIN_DATA_BYTES = 1 * 1024**3     # 1 GB minimum for separate data disk
+    # Minimum size check:
+    # A/B layout needs: ESP(512M) + Root-A(4G) + Root-B(4G) = 8705 MiB
+    # Same-disk: also needs data partition ≥ 512 MiB → 9217 MiB ≈ 9 GiB
+    # Separate-disk: only needs A/B layout → 8706 MiB minimum
+    _MIN_SAME_BYTES = 9217 * 1024 * 1024    # ~9 GiB for same-disk (OS + data)
+    _MIN_SEP_BYTES  = 8706 * 1024 * 1024    # ~8.5 GiB for separate-disk (OS only)
+    _MIN_DATA_BYTES = 1 * 1024**3           # 1 GiB minimum for separate data disk
+    _min_os = _MIN_SAME_BYTES if same_disk else _MIN_SEP_BYTES
     os_size = _disk_size_bytes(f"/dev/{os_disk}")
-    if os_size > 0 and os_size < _MIN_OS_BYTES:
+    if os_size > 0 and os_size < _min_os:
+        need_gib = round(_min_os / (1024**3), 1)
+        have_gib = round(os_size / (1024**3), 1)
         errors.append(
-            f"OS disk too small ({os_size // (1024**3)} GB). "
-            f"Minimum {_MIN_OS_BYTES // (1024**3)} GB required for A/B partition scheme."
+            f"OS disk too small ({have_gib} GiB). "
+            f"Minimum {need_gib} GiB required for A/B partition scheme."
         )
         return False, errors, warnings
 
@@ -518,6 +524,19 @@ def _create_gpt(dev, include_data_part):
       p4 = Data   (btrfs, rest)    → /mnt/data (same-disk) or /mnt/fast-storage (separate-disk)
     If the OS disk has <2GB remaining after A/B, p4 is skipped in separate-disk mode.
     """
+    # Hard size guard — catches disks that slipped past validate() (e.g. when
+    # blockdev returned 0 at validation time or user called /start directly).
+    # Root-B ends at 8705 MiB; add 1 MiB for the backup GPT header at end.
+    _MIN_MiB = 8706
+    disk_bytes = _disk_size_bytes(dev)
+    if disk_bytes > 0 and disk_bytes < _MIN_MiB * 1024 * 1024:
+        disk_mib = disk_bytes // (1024 * 1024)
+        raise RuntimeError(
+            f"Disk {dev} is too small for the A/B partition scheme "
+            f"({disk_mib} MiB available, {_MIN_MiB} MiB required). "
+            f"Use a disk of at least 9 GiB."
+        )
+
     cmds = [
         f"parted -s {dev} mklabel gpt",
         f"parted -s {dev} mkpart ESP fat32 1MiB 513MiB",
@@ -531,7 +550,6 @@ def _create_gpt(dev, include_data_part):
     else:
         # Separate-data mode: check if OS disk has enough remaining space
         # for a useful NVMe fast-storage partition (>= 2GB after A/B)
-        disk_bytes = _disk_size_bytes(dev)
         remaining_mb = (disk_bytes // (1024 * 1024)) - 8705 if disk_bytes else 0
         if remaining_mb >= 2048:
             cmds.append(f"parted -s {dev} mkpart primary btrfs 8705MiB 100%")
