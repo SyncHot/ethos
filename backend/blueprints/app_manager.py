@@ -319,7 +319,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/docker/pkg-status',
     },
     {
-        'id': 'vm-manager', 'name': 'VM Manager', 'version': '1.0.7',
+        'id': 'vm-manager', 'name': 'VM Manager', 'version': '1.0.8',
         'icon': 'fa-desktop', 'color': '#8b5cf6', 'category': 'System', 'admin_only': True,
         'description': 'Maszyny wirtualne QEMU/KVM z migawkami i dostepem VNC.',
         'apt_deps': ['qemu-system-x86', 'qemu-utils', 'ovmf'], 'pip_deps': [],
@@ -360,7 +360,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/flasher/pkg-status',
     },
     {
-        'id': 'builder', 'name': 'Builder', 'version': '1.0.14',
+        'id': 'builder', 'name': 'Builder', 'version': '1.0.15',
         'icon': 'fa-hammer', 'color': '#f97316', 'category': 'System', 'admin_only': True,
         'description': 'Budowanie wydan EthOS i obrazow systemowych przez interfejs webowy.',
         'apt_deps': ['squashfs-tools', 'genisoimage', 'rsync'], 'pip_deps': [],
@@ -568,7 +568,7 @@ BUILTIN_CATALOG = [
         'apt_deps': [], 'pip_deps': [], 'simple': True,
     },
     {
-        'id': 'video-station', 'name': 'Video Station', 'version': '0.0.7',
+        'id': 'video-station', 'name': 'Video Station', 'version': '0.0.9',
         'icon': 'fa-film', 'color': '#7c3aed', 'category': 'Media', 'admin_only': False,
         'description': 'Biblioteka filmow z miniaturkami, streamingiem i sledzeniem postepu.',
         'apt_deps': ['ffmpeg'], 'pip_deps': [],
@@ -577,7 +577,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/video-station/pkg-status',
     },
     {
-        'id': 'radio-music', 'name': 'Radio & Music', 'version': '0.0.6',
+        'id': 'radio-music', 'name': 'Radio & Music', 'version': '0.0.7',
         'icon': 'fa-broadcast-tower', 'color': '#10b981', 'category': 'Media', 'admin_only': False,
         'description': 'Radio internetowe z całego świata, podcasty i odtwarzacz muzyki.',
         'apt_deps': ['ffmpeg'], 'pip_deps': ['yt-dlp'],
@@ -610,7 +610,7 @@ BUILTIN_CATALOG = [
         'apt_deps': [], 'pip_deps': ['ldap3'],
     },
     {
-        'id': 'mail-server', 'name': 'Mail Server', 'version': '0.0.4',
+        'id': 'mail-server', 'name': 'Mail Server', 'version': '0.0.5',
         'icon': 'fa-envelope', 'color': '#3b82f6', 'category': 'Network', 'admin_only': True,
         'description': 'Serwer poczty (Postfix + Dovecot) z obsluga IMAP/SMTP, DKIM, relay i certyfikatow SSL.',
         'apt_deps': ['postfix', 'postfix-sqlite', 'dovecot-core', 'dovecot-imapd', 'dovecot-pop3d', 'dovecot-lmtpd', 'dovecot-sqlite', 'opendkim', 'opendkim-tools'],
