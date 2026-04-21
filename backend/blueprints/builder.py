@@ -2050,7 +2050,7 @@ fi
 
 echo "ethos-overlay: mounting overlay lowerdir=/run/ethos-sqsh upperdir=$UPPER workdir=$WORK"
 if ! mount -t overlay overlay \
-    -o "lowerdir=/run/ethos-sqsh,upperdir=$UPPER,workdir=$WORK" \
+    -o "lowerdir=/run/ethos-sqsh,upperdir=$UPPER,workdir=$WORK,index=off,nfs_export=off" \
     "${{rootmnt}}"; then
     echo "ethos-overlay: FAILED to mount overlay — falling back to raw root"
     umount /run/ethos-sqsh 2>/dev/null

@@ -154,6 +154,9 @@ def start_install():
                 os.makedirs(sqsh_mount, exist_ok=True)
                 os.makedirs(overlay_dir, exist_ok=True)
 
+                # Ensure overlay kernel module is loaded
+                _run("modprobe overlay 2>/dev/null || true", timeout=10)
+
                 # Mount squashfs as read-only lower layer
                 _, serr, src = _run(
                     f"mount -t squashfs -o ro,loop {sqsh_path} {sqsh_mount}",
@@ -162,7 +165,10 @@ def start_install():
                 if src != 0:
                     raise RuntimeError(f"Cannot mount squashfs: {serr}")
 
-                # Set up overlay: squashfs (lower) + data partition (upper)
+                # Set up overlay: squashfs (lower) + data partition (upper).
+                # index=off is required when upperdir is on Btrfs (kernel ≥5.12
+                # rejects Btrfs as overlay upper without this flag).
+                # nfs_export=off avoids unrelated VFS inode requirements.
                 overlay_upper = "/mnt/data/ethos/overlay/a/upper"
                 overlay_work = "/mnt/data/ethos/overlay/a/work"
                 os.makedirs(overlay_upper, exist_ok=True)
@@ -171,7 +177,7 @@ def start_install():
                 _, oerr, orc = _run(
                     f"mount -t overlay overlay "
                     f"-o lowerdir={sqsh_mount},upperdir={overlay_upper},"
-                    f"workdir={overlay_work} {overlay_dir}",
+                    f"workdir={overlay_work},index=off,nfs_export=off {overlay_dir}",
                     timeout=30,
                 )
                 if orc != 0:
