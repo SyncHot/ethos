@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import shutil
+import stat
 import subprocess
 import shlex
 import time
@@ -239,11 +240,13 @@ def validate(os_disk, data_disk, boot_device):
         errors.append("Cannot install on the boot device (USB)")
         return False, errors, warnings
 
-    # Block USB/removable disks as OS disk — too slow and unstable
+    # Warn about USB/removable disks as OS disk — slower but allowed (e.g. NUC installs)
     os_info = _disk_info(os_disk)
     if os_info and (os_info.get("transport") == "usb" or os_info.get("removable")):
-        errors.append("Cannot use a USB/removable disk as the system disk")
-        return False, errors, warnings
+        warnings.append(
+            "System disk is USB/removable — performance will be limited. "
+            "Recommended only when no internal drive is available (e.g. NUC devices)."
+        )
 
     same_disk = data_disk is None or data_disk == "same" or data_disk == os_disk
     if not same_disk and data_disk == boot_device:
@@ -398,8 +401,10 @@ def install(os_disk, data_disk, progress_cb=None, encrypt=False, passphrase=""):
                 _p("configuring", 74, "Setting up data partition symlinks...")
                 _setup_data_separation(mount_dir, _part(os_dev, 4))
         else:
-            # SquashFS: data dirs are already symlinks in squashfs image —
-            # just create target directories on the data partition
+            # SquashFS: fixup installer flags and service files via overlay,
+            # then create data partition directories.
+            _p("configuring", 73, "Configuring installed system...")
+            _fixup_installed_system(mount_dir, squashfs_mode=True)
             if same_disk:
                 _p("configuring", 74, "Preparing data partition...")
                 _prepare_data_dirs(_part(os_dev, 4))
@@ -1323,41 +1328,65 @@ def _install_udev_data_rule(mount_dir, data_part, squashfs_mode):
     log.info("Installed udev data automount rule UUID=%s → %s", data_uuid, rule_path)
 
 
-
+def _fixup_installed_system(mount_dir, squashfs_mode=False):
     """Adjust the cloned system for installed-mode operation.
+
+    The source (installer) image carries artifacts that must be removed
     or patched before the target can boot as a normal EthOS instance:
     - .installer-mode flag (would start the preboot installer instead)
     - .installed flag (must be absent so firstboot.sh can run)
     - ethos.service may have wrong port or Type from the builder
     - ethos-preboot.service should be disabled
     - ethos-firstboot.service should be enabled
+
+    In squashfs_mode all writable changes go to overlay/upper/ which shadows
+    the read-only squashfs lower layer.  To "delete" a file that exists only
+    in the lower layer we create an overlayfs whiteout (char device 0,0).
     """
-    ethos_root = os.path.join(mount_dir, "opt/ethos")
+    if squashfs_mode:
+        overlay_upper = os.path.join(mount_dir, "overlay/upper")
+        ethos_root = os.path.join(overlay_upper, "opt/ethos")
+        systemd_dir = os.path.join(overlay_upper, "etc/systemd/system")
+    else:
+        ethos_root = os.path.join(mount_dir, "opt/ethos")
+        systemd_dir = os.path.join(mount_dir, "etc/systemd/system")
 
-    # Remove installer-mode flag so the system boots into normal EthOS
-    installer_flag = os.path.join(ethos_root, ".installer-mode")
-    if os.path.exists(installer_flag):
-        os.remove(installer_flag)
-        log.info("Removed .installer-mode flag")
+    os.makedirs(ethos_root, exist_ok=True)
+    os.makedirs(systemd_dir, exist_ok=True)
 
-    # Remove .installed so firstboot.sh can run on first boot.
-    # firstboot handles: user creation, hostname, setup_done, etc.
-    installed_flag = os.path.join(ethos_root, ".installed")
-    if os.path.exists(installed_flag):
-        os.remove(installed_flag)
-        log.info("Removed .installed flag (firstboot will recreate it)")
+    def _whiteout_or_remove(path):
+        """Remove a file (ext4) or create an overlayfs whiteout (squashfs)."""
+        if squashfs_mode:
+            if os.path.exists(path) or os.path.islink(path):
+                os.remove(path)
+            # char device 0,0 is the overlayfs whiteout convention
+            os.mknod(path, stat.S_IFCHR | 0o000, os.makedev(0, 0))
+        elif os.path.exists(path):
+            os.remove(path)
 
-    # Read target port from ethos.env (default 9000)
+    # Remove/whiteout .installer-mode so the system boots into normal EthOS
+    _whiteout_or_remove(os.path.join(ethos_root, ".installer-mode"))
+    log.info("Cleared .installer-mode flag (squashfs=%s)", squashfs_mode)
+
+    # Remove/whiteout .installed so firstboot.sh can run on first boot
+    _whiteout_or_remove(os.path.join(ethos_root, ".installed"))
+    log.info("Cleared .installed flag (firstboot will recreate it)")
+
+    # Read target port from ethos.env — prefer overlay copy, fall back to mount
     port = "9000"
-    env_file = os.path.join(ethos_root, "ethos.env")
-    if os.path.exists(env_file):
-        with open(env_file) as f:
-            for line in f:
-                if line.startswith("PORT="):
-                    port = line.strip().split("=", 1)[1]
+    for env_candidate in [
+        os.path.join(ethos_root, "ethos.env"),
+        os.path.join(mount_dir, "opt/ethos/ethos.env"),
+    ]:
+        if os.path.exists(env_candidate):
+            with open(env_candidate) as f:
+                for line in f:
+                    if line.startswith("PORT="):
+                        port = line.strip().split("=", 1)[1]
+            break
 
     # Write a correct ethos.service for the installed system
-    svc_path = os.path.join(mount_dir, "etc/systemd/system/ethos.service")
+    svc_path = os.path.join(systemd_dir, "ethos.service")
     svc_content = f"""[Unit]
 Description=EthOS NAS
 After=network.target ethos-firstboot.service local-fs.target
@@ -1382,37 +1411,55 @@ WantedBy=multi-user.target
 """
     with open(svc_path, "w") as f:
         f.write(svc_content)
-    log.info("Wrote ethos.service (port=%s, Type=simple)", port)
+    log.info("Wrote ethos.service (port=%s, squashfs=%s)", port, squashfs_mode)
 
-    wants_dir = os.path.join(mount_dir, "etc/systemd/system/multi-user.target.wants")
+    wants_dir = os.path.join(systemd_dir, "multi-user.target.wants")
     os.makedirs(wants_dir, exist_ok=True)
 
     # Disable the preboot installer service on the target
     preboot_link = os.path.join(wants_dir, "ethos-preboot.service")
-    if os.path.exists(preboot_link):
+    if os.path.exists(preboot_link) or os.path.islink(preboot_link):
         os.remove(preboot_link)
-        log.info("Disabled ethos-preboot.service")
-
-    # Enable the main ethos service
-    ethos_link = os.path.join(wants_dir, "ethos.service")
-    if not os.path.exists(ethos_link):
+        log.info("Removed ethos-preboot.service wants link")
+    if squashfs_mode:
+        # Whiteout so the lower-layer preboot symlink is hidden
         try:
-            os.symlink("/etc/systemd/system/ethos.service", ethos_link)
-            log.info("Enabled ethos.service")
+            os.mknod(preboot_link, stat.S_IFCHR | 0o000, os.makedev(0, 0))
         except OSError:
             pass
 
-    # Copy updated firstboot-v2 wrapper to target
-    src_fb = os.path.join(ethos_root, "installer/images/firstboot-v2.sh")
-    dst_fb = os.path.join(mount_dir, "opt/ethos-firstboot.sh")
+    # Enable the main ethos service
+    ethos_link = os.path.join(wants_dir, "ethos.service")
+    if os.path.islink(ethos_link) or os.path.exists(ethos_link):
+        os.remove(ethos_link)
+    try:
+        os.symlink("/etc/systemd/system/ethos.service", ethos_link)
+        log.info("Enabled ethos.service")
+    except OSError as e:
+        log.warning("Could not create ethos.service wants symlink: %s", e)
+
+    # Deploy updated firstboot-v2 wrapper to the installed system.
+    # Source: always the running installer's own copy (freshest version).
+    # In squashfs mode write to overlay/upper so it overrides the lower layer;
+    # in ext4 mode write directly to the cloned target root.
+    _this_dir = os.path.dirname(os.path.abspath(__file__))
+    src_fb = os.path.normpath(os.path.join(_this_dir, "../images/firstboot-v2.sh"))
+    if squashfs_mode:
+        dst_fb = os.path.join(overlay_upper, "opt/ethos-firstboot.sh")
+        os.makedirs(os.path.dirname(dst_fb), exist_ok=True)
+    else:
+        dst_fb = os.path.join(mount_dir, "opt/ethos-firstboot.sh")
     if os.path.exists(src_fb):
-        import shutil
         shutil.copy2(src_fb, dst_fb)
         os.chmod(dst_fb, 0o755)
-        log.info("Deployed updated firstboot-v2.sh")
+        log.info("Deployed updated firstboot-v2.sh → %s", dst_fb)
 
-    # Create setup_done if wizard is disabled (belt-and-suspenders with firstboot)
-    conf_path = os.path.join(ethos_root, "install.conf")
+    # Create setup_done if wizard is disabled (belt-and-suspenders with firstboot).
+    # install.conf lives in the running installer's /opt/ethos, not the target mount.
+    running_ethos = os.path.normpath(os.path.join(_this_dir, "../.."))
+    conf_path = os.path.join(running_ethos, "install.conf")
+    if not os.path.exists(conf_path):
+        conf_path = os.path.join(mount_dir, "opt/ethos/install.conf")
     setup_wizard = "yes"
     hostname = "ethos"
     username = "nasadmin"
@@ -1442,7 +1489,6 @@ WantedBy=multi-user.target
                 "username": username,
                 "nas_name": nas_name,
             }, f)
-        # Password was set during install — skip force-change gate
         pw_marker = os.path.join(ethos_root, ".password_changed")
         with open(pw_marker, "w") as f:
             f.write("installer\n")
