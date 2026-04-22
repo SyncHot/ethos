@@ -515,11 +515,11 @@ _TRANSLATIONS = {
         "fr": "Sélectionner le disque de données",
         "es": "Seleccionar disco de datos",
     },
-    "USB — nie można użyć jako systemowy": {
-        "en": "USB — cannot be used as system disk",
-        "de": "USB — kann nicht als Systemfestplatte verwendet werden",
-        "fr": "USB — ne peut pas être utilisé comme disque système",
-        "es": "USB — no se puede usar como disco del sistema",
+    "USB — wolniejszy": {
+        "en": "USB — slower",
+        "de": "USB — langsamer",
+        "fr": "USB — plus lent",
+        "es": "USB — más lento",
     },
     "Szukaj EthOS w sieci": {
         "en": "Look for EthOS on the network",

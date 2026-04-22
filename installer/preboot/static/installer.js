@@ -283,7 +283,9 @@ const Installer = {
 
     _autoSelectOsDisk() {
         if (this.osDisk) return;
-        const eligible = this.disks.filter(d => !d.is_boot && !(d.transport === 'usb' || d.removable));
+        // Prefer internal disks; fall back to USB if no internal available
+        const nonUsb = this.disks.filter(d => !d.is_boot && !(d.transport === 'usb' || d.removable));
+        const eligible = nonUsb.length ? nonUsb : this.disks.filter(d => !d.is_boot);
         if (eligible.length === 1) {
             this.osDisk = eligible[0].name;
             this._selectDiskInUI('disk-list-os', this.osDisk);
@@ -324,7 +326,7 @@ const Installer = {
         c.innerHTML = this.disks.map(d => {
             const isBoot = d.is_boot;
             const isUsb = (d.transport === 'usb' || d.removable) && !isBoot;
-            const disabled = isBoot || (role === 'os' && isUsb);
+            const disabled = isBoot;
             const selected = role === 'os' ? this.osDisk === d.name : this.dataDisk === d.name;
 
             const typeIcon = d.transport === 'nvme' ? 'fa-bolt' :
@@ -334,7 +336,7 @@ const Installer = {
 
             let badges = '';
             if (isBoot) badges += `<span class="disk-badge boot">${this.t('Instalator')}</span> `;
-            if (isUsb && role === 'os') badges += `<span class="disk-badge usb-warn">${this.t('USB — nie można użyć jako systemowy')}</span> `;
+            if (isUsb && role === 'os') badges += `<span class="disk-badge usb-warn">⚠ ${this.t('USB — wolniejszy')}</span> `;
             if (isUsb && role === 'data') badges += `<span class="disk-badge usb-warn">⚠ USB</span> `;
             if (d.smart_status === 'failed') badges += '<span class="disk-badge smart-fail">SMART ✗</span> ';
 
