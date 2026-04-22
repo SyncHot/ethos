@@ -1330,10 +1330,10 @@ def _do_ab_slot_update_squashfs(pkg_dir, new_ver, ab_slots_file):
         _emit('update_log', {'message': 'Overlay cleared'})
 
         # 2b) Restore critical system state from active (running) system
-        # Without these, the inactive slot boots into installer/hotspot mode
+        # Without these, the inactive slot may not boot correctly.
         _emit('update_log', {'message': 'Restoring system config to overlay…'})
 
-        # .installed marker — prevents preboot installer from starting
+        # .installed marker — prevents firstboot.sh from running again
         if os.path.isfile('/opt/ethos/.installed'):
             _d = os.path.join(overlay_upper, 'opt/ethos/.installed')
             os.makedirs(os.path.dirname(_d), exist_ok=True)
@@ -1362,10 +1362,6 @@ def _do_ab_slot_update_squashfs(pkg_dir, new_ver, ab_slots_file):
             lnk = os.path.join(wants, 'ethos.service')
             if not os.path.exists(lnk):
                 os.symlink('/etc/systemd/system/ethos.service', lnk)
-            # Ensure preboot is NOT enabled on the updated slot
-            pb = os.path.join(wants, 'ethos-preboot.service')
-            if os.path.exists(pb):
-                os.remove(pb)
 
         # NetworkManager connections (WiFi, Ethernet, etc.)
         nm_src = '/etc/NetworkManager/system-connections'

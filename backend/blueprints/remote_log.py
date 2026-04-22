@@ -169,7 +169,7 @@ def _collect_boot_log():
 
 def _collect_service_journals():
     """Recent journal entries for EthOS services."""
-    services = ['ethos', 'ethos-firstboot', 'ethos-preboot', 'ethos-ap']
+    services = ['ethos', 'ethos-firstboot']
     result = {}
     for svc in services:
         journal = _run(f'journalctl -u {svc} --no-pager -n 50 --no-hostname 2>/dev/null')
@@ -206,7 +206,7 @@ def _collect_errors():
 
 def _collect_service_status():
     """Current status of all EthOS services."""
-    services = ['ethos', 'ethos-firstboot', 'ethos-preboot', 'ethos-ap',
+    services = ['ethos', 'ethos-firstboot',
                 'NetworkManager', 'avahi-daemon']
     result = {}
     for svc in services:
