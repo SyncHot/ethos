@@ -489,29 +489,93 @@ def install(os_disk, data_disk, progress_cb=None, encrypt=False, passphrase=""):
 
 
 def _release_disk(dev):
-    """Unmount all partitions, disable swap, and release kernel holds on a disk."""
+    """Aggressively release all kernel/userspace holds on a disk before mkfs/dd.
+
+    Why this works when plain umount -f fails:
+    - fuser -k sends SIGKILL to every process with an open file descriptor on
+      the partition — handles automounters, udev helpers, systemd-mount units.
+    - umount -l (lazy) detaches the mount from the namespace immediately even if
+      the filesystem is still busy; the kernel releases it once all fds close.
+    - mdadm --stop / vgchange -an deactivate RAID and LVM so dm-* devices that
+      sit on top of partitions disappear before we try to overwrite them.
+    - wipefs on each partition erases FS magic bytes so the kernel (and udev)
+      stop seeing "known filesystem" on the node and won't auto-remount.
+    - udevadm settle waits until udev has finished all pending events so no
+      new automount rules fire between the last umount and the first mkfs.
+    """
     import glob as _glob
-    # Find all partitions for this device (e.g. /dev/sdb1, /dev/sdb2, ...)
-    base = os.path.basename(dev)
+    import time
+
+    # Collect all partition device nodes for this disk
     parts = sorted(_glob.glob(f"{dev}[0-9]*") + _glob.glob(f"{dev}p[0-9]*"))
-    for part in parts:
+    all_devs = parts + [dev]
+
+    # 1. Kill every process holding any fd on this disk (SIGKILL, not just SIGHUP)
+    for d in all_devs:
+        _run(f"fuser -k -9 {d} 2>/dev/null", timeout=10)
+    time.sleep(0.5)
+
+    # 2. Disable swap on all partitions
+    for d in all_devs:
+        _run(f"swapoff {d} 2>/dev/null", timeout=10)
+
+    # 3. Stop MD RAID arrays that use any partition of this disk
+    out, _, _ = _run("mdadm --detail --scan 2>/dev/null", timeout=10)
+    for line in out.splitlines():
+        if line.startswith("ARRAY"):
+            md = line.split()[1]  # e.g. /dev/md0
+            detail, _, _ = _run(f"mdadm --detail {md} 2>/dev/null", timeout=10)
+            if any(os.path.basename(p) in detail for p in parts):
+                _run(f"mdadm --stop {md} 2>/dev/null", timeout=15)
+
+    # 4. Deactivate LVM volume groups that have PVs on this disk
+    pv_out, _, _ = _run("pvs --noheadings -o pv_name,vg_name 2>/dev/null", timeout=10)
+    vgs_to_deactivate = set()
+    for line in pv_out.splitlines():
+        cols = line.split()
+        if len(cols) >= 2 and any(cols[0].startswith(p) for p in parts + [dev]):
+            vgs_to_deactivate.add(cols[1])
+    for vg in vgs_to_deactivate:
+        _run(f"vgchange -an {vg} 2>/dev/null", timeout=15)
+
+    # 5. Remove device-mapper mappings (LUKS, LVM thin pools, etc.)
+    dm_out, _, _ = _run("dmsetup ls 2>/dev/null", timeout=10)
+    for line in dm_out.splitlines():
+        name = line.split()[0] if line.split() else ""
+        if name and name != "No":
+            _run(f"dmsetup remove {name} 2>/dev/null", timeout=10)
+
+    # 6. Force-unmount all partitions (first -f, then -l as fallback)
+    #    Iterate in reverse so nested mounts (e.g. /boot/efi inside /) go last
+    for part in reversed(parts):
         _run(f"umount -f {part} 2>/dev/null", timeout=15)
-        _run(f"swapoff {part} 2>/dev/null", timeout=10)
-    # Also unmount the whole device in case it's mounted directly
+        _run(f"umount -l {part} 2>/dev/null", timeout=10)
     _run(f"umount -f {dev} 2>/dev/null", timeout=15)
-    _run(f"swapoff {dev} 2>/dev/null", timeout=10)
-    # Remove any device-mapper mappings (LUKS, LVM) that reference this disk
-    _run(f"dmsetup remove_all 2>/dev/null", timeout=15)
-    # Tell kernel to drop partition info
+    _run(f"umount -l {dev} 2>/dev/null", timeout=10)
+
+    # 7. Wipe filesystem signatures from each partition so udev won't
+    #    recognise and auto-remount them after partprobe
+    for part in parts:
+        _run(f"wipefs -af {part} 2>/dev/null", timeout=15)
+
+    # 8. Force kernel to forget all partition table state
+    _run(f"blockdev --flushbufs {dev} 2>/dev/null", timeout=10)
     _run(f"blockdev --rereadpt {dev} 2>/dev/null", timeout=10)
-    _run("partprobe 2>/dev/null && sleep 1", timeout=10)
+
+    # 9. Let udev process the "partition gone" events before we write new ones
+    _run("partprobe 2>/dev/null", timeout=10)
+    _run("udevadm settle --timeout=5 2>/dev/null", timeout=10)
+    time.sleep(1)
 
 
 def _wipe_disk(dev):
+    """Wipe disk: release all holds, erase FS/PT signatures, zero first 10 MiB."""
     _release_disk(dev)
-    _run(f"wipefs -a {dev} 2>/dev/null", timeout=30)
-    _run(f"dd if=/dev/zero of={dev} bs=1M count=10 2>/dev/null", timeout=30)
-    _run("partprobe 2>/dev/null && sleep 2", timeout=10)
+    _run(f"wipefs -af {dev} 2>/dev/null", timeout=30)
+    _run(f"dd if=/dev/zero of={dev} bs=1M count=10 oflag=direct 2>/dev/null", timeout=30)
+    _run("partprobe 2>/dev/null", timeout=10)
+    _run("udevadm settle --timeout=5 2>/dev/null", timeout=10)
+    import time; time.sleep(2)
 
 
 def _create_gpt(dev, include_data_part):
@@ -560,20 +624,40 @@ def _create_gpt(dev, include_data_part):
         if rc != 0:
             raise RuntimeError(f"Partition failed: {cmd} → {err}")
 
-    _run("partprobe 2>/dev/null && sleep 2", timeout=10)
+    _run("partprobe 2>/dev/null", timeout=10)
+    _run("udevadm settle --timeout=5 2>/dev/null", timeout=10)
+    import time; time.sleep(2)
+
+
+def _release_partition(part):
+    """Kill any process holding `part` and lazy-unmount it.
+    Called just before each mkfs to defeat automounters (udisks2, systemd-mount)
+    that may have grabbed a newly-created partition between partprobe and mkfs."""
+    import time
+    _run(f"fuser -k -9 {part} 2>/dev/null", timeout=10)
+    time.sleep(0.3)
+    _run(f"umount -f {part} 2>/dev/null", timeout=10)
+    _run(f"umount -l {part} 2>/dev/null", timeout=5)
+    _run(f"wipefs -af {part} 2>/dev/null", timeout=10)
 
 
 def _format_partitions(dev, same_disk, encrypt=False, passphrase=""):
     """Format A/B partitions: Root-A + Root-B (empty), optionally Data/NVMe-Pool.
     If encrypt=True, data partition is LUKS-encrypted."""
+    # Release each partition immediately before formatting so automounters
+    # (udisks2, systemd-automount) cannot grab the new device nodes between
+    # partprobe and mkfs.
+    _release_partition(_part(dev, 1))
     _, err, rc = _run(f"mkfs.vfat -F32 -n EFI {_part(dev, 1)}", timeout=60)
     if rc != 0:
         raise RuntimeError(f"mkfs.vfat failed: {err}")
 
+    _release_partition(_part(dev, 2))
     _, err, rc = _run(f"mkfs.ext4 -F -L EthOS-Root-A {_part(dev, 2)}", timeout=120)
     if rc != 0:
         raise RuntimeError(f"mkfs.ext4 Root-A failed: {err}")
 
+    _release_partition(_part(dev, 3))
     _, err, rc = _run(f"mkfs.ext4 -F -L EthOS-Root-B {_part(dev, 3)}", timeout=120)
     if rc != 0:
         raise RuntimeError(f"mkfs.ext4 Root-B failed: {err}")
