@@ -1578,6 +1578,7 @@ mkdir -p "$ROOT/etc/ssh/sshd_config.d"
 cat > "$ROOT/etc/ssh/sshd_config.d/ethos-hardening.conf" <<'SSHH'
 # EthOS SSH Hardening
 PermitRootLogin no
+PasswordAuthentication yes
 MaxAuthTries 3
 LoginGraceTime 30
 X11Forwarding no
@@ -1586,12 +1587,23 @@ SSHH
 
 # Gate SSH login until the default password is changed via the Web UI.
 # ForceCommand runs check_password_changed.sh which blocks or exec's the shell.
+# During installer mode (.installed absent) the script allows access for debugging.
 cat >> "$ROOT/etc/ssh/sshd_config" <<'SSHGATE'
 
 # EthOS: block SSH until default password changed via Web UI
 Match User *
     ForceCommand /opt/ethos/tools/check_password_changed.sh
 SSHGATE
+
+# ── SSH host key regeneration drop-in ──
+# Host keys are wiped at dist-sec time so each deployed system gets unique keys.
+# This drop-in ensures sshd generates any missing keys before starting —
+# without it the ssh.service ControlProcess (sshd -t) can fail on first boot.
+mkdir -p "$ROOT/etc/systemd/system/ssh.service.d"
+cat > "$ROOT/etc/systemd/system/ssh.service.d/ethos-keygen.conf" <<'SSHKEYGEN'
+[Service]
+ExecStartPre=/usr/bin/ssh-keygen -A 2>/dev/null
+SSHKEYGEN
 
 # ── Force password change on first boot ──
 rm -f "$ROOT/opt/ethos/.password_changed"

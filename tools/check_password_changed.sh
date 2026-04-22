@@ -3,6 +3,17 @@
 # Used as ForceCommand in sshd_config — must exec the user's intended
 # command/shell when the gate passes, or exit 1 to deny access.
 MARKER="/opt/ethos/.password_changed"
+INSTALLED="/opt/ethos/.installed"
+
+# During installer/preboot mode (before installation), allow SSH for debugging.
+# The installer hasn't run yet so .password_changed doesn't exist yet.
+if [ ! -f "$INSTALLED" ]; then
+    if [ -n "$SSH_ORIGINAL_COMMAND" ]; then
+        exec /bin/bash -c "$SSH_ORIGINAL_COMMAND"
+    else
+        exec /bin/bash --login
+    fi
+fi
 
 if [ ! -f "$MARKER" ]; then
     echo "======================================================================"

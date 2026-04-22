@@ -81,15 +81,17 @@ def main():
 
     # Print access info to console (user sees this on the monitor)
     local_ip = _get_local_ip()
+    default_user = _get_default_user()
     print(flush=True)
     print("=" * 60, flush=True)
     print(f"  EthOS Installer", flush=True)
-    print(f"  http://{local_ip}:{PORT}", flush=True)
+    print(f"  Web UI:  http://{local_ip}:{PORT}", flush=True)
+    print(f"  SSH:     ssh {default_user}@{local_ip}  (haslo: ethos)", flush=True)
     print("=" * 60, flush=True)
     print(flush=True)
 
     log.info("Starting EthOS Installer on %s:%d", HOST, PORT)
-    app.run(host=HOST, port=PORT, debug=False, use_reloader=False)
+    app.run(host=HOST, port=PORT, debug=False, use_reloader=False, threaded=True)
 
 
 def _get_local_ip():
@@ -104,6 +106,27 @@ def _get_local_ip():
         return ips[0] if ips else "0.0.0.0"
     except Exception:
         return "0.0.0.0"
+
+
+def _get_default_user():
+    """Get the default system user for SSH hint."""
+    import subprocess
+    try:
+        # Read ETHOS_USER from install.conf if available
+        conf = "/opt/ethos/install.conf"
+        if os.path.exists(conf):
+            with open(conf) as f:
+                for line in f:
+                    if line.startswith("ETHOS_USER="):
+                        return line.split("=", 1)[1].strip().strip('"')
+        # Fall back to first non-system user (UID >= 1000)
+        out = subprocess.check_output(
+            "awk -F: '$3>=1000&&$3<65534{print $1;exit}' /etc/passwd",
+            shell=True, text=True, timeout=3
+        ).strip()
+        return out or "nasadmin"
+    except Exception:
+        return "nasadmin"
 
 
 if __name__ == "__main__":

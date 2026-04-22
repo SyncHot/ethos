@@ -163,7 +163,8 @@ def discover():
     except json.JSONDecodeError:
         return {"disks": [], "boot_device": boot_dev, "error": "lsblk parse error"}
 
-    disks = []
+    # Build basic disk list first (no smartctl yet)
+    candidates = []
     for dev in data.get("blockdevices", []):
         if dev.get("type") != "disk":
             continue
@@ -172,19 +173,13 @@ def discover():
         if size_bytes < 1 * 1024**3:  # Skip < 1GB (unusable for OS or data)
             continue
 
-        # Check if any partition is mounted as root
         is_boot = name == boot_dev
         children = dev.get("children", [])
-        mountpoints = []
-        for child in children:
-            mp = child.get("mountpoint")
-            if mp:
-                mountpoints.append(mp)
+        mountpoints = [c.get("mountpoint") for c in children if c.get("mountpoint")]
 
-        dev_path = f"/dev/{name}"
-        disk = {
+        candidates.append({
             "name": name,
-            "path": dev_path,
+            "path": f"/dev/{name}",
             "persistent_id": _get_persistent_id(name),
             "size_bytes": size_bytes,
             "size_gb": round(size_bytes / (1024**3), 1),
@@ -196,12 +191,22 @@ def discover():
             "removable": bool(dev.get("hotplug")),
             "is_boot": is_boot,
             "mountpoints": mountpoints,
-            "smart_status": _smart_status(dev_path),
-            "smart_temp": _smart_temp(dev_path),
+            "smart_status": "unknown",
+            "smart_temp": None,
             "partitions": len(children),
             "has_ethos_data": name in ethos_data_disk_names,
-        }
-        disks.append(disk)
+        })
+
+    # Fetch SMART data for all disks in parallel (each smartctl can take up to 10s)
+    import concurrent.futures
+    def _fetch_smart(disk):
+        dev_path = disk["path"]
+        disk["smart_status"] = _smart_status(dev_path)
+        disk["smart_temp"] = _smart_temp(dev_path)
+        return disk
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(candidates) or 1)) as pool:
+        disks = list(pool.map(_fetch_smart, candidates))
 
     disks.sort(key=lambda d: (d["is_boot"], d["removable"], -d["size_bytes"]))
     return {"disks": disks, "boot_device": boot_dev}
