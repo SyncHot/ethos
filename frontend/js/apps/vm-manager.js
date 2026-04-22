@@ -685,6 +685,7 @@ function renderVMManager(body) {
                 <div class="vm-dtab ${S.detailTab === 'network' ? 'active' : ''}" data-t="network"><i class="fas fa-network-wired"></i> ${t('Sieć')}</div>
                 <div class="vm-dtab ${S.detailTab === 'snapshots' ? 'active' : ''}" data-t="snapshots">${t('Snapshoty')}</div>
                 <div class="vm-dtab ${S.detailTab === 'disk' ? 'active' : ''}" data-t="disk">${t('Dysk')}</div>
+                <div class="vm-dtab ${S.detailTab === 'usb' ? 'active' : ''}" data-t="usb"><i class="fas fa-usb"></i> USB</div>
             </div>
             <div id="vm-detail-content"></div>
         `;
@@ -735,6 +736,7 @@ function renderVMManager(body) {
             case 'network': renderNetworkPanel(dc); break;
             case 'snapshots': renderSnapshotsPanel(dc); break;
             case 'disk': renderDiskPanel(dc); break;
+            case 'usb': renderUsbPanel(dc); break;
         }
     }
 
@@ -1476,6 +1478,116 @@ function renderVMManager(body) {
                     const r = await api(`/vm/machines/${vm.id}/disks`, { method: 'POST', body: { size: sizeStr, format: fmt, bus } });
                     toast(r.message || t('Dysk dodany'), 'success');
                     renderDiskPanel(dc);
+                } catch (e) { toast(e.message || t('Błąd'), 'error'); }
+            });
+        });
+    }
+
+    async function renderUsbPanel(dc) {
+        const vm = S.selectedVM;
+        dc.innerHTML = `<div class="vm-loading"><i class="fas fa-spinner fa-spin"></i> ${t('Ładowanie urządzeń USB...')}</div>`;
+
+        let configured = [], hostDevs = [];
+        try {
+            const [cfgR, hostR] = await Promise.all([
+                api(`/vm/machines/${vm.id}/usb`),
+                api('/vm/usb-devices'),
+            ]);
+            configured = cfgR.usb_devices || [];
+            hostDevs = Array.isArray(hostR) ? hostR : [];
+        } catch (e) {
+            dc.innerHTML = `<div class="vm-empty">${esc(e.message || t('Błąd pobierania USB'))}</div>`;
+            return;
+        }
+
+        const running = vm.status === 'running';
+
+        let html = `<div style="padding:12px">`;
+
+        // Configured devices
+        html += `<h4 style="margin:0 0 8px">${t('Podłączone urządzenia USB')}</h4>`;
+        if (!configured.length) {
+            html += `<div class="vm-empty" style="margin-bottom:16px">${t('Brak urządzeń USB przypisanych do tej maszyny.')}</div>`;
+        } else {
+            html += `<table class="vm-table" style="margin-bottom:16px"><thead><tr>
+                <th>${t('Nazwa')}</th><th>Vendor ID</th><th>Product ID</th>
+                <th style="text-align:right">${t('Akcje')}</th>
+            </tr></thead><tbody>`;
+            configured.forEach((ud, idx) => {
+                html += `<tr>
+                    <td>${esc(ud.name || `${ud.vendorid}:${ud.productid}`)}</td>
+                    <td class="vm-mono">${esc(ud.vendorid)}</td>
+                    <td class="vm-mono">${esc(ud.productid)}</td>
+                    <td style="text-align:right">
+                        <button class="vm-btn vm-btn-danger vm-btn-xs vm-usb-detach" data-idx="${idx}">
+                            <i class="fas fa-unlink"></i> ${t('Odepnij')}
+                        </button>
+                    </td>
+                </tr>`;
+            });
+            html += `</tbody></table>`;
+        }
+
+        // Available host devices
+        html += `<h4 style="margin:0 0 8px">${t('Dostępne urządzenia hosta')}</h4>`;
+        if (!hostDevs.length) {
+            html += `<div class="vm-empty">${t('Nie znaleziono urządzeń USB na hoście.')}</div>`;
+        } else {
+            html += `<table class="vm-table"><thead><tr>
+                <th>${t('Nazwa')}</th><th>Vendor:Product</th><th>Bus/Dev</th>
+                <th style="text-align:right">${t('Akcje')}</th>
+            </tr></thead><tbody>`;
+            hostDevs.forEach(hd => {
+                const alreadyAttached = configured.some(c => c.vendorid === hd.vendorid && c.productid === hd.productid);
+                html += `<tr>
+                    <td>${esc(hd.name)}</td>
+                    <td class="vm-mono">${esc(hd.vendorid)}:${esc(hd.productid)}</td>
+                    <td class="vm-mono">${esc(String(hd.bus).padStart(3,'0'))}/${esc(String(hd.device).padStart(3,'0'))}</td>
+                    <td style="text-align:right">
+                        ${alreadyAttached
+                            ? `<span style="color:var(--text-muted);font-size:12px">${t('Już podłączone')}</span>`
+                            : `<button class="vm-btn vm-btn-primary vm-btn-xs vm-usb-attach"
+                                data-vid="${esc(hd.vendorid)}" data-pid="${esc(hd.productid)}" data-name="${esc(hd.name)}">
+                                <i class="fas fa-link"></i> ${t('Podłącz')}
+                               </button>`
+                        }
+                    </td>
+                </tr>`;
+            });
+            html += `</tbody></table>`;
+        }
+
+        if (running) {
+            html += `<div class="vm-info-note" style="margin-top:12px">
+                <i class="fas fa-info-circle"></i> ${t('Zmiany zostaną zastosowane po ponownym uruchomieniu maszyny.')}
+            </div>`;
+        }
+
+        html += `</div>`;
+        dc.innerHTML = html;
+
+        // Detach handlers
+        dc.querySelectorAll('.vm-usb-detach').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const idx = parseInt(btn.dataset.idx, 10);
+                try {
+                    await api(`/vm/machines/${vm.id}/usb/${idx}`, { method: 'DELETE' });
+                    toast(t('Urządzenie USB odłączone'), 'success');
+                    renderUsbPanel(dc);
+                } catch (e) { toast(e.message || t('Błąd'), 'error'); }
+            });
+        });
+
+        // Attach handlers
+        dc.querySelectorAll('.vm-usb-attach').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                try {
+                    await api(`/vm/machines/${vm.id}/usb`, {
+                        method: 'POST',
+                        body: { vendorid: btn.dataset.vid, productid: btn.dataset.pid, name: btn.dataset.name },
+                    });
+                    toast(t('Urządzenie USB podłączone'), 'success');
+                    renderUsbPanel(dc);
                 } catch (e) { toast(e.message || t('Błąd'), 'error'); }
             });
         });

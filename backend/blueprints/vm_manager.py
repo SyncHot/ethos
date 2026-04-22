@@ -22,9 +22,13 @@ Endpoints:
   POST   /api/vm/machines/<id>/snapshots                 — create snapshot
   POST   /api/vm/machines/<id>/snapshots/<tag>           — restore snapshot
   DELETE /api/vm/machines/<id>/snapshots/<tag>           — delete snapshot
+  GET    /api/vm/machines/<id>/usb                       — list USB passthrough devices
+  POST   /api/vm/machines/<id>/usb                       — attach USB device to VM
+  DELETE /api/vm/machines/<id>/usb/<index>               — detach USB device from VM
   POST   /api/vm/quick-create-ethos                      — quick-create EthOS VM
   POST   /api/vm/import-disk                             — import disk image
   POST   /api/vm/convert                                 — convert disk format
+  GET    /api/vm/usb-devices                             — list host USB devices for passthrough
   GET    /api/vm/machines/<id>/installer-logs            — proxy installer logs from running VM
 """
 
@@ -1741,6 +1745,19 @@ def start_vm(vm_id):
         cmd += ['-vnc', f':{vnc_display}']
         cmd += ['-device', 'virtio-gpu-pci']
         cmd += ['-device', 'usb-ehci', '-device', 'usb-tablet']
+
+        # USB passthrough
+        usb_devs = vm.get('usb_devices', [])
+        if usb_devs:
+            cmd += ['-device', 'qemu-xhci,id=xhci-passthrough']
+            for ud in usb_devs:
+                vid = ud.get('vendorid', '')
+                pid = ud.get('productid', '')
+                if vid and pid:
+                    cmd += ['-device',
+                            f'usb-host,bus=xhci-passthrough.0,'
+                            f'vendorid=0x{vid},productid=0x{pid}']
+
         cmd += ['-serial', f'tcp:127.0.0.1:{serial_port},server=on,wait=off']
         cmd += ['-monitor', 'none']
 
@@ -1864,6 +1881,18 @@ def start_vm(vm_id):
 
         # USB tablet for better mouse tracking in VNC
         cmd += ['-device', 'usb-ehci', '-device', 'usb-tablet']
+
+        # USB passthrough — xhci controller + one usb-host device per entry
+        usb_devs = vm.get('usb_devices', [])
+        if usb_devs:
+            cmd += ['-device', 'qemu-xhci,id=xhci-passthrough']
+            for ud in usb_devs:
+                vid = ud.get('vendorid', '')
+                pid = ud.get('productid', '')
+                if vid and pid:
+                    cmd += ['-device',
+                            f'usb-host,bus=xhci-passthrough.0,'
+                            f'vendorid=0x{vid},productid=0x{pid}']
 
         # VGA adapter — virtio-gpu for best performance in VNC/noVNC
         cmd += ['-vga', 'virtio']
@@ -2628,6 +2657,110 @@ def delete_snapshot(vm_id, tag):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+
+# ═══════════════════════════════════════════════════════════
+#  USB PASSTHROUGH
+# ═══════════════════════════════════════════════════════════
+
+def _list_host_usb():
+    """Return a list of USB devices attached to the host.
+
+    Parses lsusb output and filters out root hubs and generic hubs.
+    Returns dicts with: bus, device, vendorid, productid, name.
+    """
+    out, _, rc = host_run('lsusb 2>/dev/null').stdout, '', 0
+    try:
+        result = host_run('lsusb', timeout=5)
+        out = result.stdout
+    except Exception:
+        out = ''
+    devices = []
+    hub_keywords = ('root hub', 'hub class', 'usb hub')
+    for line in out.splitlines():
+        # Bus 002 Device 005: ID 0bc2:2037 Seagate RSS LLC Expansion HDD
+        m = re.match(
+            r'Bus\s+(\d+)\s+Device\s+(\d+):\s+ID\s+([0-9a-fA-F]{4}):([0-9a-fA-F]{4})\s*(.*)',
+            line.strip()
+        )
+        if not m:
+            continue
+        bus, dev, vid, pid, name = m.groups()
+        name = name.strip()
+        if any(kw in name.lower() for kw in hub_keywords):
+            continue
+        devices.append({
+            'bus': int(bus),
+            'device': int(dev),
+            'vendorid': vid.lower(),
+            'productid': pid.lower(),
+            'name': name or f'{vid}:{pid}',
+        })
+    return devices
+
+
+@vm_bp.route('/usb-devices')
+@admin_required
+def list_usb_devices():
+    """List USB devices on the host available for passthrough."""
+    return jsonify(_list_host_usb())
+
+
+@vm_bp.route('/machines/<vm_id>/usb', methods=['GET'])
+@admin_required
+def get_vm_usb(vm_id):
+    """List USB passthrough devices configured for a VM."""
+    vms = _load_vms()
+    vm = vms.get(vm_id)
+    if not vm:
+        return jsonify({'error': 'VM not found'}), 404
+    return jsonify({'usb_devices': vm.get('usb_devices', [])})
+
+
+@vm_bp.route('/machines/<vm_id>/usb', methods=['POST'])
+@admin_required
+def attach_vm_usb(vm_id):
+    """Attach a USB device to a VM (persisted in config, applied on next start)."""
+    vms = _load_vms()
+    vm = vms.get(vm_id)
+    if not vm:
+        return jsonify({'error': 'VM not found'}), 404
+
+    data = request.get_json(force=True, silent=True) or {}
+    vendorid = data.get('vendorid', '').strip().lower().lstrip('0x')
+    productid = data.get('productid', '').strip().lower().lstrip('0x')
+    name = data.get('name', f'{vendorid}:{productid}')
+
+    if not re.fullmatch(r'[0-9a-f]{4}', vendorid) or not re.fullmatch(r'[0-9a-f]{4}', productid):
+        return jsonify({'error': 'Invalid vendorid or productid (must be 4-digit hex)'}), 400
+
+    usb_devices = vm.setdefault('usb_devices', [])
+    # Prevent duplicates
+    for ud in usb_devices:
+        if ud.get('vendorid') == vendorid and ud.get('productid') == productid:
+            return jsonify({'error': 'Device already attached'}), 409
+
+    usb_devices.append({'vendorid': vendorid, 'productid': productid, 'name': name})
+    _save_vms(vms)
+    return jsonify({'ok': True, 'usb_devices': usb_devices})
+
+
+@vm_bp.route('/machines/<vm_id>/usb/<int:index>', methods=['DELETE'])
+@admin_required
+def detach_vm_usb(vm_id, index):
+    """Remove a USB passthrough device from VM config by index."""
+    vms = _load_vms()
+    vm = vms.get(vm_id)
+    if not vm:
+        return jsonify({'error': 'VM not found'}), 404
+
+    usb_devices = vm.get('usb_devices', [])
+    if index < 0 or index >= len(usb_devices):
+        return jsonify({'error': 'Index out of range'}), 400
+
+    removed = usb_devices.pop(index)
+    vm['usb_devices'] = usb_devices
+    _save_vms(vms)
+    return jsonify({'ok': True, 'removed': removed})
 
 
 # ═══════════════════════════════════════════════════════════
