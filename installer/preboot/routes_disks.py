@@ -41,10 +41,7 @@ def recommend():
     MIN_OS = 9 * 1024**3
     MIN_DATA = 1 * 1024**3
     usable = [d for d in disks if not d["is_boot"] and d["size_bytes"] >= MIN_DATA]
-    os_capable = [d for d in usable
-                  if d["size_bytes"] >= MIN_OS
-                  and d.get("transport") != "usb"
-                  and not d.get("removable")]
+    os_capable = [d for d in usable if d["size_bytes"] >= MIN_OS]
     data_only = [d for d in usable if d not in os_capable]
 
     scenarios = []
@@ -74,8 +71,7 @@ def recommend():
     ssds = [d for d in os_capable if not d.get("rotational")
             or d.get("transport") == "nvme"]
     # Internal HDDs preferred; USB HDDs/SSDs as fallback data candidates
-    internal_hdds = [d for d in usable if d.get("rotational")
-                     and d.get("transport") != "usb"]
+    internal_hdds = [d for d in usable if d.get("rotational")]
     large_disks = [d for d in usable if d not in ssds]
 
     if ssds and (internal_hdds or large_disks):
