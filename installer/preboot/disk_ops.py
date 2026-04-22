@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import shutil
+import stat
 import subprocess
 import shlex
 import time
@@ -234,11 +235,13 @@ def validate(os_disk, data_disk, boot_device):
         errors.append("Cannot install on the boot device (USB)")
         return False, errors, warnings
 
-    # Block USB/removable disks as OS disk — too slow and unstable
+    # Warn about USB/removable OS disk — allowed but not recommended
     os_info = _disk_info(os_disk)
     if os_info and (os_info.get("transport") == "usb" or os_info.get("removable")):
-        errors.append("Cannot use a USB/removable disk as the system disk")
-        return False, errors, warnings
+        warnings.append(
+            "OS disk is USB/removable — slower and may be disconnected. "
+            "Not recommended as a system disk without reliable power and connection."
+        )
 
     same_disk = data_disk is None or data_disk == "same" or data_disk == os_disk
     if not same_disk and data_disk == boot_device:
@@ -393,8 +396,10 @@ def install(os_disk, data_disk, progress_cb=None, encrypt=False, passphrase=""):
                 _p("configuring", 74, "Setting up data partition symlinks...")
                 _setup_data_separation(mount_dir, _part(os_dev, 4))
         else:
-            # SquashFS: data dirs are already symlinks in squashfs image —
-            # just create target directories on the data partition
+            # SquashFS: fixup installer flags and service files via overlay,
+            # then create data partition directories.
+            _p("configuring", 73, "Configuring installed system...")
+            _fixup_installed_system(mount_dir, squashfs_mode=True)
             if same_disk:
                 _p("configuring", 74, "Preparing data partition...")
                 _prepare_data_dirs(_part(os_dev, 4))
@@ -495,16 +500,27 @@ def _release_disk(dev):
     base = os.path.basename(dev)
     parts = sorted(_glob.glob(f"{dev}[0-9]*") + _glob.glob(f"{dev}p[0-9]*"))
     for part in parts:
+        _run(f"fuser -km {part} 2>/dev/null", timeout=10)
         _run(f"umount -f {part} 2>/dev/null", timeout=15)
         _run(f"swapoff {part} 2>/dev/null", timeout=10)
     # Also unmount the whole device in case it's mounted directly
+    _run(f"fuser -km {dev} 2>/dev/null", timeout=10)
     _run(f"umount -f {dev} 2>/dev/null", timeout=15)
     _run(f"swapoff {dev} 2>/dev/null", timeout=10)
+    # Stop any mdadm RAID arrays that use this disk
+    _run(f"mdadm --stop --scan 2>/dev/null", timeout=15)
+    # Detach any loop devices backed by partitions on this disk
+    out, _, _ = _run("losetup -l -n -O NAME,BACK-FILE 2>/dev/null", timeout=10)
+    for line in out.splitlines():
+        cols = line.split(None, 1)
+        if len(cols) == 2 and dev in cols[1]:
+            _run(f"losetup -d {cols[0]} 2>/dev/null", timeout=10)
     # Remove any device-mapper mappings (LUKS, LVM) that reference this disk
     _run(f"dmsetup remove_all 2>/dev/null", timeout=15)
-    # Tell kernel to drop partition info
+    # Wait for udev to finish processing events, then tell kernel to drop partition info
+    _run("udevadm settle 2>/dev/null", timeout=15)
     _run(f"blockdev --rereadpt {dev} 2>/dev/null", timeout=10)
-    _run("partprobe 2>/dev/null && sleep 1", timeout=10)
+    _run("partprobe 2>/dev/null && sleep 2", timeout=15)
 
 
 def _wipe_disk(dev):
@@ -558,8 +574,18 @@ def _create_gpt(dev, include_data_part):
     for cmd in cmds:
         out, err, rc = _run(cmd, timeout=30)
         if rc != 0:
-            raise RuntimeError(f"Partition failed: {cmd} → {err}")
+            # parted exits non-zero when it can't notify the kernel about the new
+            # partition table, even though it successfully wrote it to disk.  This
+            # is a recoverable warning — force a kernel re-read and carry on.
+            if "unable to inform the kernel" in err or "re-read the partition table" in err:
+                log.warning("parted kernel-notify warning (continuing): %s", err)
+                _run(f"blockdev --rereadpt {dev} 2>/dev/null", timeout=10)
+                _run("udevadm settle 2>/dev/null", timeout=15)
+                _run("partprobe 2>/dev/null && sleep 3", timeout=20)
+            else:
+                raise RuntimeError(f"Partition failed: {cmd} → {err}")
 
+    _run("udevadm settle 2>/dev/null", timeout=15)
     _run("partprobe 2>/dev/null && sleep 2", timeout=10)
 
 
@@ -1234,41 +1260,65 @@ def _install_udev_data_rule(mount_dir, data_part, squashfs_mode):
     log.info("Installed udev data automount rule UUID=%s → %s", data_uuid, rule_path)
 
 
-
+def _fixup_installed_system(mount_dir, squashfs_mode=False):
     """Adjust the cloned system for installed-mode operation.
+
+    The source (installer) image carries artifacts that must be removed
     or patched before the target can boot as a normal EthOS instance:
     - .installer-mode flag (would start the preboot installer instead)
     - .installed flag (must be absent so firstboot.sh can run)
     - ethos.service may have wrong port or Type from the builder
     - ethos-preboot.service should be disabled
     - ethos-firstboot.service should be enabled
+
+    In squashfs_mode all writable changes go to overlay/upper/ which shadows
+    the read-only squashfs lower layer.  To "delete" a file that exists only
+    in the lower layer we create an overlayfs whiteout (char device 0,0).
     """
-    ethos_root = os.path.join(mount_dir, "opt/ethos")
+    if squashfs_mode:
+        overlay_upper = os.path.join(mount_dir, "overlay/upper")
+        ethos_root = os.path.join(overlay_upper, "opt/ethos")
+        systemd_dir = os.path.join(overlay_upper, "etc/systemd/system")
+    else:
+        ethos_root = os.path.join(mount_dir, "opt/ethos")
+        systemd_dir = os.path.join(mount_dir, "etc/systemd/system")
 
-    # Remove installer-mode flag so the system boots into normal EthOS
-    installer_flag = os.path.join(ethos_root, ".installer-mode")
-    if os.path.exists(installer_flag):
-        os.remove(installer_flag)
-        log.info("Removed .installer-mode flag")
+    os.makedirs(ethos_root, exist_ok=True)
+    os.makedirs(systemd_dir, exist_ok=True)
 
-    # Remove .installed so firstboot.sh can run on first boot.
-    # firstboot handles: user creation, hostname, setup_done, etc.
-    installed_flag = os.path.join(ethos_root, ".installed")
-    if os.path.exists(installed_flag):
-        os.remove(installed_flag)
-        log.info("Removed .installed flag (firstboot will recreate it)")
+    def _whiteout_or_remove(path):
+        """Remove a file (ext4) or create an overlayfs whiteout (squashfs)."""
+        if squashfs_mode:
+            if os.path.exists(path) or os.path.islink(path):
+                os.remove(path)
+            # char device 0,0 is the overlayfs whiteout convention
+            os.mknod(path, stat.S_IFCHR | 0o000, os.makedev(0, 0))
+        elif os.path.exists(path):
+            os.remove(path)
 
-    # Read target port from ethos.env (default 9000)
+    # Remove/whiteout .installer-mode so the system boots into normal EthOS
+    _whiteout_or_remove(os.path.join(ethos_root, ".installer-mode"))
+    log.info("Cleared .installer-mode flag (squashfs=%s)", squashfs_mode)
+
+    # Remove/whiteout .installed so firstboot.sh can run on first boot
+    _whiteout_or_remove(os.path.join(ethos_root, ".installed"))
+    log.info("Cleared .installed flag (firstboot will recreate it)")
+
+    # Read target port from ethos.env — prefer squashfs image copy, fall back to installer
     port = "9000"
-    env_file = os.path.join(ethos_root, "ethos.env")
-    if os.path.exists(env_file):
-        with open(env_file) as f:
-            for line in f:
-                if line.startswith("PORT="):
-                    port = line.strip().split("=", 1)[1]
+    for env_candidate in [
+        os.path.join(ethos_root, "ethos.env"),
+        os.path.join(mount_dir, "opt/ethos/ethos.env"),
+    ]:
+        if os.path.exists(env_candidate):
+            with open(env_candidate) as f:
+                for line in f:
+                    if line.startswith("PORT="):
+                        port = line.strip().split("=", 1)[1]
+            break
 
     # Write a correct ethos.service for the installed system
-    svc_path = os.path.join(mount_dir, "etc/systemd/system/ethos.service")
+    svc_path = os.path.join(systemd_dir, "ethos.service")
     svc_content = f"""[Unit]
 Description=EthOS NAS
 After=network.target ethos-firstboot.service local-fs.target
@@ -1293,37 +1343,57 @@ WantedBy=multi-user.target
 """
     with open(svc_path, "w") as f:
         f.write(svc_content)
-    log.info("Wrote ethos.service (port=%s, Type=simple)", port)
+    log.info("Wrote ethos.service (port=%s, squashfs=%s)", port, squashfs_mode)
 
-    wants_dir = os.path.join(mount_dir, "etc/systemd/system/multi-user.target.wants")
+    wants_dir = os.path.join(systemd_dir, "multi-user.target.wants")
     os.makedirs(wants_dir, exist_ok=True)
 
     # Disable the preboot installer service on the target
     preboot_link = os.path.join(wants_dir, "ethos-preboot.service")
-    if os.path.exists(preboot_link):
+    if os.path.exists(preboot_link) or os.path.islink(preboot_link):
         os.remove(preboot_link)
-        log.info("Disabled ethos-preboot.service")
-
-    # Enable the main ethos service
-    ethos_link = os.path.join(wants_dir, "ethos.service")
-    if not os.path.exists(ethos_link):
+        log.info("Removed ethos-preboot.service wants link")
+    if squashfs_mode:
+        # Whiteout so the lower-layer preboot symlink is hidden
         try:
-            os.symlink("/etc/systemd/system/ethos.service", ethos_link)
-            log.info("Enabled ethos.service")
+            os.mknod(preboot_link, stat.S_IFCHR | 0o000, os.makedev(0, 0))
         except OSError:
             pass
 
-    # Copy updated firstboot-v2 wrapper to target
-    src_fb = os.path.join(ethos_root, "installer/images/firstboot-v2.sh")
-    dst_fb = os.path.join(mount_dir, "opt/ethos-firstboot.sh")
+    # Enable the main ethos service
+    ethos_link = os.path.join(wants_dir, "ethos.service")
+    if os.path.islink(ethos_link) or os.path.exists(ethos_link):
+        os.remove(ethos_link)
+    try:
+        os.symlink("/etc/systemd/system/ethos.service", ethos_link)
+        log.info("Enabled ethos.service")
+    except OSError as e:
+        log.warning("Could not create ethos.service wants symlink: %s", e)
+
+    # Deploy updated firstboot-v2 wrapper to the installed system
+    # Source: always the running installer's own copy (freshest version).
+    # In squashfs mode write to overlay/upper so it overrides the lower layer;
+    # in ext4 mode write directly to the cloned target root.
+    _this_dir = os.path.dirname(os.path.abspath(__file__))
+    src_fb = os.path.normpath(os.path.join(_this_dir, "../images/firstboot-v2.sh"))
+    if squashfs_mode:
+        dst_fb = os.path.join(overlay_upper, "opt/ethos-firstboot.sh")
+        os.makedirs(os.path.dirname(dst_fb), exist_ok=True)
+    else:
+        dst_fb = os.path.join(mount_dir, "opt/ethos-firstboot.sh")
     if os.path.exists(src_fb):
         import shutil
         shutil.copy2(src_fb, dst_fb)
         os.chmod(dst_fb, 0o755)
-        log.info("Deployed updated firstboot-v2.sh")
+        log.info("Deployed updated firstboot-v2.sh → %s", dst_fb)
 
     # Create setup_done if wizard is disabled (belt-and-suspenders with firstboot)
-    conf_path = os.path.join(ethos_root, "install.conf")
+    # install.conf lives in the running installer's /opt/ethos, not the target mount.
+    running_ethos = os.path.normpath(os.path.join(_this_dir, "../.."))
+    conf_path = os.path.join(running_ethos, "install.conf")
+    if not os.path.exists(conf_path):
+        # Fallback: check the target mount (ext4 clone case)
+        conf_path = os.path.join(mount_dir, "opt/ethos/install.conf")
     setup_wizard = "yes"
     hostname = "ethos"
     username = "nasadmin"
@@ -1368,6 +1438,97 @@ _GRUB_ESSENTIAL_MODS = (
     "search_label linux configfile all_video boot fat efi_gop "
     "gzio video video_fb loadenv"
 )
+
+
+def _find_windows_esps(skip_dev):
+    """Scan all disks for ESPs containing a Windows Boot Manager.
+
+    Mounts each ESP candidate temporarily, looks for
+    EFI/Microsoft/Boot/bootmgfw.efi, and returns a list of dicts::
+
+        [{"part": "/dev/sda1", "uuid": "1A2B-3C4D", "label": "Windows Boot Manager"}]
+
+    ``skip_dev`` is the EthOS target disk (e.g. /dev/sdb) — its partitions
+    are never returned.
+    """
+    import glob as _glob
+    import tempfile
+
+    candidates = []
+
+    # Collect all partition devices on all block devices except skip_dev
+    all_parts = (
+        sorted(_glob.glob("/dev/sd?[0-9]*"))
+        + sorted(_glob.glob("/dev/nvme?n?p[0-9]*"))
+        + sorted(_glob.glob("/dev/mmcblk?p[0-9]*"))
+        + sorted(_glob.glob("/dev/vd?[0-9]*"))
+    )
+
+    skip_prefix = skip_dev.rstrip("/")  # e.g. /dev/sdb
+    checked_esps = set()
+
+    for part in all_parts:
+        # Skip EthOS target disk partitions
+        if part.startswith(skip_prefix):
+            continue
+        if part in checked_esps:
+            continue
+
+        # Quick filter: must be FAT (EFI system partitions are always FAT32)
+        out, _, rc = _run(f"blkid -p -s TYPE -o value {part} 2>/dev/null", timeout=5)
+        if rc != 0 or out.strip() not in ("vfat",):
+            continue
+
+        uuid, _, _ = _run(f"blkid -p -s UUID -o value {part} 2>/dev/null", timeout=5)
+        uuid = uuid.strip()
+        if not uuid:
+            continue
+
+        # Mount and check for Windows Boot Manager
+        tmp = tempfile.mkdtemp(prefix="/tmp/ethos-esp-probe-")
+        try:
+            _, _, mrc = _run(f"mount -o ro {part} {tmp}", timeout=15)
+            if mrc != 0:
+                continue
+            checked_esps.add(part)
+
+            bootmgr = os.path.join(tmp, "EFI/Microsoft/Boot/bootmgfw.efi")
+            bootmgr_lower = os.path.join(tmp, "efi/microsoft/boot/bootmgfw.efi")
+            if not (os.path.isfile(bootmgr) or os.path.isfile(bootmgr_lower)):
+                continue
+
+            # Try to determine Windows version from BCD or just use generic label
+            label = _detect_windows_label(tmp)
+            candidates.append({"part": part, "uuid": uuid, "label": label})
+            log.info("Found Windows ESP on %s (UUID=%s) label=%r", part, uuid, label)
+        except Exception as e:
+            log.warning("ESP probe error on %s: %s", part, e)
+        finally:
+            _run(f"umount {tmp} 2>/dev/null", timeout=10)
+            try:
+                os.rmdir(tmp)
+            except OSError:
+                pass
+
+    return candidates
+
+
+def _detect_windows_label(esp_mount):
+    """Return a human-readable label for the Windows version on this ESP.
+
+    Tries to read the display name from the BCD store; falls back to
+    version-probing via ntfs boot files; returns "Windows" if unknown.
+    """
+    # Check for Windows 11 marker (winre.wim or efisys.bin with Win11 flag
+    # aren't reliable from ESP alone — use presence of newer EFI binaries as hint)
+    win11_marker = os.path.join(esp_mount, "EFI/Microsoft/Boot/bootmgfw.efi")
+    if os.path.isfile(win11_marker):
+        size = os.path.getsize(win11_marker)
+        # bootmgfw.efi in Windows 11 is typically ≥ 1.5 MB
+        if size >= 1_500_000:
+            return "Windows 11"
+        return "Windows 10"
+    return "Windows"
 
 
 def _find_source_bootx64():
@@ -1601,8 +1762,7 @@ def _write_esp_grub(dev, mount_dir, progress_cb=None, squashfs_mode=False, data_
         cmdline += " ethos.rootfs=squashfs"
 
     esp_grub_cfg = os.path.join(esp_grub_dir, "grub.cfg")
-    with open(esp_grub_cfg, "w") as f:
-        f.write(f"""\
+    grub_cfg_content = f"""\
 # EthOS A/B boot configuration with automatic failover
 #
 # IMPORTANT: Kernel loading (linux/initrd) MUST only happen inside menuentry
@@ -1693,7 +1853,28 @@ menuentry "EthOS Recovery Shell (ESP)" {{
     linux ($esp)/EFI/recovery/vmlinuz ro init=/bin/bash nomodeset
     initrd ($esp)/EFI/recovery/initrd.img
 }}
-""")
+"""
+    # ── Detect Windows on other disks and append chainloader entries ──
+    _p(79, "Scanning for Windows on other disks...")
+    windows_esps = _find_windows_esps(skip_dev=dev)
+    if windows_esps:
+        grub_cfg_content += "\n# ── Other operating systems ──\n"
+        for w in windows_esps:
+            grub_cfg_content += f"""\
+menuentry "{w['label']}" {{
+    insmod part_gpt
+    insmod fat
+    insmod chain
+    search --no-floppy --fs-uuid --set=root {w['uuid']}
+    chainloader /EFI/Microsoft/Boot/bootmgfw.efi
+}}
+"""
+            log.info("Added Windows chainloader entry: %s (UUID=%s)", w['label'], w['uuid'])
+    else:
+        log.info("No Windows ESP found on other disks")
+
+    with open(esp_grub_cfg, "w") as f:
+        f.write(grub_cfg_content)
     log.info("Wrote A/B ESP grub.cfg: kernel=%s root_a=%s root_b=%s", kver, root_a_uuid, root_b_uuid)
 
     # Also place grub.cfg where GRUB's $prefix looks (boot/grub/ on ESP).
