@@ -137,7 +137,8 @@ SVCEOF
 systemctl daemon-reload 2>/dev/null || true
 # Enable main EthOS service
 systemctl enable ethos.service 2>/dev/null || true
-# Disable firstboot service
+# Disable installer services
+systemctl disable ethos-preboot.service 2>/dev/null || true
 systemctl disable ethos-firstboot.service 2>/dev/null || true
 
 echo "[7/8] Regenerating SSH keys..."

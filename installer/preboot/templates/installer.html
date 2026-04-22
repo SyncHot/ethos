@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>EthOS Installer</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <link rel="stylesheet" href="/static/installer.css">
+    <link rel="stylesheet" href="/static/fa/all.min.css">
+    <link rel="stylesheet" href="/static/fonts/inter.css">
+</head>
+<body>
+    <div class="installer" id="app">
+        <!-- Header -->
+        <header class="installer-header">
+            <div class="logo"><i class="fas fa-server"></i> EthOS</div>
+            <div class="steps-indicator" id="steps-indicator"></div>
+        </header>
+
+        <!-- Step 0: Language -->
+        <section class="step" id="step-lang">
+            <div class="step-icon"><i class="fas fa-globe"></i></div>
+            <h2 data-i18n="Witaj w instalatorze EthOS">Witaj w instalatorze EthOS</h2>
+            <p data-i18n="Wybierz język instalacji">Wybierz język instalacji</p>
+            <div class="lang-grid" id="lang-grid"></div>
+        </section>
+
+        <!-- Step 1: Account -->
+        <section class="step hidden" id="step-account">
+            <div class="step-icon"><i class="fas fa-user-plus"></i></div>
+            <h2 data-i18n="Utwórz konto">Utwórz konto</h2>
+            <div class="form-group">
+                <label data-i18n="Nazwa użytkownika">Nazwa użytkownika</label>
+                <input type="text" id="inp-username" autocomplete="off" placeholder="admin" maxlength="32">
+                <div class="field-error" id="err-username"></div>
+            </div>
+            <div class="form-group">
+                <label data-i18n="Hasło">Hasło</label>
+                <input type="password" id="inp-password" placeholder="••••" maxlength="128">
+                <div class="field-error" id="err-password"></div>
+            </div>
+            <div class="form-group">
+                <label data-i18n="Powtórz hasło">Powtórz hasło</label>
+                <input type="password" id="inp-password2" placeholder="••••" maxlength="128">
+                <div class="field-error" id="err-password2"></div>
+            </div>
+            <div class="form-group">
+                <label data-i18n="Nazwa hosta">Nazwa hosta</label>
+                <input type="text" id="inp-hostname" placeholder="ethos" maxlength="63" value="ethos">
+            </div>
+        </section>
+
+        <!-- Step 2: Scenario selection -->
+        <section class="step hidden" id="step-scenario">
+            <div class="step-icon"><i class="fas fa-layer-group"></i></div>
+            <h2 data-i18n="Tryb instalacji">Tryb instalacji</h2>
+            <p data-i18n="Wybierz jak zainstalować system">Wybierz jak zainstalować system</p>
+            <div id="scenario-loading" class="loading"><i class="fas fa-spinner fa-spin"></i> <span data-i18n="Analizuję dyski...">Analizuję dyski...</span></div>
+            <div id="scenario-error" class="msg-error hidden"></div>
+            <div id="scenario-cards" class="scenario-grid hidden"></div>
+        </section>
+
+        <!-- Step 3: Disk selection -->
+        <section class="step hidden" id="step-disks">
+            <div class="step-icon"><i class="fas fa-hdd"></i></div>
+            <h2 data-i18n="Wybierz dyski">Wybierz dyski</h2>
+            <div id="disk-section">
+                <div id="disk-os-section">
+                    <h3 data-i18n="Dysk systemu">Dysk systemu</h3>
+                    <div id="disk-list-os" class="disk-list"></div>
+                </div>
+                <div id="disk-data-section" class="hidden">
+                    <h3 data-i18n="Dysk danych">Dysk danych</h3>
+                    <div id="disk-list-data" class="disk-list"></div>
+                </div>
+            </div>
+            <!-- Partition layout preview -->
+            <div id="partition-preview" class="partition-preview hidden">
+                <h3 data-i18n="Układ partycji">Układ partycji</h3>
+                <div id="partition-viz"></div>
+            </div>
+        </section>
+
+        <!-- Step 4: Security (encryption) -->
+        <section class="step hidden" id="step-security">
+            <div class="step-icon"><i class="fas fa-shield-alt"></i></div>
+            <h2 data-i18n="Bezpieczeństwo">Bezpieczeństwo</h2>
+            <div class="security-options">
+                <label class="toggle-card" id="toggle-encrypt">
+                    <div class="toggle-card-header">
+                        <input type="checkbox" id="chk-encrypt">
+                        <div class="toggle-card-icon"><i class="fas fa-lock"></i></div>
+                        <div class="toggle-card-text">
+                            <div class="toggle-card-title" data-i18n="Szyfrowanie danych (LUKS)">Szyfrowanie danych (LUKS)</div>
+                            <div class="toggle-card-desc" data-i18n="Chroni dane przed nieautoryzowanym dostępem fizycznym">Chroni dane przed nieautoryzowanym dostępem fizycznym</div>
+                        </div>
+                    </div>
+                    <div class="encrypt-details hidden" id="encrypt-details">
+                        <div class="form-group">
+                            <label data-i18n="Hasło awaryjne">Hasło awaryjne</label>
+                            <input type="password" id="inp-passphrase" placeholder="min. 8 znaków" maxlength="128">
+                            <div class="field-error" id="err-passphrase"></div>
+                        </div>
+                        <div class="form-group">
+                            <label data-i18n="Powtórz hasło awaryjne">Powtórz hasło awaryjne</label>
+                            <input type="password" id="inp-passphrase2" placeholder="min. 8 znaków" maxlength="128">
+                            <div class="field-error" id="err-passphrase2"></div>
+                        </div>
+                        <div class="msg-info">
+                            <i class="fas fa-info-circle"></i>
+                            <span data-i18n="Dysk odblokuje się automatycznie przy starcie. Hasło awaryjne służy do ręcznego odzyskiwania danych.">Dysk odblokuje się automatycznie przy starcie. Hasło awaryjne służy do ręcznego odzyskiwania danych.</span>
+                        </div>
+                    </div>
+                </label>
+                <div class="toggle-card readonly">
+                    <div class="toggle-card-header">
+                        <div class="toggle-card-check"><i class="fas fa-check-circle"></i></div>
+                        <div class="toggle-card-icon"><i class="fas fa-fingerprint"></i></div>
+                        <div class="toggle-card-text">
+                            <div class="toggle-card-title" data-i18n="Weryfikacja integralności">Weryfikacja integralności</div>
+                            <div class="toggle-card-desc" data-i18n="Immutable root (SquashFS) chroni system przed modyfikacją. Zawsze włączone.">Immutable root (SquashFS) chroni system przed modyfikacją. Zawsze włączone.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Step 5: Summary -->
+        <section class="step hidden" id="step-summary">
+            <div class="step-icon"><i class="fas fa-clipboard-check"></i></div>
+            <h2 data-i18n="Podsumowanie">Podsumowanie</h2>
+            <div class="summary-table" id="summary-table"></div>
+            <div class="msg-warn" style="margin-top:12px">
+                <i class="fas fa-exclamation-triangle"></i>
+                <span data-i18n="UWAGA: Wszystkie dane na wybranych dyskach zostaną usunięte!">UWAGA: Wszystkie dane na wybranych dyskach zostaną usunięte!</span>
+            </div>
+            <div class="form-group" style="margin-top:12px">
+                <label id="confirm-label" data-i18n="Wpisz INSTALUJ aby potwierdzić">Wpisz INSTALUJ aby potwierdzić</label>
+                <input type="text" id="inp-confirm" placeholder="INSTALUJ" autocomplete="off">
+            </div>
+        </section>
+
+        <!-- Step 6: Installation -->
+        <section class="step hidden" id="step-install">
+            <div class="step-icon"><i class="fas fa-cog fa-spin"></i></div>
+            <h2 data-i18n="Instaluję system...">Instaluję system...</h2>
+            <div class="progress-outer">
+                <div class="progress-bar" id="progress-bar"></div>
+            </div>
+            <div class="progress-pct" id="progress-pct">0%</div>
+            <div class="progress-msg" id="progress-msg"></div>
+            <div class="install-log" id="install-log"></div>
+        </section>
+
+        <!-- Step 7: Done -->
+        <section class="step hidden" id="step-done">
+            <div class="step-icon done"><i class="fas fa-check-circle"></i></div>
+            <h2 data-i18n="System zainstalowany!">System zainstalowany!</h2>
+            <p data-i18n="Po restarcie połącz się z EthOS pod adresem:">Po restarcie połącz się z EthOS pod adresem:</p>
+            <div class="done-url" id="done-url"></div>
+            <button class="btn btn-lg" id="btn-reboot" onclick="Installer.reboot()" style="margin-top: 24px">
+                <i class="fas fa-power-off"></i> <span data-i18n="Uruchom ponownie">Uruchom ponownie</span>
+            </button>
+        </section>
+
+        <!-- Navigation -->
+        <div class="nav-bar" id="nav-bar">
+            <button class="btn btn-outline" id="btn-back" onclick="Installer.prev()">
+                <i class="fas fa-arrow-left"></i> <span data-i18n="Wstecz">Wstecz</span>
+            </button>
+            <button class="btn" id="btn-next" onclick="Installer.next()">
+                <span data-i18n="Dalej">Dalej</span> <i class="fas fa-arrow-right"></i>
+            </button>
+        </div>
+    </div>
+
+    <script src="/static/installer.js"></script>
+</body>
+</html>

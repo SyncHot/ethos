@@ -146,9 +146,12 @@ echo "    NAS Name: ${ETHOS_NAS_NAME}"
 echo "    Port:     ${ETHOS_PORT}"
 
 # ─── Wait for network ───
-# Determine wait time: if saved WiFi exists, wait longer.
+# No network → exit and let preboot-server handle WiFi setup.
+# After WiFi is configured, system reboots and firstboot runs again with network.
+# Determine wait time: if saved WiFi exists, wait longer (AP race condition).
 WAIT_SECS=30
-if nmcli -t -f TYPE,NAME connection show 2>/dev/null | grep -q '^802-11-wireless:'; then
+if nmcli -t -f TYPE,NAME connection show 2>/dev/null | grep -q '^802-11-wireless:' \
+   && ! nmcli -t -f TYPE,NAME connection show 2>/dev/null | grep -q 'ethos-hotspot'; then
     WAIT_SECS=90
     echo "[i] Zapisane WiFi wykryte — wydłużam oczekiwanie na sieć"
 fi
@@ -381,6 +384,13 @@ SH
     chmod +x "$INSTALL_DIR"/{start,stop,rebuild}.sh
 fi
 
+# ── Stop preboot server (frees port 9000) ──
+systemctl stop ethos-preboot.service 2>/dev/null || true
+systemctl disable ethos-preboot.service 2>/dev/null || true
+# Kill any remaining process on port 9000
+fuser -k 9000/tcp 2>/dev/null || true
+sleep 1
+
 # ── Start ──
 systemctl daemon-reload
 systemctl enable ethos.service
@@ -465,6 +475,46 @@ if command -v avahi-daemon &>/dev/null; then
     echo "[✓] Avahi (mDNS) uruchomione"
 fi
 
+# ─── WiFi AP (hotspot) ───
+# For prepackaged images, builder already created ethos-ap.service.
+# Only configure for installer mode where service may not exist.
+if [[ ! -f /etc/systemd/system/ethos-ap.service ]]; then
+    echo "[i] Konfiguruję hotspot WiFi..."
+    AP_SCRIPT=""
+    if [[ -x "/usr/local/bin/ethos-ap" ]]; then
+        AP_SCRIPT="/usr/local/bin/ethos-ap"
+    elif [[ -f "$INSTALLER_DIR/ethos-ap.sh" ]]; then
+        cp "$INSTALLER_DIR/ethos-ap.sh" "$INSTALL_DIR/ethos-ap.sh"
+        chmod +x "$INSTALL_DIR/ethos-ap.sh"
+        AP_SCRIPT="$INSTALL_DIR/ethos-ap.sh"
+    fi
+
+    if [[ -n "$AP_SCRIPT" ]]; then
+        cat > /etc/systemd/system/ethos-ap.service <<APSVC
+[Unit]
+Description=EthOS WiFi Hotspot (auto-start if no network)
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash ${AP_SCRIPT} auto
+ExecStop=/bin/bash ${AP_SCRIPT} stop
+
+[Install]
+WantedBy=multi-user.target
+APSVC
+        systemctl daemon-reload
+        systemctl enable ethos-ap.service
+        echo "[✓] Serwis auto-hotspot utworzony"
+    else
+        echo "[!] Brak skryptu ethos-ap — pomijam hotspot"
+    fi
+else
+    echo "[✓] Serwis auto-hotspot już skonfigurowany"
+fi
+
 # ─── Mark as installed ───
 touch "$MARKER"
 echo "installed=$(date -Iseconds)" >> "$MARKER"
@@ -474,6 +524,10 @@ echo "port=$ETHOS_PORT" >> "$MARKER"
 
 # ─── Disable first-boot service ───
 systemctl disable ethos-firstboot.service 2>/dev/null || true
+
+# ─── Pre-boot already stopped above (before ethos.service start) ───
+systemctl stop ethos-preboot.service 2>/dev/null || true
+systemctl disable ethos-preboot.service 2>/dev/null || true
 
 # ─── Cleanup installer files ───
 if [[ -d "$INSTALLER_DIR/app" ]]; then

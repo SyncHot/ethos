@@ -310,7 +310,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/printer/pkg-status',
     },
     {
-        'id': 'docker-manager', 'name': 'Docker Manager', 'version': '1.0.7',
+        'id': 'docker-manager', 'name': 'Docker Manager', 'version': '1.0.6',
         'icon': 'fa-cubes', 'color': '#2496ed', 'category': 'System', 'admin_only': True,
         'description': 'Zarządzanie kontenerami Docker, projektami Compose, obrazami i logami.',
         'apt_deps': [], 'pip_deps': [],
@@ -319,7 +319,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/docker/pkg-status',
     },
     {
-        'id': 'vm-manager', 'name': 'VM Manager', 'version': '1.0.9',
+        'id': 'vm-manager', 'name': 'VM Manager', 'version': '1.0.8',
         'icon': 'fa-desktop', 'color': '#8b5cf6', 'category': 'System', 'admin_only': True,
         'description': 'Maszyny wirtualne QEMU/KVM z migawkami i dostepem VNC.',
         'apt_deps': ['qemu-system-x86', 'qemu-utils', 'ovmf'], 'pip_deps': [],
@@ -360,7 +360,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/flasher/pkg-status',
     },
     {
-        'id': 'builder', 'name': 'Builder', 'version': '1.0.16',
+        'id': 'builder', 'name': 'Builder', 'version': '1.0.15',
         'icon': 'fa-hammer', 'color': '#f97316', 'category': 'System', 'admin_only': True,
         'description': 'Budowanie wydan EthOS i obrazow systemowych przez interfejs webowy.',
         'apt_deps': ['squashfs-tools', 'genisoimage', 'rsync'], 'pip_deps': [],

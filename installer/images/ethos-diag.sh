@@ -89,8 +89,12 @@ FILES=(
     "/opt/ethos/venv/bin/python"
     "/opt/ethos/backend/requirements.txt"
     "/opt/ethos-firstboot.sh"
+    "/opt/ethos/installer/preboot/app.py"
+    "/usr/local/bin/ethos-ap"
     "/etc/systemd/system/ethos.service"
     "/etc/systemd/system/ethos-firstboot.service"
+    "/etc/systemd/system/ethos-preboot.service"
+    "/etc/systemd/system/ethos-ap.service"
     "/var/log/ethos-firstboot.log"
 )
 for f in "${FILES[@]}"; do
@@ -115,7 +119,7 @@ fi
 
 # ── 5. Service statuses ──
 section "5. Systemd Services"
-SERVICES=(ethos ethos-firstboot)
+SERVICES=(ethos ethos-firstboot ethos-preboot ethos-ap)
 for svc in "${SERVICES[@]}"; do
     UNIT="${svc}.service"
     if ! systemctl list-unit-files "$UNIT" &>/dev/null 2>&1; then
@@ -193,7 +197,7 @@ fi
 # ── 8. Service journals (recent) ──
 section "8. Service Journals (last 15 lines each)"
 
-for svc in ethos ethos-firstboot; do
+for svc in ethos ethos-firstboot ethos-preboot ethos-ap; do
     echo ""
     echo -e "  ${BOLD}── $svc ──${NC}"
     JOURNAL=$(journalctl -u "$svc" --no-pager -n 15 --no-hostname 2>/dev/null || echo "(no journal)")
@@ -248,6 +252,20 @@ else
     fail "Venv python not found or not executable"
 fi
 
+# ── 11. Hotspot / AP ──
+section "11. WiFi Hotspot"
+AP_STATUS=$(/usr/local/bin/ethos-ap status 2>/dev/null || echo "unknown")
+info "AP status: $AP_STATUS"
+NM_HOTSPOT=$(nmcli -t -f NAME,TYPE connection show --active 2>/dev/null | grep hotspot || echo "")
+if [[ -n "$NM_HOTSPOT" ]]; then
+    ok "Hotspot active: $NM_HOTSPOT"
+    ip addr show dev $(nmcli -t -f DEVICE,CONNECTION device status 2>/dev/null | grep ethos | cut -d: -f1) 2>/dev/null | grep "inet " | while read -r line; do
+        info "  $line"
+    done
+else
+    info "Hotspot not active (normal if WiFi connected)"
+fi
+
 # ── Summary ──
 section "Summary"
 echo ""
@@ -257,18 +275,24 @@ INSTALLED=false
 NETWORK=false
 PORT_OK=false
 ETHOS_OK=false
+PREBOOT_OK=false
 
 [[ -f /opt/ethos/.installed ]] && INSTALLED=true
 [[ -n "$IP" ]] && NETWORK=true
 [[ -n "$PORT_PID" ]] && PORT_OK=true
 [[ -n "$SETUP_OUT" ]] && ETHOS_OK=true
+[[ -n "$PREBOOT_OUT" ]] && PREBOOT_OK=true
 
 if $ETHOS_OK; then
     ok "EthOS is running and serving on :9000"
-    info "Open http://${IP:-<your-ip>}:9000 in browser"
+    info "Open http://${IP:-192.168.42.1}:9000 in browser"
+elif $PREBOOT_OK; then
+    ok "EthOS Installer (preboot) is running on :9000"
+    info "Open http://${IP:-192.168.42.1}:9000 in browser"
 elif $PORT_OK && ! $ETHOS_OK; then
     warn "Something is on port 9000 but not responding to health check"
-    info "Check: sudo journalctl -u ethos -n 50"
+    info "Check: sudo journalctl -u ethos-preboot -n 50"
+    info "Or:    sudo journalctl -u ethos -n 50"
 elif $INSTALLED && ! $PORT_OK; then
     fail "EthOS is installed but NOT running"
     info "Try: sudo systemctl restart ethos"
@@ -278,7 +302,7 @@ elif ! $INSTALLED && $NETWORK; then
     info "Firstboot should run. Check: journalctl -u ethos-firstboot -f"
 elif ! $INSTALLED && ! $NETWORK; then
     warn "Not installed, no network"
-    info "Connect device to Ethernet or WiFi"
+    info "Connect to hotspot 'ethos' → http://192.168.42.1:9000"
 fi
 
 echo ""

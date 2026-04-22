@@ -955,9 +955,13 @@ def create_vm():
 def _mark_image_installed(disk_file):
     """Mount a qcow2 disk image and prepare it for direct boot.
 
-    Mounts the image, creates the .installed marker so firstboot.sh is
-    skipped, ensures ethos.service is enabled, and writes installer_result.json
-    so the setup wizard skips the disk-partitioning step.
+    Builder images boot into ethos-preboot.service (the disk installer)
+    by default.  For quick-created VMs the system is already on disk,
+    so the preboot must be skipped.  This function:
+    1. Creates /opt/ethos/.installed — tells systemd's
+       ConditionPathExists to NOT start preboot.
+    2. Enables ethos.service — so the main app starts on boot.
+    3. Disables ethos-preboot.service — belt-and-suspenders.
     """
     nbd_dev = '/dev/nbd0'
     mnt = '/tmp/_vm_mark_installed'
@@ -990,7 +994,7 @@ def _mark_image_installed(disk_file):
         os.makedirs(os.path.dirname(marker), exist_ok=True)
         with open(marker, 'w') as f:
             f.write('installed\n')
-        # 2. Ensure ethos.service is enabled
+        # 2. Enable ethos.service, disable preboot via systemd symlinks
         systemd_dir = os.path.join(mnt, 'etc/systemd/system')
         wants_dir = os.path.join(systemd_dir, 'multi-user.target.wants')
         os.makedirs(wants_dir, exist_ok=True)
@@ -1111,8 +1115,8 @@ def quick_create_ethos():
     disk_file = os.path.join(vm_path, f'disk0.{disk_format}')
 
     # For EthOS builder images (.img/.raw): convert the image to qcow2 and
-    # mark it as installed so firstboot.sh is skipped and the setup wizard
-    # boots directly.
+    # mark it as installed so it boots directly into the EthOS setup wizard
+    # (skipping the preboot disk installer which is meant for real hardware).
     img_ext = os.path.splitext(boot_image)[1].lower()
     is_raw_image = img_ext in ('.img', '.raw')
 
@@ -1132,8 +1136,8 @@ def quick_create_ethos():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-    # Mark image as installed so firstboot.sh is skipped and the VM boots
-    # directly into the EthOS setup wizard.
+    # Mark image as installed so the VM boots into ethos.service (setup wizard)
+    # instead of ethos-preboot.service (disk installer for real hardware).
     _mark_image_installed(disk_file)
 
     vms[vm_id] = {

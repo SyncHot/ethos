@@ -2223,6 +2223,17 @@ mkdir -p "$ETHOS_DIR/installer/images"
 cp "$NASOS/installer/"*.sh         "$ETHOS_DIR/installer/"     2>/dev/null || true
 cp "$NASOS/installer/images/"*.sh     "$ETHOS_DIR/installer/images/" 2>/dev/null || true
 
+# ── Flask-based preboot installer ──
+echo "LOG:Copying Flask preboot installer..."
+if [[ -d "$NASOS/installer/preboot" ]]; then
+    cp -r "$NASOS/installer/preboot" "$ETHOS_DIR/installer/preboot"
+    find "$ETHOS_DIR/installer/preboot" -type d -name "__pycache__" -exec rm -rf {{}} + 2>/dev/null || true
+    echo "LOG:Flask preboot installer copied — $(du -sh "$ETHOS_DIR/installer/preboot" | awk '{{print $1}}')"
+else
+    echo "LOG:ERROR — Flask preboot installer not found at $NASOS/installer/preboot"
+    exit 1
+fi
+
 # ── Clean cache from copied code ──
 find "$ETHOS_DIR" -type d -name "__pycache__" -exec rm -rf {{}} + 2>/dev/null || true
 find "$ETHOS_DIR" -name "*.pyc" -delete 2>/dev/null || true
@@ -2297,6 +2308,21 @@ ETHOS_PORT=$NAS_PORT
 ETHOS_SETUP_WIZARD=yes
 INSTCFG
 
+# ── Installer-mode marker: USB is an installer, not a live OS ──
+touch "$ETHOS_DIR/.installer-mode"
+echo "LOG:Installer-mode marker created"
+
+# ── WiFi AP script ──
+echo "LOG:Copying ethos-ap.sh..."
+cp "$NASOS/installer/images/ethos-ap.sh" "$ROOT/usr/local/bin/ethos-ap"
+chmod +x "$ROOT/usr/local/bin/ethos-ap"
+if [[ ! -f "$ROOT/usr/local/bin/ethos-ap" ]]; then
+    echo "LOG:ERROR — ethos-ap not copied!"
+    ls -la "$NASOS/installer/images/ethos-ap.sh" 2>&1 || true
+    exit 1
+fi
+echo "LOG:ethos-ap.sh OK"
+
 # ── Firstboot script (copy from source — simplified v2) ──
 echo "LOG:Copying firstboot-v2.sh..."
 if [[ -f "$NASOS/installer/images/firstboot-v2.sh" ]]; then
@@ -2328,11 +2354,12 @@ fi
 # ── Firstboot systemd service ──
 cat > "$ROOT/etc/systemd/system/ethos-firstboot.service" <<SVCUNIT
 [Unit]
-Description=EthOS First Boot Setup
-After=network.target
+Description=EthOS First Boot Installer
+After=network.target ethos-preboot.service
 Wants=network.target
 ConditionPathExists=/opt/ethos-firstboot.sh
 ConditionPathExists=!/opt/ethos/.installed
+ConditionPathExists=!/opt/ethos/.installer-mode
 [Service]
 Type=oneshot
 ExecStart=/bin/bash /opt/ethos-firstboot.sh
@@ -2344,16 +2371,69 @@ WantedBy=multi-user.target
 SVCUNIT
 ln -sf /etc/systemd/system/ethos-firstboot.service "$ROOT/etc/systemd/system/multi-user.target.wants/ethos-firstboot.service"
 
-# Set multi-user as default
+# WiFi AP service
+cat > "$ROOT/etc/systemd/system/ethos-ap.service" <<'APSVC'
+[Unit]
+Description=EthOS WiFi Hotspot (auto if no network)
+After=NetworkManager.service
+Wants=NetworkManager.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/ethos-ap auto
+ExecStop=/usr/local/bin/ethos-ap stop
+[Install]
+WantedBy=multi-user.target
+APSVC
+ln -sf /etc/systemd/system/ethos-ap.service "$ROOT/etc/systemd/system/multi-user.target.wants/ethos-ap.service"
+
+# Pre-boot setup server (Flask-based installer with i18n + offline fonts)
+echo "LOG:Verifying Flask preboot installer in image..."
+if [[ ! -f "$ROOT/opt/ethos/installer/preboot/app.py" ]]; then
+    echo "LOG:CRITICAL ERROR — Flask preboot app.py does not exist in image!"
+    exit 1
+fi
+echo "LOG:Flask preboot installer OK"
+
+cat > "$ROOT/etc/systemd/system/ethos-preboot.service" <<'PREBOOT'
+[Unit]
+Description=EthOS Installer (pre-boot setup)
+After=network.target NetworkManager.service
+Wants=NetworkManager.service
+Before=ethos-firstboot.service
+Conflicts=ethos.service
+ConditionPathExists=/opt/ethos/installer/preboot/app.py
+ConditionPathExists=!/opt/ethos/.installed
+StartLimitIntervalSec=60
+StartLimitBurst=5
+[Service]
+Type=simple
+WorkingDirectory=/opt/ethos/installer/preboot
+ExecStart=/opt/ethos/venv/bin/python /opt/ethos/installer/preboot/app.py
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=5
+Environment=PYTHONUNBUFFERED=1
+[Install]
+WantedBy=multi-user.target
+PREBOOT
+ln -sf /etc/systemd/system/ethos-preboot.service "$ROOT/etc/systemd/system/multi-user.target.wants/ethos-preboot.service"
+
+# Set multi-user as default (headless — no kiosk, access via hotspot + browser)
 mkdir -p "$ROOT/etc/systemd/system/multi-user.target.wants"
 chroot "$ROOT" systemctl set-default multi-user.target 2>/dev/null || true
 
-# ── ethos.service — enabled directly (no preboot conflict, boots straight to setup wizard) ──
+# ── ethos.service (pre-create — firstboot.sh enables + starts it after stopping preboot) ──
+# After=ethos-firstboot.service: prevents race where ethos starts before firstboot
+# creates the venv (which would cause repeated failures + systemd start-rate lock).
+# firstboot uses --no-block so it exits immediately after queuing the start —
+# no deadlock.
 cat > "$ROOT/etc/systemd/system/ethos.service" <<SVCETHOS
 [Unit]
 Description=EthOS NAS
-After=network.target local-fs.target
+After=network.target local-fs.target ethos-firstboot.service
 Wants=network.target
+Conflicts=ethos-preboot.service
 RequiresMountsFor=/mnt/data
 
 [Service]
@@ -2372,7 +2452,7 @@ TimeoutStopSec=30
 [Install]
 WantedBy=multi-user.target
 SVCETHOS
-ln -sf /etc/systemd/system/ethos.service "$ROOT/etc/systemd/system/multi-user.target.wants/ethos.service"
+# NOTE: Do NOT enable here — firstboot.sh enables after stopping preboot (port 9000 conflict)
 
 # ── Auto-login on tty1 as nasadmin (NOT root) during first boot ──
 # After setup wizard completes, setup_complete() replaces this with
@@ -2401,7 +2481,11 @@ if [ ! -f /opt/ethos/.installed ]; then
     if [ -n "$IP" ]; then
     echo "  =>  http://${{IP}}:9000"
     else
-    echo "  Podlacz kabel Ethernet lub WiFi, aby uzyskac dostep."
+    echo "  No network — connect to WiFi hotspot:"
+    echo "    SSID:  ethos  (bez hasla)"
+    echo "    Adres: http://192.168.42.1:9000"
+    echo ""
+    echo "  Lub podlacz kabel Ethernet."
     fi
     echo ""
     echo "  Kreator pomoze Ci ustawic:"
@@ -2474,7 +2558,7 @@ if command -v mksquashfs >/dev/null 2>&1; then
         rm -rf "$ETHOS_DIR_SQ/$d"
         ln -s "/mnt/data/ethos/$d" "$ETHOS_DIR_SQ/$d"
     done
-    rm -f "$ETHOS_DIR_SQ/.installed"
+    rm -f "$ETHOS_DIR_SQ/.installer-mode" "$ETHOS_DIR_SQ/.installed"
     mkdir -p "$ROOT/mnt/data"
     mkdir -p "$ROOT/mnt/snapshots"
 
@@ -2630,11 +2714,12 @@ print('LOG:Manifest written: ' + p if p else 'LOG:WARNING: manifest signing fail
     rm -f "$ETHOS_DIR_SQ/venv"
     if [ -d "$VENV_BACKUP/bin" ]; then
         mv "$VENV_BACKUP" "$ETHOS_DIR_SQ/venv"
-        echo "LOG:venv restored for squashfs"
+        echo "LOG:venv restored for installer"
     else
         mkdir -p "$ETHOS_DIR_SQ/venv"
-        echo "LOG:WARNING: venv backup missing — squashfs may not work"
+        echo "LOG:WARNING: venv backup missing — installer may not work"
     fi
+    touch "$ETHOS_DIR_SQ/.installer-mode"
 else
     echo "LOG:WARNING: mksquashfs not found — SquashFS image will not be created"
 fi
@@ -2653,10 +2738,12 @@ echo "PREFLIGHT:START"
 echo "PREFLIGHT:kernel=$(uname -r)"
 SYSTEMD_STATE=$(systemctl is-system-running --wait --timeout=30 2>/dev/null || echo unknown)
 echo "PREFLIGHT:SYSTEMD:$SYSTEMD_STATE"
-# Check EthOS service is active
-# On installed systems ethos.service runs.
+# Check whichever EthOS service is expected to be active
+# On installer images ethos-preboot.service runs; on installed systems ethos.service runs.
 if systemctl is-active ethos.service >/dev/null 2>&1; then
     echo "PREFLIGHT:ETHOS:OK"
+elif systemctl is-active ethos-preboot.service >/dev/null 2>&1; then
+    echo "PREFLIGHT:ETHOS:PREBOOT_OK"
 else
     echo "PREFLIGHT:ETHOS:FAIL"
 fi
@@ -2700,7 +2787,7 @@ PFSCRIPT
     cat > "$ROOT/etc/systemd/system/ethos-preflight.service" <<'PFSVC'
 [Unit]
 Description=EthOS Pre-flight Health Check
-After=network.target ethos.service
+After=network.target ethos-preboot.service ethos.service
 ConditionPathExists=/usr/local/sbin/ethos-preflight.sh
 
 [Service]
