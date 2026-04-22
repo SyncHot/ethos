@@ -2665,19 +2665,46 @@ def delete_snapshot(vm_id, tag):
 def _list_host_usb():
     """Return a list of USB devices attached to the host.
 
-    Parses lsusb output and filters out root hubs and generic hubs.
-    Returns dicts with: bus, device, vendorid, productid, name.
+    Parses lsusb output, filters out hubs, then enriches each entry with
+    block-device name and size by walking the sysfs device chain.
+    Returns dicts: bus, device, vendorid, productid, name, block_dev, size.
     """
-    out, _, rc = host_run('lsusb 2>/dev/null').stdout, '', 0
     try:
-        result = host_run('lsusb', timeout=5)
-        out = result.stdout
+        out = host_run('lsusb', timeout=5).stdout
     except Exception:
         out = ''
-    devices = []
+
+    # Build a map of vid:pid -> {block_dev, size} from lsblk + sysfs
+    block_map = {}
+    try:
+        r = host_run("lsblk -J -o NAME,TRAN,SIZE 2>/dev/null", timeout=5)
+        bd = json.loads(r.stdout).get('blockdevices', [])
+        for dev in bd:
+            if dev.get('tran') != 'usb':
+                continue
+            name = dev.get('name', '')
+            size = dev.get('size', '')
+            # Walk sysfs chain to get idVendor / idProduct
+            try:
+                sysfs = os.path.realpath(f'/sys/block/{name}')
+                cur = sysfs
+                while cur and cur != '/':
+                    vid_f = os.path.join(cur, 'idVendor')
+                    pid_f = os.path.join(cur, 'idProduct')
+                    if os.path.isfile(vid_f) and os.path.isfile(pid_f):
+                        vid = open(vid_f).read().strip().lower()
+                        pid = open(pid_f).read().strip().lower()
+                        block_map[f'{vid}:{pid}'] = {'block_dev': name, 'size': size}
+                        break
+                    cur = os.path.dirname(cur)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     hub_keywords = ('root hub', 'hub class', 'usb hub')
+    devices = []
     for line in out.splitlines():
-        # Bus 002 Device 005: ID 0bc2:2037 Seagate RSS LLC Expansion HDD
         m = re.match(
             r'Bus\s+(\d+)\s+Device\s+(\d+):\s+ID\s+([0-9a-fA-F]{4}):([0-9a-fA-F]{4})\s*(.*)',
             line.strip()
@@ -2688,13 +2715,15 @@ def _list_host_usb():
         name = name.strip()
         if any(kw in name.lower() for kw in hub_keywords):
             continue
-        devices.append({
+        entry = {
             'bus': int(bus),
             'device': int(dev),
             'vendorid': vid.lower(),
             'productid': pid.lower(),
             'name': name or f'{vid}:{pid}',
-        })
+        }
+        entry.update(block_map.get(f'{vid.lower()}:{pid.lower()}', {}))
+        devices.append(entry)
     return devices
 
 

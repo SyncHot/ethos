@@ -1534,15 +1534,18 @@ function renderVMManager(body) {
             html += `<div class="vm-empty">${t('Nie znaleziono urządzeń USB na hoście.')}</div>`;
         } else {
             html += `<table class="vm-table"><thead><tr>
-                <th>${t('Nazwa')}</th><th>Vendor:Product</th><th>Bus/Dev</th>
+                <th>${t('Nazwa')}</th><th>Vendor:Product</th><th>${t('Dysk / rozmiar')}</th>
                 <th style="text-align:right">${t('Akcje')}</th>
             </tr></thead><tbody>`;
             hostDevs.forEach(hd => {
                 const alreadyAttached = configured.some(c => c.vendorid === hd.vendorid && c.productid === hd.productid);
+                const diskInfo = hd.block_dev
+                    ? `<span class="vm-mono">/dev/${esc(hd.block_dev)}</span> <span style="color:var(--text-muted)">${esc(hd.size || '')}</span>`
+                    : `<span style="color:var(--text-muted)">—</span>`;
                 html += `<tr>
                     <td>${esc(hd.name)}</td>
                     <td class="vm-mono">${esc(hd.vendorid)}:${esc(hd.productid)}</td>
-                    <td class="vm-mono">${esc(String(hd.bus).padStart(3,'0'))}/${esc(String(hd.device).padStart(3,'0'))}</td>
+                    <td>${diskInfo}</td>
                     <td style="text-align:right">
                         ${alreadyAttached
                             ? `<span style="color:var(--text-muted);font-size:12px">${t('Już podłączone')}</span>`
