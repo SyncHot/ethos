@@ -2082,6 +2082,13 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         if (center) center.style.display = 'none';
         if (bottom) bottom.style.display = 'none';
 
+        // Ensure video controls are visible
+        if (video) {
+            video.controls = true;
+            // Explicitly ensure controls are visible in case of browser quirks
+            video.style.setProperty('visibility', 'visible', 'important');
+        }
+
         // Auto-hide top bar after 3s
         function _resetHideTimer() {
             clearTimeout(_ctrlHideTimer);
