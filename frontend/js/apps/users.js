@@ -38,7 +38,7 @@ AppRegistry['users'] = function (appDef) {
                 <div class="usr-header">
                     <h2>${t('Użytkownicy systemowi')}</h2>
                     <div class="usr-header-actions">
-                        <button class="usr-btn primary" id="usr-btn-add-user">
+                        <button class="btn btn-primary" id="usr-btn-add-user">
                             <i class="fas fa-user-plus"></i> ${t('Dodaj użytkownika')}
                         </button>
                     </div>
@@ -51,7 +51,7 @@ AppRegistry['users'] = function (appDef) {
                 <div class="usr-header">
                     <h2>${t('Grupy')}</h2>
                     <div class="usr-header-actions">
-                        <button class="usr-btn primary" id="usr-btn-add-group">
+                        <button class="btn btn-primary" id="usr-btn-add-group">
                             <i class="fas fa-plus"></i> ${t('Utwórz grupę')}
                         </button>
                     </div>
@@ -67,7 +67,7 @@ AppRegistry['users'] = function (appDef) {
                 </div>
                 <div class="usr-priv-grid" id="usr-priv-grid"></div>
                 <div class="usr-priv-actions" id="usr-priv-actions" style="display:none">
-                    <button class="usr-btn primary" id="usr-priv-save">
+                    <button class="btn btn-primary" id="usr-priv-save">
                         <i class="fas fa-save"></i> ${t('Zapisz uprawnienia')}
                     </button>
                 </div>
@@ -659,7 +659,7 @@ AppRegistry['users'] = function (appDef) {
                 </div>
 
                 <div class="usr-ldap-actions">
-                    <button class="usr-btn primary" id="ldap-save"><i class="fas fa-save"></i> ${t('Zapisz')}</button>
+                    <button class="btn btn-primary" id="ldap-save"><i class="fas fa-save"></i> ${t('Zapisz')}</button>
                     <button class="usr-btn" id="ldap-test"><i class="fas fa-plug"></i> ${t('Test połączenia')}</button>
                     <button class="usr-btn" id="ldap-sync"><i class="fas fa-sync-alt"></i> ${t('Synchronizuj teraz')}</button>
                     <button class="usr-btn danger" id="ldap-remove" style="margin-left:auto"><i class="fas fa-trash"></i> ${t('Usuń konfigurację')}</button>

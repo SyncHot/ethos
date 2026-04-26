@@ -449,42 +449,87 @@ def _handle_unhandled(e):
     return jsonify({'error': 'Internal server error'}), 500
 
 
-# Register blueprints
+# ── Register Blueprints by Function Group ──
+
+# ── Storage & File Management ──
 app.register_blueprint(storage_bp)
 init_storage(socketio)
 app.register_blueprint(resources_bp)
 app.register_blueprint(backup_bp)
+app.register_blueprint(cloud_backup_bp)
+app.register_blueprint(raid_bp)
+app.register_blueprint(diskrepair_bp)
+app.register_blueprint(ssd_cache_bp)
+
+# ── System & User Management ──
 app.register_blueprint(users_bp)
-app.register_blueprint(network_bp)
-app.register_blueprint(eventlog_bp)
-app.register_blueprint(sandbox_bp)
-app.register_blueprint(update_bp)
-app.register_blueprint(updates_public_bp)
-app.register_blueprint(ddns_bp)
 app.register_blueprint(settings_bp)
-app.register_blueprint(ssh_bp)
-app.register_blueprint(installer_bp)
+app.register_blueprint(hardware_bp)
 app.register_blueprint(power_bp, url_prefix='/api/power')
 app.register_blueprint(encryption_bp)
-app.register_blueprint(ssd_cache_bp)
-app.register_blueprint(hardware_bp)
-app.register_blueprint(notifications_bp)
 app.register_blueprint(totp_bp)
-app.register_blueprint(dashboard_bp)
-app.register_blueprint(api_docs_bp)
-app.register_blueprint(security_advisor_bp)
+app.register_blueprint(sandbox_bp)
+
+# ── Network & Security ──
+app.register_blueprint(network_bp)
+app.register_blueprint(ddns_bp)
 app.register_blueprint(firewall_bp)
 app.register_blueprint(fail2ban_bp)
+app.register_blueprint(wireguard_bp)
+app.register_blueprint(ups_bp)
+
+# ── Applications & Services ──
+app.register_blueprint(dashboard_bp)
+app.register_blueprint(notifications_bp)
+app.register_blueprint(eventlog_bp)
+init_eventlog()
+app.register_blueprint(ssh_bp)
+app.register_blueprint(installer_bp)
 app.register_blueprint(app_manager_bp)
 init_app_manager(socketio)
 _load_optional_blueprints(app, socketio)
+app.register_blueprint(api_docs_bp)
+app.register_blueprint(security_advisor_bp)
+app.register_blueprint(antivirus_bp)
+app.register_blueprint(printer_bp)
+app.register_blueprint(downloads_bp)
+app.register_blueprint(aichat_bp)
+app.register_blueprint(ldap_bp)
+app.register_blueprint(appstore_bp)
+app.register_blueprint(builder_bp)
+app.register_blueprint(familyhub_bp)
+app.register_blueprint(packages_bp)
+app.register_blueprint(docker_bp)
+app.register_blueprint(vm_bp)
+app.register_blueprint(doc_anonymizer_bp)
+app.register_blueprint(gallery_bp)
+app.register_blueprint(cron_bp)
+app.register_blueprint(photos_ai_bp)
+app.register_blueprint(flasher_bp)
+app.register_blueprint(video_station_bp)
+app.register_blueprint(domains_mgr_bp)
+app.register_blueprint(pkg_registry_bp)
+app.register_blueprint(editor_bp)
+app.register_blueprint(websites_bp)
+app.register_blueprint(sharing_bp)
+app.register_blueprint(rollback_bp)
+app.register_blueprint(remote_log_bp)
+app.register_blueprint(radio_music_bp)
+app.register_blueprint(surveillance_bp)
+app.register_blueprint(sync_drive_bp)
+app.register_blueprint(tickets_bp)
+app.register_blueprint(med_assistant_bp)
+app.register_blueprint(mail_bp)
+app.register_blueprint(notes_bp)
 
+# ── Final Initialization ──
 # Init VM WebSocket proxy (must run after vm_manager blueprint is registered)
 try:
     from blueprints.vm_manager import _init_ws_proxy
     _init_ws_proxy(app)
 except ImportError:
     pass
+
 migrate_from_ethos_packages()
 init_update(socketio)
 

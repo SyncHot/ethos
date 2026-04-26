@@ -1,0 +1,5 @@
+FROM qwen3.6:35b
+PARAMETER num_ctx 32768
+# Zmniejszamy num_gpu, aby sterownik miał więcej "oddechu" w VRAM
+PARAMETER num_gpu 8
+PARAMETER num_batch 128
