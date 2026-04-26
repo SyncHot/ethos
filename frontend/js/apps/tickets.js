@@ -486,6 +486,7 @@ async function renderTickets(body, launchOpts) {
         const copilotEnabled = existing?.copilot_enabled || false;
         const localaiEnabled = existing?.localai_enabled || false;
         const freemodelEnabled = existing?.freemodel_enabled || false;
+        const ollamaEnabled = existing?.ollama_enabled || false;
 
         let activeModelName = '';
         try {
@@ -554,6 +555,14 @@ async function renderTickets(body, launchOpts) {
                 </div>
                 <div class="tk-form-group">
                     <label class="tk-toggle-row">
+                        <input type="checkbox" id="tk-pf-ollama" ${ollamaEnabled ? 'checked' : ''} />
+                        <span class="tk-toggle-slider"></span>
+                        <span class="tk-toggle-label"><i class="fas fa-wind"></i> ${t('Ollama (Zdalny serwer)')}</span>
+                    </label>
+                    <small class="tk-toggle-hint">${t('Używa zdalnego serwera Ollama. Skonfiguruj URL i klucz API w ustawieniach AIChat.')}</small>
+                </div>
+                <div class="tk-form-group">
+                    <label class="tk-toggle-row">
                         <input type="checkbox" id="tk-pf-freemodel" ${freemodelEnabled ? 'checked' : ''} />
                         <span class="tk-toggle-slider"></span>
                         <span class="tk-toggle-label"><i class="fas fa-gift"></i> ${t('Darmowe modele Copilota')}</span>
@@ -576,6 +585,7 @@ async function renderTickets(body, launchOpts) {
                     .split(',').map(s => s.trim()).filter(Boolean),
                 copilot_enabled: modal.querySelector('#tk-pf-copilot').checked,
                 localai_enabled: modal.querySelector('#tk-pf-localai').checked,
+                ollama_enabled: modal.querySelector('#tk-pf-ollama').checked,
                 freemodel_enabled: modal.querySelector('#tk-pf-freemodel').checked,
             };
             if (payload.columns.length === 0) payload.columns = [...DEFAULT_COLUMNS];
@@ -955,7 +965,7 @@ async function renderTickets(body, launchOpts) {
                     <button class="tk-act-btn" id="tk-find-bugs-btn" title="${t('Audyt aplikacji (Epic)')}">
                         <i class="fas fa-bug"></i>
                     </button>
-                    ${(currentProject.copilot_enabled || currentProject.localai_enabled || currentProject.freemodel_enabled) ? '<button class="tk-act-btn" id="tk-watcher-btn" title="AI Agent"><i class="fas fa-tower-broadcast"></i></button><button class="tk-act-btn" id="tk-ai-usage-btn" title="AI Usage"><i class="fas fa-chart-bar"></i></button>' : ''}
+                    ${(currentProject.copilot_enabled || currentProject.localai_enabled || currentProject.ollama_enabled || currentProject.freemodel_enabled) ? '<button class="tk-act-btn" id="tk-watcher-btn" title="AI Agent"><i class="fas fa-tower-broadcast"></i></button><button class="tk-act-btn" id="tk-ai-usage-btn" title="AI Usage"><i class="fas fa-chart-bar"></i></button>' : ''}
                     <button class="tk-act-btn" id="tk-mobile-filter-toggle" title="${t('Filtry')}">
                         <i class="fas fa-filter"></i>
                     </button>
