@@ -1,0 +1,42 @@
+# Environment and runtime
+.installed
+.password_changed
+.pip-cache/
+ethos.env
+*.env.local
+
+# Build and cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+npm-debug.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Runtime
+logs/
+uploads/
+data/
+backups/
+venv/
+
+# System
+.DS_Store
+*.local
+Thumbs.db
+
+# Specific directories
+cups-config/ssl/
