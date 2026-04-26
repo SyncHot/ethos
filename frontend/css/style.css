@@ -137,7 +137,7 @@ select {
     background-color: var(--bg-elevated);
     border: 1px solid var(--border);
     border-radius: var(--r-sm);
-    color: var(--text);
+    color: var(--text-primary);
     padding: 6px 24px 6px 8px;
     font-family: inherit;
     font-size: var(--fs-sm);
@@ -3418,7 +3418,7 @@ a.dkr-port-link:hover {
 
 /* VM Modal */
 .vm-modal-overlay {
-    position: absolute; inset: 0; background: rgba(0,0,0,0.6);
+    position: absolute; inset: 0; background: rgba(0,0,0,0.75);
     display: flex; align-items: center; justify-content: center; z-index: 100;
 }
 .vm-modal {
@@ -3435,7 +3435,13 @@ a.dkr-port-link:hover {
     cursor: pointer; padding: var(--space-xs) var(--space-sm); border-radius: var(--r-sm); min-width: 36px; min-height: 36px;
 }
 .vm-modal-close:hover { color: var(--text-primary); background: rgba(255,255,255,.05); }
-.vm-modal-body { padding: 16px 18px; overflow: auto; flex: 1; }
+.vm-modal-body {
+    padding: 16px 18px;
+    overflow: auto;
+    flex: 1;
+    color: var(--text-primary);
+    background: var(--bg-primary);
+}
 .vm-modal-footer {
     display: flex; justify-content: flex-end; gap: 8px; padding: var(--space-md) var(--space-lg);
     border-top: 1px solid var(--border);
@@ -6043,8 +6049,21 @@ a.dkr-port-link:hover {
     color: var(--text-primary);
     transition: background var(--transition-fast);
 }
-.dte-browse-item:hover { background: var(--bg-hover); }
+.dte-browse-item:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
 .dte-browse-item i { width: 18px; text-align: center; flex-shrink: 0; }
+
+/* ISO picker file items - improved readability */
+.ux-dir-list .dte-browse-item {
+    color: var(--text-primary);
+    background: var(--bg-primary);
+}
+.ux-dir-list .dte-browse-item:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
 
 /* ═══════════════ Code Editor ═══════════════ */
 .code-editor { display: flex; flex-direction: column; height: 100%; background: var(--bg-primary); }
