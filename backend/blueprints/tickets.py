@@ -141,6 +141,7 @@ def api_create_project():
         'localai_enabled': bool(body.get('localai_enabled', False)),
         'freemodel_enabled': bool(body.get('freemodel_enabled', False)),
         'ollama_enabled': bool(body.get('ollama_enabled', False)),
+        'ollama_model': str(body.get('ollama_model', 'mistral')).strip(),
         'created': now,
         'updated': now,
     }
@@ -192,6 +193,7 @@ def api_update_project(project_id):
     if 'localai_enabled' in body: updates['localai_enabled'] = bool(body['localai_enabled'])
     if 'freemodel_enabled' in body: updates['freemodel_enabled'] = bool(body['freemodel_enabled'])
     if 'ollama_enabled' in body: updates['ollama_enabled'] = bool(body['ollama_enabled'])
+    if 'ollama_model' in body: updates['ollama_model'] = str(body['ollama_model']).strip() or 'mistral'
 
     if 'members' in body:
         members = body['members']

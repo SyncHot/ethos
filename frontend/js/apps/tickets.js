@@ -487,6 +487,7 @@ async function renderTickets(body, launchOpts) {
         const localaiEnabled = existing?.localai_enabled || false;
         const freemodelEnabled = existing?.freemodel_enabled || false;
         const ollamaEnabled = existing?.ollama_enabled || false;
+        const ollamaModel = existing?.ollama_model || 'mistral';
 
         let activeModelName = '';
         try {
@@ -561,6 +562,11 @@ async function renderTickets(body, launchOpts) {
                     </label>
                     <small class="tk-toggle-hint">${t('Używa zdalnego serwera Ollama. Skonfiguruj URL i klucz API w ustawieniach AIChat.')}</small>
                 </div>
+                <div class="tk-form-group" id="tk-ollama-model-group" style="display:${ollamaEnabled ? 'block' : 'none'};margin-left:20px;">
+                    <label>${t('Model Ollama:')}</label>
+                    <input type="text" id="tk-pf-ollama-model" class="tk-input" value="${_escHtml(ollamaModel)}" placeholder="mistral, llama2, neural-chat, etc." />
+                    <small class="tk-toggle-hint">${t('Nazwa modelu dostępnego na serwerze Ollama (np. mistral, llama2:7b)')}</small>
+                </div>
                 <div class="tk-form-group">
                     <label class="tk-toggle-row">
                         <input type="checkbox" id="tk-pf-freemodel" ${freemodelEnabled ? 'checked' : ''} />
@@ -586,6 +592,7 @@ async function renderTickets(body, launchOpts) {
                 copilot_enabled: modal.querySelector('#tk-pf-copilot').checked,
                 localai_enabled: modal.querySelector('#tk-pf-localai').checked,
                 ollama_enabled: modal.querySelector('#tk-pf-ollama').checked,
+                ollama_model: modal.querySelector('#tk-pf-ollama-model')?.value.trim() || 'mistral',
                 freemodel_enabled: modal.querySelector('#tk-pf-freemodel').checked,
             };
             if (payload.columns.length === 0) payload.columns = [...DEFAULT_COLUMNS];
@@ -603,19 +610,28 @@ async function renderTickets(body, launchOpts) {
 
         const copilotToggle = overlay.querySelector('#tk-pf-copilot');
         const localToggle = overlay.querySelector('#tk-pf-localai');
+        const ollamaToggle = overlay.querySelector('#tk-pf-ollama');
         const freeToggle = overlay.querySelector('#tk-pf-freemodel');
-        if (copilotToggle && localToggle && freeToggle) {
-            copilotToggle.onchange = () => { if (copilotToggle.checked) { localToggle.checked = false; freeToggle.checked = false; } };
+        const ollamaModelGroup = overlay.querySelector('#tk-ollama-model-group');
+        
+        if (copilotToggle && localToggle && ollamaToggle && freeToggle) {
+            const updateMutualExclusivity = () => {
+                if (copilotToggle.checked) { localToggle.checked = false; ollamaToggle.checked = false; freeToggle.checked = false; }
+                if (localToggle.checked) { copilotToggle.checked = false; ollamaToggle.checked = false; freeToggle.checked = false; }
+                if (ollamaToggle.checked) { copilotToggle.checked = false; localToggle.checked = false; freeToggle.checked = false; }
+                if (freeToggle.checked) { copilotToggle.checked = false; localToggle.checked = false; ollamaToggle.checked = false; }
+                if (ollamaModelGroup) ollamaModelGroup.style.display = ollamaToggle.checked ? 'block' : 'none';
+            };
+            
+            copilotToggle.onchange = updateMutualExclusivity;
             localToggle.onchange = () => {
-                if (localToggle.checked) {
-                    copilotToggle.checked = false;
-                    freeToggle.checked = false;
-                    if (!activeModelName) {
-                        toast(t('Brak aktywnego modelu. Pobierz i aktywuj model w Bibliotece modeli (AIChat).'), 'warning');
-                    }
+                updateMutualExclusivity();
+                if (localToggle.checked && !activeModelName) {
+                    toast(t('Brak aktywnego modelu. Pobierz i aktywuj model w Bibliotece modeli (AIChat).'), 'warning');
                 }
             };
-            freeToggle.onchange = () => { if (freeToggle.checked) { copilotToggle.checked = false; localToggle.checked = false; } };
+            ollamaToggle.onchange = updateMutualExclusivity;
+            freeToggle.onchange = updateMutualExclusivity;
         }
 
         /* ── Chip picker logic ── */
