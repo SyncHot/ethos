@@ -1,6 +1,13 @@
 /* ─────────────────── Tickets / Kanban Board (EthOS) ─────────────────── */
 /* globals AppRegistry, createWindow, NAS, api, toast, t, _escHtml */
 
+// ─── Helper: escape HTML for template literals ───
+function _escHtml(str) {
+    const d = document.createElement('div');
+    d.textContent = str;
+    return d.innerHTML;
+}
+
 AppRegistry['tickets'] = function (appDef, launchOpts) {
     const winId = 'tickets';
     createWindow(winId, {
@@ -193,6 +200,7 @@ async function renderTickets(body, launchOpts) {
             const data = await api('/tickets/projects');
             projects = data.projects || [];
         } catch (e) {
+            console.error('Failed to load projects:', e);
             toast(t('Błąd ładowania projektów'), 'error');
             projects = [];
         }
