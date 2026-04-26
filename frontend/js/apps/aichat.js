@@ -2052,6 +2052,11 @@ function _aicRenderSettings(root) {
                             '<input type="password" id="aicOllamaApiKey" value="' + _aicEsc(c.ollama_api_key || '') + '" placeholder="' + t('Pozostaw puste jeśli nie jest wymagany') + '">' +
                             '<div class="aic-field-hint">' + t('Jeśli serwer Ollama wymaga autentykacji') + '</div>' +
                         '</div>' +
+                        '<div class="aic-field">' +
+                            '<label>' + t('Model Ollama') + '</label>' +
+                            '<input type="text" id="aicOllamaModel" value="' + _aicEsc(c.model || 'mistral') + '" placeholder="mistral, llama2, neural-chat, orca-mini, etc.">' +
+                            '<div class="aic-field-hint">' + t('Nazwa modelu dostępnego na serwerze Ollama (np. mistral, llama2:7b)') + '</div>' +
+                        '</div>' +
                     '</div>' +
                     /* ── OpenAI/Azure section ── */
                     '<div id="aicRemoteApiSection"' + (provider === 'local' || provider === 'ollama' ? ' style="display:none"' : '') + '>' +
@@ -2165,6 +2170,7 @@ window._aicSaveSettings = function () {
     if (provider === 'ollama') {
         data.ollama_url = document.getElementById('aicOllamaUrl').value.trim() || 'http://localhost:11434';
         data.ollama_api_key = document.getElementById('aicOllamaApiKey').value.trim();
+        data.model = document.getElementById('aicOllamaModel').value.trim() || 'mistral';
     } else if (provider !== 'local') {
         var apiKeyInput = document.getElementById('aicApiKey').value.trim();
         // Only update api_key if it's not masked (i.e., user typed a new one)
