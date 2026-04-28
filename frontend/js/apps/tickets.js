@@ -168,6 +168,12 @@ async function renderTickets(body, launchOpts) {
             }
             return;
         }
+        if (ev.type === 'watcher_activity') {
+            // lightweight: just refresh watcher state + re-render cards (no ticket reload)
+            watcherExecuting = (ev.executing && ev.ticket_id) ? ev : null;
+            renderBoard();
+            return;
+        }
         if (ev.project_id !== currentProject.id) return;
         Promise.all([loadTickets(currentProject.id), loadWatcherState()]).then(() => renderBoard());
     };
@@ -488,6 +494,8 @@ async function renderTickets(body, launchOpts) {
         const freemodelEnabled = existing?.freemodel_enabled || false;
         const ollamaEnabled = existing?.ollama_enabled || false;
         const ollamaModel = existing?.ollama_model || 'mistral';
+        const qaModel = existing?.qa_model || '';
+        const auditApps = existing?.audit_apps || '';
 
         let activeModelName = '';
         try {
@@ -563,9 +571,19 @@ async function renderTickets(body, launchOpts) {
                     <small class="tk-toggle-hint">${t('Używa zdalnego serwera Ollama. Skonfiguruj URL i klucz API w ustawieniach AIChat.')}</small>
                 </div>
                 <div class="tk-form-group" id="tk-ollama-model-group" style="display:${ollamaEnabled ? 'block' : 'none'};margin-left:20px;">
-                    <label>${t('Model Ollama:')}</label>
-                    <input type="text" id="tk-pf-ollama-model" class="tk-input" value="${_escHtml(ollamaModel)}" placeholder="mistral, llama2, neural-chat, etc." />
-                    <small class="tk-toggle-hint">${t('Nazwa modelu dostępnego na serwerze Ollama (np. mistral, llama2:7b)')}</small>
+                    <label>${t('Model Ollama (Fix):')}</label>
+                    <select id="tk-pf-ollama-model" class="tk-input" style="width:100%">
+                        <option value="${_escHtml(ollamaModel)}">${_escHtml(ollamaModel) || t('Ładowanie...')}</option>
+                    </select>
+                    <small class="tk-toggle-hint" id="tk-ollama-model-hint">${t('Ładowanie listy modeli...')}</small>
+                </div>
+                <div class="tk-form-group" id="tk-qa-model-group" style="display:${ollamaEnabled ? 'block' : 'none'};margin-left:20px;">
+                    <label>${t('Model Ollama (QA + dedup — szybki):')}</label>
+                    <select id="tk-pf-qa-model" class="tk-input" style="width:100%">
+                        <option value="">${t('(tak sam jak Fix)')}</option>
+                        <option value="${_escHtml(qaModel)}" ${qaModel ? 'selected' : ''}>${_escHtml(qaModel) || ''}</option>
+                    </select>
+                    <small class="tk-toggle-hint" id="tk-qa-model-hint">${t('Mały/szybki model do weryfikacji QA i deduplikacji. Zostaw puste żeby używać tego samego co Fix.')}</small>
                 </div>
                 <div class="tk-form-group">
                     <label class="tk-toggle-row">
@@ -574,6 +592,13 @@ async function renderTickets(body, launchOpts) {
                         <span class="tk-toggle-label"><i class="fas fa-gift"></i> ${t('Darmowe modele Copilota')}</span>
                     </label>
                     <small class="tk-toggle-hint">${t('Używa darmowych modeli Copilot CLI (GPT-4.1, GPT-5 Mini). Pełny flow jak Copilot, ale bez zużycia limitu premium.')}</small>
+                </div>
+                <div class="tk-form-group" id="tk-audit-apps-group" style="display:${ollamaEnabled ? 'block' : 'none'};margin-left:20px;">
+                    <label><i class="fas fa-magnifying-glass-chart"></i> ${t('Auto-audyt aplikacji (co 2 dni):')}</label>
+                    <input type="text" id="tk-pf-audit-apps" class="tk-input" style="width:100%"
+                        value="${_escHtml(auditApps)}"
+                        placeholder="np. tickets,aichat,docker-manager   lub   * (wszystkie)">
+                    <small class="tk-toggle-hint">${t('IDs aplikacji oddzielone przecinkiem. Watcher będzie je automatycznie audytował Ollamą co 2 dni i tworzył tickety z bugami. Zostaw puste żeby wyłączyć.')}</small>
                 </div>
             </div>
         `;
@@ -593,6 +618,8 @@ async function renderTickets(body, launchOpts) {
                 localai_enabled: modal.querySelector('#tk-pf-localai').checked,
                 ollama_enabled: modal.querySelector('#tk-pf-ollama').checked,
                 ollama_model: modal.querySelector('#tk-pf-ollama-model')?.value.trim() || 'mistral',
+                qa_model: modal.querySelector('#tk-pf-qa-model')?.value.trim() || '',
+                audit_apps: modal.querySelector('#tk-pf-audit-apps')?.value.trim() || '',
                 freemodel_enabled: modal.querySelector('#tk-pf-freemodel').checked,
             };
             if (payload.columns.length === 0) payload.columns = [...DEFAULT_COLUMNS];
@@ -613,6 +640,7 @@ async function renderTickets(body, launchOpts) {
         const ollamaToggle = overlay.querySelector('#tk-pf-ollama');
         const freeToggle = overlay.querySelector('#tk-pf-freemodel');
         const ollamaModelGroup = overlay.querySelector('#tk-ollama-model-group');
+        const auditAppsGroup = overlay.querySelector('#tk-audit-apps-group');
         
         if (copilotToggle && localToggle && ollamaToggle && freeToggle) {
             const updateMutualExclusivity = () => {
@@ -620,7 +648,11 @@ async function renderTickets(body, launchOpts) {
                 if (localToggle.checked) { copilotToggle.checked = false; ollamaToggle.checked = false; freeToggle.checked = false; }
                 if (ollamaToggle.checked) { copilotToggle.checked = false; localToggle.checked = false; freeToggle.checked = false; }
                 if (freeToggle.checked) { copilotToggle.checked = false; localToggle.checked = false; ollamaToggle.checked = false; }
-                if (ollamaModelGroup) ollamaModelGroup.style.display = ollamaToggle.checked ? 'block' : 'none';
+                const show = ollamaToggle.checked ? 'block' : 'none';
+                if (ollamaModelGroup) ollamaModelGroup.style.display = show;
+                if (auditAppsGroup) auditAppsGroup.style.display = show;
+                const qaModelGroup2 = overlay.querySelector('#tk-qa-model-group');
+                if (qaModelGroup2) qaModelGroup2.style.display = show;
             };
             
             copilotToggle.onchange = updateMutualExclusivity;
@@ -630,7 +662,45 @@ async function renderTickets(body, launchOpts) {
                     toast(t('Brak aktywnego modelu. Pobierz i aktywuj model w Bibliotece modeli (AIChat).'), 'warning');
                 }
             };
-            ollamaToggle.onchange = updateMutualExclusivity;
+            const loadOllamaModels = async (currentVal) => {
+                const sel = overlay.querySelector('#tk-pf-ollama-model');
+                const qasel = overlay.querySelector('#tk-pf-qa-model');
+                const hint = overlay.querySelector('#tk-ollama-model-hint');
+                const qahint = overlay.querySelector('#tk-qa-model-hint');
+                if (!sel) return;
+                try {
+                    if (hint) hint.textContent = t('Ładowanie listy modeli...');
+                    const data = await api('/tickets/ollama-models');
+                    const models = data.models || [];
+                    if (models.length === 0) {
+                        sel.innerHTML = `<option value="">${t('Brak modeli — sprawdź czy Ollama działa')}</option>`;
+                        if (hint) hint.textContent = t('Nie znaleziono modeli na serwerze Ollama.');
+                    } else {
+                        sel.innerHTML = models.map(m =>
+                            `<option value="${m}" ${m === (currentVal || '') ? 'selected' : ''}>${m}</option>`
+                        ).join('');
+                        if (hint) hint.textContent = t('Wybierz model z listy');
+                        if (qasel) {
+                            qasel.innerHTML = `<option value="">${t('(tak sam jak Fix)')}</option>` +
+                                models.map(m =>
+                                    `<option value="${m}" ${m === (qaModel || '') ? 'selected' : ''}>${m}</option>`
+                                ).join('');
+                            if (qahint) qahint.textContent = t('Wybierz szybki model do QA i deduplikacji');
+                        }
+                    }
+                } catch(e) {
+                    sel.innerHTML = `<option value="${currentVal || ''}">${currentVal || t('Wpisz ręcznie...')}</option>`;
+                    if (hint) hint.textContent = t('Nie można pobrać listy — Ollama niedostępna');
+                }
+            };
+            const qaModelGroup = overlay.querySelector('#tk-qa-model-group');
+            ollamaToggle.onchange = () => {
+                updateMutualExclusivity();
+                if (ollamaModelGroup) ollamaModelGroup.style.display = ollamaToggle.checked ? 'block' : 'none';
+                if (qaModelGroup) qaModelGroup.style.display = ollamaToggle.checked ? 'block' : 'none';
+                if (ollamaToggle.checked) loadOllamaModels(ollamaModel);
+            };
+            if (ollamaEnabled) loadOllamaModels(ollamaModel);
             freeToggle.onchange = updateMutualExclusivity;
         }
 
@@ -786,39 +856,427 @@ async function renderTickets(body, launchOpts) {
         });
     }
 
-    /* ── Find 5 Bugs Button Helper ── */
-    async function runAppAudit() {
+    /* ── Ticket Watcher Status ── */
+    let _watcherPollTimer = null;
+
+    async function _pollWatcherStatus(container) {
+        clearTimeout(_watcherPollTimer);
         try {
-            toast(t('Rozpoczynanie audytu...'), 'info');
-            
-            // Ensure we have the latest project list to find ETHOS
-            if (!projects.length) await loadProjects();
-            
-            let targetProject = projects.find(p => p.name === 'ETHOS');
-            if (!targetProject) {
-                console.warn(t('Projekt ETHOS nie znaleziony, używam bieżącego'));
-                targetProject = currentProject;
-                if (!targetProject) {
-                     toast(t('Nie wybrano projektu'), 'error');
-                     return;
-                }
+            const s = await api('/tickets/watcher/status');
+            const dot = container.querySelector('#tk-watcher-dot');
+            const btn = container.querySelector('#tk-watcher-status-btn');
+            if (!dot) return;
+
+            const st = s.status || {};
+            const lk = s.lock;
+
+            let label = '';
+            let color = '#6b7280'; // grey = unknown
+
+            if (!s.active) {
+                color = '#ef4444';
+                label = 'Watcher zatrzymany';
+            } else if (lk) {
+                const phase = lk.phase || 'fix';
+                const phaseIcon = phase === 'qa' ? '🔍 QA' : '🔧 Fix';
+                const elapsed = lk.elapsed ? ` (${Math.round(lk.elapsed/60)}min)` : '';
+                color = '#f59e0b';
+                label = `${phaseIcon}: ${lk.ticket_id || '?'}${elapsed}`;
+            } else if (st.phase === 'audit') {
+                color = '#a855f7';
+                label = `🔍 Audyt: ${st.app_id || '?'}`;
+            } else {
+                color = '#22c55e';
+                label = 'Watcher idle';
             }
 
-            toast(t('Generowanie ticketów...'), 'info');
-            const res = await api(`/tickets/projects/${targetProject.id}/bug-hunt`, { method: 'POST' });
-            
-            if (res.ok) {
-                toast(t('Utworzono') + ' ' + res.count + ' ' + t('ticketów dla aplikacji:') + ' ' + res.app, 'success');
-                // Refresh if we are viewing that project
-                if (currentProject && currentProject.id === targetProject.id) {
-                    await loadTickets(currentProject.id);
-                    renderBoard();
+            dot.style.background = color;
+            dot.title = label;
+            if (btn) btn.title = label;
+
+            // update watcher bar if visible
+            const bar = container.querySelector('#tk-watcher-bar');
+            if (bar) {
+                bar.textContent = label;
+                bar.style.color = color;
+            }
+
+            // refresh card indicators if executing ticket changed
+            const newTid = lk ? lk.ticket_id : null;
+            const oldTid = watcherExecuting ? watcherExecuting.ticket_id : null;
+            if (newTid !== oldTid) {
+                watcherExecuting = lk ? { ...lk, executing: true } : null;
+                renderBoard();
+            }
+        } catch (e) { /* ignore */ }
+        _watcherPollTimer = setTimeout(() => _pollWatcherStatus(container), 8000);
+    }
+
+    async function _showWatcherStatusModal() {
+        let s;
+        try { s = await api('/tickets/watcher/status'); } catch(e) { s = {active:false,error:e.message}; }
+        const existing = document.querySelector('.tk-watcher-stat-overlay');
+        if (existing) existing.remove();
+        const overlay = document.createElement('div');
+        overlay.className = 'tk-watcher-stat-overlay';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9999;display:flex;align-items:center;justify-content:center;';
+
+        const dot = s.active ? (s.lock ? '🟠' : '🟢') : '🔴';
+        const statusText = s.active ? (s.lock ? 'Aktywny (przetwarza ticket)' : 'Aktywny (czeka)') : 'Zatrzymany';
+
+        const schedRows = Object.entries(s.schedule||{}).map(([k, v]) => {
+            const [projId, appId] = k.split(':');
+            const last = v.last_audit ? new Date(v.last_audit*1000).toLocaleString() : 'nigdy';
+            const nextTs = v.last_audit ? v.last_audit + 2*24*3600 : 0;
+            const next = nextTs > Date.now()/1000 ? new Date(nextTs*1000).toLocaleString() : 'przy następnym cyklu';
+            return `<tr style="border-bottom:1px solid #1f2937;">
+              <td style="padding:6px 8px;color:#d1d5db;">${appId}</td>
+              <td style="padding:6px 8px;color:#9ca3af;font-size:11px;">${last}</td>
+              <td style="padding:6px 8px;color:#9ca3af;font-size:11px;">${next}</td>
+              <td style="padding:6px 8px;color:#86efac;">${v.tickets_created||0}</td>
+            </tr>`;
+        }).join('');
+
+        overlay.innerHTML = `
+<div style="background:#1e1e2e;border:1px solid #374151;border-radius:12px;padding:24px;width:780px;max-width:96vw;max-height:88vh;display:flex;flex-direction:column;">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-shrink:0;">
+    <h3 style="color:#e5e7eb;margin:0;">🤖 Ticket Watcher</h3>
+    <button id="tk-ws-close" style="background:none;border:none;color:#9ca3af;font-size:20px;cursor:pointer;">✕</button>
+  </div>
+  <div style="display:flex;gap:4px;margin-bottom:14px;flex-shrink:0;">
+    <button class="tk-ws-tab active" data-tab="status" style="padding:6px 16px;border:1px solid #374151;border-radius:6px 6px 0 0;background:#111827;color:#e5e7eb;cursor:pointer;font-size:13px;">📊 Status</button>
+    <button class="tk-ws-tab" data-tab="log" style="padding:6px 16px;border:1px solid #374151;border-radius:6px 6px 0 0;background:#1e1e2e;color:#9ca3af;cursor:pointer;font-size:13px;">📋 Live Log</button>
+  </div>
+  <div id="tk-ws-status-panel" style="flex:1;overflow-y:auto;">
+    <div style="background:#111827;border-radius:8px;padding:14px;margin-bottom:16px;">
+      <div style="font-size:18px;margin-bottom:6px;">${dot} <span style="color:#e5e7eb;">${statusText}</span></div>
+      ${s.lock ? `<div style="color:#fbbf24;font-size:12px;font-family:monospace;">Ticket: ${s.lock.ticket_id} | Model: ${s.lock.model||'?'} | Start: ${new Date((s.lock.started||0)*1000).toLocaleTimeString()}</div>` : ''}
+      <div style="color:#6b7280;font-size:11px;margin-top:6px;">Watcher skanuje kolejkę co 2 minuty. Audyty aplikacji co 2 dni.</div>
+    </div>
+    ${schedRows ? `
+    <div style="color:#9ca3af;font-size:12px;margin-bottom:8px;">📅 Historia audytów:</div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <thead><tr style="color:#6b7280;border-bottom:2px solid #374151;">
+        <th style="padding:6px 8px;text-align:left;">Aplikacja</th>
+        <th style="padding:6px 8px;text-align:left;">Ostatni audyt</th>
+        <th style="padding:6px 8px;text-align:left;">Następny</th>
+        <th style="padding:6px 8px;text-align:left;">Tickety</th>
+      </tr></thead>
+      <tbody>${schedRows}</tbody>
+    </table>` : '<div style="color:#6b7280;font-size:13px;">Brak historii audytów.</div>'}
+    <div style="margin-top:16px;padding:12px;background:#0f1629;border-radius:6px;color:#6b7280;font-size:12px;">
+      💡 Aby włączyć automatyczny audyt: otwórz ustawienia projektu → włącz Ollama → wpisz app-id w polu "Aplikacje do audytu" (np. <code style="color:#818cf8;">flasher, aichat, storage</code>)
+    </div>
+  </div>
+  <div id="tk-ws-log-panel" style="flex:1;display:none;flex-direction:column;min-height:0;">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-shrink:0;">
+      <span style="color:#6b7280;font-size:12px;" id="tk-ws-log-info">Ładowanie…</span>
+      <label style="margin-left:auto;color:#9ca3af;font-size:12px;cursor:pointer;">
+        <input type="checkbox" id="tk-ws-log-autoscroll" checked style="margin-right:4px;">auto-scroll
+      </label>
+      <button id="tk-ws-log-clear" style="background:#1f2937;border:1px solid #374151;color:#9ca3af;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:11px;">🗑 wyczyść widok</button>
+    </div>
+    <div id="tk-ws-log-box" style="flex:1;background:#0d1117;border-radius:6px;padding:10px;overflow-y:auto;font-family:monospace;font-size:11.5px;color:#d1d5db;line-height:1.6;min-height:320px;max-height:55vh;"></div>
+  </div>
+</div>`;
+
+        // ── tab switching ──
+        const statusPanel = overlay.querySelector('#tk-ws-status-panel');
+        const logPanel    = overlay.querySelector('#tk-ws-log-panel');
+        overlay.querySelectorAll('.tk-ws-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                overlay.querySelectorAll('.tk-ws-tab').forEach(t => {
+                    t.style.background = '#1e1e2e'; t.style.color = '#9ca3af';
+                    t.classList.remove('active');
+                });
+                tab.style.background = '#111827'; tab.style.color = '#e5e7eb';
+                tab.classList.add('active');
+                if (tab.dataset.tab === 'log') {
+                    statusPanel.style.display = 'none';
+                    logPanel.style.display = 'flex';
+                    _startLogPolling();
+                } else {
+                    statusPanel.style.display = '';
+                    logPanel.style.display = 'none';
+                    _stopLogPolling();
+                }
+            });
+        });
+
+        // ── live log polling ──
+        const logBox  = overlay.querySelector('#tk-ws-log-box');
+        const logInfo = overlay.querySelector('#tk-ws-log-info');
+        let   logOffset = 0, logPollTimer = null, logInitialized = false;
+
+        function _logLine(raw) {
+            // colour-code log levels
+            const div = document.createElement('div');
+            div.style.whiteSpace = 'pre-wrap';
+            div.style.wordBreak = 'break-all';
+            if (/\bERROR\b/.test(raw))                    div.style.color = '#f87171';
+            else if (/\bWARNING\b/.test(raw))             div.style.color = '#fbbf24';
+            else if (/\[aider\]/.test(raw))               div.style.color = '#c084fc';
+            else if (/\bAider\b/.test(raw))               div.style.color = '#818cf8';
+            else if (/Cycle start/.test(raw))             div.style.color = '#34d399';
+            else if (/Claimed|→/.test(raw))               div.style.color = '#60a5fa';
+            else if (/Escalat|QA (PASS|FAIL)/.test(raw)) div.style.color = '#f472b6';
+            else                                          div.style.color = '#d1d5db';
+            div.textContent = raw;
+            return div;
+        }
+
+        async function _pollLog() {
+            try {
+                const params = logInitialized ? `?offset=${logOffset}` : `?lines=300`;
+                const data = await api('/tickets/watcher/log' + params);
+                if (data.lines && data.lines.length) {
+                    const autoScroll = overlay.querySelector('#tk-ws-log-autoscroll').checked;
+                    const wasAtBottom = logBox.scrollHeight - logBox.scrollTop <= logBox.clientHeight + 10;
+                    data.lines.forEach(l => logBox.appendChild(_logLine(l)));
+                    if (autoScroll && wasAtBottom) logBox.scrollTop = logBox.scrollHeight;
+                }
+                logOffset = data.size || logOffset;
+                logInitialized = true;
+                logInfo.textContent = `${new Date().toLocaleTimeString()} — offset ${logOffset}`;
+            } catch(e) { logInfo.textContent = 'Błąd: ' + e.message; }
+            logPollTimer = setTimeout(_pollLog, 2000);
+        }
+
+        function _startLogPolling() { if (!logPollTimer) _pollLog(); }
+        function _stopLogPolling()  { clearTimeout(logPollTimer); logPollTimer = null; }
+
+        overlay.querySelector('#tk-ws-log-clear').addEventListener('click', () => {
+            logBox.innerHTML = '';
+        });
+        overlay.querySelector('#tk-ws-close').addEventListener('click', () => {
+            _stopLogPolling(); overlay.remove();
+        });
+        overlay.addEventListener('click', e => {
+            if (e.target === overlay) { _stopLogPolling(); overlay.remove(); }
+        });
+        document.body.appendChild(overlay);
+    }
+
+    /* ── App Audit: pick app → run ── */
+    const _AUDIT_APPS = [
+        {id:'aichat',          name:'AI Chat',             icon:'fa-robot'},
+        {id:'antivirus',       name:'Antivirus',           icon:'fa-virus-slash'},
+        {id:'appstore',        name:'App Store',           icon:'fa-store'},
+        {id:'backup',          name:'Backup',              icon:'fa-box-archive'},
+        {id:'builder',         name:'Builder',             icon:'fa-hammer'},
+        {id:'cloud-backup',    name:'Cloud Backup',        icon:'fa-cloud'},
+        {id:'cron-manager',    name:'Cron Manager',        icon:'fa-clock'},
+        {id:'dashboard',       name:'Dashboard',           icon:'fa-chart-line'},
+        {id:'ddns',            name:'DDNS',                icon:'fa-network-wired'},
+        {id:'diskrepair',      name:'Disk Repair',         icon:'fa-hdd'},
+        {id:'dlna',            name:'DLNA',                icon:'fa-broadcast-tower'},
+        {id:'docker-manager',  name:'Docker',              icon:'fa-docker'},
+        {id:'domains-manager', name:'Domains',             icon:'fa-globe'},
+        {id:'downloads',       name:'Downloads',           icon:'fa-download'},
+        {id:'encryption',      name:'Encryption',          icon:'fa-lock'},
+        {id:'eventlog',        name:'Event Log',           icon:'fa-list-alt'},
+        {id:'fail2ban',        name:'Fail2Ban',            icon:'fa-ban'},
+        {id:'familyhub',       name:'Family Hub',          icon:'fa-users'},
+        {id:'firewall',        name:'Firewall',            icon:'fa-fire'},
+        {id:'flasher',         name:'USB Flasher',         icon:'fa-usb'},
+        {id:'gallery',         name:'Gallery',             icon:'fa-images'},
+        {id:'hardware',        name:'Hardware',            icon:'fa-microchip'},
+        {id:'mail-server',     name:'Mail Server',         icon:'fa-envelope'},
+        {id:'monitor',         name:'Monitor',             icon:'fa-desktop'},
+        {id:'network',         name:'Network',             icon:'fa-network-wired'},
+        {id:'notifications',   name:'Notifications',       icon:'fa-bell'},
+        {id:'packages',        name:'Packages',            icon:'fa-box'},
+        {id:'power',           name:'Power',               icon:'fa-power-off'},
+        {id:'radio-music',     name:'Radio & Music',       icon:'fa-music'},
+        {id:'raid-manager',    name:'RAID Manager',        icon:'fa-database'},
+        {id:'remote-log',      name:'Remote Log',          icon:'fa-terminal'},
+        {id:'resources',       name:'Resources',           icon:'fa-server'},
+        {id:'security-advisor',name:'Security Advisor',    icon:'fa-shield-alt'},
+        {id:'settings',        name:'Settings',            icon:'fa-cog'},
+        {id:'sharing',         name:'File Sharing',        icon:'fa-share-alt'},
+        {id:'ssd-cache',       name:'SSD Cache',           icon:'fa-bolt'},
+        {id:'ssh-manager',     name:'SSH Manager',         icon:'fa-key'},
+        {id:'stickynotes',     name:'Sticky Notes',        icon:'fa-sticky-note'},
+        {id:'storage',         name:'Storage',             icon:'fa-database'},
+        {id:'sync-drive',      name:'Sync Drive',          icon:'fa-sync'},
+        {id:'tickets',         name:'Tickets',             icon:'fa-ticket-alt'},
+        {id:'totp',            name:'2FA / TOTP',          icon:'fa-mobile-alt'},
+        {id:'updater',         name:'Updater',             icon:'fa-arrow-up'},
+        {id:'ups',             name:'UPS',                 icon:'fa-battery-full'},
+        {id:'users',           name:'Users',               icon:'fa-users'},
+        {id:'video-station',   name:'Video Station',       icon:'fa-film'},
+    ];
+
+    function showAuditAppPicker(targetProject) {
+        const existing = document.querySelector('.tk-audit-picker-overlay');
+        if (existing) existing.remove();
+
+        const overlay = document.createElement('div');
+        overlay.className = 'tk-audit-picker-overlay';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9999;display:flex;align-items:center;justify-content:center;';
+
+        const aiLabel = targetProject.ollama_enabled
+            ? `<span style="color:#a855f7;font-size:12px;">🤖 ${targetProject.ollama_model || 'ollama'} aktywna</span>`
+            : `<span style="color:#6b7280;font-size:12px;">⚠️ Ollama wyłączona — analiza statyczna</span>`;
+
+        overlay.innerHTML = `
+<div style="background:#1e1e2e;border:1px solid #374151;border-radius:12px;padding:24px;width:580px;max-width:95vw;max-height:80vh;overflow-y:auto;">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+    <h3 style="color:#e5e7eb;margin:0;">🔍 Wybierz aplikację do audytu</h3>
+    <button id="tk-audit-close" style="background:none;border:none;color:#9ca3af;font-size:20px;cursor:pointer;">✕</button>
+  </div>
+  <div style="margin-bottom:16px;">${aiLabel}</div>
+  <div id="tk-audit-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;"></div>
+</div>`;
+
+        const grid = overlay.querySelector('#tk-audit-grid');
+        _AUDIT_APPS.forEach(app => {
+            const btn = document.createElement('button');
+            btn.style.cssText = 'background:#111827;border:1px solid #374151;border-radius:8px;padding:12px 8px;color:#e5e7eb;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:6px;font-size:13px;transition:border-color .15s,background .15s;';
+            btn.innerHTML = `<i class="fas ${app.icon}" style="font-size:20px;color:#6366f1;"></i><span>${app.name}</span>`;
+            btn.addEventListener('mouseenter', () => { btn.style.borderColor='#6366f1'; btn.style.background='#1a1a2e'; });
+            btn.addEventListener('mouseleave', () => { btn.style.borderColor='#374151'; btn.style.background='#111827'; });
+            btn.addEventListener('click', () => {
+                overlay.remove();
+                _executeAudit(targetProject, app.id, app.name);
+            });
+            grid.appendChild(btn);
+        });
+
+        overlay.querySelector('#tk-audit-close').addEventListener('click', () => overlay.remove());
+        overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+        document.body.appendChild(overlay);
+    }
+
+    function _showAuditProgressModal(appName, hasAI) {
+        const existing = document.querySelector('.tk-audit-progress-overlay');
+        if (existing) existing.remove();
+        const overlay = document.createElement('div');
+        overlay.className = 'tk-audit-progress-overlay';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;display:flex;align-items:center;justify-content:center;';
+        overlay.innerHTML = `
+<div style="background:#1e1e2e;border:1px solid #374151;border-radius:12px;padding:28px;width:560px;max-width:95vw;">
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px;">
+    <span style="font-size:22px;">🔍</span>
+    <div>
+      <div style="color:#e5e7eb;font-weight:600;font-size:16px;">Audyt: ${appName}</div>
+      <div style="color:#9ca3af;font-size:12px;">${hasAI ? '🤖 Ollama AI aktywna' : '⚙️ Analiza statyczna'}</div>
+    </div>
+    <button id="tk-ap-close" style="margin-left:auto;background:none;border:none;color:#6b7280;font-size:18px;cursor:pointer;" title="Zamknij (audyt trwa w tle)">✕</button>
+  </div>
+  <div style="background:#111827;border-radius:8px;height:10px;margin-bottom:14px;overflow:hidden;">
+    <div id="tk-ap-bar" style="background:linear-gradient(90deg,#6366f1,#a855f7);height:100%;width:0%;transition:width .4s;border-radius:8px;"></div>
+  </div>
+  <div id="tk-ap-log" style="background:#0d0d1a;border-radius:6px;padding:12px;height:200px;overflow-y:auto;font-family:monospace;font-size:12px;color:#d1d5db;"></div>
+  <div id="tk-ap-done" style="display:none;margin-top:14px;padding:12px;background:#052e16;border:1px solid #16a34a;border-radius:8px;color:#86efac;font-size:13px;"></div>
+  <div id="tk-ap-warn" style="display:none;margin-top:14px;padding:12px;background:#1a1000;border:1px solid #d97706;border-radius:8px;color:#fbbf24;font-size:13px;"></div>
+</div>`;
+        overlay.querySelector('#tk-ap-close').addEventListener('click', () => overlay.remove());
+        document.body.appendChild(overlay);
+        return overlay;
+    }
+
+    async function _executeAudit(targetProject, appId, appName) {
+        const hasAI = !!targetProject.ollama_enabled;
+        const modal = _showAuditProgressModal(appName, hasAI);
+        const bar = modal.querySelector('#tk-ap-bar');
+        const logEl = modal.querySelector('#tk-ap-log');
+        const doneEl = modal.querySelector('#tk-ap-done');
+        const warnEl = modal.querySelector('#tk-ap-warn');
+        let lastLogLen = 0;
+
+        function appendLog(lines) {
+            lines.forEach(l => {
+                const div = document.createElement('div');
+                div.style.cssText = 'padding:2px 0;border-bottom:1px solid #1f2937;';
+                div.textContent = l;
+                if (l.includes('❌') || l.includes('Error')) div.style.color = '#f87171';
+                else if (l.includes('✅') || l.includes('✓')) div.style.color = '#86efac';
+                else if (l.includes('🤖')) div.style.color = '#c084fc';
+                logEl.appendChild(div);
+            });
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        try {
+            // Start async job
+            const startRes = await api(`/tickets/projects/${targetProject.id}/bug-hunt`, {
+                method: 'POST',
+                body: { app_id: appId }
+            });
+            if (!startRes.job_id) {
+                warnEl.textContent = startRes.warning || startRes.error || 'Unexpected response';
+                warnEl.style.display = 'block';
+                return;
+            }
+
+            const jobId = startRes.job_id;
+            appendLog([`🚀 Job started: ${jobId}`]);
+
+            // Poll for progress
+            let done = false;
+            while (!done) {
+                await new Promise(r => setTimeout(r, 2000));
+                try {
+                    const status = await api(`/tickets/projects/${targetProject.id}/bug-hunt/status/${jobId}`);
+                    if (!status) break;
+
+                    // Update progress bar
+                    bar.style.width = (status.progress || 0) + '%';
+
+                    // Append new log lines
+                    const newLines = (status.log || []).slice(lastLogLen);
+                    if (newLines.length) {
+                        appendLog(newLines);
+                        lastLogLen = status.log.length;
+                    }
+
+                    if (status.status === 'done') {
+                        done = true;
+                        bar.style.width = '100%';
+                        const res = status.result || {};
+                        if (res.warning) {
+                            warnEl.textContent = '⚠️ ' + res.warning;
+                            warnEl.style.display = 'block';
+                        } else if (res.ok) {
+                            const a = res.analysis || {};
+                            doneEl.innerHTML = `✅ <strong>Audyt zakończony: ${res.app}</strong><br>
+📊 Endpoints: ${a.endpoints||0} &nbsp;|&nbsp; Bezpieczeństwo: ${a.security_issues||0} &nbsp;|&nbsp; Wydajność: ${a.performance_issues||0}
+${a.ai_issues ? `<br>🤖 AI insights: ${a.ai_issues}` : ''}
+<br>🎟️ Utworzono ticketów: <strong>${res.count}</strong>`;
+                            doneEl.style.display = 'block';
+                            if (currentProject && currentProject.id === targetProject.id) {
+                                await loadTickets(currentProject.id);
+                                renderBoard();
+                            }
+                        }
+                    } else if (status.status === 'error') {
+                        done = true;
+                        warnEl.textContent = '❌ ' + (status.error || 'Unknown error');
+                        warnEl.style.display = 'block';
+                        bar.style.background = '#ef4444';
+                    }
+                } catch (pollErr) {
+                    console.warn('Poll error:', pollErr);
                 }
             }
         } catch (e) {
             console.error(e);
-            toast(t('Błąd: ') + e.message, 'error');
+            warnEl.textContent = '❌ ' + e.message;
+            warnEl.style.display = 'block';
         }
+    }
+
+    async function runAppAudit() {
+        if (!projects.length) await loadProjects();
+
+        let targetProject = projects.find(p => p.name === 'ETHOS') || currentProject;
+        if (!targetProject) {
+            toast(t('Nie wybrano projektu'), 'error');
+            return;
+        }
+
+        showAuditAppPicker(targetProject);
     }
 
     function updateSelectionToolbar() {
@@ -978,9 +1436,10 @@ async function renderTickets(body, launchOpts) {
                     <button class="tk-btn tk-btn-danger" id="tk-delete-selected" style="margin-left:8px; display:none;">
                         <i class="fas fa-trash"></i> <span id="tk-sel-count"></span>
                     </button>
-                    <button class="tk-act-btn" id="tk-find-bugs-btn" title="${t('Audyt aplikacji (Epic)')}">
+                    <button class="tk-act-btn" id="tk-find-bugs-btn" title="${t('Audyt aplikacji (Epic)') + (currentProject.ollama_enabled ? ' + 🤖 AI' : '')}">
                         <i class="fas fa-bug"></i>
                     </button>
+                    ${currentProject.ollama_enabled ? `<button class="tk-act-btn" id="tk-watcher-status-btn" title="Ticket Watcher status" style="position:relative;"><i class="fas fa-robot"></i><span id="tk-watcher-dot" style="position:absolute;top:4px;right:4px;width:7px;height:7px;border-radius:50%;background:#6b7280;"></span></button><span id="tk-watcher-bar" style="font-size:11px;opacity:0.7;margin-left:4px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle;"></span>` : ''}
                     ${(currentProject.copilot_enabled || currentProject.localai_enabled || currentProject.ollama_enabled || currentProject.freemodel_enabled) ? '<button class="tk-act-btn" id="tk-watcher-btn" title="AI Agent"><i class="fas fa-tower-broadcast"></i></button><button class="tk-act-btn" id="tk-ai-usage-btn" title="AI Usage"><i class="fas fa-chart-bar"></i></button>' : ''}
                     <button class="tk-act-btn" id="tk-mobile-filter-toggle" title="${t('Filtry')}">
                         <i class="fas fa-filter"></i>
@@ -1036,6 +1495,13 @@ async function renderTickets(body, launchOpts) {
             app.querySelector('#tk-project-settings').onclick = () => showProjectModal(currentProject);
             const watcherBtn = app.querySelector('#tk-watcher-btn');
             if (watcherBtn) watcherBtn.onclick = () => showWatcherModal();
+
+            // Watcher status button — poll every 30s, show live status dot
+            const wsBtn = app.querySelector('#tk-watcher-status-btn');
+            if (wsBtn) {
+                wsBtn.onclick = () => _showWatcherStatusModal();
+                _pollWatcherStatus(app);
+            }
             const aiUsageBtn = app.querySelector('#tk-ai-usage-btn');
             if (aiUsageBtn) aiUsageBtn.onclick = () => showAiUsageModal();
 
@@ -1580,16 +2046,21 @@ async function renderTickets(body, launchOpts) {
             localModel = (lm && lm.model) || null;
         } catch (e) { localModel = null; }
 
-        /* ── fetch AI agent logs (copilot + lokalny) ── */
+        /* ── fetch AI agent logs (copilot + localai + ollama) ── */
         let copilotLogs = [];
         try {
-            const logsResp = await api('/tickets/tickets/' + ticket.id + '/copilot-logs');
-            const localResp = await api('/tickets/tickets/' + ticket.id + '/copilot-logs?agent=localai');
-            const cLogs = (logsResp && logsResp.logs) || [];
-            const lLogs = (localResp && localResp.logs) || [];
+            const [logsResp, localResp, ollamaResp] = await Promise.allSettled([
+                api('/tickets/tickets/' + ticket.id + '/copilot-logs'),
+                api('/tickets/tickets/' + ticket.id + '/copilot-logs?agent=localai'),
+                api('/tickets/tickets/' + ticket.id + '/copilot-logs?agent=ollama'),
+            ]);
+            const cLogs = (logsResp.status === 'fulfilled' && logsResp.value?.logs) || [];
+            const lLogs = (localResp.status === 'fulfilled' && localResp.value?.logs) || [];
+            const oLogs = (ollamaResp.status === 'fulfilled' && ollamaResp.value?.logs) || [];
             copilotLogs = [
                 ...cLogs.map(l => ({ ...l, agent: l.agent || 'copilot' })),
                 ...lLogs.map(l => ({ ...l, agent: l.agent || 'localai' })),
+                ...oLogs.map(l => ({ ...l, agent: 'ollama' })),
             ];
         } catch (e) { /* ignore — no logs available */ }
 

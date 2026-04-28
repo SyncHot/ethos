@@ -1,0 +1,44 @@
+{
+  "name": "EthOS",
+  "short_name": "EthOS",
+  "id": "/",
+  "start_url": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "theme_color": "#1e293b",
+  "background_color": "#0f172a",
+  "orientation": "any",
+  "categories": ["utilities", "productivity"],
+  "launch_handler": { "client_mode": "navigate-existing" },
+  "icons": [
+    { "src": "/img/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/img/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ],
+  "share_target": {
+    "action": "/?app=gallery&share=1",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "files": [{ "name": "media", "accept": ["image/*", "video/*"] }]
+    }
+  },
+  "shortcuts": [
+    {
+      "name": "Galeria",
+      "short_name": "Galeria",
+      "url": "/?app=gallery",
+      "icons": [{ "src": "/img/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Radio & Music",
+      "short_name": "Music",
+      "url": "/?app=radio-music",
+      "icons": [
+        { "src": "/img/icon-music-192.png", "sizes": "192x192", "type": "image/png" },
+        { "src": "/img/icon-music-512.png", "sizes": "512x512", "type": "image/png" }
+      ]
+    }
+  ]
+}

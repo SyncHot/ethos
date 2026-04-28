@@ -2053,9 +2053,11 @@ function _aicRenderSettings(root) {
                             '<div class="aic-field-hint">' + t('Jeśli serwer Ollama wymaga autentykacji') + '</div>' +
                         '</div>' +
                         '<div class="aic-field">' +
-                            '<label>' + t('Model Ollama') + '</label>' +
-                            '<input type="text" id="aicOllamaModel" value="' + _aicEsc(c.model || 'mistral') + '" placeholder="mistral, llama2, neural-chat, orca-mini, etc.">' +
-                            '<div class="aic-field-hint">' + t('Nazwa modelu dostępnego na serwerze Ollama (np. mistral, llama2:7b)') + '</div>' +
+                            '<label>' + t('Model Ollama') + ' <button type="button" id="aicOllamaRefresh" onclick="window._aicLoadOllamaModels()" style="margin-left:8px;font-size:11px;padding:2px 8px;cursor:pointer;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text2)" title="' + t('Odśwież listę modeli') + '"><i class="fas fa-sync-alt"></i></button></label>' +
+                            '<select id="aicOllamaModel" style="width:100%;padding:6px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text1);font-size:13px">' +
+                                '<option value="' + _aicEsc(c.model || '') + '">' + _aicEsc(c.model || t('Ładowanie...')) + '</option>' +
+                            '</select>' +
+                            '<div class="aic-field-hint" id="aicOllamaModelHint">' + t('Kliknij odśwież aby załadować listę modeli z serwera') + '</div>' +
                         '</div>' +
                     '</div>' +
                     /* ── OpenAI/Azure section ── */
@@ -2137,6 +2139,10 @@ function _aicRenderSettings(root) {
                 '</div>' +
             '</div>' +
         '</div>';
+    // Auto-load Ollama models if Ollama is already selected
+    if (provider === 'ollama') {
+        setTimeout(function() { window._aicLoadOllamaModels(); }, 0);
+    }
 }
 
 window._aicUpdateProviderUI = function () {
@@ -2147,6 +2153,7 @@ window._aicUpdateProviderUI = function () {
     if (provider === 'ollama') {
         ollamaSection.style.display = 'block';
         remoteApiSection.style.display = 'none';
+        window._aicLoadOllamaModels();
     } else if (provider === 'local') {
         ollamaSection.style.display = 'none';
         remoteApiSection.style.display = 'none';
@@ -2154,6 +2161,34 @@ window._aicUpdateProviderUI = function () {
         ollamaSection.style.display = 'none';
         remoteApiSection.style.display = 'block';
     }
+};
+
+window._aicLoadOllamaModels = function () {
+    var sel = document.getElementById('aicOllamaModel');
+    var hint = document.getElementById('aicOllamaModelHint');
+    var urlInput = document.getElementById('aicOllamaUrl');
+    if (!sel) return;
+    var currentVal = sel.value;
+    var urlParam = urlInput ? encodeURIComponent(urlInput.value.trim()) : '';
+    if (hint) hint.textContent = 'Ładowanie...';
+    _aicFetch('/api/aichat/ollama-models' + (urlParam ? '?url=' + urlParam : ''))
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var models = data.models || [];
+            if (models.length === 0) {
+                sel.innerHTML = '<option value="">' + (data.error ? 'Błąd: ' + data.error.substring(0,60) : 'Brak modeli') + '</option>';
+                if (hint) hint.textContent = 'Nie znaleziono modeli. Sprawdź URL i czy Ollama działa.';
+            } else {
+                sel.innerHTML = models.map(function(m) {
+                    return '<option value="' + m + '"' + (m === currentVal ? ' selected' : '') + '>' + m + '</option>';
+                }).join('');
+                if (models.includes(currentVal)) sel.value = currentVal;
+                if (hint) hint.textContent = 'Znaleziono ' + models.length + ' modeli';
+            }
+        })
+        .catch(function() {
+            if (hint) hint.textContent = 'Nie można pobrać listy — sprawdź URL serwera Ollama';
+        });
 };
 
 window._aicSaveSettings = function () {

@@ -1877,3 +1877,24 @@ def status_aichat():
         'rag_enabled': cfg.get('rag_enabled', True),
     }
     return jsonify(result)
+
+
+@aichat_bp.route('/ollama-models', methods=['GET'])
+def list_ollama_models():
+    """Return list of models available on the configured Ollama server"""
+    import urllib.request as _ureq
+    username = _get_username()
+    cfg = _load_config(username)
+
+    # Use URL from query param (when user types a new URL before saving) or from config
+    ollama_url = request.args.get('url', '').strip() or cfg.get('ollama_url', 'http://localhost:11434')
+    ollama_url = ollama_url.rstrip('/')
+
+    try:
+        req = _ureq.Request(ollama_url + '/api/tags', headers={'Content-Type': 'application/json'})
+        with _ureq.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+        models = [m['name'] for m in data.get('models', [])]
+        return jsonify({'models': models, 'url': ollama_url})
+    except Exception as e:
+        return jsonify({'models': [], 'error': str(e), 'url': ollama_url})

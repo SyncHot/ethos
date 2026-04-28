@@ -10132,13 +10132,15 @@ def _mark_boot_success():
         for grubenv in (
             '/boot/efi/EFI/BOOT/grubenv',
             '/boot/efi/EFI/debian/grubenv',
+            '/boot/efi/EFI/ubuntu/grubenv',
             '/boot/efi/boot/grub/grubenv',
             '/boot/grub/grubenv',
         ):
             if os.path.exists(grubenv):
-                os.system(f'grub-editenv {grubenv} set boot_success=1')
+                # Reset counter to 0 so consecutive-failure rollback restarts from scratch
+                os.system(f'grub-editenv {grubenv} set boot_success=1 boot_counter=0')
                 logging.getLogger('boot').info(
-                    'Marked boot_success=1 in %s (slot=%s)', grubenv, slot)
+                    'Marked boot_success=1 boot_counter=0 in %s (slot=%s)', grubenv, slot)
 
         # Store slot info for updater/UI access
         _slot_file = os.path.join(ETHOS_ROOT, 'data', 'active_slot')

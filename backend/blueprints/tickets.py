@@ -75,6 +75,100 @@ def _gen_id(prefix=''):
 def _now():
     return time.time()
 
+def _norm_title(title: str) -> str:
+    """Normalise a ticket title for deduplication (lowercase, collapse whitespace, strip punctuation)."""
+    t = (title or '').lower().strip()
+    t = re.sub(r'[^\w\s]', ' ', t)
+    t = re.sub(r'\s+', ' ', t).strip()
+    return t
+
+def _build_existing_titles(project_id: str) -> set:
+    """Return a set of normalised titles for all tickets in the project."""
+    return {_norm_title(t.get('title', '')) for t in get_tickets(project_id)}
+
+def _find_existing_epic(project_id: str, app_name: str):
+    """Return the first EPIC ticket for this app if one already exists, else None."""
+    target = _norm_title(f'[EPIC] Code Audit: {app_name}')
+    for t in get_tickets(project_id):
+        if _norm_title(t.get('title', '')) == target:
+            return t
+    return None
+
+def _ai_dedup_filter(new_tickets: list, existing_tickets: list,
+                     ollama_url: str, ollama_model: str,
+                     progress_cb=None) -> list:
+    """
+    Use Ollama to remove tickets from new_tickets that are semantically
+    equivalent to any ticket already in existing_tickets.
+
+    Returns the subset of new_tickets that are genuinely new.
+    Falls back to normalised-title matching if Ollama is unavailable.
+    """
+    import requests as _req
+
+    if not existing_tickets:
+        return new_tickets
+
+    # --- fast pre-filter: exact normalised-title match ---
+    existing_norms = {_norm_title(t.get('title', '')) for t in existing_tickets}
+    candidates = [t for t in new_tickets
+                  if _norm_title(t.get('title', '')) not in existing_norms]
+
+    if not candidates or not ollama_url or not ollama_model:
+        return candidates
+
+    # --- AI pass: batch-check remaining candidates ---
+    existing_summary = '\n'.join(
+        f'- {t.get("title", "")}' for t in existing_tickets[:120]  # cap at 120
+    )
+    new_summary = '\n'.join(
+        f'{i}. {t.get("title", "")}'
+        for i, t in enumerate(candidates)
+    )
+
+    prompt = (
+        "You are a ticket deduplication assistant.\n\n"
+        "EXISTING TICKETS (already in the project):\n"
+        f"{existing_summary}\n\n"
+        "CANDIDATE NEW TICKETS (numbered list):\n"
+        f"{new_summary}\n\n"
+        "Task: identify which candidates are duplicates or near-duplicates of existing tickets.\n"
+        "Two tickets are duplicates if they describe the same bug, risk, or task — even with different wording.\n\n"
+        "Reply ONLY with a JSON array of the numbers (0-based) of tickets that are NOT duplicates.\n"
+        "Example: [0, 2, 4]\n"
+        "If all are duplicates reply: []\n"
+        "If none are duplicates reply with all indices."
+    )
+
+    if progress_cb:
+        progress_cb(f'🔎 AI dedup check: {len(candidates)} candidates vs {len(existing_tickets)} existing…')
+
+    try:
+        resp = _req.post(
+            f'{ollama_url.rstrip("/")}/api/generate',
+            json={'model': ollama_model, 'prompt': prompt, 'stream': False,
+                  'options': {'temperature': 0, 'num_predict': 256}},
+            timeout=120,
+        )
+        resp.raise_for_status()
+        raw = resp.json().get('response', '')
+        # extract first JSON array from the response
+        m = re.search(r'\[[\d,\s]*\]', raw)
+        if m:
+            keep_indices = json.loads(m.group())
+            result = [candidates[i] for i in keep_indices if i < len(candidates)]
+            skipped = len(candidates) - len(result)
+            if progress_cb and skipped:
+                progress_cb(f'🚫 AI removed {skipped} duplicate(s)')
+            return result
+    except Exception as e:
+        # fallback: return all candidates (title-dedup already ran)
+        if progress_cb:
+            progress_cb(f'⚠️ AI dedup failed ({e}), using title match only')
+
+    return candidates
+
+
 def _strip(text, length=None):
     if not text:
         return ''
@@ -142,6 +236,8 @@ def api_create_project():
         'freemodel_enabled': bool(body.get('freemodel_enabled', False)),
         'ollama_enabled': bool(body.get('ollama_enabled', False)),
         'ollama_model': str(body.get('ollama_model', 'mistral')).strip(),
+        'qa_model': str(body.get('qa_model', '')).strip(),
+        'audit_apps': str(body.get('audit_apps', '')).strip(),
         'created': now,
         'updated': now,
     }
@@ -194,6 +290,8 @@ def api_update_project(project_id):
     if 'freemodel_enabled' in body: updates['freemodel_enabled'] = bool(body['freemodel_enabled'])
     if 'ollama_enabled' in body: updates['ollama_enabled'] = bool(body['ollama_enabled'])
     if 'ollama_model' in body: updates['ollama_model'] = str(body['ollama_model']).strip() or 'mistral'
+    if 'qa_model' in body: updates['qa_model'] = str(body['qa_model']).strip()
+    if 'audit_apps' in body: updates['audit_apps'] = str(body['audit_apps']).strip()
 
     if 'members' in body:
         members = body['members']
@@ -921,9 +1019,14 @@ def copilot_logs(ticket_id):
         return jsonify({'error': 'Forbidden'}), 403
 
     agent = (request.args.get('agent', 'copilot') or 'copilot').strip().lower()
-    if agent not in ('copilot', 'localai'):
+    if agent not in ('copilot', 'localai', 'ollama'):
         return jsonify({'error': 'Invalid agent'}), 400
-    log_dir = COPILOT_LOG_DIR if agent == 'copilot' else LOCALAI_LOG_DIR
+    if agent == 'ollama':
+        log_dir = OLLAMA_LOG_DIR
+    elif agent == 'localai':
+        log_dir = LOCALAI_LOG_DIR
+    else:
+        log_dir = COPILOT_LOG_DIR
 
     safe_id = re.sub(r'[^a-zA-Z0-9_]', '', ticket_id)
     pattern = os.path.join(log_dir, f'{safe_id}_*.log')
@@ -963,10 +1066,20 @@ def copilot_log_content(ticket_id, filename):
 
     agent = (request.args.get('agent') or '').strip().lower()
     if not agent:
-        agent = 'localai' if '_local_' in filename else 'copilot'
-    if agent not in ('copilot', 'localai'):
+        if '_local_' in filename:
+            agent = 'localai'
+        elif '_ollama_' in filename or os.path.exists(os.path.join(OLLAMA_LOG_DIR, filename)):
+            agent = 'ollama'
+        else:
+            agent = 'copilot'
+    if agent not in ('copilot', 'localai', 'ollama'):
         return jsonify({'error': 'Invalid agent'}), 400
-    log_dir = COPILOT_LOG_DIR if agent == 'copilot' else LOCALAI_LOG_DIR
+    if agent == 'ollama':
+        log_dir = OLLAMA_LOG_DIR
+    elif agent == 'localai':
+        log_dir = LOCALAI_LOG_DIR
+    else:
+        log_dir = COPILOT_LOG_DIR
 
     safe_id = re.sub(r'[^a-zA-Z0-9_]', '', ticket_id)
     safe_name = re.sub(r'[^a-zA-Z0-9_.\-]', '', filename)
@@ -993,40 +1106,6 @@ def copilot_log_content(ticket_id, filename):
             'filename': safe_name,
             'size': file_size,
             'offset': file_size,
-        })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@tickets_bp.route('/watcher/status', methods=['GET'])
-def watcher_status():
-    if not g.username:
-        return jsonify({'error': 'Unauthorized'}), 401
-    try:
-        active = subprocess.run(
-            ['systemctl', 'is-active', _WATCHER_UNIT],
-            capture_output=True, text=True, timeout=5
-        ).stdout.strip()
-        enabled = subprocess.run(
-            ['systemctl', 'is-enabled', _WATCHER_UNIT],
-            capture_output=True, text=True, timeout=5
-        ).stdout.strip()
-        result = subprocess.run(
-            ['systemctl', 'show', _WATCHER_UNIT,
-             '--property=ActiveState,SubState,ActiveEnterTimestamp,MainPID'],
-            capture_output=True, text=True, timeout=5
-        )
-        props = {}
-        for line in result.stdout.strip().splitlines():
-            if '=' in line:
-                k, v = line.split('=', 1)
-                props[k] = v
-        return jsonify({
-            'active': active,
-            'enabled': enabled,
-            'pid': props.get('MainPID', ''),
-            'state': props.get('ActiveState', ''),
-            'substate': props.get('SubState', ''),
-            'since': props.get('ActiveEnterTimestamp', ''),
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -1110,8 +1189,229 @@ def preflight_check():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+
+@tickets_bp.route('/ollama-models', methods=['GET'])
+def list_ollama_models():
+    """Return list of models available on configured Ollama server"""
+    import urllib.request
+    # Try to get URL from AIChat settings first, fall back to env/default
+    ollama_url = os.environ.get('OLLAMA_URL', 'http://localhost:11434')
+    try:
+        from blueprints.aichat import _load_config
+        username = g.username or 'admin'
+        cfg = _load_config(username)
+        if cfg.get('ollama_url'):
+            ollama_url = cfg['ollama_url'].rstrip('/')
+    except Exception:
+        pass
+    try:
+        req = urllib.request.Request(ollama_url + '/api/tags', headers={'Content-Type': 'application/json'})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+        models = [m['name'] for m in data.get('models', [])]
+        return jsonify({'models': models, 'url': ollama_url})
+    except Exception as e:
+        return jsonify({'models': [], 'error': str(e), 'url': ollama_url})
+
+# ── Bug Hunt Job Store (in-memory, per-process) ─────────────────────────────
+_bug_hunt_jobs: dict = {}  # job_id -> {status, progress, log, result, error}
+_bug_hunt_lock = threading.Lock()
+
+
+def _bug_hunt_worker(job_id: str, project_id: str, project: dict, target_app: dict,
+                     ollama_url, ollama_model):
+    """Background worker: runs SmartAppAuditor and stores result in _bug_hunt_jobs."""
+
+    def progress(msg: str, pct: int = None):
+        with _bug_hunt_lock:
+            job = _bug_hunt_jobs.get(job_id)
+            if job:
+                job['log'].append(msg)
+                if pct is not None:
+                    job['progress'] = pct
+        print(f'[bug-hunt {job_id}] {msg}')
+
+    try:
+        progress(f'🔍 Analysing: {target_app["name"]} ({target_app["id"]})', 5)
+
+        from blueprints.smart_auditor import SmartAppAuditor
+        auditor = SmartAppAuditor(
+            target_app['id'],
+            target_app['name'],
+            target_app,
+            ollama_url=ollama_url,
+            ollama_model=ollama_model,
+            large_context=True,
+            progress_cb=progress,
+        )
+
+        progress('📂 Loading source files…', 10)
+        findings = auditor.analyze()
+        meta = findings.get('metadata', {})
+
+        bp_found = meta.get('backend_file',  'not_found') not in ('not_found', None)
+        js_found = meta.get('frontend_file', 'not_found') not in ('not_found', None)
+
+        if not bp_found and not js_found:
+            with _bug_hunt_lock:
+                _bug_hunt_jobs[job_id].update({
+                    'status': 'done',
+                    'progress': 100,
+                    'result': {
+                        'warning': f'No source files found for "{target_app["name"]}"',
+                        'app': target_app['name'],
+                        'count': 0,
+                    }
+                })
+            return
+
+        progress(f'📊 Static analysis done. endpoints={meta.get("endpoints_found",0)} '
+                 f'security={len(findings["security"])} perf={len(findings["performance"])}', 60)
+
+        if ollama_model:
+            progress(f'🤖 AI insights: {len(findings["ai_insights"])} found', 75)
+
+        tasks_data = auditor.generate_tasks()
+        real_findings = (len(findings['security']) + len(findings['performance']) +
+                         len(findings['logic']) + len(findings['ai_insights']))
+
+        if real_findings == 0 and len(tasks_data) <= 1:
+            with _bug_hunt_lock:
+                _bug_hunt_jobs[job_id].update({
+                    'status': 'done',
+                    'progress': 100,
+                    'result': {
+                        'warning': f'No issues found in "{target_app["name"]}". Clean audit.',
+                        'app': target_app['name'],
+                        'count': 0,
+                    }
+                })
+            return
+
+        now = _now()
+        target_column = project['columns'][0] if project.get('columns') else 'Backlog'
+        username = project.get('owner', 'admin')
+
+        eps   = meta.get('endpoints_found', 0)
+        sec   = len(findings['security'])
+        perf  = len(findings['performance'])
+        ai_i  = len(findings['ai_insights'])
+        deps  = meta.get('dependency_count', 0)
+        kb    = meta.get('bundle_size_kb', 0)
+
+        epic_desc = (
+            f"Comprehensive AI audit of **{target_app['name']}** application.\n"
+            f"*{target_app.get('description','')}*\n\n"
+            f"**Analysis Summary:**\n"
+            f"- Endpoints found: {eps}\n"
+            f"- Security issues: {sec}\n"
+            f"- Performance concerns: {perf}\n"
+            f"- AI insights: {ai_i}\n"
+            f"- Dependencies: {deps}\n"
+            f"- JS bundle size: {kb} KB\n\n"
+            f"**Source files:**\n"
+            f"- Backend: `{meta.get('backend_file', 'N/A')}`\n"
+            f"- Frontend: `{meta.get('frontend_file', 'N/A')}`"
+        )
+
+        # ── Reuse existing EPIC for this app (never duplicate epics) ──
+        existing_epic = _find_existing_epic(project_id, target_app['name'])
+        if existing_epic:
+            epic_id = existing_epic['id']
+            update_ticket(epic_id, {'description': epic_desc, 'updated': now})
+            progress(f'♻️ Reusing existing EPIC {epic_id}', 80)
+            created = []
+        else:
+            epic_id = _gen_id('t_')
+            epic = {
+                'id': epic_id, 'project_id': project_id,
+                'title': f'[EPIC] Code Audit: {target_app["name"]}',
+                'description': epic_desc,
+                'column': target_column, 'priority': 'high',
+                'assignee': username, 'reporter': username,
+                'labels': ['audit', 'auto-generated', 'smart-analysis', target_app['id']],
+                'comments': [], 'attachments': [], 'order': 0,
+                'created': now, 'updated': now,
+            }
+            created = [create_ticket(epic)]
+            progress(f'🎟️ Created EPIC {epic_id}', 82)
+
+        # ── AI dedup: filter out tasks already represented in the project ──
+        existing_tickets = get_tickets(project_id)
+        progress(f'🔎 Dedup check: {len(tasks_data)} candidate tasks vs {len(existing_tickets)} existing…', 84)
+        unique_tasks = _ai_dedup_filter(
+            new_tickets=tasks_data,
+            existing_tickets=existing_tickets,
+            ollama_url=ollama_url,
+            ollama_model=ollama_model,
+            progress_cb=progress,
+        )
+
+        if not unique_tasks and not created:
+            with _bug_hunt_lock:
+                _bug_hunt_jobs[job_id].update({
+                    'status': 'done', 'progress': 100,
+                    'result': {
+                        'warning': f'All findings already tracked — no new tickets for "{target_app["name"]}".',
+                        'app': target_app['name'], 'count': 0,
+                    }
+                })
+            return
+
+        progress(f'🎟️ Creating {len(unique_tasks)} new ticket(s)…', 88)
+        for td in unique_tasks:
+            tid = _gen_id('t_')
+            created.append(create_ticket({
+                'id': tid, 'project_id': project_id,
+                'title': td['title'], 'description': td.get('description', ''),
+                'column': target_column, 'priority': td.get('priority', 'medium'),
+                'assignee': None, 'reporter': username,
+                'labels': td.get('labels', []) + [f'epic:{epic_id}'],
+                'comments': [], 'attachments': [], 'order': 0,
+                'created': now, 'updated': now,
+            }))
+
+        _save_audit_history(target_app['id'], target_app['name'], project_id, findings, epic_id)
+
+        try:
+            from blueprints.tickets import _emit
+            for t in created:
+                _emit('ticket_created', project_id, {'ticket': t})
+        except Exception:
+            pass
+
+        progress(f'✅ Done! Created {len(created)} ticket(s) ({len(tasks_data) - len(unique_tasks)} duplicate(s) skipped).', 100)
+
+        with _bug_hunt_lock:
+            _bug_hunt_jobs[job_id].update({
+                'status': 'done',
+                'progress': 100,
+                'result': {
+                    'ok': True, 'count': len(created),
+                    'app': target_app['name'], 'epic_id': epic_id,
+                    'analysis': {
+                        'endpoints': eps, 'security_issues': sec,
+                        'performance_issues': perf, 'ai_issues': ai_i,
+                        'tasks_created': len(unique_tasks),
+                        'duplicates_skipped': len(tasks_data) - len(unique_tasks),
+                    }
+                }
+            })
+
+    except Exception as e:
+        import traceback as _tb
+        msg = f'❌ Error: {str(e)}'
+        with _bug_hunt_lock:
+            job = _bug_hunt_jobs.get(job_id)
+            if job:
+                job['log'].append(msg)
+                job.update({'status': 'error', 'error': str(e)})
+        print(f'[bug-hunt {job_id}] EXCEPTION: {e}\n{_tb.format_exc()}')
+
+
 @tickets_bp.route('/projects/<project_id>/bug-hunt', methods=['POST'])
 def bug_hunt(project_id):
+    """Start async audit job — returns job_id immediately."""
     if not g.username:
         return jsonify({'error': 'Unauthorized'}), 401
 
@@ -1121,209 +1421,185 @@ def bug_hunt(project_id):
     if not _is_member(project):
         return jsonify({'error': 'Access denied'}), 403
 
-    candidates = [p for p in _ETHOS_PACKAGES if p['id'] != 'docker-manager']
+    candidates = [p for p in _ETHOS_PACKAGES if p['id'] not in ('docker-manager',)]
     if not candidates:
         return jsonify({'error': 'No suitable packages found'}), 500
 
-    target_app = random.choice(candidates)
+    body = request.get_json(silent=True) or {}
+    requested_app_id = body.get('app_id')
 
-    # 1. Analyze Complexity
-    deps_str = target_app.get('deps_label', '')
-    deps = [d.strip() for d in deps_str.split(',') if d.strip() and 'brak' not in d.lower()]
-    is_complex_auth = len(deps) > 1
-
-    # 2. Analyze Performance
-    js_size_kb = 0
-    try:
-        js_map = {
-            'ai-chat': 'aichat.js',
-            'code-editor': 'code_editor.js',
-            'disk-repair': 'diskrepair.js',
-            'download-manager': 'downloads.js',
-            'domains-manager': 'domains.js',
-            'doc-editor': 'editor.js',
-            'usb-flasher': 'flasher.js',
-            'sharing': 'sharing.js',
-        }
-
-        app_key = target_app.get('app_id', target_app['id'])
-        candidates_filenames = [
-            js_map.get(app_key),
-            js_map.get(target_app['id']),
-            f"{app_key}.js",
-            f"{app_key.replace('-', '')}.js",
-            f"{app_key.replace('-', '_')}.js"
-        ]
-
-        root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        for fname in candidates_filenames:
-            if not fname:
-                continue
-            js_path = os.path.join(root_dir, 'frontend', 'js', 'apps', fname)
-            if os.path.exists(js_path):
-                size_bytes = os.path.getsize(js_path)
-                js_size_kb = round(size_bytes / 1024, 1)
-                break
-    except Exception:
-        pass
-
-    target_column = project['columns'][0] if project.get('columns') else 'Backlog'
-    created_tickets = []
-    now = _now()
-
-    # 3. Create Epic
-    epic_id = _gen_id('t_')
-    epic_title = f"[EPIC] EthOS Package Optimization: {target_app['name']}"
-    epic_desc = (f"Comprehensive audit and optimization of the {target_app['name']} application (v1.0).\n"
-                 f"Application description: {target_app['description']}\n\n"
-                 f"**Audit objectives:**\n"
-                 f"1. 🛡️ [Security] RBAC verification and endpoint validation.\n"
-                 f"2. ⚙️ [Logic] Session continuity and functional path flow.\n"
-                 f"3. 🎨 [UX/UI] Alignment with the EthOS Design System.\n"
-                 f"4. 🚀 [Perf] Asset optimization and API response time.\n\n"
-                 f"**Preliminary analysis:**\n"
-                 f"- Dependencies: {len(deps)} ({', '.join(deps) if deps else 'none'})\n"
-                 f"- JS bundle size: {js_size_kb} KB\n"
-                 f"- Security complexity: {'High (Smart Slicing active)' if is_complex_auth else 'Standard'}")
-
-    epic_ticket = {
-        'id': epic_id,
-        'project_id': project_id,
-        'title': epic_title,
-        'description': epic_desc,
-        'column': target_column,
-        'priority': 'high',
-        'assignee': g.username,
-        'reporter': g.username,
-        'labels': ['audit', 'auto-generated', target_app['id']],
-        'comments': [],
-        'attachments': [],
-        'order': 0,
-        'created': now,
-        'updated': now,
-    }
-    # Note: 'type' and 'complexity' fields from original are not in DB schema but were stored in JSON
-    # If they are important, we should add columns. Assuming they are less critical or can go in description/labels for now.
-    # Original logic had them in the dict.
-    # Let's add them as labels or part of description if schema doesn't support.
-    # Or just ignore if frontend doesn't strictly need them.
-    # To be safe, I'll add them to description or ignore.
-    # Actually, I can store extra fields in a 'meta' JSON column if I had one.
-    # For now, I'll proceed without them or add complexity as label.
-    if is_complex_auth: epic_ticket['labels'].append('complexity:complex')
-    else: epic_ticket['labels'].append('complexity:medium')
-    epic_ticket['labels'].append('type:epic')
-
-    created_tickets.append(create_ticket(epic_ticket))
-
-    # 4. Create Tasks
-    tasks = []
-    if is_complex_auth:
-        tasks.append({
-            'title': f"🛡️ [Security] [RBAC] Backend Auth: {target_app['name']}",
-            'desc': (f"Backend authorization verification (Smart Slicing: High Complexity).\n\n"
-                     f"**Scope:**\n"
-                     f"- Audit `@admin_required` decorators.\n"
-                     f"- Verify access to system files.\n"
-                     f"- Endpoints: {target_app.get('install_endpoint', 'N/A')}"),
-            'labels': ['security', 'RBAC', 'backend', f"epic:{epic_id}", 'complexity:complex'],
-            'priority': 'critical'
-        })
-        tasks.append({
-            'title': f"🛡️ [Security] [RBAC] Frontend Guard: {target_app['name']}",
-            'desc': (f"Client-side security verification.\n\n"
-                     f"**Scope:**\n"
-                     f"- Hide UI elements for users without permissions.\n"
-                     f"- Handle 403 Forbidden responses in the view."),
-            'labels': ['security', 'RBAC', 'frontend', f"epic:{epic_id}", 'complexity:medium'],
-            'priority': 'high'
-        })
-        tasks.append({
-            'title': f"🛡️ [Security] Manifest Config & Deps: {target_app['name']}",
-            'desc': (f"Manifest and dependency audit ({len(deps)}).\n"
-                     f"Ensure dependencies do not introduce security vulnerabilities."),
-            'labels': ['security', 'config', f"epic:{epic_id}", 'complexity:medium'],
-            'priority': 'medium'
-        })
+    if requested_app_id:
+        target_app = next((p for p in candidates if p['id'] == requested_app_id), None)
+        if not target_app:
+            return jsonify({'error': f'App not found: {requested_app_id}'}), 404
     else:
-        tasks.append({
-            'title': f"🛡️ [Security] RBAC verification and endpoint validation: {target_app['name']}",
-            'desc': (f"Check if API endpoints of {target_app['name']} are properly secured.\n\n"
-                     f"**Endpoints to check:**\n"
-                     f"- Install: `{target_app.get('install_endpoint', 'N/A')}`\n"
-                     f"- Uninstall: `{target_app.get('uninstall_endpoint', 'N/A')}`\n\n"
-                     f"**Developer tasks:**\n"
-                     f"- Add `@admin_required` decorator.\n"
-                     f"- Check logging of unauthorized access attempts."),
-            'labels': ['security', 'RBAC', f"epic:{epic_id}", 'complexity:medium'],
-            'priority': 'critical'
-        })
+        try:
+            history_path = os.path.normpath(os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                '..', 'data', 'audit_schedule.json'))
+            schedule = json.load(open(history_path)) if os.path.exists(history_path) else {}
+        except Exception:
+            schedule = {}
+        audited_ids = {k.split(':')[0] for k in schedule.keys()}
+        unaudited = [p for p in candidates if p['id'] not in audited_ids]
+        target_app = unaudited[0] if unaudited else random.choice(candidates)
 
-    tasks.append({
-        'title': f"⚙️ [Logic] Session continuity and functional path flow: {target_app['name']}",
-        'desc': (f"Business logic and application state management analysis.\n\n"
-                 f"**Context Aware:**\n"
-                 f"Focus on EthOS application logic, not Docker isolation.\n"
-                 f"- Is the application state preserved after refresh?\n"
-                 f"- Are network errors handled with graceful degradation?"),
-        'labels': ['logic', 'flow', f"epic:{epic_id}", 'complexity:medium'],
-        'priority': 'medium'
-    })
+    # Ollama config
+    ollama_url = None
+    ollama_model = None
+    if project.get('ollama_enabled'):
+        ollama_url = os.environ.get('OLLAMA_URL', 'http://localhost:11434')
+        try:
+            from blueprints.aichat import _load_config
+            cfg = _load_config(g.username or 'admin')
+            if cfg.get('ollama_url'):
+                ollama_url = cfg['ollama_url'].rstrip('/')
+        except Exception:
+            pass
+        ollama_model = project.get('ollama_model') or 'mistral'
 
-    tasks.append({
-        'title': f"🎨 [UX/UI] Alignment with EthOS Design System: {target_app['name']}",
-        'desc': (f"Align the appearance of {target_app['name']} with EthOS Design System standards.\n\n"
-                 f"**Elements to verify:**\n"
-                 f"- Primary color: `{target_app.get('color', 'N/A')}`\n"
-                 f"- Icon: `{target_app.get('icon', 'N/A')}`\n"
-                 f"- Font and spacing consistency."),
-        'labels': ['ui-ux', 'design-system', f"epic:{epic_id}", 'complexity:simple'],
-        'priority': 'low'
-    })
-
-    perf_details = (f"Analysis: Resource loading time and memory usage.\n\n"
-                    f"**Scan results:**\n"
-                    f"- JS file size: **{js_size_kb} KB**\n"
-                    f"- Dependencies: {len(deps)}\n\n")
-    perf_tasks = (f"**Implementation (Dev):**\n"
-                  f"- Implement Lazy Loading for modules (if > 200KB).\n"
-                  f"- Optimize bundle size.\n"
-                  f"- Check for memory leaks when switching features.\n\n"
-                  f"**Tests (QA):**\n"
-                  f"- Measure TTFB (Time to First Byte).\n"
-                  f"- Test behavior under limited bandwidth (3G Throttling).")
-    if js_size_kb > 500:
-        perf_details += f"⚠️ **WARNING:** Assets > 500KB may slow loading on weak connections.\n\n"
-
-    tasks.append({
-        'title': f"🚀 [Perf] Asset optimization and API response time: {target_app['name']}",
-        'desc': perf_details + perf_tasks,
-        'labels': ['performance', 'optimization', f"epic:{epic_id}", 'complexity:medium'],
-        'priority': 'medium'
-    })
-
-    for task in tasks:
-        t_ticket = {
-            'id': _gen_id('t_'),
-            'project_id': project_id,
-            'title': task['title'],
-            'description': task['desc'],
-            'column': target_column,
-            'priority': task['priority'],
-            'assignee': None,
-            'reporter': g.username,
-            'labels': task['labels'],
-            'comments': [],
-            'attachments': [],
-            'order': 0,
-            'created': now,
-            'updated': now,
+    # Create job
+    job_id = _gen_id('job_')
+    with _bug_hunt_lock:
+        _bug_hunt_jobs[job_id] = {
+            'status': 'running',
+            'progress': 0,
+            'log': [f'🚀 Starting audit: {target_app["name"]}' +
+                    (f' (🤖 {ollama_model})' if ollama_model else '')],
+            'result': None,
+            'error': None,
+            'app': target_app['name'],
+            'app_id': target_app['id'],
+            'created': time.time(),
         }
-        # Add 'type' label if missing
-        t_ticket['labels'].append('type:task')
-        created_tickets.append(create_ticket(t_ticket))
 
-    for t in created_tickets:
-        _emit('ticket_created', project_id, {'ticket': t})
+    t = threading.Thread(
+        target=_bug_hunt_worker,
+        args=(job_id, project_id, project, target_app, ollama_url, ollama_model),
+        daemon=True,
+    )
+    t.start()
 
-    return jsonify({'ok': True, 'count': len(created_tickets), 'app': target_app['name'], 'epic_id': epic_id}), 201
+    return jsonify({'job_id': job_id, 'app': target_app['name']}), 202
+
+
+@tickets_bp.route('/projects/<project_id>/bug-hunt/status/<job_id>', methods=['GET'])
+def bug_hunt_status(project_id, job_id):
+    """Poll job status — returns progress, log lines, and final result."""
+    if not g.username:
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    with _bug_hunt_lock:
+        job = _bug_hunt_jobs.get(job_id)
+
+    if not job:
+        return jsonify({'error': 'Job not found'}), 404
+
+    return jsonify({
+        'status':   job['status'],
+        'progress': job['progress'],
+        'log':      job['log'],
+        'result':   job['result'],
+        'error':    job['error'],
+        'app':      job.get('app'),
+    })
+
+
+@tickets_bp.route('/watcher/status', methods=['GET'])
+def watcher_status():
+    """Return ticket watcher health: running, last cycle, active job."""
+    if not g.username:
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    import subprocess
+    try:
+        r = subprocess.run(['systemctl', 'is-active', 'ethos-ticket-watcher'],
+                           capture_output=True, text=True, timeout=5)
+        active = r.stdout.strip() == 'active'
+    except Exception:
+        active = False
+
+    lock_info = None
+    lock_file = '/tmp/.ethos_watcher_executing'
+    if os.path.exists(lock_file):
+        try:
+            lock_info = json.load(open(lock_file))
+            pid = lock_info.get('copilot_pid')
+            if pid:
+                try:
+                    os.kill(pid, 0)
+                    lock_info['elapsed'] = round(time.time() - lock_info.get('started', time.time()))
+                except (ProcessLookupError, OSError):
+                    lock_info = None  # stale lock
+        except Exception:
+            pass
+
+    status_info = None
+    status_file = '/tmp/.ethos_watcher_status'
+    if os.path.exists(status_file):
+        try:
+            status_info = json.load(open(status_file))
+            pid = status_info.get('pid')
+            age = time.time() - status_info.get('ts', 0)
+            if age > 600:  # stale if older than 10 min
+                status_info = None
+        except Exception:
+            pass
+
+    schedule = {}
+    sched_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                              '..', 'data', 'audit_schedule.json')
+    sched_path = os.path.normpath(sched_path)
+    if os.path.exists(sched_path):
+        try:
+            schedule = json.load(open(sched_path))
+        except Exception:
+            pass
+
+    return jsonify({
+        'active': active,
+        'lock': lock_info,
+        'status': status_info,
+        'schedule': schedule,
+    })
+
+
+@tickets_bp.route('/watcher/log', methods=['GET'])
+def watcher_log():
+    """Return the last N lines of the ticket watcher log, with optional byte offset for polling."""
+    if not g.username:
+        return jsonify({'error': 'Unauthorized'}), 401
+    lines_n = min(int(request.args.get('lines', 200)), 2000)
+    offset   = int(request.args.get('offset', 0))
+    try:
+        size = os.path.getsize(WATCHER_LOG_FILE)
+        with open(WATCHER_LOG_FILE, 'r', encoding='utf-8', errors='replace') as f:
+            if offset and offset < size:
+                f.seek(offset)
+                new_text = f.read()
+                new_lines = new_text.splitlines()
+            else:
+                all_lines = f.readlines()
+                new_lines = [l.rstrip('\n') for l in all_lines[-lines_n:]]
+        return jsonify({'lines': new_lines, 'size': size})
+    except FileNotFoundError:
+        return jsonify({'lines': [], 'size': 0})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+    """Save audit results to history"""
+    try:
+        from blueprints.tickets_db import get_db
+        audit_id = _gen_id('audit_')
+        now = time.time()
+
+        conn = get_db()
+        conn.execute(
+            '''INSERT INTO audit_history (id, app_id, app_name, project_id, timestamp, findings, epic_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?)''',
+            (audit_id, app_id, app_name, project_id, now, json.dumps(findings), epic_id)
+        )
+        conn.commit()
+    except Exception as e:
+        print(f"Failed to save audit history: {e}")

@@ -1,0 +1,31 @@
+EthOS NAS Operating System
+Copyright (C) 2024-2026 EthOS Project Contributors
+
+This product includes software developed by the EthOS community.
+
+Third-Party Components:
+=======================
+
+Python Packages (see venv/):
+- Flask — BSD-3-Clause
+- Flask-SocketIO — MIT
+- Flask-Compress — MIT
+- Flask-Caching — BSD-3-Clause
+- Gevent — MIT
+- psutil — BSD-3-Clause
+- Pillow — HPND
+- pyotp — MIT
+- qrcode — BSD-3-Clause
+- requests — Apache-2.0
+
+System Components:
+- Linux Kernel — GPL-2.0
+- Debian — DFSG
+- Docker Engine — Apache-2.0
+- Samba — GPL-3.0
+- NFS Utils — GPL-2.0
+- mdadm — GPL-2.0
+- smartmontools — GPL-2.0
+
+Frontend:
+- All frontend code is original work, licensed under GPL-3.0

@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>EthOS</title>
+    <link rel="stylesheet" href="css/style.css?v=3">
+    <link rel="stylesheet" href="css/apps.css?v=6">
+    <link rel="stylesheet" href="vendor/fa/all.min.css">
+    <link rel="stylesheet" href="vendor/fonts/inter.css">
+    <link rel="manifest" href="/manifest.json">
+
+    <!-- iOS support -->
+    <link rel="apple-touch-icon" href="/img/icon-192.png">
+    <meta name="apple-mobile-web-app-status-bar" content="#1e293b">
+    <meta name="theme-color" content="#1e293b">
+
+    <script src="js/i18n.js?v=2"></script>
+</head>
+<body>
+    <!-- ═══════ Setup Wizard (first boot) ═══════ -->
+    <div id="setup-wizard" class="login-screen hidden">
+        <div class="login-bg"></div>
+        <div id="setup-content"></div>
+    </div>
+
+    <!-- ═══════ Login Screen ═══════ -->
+    <div id="login-screen" class="login-screen">
+        <div class="login-bg"></div>
+        <div class="login-card">
+            <div class="login-logo">
+                <div class="logo-icon">
+                    <i class="fas fa-server"></i>
+                </div>
+            </div>
+            <h1 class="login-hostname" id="login-hostname">EthOS</h1>
+            <p class="login-motto">Your Desktop, Anywhere</p>
+            <p class="login-subtitle">Network Attached Storage</p>
+            <form id="login-form" autocomplete="off">
+                <div class="form-group">
+                    <div class="input-icon">
+                        <i class="fas fa-user"></i>
+                        <input type="text" id="login-username" placeholder="Użytkownik (puste = admin)" data-i18n-placeholder="Użytkownik (puste = admin)" autocomplete="username">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <div class="input-icon">
+                        <i class="fas fa-lock"></i>
+                        <input type="password" id="login-password" placeholder="Hasło" data-i18n-placeholder="Hasło" autofocus>
+                    </div>
+                </div>
+                <button type="submit" class="btn-login">
+                    <span data-i18n="Zaloguj się">Zaloguj się</span>
+                    <i class="fas fa-arrow-right"></i>
+                </button>
+                <p class="login-error" id="login-error" role="alert"></p>
+            </form>
+        </div>
+        <div class="login-footer">
+            <span id="login-time"></span>
+        </div>
+    </div>
+
+    <!-- ═══════ Desktop ═══════ -->
+    <div id="desktop" class="desktop hidden" role="main">
+        <!-- Taskbar (top) -->
+        <header class="taskbar" id="taskbar" role="navigation">
+            <div class="taskbar-left">
+                <button class="taskbar-btn menu-btn" id="main-menu-btn" title="Menu główne" data-i18n-title="Menu główne">
+                    <svg viewBox="0 0 24 24" width="18" height="18">
+                        <rect x="3" y="3" width="8" height="8" rx="1.5" fill="currentColor"/>
+                        <rect x="13" y="3" width="8" height="8" rx="1.5" fill="currentColor"/>
+                        <rect x="3" y="13" width="8" height="8" rx="1.5" fill="currentColor"/>
+                        <rect x="13" y="13" width="8" height="8" rx="1.5" fill="currentColor"/>
+                    </svg>
+                </button>
+                <div class="taskbar-separator"></div>
+                <div class="taskbar-windows" id="taskbar-windows"></div>
+            </div>
+            <div class="taskbar-right">
+                <div class="taskbar-stats" id="taskbar-stats">
+                    <div class="mini-stat" id="stat-cpu" title="CPU">
+                        <i class="fas fa-microchip"></i>
+                        <span>0%</span>
+                    </div>
+                    <div class="mini-stat" id="stat-ram" title="RAM">
+                        <i class="fas fa-memory"></i>
+                        <span>0%</span>
+                    </div>
+                    <div class="mini-stat" id="stat-net" title="Sieć" data-i18n-title="Sieć">
+                        <i class="fas fa-network-wired"></i>
+                        <span>0 B/s</span>
+                    </div>
+                </div>
+                <div class="taskbar-separator"></div>
+                <button class="taskbar-btn" id="notifications-btn" title="Powiadomienia" data-i18n-title="Powiadomienia" aria-label="Notifications">
+                    <i class="fas fa-bell"></i>
+                    <span class="notif-badge hidden" id="notif-badge">0</span>
+                </button>
+                <button class="taskbar-btn hidden" id="usb-tray-btn" title="USB" aria-label="USB Devices">
+                    <i class="fas fa-usb"></i>
+                    <span class="notif-badge hidden" id="usb-tray-badge">0</span>
+                </button>
+                <div class="taskbar-separator"></div>
+                <div class="taskbar-clock" id="taskbar-clock"></div>
+                <button class="taskbar-btn power-btn" id="power-btn" title="Power Manager" aria-label="Power Manager">
+                    <i class="fas fa-power-off"></i>
+                </button>
+                <button class="taskbar-btn user-btn" id="user-btn" title="Użytkownik" data-i18n-title="Użytkownik" aria-label="User Menu">
+                    <i class="fas fa-user-circle"></i>
+                </button>
+            </div>
+        </header>
+
+        <!-- Desktop Area -->
+        <div class="desktop-area" id="desktop-area">
+            <div class="desktop-icons" id="desktop-icons"></div>
+            <div class="window-layer" id="window-layer"></div>
+        </div>
+
+        <!-- ═══ Overlays ═══ -->
+
+        <!-- Main Menu -->
+        <div class="overlay main-menu hidden" id="main-menu" role="dialog" aria-modal="true">
+            <div class="main-menu-backdrop"></div>
+            <div class="main-menu-panel">
+                <div class="mm-header">
+                    <input type="text" id="mm-search" class="mm-search" placeholder="Szukaj aplikacji..." data-i18n-placeholder="Szukaj aplikacji...">
+                </div>
+                <div class="mm-grid" id="mm-grid"></div>
+            </div>
+        </div>
+
+        <!-- Notification Panel -->
+        <div class="notif-panel hidden" id="notif-panel" role="dialog" aria-modal="true">
+            <div class="notif-header">
+                <h3 data-i18n="Powiadomienia">Powiadomienia</h3>
+                <button class="notif-clear" id="notif-clear" data-i18n="Wyczyść">Wyczyść</button>
+            </div>
+            <div class="notif-list" id="notif-list">
+                <p class="notif-empty" data-i18n="Brak powiadomień">Brak powiadomień</p>
+            </div>
+        </div>
+
+        <!-- USB Tray Panel -->
+        <div class="usb-tray-panel hidden" id="usb-tray-panel" role="dialog" aria-modal="true">
+            <div class="notif-header">
+                <h3><i class="fas fa-usb" style="margin-right:8px;color:var(--accent)"></i> <span data-i18n="Urządzenia USB">Urządzenia USB</span></h3>
+            </div>
+            <div class="usb-tray-list" id="usb-tray-list">
+                <p class="notif-empty" data-i18n="Brak urządzeń USB">Brak urządzeń USB</p>
+            </div>
+        </div>
+
+        <!-- Power Menu -->
+        <div class="power-menu hidden" id="power-menu" role="dialog" aria-modal="true">
+            <div class="pm-header">
+                <i class="fas fa-power-off"></i>
+                <span>Power Manager</span>
+            </div>
+            <div class="pm-uptime" id="pm-uptime" data-i18n="Ładowanie...">Ładowanie...</div>
+            <div class="um-divider"></div>
+            <button class="um-item pm-action hidden" id="pwa-install-btn" style="color:#38bdf8">
+                <i class="fas fa-download"></i> <span data-i18n="Zainstaluj EthOS">Zainstaluj EthOS</span>
+            </button>
+            <button class="um-item pm-action" data-action="restart-app">
+                <i class="fas fa-sync-alt" style="color:#22c55e"></i> <span data-i18n="Restart aplikacji">Restart aplikacji</span>
+            </button>
+            <button class="um-item pm-action" data-action="reboot">
+                <i class="fas fa-redo" style="color:#f59e0b"></i> <span data-i18n="Restart systemu">Restart systemu</span>
+            </button>
+            <button class="um-item pm-action" data-action="shutdown">
+                <i class="fas fa-power-off" style="color:#ef4444"></i> <span data-i18n="Wyłącz system">Wyłącz system</span>
+            </button>
+        </div>
+
+        <!-- User Menu -->
+        <div class="user-menu hidden" id="user-menu" role="dialog" aria-modal="true">
+            <div class="um-header">
+                <i class="fas fa-user-circle"></i>
+                <span id="um-username">Administrator</span>
+            </div>
+            <div class="um-divider"></div>
+            <button class="um-item" id="btn-about">
+                <i class="fas fa-info-circle"></i> <span data-i18n="O systemie">O systemie</span>
+            </button>
+            <button class="um-item" id="btn-logout">
+                <i class="fas fa-sign-out-alt"></i> <span data-i18n="Wyloguj się">Wyloguj się</span>
+            </button>
+        </div>
+
+        <!-- Toast container -->
+        <div class="toast-container" id="toast-container" aria-live="polite"></div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
+    <script src="js/setup.js?v=3"></script>
+    <script src="js/desktop.js?v=11"></script>
+    <script src="js/apps.js?v=11"></script>
+    <script src="js/apps/dashboard.js?v=1"></script>
+    <script src="js/apps/storage.js?v=9"></script>
+    <script src="js/apps/security_advisor.js?v=1"></script>
+    <script src="js/apps/printer.js?v=3"></script>
+    <script src="js/apps/resources.js?v=3"></script>
+    <script src="js/apps/backup.js?v=3"></script>
+    <script src="js/apps/terminal.js?v=2"></script>
+    <script src="js/apps/packages.js?v=3"></script>
+    <script src="js/apps/users.js?v=2"></script>
+    <script src="js/apps/network.js?v=1"></script>
+    <script src="js/apps/duplicates.js?v=1"></script>
+    <script src="js/apps/gallery.js?v=4"></script>
+    <script src="js/apps/photos_ai.js?v=1"></script>
+    <script src="js/apps/editor.js?v=1"></script>
+    <script src="js/apps/code-editor.js?v=2"></script>
+    <script src="js/apps/dlna.js?v=1"></script>
+    <script src="js/apps/downloads.js?v=1"></script>
+    <script src="js/apps/flasher.js?v=2"></script>
+    <script src="js/apps/builder.js?v=2"></script>
+    <script src="js/apps/updates.js?v=2"></script>
+    <script src="js/apps/services.js?v=1"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
+    <script src="js/apps/surveillance.js?v=1"></script>
+    <script src="js/apps/aichat.js?v=4"></script>
+    <script src="js/apps/doc-anonymizer.js?v=6"></script>
+    <script src="js/apps/med-assistant.js?v=2"></script>
+    <script src="js/apps/websites.js?v=2"></script>
+    <script src="js/apps/naslink.js?v=1"></script>
+    <script src="js/apps/ssh.js?v=1"></script>
+    <script src="js/apps/domains.js?v=3"></script>
+    <script src="js/apps/stickynotes.js?v=2"></script>
+    <script src="js/apps/tickets.js?v=8"></script>
+    <script src="js/apps/familyhub.js?v=1"></script>
+    <script src="js/apps/fail2ban.js?v=1"></script>
+    <script src="js/apps/firewall.js?v=3"></script>
+    <script src="js/apps/cron.js?v=1"></script>
+    <script src="js/apps/wireguard.js?v=2"></script>
+    <script src="js/apps/antivirus.js?v=1"></script>
+    <script src="js/apps/ups.js?v=1"></script>
+    <script src="js/apps/power.js?v=1"></script>
+    <script src="js/apps/rollback.js?v=1"></script>
+    <script src="js/apps/notifications.js?v=1"></script>
+    <script src="js/apps/cloud-backup.js?v=1"></script>
+    <script src="js/apps/docker-manager.js?v=1"></script>
+    <script src="js/apps/vm-manager.js?v=1"></script>
+    <script src="js/apps/remote-log.js?v=1"></script>
+    <script src="js/apps/video_station.js?v=3"></script>
+    <script src="js/apps/radio_music.js?v=28"></script>
+    <script src="js/apps/mail-server.js?v=1"></script>
+    <script>
+        let deferredPrompt;
+        const VAPID_PUBLIC_KEY = 'BEF7XjErpRw0e6NDpheHYFuCYVWsqb6bDJ3WKM62w-JiVNfPejVq6l-aAJCa7Ew9dGdDD_zFrvr-i9o7cvHxehY';
+
+        window.addEventListener('beforeinstallprompt', (e) => {
+            // Prevent Chrome 67 and earlier from automatically showing the prompt
+            e.preventDefault();
+            // Stash the event so it can be triggered later.
+            deferredPrompt = e;
+            // Update UI to notify the user they can add to home screen
+            const installBtn = document.getElementById('pwa-install-btn');
+            if (installBtn) {
+                installBtn.classList.remove('hidden');
+
+                installBtn.onclick = (e) => {
+                    // hide our user interface that shows our A2HS button
+                    installBtn.classList.add('hidden');
+                    // Show the prompt
+                    deferredPrompt.prompt();
+                    // Wait for the user to respond to the prompt
+                    deferredPrompt.userChoice.then((choiceResult) => {
+                        if (choiceResult.outcome === 'accepted') {
+                            console.log('User accepted the A2HS prompt');
+                        } else {
+                            console.log('User dismissed the A2HS prompt');
+                            installBtn.classList.remove('hidden');
+                        }
+                        deferredPrompt = null;
+                    });
+                };
+            }
+        });
+
+        function urlBase64ToUint8Array(base64String) {
+            const padding = '='.repeat((4 - base64String.length % 4) % 4);
+            const base64 = (base64String + padding)
+                .replace(/-/g, '+')
+                .replace(/_/g, '/');
+
+            const rawData = window.atob(base64);
+            const outputArray = new Uint8Array(rawData.length);
+
+            for (let i = 0; i < rawData.length; ++i) {
+                outputArray[i] = rawData.charCodeAt(i);
+            }
+            return outputArray;
+        }
+
+        async function subscribeUserToPush() {
+            if (!('serviceWorker' in navigator)) return;
+
+            const registration = await navigator.serviceWorker.ready;
+            const subscription = await registration.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+            });
+
+            await fetch('/api/notifications/subscribe', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + (window.NAS && NAS.token || ''),
+                    'X-CSRFToken': (window.NAS && NAS.csrfToken || ''),
+                },
+                body: JSON.stringify(subscription)
+            }).catch(() => {});
+            console.log('User subscribed to push notifications');
+        }
+
+    if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js').then(reg => {
+                    console.log('SW registered!', reg);
+                    // Ask for permission if not granted
+                    if (Notification.permission === 'default') {
+                        Notification.requestPermission().then(permission => {
+                            if (permission === 'granted') {
+                                subscribeUserToPush();
+                            }
+                        });
+                    } else if (Notification.permission === 'granted') {
+                        subscribeUserToPush();
+                    }
+                }).catch(err => {
+                    console.log('SW registration failed: ', err);
+                });
+            });
+        }
+    </script>
+</body>
+</html>

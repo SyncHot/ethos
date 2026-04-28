@@ -1,0 +1,622 @@
+"""
+SmartAppAuditor with AI-powered bug detection using Ollama
+"""
+import os
+import re
+import json
+import requests
+import time
+from pathlib import Path
+from typing import Dict, List, Any, Tuple, Optional
+
+class SmartAppAuditor:
+    """Analyzes real app code with optional AI-powered deep analysis"""
+    
+    def __init__(self, app_id: str, app_name: str, app_data: Dict[str, Any], 
+                 ollama_url: Optional[str] = None, ollama_model: Optional[str] = None):
+        self.app_id = app_id
+        self.app_name = app_name
+        self.app_data = app_data
+        self.root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        self.ollama_url = ollama_url
+        self.ollama_model = ollama_model
+        self.findings = {
+            'security': [],
+            'performance': [],
+            'ux_ui': [],
+            'logic': [],
+            'ai_insights': [],
+            'metadata': {}
+        }
+        self._backend_code = None
+        self._frontend_code = None
+    
+    def analyze(self) -> Dict[str, Any]:
+        """Run full analysis and return findings"""
+        self.analyze_backend_security()
+        self.analyze_frontend_code()
+        self.measure_bundle_size()
+        self.analyze_dependencies()
+        
+        # If Ollama is available, run AI analysis
+        if self.ollama_url and self.ollama_model:
+            self._run_ai_analysis()
+        
+        return self.findings
+    
+    # ─── AI-POWERED ANALYSIS ──────────────────────────────────────
+    
+    def _run_ai_analysis(self) -> None:
+        """Use Ollama to perform deeper code analysis"""
+        try:
+            self.findings['metadata']['ai_analysis'] = 'in_progress'
+            
+            # Get backend code snippet
+            backend_file = self._find_blueprint_file()
+            if backend_file:
+                with open(backend_file, 'r', encoding='utf-8', errors='ignore') as f:
+                    code = f.read()
+                    # Take first 8KB of code (to keep prompt manageable)
+                    self._backend_code = code[:3000]
+            
+            # Analyze with AI
+            ai_findings = self._query_ollama_for_bugs()
+            if ai_findings:
+                self.findings['ai_insights'].extend(ai_findings)
+                self.findings['metadata']['ai_analysis'] = 'completed'
+            
+        except Exception as e:
+            self.findings['metadata']['ai_analysis'] = f'error: {str(e)}'
+            print(f"AI analysis failed: {e}")
+    
+    def _query_ollama_for_bugs(self) -> List[Dict[str, Any]]:
+        """Query Ollama model for bug/issue detection"""
+        if not self._backend_code:
+            return []
+        
+        prompt = f"""Find bugs in this Python/Flask code. Return JSON array only, no other text.
+
+```python
+{self._backend_code}
+```
+
+Format: [{{"type":"security|logic|performance","severity":"critical|high|medium|low","description":"brief issue description","location":"function name or line area","fix":"how to fix"}}]
+
+If no issues: []"""
+
+        try:
+            # Use streaming to avoid timeout on cold-start or large models
+            response = requests.post(
+                f"{self.ollama_url.rstrip('/')}/api/chat",
+                json={
+                    'model': self.ollama_model,
+                    'messages': [
+                        {'role': 'system', 'content': 'You are a code security and performance expert. Analyze code and find bugs.'},
+                        {'role': 'user', 'content': prompt}
+                    ],
+                    'stream': True,
+                    'options': {
+                        'temperature': 0.3,
+                        'num_predict': 1500,
+                    }
+                },
+                timeout=600,  # 10 min total (large models need time to load)
+                stream=True
+            )
+
+            if response.status_code == 200:
+                full_content = []
+                for line in response.iter_lines(chunk_size=None):
+                    if not line:
+                        continue
+                    try:
+                        chunk = json.loads(line.decode('utf-8') if isinstance(line, bytes) else line)
+                        delta = chunk.get('message', {}).get('content', '')
+                        if delta:
+                            full_content.append(delta)
+                        if chunk.get('done'):
+                            break
+                    except Exception:
+                        continue
+                return self._parse_ai_response(''.join(full_content))
+        except Exception as e:
+            print(f"Ollama request failed: {e}")
+
+        return []
+    
+    def _parse_ai_response(self, content: str) -> List[Dict[str, Any]]:
+        """Parse AI response and extract findings"""
+        findings = []
+        
+        if "No critical issues detected" in content:
+            return findings
+        
+        # Try to extract JSON
+        json_match = re.search(r'\[.*\]', content, re.DOTALL)
+        if json_match:
+            try:
+                issues = json.loads(json_match.group())
+                for issue in issues:
+                    if isinstance(issue, dict):
+                        findings.append({
+                            'type': issue.get('type', 'logic'),
+                            'severity': issue.get('severity', 'medium'),
+                            'message': issue.get('description', ''),
+                            'location': issue.get('location', ''),
+                            'fix': issue.get('fix', ''),
+                            'source': 'ai_analysis'
+                        })
+            except json.JSONDecodeError:
+                pass
+        
+        # If no JSON found, try to extract issues manually
+        if not findings and content:
+            lines = content.split('\n')
+            for line in lines:
+                if any(keyword in line.lower() for keyword in ['security', 'bug', 'error', 'issue', 'vulnerable']):
+                    if len(line.strip()) > 10:
+                        findings.append({
+                            'type': 'ai_insight',
+                            'severity': 'medium',
+                            'message': line.strip()[:100],
+                            'source': 'ai_analysis'
+                        })
+        
+        return findings
+    
+    # ─── ORIGINAL STATIC ANALYSIS ────────────────────────────────
+    
+    def analyze_backend_security(self) -> None:
+        """Parse Python blueprint file and check for security issues"""
+        blueprint_file = self._find_blueprint_file()
+        if not blueprint_file:
+            self.findings['metadata']['backend_file'] = 'not_found'
+            return
+        
+        self.findings['metadata']['backend_file'] = blueprint_file
+        self.findings['metadata']['backend_lines'] = 0
+        
+        try:
+            with open(blueprint_file, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+                self.findings['metadata']['backend_lines'] = len(content.split('\n'))
+            
+            # Find all endpoints (routes)
+            endpoints = self._extract_backend_endpoints(blueprint_file, content)
+            self.findings['metadata']['endpoints_found'] = len(endpoints)
+            
+            # Check for missing @admin_required decorators
+            issues = self._check_endpoint_security(endpoints)
+            self.findings['security'].extend(issues)
+            
+            # Check for hardcoded credentials/secrets
+            secrets_issues = self._check_for_secrets(content)
+            self.findings['security'].extend(secrets_issues)
+            
+        except Exception as e:
+            self.findings['security'].append({
+                'type': 'analysis_error',
+                'severity': 'low',
+                'message': f'Backend analysis error: {str(e)}'
+            })
+    
+    def _find_blueprint_file(self) -> Optional[str]:
+        """Find the blueprint file for this app using smart name matching"""
+        blueprints_dir = os.path.join(self.root_dir, 'backend', 'blueprints')
+
+        # Explicit overrides for unusual mappings
+        explicit_map = {
+            'ai-chat': 'aichat.py',
+            'download-manager': 'downloads.py',
+            'docker-manager': 'docker_manager.py',
+            'vm-manager': 'vm_manager.py',
+            'doc-editor': 'doc_editor.py',
+            'disk-repair': 'diskrepair.py',
+            'code-editor': 'codeeditor.py',
+        }
+        if self.app_id in explicit_map:
+            path = os.path.join(blueprints_dir, explicit_map[self.app_id])
+            if os.path.exists(path):
+                return path
+
+        # Try common patterns derived from app_id
+        candidates = [
+            self.app_id + '.py',                          # tickets.py
+            self.app_id.replace('-', '_') + '.py',        # docker_manager.py
+            self.app_id.replace('-', '') + '.py',         # aichat.py
+        ]
+        for fname in candidates:
+            path = os.path.join(blueprints_dir, fname)
+            if os.path.exists(path):
+                return path
+
+        # Fuzzy: scan all .py files and look for Blueprint with matching name
+        app_name_clean = self.app_name.lower().replace(' ', '_').replace('-', '_')
+        for fname in os.listdir(blueprints_dir):
+            if not fname.endswith('.py'):
+                continue
+            fpath = os.path.join(blueprints_dir, fname)
+            try:
+                with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
+                    snippet = f.read(2000)
+                # Check if Blueprint name or file contains app_id keyword
+                if (self.app_id.replace('-', '_') in fname.lower() or
+                        app_name_clean in fname.lower()):
+                    return fpath
+            except Exception:
+                continue
+
+        return None
+    
+    def _extract_backend_endpoints(self, blueprint_file: str, content: str) -> List[Dict[str, Any]]:
+        """Extract all @route decorators and check if they're protected"""
+        endpoints = []
+        lines = content.split('\n')
+        
+        for i, line in enumerate(lines):
+            # Look for @bp.route or @<name>_bp.route
+            if re.search(r'@\w+_bp\.route\(', line):
+                # Extract route pattern
+                route_match = re.search(r"@\w+_bp\.route\('([^']+)'", line)
+                methods_match = re.search(r"methods=\[([^\]]+)\]", line)
+                
+                route_path = route_match.group(1) if route_match else 'unknown'
+                methods = methods_match.group(1).replace("'", "").replace('"', '') if methods_match else 'GET'
+                
+                # Check if next line or nearby has @admin_required
+                has_admin_required = False
+                for j in range(max(0, i-2), min(len(lines), i+3)):
+                    if '@admin_required' in lines[j]:
+                        has_admin_required = True
+                        break
+                
+                endpoints.append({
+                    'path': route_path,
+                    'methods': methods,
+                    'line': i + 1,
+                    'has_admin_required': has_admin_required,
+                    'is_sensitive': self._is_sensitive_endpoint(route_path)
+                })
+        
+        return endpoints
+    
+    def _is_sensitive_endpoint(self, route_path: str) -> bool:
+        """Check if endpoint is sensitive and should have @admin_required"""
+        sensitive_keywords = [
+            'install', 'uninstall', 'config', 'setting', 'delete', 'remove',
+            'admin', 'auth', 'permission', 'user', 'password', 'token'
+        ]
+        return any(kw in route_path.lower() for kw in sensitive_keywords)
+    
+    def _check_endpoint_security(self, endpoints: List[Dict]) -> List[Dict[str, Any]]:
+        """Find security issues with endpoints"""
+        issues = []
+        
+        unprotected = [e for e in endpoints if e['is_sensitive'] and not e['has_admin_required']]
+        
+        if unprotected:
+            issues.append({
+                'type': 'missing_auth',
+                'severity': 'critical',
+                'count': len(unprotected),
+                'message': f'Found {len(unprotected)} sensitive endpoint(s) without @admin_required',
+                'endpoints': [f"{e['path']} (line {e['line']})" for e in unprotected]
+            })
+        
+        public_endpoints = [e for e in endpoints if not e['is_sensitive'] and not e['has_admin_required']]
+        if public_endpoints:
+            issues.append({
+                'type': 'public_endpoints',
+                'severity': 'low',
+                'count': len(public_endpoints),
+                'message': f'Found {len(public_endpoints)} public (non-auth) endpoint(s)',
+                'endpoints': [f"{e['path']}" for e in public_endpoints[:5]]
+            })
+        
+        return issues
+    
+    def _check_for_secrets(self, content: str) -> List[Dict[str, Any]]:
+        """Check for hardcoded secrets/credentials"""
+        issues = []
+        
+        # Simple patterns for common secrets
+        secret_patterns = [
+            (r'password\s*=\s*["\']([^"\']+)["\']', 'hardcoded_password'),
+            (r'api_key\s*=\s*["\']([^"\']+)["\']', 'hardcoded_api_key'),
+            (r'secret\s*=\s*["\']([^"\']+)["\']', 'hardcoded_secret'),
+            (r'token\s*=\s*["\']([^"\']{10,})["\']', 'hardcoded_token'),
+        ]
+        
+        found_secrets = []
+        for pattern, secret_type in secret_patterns:
+            matches = re.findall(pattern, content, re.IGNORECASE)
+            if matches:
+                found_secrets.append({
+                    'type': secret_type,
+                    'count': len(matches)
+                })
+        
+        if found_secrets:
+            issues.append({
+                'type': 'hardcoded_secrets',
+                'severity': 'critical',
+                'message': f'Found {len(found_secrets)} potential hardcoded secret(s)',
+                'details': found_secrets
+            })
+        
+        return issues
+    
+    def analyze_frontend_code(self) -> None:
+        """Parse JavaScript app file and check for issues"""
+        js_file = self._find_frontend_file()
+        if not js_file:
+            self.findings['metadata']['frontend_file'] = 'not_found'
+            return
+        
+        self.findings['metadata']['frontend_file'] = js_file
+        
+        try:
+            with open(js_file, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+                self.findings['metadata']['frontend_lines'] = len(content.split('\n'))
+            
+            # Check for permission checks
+            auth_checks = self._find_auth_checks(content)
+            if not auth_checks:
+                self.findings['ux_ui'].append({
+                    'type': 'missing_permission_guards',
+                    'severity': 'medium',
+                    'message': 'Frontend lacks permission/admin checks - may expose UI to unauthorized users'
+                })
+            else:
+                self.findings['metadata']['auth_checks_found'] = auth_checks
+            
+            # Check for error handling
+            error_handling = self._check_error_handling(content)
+            self.findings['logic'].extend(error_handling)
+            
+        except Exception as e:
+            self.findings['logic'].append({
+                'type': 'analysis_error',
+                'severity': 'low',
+                'message': f'Frontend analysis error: {str(e)}'
+            })
+    
+    def _find_frontend_file(self) -> str:
+        """Find the frontend JS file for this app"""
+        app_id_map = {
+            'ai-chat': 'aichat.js',
+            'gallery': 'gallery.js',
+            'surveillance': 'surveillance.js',
+            'download-manager': 'downloads.js',
+            'docker-manager': 'docker-manager.js',
+            'vm-manager': 'vm-manager.js',
+            'printer': 'printer.js',
+            'doc-editor': 'editor.js',
+            'disk-repair': 'diskrepair.js',
+            'code-editor': 'code_editor.js',
+        }
+        
+        filename = app_id_map.get(self.app_id)
+        if filename:
+            path = os.path.join(self.root_dir, 'frontend', 'js', 'apps', filename)
+            if os.path.exists(path):
+                return path
+        return None
+    
+    def _find_auth_checks(self, content: str) -> int:
+        """Count permission/auth checks in frontend"""
+        auth_keywords = ['isAdmin', 'hasPermission', 'g.is_admin', 'authorized', 'permission', 'admin_required']
+        count = sum(content.count(kw) for kw in auth_keywords)
+        return count
+    
+    def _check_error_handling(self, content: str) -> List[Dict[str, Any]]:
+        """Check for error handling patterns"""
+        issues = []
+        
+        # Count try/catch blocks
+        try_catch_count = len(re.findall(r'try\s*\{', content))
+        total_lines = len(content.split('\n'))
+        
+        if try_catch_count == 0 and total_lines > 500:
+            issues.append({
+                'type': 'missing_error_handling',
+                'severity': 'medium',
+                'message': 'No try/catch blocks found - error handling may be inadequate'
+            })
+        
+        # Check for api() error handling patterns
+        api_calls = len(re.findall(r'api\(', content))
+        catch_handlers = len(re.findall(r'catch\s*\(', content))
+        
+        if api_calls > catch_handlers * 2 and api_calls > 5:
+            issues.append({
+                'type': 'inadequate_api_error_handling',
+                'severity': 'low',
+                'message': f'Found {api_calls} API calls but only {catch_handlers} catch handlers'
+            })
+        
+        return issues
+    
+    def measure_bundle_size(self) -> None:
+        """Measure actual JS file size"""
+        js_file = self._find_frontend_file()
+        if not js_file:
+            return
+        
+        try:
+            size_bytes = os.path.getsize(js_file)
+            size_kb = round(size_bytes / 1024, 1)
+            self.findings['metadata']['bundle_size_kb'] = size_kb
+            
+            if size_kb > 500:
+                self.findings['performance'].append({
+                    'type': 'large_bundle',
+                    'severity': 'medium',
+                    'message': f'Bundle size is {size_kb} KB - consider lazy loading (>500 KB threshold)',
+                    'size_kb': size_kb
+                })
+            elif size_kb > 200:
+                self.findings['performance'].append({
+                    'type': 'moderate_bundle',
+                    'severity': 'low',
+                    'message': f'Bundle size is {size_kb} KB - monitor for optimization',
+                    'size_kb': size_kb
+                })
+        except Exception as e:
+            pass
+    
+    def analyze_dependencies(self) -> None:
+        """Analyze app dependencies"""
+        deps_str = self.app_data.get('deps_label', '')
+        deps = [d.strip() for d in deps_str.split(',') if d.strip() and 'brak' not in d.lower()]
+        
+        self.findings['metadata']['dependencies'] = deps
+        self.findings['metadata']['dependency_count'] = len(deps)
+        
+        if len(deps) > 3:
+            self.findings['performance'].append({
+                'type': 'many_dependencies',
+                'severity': 'low',
+                'message': f'App has {len(deps)} dependencies - ensure each is necessary',
+                'count': len(deps)
+            })
+    
+    # ─── TASK GENERATION ──────────────────────────────────────────
+    
+    def generate_tasks(self) -> List[Dict[str, Any]]:
+        """Generate specific, actionable tasks based on findings"""
+        tasks = []
+        
+        # Security tasks
+        for finding in self.findings['security']:
+            tasks.append(self._create_task_from_finding(finding, 'critical'))
+        
+        # Performance tasks
+        for finding in self.findings['performance']:
+            tasks.append(self._create_task_from_finding(finding, 'high'))
+        
+        # UX/UI tasks
+        for finding in self.findings['ux_ui']:
+            tasks.append(self._create_task_from_finding(finding, 'medium'))
+        
+        # Logic/flow tasks
+        for finding in self.findings['logic']:
+            if finding.get('type') != 'analysis_error':
+                tasks.append(self._create_task_from_finding(finding, 'medium'))
+        
+        # AI insights (if available)
+        for finding in self.findings['ai_insights']:
+            tasks.append(self._create_task_from_finding(finding, finding.get('severity', 'medium')))
+        
+        # Always add general UX/Design task
+        if not any(t['category'] == 'ui-ux' for t in tasks):
+            tasks.append(self._default_ui_task())
+        
+        return tasks
+    
+    def _create_task_from_finding(self, finding: Dict, priority: str) -> Dict[str, Any]:
+        """Convert a finding into a task"""
+        finding_type = finding.get('type', 'unknown')
+        severity = finding.get('severity', 'medium')
+        
+        category_map = {
+            'missing_auth': 'security',
+            'public_endpoints': 'security',
+            'hardcoded_secrets': 'security',
+            'missing_permission_guards': 'ux_ui',
+            'large_bundle': 'performance',
+            'moderate_bundle': 'performance',
+            'many_dependencies': 'performance',
+            'missing_error_handling': 'logic',
+            'inadequate_api_error_handling': 'logic',
+            'ai_insight': 'ai_findings',
+        }
+        
+        category = category_map.get(finding_type, 'logic')
+        
+        # Map priority based on severity
+        if severity == 'critical':
+            priority = 'critical'
+        elif severity == 'high':
+            priority = 'high'
+        else:
+            priority = 'medium'
+        
+        emoji_map = {
+            'security': '🛡️',
+            'performance': '🚀',
+            'logic': '⚙️',
+            'ux_ui': '🎨',
+            'ai_findings': '🤖'
+        }
+        emoji = emoji_map.get(category, '📋')
+        
+        task = {
+            'category': category,
+            'emoji': emoji,
+            'priority': priority,
+            'title': f"{emoji} [{category.upper()}] {finding['message']}",
+            'description': self._format_task_description(finding),
+            'finding_details': finding,
+            'labels': [category, 'auto-generated']
+        }
+        
+        if finding.get('source') == 'ai_analysis':
+            task['labels'].append('ai-detected')
+        
+        return task
+    
+    def _format_task_description(self, finding: Dict) -> str:
+        """Format finding into task description"""
+        desc = f"**Finding:** {finding['message']}\n\n"
+        
+        if 'location' in finding and finding['location']:
+            desc += f"**Location:** {finding['location']}\n\n"
+        
+        if 'endpoints' in finding:
+            desc += "**Affected Endpoints:**\n"
+            for ep in finding['endpoints'][:10]:
+                desc += f"- `{ep}`\n"
+            if len(finding.get('endpoints', [])) > 10:
+                desc += f"- ... and {len(finding['endpoints']) - 10} more\n"
+            desc += "\n"
+        
+        if 'count' in finding:
+            desc += f"**Count:** {finding['count']}\n\n"
+        
+        if 'fix' in finding and finding['fix']:
+            desc += f"**Recommended Fix:** {finding['fix']}\n\n"
+        
+        if finding.get('type') == 'missing_auth':
+            desc += "**Developer action:**\n- Add `@admin_required` decorator to sensitive endpoints\n- Test with unauthorized user\n"
+        elif finding.get('type') == 'missing_permission_guards':
+            desc += "**QA action:**\n- Login as regular (non-admin) user\n- Verify sensitive UI elements are hidden\n"
+        elif finding.get('type') == 'large_bundle':
+            desc += "**Implementation:**\n- Consider lazy loading for modules\n- Use dynamic imports for feature components\n- Measure impact with DevTools\n"
+        
+        return desc
+    
+    def _default_ui_task(self) -> Dict[str, Any]:
+        """Default UI/UX task if no specific issues found"""
+        color = self.app_data.get('color', '#2563eb')
+        icon = self.app_data.get('icon', 'fa-app')
+        
+        return {
+            'category': 'ui-ux',
+            'emoji': '🎨',
+            'priority': 'low',
+            'title': f"🎨 [UX/UI] Align {self.app_name} with EthOS Design System",
+            'description': (
+                f"Verify visual consistency with EthOS Design System.\n\n"
+                f"**App metadata:**\n"
+                f"- Color: `{color}`\n"
+                f"- Icon: `{icon}`\n\n"
+                f"**Checklist:**\n"
+                f"- Primary color matches brand guidelines\n"
+                f"- Icons are consistent with EthOS style\n"
+                f"- Spacing and typography aligned\n"
+                f"- Dark/light mode support (if applicable)\n"
+            ),
+            'labels': ['ui-ux', 'design-system', 'auto-generated']
+        }

@@ -1,0 +1,819 @@
+#!/usr/bin/env python3
+"""
+Ticket Watcher — analyzes tickets using Ollama and posts AI suggestions as comments.
+Runs as a long-lived service (ethos-ticket-watcher.service).
+"""
+
+import os
+import sys
+import re
+import json
+import time
+import signal
+import logging
+import requests
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from blueprints.tickets_db import get_projects, get_tickets, get_ticket, update_ticket, create_ticket
+from host import data_path
+import uuid as _uuid
+
+# ── Config ──────────────────────────────────────────────────────────────────
+
+LOG_DIR        = '/opt/ethos/logs/ollama_tickets'
+WATCHER_LOG    = '/opt/ethos/logs/ticket_watcher_new.log'
+LOCK_FILE      = '/tmp/.ethos_watcher_executing'
+AICHAT_CONFIG  = '/opt/ethos/data/aichat_config_{}.json'
+DEFAULT_OLLAMA = 'http://localhost:11434'
+LOOP_INTERVAL  = 120        # seconds between full queue sweeps
+MIN_REANALYZE  = 1800       # skip ticket if ollama comment was added < 30 min ago
+STREAM_TIMEOUT = 600        # seconds for a single Ollama streaming call
+OLLAMA_AUTHOR  = 'ollama-watcher'
+AUDIT_INTERVAL = 2 * 24 * 3600   # 2 days between audits per app
+AUDIT_SCHEDULE = '/opt/ethos/data/audit_schedule.json'
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [watcher] %(levelname)s %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler(WATCHER_LOG, encoding='utf-8'),
+    ]
+)
+log = logging.getLogger('watcher')
+
+_running = True
+
+def _handle_signal(sig, frame):
+    global _running
+    log.info(f'Got signal {sig}, shutting down gracefully…')
+    _running = False
+
+signal.signal(signal.SIGTERM, _handle_signal)
+signal.signal(signal.SIGINT,  _handle_signal)
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+def _get_ollama_url():
+    """Read Ollama URL from any existing aichat config file."""
+    data_dir = os.path.dirname(data_path('x'))
+    for fname in os.listdir(data_dir):
+        if fname.startswith('aichat_config_') and fname.endswith('.json'):
+            try:
+                with open(os.path.join(data_dir, fname)) as f:
+                    cfg = json.load(f)
+                if cfg.get('ollama_url'):
+                    return cfg['ollama_url'].rstrip('/')
+            except Exception:
+                pass
+    return os.environ.get('OLLAMA_URL', DEFAULT_OLLAMA)
+
+def _last_ollama_comment_ts(ticket):
+    """Return unix timestamp of the last ollama-watcher comment, or 0."""
+    comments = ticket.get('comments') or []
+    ts = 0
+    for c in comments:
+        if (c.get('author') == OLLAMA_AUTHOR or c.get('user') == OLLAMA_AUTHOR):
+            ts = max(ts, float(c.get('created') or c.get('created_at') or 0))
+    return ts
+
+def _was_returned_from_qa(ticket: dict) -> bool:
+    """True if ticket was moved back to In Progress after AI already worked on it."""
+    last_ai = _last_ollama_comment_ts(ticket)
+    if not last_ai:
+        return False  # AI never touched it
+    updated = float(ticket.get('updated') or ticket.get('updated_at') or 0)
+    return updated > last_ai  # someone changed it after AI's last comment
+
+
+def _build_retry_prompt(ticket, project) -> str:
+    """Prompt for a ticket returned from QA — includes previous AI attempts and human feedback."""
+    title    = ticket.get('title', '').strip()
+    desc     = (ticket.get('description') or '').strip()
+    column   = ticket.get('column', '')
+    labels   = ', '.join(ticket.get('labels') or []) or 'none'
+    model    = project.get('ollama_model', 'mistral')
+
+    prev_ai      = []
+    human_after  = []
+    last_ai_ts   = 0.0
+
+    for c in (ticket.get('comments') or []):
+        author = c.get('author') or c.get('user') or '?'
+        ts     = float(c.get('created') or c.get('created_at') or 0)
+        text   = (c.get('text') or '').strip()
+        if author == OLLAMA_AUTHOR:
+            prev_ai.append(text[:1500])
+            last_ai_ts = max(last_ai_ts, ts)
+        elif ts > last_ai_ts:
+            human_after.append(f'[{author}]: {text[:500]}')
+
+    ai_block    = ('\n---\n'.join(prev_ai[-2:])) or '(none)'  # last 2 AI attempts
+    human_block = ('\n'.join(human_after)) or '(no human feedback)'
+
+    return f"""You are a senior developer. A ticket was returned from QA back to In Progress — meaning your previous fix attempt was NOT accepted.
+
+## Ticket: {title}
+Labels: {labels} | Status: {column}
+
+## Description
+{desc[:2000]}
+
+## Your previous fix attempt(s)
+{ai_block}
+
+## Human feedback / reason for rejection
+{human_block}
+
+## Your task
+The previous attempt was rejected. Carefully re-read the feedback above and provide a REVISED, CORRECT fix.
+- Address every point raised in the human feedback.
+- Do not repeat the same approach that was rejected.
+- Be specific: show exact code changes (old → new).
+- Explain what was wrong with the previous attempt and why the new fix is better.
+
+Model: {model}"""
+
+
+def _get_source_snippet(app_id: str, max_bytes: int = 50000) -> tuple:
+    """Return (backend_code, frontend_code, bp_path, js_path) for an app_id."""
+    try:
+        sys.path.insert(0, '/opt/ethos/backend')
+        from blueprints.smart_auditor import SmartAppAuditor
+        a = SmartAppAuditor(app_id, app_id, {})
+        bp = a._find_blueprint_file()
+        js = a._find_frontend_file()
+        bp_code = open(bp, encoding='utf-8', errors='ignore').read()[:max_bytes] if bp else ''
+        js_code = open(js, encoding='utf-8', errors='ignore').read()[:max_bytes] if js else ''
+        return bp_code, js_code, bp or '', js or ''
+    except Exception:
+        return '', '', '', ''
+
+
+def _build_prompt(ticket, project):
+    """Build a detailed analysis prompt from a ticket, including source code when available."""
+    title       = ticket.get('title', '').strip()
+    description = (ticket.get('description') or '').strip()
+    column      = ticket.get('column', '')
+    priority    = ticket.get('priority', 'medium')
+    labels_list = ticket.get('labels') or []
+    labels      = ', '.join(labels_list) or 'brak'
+    assignee    = ticket.get('assignee') or 'nieprzypisany'
+
+    comments_text = ''
+    for c in (ticket.get('comments') or [])[-5:]:
+        author = c.get('author') or c.get('user') or '?'
+        if author == OLLAMA_AUTHOR:
+            continue
+        text = (c.get('text') or '').strip()[:500]
+        comments_text += f'\n  [{author}]: {text}'
+    if not comments_text:
+        comments_text = '\n  (brak)'
+
+    project_name = project.get('name', '')
+    ollama_model = project.get('ollama_model', 'mistral')
+
+    # Extract app_id from labels (e.g. "app:antivirus")
+    app_id = None
+    for lbl in labels_list:
+        if lbl.startswith('app:'):
+            app_id = lbl[4:]
+            break
+
+    source_block = ''
+    if app_id:
+        bp_code, js_code, bp_path, js_path = _get_source_snippet(app_id)
+        if bp_code:
+            source_block += f'\n\n## Backend source: `{os.path.basename(bp_path)}`\n```python\n{bp_code}\n```'
+        if js_code:
+            source_block += f'\n\n## Frontend source: `{os.path.basename(js_path)}`\n```javascript\n{js_code}\n```'
+
+    app_context = f' (application: **{app_id}**)' if app_id else ''
+
+    prompt = f"""You are a senior developer working on the EthOS NAS project.
+You are analysing a ticket{app_context} in project "{project_name}".
+
+## Ticket
+- Title: {title}
+- Priority: {priority}
+- Status: {column}
+- Labels: {labels}
+- Assignee: {assignee}
+
+## Description
+{description or '(no description)'}
+
+## Human comments
+{comments_text}
+{source_block}
+
+## Your task
+1. Understand the exact problem described in the ticket.
+2. Locate the issue in the source code above (quote the relevant lines).
+3. Provide a CONCRETE fix — show exact old code → new code.
+4. Explain WHY this fixes the issue in 2-3 sentences.
+5. Note any related files that may also need changes.
+
+Be specific. Do not give generic advice. Model: {ollama_model}"""
+    return prompt
+
+def _stream_ollama(ollama_url, model, prompt, log_path):
+    """
+    Stream Ollama response, write to log file, return full response text.
+    Returns (response_text, tokens_in, tokens_out).
+    """
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    ts_start = time.time()
+
+    header = (
+        f"=== Model: {model} ===\n"
+        f"=== Started: {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n"
+        f"=== Agent: ollama-watcher ===\n\n"
+        f"--- Prompt ---\n{prompt}\n\n--- Response ---\n"
+    )
+
+    full_response = ''
+    tokens_in = 0
+    tokens_out = 0
+
+    with open(log_path, 'w', encoding='utf-8') as lf:
+        lf.write(header)
+        lf.flush()
+
+        try:
+            resp = requests.post(
+                f"{ollama_url}/api/chat",
+                json={
+                    'model': model,
+                    'messages': [
+                        {'role': 'system', 'content': 'Jesteś pomocnym asystentem programistycznym.'},
+                        {'role': 'user',   'content': prompt},
+                    ],
+                    'stream': True,
+                    'options': {'temperature': 0.4, 'num_predict': 1024},
+                },
+                stream=True,
+                timeout=STREAM_TIMEOUT,
+            )
+            resp.raise_for_status()
+
+            for raw_line in resp.iter_lines():
+                if not _running:
+                    break
+                if not raw_line:
+                    continue
+                try:
+                    chunk = json.loads(raw_line)
+                except json.JSONDecodeError:
+                    continue
+                content = (chunk.get('message') or {}).get('content') or ''
+                if content:
+                    full_response += content
+                    lf.write(content)
+                    lf.flush()
+                if chunk.get('done'):
+                    usage = chunk.get('prompt_eval_count', 0), chunk.get('eval_count', 0)
+                    tokens_in, tokens_out = usage
+
+        except Exception as e:
+            error_line = f'\n[ERROR] {e}\n'
+            lf.write(error_line)
+            lf.flush()
+            log.error(f'Ollama stream error: {e}')
+
+        elapsed = time.time() - ts_start
+        elapsed_str = f'{int(elapsed // 60)}m {int(elapsed % 60)}s'
+        footer = (
+            f'\n\n=== Total session time: {elapsed_str} ===\n'
+            f'=== Tokens in: {tokens_in} | Tokens out: {tokens_out} ===\n'
+        )
+        lf.write(footer)
+
+    return full_response.strip(), tokens_in, tokens_out
+
+def _write_lock(ticket_id, model, project_name, log_file):
+    try:
+        with open(LOCK_FILE, 'w') as f:
+            json.dump({
+                'ticket_id': ticket_id,
+                'model': {'model': model, 'label': f'Ollama / {model}'},
+                'agent': 'ollama',
+                'started': time.time(),
+                'copilot_pid': os.getpid(),
+                'log_file': os.path.basename(log_file),
+                'qa_cycle': 0,
+                'project': project_name,
+            }, f)
+    except Exception as e:
+        log.warning(f'Lock write failed: {e}')
+
+def _clear_lock():
+    try:
+        if os.path.exists(LOCK_FILE):
+            os.remove(LOCK_FILE)
+    except Exception:
+        pass
+
+def _add_comment(ticket_id, text, model):
+    ticket = get_ticket(ticket_id)
+    if not ticket:
+        return
+    comments = list(ticket.get('comments') or [])
+    comments.append({
+        'id': f'c_{_uuid.uuid4().hex[:8]}',
+        'author': OLLAMA_AUTHOR,
+        'user': OLLAMA_AUTHOR,
+        'text': f'🤖 **Ollama ({model}):**\n\n{text}',
+        'created': time.time(),
+    })
+    update_ticket(ticket_id, {'comments': comments})
+
+# ── Audit scheduler helpers ─────────────────────────────────────────────────
+
+def _load_schedule() -> dict:
+    try:
+        with open(AUDIT_SCHEDULE) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def _save_schedule(sched: dict):
+    try:
+        with open(AUDIT_SCHEDULE, 'w') as f:
+            json.dump(sched, f, indent=2)
+    except Exception as e:
+        log.warning(f'Schedule save failed: {e}')
+
+def _audit_due(sched: dict, key: str) -> bool:
+    entry = sched.get(key, {})
+    last  = entry.get('last_audit', 0)
+    return time.time() - last > AUDIT_INTERVAL
+
+def _get_all_app_ids() -> list:
+    """Return all known app IDs by scanning blueprint filenames."""
+    bp_dir = '/opt/ethos/backend/blueprints'
+    skip = {'__init__', 'admin_required', 'db_pool', 'api_docs',
+            'app_manager', 'appstore', 'builder', 'installer'}
+    ids = []
+    for fname in sorted(os.listdir(bp_dir)):
+        if not fname.endswith('.py'):
+            continue
+        base = fname[:-3]
+        if base in skip or base.startswith('builder_'):
+            continue
+        # Convert _ to - for app_id convention
+        ids.append(base.replace('_', '-'))
+    return ids
+
+def _resolve_app_ids(spec: str) -> list:
+    """Expand audit_apps spec ('*', or comma list) to actual app_id list."""
+    spec = spec.strip()
+    if not spec:
+        return []
+    if spec == '*':
+        return _get_all_app_ids()
+    return [s.strip() for s in spec.split(',') if s.strip()]
+
+def _get_project_column(project: dict, col_name: str) -> str:
+    """Return first column matching name, or fallback."""
+    cols = project.get('columns') or ['To Do', 'In Progress', 'QA', 'Done']
+    if isinstance(cols, list) and cols:
+        for c in cols:
+            if col_name.lower() in c.lower():
+                return c
+        return cols[0]
+    return 'To Do'
+
+def _audit_app_for_project(project: dict, app_id: str, ollama_url: str) -> int:
+    """Run SmartAppAuditor for one app, create tickets. Returns tickets created count."""
+    import sys, re as _re, json as _json
+    sys.path.insert(0, '/opt/ethos/backend')
+    from blueprints.smart_auditor import SmartAppAuditor
+
+    model = project.get('ollama_model', 'mistral')
+    log.info(f'Auditing app "{app_id}" for project "{project["name"]}" with {model}')
+
+    auditor = SmartAppAuditor(
+        app_id=app_id,
+        app_name=app_id.replace('-', ' ').title(),
+        app_data={},
+        ollama_url=ollama_url,
+        ollama_model=model,
+        large_context=True,
+    )
+    findings = auditor.analyze()
+    tasks    = auditor.generate_tasks()
+
+    if not tasks:
+        log.info(f'No findings for {app_id}')
+        return 0
+
+    col_todo = _get_project_column(project, 'to do')
+    now      = time.time()
+    project_id = project['id']
+
+    existing_tickets = get_tickets(project_id)
+
+    # ── fast normalised-title pre-filter ──────────────────────────────────
+    def _norm(title):
+        t = (title or '').lower().strip()
+        t = _re.sub(r'[^\w\s]', ' ', t)
+        t = _re.sub(r'\s+', ' ', t).strip()
+        return t
+
+    existing_norms = {_norm(t.get('title', '')) for t in existing_tickets}
+    candidates = [t for t in tasks if _norm(t.get('title', '')) not in existing_norms]
+
+    # ── AI dedup: semantic duplicate check via Ollama ─────────────────────
+    if candidates and existing_tickets and ollama_url and model:
+        existing_summary = '\n'.join(f'- {t.get("title","")}' for t in existing_tickets[:120])
+        new_summary = '\n'.join(f'{i}. {t.get("title","")}' for i, t in enumerate(candidates))
+        prompt = (
+            "You are a ticket deduplication assistant.\n\n"
+            "EXISTING TICKETS:\n" + existing_summary + "\n\n"
+            "CANDIDATE NEW TICKETS:\n" + new_summary + "\n\n"
+            "Which candidates are NOT duplicates of existing tickets?\n"
+            "Reply ONLY with a JSON array of 0-based indices of non-duplicates.\n"
+            "Example: [0, 2, 4]"
+        )
+        try:
+            resp = requests.post(
+                f'{ollama_url.rstrip("/")}/api/generate',
+                json={'model': model, 'prompt': prompt, 'stream': False,
+                      'options': {'temperature': 0, 'num_predict': 256}},
+                timeout=120,
+            )
+            raw = resp.json().get('response', '')
+            m = _re.search(r'\[[\d,\s]*\]', raw)
+            if m:
+                keep = _json.loads(m.group())
+                before = len(candidates)
+                candidates = [candidates[i] for i in keep if i < len(candidates)]
+                log.info(f'AI dedup: {before - len(candidates)} duplicate(s) removed for {app_id}')
+        except Exception as e:
+            log.warning(f'AI dedup failed for {app_id}: {e}')
+
+    created = 0
+    for task in candidates:
+        title = task.get('title', '')[:200]
+        labels = list(task.get('labels', []))
+        labels.append(f'app:{app_id}')
+        labels.append('auto-audit')
+
+        ticket = create_ticket({
+            'id':          f't_{_uuid.uuid4().hex[:12]}',
+            'project_id':  project_id,
+            'title':       title,
+            'description': task.get('description', ''),
+            'column':      col_todo,
+            'priority':    task.get('priority', 'medium'),
+            'reporter':    OLLAMA_AUTHOR,
+            'labels':      labels,
+            'comments':    [],
+            'created':     now,
+            'updated':     now,
+        })
+        if ticket:
+            created += 1
+
+    log.info(f'Created {created} tickets from audit of {app_id} ({len(tasks) - created} duplicate(s) skipped)')
+    return created
+
+
+def _run_audits(projects: list, ollama_url: str) -> bool:
+    """Audit at most ONE due app across all projects per call.
+
+    Returns True if an audit was performed (Phase 2 should still run after).
+    Spreading audits one-per-cycle ensures Phase 2 (ticket queue) gets
+    Ollama attention every 2 minutes instead of waiting for all 54 apps.
+    """
+    sched = _load_schedule()
+
+    for project in projects:
+        if not _running:
+            return False
+        if not project.get('ollama_enabled'):
+            continue
+        audit_spec = (project.get('audit_apps') or '').strip()
+        if not audit_spec:
+            continue
+
+        app_ids = _resolve_app_ids(audit_spec)
+        for app_id in app_ids:
+            if not _running:
+                return False
+            key = f"{project['id']}:{app_id}"
+            if not _audit_due(sched, key):
+                continue
+
+            # Found one due audit — run it, then return so Phase 2 can run
+            try:
+                count = _audit_app_for_project(project, app_id, ollama_url)
+                sched[key] = {
+                    'last_audit':      time.time(),
+                    'tickets_created': count,
+                    'model':           project.get('ollama_model', ''),
+                }
+                log.info(f'Audit done: {key} → {count} tickets')
+            except Exception as e:
+                log.error(f'Audit failed for {key}: {e}', exc_info=True)
+                # Mark as attempted so we don't retry immediately
+                sched[key] = {
+                    'last_audit':      time.time(),
+                    'tickets_created': 0,
+                    'model':           project.get('ollama_model', ''),
+                    'error':           str(e),
+                }
+
+            _save_schedule(sched)
+            return True  # one audit done — yield back to main loop
+
+    return False  # nothing was due
+
+
+# ── Resolution helpers ───────────────────────────────────────────────────────
+
+def _get_source_for_ticket(ticket: dict) -> tuple:
+    """
+    Returns (file_path, label) for the source file relevant to this ticket.
+    Looks at ticket labels for layer:* and app:* tags.
+    """
+    labels = ticket.get('labels') or []
+    layer  = next((l.split(':', 1)[1] for l in labels if l.startswith('layer:')), None)
+    app_id = next((l.split(':', 1)[1] for l in labels if l.startswith('app:')), None)
+
+    if not app_id:
+        return None, None
+
+    root = '/opt/ethos'
+    bp_dir = os.path.join(root, 'backend', 'blueprints')
+    js_dir = os.path.join(root, 'frontend', 'js', 'apps')
+
+    # Use auditor's file discovery
+    import sys
+    sys.path.insert(0, '/opt/ethos/backend')
+    from blueprints.smart_auditor import SmartAppAuditor
+    a = SmartAppAuditor(app_id=app_id, app_name=app_id, app_data={})
+
+    if layer == 'frontend':
+        path = a._find_frontend_file()
+        return path, 'frontend JS'
+    elif layer == 'database':
+        bp = a._find_blueprint_file()
+        path = a._find_db_file(bp)
+        return path, 'database layer'
+    else:
+        path = a._find_blueprint_file()
+        return path, 'backend blueprint'
+
+
+def _build_resolution_prompt(ticket: dict, source_path: str, source_label: str, project: dict) -> str:
+    title   = ticket.get('title', '')
+    desc    = ticket.get('description', '')
+    labels  = ', '.join(ticket.get('labels') or [])
+    finding = ''
+
+    # Extract finding details from description if present
+    loc_m = re.search(r'\*\*Location:\*\*\s*`([^`]+)`', desc)
+    fix_m = re.search(r'\*\*Fix:\*\*\s*(.+?)(?:\n|$)', desc)
+    if loc_m:
+        finding += f'Location: {loc_m.group(1)}\n'
+    if fix_m:
+        finding += f'Suggested fix direction: {fix_m.group(1)}\n'
+
+    try:
+        code = open(source_path, encoding='utf-8', errors='ignore').read()
+        # For large files, focus on the relevant section if location is known
+        if loc_m and len(code) > 40000:
+            loc_hint = loc_m.group(1)
+            lines = code.splitlines(keepends=True)
+            # Find lines around the location
+            match_lines = [i for i, l in enumerate(lines) if loc_hint in l]
+            if match_lines:
+                start = max(0, match_lines[0] - 20)
+                end   = min(len(lines), match_lines[0] + 120)
+                code  = ''.join(lines[start:end])
+    except Exception:
+        code = '(could not read source file)'
+
+    return f"""You are a senior developer fixing a bug in the EthOS NAS project.
+
+## Ticket: {title}
+Labels: {labels}
+
+## Problem description
+{desc[:2000]}
+
+{finding}
+
+## Source file: {os.path.basename(source_path)} ({source_label})
+```
+{code[:60000]}
+```
+
+## Your task
+1. Identify the exact location of the bug in the code above.
+2. Provide the EXACT fix — show the old code and the corrected replacement.
+3. Explain WHY this fixes the issue.
+4. If additional files need changes, mention them.
+
+Format your response as:
+**Root cause:** (one sentence)
+**Fix in `{os.path.basename(source_path)}`:**
+```python  (or js)
+# OLD:
+<problematic code>
+
+# NEW:
+<fixed code>
+```
+**Explanation:** (2-3 sentences)
+**Additional changes needed:** (or "None")"""
+
+
+def _resolve_ticket(ticket: dict, project: dict, ollama_url: str) -> bool:
+    """
+    For AI-detected tickets: read full source, ask Ollama for specific fix,
+    post as comment, move to In Review.
+    Returns True on success.
+    """
+    ticket_id = ticket['id']
+    labels    = ticket.get('labels') or []
+
+    source_path, source_label = _get_source_for_ticket(ticket)
+    if not source_path or not os.path.exists(source_path):
+        log.debug(f'No source file for ticket {ticket_id}, using standard analysis')
+        return False
+
+    model    = project.get('ollama_model', 'mistral')
+    ts       = int(time.time())
+    log_file = os.path.join(LOG_DIR, f'{ticket_id}_resolve_{ts}.log')
+
+    log.info(f'Resolving AI ticket {ticket_id} "{ticket.get("title","")}" — {source_label}')
+    prompt = _build_resolution_prompt(ticket, source_path, source_label, project)
+
+    _write_lock(ticket_id, model, project.get('name', ''), log_file)
+    try:
+        response, tok_in, tok_out = _stream_ollama(ollama_url, model, prompt, log_file)
+    finally:
+        _clear_lock()
+
+    if not response:
+        return False
+
+    # Add fix as comment
+    comment_text = '🔧 **Propozycja naprawy (Ollama ' + model + '):**\n\n' + response
+    _add_comment(ticket_id, comment_text, model)
+
+    # Move to "In Review" column if available
+    cols = project.get('columns') or []
+    review_col = next((c for c in cols if 'review' in c.lower() or 'qa' in c.lower()), None)
+    if review_col and ticket.get('column') != review_col:
+        update_ticket(ticket_id, {'column': review_col})
+        log.info(f'Moved ticket {ticket_id} to "{review_col}"')
+
+    log.info(f'Resolution done: {ticket_id} — {tok_in}/{tok_out} tokens')
+    return True
+
+
+# ── Main watcher loop ────────────────────────────────────────────────────────
+
+def _process_ticket(ticket, project, ollama_url):
+    """Analyze a single ticket with Ollama. Returns True on success."""
+    ticket_id = ticket['id']
+    model     = project.get('ollama_model', 'mistral')
+    ts        = int(time.time())
+    log_file  = os.path.join(LOG_DIR, f'{ticket_id}_{ts}.log')
+
+    log.info(f'Processing ticket {ticket_id} "{ticket.get("title","")}" with model {model}')
+
+    prompt = _build_prompt(ticket, project)
+
+    _write_lock(ticket_id, model, project.get('name', ''), log_file)
+
+    try:
+        response, tok_in, tok_out = _stream_ollama(ollama_url, model, prompt, log_file)
+    finally:
+        _clear_lock()
+
+    if not response:
+        log.warning(f'Empty response for ticket {ticket_id}')
+        return False
+
+    _add_comment(ticket_id, response, model)
+    log.info(f'Done: {ticket_id} — {tok_in} in / {tok_out} out tokens, log: {os.path.basename(log_file)}')
+    return True
+
+def run():
+    log.info('Ticket Watcher starting…')
+    os.makedirs(LOG_DIR, exist_ok=True)
+    _clear_lock()
+
+    while _running:
+        try:
+            ollama_url = _get_ollama_url()
+            projects   = get_projects()
+            processed  = 0
+
+            # ── Phase 1: one app audit per cycle (every 2 days per app) ──
+            audit_ran = _run_audits(projects, ollama_url)
+            if audit_ran:
+                log.debug('Phase 1 done — proceeding to Phase 2 ticket queue.')
+
+            # ── Phase 2: process ticket queue (always runs after Phase 1) ──
+            # Pick ONE ticket per cycle: To Do → claim (move to In Progress) →
+            # analyse/resolve → move to QA/In Review.  Single-ticket-at-a-time
+            # guarantees no Ollama resource contention.
+            for project in projects:
+                if not _running:
+                    break
+                if not project.get('ollama_enabled'):
+                    continue
+
+                cols        = project.get('columns') or ['To Do', 'In Progress', 'QA', 'Done']
+                col_names   = [c.lower() for c in cols]
+                in_progress = next((c for c in cols if 'progress' in c.lower()), 'In Progress')
+
+                tickets = get_tickets(project['id'])
+
+                # Separate: already claimed (In Progress) vs waiting (To Do)
+                in_prog_tickets = [t for t in tickets
+                                   if t.get('column', '').lower() == 'in progress']
+                todo_tickets    = [t for t in tickets
+                                   if t.get('column', '').lower() == 'to do']
+
+                # Prefer tickets already In Progress (already claimed), then To Do
+                candidates = in_prog_tickets + todo_tickets
+
+                for ticket in candidates:
+                    if not _running:
+                        break
+
+                    returned = _was_returned_from_qa(ticket)
+
+                    if not returned:
+                        last_ts = _last_ollama_comment_ts(ticket)
+                        if time.time() - last_ts < MIN_REANALYZE:
+                            continue  # recently touched and not returned — skip
+
+                    # Claim ticket: move To Do → In Progress so user sees AI is working on it
+                    if ticket.get('column', '').lower() == 'to do':
+                        update_ticket(ticket['id'], {'column': in_progress})
+                        ticket['column'] = in_progress
+                        log.info(f'Claimed ticket {ticket["id"]} "{ticket.get("title","")}" → {in_progress}')
+
+                    labels         = ticket.get('labels') or []
+                    is_ai_detected = 'ai-detected' in labels
+
+                    if returned:
+                        # QA rejected — build retry prompt with previous AI attempts + human feedback
+                        log.info(f'Retrying ticket {ticket["id"]} "{ticket.get("title","")}" (returned from QA)')
+                        ticket_id = ticket['id']
+                        model     = project.get('ollama_model', 'mistral')
+                        ts        = int(time.time())
+                        log_file  = os.path.join(LOG_DIR, f'{ticket_id}_retry_{ts}.log')
+                        prompt    = _build_retry_prompt(ticket, project)
+                        _write_lock(ticket_id, model, project.get('name', ''), log_file)
+                        try:
+                            response, tok_in, tok_out = _stream_ollama(ollama_url, model, prompt, log_file)
+                        finally:
+                            _clear_lock()
+                        if response:
+                            _add_comment(ticket_id, '🔄 **Retry (QA rejected):**\n\n' + response, model)
+                            # Move back to QA for another review
+                            review_col = next((c for c in cols if 'review' in c.lower() or 'qa' in c.lower()), None)
+                            if review_col:
+                                update_ticket(ticket_id, {'column': review_col})
+                                log.info(f'Retry done — moved {ticket_id} back to {review_col}')
+                            ok = True
+                        else:
+                            ok = False
+                    elif is_ai_detected:
+                        ok = _resolve_ticket(ticket, project, ollama_url)
+                        if not ok:
+                            ok = _process_ticket(ticket, project, ollama_url)
+                    else:
+                        ok = _process_ticket(ticket, project, ollama_url)
+
+                    if ok:
+                        processed += 1
+                    # Process only ONE ticket per cycle — yield back to Phase 1
+                    break
+
+            if processed == 0:
+                log.debug('No tickets to process this cycle.')
+        except Exception as e:
+            log.error(f'Watcher cycle error: {e}', exc_info=True)
+
+        # Wait before next sweep
+        for _ in range(LOOP_INTERVAL):
+            if not _running:
+                break
+            time.sleep(1)
+
+    log.info('Ticket Watcher stopped.')
+    _clear_lock()
+
+if __name__ == '__main__':
+    run()

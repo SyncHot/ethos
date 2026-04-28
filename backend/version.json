@@ -1,0 +1,330 @@
+{
+  "version": "1.0.144",
+  "codename": "Eatheros",
+  "build_date": "2026-04-23",
+  "changelog": [
+    {
+      "version": "1.0.144",
+      "date": "2026-04-23",
+      "title": "Github source of updates",
+      "changes": [
+        "Github source of updates"
+      ]
+    },
+    {
+      "version": "1.0.143",
+      "date": "2026-04-23",
+      "title": "Github source of updates",
+      "changes": [
+        "Github source of updates"
+      ]
+    },
+    {
+      "version": "1.0.142",
+      "date": "2026-04-23",
+      "title": "Github source of updates",
+      "changes": [
+        "Github source of updates"
+      ]
+    },
+    {
+      "version": "1.0.141",
+      "date": "2026-04-23",
+      "title": "Github as source of updates",
+      "changes": [
+        "Github as source of updates"
+      ]
+    },
+    {
+      "version": "6.2.0",
+      "date": "2026-03-12",
+      "title": "Security & reliability hardening",
+      "changes": [
+        "Fix: path traversal w Builder (delete/download artifact) — realpath validation",
+        "Fix: shell injection w _write_env_file_key — pure Python file I/O zamiast sed/echo",
+        "Fix: SSH password widoczne w ps — sshpass -e (env) zamiast -p",
+        "Fix: StrictHostKeyChecking=accept-new zamiast =no (MITM protection)",
+        "Fix: brute-force lockout działa (counter + 5min lockout po 5 próbach)",
+        "Fix: FFmpeg stderr pipe deadlock — subprocess.DEVNULL zamiast PIPE",
+        "Fix: ZIP download size limit (2 GB) — ochrona przed OOM",
+        "Fix: flasher checksum path validation — tylko dozwolone ścieżki",
+        "Fix: flasher dead code usunięty (unreachable return+run)",
+        "Fix: N+1 _load_settings() w listowaniu nagrań — hoisted",
+        "Fix: FD leak w downloads (open() bez with)",
+        "Fix: event monitor thread join on stop",
+        "Nowy: janitor loop — czyszczenie expired tokens, unlocked_folders, temp ZIP, login_attempts"
+      ]
+    },
+    {
+      "version": "6.1.0",
+      "date": "2026-03-11",
+      "title": "AI Chat — non-blocking inference",
+      "changes": [
+        "Fix: LLM inference w prawdziwym wątku OS (nie greenlet gevent)",
+        "Fix: serwer odpowiada w <5ms podczas generowania tokenów",
+        "Tuning Intel N150: n_threads=3, n_ctx=2048, n_batch=256",
+        "os.nice(15) na wątku inferencji — niższy priorytet CPU",
+        "RAG: top_k=3, kontekst max 500 znaków na chunk",
+        "System prompt: krótkie odpowiedzi, zakaz kodu"
+      ]
+    },
+    {
+      "version": "4.6.0",
+      "date": "2026-03-09",
+      "title": "Zarządzanie ssh",
+      "changes": [
+        "Zarządzanie ssh"
+      ]
+    },
+    {
+      "version": "4.1.1",
+      "date": "2026-03-08",
+      "title": "Sklep za aplikacjami pakiety ethos",
+      "changes": [
+        "Sklep za aplikacjami pakiety ethos"
+      ]
+    },
+    {
+      "version": "4.1.0",
+      "date": "2026-03-08",
+      "title": "Surveilence poprawiony",
+      "changes": [
+        "Surveilence poprawiony"
+      ]
+    },
+    {
+      "version": "4.0.5",
+      "date": "2026-03-08",
+      "title": "Ring cameras",
+      "changes": [
+        "Ring cameras"
+      ]
+    },
+    {
+      "version": "4.0.4",
+      "date": "2026-03-08",
+      "title": "Surveillance dziala",
+      "changes": [
+        "Surveillance dziala"
+      ]
+    },
+    {
+      "version": "4.0.1",
+      "date": "2026-03-08",
+      "title": "PLiki uzytkownikow",
+      "changes": [
+        "PLiki uzytkownikow"
+      ]
+    },
+    {
+      "version": "4.0.0",
+      "date": "2026-03-07",
+      "title": "Home folder only for users",
+      "changes": [
+        "Home folder only for users"
+      ]
+    },
+    {
+      "version": "3.2.1",
+      "date": "2026-03-07",
+      "title": "SAMBA w filemanagerze",
+      "changes": [
+        "SAMBA w filemanagerze"
+      ]
+    },
+    {
+      "version": "3.2.0",
+      "date": "2026-03-07",
+      "title": "Builder naprawiony",
+      "changes": [
+        "Builder naprawiony"
+      ]
+    },
+    {
+      "version": "3.1.0",
+      "date": "2026-03-07",
+      "title": "Statusy pobierania",
+      "changes": [
+        "Statusy pobierania"
+      ]
+    },
+    {
+      "version": "3.0.8",
+      "date": "2026-03-07",
+      "title": "Aktualizacje poprawione",
+      "changes": [
+        "Aktualizacje poprawione"
+      ]
+    },
+    {
+      "version": "3.0.3",
+      "date": "2026-03-06",
+      "title": "OTA - aktualizacja systemu",
+      "changes": [
+        "OTA - aktualizacja systemu"
+      ]
+    },
+    {
+      "version": "3.0.2",
+      "date": "2026-03-06",
+      "title": "OTA - aktualizacja systemu",
+      "changes": [
+        "OTA - aktualizacja systemu"
+      ]
+    },
+    {
+      "version": "3.0.1",
+      "date": "2026-03-05",
+      "title": "Builder not creating full iso image of latest changes",
+      "changes": [
+        "Builder not creating full iso image of latest changes"
+      ]
+    },
+    {
+      "version": "3.0.0",
+      "date": "2026-03-05",
+      "title": "Kreator USB, Builder releasów",
+      "changes": [
+        "Kreator USB, Builder releasów"
+      ]
+    },
+    {
+      "version": "2.4.1",
+      "date": "2026-03-05",
+      "title": "Builder + Kreator USB",
+      "changes": [
+        "Nowa aplikacja Builder do budowania release i obrazów",
+        "Nowa aplikacja Kreator USB do flashowania pendrive",
+        "Poprawka limitu równoczesnych pobrań debrid"
+      ]
+    },
+    {
+      "version": "2.4.0",
+      "date": "2026-03-03",
+      "title": "Ochrona folderów hasłem",
+      "changes": [
+        "Zabezpieczanie folderów hasłem z szyfrowaniem SHA-256",
+        "Blokada dostępu do chronionych plików w menedżerze, galerii i wyszukiwaniu",
+        "Ikony kłódki na chronionych folderach we wszystkich widokach",
+        "Odblokowywanie folderu na czas sesji",
+        "Zachowanie hasła przy zmianie nazwy i przenoszeniu folderów"
+      ]
+    },
+    {
+      "version": "2.3.0",
+      "date": "2026-02-20",
+      "title": "Galeria zdjęć",
+      "changes": [
+        "Nowa aplikacja Galeria z widokiem masonry grid",
+        "Lightbox z nawigacją gestami (swipe) i klawiaturą",
+        "Albumy automatyczne na podstawie folderów",
+        "Widok timeline — zdjęcia pogrupowane po dacie",
+        "System ulubionych zdjęć zintegrowany z menedżerem plików",
+        "Generowanie miniaturek (.thumbs/) obok źródłowych zdjęć"
+      ]
+    },
+    {
+      "version": "2.2.0",
+      "date": "2026-02-10",
+      "title": "EthOS Sync — aplikacja mobilna",
+      "changes": [
+        "Aplikacja Android EthOS Sync do synchronizacji plików",
+        "Automatyczna synchronizacja zdjęć z telefonu",
+        "Pobieranie i aktualizacja APK z poziomu systemu",
+        "Integracja WebView z interfejsem EthOS"
+      ]
+    },
+    {
+      "version": "2.1.0",
+      "date": "2026-01-28",
+      "title": "Sklep z aplikacjami",
+      "changes": [
+        "App Store z katalogiem aplikacji Docker",
+        "Instalacja jednym kliknięciem z postępem w czasie rzeczywistym",
+        "Aktualizacja i usuwanie aplikacji",
+        "Konfiguracja portów i wolumenów przed instalacją"
+      ]
+    },
+    {
+      "version": "2.0.0",
+      "date": "2026-01-15",
+      "title": "EthOS 2.0 — nowy interfejs",
+      "changes": [
+        "Całkowicie przeprojektowany interfejs w stylu desktop OS",
+        "System okien z przeciąganiem, zmianą rozmiaru, minimalizacją",
+        "Pasek zadań z zegarem, powiadomieniami i menu użytkownika",
+        "Ciemny i jasny motyw z automatycznym przełączaniem",
+        "Pulpit z ikonami i skrótami do aplikacji"
+      ]
+    },
+    {
+      "version": "1.5.0",
+      "date": "2025-12-20",
+      "title": "Zarządzanie Dockerem",
+      "changes": [
+        "Menedżer kontenerów Docker z podglądem stanu",
+        "Start, stop, restart, usuwanie kontenerów",
+        "Podgląd logów kontenerów w czasie rzeczywistym",
+        "Edycja docker-compose.yaml",
+        "Dashboard z podsumowaniem kontenerów"
+      ]
+    },
+    {
+      "version": "1.4.0",
+      "date": "2025-12-05",
+      "title": "Terminal i sieć",
+      "changes": [
+        "Wbudowany terminal z pełną obsługą PTY",
+        "Wiele sesji terminalowych jednocześnie",
+        "Panel zarządzania siecią",
+        "Konfiguracja DNS, interfejsów sieciowych"
+      ]
+    },
+    {
+      "version": "1.3.0",
+      "date": "2025-11-20",
+      "title": "Backup i przywracanie",
+      "changes": [
+        "System kopii zapasowych z harmonogramem",
+        "Przywracanie z wybranych punktów",
+        "Kompresja i szyfrowanie backupów",
+        "Powiadomienia o statusie kopii"
+      ]
+    },
+    {
+      "version": "1.2.0",
+      "date": "2025-11-05",
+      "title": "Monitor zasobów",
+      "changes": [
+        "Monitorowanie CPU, RAM, dysków w czasie rzeczywistym",
+        "Wykresy historyczne użycia zasobów",
+        "Alerty przy wysokim zużyciu",
+        "Szczegóły dysków z modelami i S.M.A.R.T."
+      ]
+    },
+    {
+      "version": "1.1.0",
+      "date": "2025-10-20",
+      "title": "Menedżer plików",
+      "changes": [
+        "Trzy widoki: lista, siatka, miniaturki",
+        "Przeciągnij i upuść pliki do przesyłania",
+        "Kopiowanie, przenoszenie, zmiana nazwy z obsługą konfliktów",
+        "Wyszukiwanie plików po zawartości i nazwie",
+        "Kompresja i rozpakowywanie archiwów",
+        "Podgląd plików: zdjęcia, wideo, teksty, PDF"
+      ]
+    },
+    {
+      "version": "1.0.0",
+      "date": "2025-10-01",
+      "title": "Pierwsza wersja",
+      "changes": [
+        "Podstawowa struktura systemu EthOS",
+        "Logowanie i autoryzacja tokenowa",
+        "Panel informacji systemowych",
+        "Obsługa dysków USB i montowanie"
+      ]
+    }
+  ]
+}
