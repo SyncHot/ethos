@@ -420,6 +420,7 @@ function openDirPicker(startPath, title, onSelect) {
     let browsePath = startPath || '/home';
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
+    overlay.style.background = 'rgba(0, 0, 0, 1)'; // Fix transparency
     overlay.innerHTML = `
         <div class="modal-box" style="width:480px;">
             <div class="modal-header"><span>${title || t('Wybierz folder')}</span><button class="modal-close"><i class="fas fa-times"></i></button></div>
@@ -715,7 +716,7 @@ function createWindow(id, opts = {}) {
                 <button class="win-ctrl close" data-action="close"><i class="fas fa-times"></i></button>
             </div>
         </div>
-        <div class="window-body" id="win-body-${id}">${o.content}</div>
+        <div class="window-body" id="win-body-${id}" style="background: var(--bg-surface, #1e293b);">${o.content}</div>
         <div class="win-resize n" data-dir="n"></div>
         <div class="win-resize s" data-dir="s"></div>
         <div class="win-resize e" data-dir="e"></div>
@@ -1156,6 +1157,7 @@ async function showDesktopIconsConfig() {
 
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
+    overlay.style.background = 'rgba(0, 0, 0, 1)'; // Fix transparency
 
     const modal = document.createElement('div');
     modal.className = 'di-config-modal';
@@ -1628,6 +1630,7 @@ function showPowerConfirm(label, icon, color) {
     return new Promise(resolve => {
         const overlay = document.createElement('div');
         overlay.className = 'power-confirm-overlay';
+        overlay.style.background = 'rgba(0, 0, 0, 1)'; // Fix transparency
         overlay.innerHTML = `
             <div class="power-confirm-box">
                 <div class="power-confirm-icon" style="color:${color}">
@@ -1671,6 +1674,7 @@ function showRestartOverlay(msg, isShutdown = false) {
 
     const overlay = document.createElement('div');
     overlay.className = 'power-restart-overlay';
+    overlay.style.background = 'rgba(0, 0, 0, 1)'; // Fix transparency
     overlay.innerHTML = `
         <div class="power-restart-spinner"></div>
         <div class="power-restart-msg">${msg}</div>
@@ -2516,6 +2520,7 @@ function showModal(title, bodyHtml, buttons = []) {
         let resolved = false;
         const overlay = document.createElement('div');
         overlay.className = 'modal-overlay';
+        overlay.style.background = 'rgba(0, 0, 0, 1)'; // Fix transparency
         overlay.innerHTML = `
             <div class="modal">
                 <div class="modal-header">${title}</div>
@@ -2755,6 +2760,7 @@ async function showStorageWelcome() {
 
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay saw-overlay';
+    overlay.style.background = 'rgba(0, 0, 0, 1)'; // Fix transparency
 
     const totalBytes = availableDisks.reduce((s, d) => s + (d.size_bytes || 0), 0);
     const fmtSize = (b) => {
