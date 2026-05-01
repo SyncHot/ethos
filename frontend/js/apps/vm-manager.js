@@ -47,6 +47,7 @@ function renderVMManager(body) {
         let browsePath = startPath || '/media';
         const overlay = document.createElement('div');
         overlay.className = 'modal-overlay';
+        overlay.style.background = 'rgba(0, 0, 0, 1)'; // Fix transparency
         overlay.innerHTML = `
             <div class="modal-box" style="width:520px;">
                 <div class="modal-header"><span>${t('Wybierz obraz ISO/IMG')}</span><button class="modal-close"><i class="fas fa-times"></i></button></div>
@@ -289,6 +290,7 @@ function renderVMManager(body) {
 
         const overlay = document.createElement('div');
         overlay.className = 'vm-modal-overlay';
+        overlay.style.background = 'rgba(0, 0, 0, 1)'; // Fix transparency
         overlay.innerHTML = `
             <div class="vm-modal">
                 <div class="vm-modal-header">
@@ -441,6 +443,7 @@ function renderVMManager(body) {
             const ports = (r.ports || []).map(p => `<div class="vm-qc-port"><span class="vm-qc-port-label">${esc(p.label)}</span><span class="vm-qc-port-map">${_vmHost}:${p.host} → :${p.guest}</span></div>`).join('');
             const overlay = document.createElement('div');
             overlay.className = 'vm-modal-overlay';
+            overlay.style.background = 'rgba(0, 0, 0, 1)'; // Fix transparency
             overlay.innerHTML = `
                 <div class="vm-modal" style="max-width:460px">
                     <div class="vm-modal-header">
@@ -492,6 +495,7 @@ function renderVMManager(body) {
     async function showImportDiskModal() {
         const overlay = document.createElement('div');
         overlay.className = 'vm-modal-overlay';
+        overlay.style.background = 'rgba(0, 0, 0, 1)'; // Fix transparency
         overlay.innerHTML = `
             <div class="vm-modal" style="max-width:540px">
                 <div class="vm-modal-header">
@@ -663,7 +667,7 @@ function renderVMManager(body) {
                 <span class="app-toolbar-actions">
                     ${running
                         ? `<button class="vm-btn vm-btn-warn" id="vm-d-stop"><i class="fas fa-stop"></i> Zatrzymaj</button>
-                           <button class="vm-btn" id="vm-d-restart"><i class="fas fa-redo"></i> Restart</button>`
+                           <button class="vm-btn" id="vm-d-restart"><i class="fas fa-redo</i> Restart</button>`
                         : `<button class="vm-btn vm-btn-success" id="vm-d-start"><i class="fas fa-play"></i> Uruchom</button>`}
                 </span>
             </div>
@@ -889,9 +893,9 @@ function renderVMManager(body) {
             }
             if (vm.ws_port) {
                 const vncUrl = `http://${host}:${vm.ws_port}/vnc_lite.html?host=${host}&port=${vm.ws_port}&autoconnect=true&resize=scale&reconnect=true`;
-                links.push(`<a href="${esc(vncUrl)}" target="_blank" class="vm-link-chip vm-link-vnc" title="Otwórz konsolę VNC w przeglądarce"><i class="fas fa-tv"></i> Konsola VNC <span class="vm-link-port">:${vm.ws_port}</span></a>`);
+                links.push(`<a href="${esc(vncUrl)}" target="_blank" class="vm-link-chip vm-link-vnc" title="Otwórz konsolę VNC w przeglądarce"><i class="fas fa-tv</i> Konsola VNC <span class="vm-link-port">:${vm.ws_port}</span></a>`);
             } else if (vm.vnc_port) {
-                links.push(`<span class="vm-link-chip vm-link-vnc" title="Połącz klientem VNC na ${host}:${vm.vnc_port}"><i class="fas fa-tv"></i> VNC <span class="vm-link-port">:${vm.vnc_port}</span></span>`);
+                links.push(`<span class="vm-link-chip vm-link-vnc" title="Połącz klientem VNC na ${host}:${vm.vnc_port}"><i class="fas fa-tv</i> VNC <span class="vm-link-port">:${vm.vnc_port}</span></span>`);
             }
             if (links.length) {
                 linksHtml = `
@@ -920,13 +924,13 @@ function renderVMManager(body) {
                     ${running && vm.pid ? `<div class="vm-info-row"><span>PID:</span><span>${vm.pid}</span></div>` : ''}
                 </div>
                 <div class="vm-info-card">
-                    <h4><i class="fas fa-sliders-h"></i> Zasoby ${!running ? '<button class="vm-btn vm-btn-sm app-ml-auto" id="vm-edit-config"><i class="fas fa-edit"></i> Edytuj</button>' : ''}</h4>
+                    <h4><i class="fas fa-sliders-h"></i> Zasoby ${!running ? '<button class="vm-btn vm-btn-sm app-ml-auto" id="vm-edit-config"><i class="fas fa-edit</i> Edytuj</button>' : ''}</h4>
                     <div class="vm-info-row"><span>CPU:</span><span id="vm-cfg-cpu">${vm.cpu} rdzeni</span></div>
                     <div class="vm-info-row"><span>RAM:</span><span id="vm-cfg-ram">${vm.ram} MB</span></div>
                     <div class="vm-info-row"><span>Dysk:</span><span>${esc(vm.disk_size)}</span></div>
                     <div class="vm-info-row"><span>Obraz boot:</span><span class="vm-boot-image-cell">${vm.boot_image
-                        ? `<i class="fas fa-usb" style="color:#f59e0b;margin-right:4px"></i>${esc(vm.boot_image.split('/').pop())}${!running ? ' <button class="vm-btn vm-btn-xs vm-btn-danger" id="vm-eject-boot" title="Odłącz obraz (jak wyjęcie pendrive)"><i class="fas fa-eject"></i> Odłącz</button>' : ''}`
-                        : `<span style="opacity:.5">— brak —</span>${!running ? ' <button class="vm-btn vm-btn-xs" id="vm-attach-boot" title="Podłącz obraz rozruchowy"><i class="fas fa-plug"></i> Podłącz</button>' : ''}`
+                        ? `<i class="fas fa-usb" style="color:#f59e0b;margin-right:4px"></i>${esc(vm.boot_image.split('/').pop())}${!running ? ' <button class="vm-btn vm-btn-xs vm-btn-danger" id="vm-eject-boot" title="Odłącz obraz (jak wyjęcie pendrive)"><i class="fas fa-eject</i> Odłącz</button>' : ''}`
+                        : `<span style="opacity:.5">— brak —</span>${!running ? ' <button class="vm-btn vm-btn-xs" id="vm-attach-boot" title="Podłącz obraz rozruchowy"><i class="fas fa-plug</i> Podłącz</button>' : ''}`
                     }</span></div>
                 </div>
             </div>
@@ -1004,7 +1008,7 @@ function renderVMManager(body) {
                     <span class="vm-badge">${pf.length}</span>
                 </span>
                 ${!running ? `<button class="vm-btn vm-btn-primary vm-btn-sm" id="vm-pf-add">
-                    <i class="fas fa-plus"></i> Dodaj regułę
+                    <i class="fas fa-plus</i> Dodaj regułę
                 </button>` : ''}
             </div>
             ${pf.length ? `
@@ -1021,7 +1025,7 @@ function renderVMManager(body) {
                     <td><span class="vm-arch-badge x86">${esc(r.proto).toUpperCase()}</span></td>
                     <td class="vm-mono">${r.host === 0 ? '<em>auto</em>' : r.host}</td>
                     <td class="vm-mono">${r.guest}</td>
-                    ${!running ? `<td><button class="vm-btn vm-btn-sm vm-btn-danger" data-pf-del="${i}" title="${t('Usuń')}"><i class="fas fa-trash"></i></button></td>` : ''}
+                    ${!running ? `<td><button class="vm-btn vm-btn-sm vm-btn-danger" data-pf-del="${i}" title="${t('Usuń')}"><i class="fas fa-trash</i></button></td>` : ''}
                 </tr>`).join('')}</tbody>
             </table>` : `<div class="vm-empty">${t('Brak reguł port forwarding. Dodaj regułę, aby przekierować port z hosta do VM.')}</div>`}
             ` : ''}
@@ -1043,7 +1047,7 @@ function renderVMManager(body) {
                                 <div class="vm-info-row"><span>Bridge IP:</span><span class="vm-mono">${esc(bs.bridge_ip)}</span></div>
                                 <div class="vm-info-row"><span>Status:</span><span class="app-text-ok"><i class="fas fa-check-circle"></i> Gotowy</span></div>
                                 ${!running ? `<button class="vm-btn vm-btn-secondary vm-btn-sm" id="vm-bridge-reset" style="margin-top:8px">
-                                    <i class="fas fa-redo"></i> Resetuj bridge
+                                    <i class="fas fa-redo</i> Resetuj bridge
                                 </button>` : ''}`;
                             dc.querySelector('#vm-bridge-reset')?.addEventListener('click', async () => {
                                 if (!await confirmDialog(t('Resetować bridge? Połączenie zostanie chwilowo przerwane.'))) return;
@@ -1060,7 +1064,7 @@ function renderVMManager(body) {
                             el.innerHTML = `
                                 <div class="vm-info-row"><span>Status:</span><span class="app-text-warn"><i class="fas fa-exclamation-triangle"></i> Bridge nie skonfigurowany</span></div>
                                 ${!running ? `<button class="vm-btn vm-btn-primary vm-btn-sm" id="vm-bridge-setup" style="margin-top:8px">
-                                    <i class="fas fa-cog"></i> Skonfiguruj bridge
+                                    <i class="fas fa-cog</i> Skonfiguruj bridge
                                 </button>` : ''}`;
                             dc.querySelector('#vm-bridge-setup')?.addEventListener('click', async () => {
                                 try {
@@ -1109,6 +1113,7 @@ function renderVMManager(body) {
     function showAddPortForwardModal(vm, net) {
         const overlay = document.createElement('div');
         overlay.className = 'vm-modal-overlay';
+        overlay.style.background = 'rgba(0, 0, 0, 1)'; // Fix transparency
         overlay.innerHTML = `
             <div class="vm-modal" style="max-width:420px">
                 <div class="vm-modal-header">
@@ -1181,6 +1186,7 @@ function renderVMManager(body) {
 
         const overlay = document.createElement('div');
         overlay.className = 'vm-modal-overlay';
+        overlay.style.background = 'rgba(0, 0, 0, 1)'; // Fix transparency
         overlay.innerHTML = `
             <div class="vm-modal">
                 <div class="vm-modal-header">
@@ -1295,7 +1301,7 @@ function renderVMManager(body) {
         dc.innerHTML = `
             <div class="vm-toolbar app-toolbar-flat">
                 <span class="vm-toolbar-title"><i class="fas fa-camera"></i> Snapshoty <span class="vm-badge">${S.snapshots.length}</span></span>
-                <button class="vm-btn vm-btn-primary vm-btn-sm" id="vm-snap-create"><i class="fas fa-plus"></i> Nowy</button>
+                <button class="vm-btn vm-btn-primary vm-btn-sm" id="vm-snap-create"><i class="fas fa-plus</i> Nowy</button>
             </div>
             ${S.snapshots.length ? `
             <table class="vm-table">
@@ -1307,8 +1313,8 @@ function renderVMManager(body) {
                         <td>${esc(s.vm_size)}</td>
                         <td>${esc(s.date)} ${esc(s.time)}</td>
                         <td>
-                            <button class="vm-btn vm-btn-sm vm-btn-success" data-restore="${esc(s.tag)}" title="${t('Przywróć')}"><i class="fas fa-undo"></i></button>
-                            <button class="vm-btn vm-btn-sm vm-btn-danger" data-del-snap="${esc(s.tag)}" title="${t('Usuń')}"><i class="fas fa-trash"></i></button>
+                            <button class="vm-btn vm-btn-sm vm-btn-success" data-restore="${esc(s.tag)}" title="${t('Przywróć')}"><i class="fas fa-undo</i></button>
+                            <button class="vm-btn vm-btn-sm vm-btn-danger" data-del-snap="${esc(s.tag)}" title="${t('Usuń')}"><i class="fas fa-trash</i></button>
                         </td>
                     </tr>
                 `).join('')}</tbody>
@@ -1330,7 +1336,7 @@ function renderVMManager(body) {
                 if (!await confirmDialog(`${t('Przywrócić snapshot')} "${btn.dataset.restore}"?`)) return;
                 try {
                     const r = await api(`/vm/machines/${vm.id}/snapshots/${encodeURIComponent(btn.dataset.restore)}`, { method: 'POST' });
-                    toast(r.message || t('Snapshot przywrócony'), 'success');
+                    toast(r.message || 'Snapshot przywrócony', 'success');
                 } catch (e) { toast(e.message || t('Błąd'), 'error'); }
             });
         });
@@ -1389,14 +1395,14 @@ function renderVMManager(body) {
                 <td class="vm-mono" style="font-size:11px">${esc(d.filename || '-')}</td>
                 <td style="text-align:right;white-space:nowrap">
                     <button class="vm-btn vm-btn-primary vm-btn-xs vm-disk-resize" data-id="${esc(d.id)}"><i class="fas fa-expand-arrows-alt"></i> ${t('Powiększ')}</button>
-                    ${!isBoot ? `<button class="vm-btn vm-btn-danger vm-btn-xs vm-disk-remove" data-id="${esc(d.id)}"><i class="fas fa-trash"></i></button>` : ''}
+                    ${!isBoot ? `<button class="vm-btn vm-btn-danger vm-btn-xs vm-disk-remove" data-id="${esc(d.id)}"><i class="fas fa-trash</i></button>` : ''}
                 </td>
             </tr>`;
         }
 
         html += `</tbody></table></div>
             <div class="app-mt-lg">
-                <button class="vm-btn vm-btn-success vm-btn-sm" id="vm-disk-add"><i class="fas fa-plus"></i> ${t('Dodaj dysk')}</button>
+                <button class="vm-btn vm-btn-success vm-btn-sm" id="vm-disk-add"><i class="fas fa-plus</i> ${t('Dodaj dysk')}</button>
             </div>`;
         dc.innerHTML = html;
 
@@ -1431,6 +1437,7 @@ function renderVMManager(body) {
         dc.querySelector('#vm-disk-add')?.addEventListener('click', async () => {
             const overlay = document.createElement('div');
             overlay.className = 'vm-modal-overlay';
+            overlay.style.background = 'rgba(0, 0, 0, 1)'; // Fix transparency
             overlay.innerHTML = `
                 <div class="vm-modal" style="max-width:400px">
                     <div class="vm-modal-header"><span>${t('Dodaj dysk')}</span><button class="vm-modal-close">&times;</button></div>
@@ -1607,7 +1614,7 @@ function renderVMManager(body) {
             <div class="vm-toolbar">
                 <span class="vm-toolbar-title"><i class="fas fa-compact-disc"></i> Obrazy ISO/IMG <span class="vm-badge" id="vm-img-cnt">0</span></span>
                 <label class="vm-btn vm-btn-primary" id="vm-upload-label">
-                    <i class="fas fa-upload"></i> ${t('Prześlij obraz')}
+                    <i class="fas fa-upload</i> ${t('Prześlij obraz')}
                     <input type="file" id="vm-upload-input" accept=".iso,.img,.raw,.qcow2,.vdi,.vmdk" class="hidden">
                 </label>
                 <button class="vm-btn" id="vm-img-refresh"><i class="fas fa-sync-alt"></i></button>
@@ -1654,7 +1661,7 @@ function renderVMManager(body) {
                 <td>${esc(img.type)}</td>
                 <td>${esc(img.size_human)}</td>
                 <td>${esc(img.modified)}</td>
-                <td><button class="vm-btn vm-btn-sm vm-btn-danger" data-del-img="${esc(img.name)}" title="${t('Usuń')}"><i class="fas fa-trash"></i></button></td>
+                <td><button class="vm-btn vm-btn-sm vm-btn-danger" data-del-img="${esc(img.name)}" title="${t('Usuń')}"><i class="fas fa-trash</i></button></td>
             </tr>
         `).join('');
 
@@ -1687,7 +1694,7 @@ function renderVMManager(body) {
                 <td>${esc(img.size_human)}</td>
                 <td>${esc(img.modified)}</td>
                 <td>
-                    <button class="vm-btn vm-btn-sm vm-btn-primary" data-copy-builder="${esc(img.path)}" data-name="${esc(img.name)}" title="${t('Kopiuj do obrazów VM')}"><i class="fas fa-copy"></i> Kopiuj</button>
+                    <button class="vm-btn vm-btn-sm vm-btn-primary" data-copy-builder="${esc(img.path)}" data-name="${esc(img.name)}" title="${t('Kopiuj do obrazów VM')}"><i class="fas fa-copy</i> Kopiuj</button>
                 </td>
             </tr>
         `).join('');
@@ -1705,7 +1712,7 @@ function renderVMManager(body) {
                 } catch (e) {
                     toast(e.message || t('Błąd kopiowania'), 'error');
                     btn.disabled = false;
-                    btn.innerHTML = '<i class="fas fa-copy"></i> Kopiuj';
+                    btn.innerHTML = '<i class="fas fa-copy</i> Kopiuj';
                 }
             });
         });
