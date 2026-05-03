@@ -161,6 +161,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     let _npSeekDragging = false;
     let _npMinimizing = false;  // debounce guard for _onPopState / _minimizeNowPlaying
     let _lockOverlay = null;
+    // Handler refs exposed for onClose cleanup (onClose can't access onRender scope)
+    let _onPopStateRef = null, _onKeyDownRef = null, _onVisWakeLockRef = null, _onVisFocusLossRef = null;
     let _wakeLock = null;
     let _seekLocked = false;    // true during track switch → seekbar won't jump to 0
     let _hlsInstance = null;    // hls.js instance for HLS live streams
@@ -1187,15 +1189,37 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                     } catch(e) { _cl('debug', 'PeriodicSync not allowed', { msg: e.message }); }
                 });
             }
+            // Expose handler refs for onClose cleanup
+            _onPopStateRef = _onPopState;
+            _onKeyDownRef = _onKeyDown;
+            _onVisWakeLockRef = _onVisWakeLock;
+            _onVisFocusLossRef = _onVisFocusLoss;
         },
         onClose() {
-            _savePlaybackState();
-            stopPlayback();
-            _hideLockScreen();
-            window.removeEventListener('popstate', _onPopState, true);
-            window.removeEventListener('keydown', _onKeyDown);
-            document.removeEventListener('visibilitychange', _onVisWakeLock);
-            document.removeEventListener('visibilitychange', _onVisFocusLoss);
+            // Stop audio immediately — do NOT call stopPlayback() here because it's
+            // defined inside onRender and not accessible from onClose (separate scope).
+            // Same for _savePlaybackState, _hideLockScreen, _releaseWakeLock — all inlined below.
+            if (_audio) {
+                _audio.pause();
+                _audio.src = ''; _audio.load();
+                _audio = null;
+            }
+            _playing = null;
+            if (_saveStateInterval) { clearInterval(_saveStateInterval); _saveStateInterval = null; }
+            clearTimeout(_radioRetryTimer); _radioRetryTimer = null;
+            if (_preloadAudio) { _preloadAudio.src = ''; _preloadAudio = null; }
+            if (_castSession) { try { _castSession.endSession(true); } catch(e) {} }
+            _isCasting = false; _castSession = null;
+            if (_wakeLock) { _wakeLock.release(); _wakeLock = null; }
+            if (_lockOverlay) { _lockOverlay.remove(); _lockOverlay = null; }
+            if ('mediaSession' in navigator) {
+                navigator.mediaSession.metadata = null;
+                navigator.mediaSession.playbackState = 'none';
+            }
+            if (_onPopStateRef) window.removeEventListener('popstate', _onPopStateRef, true);
+            if (_onKeyDownRef) window.removeEventListener('keydown', _onKeyDownRef);
+            if (_onVisWakeLockRef) document.removeEventListener('visibilitychange', _onVisWakeLockRef);
+            if (_onVisFocusLossRef) document.removeEventListener('visibilitychange', _onVisFocusLossRef);
             if (_onDeviceChange && navigator.mediaDevices) {
                 navigator.mediaDevices.removeEventListener('devicechange', _onDeviceChange);
             }
