@@ -2092,7 +2092,11 @@ def music_stream():
 
     audio_url, ct_hint = _extract_audio_url(url)
     if not audio_url:
-        return jsonify({'error': 'Nie udało się wyodrębnić audio'}), 502
+        log.warning('Failed to extract audio URL for: %s', url)
+        return jsonify({
+            'error': 'Nie udało się wyodrębnić audio. Sprawdź czy utwór istnieje i jest dostępny.',
+            'url': url
+        }), 404
 
     # HLS live stream — redirect directly to m3u8 so browser can use hls.js or native HLS
     if ct_hint == 'application/x-mpegURL' or 'm3u8' in audio_url or 'manifest' in audio_url:
@@ -2111,17 +2115,24 @@ def music_stream():
 
     try:
         resp = _open_audio(audio_url)
-    except Exception:
+    except Exception as e:
         # URL may have expired — clear cache and re-extract
+        log.warning('Failed to open audio stream for %s: %s', url, str(e))
         _YTDLP_URL_CACHE.pop(url, None)
         audio_url, ct_hint = _extract_audio_url(url)
         if not audio_url:
-            return jsonify({'error': 'Ekstrakcja nie powiodła się'}), 502
+            return jsonify({
+                'error': 'Ekstrakcja nie powiodła się po ponownej próbie. Sprawdź czy utwór istnieje i jest dostępny.',
+                'url': url
+            }), 404
         try:
             resp = _open_audio(audio_url)
-        except Exception as e:
-            log.warning('Music stream error for %s: %s', url, e)
-            return jsonify({'error': 'Strumień niedostępny'}), 502
+        except Exception as e2:
+            log.warning('Music stream error for %s after retry: %s', url, str(e2))
+            return jsonify({
+                'error': 'Strumień niedostępny. Sprawdź połączenie z internetem lub spróbuj później.',
+                'url': url
+            }), 503
 
     ct = resp.headers.get('Content-Type', ct_hint or 'audio/mp4')
     cl = resp.headers.get('Content-Length')
