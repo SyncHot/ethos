@@ -6012,9 +6012,9 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     }
 
     function _showNowPlaying() {
-        if (!_playing) return;
+        if (!_playing || _npMinimizing) return;
 
-        // If overlay exists and is just minimized (same track), re-expand it — no DOM rebuild
+        // If overlay exists and is minimized, re-expand it — no DOM rebuild
         if (_npOverlay && _npOverlay.classList.contains('rm-np-minimized')) {
             _npOverlay.classList.remove('rm-np-minimized');
             _npOverlay.style.transform = '';
@@ -6025,6 +6025,9 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             ], { duration: 380, easing: 'cubic-bezier(0.32,0.72,0,1)' });
             if (!history.state?.rmNpOpen) history.pushState({ rmNpOpen: true }, '');
             localStorage.setItem('rm_np_open', '1');
+            // Always sync content — _updateNowPlayingContent may have been skipped if
+            // the overlay was destroyed/recreated or _npOverlay was null during playAudio.
+            _updateNowPlayingContent(_playing);
             const visCvs = _npOverlay.querySelector('#rm-np-vis');
             if (visCvs && _audio) _startVisualizer(visCvs);
             _npUpdateLoop();
@@ -6039,7 +6042,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
         _hideNowPlaying();
         let item = _playing;
-        const isMusic = item.type === 'music';
+        const isMusic = item.type === 'music' || item.type === 'local';
         const isPodcast = item.type === 'podcast';
         const hasSeek = isMusic || isPodcast;
         const bgUrl = item.image || item.favicon || '';
