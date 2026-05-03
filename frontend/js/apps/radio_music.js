@@ -801,7 +801,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-np-q-item-meta{font-size:11px;color:var(--rm-text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
 
 /* ── Similar artists panel (NP) ── */
-'.rm-np-similar{width:100%;padding:12px 0;-webkit-overflow-scrolling:touch}',
+'.rm-np-similar{display:none;width:100%;padding:12px 0;-webkit-overflow-scrolling:touch}',
+'.rm-np-similar.rm-np-similar-visible{display:block}',
 '.rm-np-similar-header{display:flex;align-items:center;gap:8px;padding:0 8px 10px;font-size:13px;color:rgba(255,255,255,.5);font-weight:600}',
 '.rm-np-similar-scroll{display:flex;gap:12px;overflow-x:auto;padding:0 8px 8px;-webkit-overflow-scrolling:touch;scrollbar-width:none}',
 '.rm-np-similar-scroll::-webkit-scrollbar{display:none}',
@@ -5964,12 +5965,16 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             if (cur)  cur.textContent = '0:00';
             if (dur)  dur.textContent = '0:00';
 
-            // Step 7: clear stale lyrics from previous track
+            // Step 7: clear stale lyrics and similar from previous track
             _stopLyricsSync();
             const lyrPanel = _npOverlay.querySelector('#rm-np-lyrics-panel');
             if (lyrPanel) { lyrPanel.innerHTML = ''; lyrPanel.classList.remove('rm-lyrics-visible'); }
             const lyrBtn = _npOverlay.querySelector('#rm-np-lyrics');
             if (lyrBtn) lyrBtn.classList.remove('rm-lyrics-active');
+            const simPanel = _npOverlay.querySelector('#rm-np-similar-panel');
+            if (simPanel) { simPanel.innerHTML = ''; simPanel.classList.remove('rm-np-similar-visible'); }
+            const simBtn = _npOverlay.querySelector('#rm-np-similar-btn');
+            if (simBtn) simBtn.classList.remove('rm-lyrics-active');
 
             // Step 8: sync NP favorite and download buttons to new track
             if (_npSyncFav) _npSyncFav();
@@ -6047,6 +6052,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                     <button class="rm-speed-btn" id="rm-np-speed">${_playbackRate === 1 ? '1x' : _playbackRate + 'x'}</button>
                     <button class="rm-np-action" id="rm-np-queue-btn"><i class="fas fa-list-ol"></i> ${t('Kolejka')}</button>
                     <button class="rm-np-action" id="rm-np-lyrics"><i class="fas fa-align-left"></i> ${t('Tekst')}</button>
+                    <button class="rm-np-action" id="rm-np-similar-btn"><i class="fas fa-users"></i> ${t('Podobni')}</button>
                     <button class="rm-np-action" id="rm-np-addpl"><i class="fas fa-plus"></i> ${t('Playlista')}</button>
                     <button class="rm-np-action rm-np-cast-action" id="rm-np-cast"><i class="fab fa-chromecast"></i> Chromecast</button>
                     <button class="rm-np-action" id="rm-np-fav"><i class="fas fa-heart"></i> ${t('Ulubione')}</button>
@@ -6363,6 +6369,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         // Similar artists panel (lazy-loaded from Deezer)
         const simBtn = ov.querySelector('#rm-np-similar-btn');
         const simPanel = ov.querySelector('#rm-np-similar-panel');
+        if (simBtn) simBtn.onclick = () => { _simLoaded = false; _loadSimilarArtists(); };
         let _simLoaded = false;
         let _simArtist = '';
         let _simArtists = []; // cached list for queuing
@@ -6370,15 +6377,21 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             const artist = (item.meta || item.artist || '').trim();
             if (!artist) {
                 simPanel.innerHTML = '';
+                simPanel.classList.remove('rm-np-similar-visible');
+                if (simBtn) simBtn.classList.remove('rm-lyrics-active');
                 return;
             }
             if (_simLoaded && _simArtist === artist) return;
             _simLoaded = true;
             _simArtist = artist;
+            if (simBtn) simBtn.classList.add('rm-lyrics-active');
+            simPanel.classList.add('rm-np-similar-visible');
             simPanel.innerHTML = '<div class="rm-np-similar-loading"><i class="fas fa-spinner fa-spin"></i> ' + t('Szukam podobnych...') + '</div>';
             api('/radio-music/similar-artists?artist=' + encodeURIComponent(artist)).then(data => {
                 if (!data || !data.artists || !data.artists.length) {
                     simPanel.innerHTML = '';
+                    simPanel.classList.remove('rm-np-similar-visible');
+                    if (simBtn) simBtn.classList.remove('rm-lyrics-active');
                     return;
                 }
                 _simArtists = data.artists;
@@ -6440,8 +6453,9 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 } catch (_) {}
             }
         }
-        // Auto-load on open (for music/podcast tracks that have an artist)
-        if (item.meta || item.artist) _loadSimilarArtists();
+        // Auto-load on open (for music/podcast/local tracks that have an artist — skip radio tags)
+        const _simIsRadio = item.type === 'radio' || (!item.type && !item.artist && (item.tags || item.stationuuid));
+        if ((item.meta || item.artist) && !_simIsRadio) _loadSimilarArtists();
         // Expose for track-change refresh
         _npReloadSimilar = () => {
             _simLoaded = false;
