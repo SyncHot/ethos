@@ -6,6 +6,7 @@ Migrated from standalone resources app.
 
 import os
 import time
+import logging
 from flask import Blueprint, jsonify, request
 
 from utils import require_tools, check_tool
@@ -22,6 +23,9 @@ from blueprints.resources_db import (
     save_usb_data, save_docker_data, get_history, cleanup_old_data
 )
 
+# Setup logging for the blueprint
+logger = logging.getLogger(__name__)
+
 resources_bp = Blueprint('resources', __name__, url_prefix='/api/resources')
 
 COLLECT_INTERVAL = int(os.environ.get('COLLECT_INTERVAL', 3))            # fast: CPU, RAM, network (WebSocket only)
@@ -32,10 +36,8 @@ CLEANUP_INTERVAL = int(os.environ.get('CLEANUP_INTERVAL', 3600))
 DATA_RETENTION_DAYS = int(os.environ.get('DATA_RETENTION_DAYS', 7))
 
 # ---- In-memory cache fed by background collector ----
-# The collector runs every 3-15s and stores latest data here.
-# REST endpoints serve this cached snapshot instead of re-computing.
 _snapshot = {}
-_snapshot_ts = 0  # time.time() of last update
+_snapshot_ts = 0  
 
 
 def _cached(key, fallback_fn, *args):
@@ -45,7 +47,7 @@ def _cached(key, fallback_fn, *args):
     return fallback_fn(*args)
 
 
-# ---- REST API (served from collector cache when available) ----
+# ---- REST API ----
 
 @resources_bp.route('/system')
 def api_system():
@@ -135,7 +137,7 @@ def api_docker_action():
     return jsonify(result)
 
 
-@resources_bp.route('/history/<table>')
+@resources_bp.route('/history/<table')
 def api_history(table):
     allowed = ['cpu_history', 'ram_history', 'gpu_history', 'disk_history', 'network_history', 'process_history', 'docker_history']
     if table not in allowed:
@@ -171,19 +173,12 @@ def api_all():
 # ---- Background collector (called from main app) ----
 
 def resources_background_collector(socketio):
-    """Collect and broadcast data periodically. Called as a socketio background task.
-
-    Uses tiered intervals:
-    - Fast (every COLLECT_INTERVAL=3s): CPU, RAM, network — cheap psutil calls; WebSocket emit only
-    - Medium (every COLLECT_INTERVAL_SLOW=30s): disks, GPU, processes, USB
-    - Very slow (every COLLECT_INTERVAL_VSLOW=60s): docker stats, SMART — expensive subprocess calls
-    - DB writes happen every SAVE_TO_DB_INTERVAL=30s (independent of emit cadence)
-    """
+    """Collect and broadcast data periodically. Called as a socketio background task."""
     global _snapshot, _snapshot_ts
     last_cleanup = time.time()
-    last_slow = 0     # force medium collection on first tick
-    last_vslow = 0    # force very-slow collection on first tick
-    last_db_save = 0  # force DB save on first slow tick
+    last_slow = 0     
+    last_vslow = 0    
+    last_db_save = 0  
 
     # Cached slow-changing data
     _disks = []
@@ -200,43 +195,47 @@ def resources_background_collector(socketio):
             do_vslow = (now - last_vslow) >= COLLECT_INTERVAL_VSLOW
             do_db = (now - last_db_save) >= SAVE_TO_DB_INTERVAL
 
-            # Fast — always collected (non-blocking, ~0ms each)
+            # Fast — always collected
             cpu = get_cpu_info()
             ram = get_ram_info()
             network = get_network_info()
 
-            # Medium — disks, GPU, processes, USB (subprocess calls but not docker/smart)
+            # Medium collection
             if do_slow:
                 last_slow = now
-                _gpu = get_gpu_info()
-                _disks = get_disk_info()
-                _processes = get_processes('cpu', 20)
-                _usb = get_usb_devices()
+                try:
+                    _gpu = get_gpu_info()
+                    _disks = get_disk_info()
+                    _processes = get_processes('cpu', 20)
+                    _usb = get_usb_devices()
+                except Exception as e:
+                    logger.error(f"Medium collection error: {e}")
 
-            # Very slow — docker stats and SMART (expensive, can block several seconds)
+            # Very slow collection
             if do_vslow:
                 last_vslow = now
-                _smart = get_smart_info()
-                _docker = get_docker_containers()
+                try:
+                    _smart = get_smart_info()
+                    _docker = get_docker_containers()
+                except Exception as e:
+                    logger.error(f"Very slow collection error: {e}")
 
-            # Save to DB at reduced cadence to keep DB small
+            # Save to DB
             if do_db:
                 last_db_save = now
                 try:
                     save_cpu_data(cpu)
                     save_ram_data(ram)
                     save_network_data(network)
-                    if _gpu:
-                        save_gpu_data(_gpu)
+                    if _gpu: save_gpu_data(_gpu)
                     save_disk_data(_disks)
                     save_process_data(_processes)
                     save_usb_data(_usb)
-                    if _docker:
-                        save_docker_data(_docker)
+                    if _docker: save_docker_data(_docker)
                 except Exception as e:
-                    print(f"Resources DB save error: {e}")
+                    logger.error(f"Resources DB save error: {e}")
 
-            # Broadcast via WebSocket every tick (always include latest cached slow data)
+            # Prepare broadcast data
             data = {
                 'cpu': cpu,
                 'ram': ram,
@@ -249,18 +248,22 @@ def resources_background_collector(socketio):
                 'docker': _docker,
                 'timestamp': now
             }
-            # Update module-level snapshot so REST endpoints serve cached data
+            
+            # Atomic update of snapshot
             _snapshot = data
             _snapshot_ts = now
 
             socketio.emit('resources_update', data)
 
-            # Cleanup old data and VACUUM to reclaim space
+            # Cleanup
             if now - last_cleanup > CLEANUP_INTERVAL:
-                cleanup_old_data(DATA_RETENTION_DAYS)
-                last_cleanup = now
+                try:
+                    cleanup_old_data(DATA_RETENTION_DAYS)
+                    last_cleanup = now
+                except Exception as e:
+                    logger.error(f"Cleanup error: {e}")
 
         except Exception as e:
-            print(f"Resources collector error: {e}")
+            logger.critical(f"Resources collector loop failure: {e}", exc_info=True)
 
         socketio.sleep(COLLECT_INTERVAL)
