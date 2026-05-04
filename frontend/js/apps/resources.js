@@ -17,6 +17,11 @@ AppRegistry['resource-monitor'] = function (appDef) {
     });
 };
 
+// --- NEW: Helper function to generate key-value rows ---
+function infoRow(icon, label, value) {
+    return `<div class="res-kv-row"><span class="res-label">${label}:</span><span class="res-val">${value || '—'}</span></div>`;
+}
+
 function renderResourcesApp(body) {
     // Reboot helper — replaces inline fetch() in onclick attributes
     window._resReboot = function(btn) {
@@ -359,7 +364,7 @@ function renderResourcesApp(body) {
                 <div class="res-sys-info">
                     ${infoRow('fa-industry', t('Producent'), board.manufacturer)}
                     ${infoRow('fa-tag', t('Model'), board.product_name)}
-                    ${infoRow('fa-code-branch', t('Wersja'), board.version)}
+                    ${infoRow('fa-code-branch', T('Wersja'), board.version)}
                 </div>
             </div>
         </div>
