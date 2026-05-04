@@ -98,6 +98,91 @@ function renderResourcesApp(body) {
         return `<div class="res-bar"><div class="res-bar-fill" style="width:${p}%;background:${color || 'var(--accent)'}"></div></div>`;
     };
 
+    // --- NEW: Live Network Graph Renderer ---
+    function renderNetworkGraph(el, history) {
+        const canvas = document.createElement('canvas');
+        canvas.height = 120;
+        canvas.width = el.offsetWidth - 40; // Leave padding
+        canvas.style.border = '1px solid rgba(255,255,255,0.1)';
+        canvas.style.borderRadius = '6px';
+        canvas.style.background = 'rgba(0,0,0,0.1)';
+        el.appendChild(canvas);
+
+        const ctx = canvas.getContext('2d');
+        const width = canvas.width;
+        const height = canvas.height;
+
+        function drawGraph() {
+            ctx.clearRect(0, 0, width, height);
+            if (history.length < 2) return;
+
+            // Colors
+            const downColor = '#3b82f6';
+            const upColor = '#ef4444';
+
+            // Draw grid lines
+            ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+            ctx.lineWidth = 1;
+            for (let i = 0; i <= 5; i++) {
+                const y = height - (i * height / 5);
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(width, y);
+                ctx.stroke();
+            }
+
+            // Draw down/up lines
+            const step = width / (history.length - 1);
+            ctx.lineWidth = 2;
+
+            // Download (down)
+            ctx.strokeStyle = downColor;
+            ctx.beginPath();
+            history.forEach((point, i) => {
+                const x = i * step;
+                const y = height - ((point.down || 0) / 1000000) * (height * 0.8); // Scale to max 1 MB/s
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            });
+            ctx.stroke();
+
+            // Upload (up)
+            ctx.strokeStyle = upColor;
+            ctx.beginPath();
+            history.forEach((point, i) => {
+                const x = i * step;
+                const y = height - ((point.up || 0) / 1000000) * (height * 0.8); // Scale to max 1 MB/s
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            });
+            ctx.stroke();
+
+            // Labels
+            ctx.fillStyle = 'rgba(255,255,255,0.7)';
+            ctx.font = '10px sans-serif';
+            ctx.fillText('↓', 8, height - 4);
+            ctx.fillText('↑', 8, 16);
+
+            // Max value label
+            const maxVal = Math.max(...history.map(p => p.down || 0), ...history.map(p => p.up || 0));
+            if (maxVal > 0) {
+                const maxLabel = fmtSpeed(maxVal).replace(' MB/s', 'MB/s');
+                ctx.fillText(maxLabel, width - 60, 16);
+            }
+        }
+
+        // Initial draw
+        drawGraph();
+
+        // Update on resize
+        window.addEventListener('resize', () => {
+            canvas.width = el.offsetWidth - 40;
+            drawGraph();
+        });
+
+        return { update: drawGraph };
+    }
+
     function updateAll(data) {
         lastData = data;
         const conn = $('#res-conn');
@@ -253,12 +338,9 @@ function renderResourcesApp(body) {
         const board = sys.baseboard || {};
         const caches = cpu.caches || {};
         const flags = cpu.notable_flags || [];
-        const dimms = mem.dimms || [];
-
-        function infoRow(icon, label, val) {
-            if (!val || val === 'Not Specified' || val === 'To Be Filled By O.E.M.' || val === 'Default string') return '';
-            return `<div class="res-sys-row"><i class="fas ${icon} res-sys-icon"></i><span class="res-sys-label">${label}</span><span class="res-sys-val">${val}</span></div>`;
-        }
+        const arch = hw.architecture || '';
+        const virt = hw.virtualization || '';
+        const cacheStr = Object.entries(caches).map(([k,v]) => `${k}: ${v}`).join(' · ');
 
         el.innerHTML = `
         <h3><i class="fas fa-server"></i> ${t('Informacje o systemie')}</h3>
@@ -559,6 +641,7 @@ function renderResourcesApp(body) {
     function renderNetwork(el, data) {
         const net = data.network || {};
         const ifaces = net.interfaces || [];
+        
         el.innerHTML = `
         <h3><i class="fas fa-network-wired"></i> ${t('Sieć')}</h3>
         <div class="res-grid-2">
@@ -573,6 +656,15 @@ function renderResourcesApp(body) {
                 <span class="res-text-muted">${t('Łącznie:')} ${fmt(net.bytes_sent)}</span>
             </div>
         </div>
+
+        <!-- Live Network Graph -->
+        <div class="res-card res-mt-md">
+            <div class="res-card-hdr"><i class="fas fa-chart-line"></i> ${t('Przepływ sieciowy (60s)')}</div>
+            <div style="position:relative; padding:15px; margin-top:10px;">
+                <div id="net-graph-container" style="width:100%; height:120px;"></div>
+            </div>
+        </div>
+
         ${ifaces.length ? `
         <div class="res-card res-mt-md">
             <div class="res-card-hdr">Interfejsy</div>
@@ -583,6 +675,13 @@ function renderResourcesApp(body) {
                 `).join('')}</tbody>
             </table>
         </div>` : ''}`;
+
+        // Initialize or update network graph
+        const graphContainer = el.querySelector('#net-graph-container');
+        if (graphContainer) {
+            graphContainer.innerHTML = '';
+            renderNetworkGraph(graphContainer, netHistory);
+        }
     }
 
     function renderProcesses(el, data) {
