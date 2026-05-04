@@ -12,6 +12,17 @@ AppRegistry['gallery'] = function (appDef, launchOpts) {
     width: 1280,
     height: 820,
     onRender: body => renderGallery(body, launchOpts),
+    onClose: () => {
+      // Clean up socket listeners to prevent leaks
+      if (NAS.socket) {
+        NAS.socket.off('photos_ai_progress', _galOnAiProgress);
+        NAS.socket.off('photos_ai_done', _galOnAiDone);
+      }
+      // Stop slideshow if running
+      _galStopSlideshow();
+      // Clear any active timers
+      if (GAL._uploadAbort) { GAL._uploadAbort.abort(); GAL._uploadAbort = null; }
+    },
   });
 };
 
@@ -67,6 +78,7 @@ async function renderGallery(body, launchOpts) {
 
   body.innerHTML = `
     <div class="gal-app">
+      <button class="gal-sidebar-toggle" title="${t('Menu')}" aria-label="${t('Pokaż menu')}"><i class="fa-solid fa-bars"></i></button>
       <div class="gal-sidebar">
         <div class="gal-sidebar-section">
           <div class="gal-sidebar-title">${t('Widoki')}</div>
@@ -177,6 +189,22 @@ async function renderGallery(body, launchOpts) {
   `;
 
   GAL.gridEl = body.querySelector('.gal-grid');
+
+  // Sidebar hamburger toggle for mobile
+  const sidebarToggle = body.querySelector('.gal-sidebar-toggle');
+  const sidebar = body.querySelector('.gal-sidebar');
+  sidebarToggle.addEventListener('click', () => {
+    sidebar.classList.toggle('gal-sidebar-open');
+    sidebarToggle.querySelector('i').className = sidebar.classList.contains('gal-sidebar-open')
+      ? 'fa-solid fa-times' : 'fa-solid fa-bars';
+  });
+  // Close sidebar when clicking content area on mobile
+  body.querySelector('.gal-main').addEventListener('click', () => {
+    if (sidebar.classList.contains('gal-sidebar-open')) {
+      sidebar.classList.remove('gal-sidebar-open');
+      sidebarToggle.querySelector('i').className = 'fa-solid fa-bars';
+    }
+  });
 
   // Wire events
   body.querySelectorAll('.gal-nav-item').forEach(el => {
@@ -693,15 +721,22 @@ async function _galDeleteCurrentLightbox() {
     });
     if (r.error) { toast(t('Błąd usuwania'), 'error'); return false; }
     toast(t('Usunięto: ') + item.name, 'info');
-    // Remove from items arrays and update grid
-    const arrIdx = GAL.items.indexOf(item);
-    if (arrIdx !== -1) {
-        GAL.items.splice(arrIdx, 1);
-        const gridCards = GAL.gridEl?.querySelectorAll('.gal-card');
-        if (gridCards && gridCards[arrIdx]) gridCards[arrIdx].remove();
-    }
+    // Remove from lightbox array first (before GAL.items if they share reference)
     const lbIdx = GAL.lightboxItems.indexOf(item);
     if (lbIdx !== -1) GAL.lightboxItems.splice(lbIdx, 1);
+    // Remove from grid items (may be a different array)
+    if (GAL.lightboxItems !== GAL.items) {
+        const arrIdx = GAL.items.indexOf(item);
+        if (arrIdx !== -1) {
+            GAL.items.splice(arrIdx, 1);
+            const gridCards = GAL.gridEl?.querySelectorAll('.gal-card');
+            if (gridCards && gridCards[arrIdx]) gridCards[arrIdx].remove();
+        }
+    } else {
+        // Same array — already removed above, just update DOM
+        const gridCards = GAL.gridEl?.querySelectorAll('.gal-card');
+        if (gridCards && gridCards[lbIdx]) gridCards[lbIdx].remove();
+    }
     GAL.total--;
     _galUpdateCount();
     if (!GAL.lightboxItems.length) { _galCloseLightbox(); _galReload(); return true; }
@@ -728,7 +763,9 @@ async function _galUpdateFavBtn() {
 async function _galLoadPeople() {
   const container = GAL.root.querySelector('.gal-people-view');
   container.innerHTML = '<div class="gal-spinner" style="margin:60px auto"></div>';
-  const d = await api('/photos-ai/people');
+  let d;
+  try { d = await api('/photos-ai/people'); }
+  catch(e) { container.innerHTML = `<div class="gal-empty" style="display:flex"><i class="fa-solid fa-brain"></i><p>${_esc(t('Błąd sieci'))}</p></div>`; return; }
   if (d.error) {
     container.innerHTML = `<div class="gal-empty" style="display:flex">
       <i class="fa-solid fa-brain"></i>
@@ -781,10 +818,13 @@ async function _galLoadPeople() {
 async function _galPersonDetail(pid, container) {
   container.innerHTML = '<div class="gal-spinner" style="margin:60px auto"></div>';
 
-  const [pData, photosData] = await Promise.all([
-    api('/photos-ai/people'),
-    api(`/photos-ai/people/${pid}/photos?limit=200`),
-  ]);
+  let pData, photosData;
+  try {
+    [pData, photosData] = await Promise.all([
+      api('/photos-ai/people'),
+      api(`/photos-ai/people/${pid}/photos?limit=200`),
+    ]);
+  } catch(e) { container.innerHTML = `<div class="gal-empty" style="display:flex"><i class="fa-solid fa-user"></i><p>${_esc(t('Błąd sieci'))}</p></div>`; return; }
   const person = (pData.people || []).find(p => p.id === pid);
   if (!person) { _galLoadPeople(); return; }
   const name = person.name || t('Osoba') + ' ' + pid;
@@ -878,7 +918,8 @@ async function _galPersonDetail(pid, container) {
         selectMode = true;
         selectBtn.classList.add('btn-primary');
       }
-      const fid = parseInt(el.dataset.faceId);
+      const raw = el.dataset.faceId;
+      const fid = /^\d+$/.test(raw) ? parseInt(raw) : raw;
       if (selectedFaces.has(fid)) {
         selectedFaces.delete(fid);
         el.classList.remove('selected');
@@ -1062,7 +1103,9 @@ function _galOnAiDone(data) {
 async function _galLoadTags() {
   const container = GAL.root.querySelector('.gal-tags-view');
   container.innerHTML = '<div class="gal-spinner" style="margin:60px auto"></div>';
-  const d = await api('/photos-ai/tags');
+  let d;
+  try { d = await api('/photos-ai/tags'); }
+  catch(e) { container.innerHTML = `<div class="gal-empty" style="display:flex"><i class="fa-solid fa-tags"></i><p>${_esc(t('Błąd sieci'))}</p></div>`; return; }
   if (d.error || !d.tags || !d.tags.length) {
     container.innerHTML = `<div class="gal-empty" style="display:flex">
       <i class="fa-solid fa-tags"></i><p>${t('Brak tagów. Uruchom skan AI.')}</p></div>`;
@@ -1092,7 +1135,9 @@ async function _galLoadTags() {
 async function _galLoadSmartAlbums() {
   const container = GAL.root.querySelector('.gal-smart-view');
   container.innerHTML = '<div class="gal-spinner" style="margin:60px auto"></div>';
-  const d = await api('/photos-ai/smart-albums');
+  let d;
+  try { d = await api('/photos-ai/smart-albums'); }
+  catch(e) { container.innerHTML = `<div class="gal-empty" style="display:flex"><i class="fa-solid fa-wand-magic-sparkles"></i><p>${_esc(t('Błąd sieci'))}</p></div>`; return; }
   if (d.error || !d.albums || !d.albums.length) {
     container.innerHTML = `<div class="gal-empty" style="display:flex">
       <i class="fa-solid fa-wand-magic-sparkles"></i><p>${t('Brak albumów AI. Uruchom skan.')}</p></div>`;
@@ -1103,7 +1148,7 @@ async function _galLoadSmartAlbums() {
     const ico = a.type === 'person' && a.cover_face_id
       ? `<img src="/api/photos-ai/face-thumb/${a.cover_face_id}" style="width:100%;height:100%;object-fit:cover">`
       : `<i class="fa-solid ${icons[a.type] || 'fa-images'}"></i>`;
-    return `<div class="gal-person-card gal-smart-card" data-type="${a.type}" data-id="${_esc(a.id)}">
+    return `<div class="gal-person-card gal-smart-card" data-type="${_esc(a.type)}" data-id="${_esc(a.id)}">
       <div class="gal-person-avatar">${ico}</div>
       <div class="gal-person-name">${_esc(a.name)}</div>
       <div class="gal-person-count">${a.count} ${t('zdjęć')}</div>
@@ -1113,7 +1158,7 @@ async function _galLoadSmartAlbums() {
   container.querySelectorAll('.gal-smart-card').forEach(card => {
     card.addEventListener('click', async () => {
       container.innerHTML = '<div class="gal-spinner" style="margin:60px auto"></div>';
-      const r = await api(`/photos-ai/album-photos?type=${card.dataset.type}&id=${encodeURIComponent(card.dataset.id)}`);
+      const r = await api(`/photos-ai/album-photos?type=${encodeURIComponent(card.dataset.type)}&id=${encodeURIComponent(card.dataset.id)}`);
       container.innerHTML = `<button class="btn btn-sm" style="margin-bottom:10px" onclick="this.closest('.gal-smart-view') && _galLoadSmartAlbums()">
         <i class="fa-solid fa-arrow-left"></i> ${t('Albumy AI')}</button><div class="gal-ai-results"></div>`;
       _galRenderAiPhotoGrid(container.querySelector('.gal-ai-results'), r.items || [], r.total || 0);
@@ -1141,7 +1186,9 @@ function _galLoadSearchAi() {
       const results = container.querySelector('.gal-ai-search-results');
       if (!q) { results.innerHTML = `<p style="color:var(--text-secondary);margin-top:20px">${t('Wpisz frazę aby wyszukać po tagach AI, osobach, aparacie…')}</p>`; return; }
       results.innerHTML = '<div class="gal-spinner" style="margin:30px auto"></div>';
-      const d = await api('/photos-ai/search?q=' + encodeURIComponent(q));
+      let d;
+      try { d = await api('/photos-ai/search?q=' + encodeURIComponent(q)); }
+      catch(e) { results.innerHTML = `<p style="color:var(--text-secondary)">${_esc(t('Błąd sieci'))}</p>`; return; }
       if (!d.items || !d.items.length) { results.innerHTML = `<p style="color:var(--text-secondary)">${t('Brak wyników.')}</p>`; return; }
       _galRenderAiPhotoGrid(results, d.items, d.total || d.items.length);
     }, 400);
@@ -1154,7 +1201,9 @@ function _galLoadSearchAi() {
 async function _galLoadMerge() {
   const container = GAL.root.querySelector('.gal-merge-view');
   container.innerHTML = '<div class="gal-spinner" style="margin:60px auto"></div>';
-  const d = await api('/photos-ai/merge-suggestions');
+  let d;
+  try { d = await api('/photos-ai/merge-suggestions'); }
+  catch(e) { container.innerHTML = `<div class="gal-empty" style="display:flex"><i class="fa-solid fa-code-merge"></i><p>${_esc(t('Błąd sieci'))}</p></div>`; return; }
   const suggestions = d.suggestions || [];
   if (!suggestions.length) {
     container.innerHTML = `<div class="gal-empty" style="display:flex">
@@ -1223,7 +1272,7 @@ function _galRenderAiPhotoGrid(container, items, total) {
 /* ━━━━  LIGHTBOX  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 function _galOpenLightbox(idx) {
   GAL.lightboxIdx = idx;
-  GAL.lightboxItems = GAL.items;
+  GAL.lightboxItems = [...GAL.items];
   _galRenderLightbox();
 }
 
@@ -1235,6 +1284,9 @@ function _galRenderLightbox() {
   const lb = document.createElement('div');
   lb.className = 'gal-lightbox';
   lb.id = 'gal-lightbox';
+  lb.setAttribute('role', 'dialog');
+  lb.setAttribute('aria-modal', 'true');
+  lb.setAttribute('aria-label', item.name || t('Podgląd zdjęcia'));
 
   const isVideo = item.type === 'video';
   const fullUrl = `/api/files/download?path=${encodeURIComponent(item.path)}`;
@@ -1415,6 +1467,20 @@ function _galRenderLightbox() {
     }
   };
   document.addEventListener('keydown', lb._keyHandler);
+
+  // Focus trap: keep Tab within the lightbox
+  lb.addEventListener('keydown', e => {
+    if (e.key !== 'Tab') return;
+    const focusable = lb.querySelectorAll('button:not([disabled]), [tabindex]:not([tabindex="-1"])');
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
+  // Focus the lightbox for keyboard nav
+  lb.setAttribute('tabindex', '-1');
+  lb.focus();
 
   // Swipe support (horizontal=nav, vertical: up=delete, down=favorite)
   let startX = 0, startY = 0;
@@ -1603,14 +1669,15 @@ async function _galToggleFaces(item) {
 
     // Wire "Who is this?" buttons
     content.querySelectorAll('.gal-face-identify-btn').forEach(btn => {
-      btn.addEventListener('click', () => _galIdentifyFace(parseInt(btn.dataset.faceId), item));
+      const rawFid = btn.dataset.faceId;
+      btn.addEventListener('click', () => _galIdentifyFace(/^\d+$/.test(rawFid) ? parseInt(rawFid) : rawFid, item));
     });
 
     // Wire face item hover → highlight box
     content.querySelectorAll('.gal-face-item').forEach(el => {
       el.addEventListener('mouseenter', () => {
         const fid = el.dataset.faceId;
-        const box = document.querySelector('.gal-face-box[data-face-id="' + fid + '"]');
+        const box = document.querySelector(`.gal-face-box[data-face-id="${CSS.escape(fid)}"]`);
         if (box) box.classList.add('gal-face-box-active');
       });
       el.addEventListener('mouseleave', () => {
@@ -2044,6 +2111,7 @@ function _galShowUploadModal(files) {
         <div class="gal-upload-modal-footer">
           <span class="gal-upload-summary">${allDone ? t('Przesłano') + ' ' + done + '/' + total : done + '/' + total + ' ' + t('plików')}</span>
           <div style="display:flex;gap:8px">
+            ${uploading ? `<button class="gal-btn gal-upload-cancel-btn" style="background:var(--danger);color:#fff;border-color:var(--danger)"><i class="fa-solid fa-ban"></i> ${t('Anuluj')}</button>` : ''}
             <button class="gal-btn gal-upload-add-btn" ${uploading || allDone ? 'disabled' : ''}><i class="fa-solid fa-plus"></i> ${t('Dodaj więcej')}</button>
             <button class="gal-btn gal-upload-start-btn" style="background:var(--gal-accent);color:#fff;border-color:var(--gal-accent)" ${uploading || allDone ? 'disabled' : ''}>${uploading ? '<i class="fa-solid fa-spinner fa-spin"></i> ' + t('Wysyłanie…') : '<i class="fa-solid fa-paper-plane"></i> ' + t('Wyślij')}</button>
           </div>
@@ -2068,6 +2136,14 @@ function _galShowUploadModal(files) {
 
     const startBtn = overlay.querySelector('.gal-upload-start-btn');
     if (startBtn && !startBtn.disabled) startBtn.onclick = () => _galRunUploadQueue(selectedFolder, useDateSubfolders, render);
+
+    const cancelBtn = overlay.querySelector('.gal-upload-cancel-btn');
+    if (cancelBtn) cancelBtn.onclick = () => {
+      if (GAL._uploadAbort) { GAL._uploadAbort.abort(); GAL._uploadAbort = null; }
+      _galUploading = false;
+      _galSetSyncIndicator(false);
+      render();
+    };
   };
 
   // init queue from files
@@ -2095,6 +2171,7 @@ async function _galRunUploadQueue(folder, useDateSubfolders, rerenderFn) {
         fd.append('date_subfolders', useDateSubfolders ? '1' : '0');
 
         const xhr = new XMLHttpRequest();
+        GAL._uploadAbort = xhr;
         xhr.open('POST', '/api/gallery/upload');
         xhr.setRequestHeader('Authorization', 'Bearer ' + (NAS.token || ''));
         xhr.setRequestHeader('X-CSRF-Token', NAS.csrfToken || '');
@@ -2106,6 +2183,7 @@ async function _galRunUploadQueue(folder, useDateSubfolders, rerenderFn) {
           }
         };
         xhr.onload = () => {
+          GAL._uploadAbort = null;
           if (xhr.status >= 200 && xhr.status < 300) {
             item.progress = 100;
             item.status = 'done';
@@ -2116,7 +2194,8 @@ async function _galRunUploadQueue(folder, useDateSubfolders, rerenderFn) {
           }
           rerenderFn();
         };
-        xhr.onerror = () => { item.status = 'error'; rerenderFn(); reject(new Error('Network error')); };
+        xhr.onerror = () => { GAL._uploadAbort = null; item.status = 'error'; rerenderFn(); reject(new Error('Network error')); };
+        xhr.onabort = () => { GAL._uploadAbort = null; item.status = 'error'; rerenderFn(); };
         xhr.send(fd);
       });
     } catch (e) {
@@ -2354,21 +2433,59 @@ async function _galLoadLeaflet() {
   });
 }
 
+async function _galLoadMarkerCluster() {
+  if (window.L && L.markerClusterGroup) return true;
+  // Load markercluster CSS + JS from CDN
+  const mcCss = document.createElement('link');
+  mcCss.rel = 'stylesheet';
+  mcCss.href = 'https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css';
+  document.head.appendChild(mcCss);
+  const mcCssDefault = document.createElement('link');
+  mcCssDefault.rel = 'stylesheet';
+  mcCssDefault.href = 'https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css';
+  document.head.appendChild(mcCssDefault);
+  try {
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js';
+      s.onload = resolve;
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
+    return true;
+  } catch (e) {
+    console.warn('MarkerCluster not available, using basic markers');
+    return false;
+  }
+}
+
 async function _galLoadMap() {
   _galShowLoader(true);
   const container = GAL.root.querySelector('.gal-map-view');
   container.innerHTML = '<div id="gal-map" style="width:100%;height:100%"></div>';
   try {
     await _galLoadLeaflet();
+    const hasCluster = await _galLoadMarkerCluster();
     const data = await api('/gallery/map');
     const map = L.map('gal-map').setView([52, 19], 6);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '© OpenStreetMap'
     }).addTo(map);
-    data.forEach(p => {
-      const marker = L.marker([p.lat, p.lon]).addTo(map);
-      marker.bindPopup(`<img src="/api/files/preview?path=${encodeURIComponent(p.path)}&w=200&h=150" style="max-width:200px"><br>${_esc(p.name)}`);
-    });
+
+    if (hasCluster && data.length > 50) {
+      const markers = L.markerClusterGroup({ maxClusterRadius: 50, chunkedLoading: true });
+      data.forEach(p => {
+        const m = L.marker([p.lat, p.lon]);
+        m.bindPopup(`<img src="/api/files/preview?path=${encodeURIComponent(p.path)}&w=200&h=150" style="max-width:200px" loading="lazy"><br>${_esc(p.name)}`);
+        markers.addLayer(m);
+      });
+      map.addLayer(markers);
+    } else {
+      data.forEach(p => {
+        const marker = L.marker([p.lat, p.lon]).addTo(map);
+        marker.bindPopup(`<img src="/api/files/preview?path=${encodeURIComponent(p.path)}&w=200&h=150" style="max-width:200px" loading="lazy"><br>${_esc(p.name)}`);
+      });
+    }
     if (data.length) {
       const bounds = L.latLngBounds(data.map(p => [p.lat, p.lon]));
       map.fitBounds(bounds, { padding: [30, 30] });
@@ -2451,7 +2568,7 @@ async function _galOpenCustomAlbum(albumId) {
     const data = await api(`/gallery/custom-albums/${albumId}`);
     GAL.items = data.items || [];
     GAL.total = GAL.items.length;
-    GAL.lightboxItems = GAL.items;
+    GAL.lightboxItems = [...GAL.items];
     GAL.view = 'grid';
     GAL.root.querySelectorAll('.gal-nav-item').forEach(n => n.classList.remove('active'));
     GAL.root.querySelector('.gal-grid').style.display = '';

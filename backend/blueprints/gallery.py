@@ -21,7 +21,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from host import app_path, data_path, user_data_path, NATIVE_MODE, ensure_dep, get_user_home, \
     get_photo_folders, get_all_photo_folder_variants
-from utils import load_json as _load_json, save_json as _save_json, \
+from utils import load_json as _load_json, \
     safe_path as _safe_path_util, get_username as _get_username, DATA_ROOT, \
     ALLOWED_ROOTS, register_pkg_routes, require_tools, check_tool
 from blueprints.admin_required import admin_required
@@ -55,6 +55,14 @@ RAW_EXTS   = {'.cr2', '.cr3', '.nef', '.arw', '.dng', '.orf', '.rw2', '.raf'}
 
 os.makedirs(VIDEO_THUMB_DIR, exist_ok=True)
 
+# Protect against PIL decompression bombs
+try:
+    from PIL import Image, ImageFile
+    ImageFile.LOAD_TRUNCATED_IMAGES = True
+    Image.MAX_IMAGE_PIXELS = 200_000_000  # ~200 megapixels
+except ImportError:
+    pass
+
 _gallery_lock = threading.Lock()
 _scan_cache = {}  # key -> {'data': ..., 'time': float}
 _SCAN_CACHE_TTL = 30  # seconds
@@ -62,19 +70,8 @@ _SCAN_CACHE_TTL = 30  # seconds
 # ─── Helpers ──────────────────────────────────────────────
 
 def _safe_path(user_path):
-    if not user_path:
-        return None
-    # Support absolute paths without forcing them under DATA_ROOT
-    if os.path.isabs(user_path):
-        target = os.path.realpath(user_path)
-    else:
-        base = os.path.realpath(DATA_ROOT)
-        target = os.path.realpath(os.path.join(base, user_path))
-
-    # Ensure path is within allowed roots
-    if any(target == r or target.startswith(r + '/') for r in ALLOWED_ROOTS):
-        return target
-    return None
+    """Resolve path safely using utils.safe_path with home isolation."""
+    return _safe_path_util(user_path, isolate_home=True) if user_path else None
 
 
 def _load_gallery_folders():
@@ -119,9 +116,7 @@ def _seed_default_folders(config_path):
 
     if defaults:
         try:
-            os.makedirs(os.path.dirname(config_path), exist_ok=True)
-            with open(config_path, 'w') as f:
-                json.dump(defaults, f, ensure_ascii=False, indent=2)
+            _save_gallery_folders(defaults)
         except Exception:
             pass
     return defaults
@@ -129,8 +124,18 @@ def _seed_default_folders(config_path):
 
 def _save_gallery_folders(folders):
     fp = _gallery_config_file()
-    with open(fp, 'w') as f:
-        json.dump(folders, f, ensure_ascii=False, indent=2)
+    os.makedirs(os.path.dirname(fp) or '.', exist_ok=True)
+    tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, dir=os.path.dirname(fp), encoding='utf-8')
+    try:
+        json.dump(folders, tmp, ensure_ascii=False, indent=2)
+        tmp.close()
+        os.replace(tmp.name, fp)
+    except Exception:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+        raise
 
 
 def _load_favorites():
@@ -146,8 +151,18 @@ def _load_favorites():
 
 def _save_favorites(favs):
     fp = _favorites_file()
-    with open(fp, 'w') as f:
-        json.dump(favs, f, ensure_ascii=False, indent=2)
+    os.makedirs(os.path.dirname(fp) or '.', exist_ok=True)
+    tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, dir=os.path.dirname(fp), encoding='utf-8')
+    try:
+        json.dump(favs, tmp, ensure_ascii=False, indent=2)
+        tmp.close()
+        os.replace(tmp.name, fp)
+    except Exception:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+        raise
 
 
 def _is_media(name):
@@ -170,8 +185,8 @@ def _get_exif(real_path):
         from PIL import Image
         from PIL.ExifTags import TAGS, GPSTAGS
         img = Image.open(real_path)
-        exif_data = img._getexif()
-        if not exif_data:
+        exif_data = img.getexif()
+        if not exif_data or len(exif_data) == 0:
             return {'width': img.width, 'height': img.height}
         result = {'width': img.width, 'height': img.height}
         for tag_id, value in exif_data.items():
@@ -249,8 +264,12 @@ def _video_thumbnail(real_path, cache_key):
         except OSError:
             target_path = out_path
 
+        # Guard against paths starting with - (unlikely with _safe_path but defense-in-depth)
+        safe_input = real_path
+        if safe_input.startswith('-'):
+            safe_input = './' + safe_input
         subprocess.run([
-            'ffmpeg', '-y', '-i', real_path,
+            'ffmpeg', '-y', '-i', safe_input,
             '-vf', 'thumbnail,scale=640:-2',
             '-frames:v', '1',
             '-q:v', '8',
@@ -267,9 +286,12 @@ def _video_duration(real_path):
     """Get video duration in seconds using ffprobe."""
     try:
         ensure_dep('ffprobe', install=True)
+        safe_input = real_path
+        if safe_input.startswith('-'):
+            safe_input = './' + safe_input
         result = subprocess.run([
             'ffprobe', '-v', 'quiet', '-show_entries', 'format=duration',
-            '-of', 'default=noprint_wrappers=1:nokey=1', real_path
+            '-of', 'default=noprint_wrappers=1:nokey=1', safe_input
         ], capture_output=True, text=True, timeout=10)
         return float(result.stdout.strip())
     except Exception:
@@ -297,6 +319,7 @@ def gallery_folders_list():
 
 
 @gallery_bp.route('/folders', methods=['POST'])
+@admin_required
 def gallery_folders_add():
     """Add a folder to the gallery."""
     data = request.get_json(force=True)
@@ -320,6 +343,7 @@ def gallery_folders_add():
 
 
 @gallery_bp.route('/folders', methods=['DELETE'])
+@admin_required
 def gallery_folders_remove():
     """Remove a folder from the gallery."""
     data = request.get_json(force=True)
@@ -471,7 +495,11 @@ def gallery_scan():
         items.sort(key=lambda x: -x['modified'])
 
     total = len(items)
-    # Store in scan cache
+    # Store in scan cache with bounding (prevent memory exhaustion from varied queries)
+    if len(_scan_cache) >= 200:
+        # Evict oldest entry
+        oldest_key = min(_scan_cache, key=lambda k: _scan_cache[k].get('time', 0))
+        _scan_cache.pop(oldest_key, None)
     _scan_cache[cache_key] = {'data': items, 'time': time.time()}
     page = items[offset:offset + limit]
     return jsonify({'total': total, 'offset': offset, 'limit': limit, 'items': page})
@@ -787,6 +815,17 @@ def gallery_duplicates():
 
 # ─── Map Data (GPS Photos) ──────────────────────────────────
 
+@gallery_bp.route('/file')
+def gallery_file():
+    """Serve a gallery file (used for map thumbnails and previews)."""
+    path = request.args.get('path', '').strip()
+    if not path:
+        return jsonify({'error': 'Path required'}), 400
+    real = _safe_path(path)
+    if not real or not os.path.isfile(real):
+        return jsonify({'error': 'File not found'}), 404
+    return send_file(real)
+
 @gallery_bp.route('/map')
 def gallery_map():
     """Return photos with GPS EXIF data for map display."""
@@ -845,8 +884,28 @@ def gallery_rotate():
     try:
         from PIL import Image
         img = Image.open(real)
+        # Preserve EXIF data
+        exif = img.info.get('exif') or img.info.get('exif_data')
         rotated = img.rotate(-angle, expand=True)
-        rotated.save(real)
+        save_kwargs = {}
+        if exif:
+            save_kwargs['exif'] = exif
+        # Preserve ICC profile
+        if 'icc_profile' in img.info:
+            save_kwargs['icc_profile'] = img.info['icc_profile']
+        # Save to temp file then atomically replace
+        import tempfile as _tmpf
+        fd, tmpname = _tmpf.mkstemp(suffix=os.path.splitext(real)[1], dir=os.path.dirname(real))
+        os.close(fd)
+        try:
+            rotated.save(tmpname, **save_kwargs)
+            os.replace(tmpname, real)
+        except Exception:
+            try:
+                os.unlink(tmpname)
+            except OSError:
+                pass
+            raise
         return jsonify({'ok': True})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -862,7 +921,19 @@ def _load_shares():
 
 
 def _save_shares(shares):
-    _save_json(SHARES_FILE, shares)
+    fp = SHARES_FILE
+    os.makedirs(os.path.dirname(fp) or '.', exist_ok=True)
+    tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, dir=os.path.dirname(fp), encoding='utf-8')
+    try:
+        json.dump(shares, tmp, ensure_ascii=False, indent=2)
+        tmp.close()
+        os.replace(tmp.name, fp)
+    except Exception:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+        raise
 
 
 @gallery_bp.route('/share', methods=['POST'])
@@ -996,7 +1067,19 @@ def _load_albums():
 
 
 def _save_albums(albums):
-    _save_json(_albums_file(), albums)
+    fp = _albums_file()
+    os.makedirs(os.path.dirname(fp) or '.', exist_ok=True)
+    tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, dir=os.path.dirname(fp), encoding='utf-8')
+    try:
+        json.dump(albums, tmp, ensure_ascii=False, indent=2)
+        tmp.close()
+        os.replace(tmp.name, fp)
+    except Exception:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+        raise
 
 
 @gallery_bp.route('/custom-albums')
@@ -1139,11 +1222,25 @@ def gallery_upload():
     files = request.files.getlist('files')
     if not files:
         return jsonify({'error': 'No files provided'}), 400
+
+    # Build extension whitelist from all known media types
+    _UPLOAD_ALLOWED_EXT = set(IMAGE_EXTS) | set(VIDEO_EXTS) | set(RAW_EXTS)
+    _MAX_UPLOAD_SIZE = 50 * 1024 * 1024 * 1024  # 50 GB (accommodates large video files)
+
     uploaded = 0
     skipped = 0
     for f in files:
         if f.filename:
             safe_name = os.path.basename(f.filename)
+            ext = os.path.splitext(safe_name)[1].lower()
+            if ext not in _UPLOAD_ALLOWED_EXT:
+                skipped += 1
+                continue
+            # Check content-length if available
+            cl = f.content_length
+            if cl and cl > _MAX_UPLOAD_SIZE:
+                skipped += 1
+                continue
             dest = os.path.join(real_folder, safe_name)
             # Avoid overwriting: append _1, _2 ... if file exists
             if os.path.exists(dest):
@@ -1176,30 +1273,55 @@ def gallery_download_zip():
 
     tmp = tempfile.NamedTemporaryFile(suffix='.zip', delete=False)
     try:
-        with zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED) as zf:
-            seen_names = {}
-            for user_path, real_path in real_paths:
-                arcname = os.path.basename(user_path)
-                count = seen_names.get(arcname, 0)
-                if count > 0:
-                    name, ext = os.path.splitext(arcname)
-                    arcname = f'{name}_{count}{ext}'
-                seen_names[os.path.basename(user_path)] = count + 1
-                zf.write(real_path, arcname)
+        try:
+            with zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED) as zf:
+                seen_names = {}
+                for user_path, real_path in real_paths:
+                    arcname = os.path.basename(user_path)
+                    count = seen_names.get(arcname, 0)
+                    if count > 0:
+                        name, ext = os.path.splitext(arcname)
+                        arcname = f'{name}_{count}{ext}'
+                    seen_names[os.path.basename(user_path)] = count + 1
+                    zf.write(real_path, arcname)
+        except RuntimeError:
+            # zlib not available — fall back to uncompressed
+            with zipfile.ZipFile(tmp, 'w', zipfile.ZIP_STORED) as zf:
+                seen_names = {}
+                for user_path, real_path in real_paths:
+                    arcname = os.path.basename(user_path)
+                    count = seen_names.get(arcname, 0)
+                    if count > 0:
+                        name, ext = os.path.splitext(arcname)
+                        arcname = f'{name}_{count}{ext}'
+                    seen_names[os.path.basename(user_path)] = count + 1
+                    zf.write(real_path, arcname)
         tmp.close()
+
+        from flask import after_this_request
+
+        @after_this_request
+        def _cleanup(response):
+            try:
+                if os.path.isfile(tmp.name):
+                    os.unlink(tmp.name)
+            except Exception:
+                pass
+            return response
+
         return send_file(
             tmp.name,
             mimetype='application/zip',
             as_attachment=True,
             download_name='gallery_download.zip',
         )
-    finally:
-        # Schedule cleanup after response
+    except Exception:
         try:
             if os.path.isfile(tmp.name):
                 os.unlink(tmp.name)
-        except Exception:
+        except OSError:
             pass
+        raise
 
 
 # ── Package: install / uninstall / status ──
