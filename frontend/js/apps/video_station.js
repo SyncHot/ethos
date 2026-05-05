@@ -220,12 +220,17 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
       <div class="vs-nf-ctrls-left">
         <button class="vs-nf-btn vs-nf-btn-play" id="vs-pb-play" title="${t('Odtwórz/Pauza')}"><i class="fas fa-pause"></i></button>
         <button class="vs-nf-btn vs-nf-btn-skip" id="vs-cc-rw" title="-10s">
-          <i class="fas fa-undo"></i><span class="vs-nf-skip-n">10</span>
+          <span class="vs-nf-skip-wrap"><i class="fas fa-rotate-left"></i><span class="vs-nf-skip-n">10</span></span>
         </button>
         <button class="vs-nf-btn vs-nf-btn-skip" id="vs-cc-ff" title="+10s">
-          <i class="fas fa-redo"></i><span class="vs-nf-skip-n">10</span>
+          <span class="vs-nf-skip-wrap"><i class="fas fa-rotate-right"></i><span class="vs-nf-skip-n">10</span></span>
         </button>
-        <button class="vs-nf-btn" id="vs-mute-btn" title="${t('Wycisz')}"><i class="fas fa-volume-up"></i></button>
+        <div class="vs-nf-vol-grp">
+          <button class="vs-nf-btn" id="vs-mute-btn" title="${t('Wycisz')}"><i class="fas fa-volume-up"></i></button>
+          <div class="vs-nf-vol-slider-wrap">
+            <input type="range" class="vs-nf-vol-range" id="vs-vol-range" min="0" max="1" step="0.02" value="1">
+          </div>
+        </div>
         <div class="vs-nf-time-wrap">
           <span class="vs-nf-time-cur" id="vs-pb-cur">0:00</span>
           <span class="vs-nf-time-sep">&thinsp;/&thinsp;</span>
@@ -2338,6 +2343,19 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             video.addEventListener('volumechange', _syncMute, sig);
         }
 
+        // Volume slider
+        const volRange = bodyEl.querySelector('#vs-vol-range');
+        if (volRange) {
+            volRange.value = video.muted ? 0 : video.volume;
+            volRange.addEventListener('input', () => {
+                video.volume = parseFloat(volRange.value);
+                video.muted = video.volume === 0;
+            }, sig);
+            video.addEventListener('volumechange', () => {
+                volRange.value = video.muted ? 0 : video.volume;
+            }, sig);
+        }
+
         // Auto-hide top bar after 3s
         function _resetHideTimer() {
             clearTimeout(_ctrlHideTimer);
@@ -3208,51 +3226,60 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 '@keyframes nfAnimPop{0%{opacity:.9;transform:scale(.7)}40%{opacity:.9;transform:scale(1.1)}100%{opacity:0;transform:scale(1.3)}}',
 
 /* ── BOTTOM CONTROLS ─────────────────────────────── */
-'.vs-nf-bottom{position:absolute;bottom:0;left:0;right:0;z-index:15;display:none;flex-direction:column;padding:0 0 8px;background:linear-gradient(to top,rgba(0,0,0,.9) 0%,rgba(0,0,0,.7) 40%,rgba(0,0,0,.2) 75%,transparent 100%);transition:opacity .35s,transform .35s}',
+'.vs-nf-bottom{position:absolute;bottom:0;left:0;right:0;z-index:15;display:none;flex-direction:column;padding:0 0 14px;background:linear-gradient(to top,rgba(0,0,0,.95) 0%,rgba(0,0,0,.8) 45%,rgba(0,0,0,.35) 75%,transparent 100%);transition:opacity .35s,transform .35s}',
 '.vs-ctrl-hidden .vs-nf-bottom{opacity:0;pointer-events:none;transform:translateY(6px)}',
 
 /* ── SCRUBBER / SEEK BAR ─────────────────────────── */
-'.vs-nf-scrubber{position:relative;padding:0 20px;height:36px;display:flex;align-items:flex-end;cursor:pointer}',
-'.vs-nf-bar{position:absolute;left:20px;right:20px;bottom:8px;height:3px;border-radius:3px;background:rgba(255,255,255,.25);transition:height .2s,bottom .2s;overflow:visible}',
-'.vs-nf-scrubber:hover .vs-nf-bar{height:5px;bottom:7px}',
-'.vs-nf-bar-buf{position:absolute;left:0;top:0;bottom:0;background:rgba(255,255,255,.35);border-radius:3px;width:0;pointer-events:none}',
-'.vs-nf-bar-fill{position:absolute;left:0;top:0;bottom:0;background:#e50914;border-radius:3px;width:0;pointer-events:none}',
-'.vs-nf-bar-dot{position:absolute;top:50%;left:0;transform:translate(-50%,-50%) scale(0);width:14px;height:14px;border-radius:50%;background:#fff;pointer-events:none;box-shadow:0 1px 6px rgba(0,0,0,.6);transition:transform .2s}',
+'.vs-nf-scrubber{position:relative;padding:0 24px;height:44px;display:flex;align-items:flex-end;cursor:pointer}',
+'.vs-nf-bar{position:absolute;left:24px;right:24px;bottom:9px;height:4px;border-radius:2px;background:rgba(255,255,255,.25);transition:height .15s,bottom .15s;overflow:visible}',
+'.vs-nf-scrubber:hover .vs-nf-bar{height:6px;bottom:8px}',
+'.vs-nf-bar-buf{position:absolute;left:0;top:0;bottom:0;background:rgba(255,255,255,.35);border-radius:2px;width:0;pointer-events:none}',
+'.vs-nf-bar-fill{position:absolute;left:0;top:0;bottom:0;background:#e50914;border-radius:2px;width:0;pointer-events:none}',
+'.vs-nf-bar-dot{position:absolute;top:50%;left:0;transform:translate(-50%,-50%) scale(0);width:16px;height:16px;border-radius:50%;background:#fff;pointer-events:none;box-shadow:0 1px 8px rgba(0,0,0,.7);transition:transform .15s}',
 '.vs-nf-scrubber:hover .vs-nf-bar-dot{transform:translate(-50%,-50%) scale(1)}',
-'.vs-nf-range{position:absolute;left:20px;right:20px;top:0;bottom:0;width:calc(100% - 40px);opacity:0;cursor:pointer;margin:0;padding:0;-webkit-appearance:none;appearance:none;background:transparent;z-index:5;height:100%}',
+'.vs-nf-range{position:absolute;left:24px;right:24px;top:0;bottom:0;width:calc(100% - 48px);opacity:0;cursor:pointer;margin:0;padding:0;-webkit-appearance:none;appearance:none;background:transparent;z-index:5;height:100%}',
 
 /* ── THUMBSTRIP PREVIEW ──────────────────────────── */
-'.vs-nf-preview{position:absolute;bottom:42px;display:flex;flex-direction:column;align-items:center;pointer-events:none;border-radius:6px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,.8);border:1px solid rgba(255,255,255,.1)}',
+'.vs-nf-preview{position:absolute;bottom:48px;display:flex;flex-direction:column;align-items:center;pointer-events:none;border-radius:6px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,.8);border:1px solid rgba(255,255,255,.1)}',
 '.vs-nf-preview canvas{display:block}',
 '.vs-nf-preview-time{background:rgba(0,0,0,.85);color:#fff;font-size:12px;font-weight:600;padding:4px 8px;text-align:center;width:100%;box-sizing:border-box;letter-spacing:.03em}',
 
 /* ── CONTROLS ROW ────────────────────────────────── */
-'.vs-nf-controls{display:flex;align-items:center;justify-content:space-between;padding:2px 12px 4px}',
-'.vs-nf-ctrls-left{display:flex;align-items:center;gap:0}',
-'.vs-nf-ctrls-right{display:flex;align-items:center;gap:0}',
+'.vs-nf-controls{display:flex;align-items:center;justify-content:space-between;padding:4px 20px 2px}',
+'.vs-nf-ctrls-left{display:flex;align-items:center;gap:2px}',
+'.vs-nf-ctrls-right{display:flex;align-items:center;gap:2px}',
 
 /* buttons */
-'.vs-nf-btn{background:none;border:none;color:rgba(255,255,255,.85);cursor:pointer;padding:8px 10px;border-radius:6px;transition:color .15s,transform .15s;flex-shrink:0;line-height:1;font-size:16px;display:flex;align-items:center;justify-content:center}',
-'.vs-nf-btn:hover{color:#fff;transform:scale(1.15)}',
-'.vs-nf-btn:active{transform:scale(.95)}',
-'.vs-nf-btn-play{font-size:22px;padding:8px 12px;color:#fff}',
-'.vs-nf-btn-fs{font-size:15px}',
-'.vs-nf-btn-close{color:rgba(255,255,255,.5);font-size:14px;padding:8px 10px;margin-left:4px}',
-'.vs-nf-btn-close:hover{color:#ff5555!important;transform:scale(1.15)}',
+'.vs-nf-btn{background:none;border:none;color:rgba(255,255,255,.9);cursor:pointer;padding:8px;border-radius:4px;transition:color .12s,transform .12s;flex-shrink:0;line-height:1;font-size:20px;display:flex;align-items:center;justify-content:center;min-width:40px;min-height:40px}',
+'.vs-nf-btn:hover{color:#fff;transform:scale(1.12)}',
+'.vs-nf-btn:active{transform:scale(.9)}',
+'.vs-nf-btn-play{font-size:26px;min-width:48px;min-height:48px;padding:6px;color:#fff}',
+'.vs-nf-btn-fs{font-size:18px}',
+'.vs-nf-btn-close{color:rgba(255,255,255,.55);font-size:16px;margin-left:6px}',
+'.vs-nf-btn-close:hover{color:#ff5555!important;transform:scale(1.12)}',
 
-/* skip buttons with number badge */
-'.vs-nf-btn-skip{position:relative;font-size:16px;padding:8px 10px}',
-'.vs-nf-skip-n{position:absolute;font-size:8.5px;font-weight:800;color:#fff;pointer-events:none;top:50%;left:50%;transform:translate(-50%,-10%);letter-spacing:-.5px}',
+/* skip buttons — icon + number overlay */
+'.vs-nf-btn-skip{font-size:22px;padding:8px;min-width:42px;min-height:40px}',
+'.vs-nf-skip-wrap{position:relative;display:flex;align-items:center;justify-content:center;width:1em;height:1em}',
+'.vs-nf-skip-n{position:absolute;font-size:8px;font-weight:900;color:#fff;pointer-events:none;top:57%;left:50%;transform:translate(-50%,-50%);letter-spacing:-.3px;line-height:1}',
+
+/* volume group — mute btn + slider that slides in on hover */
+'.vs-nf-vol-grp{display:flex;align-items:center;gap:0}',
+'.vs-nf-vol-slider-wrap{width:0;overflow:hidden;transition:width .25s ease,opacity .25s ease;opacity:0;display:flex;align-items:center}',
+'.vs-nf-vol-grp:hover .vs-nf-vol-slider-wrap,.vs-nf-vol-grp:focus-within .vs-nf-vol-slider-wrap{width:84px;opacity:1}',
+'.vs-nf-vol-range{-webkit-appearance:none;appearance:none;width:72px;height:3px;border-radius:2px;background:rgba(255,255,255,.3);cursor:pointer;outline:none;margin:0 6px;flex-shrink:0}',
+'.vs-nf-vol-range::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;border-radius:50%;background:#fff;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.5)}',
+'.vs-nf-vol-range::-moz-range-thumb{width:13px;height:13px;border-radius:50%;background:#fff;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,.5)}',
 
 /* time display */
-'.vs-nf-time-wrap{color:rgba(255,255,255,.85);font-size:13px;font-weight:400;margin:0 6px 0 8px;white-space:nowrap;font-variant-numeric:tabular-nums;letter-spacing:.01em;display:flex;align-items:center;gap:0}',
-'.vs-nf-time-cur{color:#fff;font-weight:500}',
-'.vs-nf-time-sep{color:rgba(255,255,255,.4);margin:0 4px;font-size:12px}',
-'.vs-nf-time-dur{color:rgba(255,255,255,.6)}',
+'.vs-nf-time-wrap{color:rgba(255,255,255,.9);font-size:14px;font-weight:400;margin:0 4px 0 10px;white-space:nowrap;font-variant-numeric:tabular-nums;letter-spacing:.01em;display:flex;align-items:center;gap:0}',
+'.vs-nf-time-cur{color:#fff;font-weight:600}',
+'.vs-nf-time-sep{color:rgba(255,255,255,.35);margin:0 5px;font-size:13px}',
+'.vs-nf-time-dur{color:rgba(255,255,255,.55)}',
 
 /* selects */
-'.vs-nf-select{background:transparent;color:rgba(255,255,255,.85);border:1px solid rgba(255,255,255,.2);border-radius:5px;padding:4px 8px;font-size:12px;font-weight:500;cursor:pointer;max-width:110px;transition:border-color .15s,color .15s;-webkit-appearance:none;appearance:none;text-align:center;margin:0 2px}',
-'.vs-nf-select:hover{border-color:rgba(255,255,255,.6);color:#fff}',
+'.vs-nf-select{background:rgba(0,0,0,.4);color:rgba(255,255,255,.9);border:1px solid rgba(255,255,255,.25);border-radius:4px;padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer;max-width:110px;transition:border-color .15s,color .15s,background .15s;-webkit-appearance:none;appearance:none;text-align:center;margin:0 2px;letter-spacing:.02em}',
+'.vs-nf-select:hover{border-color:rgba(255,255,255,.7);color:#fff;background:rgba(0,0,0,.6)}',
 '.vs-nf-select option{background:#141414;color:#fff}',
 '.vs-player-error{position:absolute;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.8);backdrop-filter:blur(8px)}',
 '.vs-player-error-box{text-align:center;color:#fff;max-width:380px;padding:32px}',
