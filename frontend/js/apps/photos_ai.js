@@ -138,12 +138,16 @@ async function _paiPeople(main) {
       + '<p>' + t('Brak rozpoznanych osob. Uruchom skanowanie.') + '</p></div>';
     return;
   }
-  main.innerHTML = '<div class="pai-people-grid">' + d.people.map(function(p) {
+  var allPeople = d.people;
+  main.innerHTML = '<div class="pai-people-grid">' + allPeople.map(function(p) {
     var av = p.cover_face_id ? '<img src="/api/photos-ai/face-thumb/' + p.cover_face_id + '" loading="lazy">' : '<i class="fa-solid fa-user"></i>';
     return '<div class="pai-person-card" data-id="' + p.id + '">'
       + '<div class="pai-person-avatar">' + av + '</div>'
-      + '<div class="pai-person-name">' + _paiEsc(p.name) + '</div>'
-      + '<div class="pai-person-count">' + p.photo_count + ' ' + t('zdjec') + '</div></div>';
+      + '<div class="pai-person-name">' + _paiEsc(p.name || t('Osoba') + ' ' + p.id) + '</div>'
+      + '<div class="pai-person-count">' + p.photo_count + ' ' + t('zdjec') + '</div>'
+      + '<div class="pai-person-actions">'
+      + '<button class="btn btn-sm pai-merge-person-btn" title="' + t('Połącz z inną osobą') + '"><i class="fa-solid fa-code-merge"></i></button>'
+      + '</div></div>';
   }).join('') + '</div>';
 
   main.querySelectorAll('.pai-person-card').forEach(function(card) {
@@ -155,9 +159,16 @@ async function _paiPeople(main) {
       var cur = nameEl.textContent;
       var name = prompt(t('Imie osoby:'), cur);
       if (name && name !== cur) {
-        api('/photos-ai/people/' + pid + '/name', { method: 'POST', body: {name: name} });
+        api('/photos-ai/people/' + pid + '/rename', { method: 'POST', body: {name: name} });
         nameEl.textContent = name;
       }
+    });
+    card.querySelector('.pai-merge-person-btn').addEventListener('click', function(e) {
+      e.stopPropagation();
+      var pid = parseInt(card.dataset.id);
+      var srcName = card.querySelector('.pai-person-name').textContent;
+      var others = allPeople.filter(function(p) { return p.id !== pid; });
+      _paiShowMergeModal(others, pid, srcName, main);
     });
   });
 }
@@ -242,7 +253,7 @@ function _paiRenderPhotoGrid(container, items, total) {
     ? '<button class="btn btn-sm pai-back-btn" onclick="_paiGoBack()"><i class="fa-solid fa-arrow-left"></i> ' + t('Wstecz') + '</button>' : '';
   var header = backBtn ? '<div style="padding:10px">' + backBtn + ' <span class="pai-grid-count">' + total + ' ' + t('zdjec') + '</span></div>' : '';
   var grid = '<div class="pai-photo-grid">' + items.map(function(item) {
-    var thumb = '/api/files/download?path=' + encodeURIComponent(item.path) + '&thumb=1';
+    var thumb = '/api/files/preview?path=' + encodeURIComponent(item.path) + '&w=200&h=200';
     return '<div class="pai-photo-item" data-path="' + _paiEsc(item.path) + '">'
       + '<img src="' + thumb + '" loading="lazy"></div>';
   }).join('') + '</div>';
@@ -258,9 +269,50 @@ function _paiOpenInGallery(path) {
   if (typeof openApp === 'function') {
     var galApp = null;
     if (NAS.apps) galApp = NAS.apps.find(function(a) { return a.id === 'gallery'; });
-    if (galApp) { openApp(galApp, { path: folder, highlight: path }); return; }
+    if (galApp) { openApp(galApp, { folder: folder, file: path }); return; }
   }
   toast(t('Zainstaluj Galerie aby otworzyc zdjecia.'), 'info');
+}
+
+function _paiShowMergeModal(people, sourcePid, sourceName, container) {
+  var existing = document.getElementById('pai-merge-modal');
+  if (existing) existing.remove();
+  var modal = document.createElement('div');
+  modal.id = 'pai-merge-modal';
+  modal.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center';
+  modal.innerHTML = '<div style="position:absolute;inset:0;background:rgba(0,0,0,.6)" class="pai-merge-backdrop"></div>'
+    + '<div style="position:relative;background:var(--bg-secondary);border-radius:8px;padding:20px;width:380px;max-width:95vw;max-height:80vh;display:flex;flex-direction:column;gap:12px">'
+    + '<h3 style="margin:0"><i class="fa-solid fa-code-merge"></i> ' + t('Połącz z…') + '</h3>'
+    + '<p style="margin:0;font-size:.85em;opacity:.7">' + _paiEsc(sourceName) + ' ' + t('zostanie usunięta i scalone z wybraną osobą.') + '</p>'
+    + '<div style="overflow-y:auto;max-height:320px;display:flex;flex-direction:column;gap:6px" class="pai-merge-list">'
+    + people.map(function(p) {
+        var av = p.cover_face_id ? '<img src="/api/photos-ai/face-thumb/' + p.cover_face_id + '" style="width:36px;height:36px;border-radius:50%;object-fit:cover" alt="">' : '<i class="fa-solid fa-user" style="font-size:24px;opacity:.5"></i>';
+        return '<div class="pai-merge-option" data-id="' + p.id + '" data-name="' + _paiEsc(p.name || t('Osoba') + ' ' + p.id) + '" style="display:flex;align-items:center;gap:10px;padding:8px;border-radius:6px;cursor:pointer;transition:background .15s" onmouseover="this.style.background=\'var(--bg-tertiary)\'" onmouseout="this.style.background=\'\'">'
+          + '<div style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;flex-shrink:0">' + av + '</div>'
+          + '<div><div style="font-weight:600">' + _paiEsc(p.name || t('Osoba') + ' ' + p.id) + '</div>'
+          + '<div style="font-size:.8em;opacity:.6">' + (p.photo_count || 0) + ' ' + t('zdjec') + '</div></div></div>';
+      }).join('')
+    + '</div>'
+    + '<button class="btn btn-sm pai-merge-cancel">' + t('Anuluj') + '</button>'
+    + '</div>';
+  document.body.appendChild(modal);
+
+  modal.querySelectorAll('.pai-merge-option').forEach(function(el) {
+    el.addEventListener('click', async function() {
+      var targetPid = parseInt(el.dataset.id);
+      var targetName = el.dataset.name;
+      modal.remove();
+      var r = await api('/photos-ai/people/merge', { method: 'POST', body: { source_id: sourcePid, target_id: targetPid } });
+      if (r.ok) {
+        toast(t('Połączono z „{name}"', { name: targetName }), 'success');
+        _paiLoadView('people');
+      } else {
+        toast(r.error || t('Błąd'), 'error');
+      }
+    });
+  });
+  modal.querySelector('.pai-merge-cancel').addEventListener('click', function() { modal.remove(); });
+  modal.querySelector('.pai-merge-backdrop').addEventListener('click', function() { modal.remove(); });
 }
 
 function _paiGoBack() {

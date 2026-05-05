@@ -478,6 +478,61 @@ def music_liked_edit():
     return jsonify({'ok': True, 'items': liked})
 
 
+@radio_music_bp.route('/ai-dj/preferences', methods=['GET'])
+def ai_dj_preferences_get():
+    prefs = _load_json(_user_file('ai_dj_prefs.json'), {'liked_urls': [], 'disliked_urls': [], 'disliked_artists': []})
+    return jsonify(prefs)
+
+
+@radio_music_bp.route('/ai-dj/preferences', methods=['POST'])
+def ai_dj_preferences_edit():
+    data = request.get_json(silent=True) or {}
+    action = data.get('action', '')
+    url = data.get('url', '').strip()
+    artist = (data.get('artist') or data.get('name') or '').strip().lower()
+
+    prefs = _load_json(_user_file('ai_dj_prefs.json'), {'liked_urls': [], 'disliked_urls': [], 'disliked_artists': []})
+
+    if action == 'like_url' and url:
+        if url not in prefs['liked_urls']:
+            prefs['liked_urls'].insert(0, url)
+        prefs['disliked_urls'] = [u for u in prefs['disliked_urls'] if u != url]
+    elif action == 'unlike_url' and url:
+        prefs['liked_urls'] = [u for u in prefs['liked_urls'] if u != url]
+    elif action == 'dislike_url' and url:
+        if url not in prefs['disliked_urls']:
+            prefs['disliked_urls'].append(url)
+        prefs['liked_urls'] = [u for u in prefs['liked_urls'] if u != url]
+    elif action == 'undislike_url' and url:
+        prefs['disliked_urls'] = [u for u in prefs['disliked_urls'] if u != url]
+    elif action == 'dislike_artist' and artist:
+        if artist not in prefs['disliked_artists']:
+            prefs['disliked_artists'].append(artist)
+    elif action == 'undislike_artist' and artist:
+        prefs['disliked_artists'] = [a for a in prefs['disliked_artists'] if a != artist]
+    elif action == 'clear_all':
+        prefs = {'liked_urls': [], 'disliked_urls': [], 'disliked_artists': []}
+    else:
+        return jsonify({'error': 'Unknown action'}), 400
+
+    _save_json(_user_file('ai_dj_prefs.json'), prefs)
+    return jsonify({'ok': True, 'prefs': prefs})
+
+
+@radio_music_bp.route('/ai-dj/seeds', methods=['GET'])
+def ai_dj_seeds():
+    """Return top seed artists from user's music history (no yt-dlp, fast)."""
+    count = _safe_int(request.args.get('count', 10), 10, hi=20)
+    hist = _load_json(_user_file('history.json'), [])
+    artist_counts = {}
+    for h in hist:
+        art = (h.get('meta') or h.get('channel') or '').strip()
+        if art and h.get('type') in ('music', 'local'):
+            artist_counts[art] = artist_counts.get(art, 0) + h.get('play_count', 1)
+    top_artists = sorted(artist_counts, key=artist_counts.get, reverse=True)[:count]
+    return jsonify({'artists': top_artists})
+
+
 # ── Radio: stream URL resolver ───────────────────────────────
 
 @radio_music_bp.route('/radio/stream-url', methods=['GET'])
@@ -900,6 +955,18 @@ def _deezer_get(path, params=None):
         return {}
 
 
+def _get_deezer_similar_artists(art_name, limit=4):
+    """Return list of similar artists [{name, picture}] for art_name via Deezer."""
+    search = _deezer_get('/search/artist', {'q': art_name, 'limit': 1})
+    results = search.get('data', [])
+    if not results:
+        return []
+    aid = results[0].get('id')
+    related = _deezer_get(f'/artist/{aid}/related', {'limit': limit})
+    return [{'name': a.get('name', ''), 'picture': a.get('picture_medium', '')}
+            for a in related.get('data', [])]
+
+
 @radio_music_bp.route('/similar-artists', methods=['GET'])
 def similar_artists():
     """Find similar artists via Deezer API (free, no key).
@@ -992,16 +1059,10 @@ def recommendations():
     if top_artists:
         # Pick top 2 artists, find similar via Deezer
         for art_name in top_artists[:2]:
-            search = _deezer_get('/search/artist', {'q': art_name, 'limit': 1})
-            results = search.get('data', [])
-            if not results:
-                continue
-            artist_id = results[0].get('id')
-            related = _deezer_get(f'/artist/{artist_id}/related', {'limit': 4})
-            for a in related.get('data', []):
+            for a in _get_deezer_similar_artists(art_name, limit=4):
                 artist_recs.append({
-                    'name': a.get('name', ''),
-                    'picture': a.get('picture_medium', ''),
+                    'name': a['name'],
+                    'picture': a['picture'],
                     'because': art_name,
                 })
 
@@ -1844,7 +1905,7 @@ def search_all():
     if not q_str:
         return jsonify({'error': 'Brak zapytania'}), 400
     limit = _safe_int(request.args.get('limit', 10), 10, hi=30)
-    results = {'radio': [], 'podcasts': [], 'local': []}
+    results = {'radio': [], 'podcasts': [], 'local': [], 'music': []}
 
     def _search_radio():
         try:
@@ -1918,8 +1979,45 @@ def search_all():
         except Exception:
             pass
 
-    jobs = [gevent.spawn(_search_radio), gevent.spawn(_search_podcasts), gevent.spawn(_search_local)]
-    gevent.joinall(jobs, timeout=12)
+    def _search_music():
+        try:
+            ytdlp = _find_ytdlp()
+            if not ytdlp:
+                return
+            from host import host_run
+            search_arg = 'ytsearch8:' + q_str
+            cmd = (shq(ytdlp) + ' --dump-json --flat-playlist --no-warnings '
+                   '--no-download ' + shq(search_arg))
+            r = host_run(cmd, timeout=15)
+            items = []
+            if r.stdout:
+                for line in r.stdout.strip().splitlines():
+                    try:
+                        d = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    vid_id = d.get('id', '')
+                    dur = d.get('duration') or 0
+                    items.append({
+                        'id': vid_id,
+                        'title': d.get('title', ''),
+                        'channel': d.get('channel', d.get('uploader', '')),
+                        'duration': dur,
+                        'duration_fmt': _fmt_secs(dur),
+                        'thumbnail': (d.get('thumbnails', [{}])[-1].get('url', '')
+                                      or 'https://i.ytimg.com/vi/%s/hqdefault.jpg' % vid_id),
+                        'url': (d.get('url', '') or d.get('webpage_url', '')
+                                or 'https://www.youtube.com/watch?v=' + vid_id),
+                        'type': 'music',
+                        'source': 'youtube',
+                    })
+            results['music'] = items
+        except Exception:
+            pass
+
+    jobs = [gevent.spawn(_search_radio), gevent.spawn(_search_podcasts),
+            gevent.spawn(_search_local), gevent.spawn(_search_music)]
+    gevent.joinall(jobs, timeout=15)
     return jsonify(results)
 
 
@@ -2030,6 +2128,10 @@ def ai_dj_next():
     exclude_set = set(u for u in exclude_raw.split(',') if u)
     disliked_raw = request.args.get('disliked_artists', '')
     disliked_artists = set(a.strip().lower() for a in disliked_raw.split(',') if a.strip())
+    # Also merge with stored per-user preferences
+    prefs = _load_json(_user_file('ai_dj_prefs.json'), {'liked_urls': [], 'disliked_urls': [], 'disliked_artists': []})
+    disliked_artists.update(prefs.get('disliked_artists', []))
+    disliked_urls_stored = set(prefs.get('disliked_urls', []))
 
     hfile = _user_file('history.json')
     hist = _load_json(hfile, [])
@@ -2042,41 +2144,21 @@ def ai_dj_next():
             artist_counts[art] = artist_counts.get(art, 0) + h.get('play_count', 1)
     top_artists = sorted(artist_counts, key=artist_counts.get, reverse=True)[:5]
 
-    # Build artist list: current artist first, then top from history
-    search_artists = []
-    if artist:
-        search_artists.append(artist)
-    for a in top_artists:
-        if a not in search_artists:
-            search_artists.append(a)
+    # Use ONE seed artist: currently playing (from param) OR top-1 from history.
+    # Using a single seed keeps the playlist stylistically coherent.
+    seed_artist = artist or (top_artists[0] if top_artists else None)
 
-    # Get similar artists via Deezer (reuse _deezer_get)
-    def _get_deezer_similar(art_name, limit=3):
-        search = _deezer_get('/search/artist', {'q': art_name, 'limit': 1})
-        results = search.get('data', [])
-        if not results:
-            return []
-        aid = results[0].get('id')
-        related = _deezer_get(f'/artist/{aid}/related', {'limit': limit})
-        return [a.get('name', '') for a in related.get('data', [])]
-
-    # Build YouTube search queries from similar artists — parallel per artist
+    # Build YouTube search queries from similar artists of the single seed
     queries = []
-    seen_artists = set()
 
-    def _fetch_similar(art):
-        return art, _get_deezer_similar(art, 3)
-
-    d_threads = [gevent.spawn(_fetch_similar, art) for art in search_artists[:3]]
-    gevent.joinall(d_threads, timeout=10)
-
-    for t in d_threads:
-        if t.value:
-            art, similar = t.value
-            for s in similar:
-                if s not in seen_artists and s.lower() not in disliked_artists:
-                    seen_artists.add(s)
-                    queries.append(f'{s} music')
+    if seed_artist:
+        similar = [a['name'] for a in _get_deezer_similar_artists(seed_artist, limit=6)]
+        # Seed itself comes first so the playlist anchors around it
+        if seed_artist.lower() not in disliked_artists:
+            queries.append('%s best songs' % seed_artist)
+        for s in similar:
+            if s.lower() not in disliked_artists:
+                queries.append('%s music' % s)
 
     # If no Deezer results, fall back to tags from history/favorites
     if not queries:
@@ -2088,8 +2170,8 @@ def ai_dj_next():
                 if tag and len(tag) > 1:
                     tag_counts[tag] = tag_counts.get(tag, 0) + 1
         top_tags = sorted(tag_counts, key=tag_counts.get, reverse=True)[:5]
-        for t in top_tags:
-            queries.append(f'{t} music 2025')
+        for tag in top_tags:
+            queries.append('%s music 2025' % tag)
 
     # Absolute fallback
     if not queries:
@@ -2142,11 +2224,11 @@ def ai_dj_next():
     for t in threads:
         if t.value:
             for it in t.value:
-                if it['url'] not in seen_urls and (it.get('channel', '') or '').lower() not in disliked_artists:
+                if it['url'] not in seen_urls and it['url'] not in disliked_urls_stored and (it.get('channel', '') or '').lower() not in disliked_artists:
                     seen_urls.add(it['url'])
                     items.append(it)
 
-    random.shuffle(items)
+    # Keep order: seed artist tracks first, then similar artists in sequence
     return jsonify({'items': items[:count]})
 
 

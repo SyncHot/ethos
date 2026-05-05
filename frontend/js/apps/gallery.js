@@ -848,6 +848,7 @@ async function _galPersonDetail(pid, container) {
           </div>
         </div>
         <div class="gal-person-actions">
+          <button class="btn btn-sm gal-person-merge-btn"><i class="fa-solid fa-code-merge"></i> ${t('Połącz z…')}</button>
           <button class="btn btn-sm gal-person-select-mode"><i class="fa-solid fa-check-double"></i> ${t('Zaznacz')}</button>
           <button class="btn btn-sm btn-danger gal-person-delete" style="display:none"><i class="fa-solid fa-user-xmark"></i> ${t('Usuń zaznaczone')}</button>
           <button class="btn btn-sm gal-person-move" style="display:none"><i class="fa-solid fa-people-arrows"></i> ${t('Przenieś do…')}</button>
@@ -856,6 +857,7 @@ async function _galPersonDetail(pid, container) {
       <div class="gal-person-faces-section">
         <h3 style="margin:0 0 10px;font-size:14px;color:var(--text-secondary)">
           <i class="fa-solid fa-face-smile"></i> ${t('Twarze')}
+          <button class="btn btn-sm gal-person-select-all" style="margin-left:10px;font-size:11px"><i class="fa-solid fa-check-double"></i> ${t('Zaznacz wszystkie')}</button>
           <span style="font-weight:normal;font-size:12px;margin-left:6px">${t('Zaznacz błędnie przypisane twarze i usuń lub przenieś')}</span>
         </h3>
         <div class="gal-person-faces-grid">${faces.map(f => `
@@ -896,6 +898,12 @@ async function _galPersonDetail(pid, container) {
   });
   nameEl.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); nameEl.blur(); } });
 
+  // Merge with another person (direct person-level merge)
+  container.querySelector('.gal-person-merge-btn').addEventListener('click', () => {
+    const ppl = (pData.people || []).filter(p => p.id !== pid);
+    _galShowMergePersonModal(ppl, pid, name, container);
+  });
+
   // Select mode toggle
   const selectBtn = container.querySelector('.gal-person-select-mode');
   const deleteBtn = container.querySelector('.gal-person-delete');
@@ -909,6 +917,23 @@ async function _galPersonDetail(pid, container) {
     container.querySelectorAll('.gal-pf-thumb').forEach(el => el.classList.remove('selected'));
     deleteBtn.style.display = 'none';
     moveBtn.style.display = 'none';
+  });
+
+  // Select all faces
+  container.querySelector('.gal-person-select-all').addEventListener('click', () => {
+    selectMode = true;
+    selectBtn.classList.add('btn-primary');
+    selectedFaces.clear();
+    container.querySelectorAll('.gal-pf-thumb').forEach(el => {
+      const raw = el.dataset.faceId;
+      const fid = /^\d+$/.test(raw) ? parseInt(raw) : raw;
+      selectedFaces.add(fid);
+      el.classList.add('selected');
+      el.querySelector('.gal-pf-check').classList.add('checked');
+    });
+    const has = selectedFaces.size > 0;
+    deleteBtn.style.display = has ? '' : 'none';
+    moveBtn.style.display = has ? '' : 'none';
   });
 
   // Face thumbnail click → toggle selection (auto-enters select mode)
@@ -955,7 +980,10 @@ async function _galPersonDetail(pid, container) {
   });
 
   // Photo grid → lightbox
-  const photoItems = photos.map(ph => ({ path: ph.path, name: ph.path.split('/').pop(), type: 'image' }));
+  const photoItems = photos.map(ph => ({
+    path: ph.path, name: ph.path.split('/').pop(), type: ph.type || 'image',
+    modified: ph.mtime, size: ph.size || 0, album: ph.path.replace(/\/[^/]+$/, '') || '/',
+  }));
   container.querySelectorAll('.gal-person-photo').forEach(card => {
     card.addEventListener('click', () => {
       const idx = parseInt(card.dataset.idx);
@@ -1011,6 +1039,51 @@ function _galShowMoveModal(people, selectedFaces, currentPid, container) {
   modal.querySelector('.gal-face-save-btn').addEventListener('click', () => {
     const name = modal.querySelector('.gal-face-name-input').value.trim();
     if (name) doMove(null, name);
+  });
+  modal.querySelector('.gal-face-modal-close').addEventListener('click', () => modal.remove());
+  modal.querySelector('.gal-face-modal-backdrop').addEventListener('click', () => modal.remove());
+}
+
+function _galShowMergePersonModal(people, sourcePid, sourceName, container) {
+  const modal = document.createElement('div');
+  modal.className = 'gal-face-modal';
+  modal.innerHTML = `
+    <div class="gal-face-modal-backdrop"></div>
+    <div class="gal-face-modal-content">
+      <h3><i class="fa-solid fa-code-merge"></i> ${t('Połącz „{name}" z…', { name: sourceName })}</h3>
+      <p class="gal-face-modal-hint">${t('Wybierz osobę, z którą chcesz scalić. Obecna osoba zostanie usunięta.')}</p>
+      <div class="gal-face-matches" style="max-height:360px;overflow-y:auto">
+        ${people.map(p => `
+          <div class="gal-face-match" data-person-id="${p.id}">
+            ${p.cover_face_id
+              ? `<img src="/api/photos-ai/face-thumb/${p.cover_face_id}" alt="">`
+              : `<span style="width:40px;height:40px;display:flex;align-items:center;justify-content:center;background:var(--bg-tertiary);border-radius:50%"><i class="fa-solid fa-user"></i></span>`}
+            <div>
+              <div class="gal-face-match-name">${_esc(p.name || t('Osoba') + ' ' + p.id)}</div>
+              <div class="gal-face-match-conf">${p.photo_count || 0} ${t('zdjęć')}</div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+      <button class="btn btn-sm gal-face-modal-close">${t('Anuluj')}</button>
+    </div>`;
+  document.body.appendChild(modal);
+
+  modal.querySelectorAll('.gal-face-match').forEach(el => {
+    el.addEventListener('click', async () => {
+      const targetPid = parseInt(el.dataset.personId);
+      const targetName = el.querySelector('.gal-face-match-name').textContent;
+      modal.remove();
+      const r = await api('/photos-ai/people/merge', {
+        method: 'POST', body: { source_id: sourcePid, target_id: targetPid },
+      });
+      if (r.ok) {
+        toast(t('Połączono z „{name}"', { name: targetName }), 'success');
+        _galLoadPeople();
+      } else {
+        toast(r.error || t('Błąd'), 'error');
+      }
+    });
   });
   modal.querySelector('.gal-face-modal-close').addEventListener('click', () => modal.remove());
   modal.querySelector('.gal-face-modal-backdrop').addEventListener('click', () => modal.remove());
@@ -1259,7 +1332,10 @@ function _galRenderAiPhotoGrid(container, items, total) {
       </div>
     </div>`
   ).join('')}</div>`;
-  const photoItems = items.map(ph => ({ path: ph.path, name: ph.path.split('/').pop(), type: 'image' }));
+  const photoItems = items.map(ph => ({
+    path: ph.path, name: ph.path.split('/').pop(), type: ph.type || 'image',
+    modified: ph.mtime, size: ph.size || 0, album: ph.path.replace(/\/[^/]+$/, '') || '/',
+  }));
   container.querySelectorAll('.gal-ai-photo').forEach(card => {
     card.addEventListener('click', () => {
       GAL.lightboxItems = photoItems;
