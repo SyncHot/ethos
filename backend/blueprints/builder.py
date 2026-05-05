@@ -3328,17 +3328,20 @@ def _bump_version(ver):
 
 
 def _get_app_files(app_id):
-    """Get local file paths for an optional app. Returns dict with 'backend' and 'frontend' (list) paths."""
+    """Get local file paths for an optional app. Returns dict with 'backend' (list) and 'frontend' (list) paths."""
     import importlib
     am = importlib.import_module('blueprints.app_manager')
 
     files = {}
     bp_info = am._OPTIONAL_BLUEPRINTS.get(app_id)
     if bp_info:
-        module_name = bp_info[0]
-        bp_path = os.path.join(app_path(), 'backend', 'blueprints', module_name + '.py')
-        if os.path.isfile(bp_path):
-            files['backend'] = bp_path
+        backend_paths = []
+        for module_name in am._get_backend_filenames(app_id):
+            bp_path = os.path.join(app_path(), 'backend', 'blueprints', module_name + '.py')
+            if os.path.isfile(bp_path):
+                backend_paths.append(bp_path)
+        if backend_paths:
+            files['backend'] = backend_paths
 
     frontend_paths = []
     for fn in am._get_frontend_filenames(app_id):
@@ -3599,7 +3602,8 @@ def publish_diff():
             paths = local_val if isinstance(local_val, list) else [local_val]
             for file_idx, local_path in enumerate(paths):
                 if ftype == 'backend':
-                    remote_key = f'apps/{app_id}/backend.py'
+                    fname = 'backend.py' if file_idx == 0 else f'backend_{file_idx + 1}.py'
+                    remote_key = f'apps/{app_id}/{fname}'
                 else:
                     remote_key = f'apps/{app_id}/frontend.js' if file_idx == 0 else f'apps/{app_id}/frontend_{file_idx + 1}.js'
                 remote_sha = remote_tree.get(remote_key)
@@ -3716,7 +3720,7 @@ def publish_apps():
                     paths = local_val if isinstance(local_val, list) else [local_val]
                     for file_idx, local_path in enumerate(paths):
                         if ftype == 'backend':
-                            fname = 'backend.py'
+                            fname = 'backend.py' if file_idx == 0 else f'backend_{file_idx + 1}.py'
                         else:
                             fname = 'frontend.js' if file_idx == 0 else f'frontend_{file_idx + 1}.js'
                         remote_key = f'apps/{app_id}/{fname}'

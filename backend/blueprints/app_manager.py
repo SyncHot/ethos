@@ -200,6 +200,14 @@ _FRONTEND_EXTRA_FILES: dict = {
     # 'gallery': ['gallery_lightbox', 'gallery_people'],  # example
 }
 
+# Maps app_id → list of extra backend module filenames (without .py).
+# Primary backend is always bp_info[0] from _OPTIONAL_BLUEPRINTS.
+# Extras are published as backend_2.py, backend_3.py … on GitHub,
+# and downloaded/removed/updated alongside the primary during App Store ops.
+_BACKEND_EXTRA_FILES: dict = {
+    # 'video-station': ['video_station_library', 'video_station_hls', ...],
+}
+
 # Maps app_id → (module_filename, blueprint_var, init_func_or_None, socketio_attr_needed)
 # module_filename: the .py filename without extension in backend/blueprints/
 # blueprint_var: the variable name of the Blueprint object in that module
@@ -781,6 +789,17 @@ def _get_frontend_filenames(app_id):
     return [primary] + list(_FRONTEND_EXTRA_FILES.get(app_id, []))
 
 
+def _get_backend_filenames(app_id):
+    """Return list of ALL backend module names (without .py) for an app.
+    First element is the primary module from _OPTIONAL_BLUEPRINTS; remaining
+    are extras defined in _BACKEND_EXTRA_FILES.  Returns [] when the app has
+    no optional blueprint."""
+    bp_info = _OPTIONAL_BLUEPRINTS.get(app_id)
+    if not bp_info:
+        return []
+    return [bp_info[0]] + list(_BACKEND_EXTRA_FILES.get(app_id, []))
+
+
 def _load_catalog_cache():
     try:
         if not os.path.isfile(CATALOG_CACHE_FILE):
@@ -1002,14 +1021,14 @@ def _repair_missing_app_files():
                                 shutil.copy2(js_path, dist_path)
                             except Exception:
                                 pass
-            # Check backend .py
-            bp_info = _OPTIONAL_BLUEPRINTS.get(app_id)
-            if bp_info:
-                bp_path = os.path.join(_BLUEPRINTS_DIR, bp_info[0] + '.py')
+            # Check backend .py (primary + extras)
+            for idx, module_name in enumerate(_get_backend_filenames(app_id)):
+                remote_name = 'backend.py' if idx == 0 else f'backend_{idx + 1}.py'
+                bp_path = os.path.join(_BLUEPRINTS_DIR, module_name + '.py')
                 if not os.path.isfile(bp_path):
-                    url = base_url + '/' + app_id + '/backend.py'
+                    url = base_url + '/' + app_id + '/' + remote_name
                     if _download_file(url, bp_path):
-                        repaired.append(app_id + '/backend.py')
+                        repaired.append(f'{app_id}/{remote_name}')
 
         if repaired:
             log.info('[app_manager] Auto-repaired %d missing files: %s', len(repaired), ', '.join(repaired))
@@ -1364,7 +1383,7 @@ def _bg_install(app_id, app_def, task_id):
 
     _needs_restart = False
     _downloaded_frontend = None   # track newly downloaded files for cleanup on failure
-    _downloaded_backend = None
+    _downloaded_backend = []      # list of newly downloaded backend .py paths
     _task_start()
     try:
         emit({'stage': 'start', 'percent': 5, 'message': 'Instalowanie ' + app_def['name'] + '...', 'status': 'running'})
@@ -1391,19 +1410,20 @@ def _bg_install(app_id, app_def, task_id):
         else:
             emit({'stage': 'download', 'percent': 15, 'message': 'Pliki juz dostepne (bundled)', 'status': 'running'})
 
-        # Download backend.py from GitHub if not on disk
+        # Download backend .py (primary + extras) from GitHub if not on disk
         # (Builder images keep frontend JS but remove optional backend .py)
-        bp_info = _OPTIONAL_BLUEPRINTS.get(app_id)
-        if bp_info:
-            module_name = bp_info[0]
-            bp_dest = os.path.join(_BLUEPRINTS_DIR, module_name + '.py')
-            if not os.path.isfile(bp_dest):
-                bp_url = app_base_url + '/' + app_id + '/backend.py'
-                emit({'stage': 'download_backend', 'percent': 20, 'message': 'Pobieranie backend...', 'status': 'running'})
-                if not _download_file(bp_url, bp_dest):
-                    emit({'stage': 'error', 'percent': 0, 'message': 'Bład pobierania backend — sprawdz połaczenie z internetem', 'status': 'error'})
-                    return
-                _downloaded_backend = bp_dest
+        backend_modules = _get_backend_filenames(app_id)
+        if backend_modules:
+            for idx, module_name in enumerate(backend_modules):
+                remote_name = 'backend.py' if idx == 0 else f'backend_{idx + 1}.py'
+                bp_dest = os.path.join(_BLUEPRINTS_DIR, module_name + '.py')
+                if not os.path.isfile(bp_dest):
+                    bp_url = app_base_url + '/' + app_id + '/' + remote_name
+                    emit({'stage': 'download_backend', 'percent': 20, 'message': 'Pobieranie backend...', 'status': 'running'})
+                    if not _download_file(bp_url, bp_dest):
+                        emit({'stage': 'error', 'percent': 0, 'message': 'Bład pobierania backend — sprawdz połaczenie z internetem', 'status': 'error'})
+                        return
+                    _downloaded_backend.append(bp_dest)
 
         # Instalacja zaleznosci (apt: 25-42%, pip: 45-57%)
         apt_deps = app_def.get('apt_deps', [])
@@ -1414,7 +1434,7 @@ def _bg_install(app_id, app_def, task_id):
 
         if apt_deps and not _install_apt_deps(apt_deps, emit):
             # Clean up freshly downloaded files — app isn't usable without its deps
-            for p in (([_downloaded_backend] if _downloaded_backend else []) +
+            for p in (_downloaded_backend +
                       (_downloaded_frontend if isinstance(_downloaded_frontend, list) else
                        [_downloaded_frontend] if _downloaded_frontend else [])):
                 try:
@@ -1424,7 +1444,7 @@ def _bg_install(app_id, app_def, task_id):
             return
 
         if pip_deps and not _install_pip_deps(pip_deps, emit):
-            for p in (([_downloaded_backend] if _downloaded_backend else []) +
+            for p in (_downloaded_backend +
                       (_downloaded_frontend if isinstance(_downloaded_frontend, list) else
                        [_downloaded_frontend] if _downloaded_frontend else [])):
                 try:
@@ -1634,20 +1654,22 @@ def _bg_uninstall(app_id, app_def, task_id, wipe_data=False):
                     fp = os.path.join(_FRONTEND_APPS_DIR, fn + '.js')
                     if os.path.isfile(fp):
                         os.remove(fp)
-        # Remove backend blueprint only for external apps
-        bp_info = _OPTIONAL_BLUEPRINTS.get(app_id)
-        if bp_info and was_external:
-            module_name = bp_info[0]
-            bp_file = os.path.join(_BLUEPRINTS_DIR, module_name + '.py')
-            # Only delete if no other installed app uses same blueprint
-            other_using_same = [
-                aid for aid, bpi in _OPTIONAL_BLUEPRINTS.items()
-                if bpi[0] == module_name and aid != app_id
-                and aid in _load_installed()
-            ]
-            if not other_using_same and os.path.isfile(bp_file):
-                os.remove(bp_file)
-                log.info('[app_manager] Removed backend blueprint: %s', module_name)
+        # Remove backend files only for externally-downloaded apps
+        if was_external:
+            for idx, module_name in enumerate(_get_backend_filenames(app_id)):
+                bp_file = os.path.join(_BLUEPRINTS_DIR, module_name + '.py')
+                # Primary file: don't remove if another installed app shares the same module
+                if idx == 0:
+                    other_using_same = [
+                        aid for aid, bpi in _OPTIONAL_BLUEPRINTS.items()
+                        if bpi[0] == module_name and aid != app_id
+                        and aid in _load_installed()
+                    ]
+                    if other_using_same:
+                        continue
+                if os.path.isfile(bp_file):
+                    os.remove(bp_file)
+                    log.info('[app_manager] Removed backend file: %s', module_name)
 
         _set_uninstalled(app_id)
 
@@ -2244,14 +2266,16 @@ def _check_github_updates(repo):
         backend_changed = False
         frontend_changed = False
 
-        # Compare backend .py
-        module_name = bp_info[0]
-        local_py = os.path.join(_BLUEPRINTS_DIR, module_name + '.py')
-        remote_py_path = f'apps/{app_id}/backend.py'
-        if os.path.isfile(local_py) and remote_py_path in remote_tree:
-            local_sha = _git_blob_sha(local_py)
-            if local_sha != remote_tree[remote_py_path]:
-                backend_changed = True
+        # Compare backend .py files (primary + extras)
+        for idx, module_name in enumerate(_get_backend_filenames(app_id)):
+            remote_name = 'backend.py' if idx == 0 else f'backend_{idx + 1}.py'
+            local_py = os.path.join(_BLUEPRINTS_DIR, module_name + '.py')
+            remote_py_path = f'apps/{app_id}/{remote_name}'
+            if os.path.isfile(local_py) and remote_py_path in remote_tree:
+                local_sha = _git_blob_sha(local_py)
+                if local_sha != remote_tree[remote_py_path]:
+                    backend_changed = True
+                    break
 
         # Compare frontend .js (primary + extras)
         for idx, fn in enumerate(_get_frontend_filenames(app_id)):
@@ -2449,15 +2473,17 @@ def _bg_update_apps(app_ids, base_url, task_id, source='ota'):
 
             ok = True
 
-            # Download backend .py
-            module_name = bp_info[0]
-            bp_url = base_url + f'/{app_id}/backend.py'
-            bp_dest = os.path.join(_BLUEPRINTS_DIR, module_name + '.py')
+            # Download backend .py (primary + extras)
             emit({'stage': 'updating', 'percent': pct_base + 2, 'app_id': app_id,
                   'status': 'running', 'message': f'{app_id}: pobieranie backend...'})
-            if not _download_file(bp_url, bp_dest):
-                log.warning('[app_manager] Backend download failed: %s', app_id)
-                ok = False
+            for b_idx, module_name in enumerate(_get_backend_filenames(app_id)):
+                remote_name = 'backend.py' if b_idx == 0 else f'backend_{b_idx + 1}.py'
+                bp_url = base_url + f'/{app_id}/{remote_name}'
+                bp_dest = os.path.join(_BLUEPRINTS_DIR, module_name + '.py')
+                if not _download_file(bp_url, bp_dest):
+                    log.warning('[app_manager] Backend download failed: %s/%s', app_id, remote_name)
+                    ok = False
+                    break
 
             # Download frontend .js (primary + extras)
             for idx, fn in enumerate(_get_frontend_filenames(app_id)):
