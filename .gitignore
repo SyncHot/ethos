@@ -27,10 +27,15 @@ npm-debug.log
 *~
 
 # Runtime
+logs
 logs/
+uploads
 uploads/
+data
 data/
+backups
 backups/
+venv
 venv/
 
 # System
@@ -39,6 +44,7 @@ venv/
 Thumbs.db
 
 # Specific directories
-cups-config/ssl/
+cups-config/
 .aider*
 .env
+.continue/
