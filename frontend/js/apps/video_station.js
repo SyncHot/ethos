@@ -676,6 +676,24 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         const content = bodyEl.querySelector('#vs-content');
         if (!toolbar || !content) return;
 
+        // Toggle Netflix home mode
+        const layout = bodyEl.querySelector('.vs-layout');
+        if (layout) {
+            if (id === 'home') {
+                if (!layout.classList.contains('vs-home-mode'))
+                    layout.dataset.prevSidebar = layout.classList.contains('vs-sidebar-collapsed') ? '1' : '0';
+                layout.classList.add('vs-home-mode');
+            } else {
+                if (layout.classList.contains('vs-home-mode')) {
+                    layout.classList.remove('vs-home-mode');
+                    if (layout.dataset.prevSidebar === '0') {
+                        layout.classList.remove('vs-sidebar-collapsed');
+                        sidebarCollapsed = false;
+                    }
+                }
+            }
+        }
+
         switch (id) {
             case 'home':       toolbar.innerHTML = ''; loadHome(); break;
             case 'library':    renderLibraryToolbar(toolbar); loadLibrary(); break;
@@ -847,6 +865,21 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 
         let html = '<div class="vs-home">';
 
+        // Netflix-style top nav
+        html += '<div class="vs-nf-topnav" id="vs-nf-topnav">';
+        html += '<button class="vs-nf-topnav-menu" id="vs-nf-menu-btn" title="' + t('Menu') + '"><i class="fas fa-bars"></i></button>';
+        html += '<div class="vs-nf-topnav-logo" id="vs-nf-logo" title="' + t('Strona główna') + '"><i class="fas fa-film"></i></div>';
+        html += '<div class="vs-nf-topnav-links">';
+        html += '<span class="vs-nf-topnav-link active" data-section="home">' + t('Strona główna') + '</span>';
+        html += '<span class="vs-nf-topnav-link" data-section="library">' + t('Filmy') + '</span>';
+        html += '<span class="vs-nf-topnav-link" data-section="recent">' + t('Nowe') + '</span>';
+        html += '<span class="vs-nf-topnav-link" data-section="collections">' + t('Kolekcje') + '</span>';
+        html += '</div>';
+        html += '<div class="vs-nf-topnav-right">';
+        html += '<button class="vs-nf-topnav-btn" id="vs-nf-search-btn" title="' + t('Szukaj') + '"><i class="fas fa-search"></i></button>';
+        html += '</div>';
+        html += '</div>';
+
         // Hero banner
         const hero = data.hero;
         if (hero) {
@@ -917,6 +950,39 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         }
         html += '</div>';
         content.innerHTML = html;
+
+        // Top nav: scroll → solid background
+        const contentEl = bodyEl.querySelector('#vs-content');
+        const topnav = content.querySelector('#vs-nf-topnav');
+        if (contentEl && topnav) {
+            if (contentEl._vsNavScroll) contentEl.removeEventListener('scroll', contentEl._vsNavScroll);
+            contentEl._vsNavScroll = () => topnav.classList.toggle('vs-nf-solid', contentEl.scrollTop > 50);
+            contentEl.addEventListener('scroll', contentEl._vsNavScroll);
+        }
+        // Top nav link clicks
+        content.querySelectorAll('.vs-nf-topnav-link[data-section]').forEach(link =>
+            link.onclick = () => switchSection(link.dataset.section));
+        // Hamburger → show sidebar (exit home mode)
+        const menuBtn = content.querySelector('#vs-nf-menu-btn');
+        if (menuBtn) menuBtn.onclick = () => {
+            const layout = bodyEl.querySelector('.vs-layout');
+            if (layout) {
+                layout.classList.remove('vs-home-mode');
+                if (layout.dataset.prevSidebar === '0') {
+                    layout.classList.remove('vs-sidebar-collapsed');
+                    sidebarCollapsed = false;
+                }
+            }
+        };
+        // Logo → home
+        const logoBtn = content.querySelector('#vs-nf-logo');
+        if (logoBtn) logoBtn.onclick = () => switchSection('home');
+        // Search button → library with search focused
+        const searchBtn = content.querySelector('#vs-nf-search-btn');
+        if (searchBtn) searchBtn.onclick = () => {
+            switchSection('library');
+            setTimeout(() => { const si = bodyEl.querySelector('#vs-search'); if (si) si.focus(); }, 80);
+        };
 
         // Hero buttons
         content.querySelectorAll('.vs-hero-play').forEach(btn =>

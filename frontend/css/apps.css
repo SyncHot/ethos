@@ -6649,3 +6649,115 @@ textarea.app-input { resize: vertical; line-height: 1.5; }
 .vs-codec-pill-fail { background:rgba(239,68,68,.1); color:#f87171; border:1px solid rgba(239,68,68,.3); }
 
 
+
+/* ════════════════════════════════════════════════════════════════════
+   VS Netflix Theme
+   ════════════════════════════════════════════════════════════════════ */
+
+/* Dark palette ─────────────────────────────────────────────────────── */
+.vs-layout { background:#141414; }
+.vs-sidebar {
+    background:#0d0d0d; border-right:1px solid rgba(255,255,255,.07);
+    transition:width .3s, min-width .3s, opacity .25s;
+}
+.vs-sidebar-header { border-bottom:1px solid rgba(255,255,255,.07); }
+.vs-nav-label { color:rgba(255,255,255,.35); }
+.vs-nav-item { color:rgba(255,255,255,.6); }
+.vs-nav-item:hover { background:rgba(255,255,255,.08); color:#fff; }
+.vs-nav-item.active { background:#e50914; color:#fff; }
+.vs-nav-badge { background:#e50914; }
+.vs-sidebar-logo { color:#fff; }
+.vs-sidebar-logo i { color:#e50914; }
+.vs-hamburger { color:rgba(255,255,255,.6); }
+.vs-hamburger:hover { color:#fff; background:rgba(255,255,255,.1); }
+.vs-sidebar-stats { border-top:1px solid rgba(255,255,255,.07); color:rgba(255,255,255,.35); }
+.vs-toolbar { background:#141414; border-bottom:1px solid rgba(255,255,255,.08); }
+.vs-toolbar-title { color:#fff; }
+.vs-content { background:#141414; }
+.vs-card { background:#1e1e1e; border-color:rgba(255,255,255,.06); }
+.vs-card:hover { box-shadow:0 8px 28px rgba(0,0,0,.7); }
+.vs-title { color:#fff; }
+.vs-meta { color:rgba(255,255,255,.45); }
+.vs-coll-card { background:#1e1e1e; border-color:rgba(255,255,255,.06); }
+.vs-coll-name { color:#fff; }
+.vs-coll-meta { color:rgba(255,255,255,.45); }
+.vs-select { background:#1e1e1e; color:#fff; border-color:rgba(255,255,255,.12); }
+.vs-input { background:#1e1e1e; color:#fff; border-color:rgba(255,255,255,.12); }
+.vs-settings-card { background:#1e1e1e; border-color:rgba(255,255,255,.06); }
+.vs-settings-card-title { color:#fff; }
+.vs-settings-desc { color:rgba(255,255,255,.5); }
+.vs-folder-item { background:#1e1e1e; border-color:rgba(255,255,255,.06); }
+.vs-list-item { background:#1e1e1e; border-color:rgba(255,255,255,.06); }
+.vs-list-title { color:#fff; }
+.vs-list-meta { color:rgba(255,255,255,.45); }
+.vs-stat-row { color:rgba(255,255,255,.5); }
+.vs-empty { color:rgba(255,255,255,.4); }
+
+/* Home mode – sidebar hidden, toolbar hidden, no content padding ──── */
+.vs-layout.vs-home-mode .vs-sidebar { width:0; min-width:0; opacity:0; overflow:hidden; }
+.vs-layout.vs-home-mode .vs-toolbar { display:none; }
+.vs-layout.vs-home-mode .vs-content { padding:0; overflow-x:hidden; }
+
+/* Hero ─────────────────────────────────────────────────────────────── */
+.vs-hero { min-height:520px; max-height:80vh; }
+.vs-hero-grad {
+    background:linear-gradient(77deg, rgba(0,0,0,.85) 0%, transparent 55%),
+               linear-gradient(to top, #141414 0%, rgba(20,20,20,.55) 50%, transparent 100%);
+}
+.vs-hero-info { padding:40px 52px 88px; max-width:640px; }
+.vs-hero-title { font-size:clamp(28px,4.2vw,56px); margin-bottom:12px; }
+.vs-hero-overview { font-size:15px; max-width:480px; }
+.vs-hero-play {
+    background:#fff; color:#000; padding:13px 28px; font-size:16px;
+    border-radius:4px; gap:10px; font-weight:700;
+}
+.vs-hero-play:hover { filter:none; background:rgba(255,255,255,.78); }
+.vs-hero-info-btn {
+    background:rgba(109,109,110,.7); border:none; padding:12px 22px;
+    font-size:15px; border-radius:4px; font-weight:700;
+}
+.vs-hero-info-btn:hover { background:rgba(109,109,110,.5); }
+
+/* Rows ─────────────────────────────────────────────────────────────── */
+.vs-row { padding:8px 0 4px; }
+.vs-row-header { padding:0 52px 8px; }
+.vs-row-title { color:#fff; font-size:18px; font-weight:700; }
+.vs-row-track { padding:8px 52px 24px; gap:10px; }
+.vs-row-card { flex:0 0 185px; }
+.vs-row-card:hover { transform:scale(1.12); z-index:5; box-shadow:0 8px 32px rgba(0,0,0,.65); }
+.vs-row-card-img { border-radius:4px; }
+.vs-row-card-title { color:rgba(255,255,255,.65); }
+.vs-row-card:hover .vs-row-card-title { color:#fff; }
+.vs-row-prev,.vs-row-next {
+    background:rgba(255,255,255,.15); color:rgba(255,255,255,.85);
+    width:32px; height:32px; font-size:12px;
+}
+.vs-row-prev:hover,.vs-row-next:hover { background:rgba(255,255,255,.28); color:#fff; }
+
+/* Netflix-style top navigation ─────────────────────────────────────── */
+.vs-nf-topnav {
+    position:sticky; top:0; z-index:10;
+    display:flex; align-items:center; gap:16px; padding:18px 40px;
+    background:linear-gradient(to bottom, rgba(0,0,0,.88) 0%, transparent 100%);
+    transition:background .3s; margin-bottom:-64px; pointer-events:auto;
+}
+.vs-nf-topnav.vs-nf-solid { background:rgba(20,20,20,.96); backdrop-filter:blur(6px); }
+.vs-nf-topnav-logo { color:#e50914; font-size:22px; cursor:pointer; flex-shrink:0; }
+.vs-nf-topnav-menu {
+    background:none; border:none; color:rgba(255,255,255,.8); font-size:16px;
+    cursor:pointer; padding:4px 6px; border-radius:4px; flex-shrink:0;
+}
+.vs-nf-topnav-menu:hover { color:#fff; background:rgba(255,255,255,.1); }
+.vs-nf-topnav-links { display:flex; gap:22px; }
+.vs-nf-topnav-link {
+    color:rgba(255,255,255,.75); font-size:14px; cursor:pointer;
+    transition:color .15s; white-space:nowrap; user-select:none;
+}
+.vs-nf-topnav-link:hover { color:#fff; }
+.vs-nf-topnav-link.active { color:#fff; font-weight:700; }
+.vs-nf-topnav-right { margin-left:auto; display:flex; gap:4px; }
+.vs-nf-topnav-btn {
+    background:none; border:none; color:rgba(255,255,255,.75);
+    font-size:16px; cursor:pointer; padding:6px 8px; border-radius:4px;
+}
+.vs-nf-topnav-btn:hover { color:#fff; background:rgba(255,255,255,.1); }
