@@ -2425,6 +2425,12 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             speedSel.onchange = () => { video.playbackRate = parseFloat(speedSel.value); };
         }
 
+        // Prevent auto-hide while any select dropdown is open
+        [speedSel, audioSel, subSel].filter(Boolean).forEach(sel => {
+            sel.addEventListener('focus', () => clearTimeout(_ctrlHideTimer), sig);
+            sel.addEventListener('blur',  () => _resetHideTimer(), sig);
+        });
+
         // Audio track selector \u2014 show whenever multiple tracks exist
         const tracks = info.audio_tracks || [];
         if (tracks.length > 1) {
