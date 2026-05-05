@@ -5007,7 +5007,7 @@ def files_list():
 
     try:
         if _on_external:
-            dir_entries = _fs_call(_do_scandir, timeout=10)
+            dir_entries = _fs_call(_do_scandir, timeout=30)
         else:
             dir_entries = _do_scandir()
         for entry in dir_entries:

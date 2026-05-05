@@ -110,8 +110,10 @@ def keepalive_loop(sio):
                 current_mp = mnt_check.stdout.strip() if mnt_check.returncode == 0 else ''
 
                 if current_mp == mp:
-                    # Mounted correctly — just keep USB awake
+                    # Mounted correctly — keep USB awake AND prevent APM spindown
+                    # by doing a lightweight real disk read (stat alone uses VFS cache).
                     _disable_usb_autosuspend(dev_name)
+                    host_run(f"ls {Q(mp)} >/dev/null 2>&1", timeout=10)
                     continue
 
                 # Drive present but not mounted at expected path → re-mount
@@ -204,8 +206,9 @@ def try_wake_path(host_path):
             continue
         # Check if requested path is under this mountpoint
         if host_path == mp or host_path.startswith(mp + '/'):
-            # First: poke the disk with a lightweight stat to wake from standby
-            host_run(f"stat {Q(mp)} >/dev/null 2>&1", timeout=15)
+            # First: force a real directory read to wake the disk from APM standby
+            # (stat on a mountpoint may use VFS cache and not touch the spindle)
+            host_run(f"ls {Q(mp)} >/dev/null 2>&1", timeout=20)
             # Then check if still actually mounted
             mnt_check = host_run(f"findmnt -n -o TARGET {Q(mp)} 2>/dev/null", timeout=10)
             if mnt_check.returncode == 0 and mnt_check.stdout.strip() == mp:
