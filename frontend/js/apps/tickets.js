@@ -1,6 +1,9 @@
 /* ─────────────────── Tickets / Kanban Board (EthOS) ─────────────────── */
 /* globals AppRegistry, createWindow, NAS, api, toast, t */
 
+(function () {
+if (AppRegistry['tickets']) return;
+
 AppRegistry['tickets'] = function (appDef, launchOpts) {
     const winId = 'tickets';
     createWindow(winId, {
@@ -2917,3 +2920,5 @@ ${a.ai_issues ? `<br>🤖 AI insights: ${a.ai_issues}` : ''}
 
     await showProjectList();
 }
+
+})();
