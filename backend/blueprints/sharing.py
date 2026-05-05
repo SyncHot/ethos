@@ -9,6 +9,7 @@ import io
 import zipfile as _zf
 from datetime import datetime, timedelta
 from flask import Blueprint, request, jsonify, send_file, send_from_directory, g
+from werkzeug.security import generate_password_hash, check_password_hash
 from host import data_path
 from utils import load_json, save_json, DATA_ROOT, generate_thumbnail
 from audit import audit_log
@@ -80,8 +81,35 @@ def _verify_shared_with_auth(share):
     return True, None
 
 
+def _verify_share_password(share):
+    """Verify password for password-protected shares.
+    Returns (ok: bool, error_response | None).
+    If share has no password, returns (True, None) immediately."""
+    pw_hash = share.get('password')
+    if not pw_hash:
+        return True, None
+
+    # Accept password via query param or Authorization header
+    pw = request.args.get('password', '')
+    if not pw:
+        auth = request.headers.get('Authorization', '')
+        if auth.startswith('Bearer '):
+            pw = auth[7:]
+
+    if not pw or not check_password_hash(pw_hash, pw):
+        return False, (jsonify({'error': 'Password required', 'password_protected': True}), 401)
+    return True, None
+
+
 # ── Authenticated share management (under /api/files/shares) ──
 # These routes are protected by _blueprint_auth_guard via /api/files/ prefix.
+
+def _sanitize_share(s):
+    """Strip password hash, add has_password boolean for the frontend."""
+    out = {k: v for k, v in s.items() if k != 'password'}
+    out['has_password'] = bool(s.get('password'))
+    return out
+
 
 @sharing_bp.route('/api/files/shares')
 def list_shares():
@@ -89,7 +117,7 @@ def list_shares():
     shares = _load_shares()
     if me:
         shares = [s for s in shares if s.get('creator', '') == me or not s.get('creator')]
-    return jsonify(shares)
+    return jsonify([_sanitize_share(s) for s in shares])
 
 
 @sharing_bp.route('/api/files/shares/received')
@@ -112,7 +140,7 @@ def received_shares():
                     continue
             except Exception:
                 pass
-        result.append(s)
+        result.append(_sanitize_share(s))
     return jsonify(result)
 
 
@@ -144,6 +172,9 @@ def create_share():
     else:
         shared_with = []
 
+    password = data.get('password', '').strip()
+    password_hash = generate_password_hash(password) if password else None
+
     share = {
         'token': token,
         'path': path,
@@ -153,6 +184,7 @@ def create_share():
         'expires': expires_iso,
         'creator': g.username or '',
         'shared_with': shared_with,
+        'password': password_hash,
     }
 
     shares = _load_shares()
@@ -160,7 +192,7 @@ def create_share():
     _save_shares(shares)
 
     audit_log('file.share.create', f'Shared "{path}" (token: {token})')
-    return jsonify(share)
+    return jsonify(_sanitize_share(share))
 
 
 @sharing_bp.route('/api/files/shares/<token>', methods=['DELETE'])
@@ -189,6 +221,10 @@ def public_share_info(token):
         return jsonify({'error': 'Link expired or not found'}), 404
 
     ok, err = _verify_shared_with_auth(share)
+    if not ok:
+        return err
+
+    ok, err = _verify_share_password(share)
     if not ok:
         return err
 
@@ -239,6 +275,10 @@ def public_share_download(token):
     if not ok:
         return err
 
+    ok, err = _verify_share_password(share)
+    if not ok:
+        return err
+
     sub = request.args.get('path', '')
     real = _share_real_path(share, sub)
     if not real or not os.path.exists(real):
@@ -281,6 +321,10 @@ def public_share_preview(token):
         return jsonify({'error': 'Link expired or not found'}), 404
 
     ok, err = _verify_shared_with_auth(share)
+    if not ok:
+        return err
+
+    ok, err = _verify_share_password(share)
     if not ok:
         return err
 

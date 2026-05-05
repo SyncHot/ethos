@@ -3742,6 +3742,14 @@ function renderFM(body, state) {
                                 `).join('')}
                             </div>
                         </div>` : ''}
+                        <div class="app-mt-md">
+                            <label class="modal-label app-label-row">
+                                <input type="checkbox" id="share-link-pw-toggle"> ${t('Chroń hasłem')}
+                            </label>
+                            <div id="share-link-pw-wrap" style="display:none;margin-top:8px">
+                                <input type="password" class="modal-input" id="share-link-password" placeholder="${t('Hasło do linku')}" autocomplete="new-password">
+                            </div>
+                        </div>
                     </div>
                     <div class="modal-footer">
                         <button class="btn" id="share-link-cancel">Anuluj</button>
@@ -3757,6 +3765,12 @@ function renderFM(body, state) {
             if (toggle && userList) {
                 toggle.addEventListener('change', () => { userList.style.display = toggle.checked ? 'block' : 'none'; });
             }
+            // Toggle password input
+            const pwToggle = overlay.querySelector('#share-link-pw-toggle');
+            const pwWrap = overlay.querySelector('#share-link-pw-wrap');
+            if (pwToggle && pwWrap) {
+                pwToggle.addEventListener('change', () => { pwWrap.style.display = pwToggle.checked ? 'block' : 'none'; });
+            }
 
             overlay.querySelector('#share-link-cancel').addEventListener('click', () => { overlay.remove(); resolve(null); });
             overlay.querySelector('#share-link-ok').addEventListener('click', () => {
@@ -3765,8 +3779,9 @@ function renderFM(body, state) {
                 if (toggle && toggle.checked) {
                     overlay.querySelectorAll('.share-user-cb:checked').forEach(cb => selectedUsers.push(cb.value));
                 }
+                const password = (pwToggle && pwToggle.checked) ? overlay.querySelector('#share-link-password').value.trim() : '';
                 overlay.remove();
-                resolve({ hours, shared_with: selectedUsers });
+                resolve({ hours, shared_with: selectedUsers, password });
             });
             overlay.addEventListener('click', (e) => { if (e.target === overlay) { overlay.remove(); resolve(null); } });
         });
@@ -3777,6 +3792,9 @@ function renderFM(body, state) {
             const body = { path: fullPath, expires_hours: parseInt(result.hours) };
             if (result.shared_with && result.shared_with.length > 0) {
                 body.shared_with = result.shared_with;
+            }
+            if (result.password) {
+                body.password = result.password;
             }
             const share = await api('/files/shares', {
                 method: 'POST',
@@ -3802,6 +3820,7 @@ function renderFM(body, state) {
                         </div>
                         ${parseInt(result.hours) > 0 ? `<div class="app-hint"><i class="fas fa-clock"></i> Wygasa za ${result.hours === '1' ? t('1 godzinę') : result.hours + ' godz.'}</div>` : '<div class="app-hint"><i class="fas fa-infinity"></i> Link nie wygasa</div>'}
                         ${isUserShare ? `<div class="app-hint app-mt-xs"><i class="fas fa-lock"></i> ${t('Dostępny tylko dla wybranych użytkowników')}</div>` : ''}
+                        ${result.password ? `<div class="app-hint app-mt-xs"><i class="fas fa-key"></i> ${t('Chroniony hasłem')}</div>` : ''}
                     </div>
                     <div class="modal-footer">
                         <button class="btn btn-primary" id="share-link-close">Zamknij</button>

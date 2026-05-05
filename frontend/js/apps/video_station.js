@@ -40,6 +40,9 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     let currentQuery   = '';
     let currentFolder  = '';
     let currentWatched = '';
+    let currentCodec   = '';
+    let currentRes     = '';
+    let currentView   = localStorage.getItem('vs_view') || 'grid';
     let scanning       = false;
     let useTmdb        = true;
     let playerInterval = null;
@@ -179,50 +182,81 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
   </div>
 </div>
 <div class="vs-player-overlay" id="vs-player-overlay" style="display:none">
-  <div class="vs-player-top">
-    <span class="vs-player-title" id="vs-player-title"></span>
+
+  <!-- Top bar: title + badge -->
+  <div class="vs-nf-top" id="vs-player-top">
+    <span class="vs-nf-title" id="vs-player-title"></span>
     <span class="vs-player-badge" id="vs-player-badge" style="display:none"><i class="fas fa-sync-alt fa-spin"></i> ${t('Transkodowanie')}</span>
-    <select class="vs-audio-select" id="vs-audio-select" style="display:none"></select>
-    <select class="vs-sub-select" id="vs-sub-select" style="display:none"></select>
-    <select class="vs-speed-select" id="vs-speed-select">
-      <option value="0.5">0.5x</option>
-      <option value="0.75">0.75x</option>
-      <option value="1" selected>1x</option>
-      <option value="1.25">1.25x</option>
-      <option value="1.5">1.5x</option>
-      <option value="2">2x</option>
-    </select>
-    <button class="vs-pip-btn" id="vs-pip-btn" title="${t('Obraz w obrazie')}"><i class="fas fa-external-link-alt"></i></button>
-    <button class="vs-cast-btn" id="vs-cast-btn" title="${t('Cast na TV')}" style="display:none"><i class="fas fa-tv"></i></button>
-    <button class="vs-stats-btn" id="vs-stats-btn" title="${t('Statystyki dla geeków')}"><i class="fas fa-chart-bar"></i></button>
-    <button class="vs-fs-btn" id="vs-fs-btn" title="${t('Pełny ekran')}"><i class="fas fa-expand"></i></button>
-    <button class="vs-player-close" id="vs-player-close"><i class="fas fa-times"></i></button>
   </div>
+
+  <!-- Video -->
   <video id="vs-player-video" autoplay playsinline></video>
+
+  <!-- Center: click-to-toggle + animation feedback -->
   <div class="vs-player-center" id="vs-player-center">
-    <button class="vs-cc-btn" id="vs-cc-rw"><i class="fas fa-undo-alt"></i><span>10</span></button>
-    <button class="vs-cc-btn vs-cc-play" id="vs-cc-play"><i class="fas fa-pause"></i></button>
-    <button class="vs-cc-btn" id="vs-cc-ff"><i class="fas fa-redo-alt"></i><span>10</span></button>
+    <div class="vs-nf-anim" id="vs-nf-anim"></div>
   </div>
-  <div class="vs-player-bottom" id="vs-player-bottom">
-    <span class="vs-pb-time" id="vs-pb-cur">0:00</span>
-    <div class="vs-pb-seek-wrap" id="vs-pb-seek-wrap">
-      <div class="vs-pb-seek-track">
-        <div class="vs-pb-seek-buf" id="vs-pb-seek-buf"></div>
-        <div class="vs-pb-seek-fill" id="vs-pb-seek-fill"></div>
+
+  <!-- Bottom controls (Netflix layout) -->
+  <div class="vs-nf-bottom" id="vs-player-bottom">
+
+    <!-- Seek / progress bar -->
+    <div class="vs-nf-scrubber" id="vs-pb-seek-wrap">
+      <!-- Thumbstrip hover preview -->
+      <div class="vs-nf-preview" id="vs-thumbstrip-preview" style="display:none">
+        <canvas id="vs-thumbstrip-canvas" width="160" height="90"></canvas>
+        <span class="vs-nf-preview-time" id="vs-thumbstrip-time"></span>
       </div>
-      <input type="range" class="vs-pb-seek" id="vs-pb-seek" min="0" max="100" value="0" step="0.1">
+      <div class="vs-nf-bar">
+        <div class="vs-nf-bar-buf"  id="vs-pb-seek-buf"></div>
+        <div class="vs-nf-bar-fill" id="vs-pb-seek-fill"></div>
+        <div class="vs-nf-bar-dot"  id="vs-nf-thumb"></div>
+      </div>
+      <input type="range" class="vs-nf-range" id="vs-pb-seek" min="0" max="100" value="0" step="0.1">
     </div>
-    <span class="vs-pb-time" id="vs-pb-dur">0:00</span>
-  </div>
-  <div class="vs-seek-hint vs-seek-hint-left" id="vs-seek-hint-left"><i class="fas fa-backward"></i><span>-10s</span></div>
+
+    <!-- Controls row -->
+    <div class="vs-nf-controls">
+      <div class="vs-nf-ctrls-left">
+        <button class="vs-nf-btn vs-nf-btn-play" id="vs-pb-play" title="${t('Odtwórz/Pauza')}"><i class="fas fa-pause"></i></button>
+        <button class="vs-nf-btn vs-nf-btn-skip" id="vs-cc-rw" title="-10s">
+          <i class="fas fa-undo"></i><span class="vs-nf-skip-n">10</span>
+        </button>
+        <button class="vs-nf-btn vs-nf-btn-skip" id="vs-cc-ff" title="+10s">
+          <i class="fas fa-redo"></i><span class="vs-nf-skip-n">10</span>
+        </button>
+        <button class="vs-nf-btn" id="vs-mute-btn" title="${t('Wycisz')}"><i class="fas fa-volume-up"></i></button>
+        <div class="vs-nf-time-wrap">
+          <span class="vs-nf-time-cur" id="vs-pb-cur">0:00</span>
+          <span class="vs-nf-time-sep">&thinsp;/&thinsp;</span>
+          <span class="vs-nf-time-dur" id="vs-pb-dur">0:00</span>
+        </div>
+      </div>
+      <div class="vs-nf-ctrls-right">
+        <select class="vs-nf-select" id="vs-speed-select">
+          <option value="0.5">0.5×</option>
+          <option value="0.75">0.75×</option>
+          <option value="1" selected>1×</option>
+          <option value="1.25">1.25×</option>
+          <option value="1.5">1.5×</option>
+          <option value="2">2×</option>
+        </select>
+        <select class="vs-nf-select" id="vs-audio-select" style="display:none"></select>
+        <select class="vs-nf-select" id="vs-sub-select"   style="display:none"></select>
+        <button class="vs-nf-btn" id="vs-cast-btn"  title="${t('Cast na TV')}" style="display:none"><i class="fas fa-tv"></i></button>
+        <button class="vs-nf-btn" id="vs-pip-btn"   title="${t('Obraz w obrazie')}"><i class="fas fa-clone"></i></button>
+        <button class="vs-nf-btn" id="vs-stats-btn" title="${t('Statystyki')}"><i class="fas fa-chart-bar"></i></button>
+        <button class="vs-nf-btn vs-nf-btn-fs" id="vs-fs-btn" title="${t('Pełny ekran')}"><i class="fas fa-expand"></i></button>
+        <button class="vs-nf-btn vs-nf-btn-close" id="vs-player-close" title="${t('Zamknij')}"><i class="fas fa-times"></i></button>
+      </div>
+    </div>
+
+  </div><!-- /vs-nf-bottom -->
+
+  <div class="vs-seek-hint vs-seek-hint-left"  id="vs-seek-hint-left"><i class="fas fa-backward"></i><span>-10s</span></div>
   <div class="vs-seek-hint vs-seek-hint-right" id="vs-seek-hint-right"><i class="fas fa-forward"></i><span>+10s</span></div>
-  <div class="vs-swipe-hint" id="vs-swipe-hint"></div>
+  <div class="vs-swipe-hint"   id="vs-swipe-hint"></div>
   <div class="vs-stats-overlay" id="vs-stats-overlay" style="display:none"></div>
-  <div class="vs-thumbstrip-preview" id="vs-thumbstrip-preview" style="display:none">
-    <canvas id="vs-thumbstrip-canvas" width="160" height="90"></canvas>
-    <span class="vs-thumbstrip-time" id="vs-thumbstrip-time"></span>
-  </div>
   <div class="vs-resume-dialog" id="vs-resume-dialog" style="display:none">
     <div class="vs-resume-box">
       <div class="vs-resume-text" id="vs-resume-text"></div>
@@ -679,7 +713,21 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     '<option value="0"' + (currentWatched === '0' ? ' selected' : '') + '>' + t('Nieobejrzane') + '</option>' +
     '<option value="1"' + (currentWatched === '1' ? ' selected' : '') + '>' + t('Obejrzane') + '</option>' +
   '</select>' +
+  '<select id="vs-codec-filter" class="vs-select">' +
+    '<option value=""' + (currentCodec === '' ? ' selected' : '') + '>' + t('Wszystkie kodeki') + '</option>' +
+    '<option value="transcode"' + (currentCodec === 'transcode' ? ' selected' : '') + '>' + t('Wymaga transkodowania') + '</option>' +
+    '<option value="h264"' + (currentCodec === 'h264' ? ' selected' : '') + '>H.264</option>' +
+    '<option value="hevc"' + (currentCodec === 'hevc' ? ' selected' : '') + '>HEVC</option>' +
+    '<option value="av1"' + (currentCodec === 'av1' ? ' selected' : '') + '>AV1</option>' +
+  '</select>' +
+  '<select id="vs-res-filter" class="vs-select">' +
+    '<option value=""' + (currentRes === '' ? ' selected' : '') + '>' + t('Wszystkie rozdzielczości') + '</option>' +
+    '<option value="4k"' + (currentRes === '4k' ? ' selected' : '') + '>4K</option>' +
+    '<option value="1080p"' + (currentRes === '1080p' ? ' selected' : '') + '>1080p</option>' +
+    '<option value="720p"' + (currentRes === '720p' ? ' selected' : '') + '>720p</option>' +
+  '</select>' +
   '<button id="vs-select-toggle" class="app-btn app-btn-sm" title="' + t('Zaznaczanie') + '"><i class="fas fa-check-square"></i></button>' +
+  '<button id="vs-view-toggle" class="app-btn app-btn-sm" title="' + t('Widok: siatka / lista') + '"><i class="fas fa-' + (currentView === 'list' ? 'th' : 'list') + '"></i></button>' +
   '<button class="app-btn app-btn-sm" title="' + t('Ustawienia, skanowanie, TMDb') + '" id="vs-lib-settings-btn"><i class="fas fa-sliders-h"></i></button>' +
 '</div>';
 
@@ -694,7 +742,18 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         bodyEl.querySelector('#vs-watched-filter').onchange = (e) => {
             currentWatched = e.target.value; libraryOffset = 0; loadLibrary();
         };
+        bodyEl.querySelector('#vs-codec-filter').onchange = (e) => {
+            currentCodec = e.target.value; libraryOffset = 0; loadLibrary();
+        };
+        bodyEl.querySelector('#vs-res-filter').onchange = (e) => {
+            currentRes = e.target.value; libraryOffset = 0; loadLibrary();
+        };
         bodyEl.querySelector('#vs-select-toggle').onclick = _toggleSelectMode;
+        bodyEl.querySelector('#vs-view-toggle').onclick = () => {
+            currentView = currentView === 'list' ? 'grid' : 'list';
+            localStorage.setItem('vs_view', currentView);
+            libraryOffset = 0; loadLibrary();
+        };
         bodyEl.querySelector('#vs-lib-settings-btn').onclick = () => switchSection('settings');
 
         if (scanning) checkScanStatus();
@@ -710,13 +769,15 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             sort: currentSort, q: currentQuery, folder: currentFolder,
             watched: currentWatched,
         });
+        if (currentCodec) params.set('codec', currentCodec);
+        if (currentRes) params.set('res', currentRes);
         const data = await api('/video-station/library?' + params);
         if (data.error) { content.innerHTML = '<div class="vs-empty">' + escH(data.error) + '</div>'; return; }
 
         libraryItems = data.items || [];
         libraryTotal = data.total || 0;
 
-        if (!libraryItems.length && !currentQuery && !currentFolder && !currentWatched) {
+        if (!libraryItems.length && !currentQuery && !currentFolder && !currentWatched && !currentCodec && !currentRes) {
             content.innerHTML =
                 '<div class="vs-empty"><i class="fas fa-film"></i>' +
                 '<p>' + t('Brak filmów w bibliotece') + '</p>' +
@@ -727,7 +788,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         let html = '';
 
         // Continue Watching section (only on first page with no filters)
-        if (libraryOffset === 0 && !currentQuery && !currentFolder && !currentWatched) {
+        if (libraryOffset === 0 && !currentQuery && !currentFolder && !currentWatched && !currentCodec && !currentRes) {
             const cw = await api('/video-station/continue-watching?limit=10');
             const cwItems = (cw && cw.items) ? cw.items : [];
             if (cwItems.length) {
@@ -759,7 +820,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         if (!libraryItems.length) {
             html += '<div class="vs-empty"><i class="fas fa-filter"></i><p>' + t('Brak wyników') + '</p></div>';
         } else {
-            html += renderGrid(libraryItems) + renderPagination();
+            html += (currentView === 'list' ? renderList(libraryItems) : renderGrid(libraryItems)) + renderPagination();
         }
         content.innerHTML = html;
         attachGridEvents(content);
@@ -1307,6 +1368,51 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         return '<div class="vs-genre-badges">' + names.map(n => '<span class="vs-genre-badge">' + escH(n) + '</span>').join('') + '</div>';
     }
 
+    function renderList(items) {
+        let html = '<div class="vs-list' + (selectMode ? ' vs-select-mode' : '') + '">';
+        html += '<div class="vs-list-header">';
+        html += '<span class="vs-list-col vs-list-col-thumb"></span>';
+        html += '<span class="vs-list-col vs-list-col-title">' + t('Tytuł') + '</span>';
+        html += '<span class="vs-list-col vs-list-col-year">' + t('Rok') + '</span>';
+        html += '<span class="vs-list-col vs-list-col-dur">' + t('Czas') + '</span>';
+        html += '<span class="vs-list-col vs-list-col-res">' + t('Rozdzielczość') + '</span>';
+        html += '<span class="vs-list-col vs-list-col-codec">' + t('Kodek') + '</span>';
+        html += '<span class="vs-list-col vs-list-col-size">' + t('Rozmiar') + '</span>';
+        html += '</div>';
+        items.forEach(v => {
+            const dur = formatDuration(v.duration);
+            const res = v.height ? (v.height >= 2160 ? '4K' : v.height >= 1080 ? '1080p' : v.height >= 720 ? '720p' : v.height + 'p') : '';
+            const codec = (v.codec || '').toUpperCase();
+            const size = v.file_size ? formatBytes(v.file_size) : '';
+            const year = v.tmdb_year || '';
+            const imgSrc = v.poster_ok
+                ? '/api/video-station/poster/' + v.id + '?token=' + NAS.token
+                : '/api/video-station/thumb/' + v.id + '?token=' + NAS.token;
+            const pct = v.duration && v.position ? Math.min(100, Math.round((v.position / v.duration) * 100)) : 0;
+            const sel = selectedIds.has(String(v.id));
+
+            html +=
+'<div class="vs-list-row' + (v.watched ? ' vs-watched' : '') + (sel ? ' vs-selected' : '') + '" data-id="' + v.id + '">' +
+  (selectMode ? '<div class="vs-checkbox' + (sel ? ' checked' : '') + '"><i class="fas fa-' + (sel ? 'check-square' : 'square') + '"></i></div>' : '') +
+  '<span class="vs-list-col vs-list-col-thumb">' +
+    '<img src="' + imgSrc + '" loading="lazy" alt="" onerror="this.style.display=\'none\'">' +
+    '<div class="vs-thumb-placeholder"><i class="fas fa-film"></i></div>' +
+  '</span>' +
+  '<span class="vs-list-col vs-list-col-title" title="' + escH(v.title || v.filename || '') + '">' +
+    escH(v.title || v.filename || '') +
+    (pct > 0 && !v.watched ? '<div class="vs-progress-bar"><div class="vs-progress-fill" style="width:' + pct + '%"></div></div>' : '') +
+  '</span>' +
+  '<span class="vs-list-col vs-list-col-year">' + escH(year) + '</span>' +
+  '<span class="vs-list-col vs-list-col-dur">' + dur + '</span>' +
+  '<span class="vs-list-col vs-list-col-res">' + res + '</span>' +
+  '<span class="vs-list-col vs-list-col-codec">' + codec + '</span>' +
+  '<span class="vs-list-col vs-list-col-size">' + size + '</span>' +
+'</div>';
+        });
+        html += '</div>';
+        return html;
+    }
+
     function renderGrid(items, showWatched) {
         let html = '<div class="vs-grid' + (selectMode ? ' vs-select-mode' : '') + '">';
         items.forEach(v => {
@@ -1345,7 +1451,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     }
 
     function attachGridEvents(container) {
-        container.querySelectorAll('.vs-card[data-id]').forEach(card => {
+        container.querySelectorAll('.vs-card[data-id], .vs-list-row[data-id]').forEach(card => {
             card.onclick = (e) => {
                 if (selectMode) {
                     _toggleSelection(card);
@@ -1375,6 +1481,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             items += '<div class="vs-ctx-item" data-action="hide"><i class="fas fa-eye-slash"></i> ' + t('Ukryj') + '</div>';
         }
         items += '<div class="vs-ctx-item vs-ctx-danger" data-action="remove"><i class="fas fa-trash-alt"></i> ' + t('Usuń z biblioteki') + '</div>';
+        items += '<div class="vs-ctx-item vs-ctx-danger" data-action="delete"><i class="fas fa-trash"></i> ' + t('Usuń plik z dysku') + '</div>';
         menu.innerHTML = items;
         menu.style.left = e.clientX + 'px';
         menu.style.top = e.clientY + 'px';
@@ -1402,6 +1509,14 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
                     const res = await api('/video-station/remove/' + vid, { method: 'POST' });
                     if (res.error) { toast(res.error, 'error'); return; }
                     toast(t('Usunięto z biblioteki'), 'success');
+                    _reloadSection();
+                } else if (action === 'delete') {
+                    const item = libraryItems.find(i => String(i.id) === String(vid));
+                    const fname = item ? (item.filename || '') : '';
+                    if (!await confirmDialog(t('TRWALE usunąć plik z dysku?') + (fname ? '\n\n' + fname : '') + '\n\n' + t('Tej operacji nie można cofnąć!'))) return;
+                    const res = await api('/video-station/delete/' + vid, { method: 'POST' });
+                    if (res.error) { toast(res.error, 'error'); return; }
+                    toast(t('Plik usunięty z dysku'), 'success');
                     _reloadSection();
                 } else if (action === 'info') {
                     _showInfoModal(vid);
@@ -1546,9 +1661,19 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     }
 
     /* ── TMDb search dialog ─────────────────────────────────────── */
-    function _showTmdbSearchDialog(vid) {
-        const item = libraryItems.find(i => String(i.id) === String(vid));
-        const initialQuery = item ? (item.title || item.filename || '').replace(/\.[^.]+$/, '') : '';
+    async function _showTmdbSearchDialog(vid) {
+        // Fetch parsed title+year from backend (handles DDLValley.me_83_ prefixes etc.)
+        let initialTitle = '';
+        let initialYear  = '';
+        const parsed = await api('/video-station/parse-title/' + vid).catch(() => null);
+        if (parsed && !parsed.error) {
+            initialTitle = parsed.title || '';
+            initialYear  = parsed.year  || '';
+        } else {
+            const item = libraryItems.find(i => String(i.id) === String(vid));
+            initialTitle = item ? (item.title || item.filename || '').replace(/\.[^.]+$/, '') : '';
+        }
+
         const overlay = document.createElement('div');
         overlay.className = 'vs-modal-overlay vs-tmdb-overlay';
         overlay.innerHTML =
@@ -1556,7 +1681,8 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             '<div class="vs-tmdb-header"><span><i class="fas fa-wand-magic-sparkles"></i> ' + t('Wyszukaj w TMDb') + '</span>' +
             '<button class="vs-tmdb-close"><i class="fas fa-times"></i></button></div>' +
             '<div class="vs-tmdb-search-row">' +
-            '<input class="vs-tmdb-search-input" id="vs-tmdb-q" type="text" placeholder="' + t('Tytuł filmu lub serialu…') + '" value="' + initialQuery.replace(/"/g, '&quot;') + '" />' +
+            '<input class="vs-tmdb-search-input vs-tmdb-q" id="vs-tmdb-q" type="text" placeholder="' + t('Tytuł filmu lub serialu…') + '" value="' + initialTitle.replace(/"/g, '&quot;') + '" />' +
+            '<input class="vs-tmdb-year-input" id="vs-tmdb-year" type="text" placeholder="' + t('Rok') + '" maxlength="4" value="' + initialYear + '" />' +
             '<button class="vs-btn-primary vs-tmdb-search-btn" id="vs-tmdb-search-btn"><i class="fas fa-search"></i> ' + t('Szukaj') + '</button>' +
             '</div>' +
             '<div class="vs-tmdb-results" id="vs-tmdb-results"><p class="vs-tmdb-hint">' + t('Wpisz tytuł i kliknij Szukaj') + '</p></div>' +
@@ -1566,12 +1692,14 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
 
         const doSearch = async () => {
-            const q = overlay.querySelector('#vs-tmdb-q').value.trim();
+            const q    = overlay.querySelector('#vs-tmdb-q').value.trim();
+            const year = overlay.querySelector('#vs-tmdb-year').value.trim();
             if (!q) return;
             const resultsEl = overlay.querySelector('#vs-tmdb-results');
             resultsEl.innerHTML = '<p class="vs-tmdb-hint"><i class="fas fa-spinner fa-spin"></i> ' + t('Szukam…') + '</p>';
             try {
-                const res = await api('/video-station/tmdb-search-list?q=' + encodeURIComponent(q));
+                const url = '/video-station/tmdb-search-list?q=' + encodeURIComponent(q) + (year ? '&year=' + encodeURIComponent(year) : '');
+                const res = await api(url);
                 if (res.error) { resultsEl.innerHTML = '<p class="vs-tmdb-hint vs-tmdb-error">' + res.error + '</p>'; return; }
                 if (!res.results || !res.results.length) { resultsEl.innerHTML = '<p class="vs-tmdb-hint">' + t('Brak wyników') + '</p>'; return; }
                 resultsEl.innerHTML = res.results.map(r => {
@@ -1595,7 +1723,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
                         try {
                             const r2 = await api('/video-station/tmdb-apply/' + vid, {
                                 method: 'POST',
-                                body: JSON.stringify({ tmdb_id: el.dataset.id, type: el.dataset.type })
+                                body: { tmdb_id: el.dataset.id, type: el.dataset.type }
                             });
                             if (r2.error) { toast(r2.error, 'error'); el.style.opacity = ''; return; }
                             toast(t('Metadane zaktualizowane!'), 'success');
@@ -1608,8 +1736,9 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         };
 
         overlay.querySelector('#vs-tmdb-search-btn').onclick = doSearch;
-        overlay.querySelector('#vs-tmdb-q').onkeydown = (e) => { if (e.key === 'Enter') doSearch(); };
-        if (initialQuery) doSearch();
+        overlay.querySelector('#vs-tmdb-q').onkeydown    = (e) => { if (e.key === 'Enter') doSearch(); };
+        overlay.querySelector('#vs-tmdb-year').onkeydown = (e) => { if (e.key === 'Enter') doSearch(); };
+        if (initialTitle) doSearch();
     }
 
 
@@ -1931,15 +2060,19 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         return '/api/video-station/stream/' + vid + '?token=' + NAS.token;
     }
 
-    /** Load hls.js from CDN if not already loaded. Returns a Promise. */
+    /** Load hls.js (local bundled copy first, CDN fallback). Returns a Promise. */
     function _ensureHlsJs() {
         if (window.Hls) return Promise.resolve();
-        return new Promise((resolve, reject) => {
+        const load = (src) => new Promise((resolve, reject) => {
             const s = document.createElement('script');
-            s.src = 'https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js';
+            s.src = src;
             s.onload = resolve;
             s.onerror = reject;
             document.head.appendChild(s);
+        });
+        // Try local bundled copy first, fall back to CDN
+        return load('/vendor/hls.min.js').catch(() => {
+            return load('https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js');
         });
     }
 
@@ -1978,21 +2111,26 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         const overlay = bodyEl.querySelector('#vs-player-overlay');
         if (!overlay) return;
 
+        // Cleanup previous thumbstrip listener to prevent accumulation
+        if (overlay._tsCleanup) { overlay._tsCleanup(); overlay._tsCleanup = null; }
         overlay.addEventListener('mousemove', _onSeekHover);
 
         function _onSeekHover(e) {
             if (!_thumbVtt || !_thumbImg || !_thumbImg.complete || _thumbVid !== vid) return;
             const rect = overlay.getBoundingClientRect();
             const relY = e.clientY - rect.top;
-            // Only show preview when mouse is in bottom 60px (near seek bar)
-            if (relY < rect.height - 80 || relY > rect.height - 10) {
+            // Only show when mouse is near the bottom seek bar
+            if (relY < rect.height - 100 || relY > rect.height - 10) {
                 preview.style.display = 'none'; return;
             }
-            const relX = e.clientX - rect.left;
-            const fraction = Math.max(0, Math.min(1, relX / rect.width));
+            const scrubber = overlay.querySelector('.vs-nf-scrubber');
+            const scrubRect = scrubber ? scrubber.getBoundingClientRect() : rect;
+            const pad = 20; // scrubber padding
+            const barW = scrubRect.width - 2 * pad;
+            const relX = e.clientX - scrubRect.left - pad;
+            const fraction = Math.max(0, Math.min(1, relX / barW));
             const seekTime = fraction * duration;
-            const entry = _thumbVtt.find(t => seekTime >= t.start && seekTime <= t.end)
-                || _thumbVtt[0];
+            const entry = _thumbVtt.find(t => seekTime >= t.start && seekTime <= t.end) || _thumbVtt[0];
             if (!entry) { preview.style.display = 'none'; return; }
 
             const ctx = canvas.getContext('2d');
@@ -2003,9 +2141,10 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             } catch (_) { preview.style.display = 'none'; return; }
 
             timeEl.textContent = formatDuration(seekTime);
-            const px = Math.max(80, Math.min(rect.width - 80, e.clientX - rect.left));
-            preview.style.left = (px - canvas.width / 2) + 'px';
-            preview.style.bottom = '70px';
+            const halfW = canvas.width / 2;
+            // Position preview within scrubber (absolute left from scrubber edge)
+            const clampedX = Math.max(pad + halfW, Math.min(scrubRect.width - pad - halfW, relX + pad));
+            preview.style.left = (clampedX - halfW) + 'px';
             preview.style.display = 'flex';
         }
 
@@ -2080,17 +2219,123 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         overlay._playerAC = ac;
         const sig = { signal: ac.signal };
 
-        // Hide custom controls — use native browser controls
-        const center = bodyEl.querySelector('#vs-player-center');
-        const bottom = bodyEl.querySelector('#vs-player-bottom');
-        if (center) center.style.display = 'none';
-        if (bottom) bottom.style.display = 'none';
+        // Always use custom controls (unified player experience)
+        const center    = bodyEl.querySelector('#vs-player-center');
+        const bottom    = bodyEl.querySelector('#vs-player-bottom');
+        const seekFill  = bodyEl.querySelector('#vs-pb-seek-fill');
+        const seekBuf   = bodyEl.querySelector('#vs-pb-seek-buf');
+        const seekInput = bodyEl.querySelector('#vs-pb-seek');
+        const pbCur     = bodyEl.querySelector('#vs-pb-cur');
+        const pbDur     = bodyEl.querySelector('#vs-pb-dur');
+        const ccRw      = bodyEl.querySelector('#vs-cc-rw');
+        const ccFf      = bodyEl.querySelector('#vs-cc-ff');
+        const pbPlay    = bodyEl.querySelector('#vs-pb-play');
+        const fsBtn     = bodyEl.querySelector('#vs-fs-btn');
+        const closeBtn  = bodyEl.querySelector('#vs-player-close');
 
-        // Ensure video controls are visible
-        if (video) {
-            video.controls = true;
-            // Explicitly ensure controls are visible in case of browser quirks
-            video.style.setProperty('visibility', 'visible', 'important');
+        function _activateCustomControls() {
+            video.controls = false;
+            if (center) center.style.display = 'flex';
+            if (bottom) bottom.style.display = 'flex';
+            const dur = _knownDuration || video.duration || 0;
+            if (pbDur && dur) pbDur.textContent = formatDuration(dur);
+        }
+
+        _activateCustomControls();
+
+        // Ensure video is visible
+        video.style.setProperty('visibility', 'visible', 'important');
+
+        // Update duration label once metadata is known (for direct streams video.duration loads async)
+        video.addEventListener('loadedmetadata', () => {
+            const dur = _knownDuration || video.duration || 0;
+            if (pbDur && dur) pbDur.textContent = formatDuration(dur);
+        }, sig);
+
+        // Custom seek bar: update on timeupdate
+        const nfThumb = bodyEl.querySelector('#vs-nf-thumb');
+        video.addEventListener('timeupdate', () => {
+            const dur = _knownDuration || video.duration || 0;
+            if (!dur) return;
+            const realPos = _transcoding ? (_startOffset + (video.currentTime || 0)) : (video.currentTime || 0);
+            const pct = Math.min(100, (realPos / dur) * 100);
+            if (seekFill) seekFill.style.width = pct + '%';
+            if (nfThumb)  nfThumb.style.left = pct + '%';
+            if (seekInput) seekInput.value = String(pct);
+            if (pbCur) pbCur.textContent = formatDuration(realPos);
+            if (seekBuf && video.buffered.length) {
+                const bufEnd = _transcoding
+                    ? _startOffset + video.buffered.end(video.buffered.length - 1)
+                    : video.buffered.end(video.buffered.length - 1);
+                seekBuf.style.width = Math.min(100, (bufEnd / dur) * 100) + '%';
+            }
+        }, sig);
+
+        // Custom seek via range drag
+        if (seekInput) {
+            seekInput.addEventListener('input', () => {
+                const dur = _knownDuration || video.duration || 0;
+                if (!dur) return;
+                const targetSec = (parseFloat(seekInput.value) / 100) * dur;
+                if (pbCur) pbCur.textContent = formatDuration(targetSec);
+            }, sig);
+            seekInput.addEventListener('change', () => {
+                const dur = _knownDuration || video.duration || 0;
+                if (!dur) return;
+                const targetSec = (parseFloat(seekInput.value) / 100) * dur;
+                if (_transcoding) {
+                    _startHls(_currentVid, targetSec, _currentAudioIdx);
+                } else {
+                    video.currentTime = targetSec;
+                }
+            }, sig);
+        }
+
+        if (ccRw) ccRw.addEventListener('click', () => seekPlayer(video, -10), sig);
+        if (ccFf) ccFf.addEventListener('click', () => seekPlayer(video, +10), sig);
+
+        // Play/pause button
+        if (pbPlay) {
+            const _syncPbPlayBtn = () => {
+                pbPlay.innerHTML = video.paused ? '<i class="fas fa-play"></i>' : '<i class="fas fa-pause"></i>';
+            };
+            video.addEventListener('play',  _syncPbPlayBtn, sig);
+            video.addEventListener('pause', _syncPbPlayBtn, sig);
+            pbPlay.addEventListener('click', () => { video.paused ? video.play() : video.pause(); }, sig);
+        }
+
+        // Center area click toggles play/pause + brief Netflix-style animation
+        if (center) {
+            center.style.pointerEvents = 'all';
+            const animEl = center.querySelector('#vs-nf-anim');
+            center.addEventListener('click', () => {
+                // Show icon representing what we're about to do (before toggling)
+                if (animEl) {
+                    animEl.innerHTML = video.paused ? '<i class="fas fa-play"></i>' : '<i class="fas fa-pause"></i>';
+                    animEl.classList.remove('vs-nf-anim-pop');
+                    void animEl.offsetWidth;
+                    animEl.classList.add('vs-nf-anim-pop');
+                }
+                video.paused ? video.play() : video.pause();
+            }, sig);
+        }
+
+        // Mute button wiring
+        const muteBtn = bodyEl.querySelector('#vs-mute-btn');
+        if (muteBtn) {
+            const _syncMute = () => {
+                const icon = muteBtn.querySelector('i');
+                if (!icon) return;
+                if (video.muted || video.volume === 0) {
+                    icon.className = 'fas fa-volume-mute';
+                } else if (video.volume < 0.5) {
+                    icon.className = 'fas fa-volume-down';
+                } else {
+                    icon.className = 'fas fa-volume-up';
+                }
+            };
+            muteBtn.addEventListener('click', () => { video.muted = !video.muted; _syncMute(); }, sig);
+            video.addEventListener('volumechange', _syncMute, sig);
         }
 
         // Auto-hide top bar after 3s
@@ -2162,9 +2407,9 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             speedSel.onchange = () => { video.playbackRate = parseFloat(speedSel.value); };
         }
 
-        // Audio track selector (for transcoded content only)
+        // Audio track selector \u2014 show whenever multiple tracks exist
         const tracks = info.audio_tracks || [];
-        if (tracks.length > 1 && needsTranscode) {
+        if (tracks.length > 1) {
             audioSel.innerHTML = tracks.map(t => {
                 const label = [t.language, t.title, t.codec, t.channels ? t.channels + 'ch' : ''].filter(Boolean).join(' \u00b7 ') || 'Track ' + t.index;
                 return '<option value="' + t.index + '">' + escH(label) + '</option>';
@@ -2172,7 +2417,12 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             audioSel.style.display = '';
             audioSel.onchange = () => {
                 _currentAudioIdx = parseInt(audioSel.value);
-                _startHls(vid, video.currentTime + _startOffset, _currentAudioIdx);
+                // Switch to HLS if not already transcoding (video-copy + audio remux for h264)
+                if (!_transcoding) {
+                    _startHls(vid, video.currentTime, _currentAudioIdx);
+                } else if (_hlsInstance) {
+                    _startHls(vid, video.currentTime + _startOffset, _currentAudioIdx);
+                }
             };
         } else {
             audioSel.style.display = 'none';
@@ -2215,8 +2465,8 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             await _doPlay(0);
         }
 
-        // Load subtitles (file-based + embedded via HLS) and populate subtitle picker
-        _loadSubtitles(vid, video);
+        // Set up lazy subtitle loading — tracks are fetched when user opens the picker
+        _setupLazySubtitles(vid, video);
 
         // HLS seeking beyond buffer
         if (needsTranscode) {
@@ -2240,8 +2490,20 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         // Set initial duration on seekbar
         _showControls();
 
-        // save position every 10 seconds
+        // Save position every 10 seconds while playing
+        clearInterval(playerInterval);
         playerInterval = setInterval(() => savePosition(vid, video), 10000);
+
+        // Pause interval when video is paused, resume on play
+        video.addEventListener('play', () => {
+            clearInterval(playerInterval);
+            playerInterval = setInterval(() => savePosition(vid, video), 10000);
+        }, sig);
+        video.addEventListener('pause', () => {
+            clearInterval(playerInterval);
+            // Still save one last position on pause
+            savePosition(vid, video);
+        }, sig);
 
         // mark watched at >90%
         video.ontimeupdate = () => {
@@ -2268,7 +2530,14 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
                 });
                 _transcoding = true;
                 badge.style.display = '';
+                _activateCustomControls();
                 _startHls(vid, 0, null);
+            } else if (_transcoding) {
+                // HLS transcode also failed — show error overlay with retry button
+                _cl('error', 'HLS transcode also failed', {
+                    vid, errorCode: video.error?.code, errorMsg: video.error?.message
+                });
+                _showPlayerError(vid, video);
             }
         };
 
@@ -2397,7 +2666,6 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         }
 
         // Fullscreen button
-        const fsBtn = bodyEl.querySelector('#vs-fs-btn');
         if (fsBtn) {
             fsBtn.onclick = () => toggleFullscreen(overlay);
         }
@@ -2411,7 +2679,44 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             }
         }, sig);
 
-        bodyEl.querySelector('#vs-player-close').onclick = () => closePlayer();
+        if (closeBtn) closeBtn.onclick = () => closePlayer();
+    }
+
+    function _showPlayerError(vid, video) {
+        const existing = bodyEl.querySelector('#vs-player-error');
+        if (existing) existing.remove();
+
+        const overlay = bodyEl.querySelector('#vs-player-overlay');
+        if (!overlay) return;
+
+        const errorBox = document.createElement('div');
+        errorBox.id = 'vs-player-error';
+        errorBox.className = 'vs-player-error';
+        errorBox.innerHTML =
+            '<div class="vs-player-error-box">' +
+              '<i class="fas fa-exclamation-triangle"></i>' +
+              '<p>' + t('Nie udało się odtworzyć tego pliku.') + '</p>' +
+              '<p class="vs-player-error-sub">' + t('Kodek może nie być wspierany przez przeglądarkę.') + '</p>' +
+              '<div class="vs-player-error-btns">' +
+                '<button class="app-btn app-btn-primary" id="vs-error-retry">' +
+                  '<i class="fas fa-redo"></i> ' + t('Spróbuj ponownie') +
+                '</button>' +
+                '<button class="app-btn" id="vs-error-close">' +
+                  '<i class="fas fa-times"></i> ' + t('Zamknij') +
+                '</button>' +
+              '</div>' +
+            '</div>';
+        overlay.appendChild(errorBox);
+
+        errorBox.querySelector('#vs-error-retry').onclick = () => {
+            errorBox.remove();
+            _transcoding = true;
+            _startHls(vid, 0, null);
+        };
+        errorBox.querySelector('#vs-error-close').onclick = () => {
+            errorBox.remove();
+            closePlayer();
+        };
     }
 
     /**
@@ -2435,6 +2740,9 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         }
         _hlsSessionId = res.session_id;
         _startOffset = res.start_offset || 0;
+        _transcoding = true;
+        // Clear direct src to avoid conflicts with hls.js attachMedia
+        video.removeAttribute('src');
         _startHeartbeat(video);
 
         // Load embedded subtitle tracks from HLS start response
@@ -2471,8 +2779,6 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             maxBufferLength: 60,
             maxMaxBufferLength: 120,
             startPosition: -1,
-            liveSyncDurationCount: 3,
-            liveMaxLatencyDurationCount: 6,
             fragLoadingTimeOut: 30000,
             fragLoadingMaxRetry: 3,
             fragLoadingRetryDelay: 1000,
@@ -2524,6 +2830,28 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         }
     }
 
+    function _setupLazySubtitles(vid, video) {
+        // Show the sub-select with a placeholder; tracks load on first open
+        video._subsLoaded = false;
+        video._subsVid = vid;
+        const subSel = bodyEl.querySelector('#vs-sub-select');
+        if (!subSel) return;
+
+        // Show placeholder that triggers loading
+        subSel.style.display = '';
+        subSel.innerHTML = '<option value="">' + escH(t('Napisy...')) + '</option>';
+        subSel.onchange = null;
+        subSel.onclick = null;
+
+        // Load subtitles on first click
+        subSel.onclick = async () => {
+            if (video._subsLoaded) return;
+            video._subsLoaded = true;
+            subSel.innerHTML = '<option value="">' + escH(t('Ładowanie...')) + '</option>';
+            await _loadSubtitles(video._subsVid, video);
+        };
+    }
+
     async function _loadSubtitles(vid, video) {
         video.querySelectorAll('track').forEach(t => t.remove());
         const subSel = bodyEl.querySelector('#vs-sub-select');
@@ -2543,6 +2871,11 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             });
         }
 
+        // Also include already-loaded embedded tracks
+        video.querySelectorAll('track[data-embedded]').forEach((tr, i) => {
+            allTracks.push({ label: tr.label, idx: allTracks.length, type: 'embedded' });
+        });
+
         // Populate subtitle picker
         _updateSubSelect(video, allTracks);
     }
@@ -2551,7 +2884,6 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         const video = bodyEl && bodyEl.querySelector('#vs-player-video');
         if (!video || !subTracks || !subTracks.length) return;
         video.querySelectorAll('track[data-embedded]').forEach(t => t.remove());
-        const existingCount = video.querySelectorAll('track:not([data-embedded])').length;
         subTracks.forEach((sub, i) => {
             const track = document.createElement('track');
             track.kind = 'subtitles';
@@ -2561,13 +2893,15 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             track.dataset.embedded = '1';
             video.appendChild(track);
         });
-        // Rebuild subtitle picker with all tracks
-        const allTracks = [];
-        const trackEls = video.querySelectorAll('track');
-        trackEls.forEach((tr, i) => {
-            allTracks.push({ label: tr.label || ('Track ' + (i + 1)), idx: i, type: tr.dataset.embedded ? 'embedded' : 'file' });
-        });
-        _updateSubSelect(video, allTracks);
+
+        // Only rebuild picker if filesystem subs are already loaded
+        if (video._subsLoaded) {
+            const allTracks = [];
+            video.querySelectorAll('track').forEach((tr, i) => {
+                allTracks.push({ label: tr.label || ('Track ' + (i + 1)), idx: i, type: tr.dataset.embedded ? 'embedded' : 'file' });
+            });
+            _updateSubSelect(video, allTracks);
+        }
     }
 
     function _updateSubSelect(video, allTracks) {
@@ -2697,13 +3031,22 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 
     /* ── helpers ────────────────────────────────────────────── */
     function formatDuration(sec) {
-        if (!sec || sec <= 0) return '';
+        if (sec == null || sec < 0) return '';
         sec = Math.round(sec);
+        if (sec <= 0) return '0:00';
         const h = Math.floor(sec / 3600);
         const m = Math.floor((sec % 3600) / 60);
         const s = sec % 60;
         if (h > 0) return h + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
         return m + ':' + String(s).padStart(2, '0');
+    }
+
+    function formatBytes(bytes) {
+        if (bytes == null || bytes < 0) return '';
+        if (bytes === 0) return '0 B';
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+        return (bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
     }
 
     function escH(str) {
@@ -2791,6 +3134,30 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 '.vs-collection-thumb{aspect-ratio:16/10}',
 '.vs-collection-count{position:absolute;bottom:6px;left:6px;background:rgba(0,0,0,.75);color:#fff;font-size:11px;padding:2px 8px;border-radius:3px;z-index:2}',
 
+/* list view */
+'.vs-list{display:flex;flex-direction:column;gap:0}',
+'.vs-list-header{display:flex;align-items:center;padding:8px 12px;border-bottom:2px solid var(--border);font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px}',
+'.vs-list-row{display:flex;align-items:center;padding:6px 12px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .12s;font-size:13px;color:var(--text-primary)}',
+'.vs-list-row:hover{background:var(--bg-secondary)}',
+'.vs-list-row.vs-watched{opacity:.55}',
+'.vs-list-row.vs-selected{outline:2px solid var(--accent);outline-offset:-2px}',
+'.vs-list-col{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+'.vs-list-col-thumb{width:64px;min-width:64px;height:36px;position:relative;margin-right:12px;background:#111;border-radius:3px;overflow:hidden;display:flex;align-items:center;justify-content:center}',
+'.vs-list-col-thumb img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}',
+'.vs-list-col-thumb .vs-thumb-placeholder{font-size:14px;opacity:.3}',
+'.vs-list-col-title{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}',
+'.vs-list-col-title .vs-progress-bar{width:100%;height:3px;background:var(--bg-tertiary, rgba(255,255,255,.06));border-radius:1px;overflow:hidden}',
+'.vs-list-col-title .vs-progress-fill{height:100%;background:var(--accent)}',
+'.vs-list-col-year{width:60px;text-align:center;color:var(--text-muted);font-variant-numeric:tabular-nums}',
+'.vs-list-col-dur{width:70px;text-align:center;color:var(--text-muted);font-variant-numeric:tabular-nums}',
+'.vs-list-col-res{width:64px;text-align:center;color:var(--text-muted)}',
+'.vs-list-col-codec{width:72px;text-align:center;color:var(--text-muted);font-size:11px}',
+'.vs-list-col-size{width:80px;text-align:right;color:var(--text-muted);font-variant-numeric:tabular-nums}',
+'.vs-select-mode .vs-list-row{cursor:pointer}',
+'.vs-list-row .vs-checkbox{margin-right:12px}',
+'@media (max-width:768px){.vs-list-col-codec,.vs-list-col-size{display:none}.vs-list-col-year{display:none}}',
+'@media (max-width:480px){.vs-list-col-res{display:none}}',
+
 /* pagination */
 '.vs-pagination{display:flex;align-items:center;justify-content:center;gap:12px;padding:16px 0}',
 '.vs-page-info{font-size:13px;color:var(--text-muted)}',
@@ -2819,41 +3186,86 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 '.vs-tmdb-check input{margin:0;cursor:pointer}',
 '.vs-tmdb-check .fa-magic{font-size:11px;color:#fbbf24}',
 
-/* player overlay */
-'.vs-player-overlay{position:fixed;top:0;left:0;width:100vw;height:100vh;background:#000;z-index:10000;display:flex;flex-direction:column;overflow:hidden}',
-'.vs-player-overlay:fullscreen{width:100%;height:100%}',
-'.vs-player-overlay.vs-player-has-backdrop::before{content:"";position:absolute;inset:0;background:inherit;filter:blur(60px) brightness(0.25);transform:scale(1.1);z-index:0}',
-'#vs-player-video{position:relative;z-index:1;width:100%;height:100%;outline:none;object-fit:contain}',
-'.vs-player-top{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;z-index:10;background:linear-gradient(to bottom,rgba(0,0,0,.85),transparent);position:absolute;top:0;left:0;right:0}',
-'.vs-player-title{color:#fff;font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}',
-'.vs-player-close{background:none;border:none;color:#fff;font-size:20px;cursor:pointer;padding:4px 8px;opacity:.7;transition:opacity .15s}',
-'.vs-player-close:hover{opacity:1}',
-'.vs-player-badge{display:inline-flex;align-items:center;gap:5px;background:rgba(255,165,0,.85);color:#000;font-size:11px;font-weight:600;padding:3px 10px;border-radius:12px;white-space:nowrap}',
-'.vs-audio-select{background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.3);border-radius:4px;padding:2px 6px;font-size:12px;max-width:220px;cursor:pointer}',
-'.vs-audio-select option{background:#222;color:#fff}',
-'.vs-sub-select{background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.3);border-radius:4px;padding:2px 6px;font-size:12px;max-width:220px;cursor:pointer}',
-'.vs-sub-select option{background:#222;color:#fff}',
-'.vs-speed-select{background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.3);border-radius:4px;padding:2px 6px;font-size:12px;cursor:pointer}',
-'.vs-speed-select option{background:#222;color:#fff}',
+/* ── PLAYER OVERLAY ─────────────────────────────── */
+'.vs-player-overlay{position:fixed;inset:0;background:#000;z-index:10000;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}',
+'.vs-player-overlay:fullscreen,.vs-player-overlay:-webkit-full-screen{width:100%;height:100%}',
+'.vs-player-overlay.vs-player-has-backdrop::before{content:"";position:absolute;inset:0;background:inherit;filter:blur(60px) brightness(.22);transform:scale(1.1);z-index:0}',
+'#vs-player-video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;z-index:1;outline:none}',
+
+/* ── TOP BAR ─────────────────────────────────────── */
+'.vs-nf-top{position:absolute;top:0;left:0;right:0;z-index:15;display:flex;align-items:center;gap:12px;padding:18px 24px 40px;background:linear-gradient(to bottom,rgba(0,0,0,.8) 0%,transparent 100%);transition:opacity .35s,transform .35s}',
+'.vs-ctrl-hidden .vs-nf-top{opacity:0;pointer-events:none;transform:translateY(-8px)}',
+'.vs-nf-title{color:#fff;font-size:15px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;text-shadow:0 1px 4px rgba(0,0,0,.6);letter-spacing:.01em}',
+'.vs-player-badge{display:inline-flex;align-items:center;gap:5px;background:rgba(255,165,0,.9);color:#000;font-size:11px;font-weight:700;padding:3px 10px;border-radius:12px;white-space:nowrap;flex-shrink:0}',
+
+/* ── CENTER CLICK AREA ───────────────────────────── */
+'.vs-player-center{position:absolute;inset:0;z-index:10;display:none;align-items:center;justify-content:center;pointer-events:all;cursor:pointer}',
+'.vs-ctrl-hidden .vs-player-center{opacity:1}',
+
+/* center click animation */
+'.vs-nf-anim{pointer-events:none;display:flex;align-items:center;justify-content:center;width:72px;height:72px;border-radius:50%;background:rgba(255,255,255,.15);backdrop-filter:blur(4px);font-size:28px;color:#fff;opacity:0;transform:scale(.7);transition:none}',
+'.vs-nf-anim.vs-nf-anim-pop{animation:nfAnimPop .6s ease-out forwards}',
+'@keyframes nfAnimPop{0%{opacity:.9;transform:scale(.7)}40%{opacity:.9;transform:scale(1.1)}100%{opacity:0;transform:scale(1.3)}}',
+
+/* ── BOTTOM CONTROLS ─────────────────────────────── */
+'.vs-nf-bottom{position:absolute;bottom:0;left:0;right:0;z-index:15;display:none;flex-direction:column;padding:0 0 8px;background:linear-gradient(to top,rgba(0,0,0,.9) 0%,rgba(0,0,0,.7) 40%,rgba(0,0,0,.2) 75%,transparent 100%);transition:opacity .35s,transform .35s}',
+'.vs-ctrl-hidden .vs-nf-bottom{opacity:0;pointer-events:none;transform:translateY(6px)}',
+
+/* ── SCRUBBER / SEEK BAR ─────────────────────────── */
+'.vs-nf-scrubber{position:relative;padding:0 20px;height:36px;display:flex;align-items:flex-end;cursor:pointer}',
+'.vs-nf-bar{position:absolute;left:20px;right:20px;bottom:8px;height:3px;border-radius:3px;background:rgba(255,255,255,.25);transition:height .2s,bottom .2s;overflow:visible}',
+'.vs-nf-scrubber:hover .vs-nf-bar{height:5px;bottom:7px}',
+'.vs-nf-bar-buf{position:absolute;left:0;top:0;bottom:0;background:rgba(255,255,255,.35);border-radius:3px;width:0;pointer-events:none}',
+'.vs-nf-bar-fill{position:absolute;left:0;top:0;bottom:0;background:#e50914;border-radius:3px;width:0;pointer-events:none}',
+'.vs-nf-bar-dot{position:absolute;top:50%;left:0;transform:translate(-50%,-50%) scale(0);width:14px;height:14px;border-radius:50%;background:#fff;pointer-events:none;box-shadow:0 1px 6px rgba(0,0,0,.6);transition:transform .2s}',
+'.vs-nf-scrubber:hover .vs-nf-bar-dot{transform:translate(-50%,-50%) scale(1)}',
+'.vs-nf-range{position:absolute;left:20px;right:20px;top:0;bottom:0;width:calc(100% - 40px);opacity:0;cursor:pointer;margin:0;padding:0;-webkit-appearance:none;appearance:none;background:transparent;z-index:5;height:100%}',
+
+/* ── THUMBSTRIP PREVIEW ──────────────────────────── */
+'.vs-nf-preview{position:absolute;bottom:42px;display:flex;flex-direction:column;align-items:center;pointer-events:none;border-radius:6px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,.8);border:1px solid rgba(255,255,255,.1)}',
+'.vs-nf-preview canvas{display:block}',
+'.vs-nf-preview-time{background:rgba(0,0,0,.85);color:#fff;font-size:12px;font-weight:600;padding:4px 8px;text-align:center;width:100%;box-sizing:border-box;letter-spacing:.03em}',
+
+/* ── CONTROLS ROW ────────────────────────────────── */
+'.vs-nf-controls{display:flex;align-items:center;justify-content:space-between;padding:2px 12px 4px}',
+'.vs-nf-ctrls-left{display:flex;align-items:center;gap:0}',
+'.vs-nf-ctrls-right{display:flex;align-items:center;gap:0}',
+
+/* buttons */
+'.vs-nf-btn{background:none;border:none;color:rgba(255,255,255,.85);cursor:pointer;padding:8px 10px;border-radius:6px;transition:color .15s,transform .15s;flex-shrink:0;line-height:1;font-size:16px;display:flex;align-items:center;justify-content:center}',
+'.vs-nf-btn:hover{color:#fff;transform:scale(1.15)}',
+'.vs-nf-btn:active{transform:scale(.95)}',
+'.vs-nf-btn-play{font-size:22px;padding:8px 12px;color:#fff}',
+'.vs-nf-btn-fs{font-size:15px}',
+'.vs-nf-btn-close{color:rgba(255,255,255,.5);font-size:14px;padding:8px 10px;margin-left:4px}',
+'.vs-nf-btn-close:hover{color:#ff5555!important;transform:scale(1.15)}',
+
+/* skip buttons with number badge */
+'.vs-nf-btn-skip{position:relative;font-size:16px;padding:8px 10px}',
+'.vs-nf-skip-n{position:absolute;font-size:8.5px;font-weight:800;color:#fff;pointer-events:none;top:50%;left:50%;transform:translate(-50%,-10%);letter-spacing:-.5px}',
+
+/* time display */
+'.vs-nf-time-wrap{color:rgba(255,255,255,.85);font-size:13px;font-weight:400;margin:0 6px 0 8px;white-space:nowrap;font-variant-numeric:tabular-nums;letter-spacing:.01em;display:flex;align-items:center;gap:0}',
+'.vs-nf-time-cur{color:#fff;font-weight:500}',
+'.vs-nf-time-sep{color:rgba(255,255,255,.4);margin:0 4px;font-size:12px}',
+'.vs-nf-time-dur{color:rgba(255,255,255,.6)}',
+
+/* selects */
+'.vs-nf-select{background:transparent;color:rgba(255,255,255,.85);border:1px solid rgba(255,255,255,.2);border-radius:5px;padding:4px 8px;font-size:12px;font-weight:500;cursor:pointer;max-width:110px;transition:border-color .15s,color .15s;-webkit-appearance:none;appearance:none;text-align:center;margin:0 2px}',
+'.vs-nf-select:hover{border-color:rgba(255,255,255,.6);color:#fff}',
+'.vs-nf-select option{background:#141414;color:#fff}',
+'.vs-player-error{position:absolute;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.8);backdrop-filter:blur(8px)}',
+'.vs-player-error-box{text-align:center;color:#fff;max-width:380px;padding:32px}',
+'.vs-player-error-box i{font-size:48px;color:#ff9800;margin-bottom:16px}',
+'.vs-player-error-box p{font-size:16px;margin:8px 0}',
+'.vs-player-error-sub{font-size:13px!important;color:rgba(255,255,255,.5)}',
+'.vs-player-error-btns{display:flex;gap:10px;justify-content:center;margin-top:20px}',
 '.vs-ctx-menu{position:fixed;background:var(--bg-elevated,#2a2a2e);border:1px solid var(--border);border-radius:var(--r-md,6px);padding:4px 0;z-index:9999;min-width:180px;box-shadow:0 8px 24px rgba(0,0,0,.5)}',
 '.vs-ctx-item{padding:8px 14px;cursor:pointer;font-size:13px;color:var(--text-primary,#fff);display:flex;align-items:center;gap:8px;white-space:nowrap}',
 '.vs-ctx-item:hover{background:var(--bg-hover,rgba(255,255,255,.08))}',
 '.vs-ctx-item i{width:16px;text-align:center;opacity:.7}',
 '.vs-ctx-danger{color:var(--danger,#f87171)}',
 '.vs-ctx-danger:hover{background:rgba(248,113,113,.12)}',
-
-/* PiP, fullscreen & cast buttons */
-'.vs-pip-btn{background:none;border:none;color:#fff;font-size:15px;cursor:pointer;padding:4px 8px;opacity:.7;transition:opacity .15s}',
-'.vs-pip-btn:hover{opacity:1}',
-'.vs-fs-btn{background:none;border:none;color:#fff;font-size:15px;cursor:pointer;padding:4px 8px;opacity:.7;transition:opacity .15s}',
-'.vs-fs-btn:hover{opacity:1}',
-'.vs-cast-btn{background:none;border:none;color:#fff;font-size:15px;cursor:pointer;padding:4px 8px;opacity:.7;transition:opacity .15s}',
-'.vs-cast-btn:hover{opacity:1;color:#1db954}',
-
-/* Thumbstrip seek preview */
-'.vs-thumbstrip-preview{position:absolute;display:flex;flex-direction:column;align-items:center;gap:4px;pointer-events:none;z-index:15;bottom:70px}',
-'.vs-thumbstrip-preview canvas{border-radius:4px;border:2px solid rgba(255,255,255,.3);box-shadow:0 4px 16px rgba(0,0,0,.8)}',
-'.vs-thumbstrip-time{color:#fff;font-size:11px;font-weight:600;background:rgba(0,0,0,.7);padding:2px 8px;border-radius:4px;font-variant-numeric:tabular-nums}',
 
 /* Resume dialog */
 '.vs-resume-dialog{position:absolute;inset:0;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center;z-index:20}',
@@ -2922,5 +3334,27 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 '.vs-modal-overlay{position:absolute;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:90}',
 '.vs-modal-box{background:var(--bg-primary);border:1px solid var(--border);border-radius:var(--r-lg);padding:24px;width:340px;max-width:90%}',
 '.vs-modal-box h3{margin:0 0 8px;font-size:15px;color:var(--text-primary)}',
+
+/* tmdb search dialog */
+'.vs-tmdb-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:99999}',
+'.vs-tmdb-dialog{background:var(--bg-primary);border:1px solid var(--border);border-radius:var(--r-lg);padding:20px;width:520px;max-width:94vw;max-height:88vh;display:flex;flex-direction:column;gap:12px}',
+'.vs-tmdb-header{display:flex;align-items:center;justify-content:space-between;font-size:14px;font-weight:600;color:var(--text-primary)}',
+'.vs-tmdb-header button{background:none;border:none;color:var(--text-muted);font-size:18px;cursor:pointer;line-height:1;padding:0 2px}',
+'.vs-tmdb-header button:hover{color:var(--text-primary)}',
+'.vs-tmdb-search-row{display:flex;gap:8px;align-items:center}',
+'.vs-tmdb-search-input{flex:1;padding:7px 10px;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--bg-secondary);color:var(--text-primary);font-size:13px;outline:none}',
+'.vs-tmdb-search-input:focus{border-color:var(--accent)}',
+'.vs-tmdb-year-input{width:64px;padding:7px 8px;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--bg-secondary);color:var(--text-primary);font-size:13px;outline:none;flex-shrink:0}',
+'.vs-tmdb-year-input:focus{border-color:var(--accent)}',
+'.vs-tmdb-search-btn{white-space:nowrap;flex-shrink:0}',
+'.vs-tmdb-results{overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:8px;min-height:60px}',
+'.vs-tmdb-hint{color:var(--text-muted);font-size:13px;text-align:center;padding:20px 0;margin:0}',
+'.vs-tmdb-result{display:flex;gap:10px;padding:10px;border-radius:var(--r-md);border:1px solid var(--border);cursor:pointer;transition:background .15s}',
+'.vs-tmdb-result:hover{background:var(--bg-hover)}',
+'.vs-tmdb-result-poster{width:44px;height:66px;object-fit:cover;border-radius:4px;flex-shrink:0;background:var(--bg-secondary)}',
+'.vs-tmdb-result-info{display:flex;flex-direction:column;gap:3px;overflow:hidden}',
+'.vs-tmdb-result-title{font-size:13px;font-weight:600;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+'.vs-tmdb-result-year{font-size:12px;color:var(--text-muted)}',
+'.vs-tmdb-result-overview{font-size:12px;color:var(--text-secondary);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}',
     ].join('\n'); }
 };

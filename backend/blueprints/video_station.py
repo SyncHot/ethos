@@ -28,6 +28,8 @@ Routes:
   POST /api/video-station/watched/<int:vid> - mark as watched / update position
   POST /api/video-station/rescan-metadata - re-probe videos with empty codec info
   POST /api/video-station/remove/<int:vid> - remove video from library (keeps file)
+  POST /api/video-station/delete/<int:vid> - delete video from library AND from disk
+  GET  /api/video-station/parse-title/<int:vid> - parse filename into title+year for TMDb
   POST /api/video-station/batch           - batch operations (watched/unwatched/remove/hide/unhide)
   GET  /api/video-station/hide-status     - hide password status & session unlock state
   POST /api/video-station/hide-password   - set/change hide password
@@ -282,6 +284,73 @@ def _compute_vaapi_scale(w, h, max_w=4096, max_h=4096):
     return max(sw, 2), max(sh, 2)
 
 
+def _get_cpu_usage_pct():
+    """Return current system-wide CPU usage percentage (0–100) via /proc/stat.
+
+    Reads two snapshots 200 ms apart for an accurate instantaneous reading.
+    Returns 0.0 on any error.
+    """
+    def _read_stat():
+        try:
+            with open('/proc/stat') as f:
+                line = f.readline()
+            vals = list(map(int, line.split()[1:8]))
+            idle = vals[3] + vals[4]
+            total = sum(vals)
+            return idle, total
+        except Exception:
+            return 0, 1
+
+    i1, t1 = _read_stat()
+    time.sleep(0.2)
+    i2, t2 = _read_stat()
+    dt = t2 - t1
+    if dt <= 0:
+        return 0.0
+    return max(0.0, min(100.0, 100.0 * (1.0 - (i2 - i1) / dt)))
+
+
+def _adaptive_qp():
+    """Return a QP value for VAAPI/NVENC encoding based on current CPU load.
+
+    Lower QP → better quality (but more CPU/GPU work).
+    Intel N150 can comfortably run at qp=22 when idle; backs off to qp=28
+    under load so the encode pipeline doesn't starve other processes.
+
+      CPU load   QP   notes
+      < 35 %     22   high quality, plenty of headroom
+      35–60 %    24   balanced
+      60–80 %    26   light quality reduction
+      > 80 %     28   fastest possible — avoid frame drops
+    """
+    try:
+        load = _get_cpu_usage_pct()
+    except Exception:
+        return 23  # safe default
+    if load < 35:
+        return 22
+    if load < 60:
+        return 24
+    if load < 80:
+        return 26
+    return 28
+
+
+def _adaptive_crf():
+    """Return a CRF value for libx264/libx265 encoding based on current CPU load."""
+    try:
+        load = _get_cpu_usage_pct()
+    except Exception:
+        return 23
+    if load < 35:
+        return 21
+    if load < 60:
+        return 23
+    if load < 80:
+        return 26
+    return 28
+
+
 def _get_intel_media_driver_version():
     """Return installed version of intel-media-va-driver-non-free, or '' if not installed."""
     try:
@@ -343,8 +412,10 @@ def _hw_health_check():
     except Exception:
         pass
 
-    # Is it Intel (N100/N95/etc.)?
-    is_intel = 'intel' in cpu_model.lower() or 'n100' in cpu_model.lower() or 'n95' in cpu_model.lower()
+    # Is it Intel (N-series Alder Lake-N etc.)?
+    _cm = cpu_model.lower()
+    is_intel = ('intel' in _cm or 'n100' in _cm or 'n95' in _cm
+                or 'n150' in _cm or 'n200' in _cm or 'n305' in _cm)
     is_amd   = 'amd' in cpu_model.lower()
     is_nvidia = encoder == 'h264_nvenc'
 
@@ -661,13 +732,21 @@ def _start_hls_cleanup_loop(socketio_instance=None):
                 pass
 
     def _heartbeat_watchdog():
-        """Kill sessions whose client hasn't sent a heartbeat for _HLS_HEARTBEAT_TIMEOUT s."""
+        """Kill sessions whose client hasn't sent a heartbeat for _HLS_HEARTBEAT_TIMEOUT s.
+        Also proactively cleanup sessions where ffmpeg has already crashed."""
         while True:
             gevent.sleep(5)
             now = time.time()
             for sid in list(_hls_sessions):
                 sess = _hls_sessions.get(sid)
                 if not sess:
+                    continue
+                proc = sess.get('proc')
+                # Proactively cleanup crashed ffmpeg (OOM, signal, etc.)
+                if proc and proc.poll() is not None:
+                    log.warning("HLS ffmpeg crashed sid=%s (exit %s) — cleaning up",
+                                sid, proc.returncode)
+                    _cleanup_hls(sid)
                     continue
                 last = sess.get('last_heartbeat', sess.get('created', now))
                 if now - last > _HLS_HEARTBEAT_TIMEOUT:
@@ -719,9 +798,92 @@ def _start_hls_cleanup_loop(socketio_instance=None):
 
 
 def _file_watcher_loop():
-    """Poll library folders every 60 s; auto-scan if any folder mtime changed."""
+    """Watch library folders for new video files.
+
+    Tries inotifywait first (inotify-tools package) for instant detection.
+    Falls back to mtime polling every 60 s if inotifywait is not available.
+    Only events CREATE and MOVED_TO are acted on; a lightweight ffprobe is
+    run on the new file before triggering a full scan so the scan sees
+    correct metadata without blocking the I/O poll loop.
+    """
     import gevent
     gevent.sleep(30)  # initial delay — let server finish starting
+
+    if shutil.which('inotifywait'):
+        _inotify_watcher_loop()
+    else:
+        log.info("inotifywait not found — using mtime polling (install inotify-tools for instant detection)")
+        _mtime_polling_loop()
+
+
+def _inotify_watcher_loop():
+    """Inotify-based watcher: instant detection via inotifywait subprocess."""
+    import gevent
+    while True:
+        folders = _load_folders()
+        valid = [f for f in folders if os.path.isdir(f)]
+        if not valid:
+            gevent.sleep(30)
+            continue
+
+        cmd = ['inotifywait', '-m', '-r',
+               '-e', 'create,moved_to',
+               '--format', '%w%f',
+               '--'] + valid
+        proc = None
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL, text=True)
+            log.info("inotify watcher started on %s", valid)
+            _pending_paths = []   # batch: accumulate rapid bursts
+            _batch_deadline = [0.0]
+
+            def _flush_batch():
+                """Trigger scan after a short quiet period."""
+                gevent.sleep(3)  # wait for burst to settle
+                if _pending_paths and not _scan_state.get('running'):
+                    log.info("inotify: %d new file(s) detected — triggering scan", len(_pending_paths))
+                    _pending_paths.clear()
+                    _scan_state.update(running=True, stop_requested=False,
+                                       total=0, processed=0, current_file='')
+                    gevent.spawn(_scan_worker, _load_folders(), False)
+
+            flusher = [None]  # greenlet handle
+
+            while True:
+                line = proc.stdout.readline()
+                if not line:
+                    break  # process exited — restart loop
+                path = line.rstrip('\n')
+                ext = os.path.splitext(path)[1].lower()
+                if ext not in VIDEO_EXTS:
+                    continue
+                if not os.path.isfile(path):
+                    continue
+                log.debug("inotify: new video %s", path)
+                _pending_paths.append(path)
+                if flusher[0] is None or flusher[0].dead:
+                    flusher[0] = gevent.spawn(_flush_batch)
+        except Exception as e:
+            log.debug("inotify watcher error: %s", e)
+        finally:
+            if proc and proc.poll() is None:
+                try:
+                    proc.terminate()
+                except OSError:
+                    pass
+
+        # Restart after a short delay (e.g. folder list changed)
+        gevent.sleep(15)
+        # Refresh folder list in case new folders were added while we were watching
+        new_folders = _load_folders()
+        if set(new_folders) != set(valid):
+            log.info("inotify: folder list changed (%s → %s), restarting watcher", valid, new_folders)
+
+
+def _mtime_polling_loop():
+    """Fallback: poll library folders every 60 s; auto-scan if any folder mtime changed."""
+    import gevent
     while True:
         try:
             folders = _load_folders()
@@ -738,7 +900,7 @@ def _file_watcher_loop():
                 if prev is not None and mt != prev:
                     changed.append(f)
             if changed and not _scan_state.get('running'):
-                log.info("File watcher: changes in %s — triggering scan", changed)
+                log.info("File watcher (poll): changes in %s — triggering scan", changed)
                 _scan_state.update(running=True, stop_requested=False,
                                    total=0, processed=0, current_file='')
                 gevent.spawn(_scan_worker, folders, False)
@@ -916,6 +1078,7 @@ def _check_deps():
     return {
         'ffmpeg': shutil.which('ffmpeg') is not None,
         'ffprobe': shutil.which('ffprobe') is not None,
+        'inotifywait': shutil.which('inotifywait') is not None,
     }
 
 
@@ -957,8 +1120,14 @@ def _collect_videos(folders):
 
 def _probe_video(path):
     try:
+        # Scale timeout by file size: small files 30s, large files (>4GB) up to 120s
+        try:
+            fsize = os.path.getsize(path)
+            timeout = 120 if fsize > 4 * 1024**3 else 60
+        except OSError:
+            timeout = 60
         cmd = 'ffprobe -v quiet -print_format json -show_format -show_streams ' + q(path)
-        result = host_run(cmd, timeout=30)
+        result = host_run(cmd, timeout=timeout)
         if result.returncode != 0:
             log.debug('ffprobe non-zero exit for %s: %s', path, result.stderr)
             return {}
@@ -995,6 +1164,7 @@ def _probe_video(path):
             'audio_codec': first_audio.get('codec_name', ''),
             'bitrate': int(fmt.get('bit_rate', 0)),
             'title': fmt.get('tags', {}).get('title', ''),
+            'pix_fmt': vstream.get('pix_fmt', ''),
             'audio_tracks': audio_tracks,
             'sub_tracks': sub_tracks,
         }
@@ -1398,7 +1568,7 @@ def install_deps():
         try:
             if s:
                 s.emit("vs_install", {"stage": "start", "percent": 10, "message": "Instalowanie ffmpeg..."})
-            host_run("apt-get update -qq && apt-get install -y -qq ffmpeg && apt-get clean", timeout=300)
+            host_run("apt-get update -qq && apt-get install -y -qq ffmpeg inotify-tools && apt-get clean", timeout=300)
             if s:
                 s.emit("vs_install", {"stage": "done", "percent": 100, "message": "Gotowe!"})
         except Exception as e:
@@ -1432,8 +1602,22 @@ def get_folders():
     return jsonify({"folders": _load_folders()})
 
 
-@video_station_bp.route("/folders", methods=["POST"])
+# System directories that should never be added as library folders
+_SYSTEM_PATHS = {'/', '/etc', '/sys', '/proc', '/dev', '/boot', '/root', '/run', '/tmp', '/var', '/snap'}
+_SYSTEM_PREFIXES = ('/etc/', '/sys/', '/proc/', '/dev/', '/boot/', '/root/', '/run/', '/snap/')
 
+def _is_safe_library_path(folder):
+    """Reject system directories and paths inside protected system trees."""
+    rp = os.path.realpath(folder)
+    if rp in _SYSTEM_PATHS:
+        return False
+    if rp.startswith(_SYSTEM_PREFIXES):
+        return False
+    return True
+
+
+@video_station_bp.route("/folders", methods=["POST"])
+@admin_required
 def save_folders():
     folders = (request.json or {}).get("folders", [])
     valid = []
@@ -1441,14 +1625,14 @@ def save_folders():
         if not isinstance(f, str) or not f.startswith("/"):
             continue
         rp = os.path.realpath(f)
-        if os.path.isdir(rp):
+        if os.path.isdir(rp) and _is_safe_library_path(rp):
             valid.append(rp)
     _save_folders(valid)
     return jsonify({"ok": True, "folders": valid})
 
 
 @video_station_bp.route("/scan", methods=["POST"])
-
+@admin_required
 def start_scan():
     if _scan_state["running"]:
         return jsonify({"error": "Skan juz trwa."}), 409
@@ -1465,7 +1649,7 @@ def start_scan():
 
 
 @video_station_bp.route("/scan-stop", methods=["POST"])
-
+@admin_required
 def stop_scan():
     _scan_state["stop_requested"] = True
     return jsonify({"ok": True})
@@ -1553,6 +1737,8 @@ def library():
     q_search = request.args.get("q", "").strip()
     folder_filter = request.args.get("folder", "")
     watched_filter = request.args.get("watched", "")
+    codec_filter = request.args.get("codec", "")      # "hevc" | "av1" | "h264" | "transcode"
+    res_filter = request.args.get("res", "")           # "4k" | "1080p" | "720p"
     show_hidden = request.args.get("show_hidden", "") == "1"
     order_map = {
         "added_desc": "added_at DESC", "added_asc": "added_at ASC",
@@ -1577,6 +1763,18 @@ def library():
         where.append("COALESCE(ws.watched, 0)=1")
     elif watched_filter == '0':
         where.append("COALESCE(ws.watched, 0)=0")
+    if codec_filter == 'transcode':
+        where.append("(LOWER(v.codec) NOT IN ('h264','avc1','vp8','vp9','theora','av1')"
+                     " OR LOWER(v.audio_codec) NOT IN ('aac','mp3','opus','vorbis','flac'))")
+    elif codec_filter in ('hevc', 'av1', 'h264'):
+        where.append("LOWER(v.codec)=?")
+        params.append(codec_filter)
+    if res_filter == '4k':
+        where.append("v.width >= 3840")
+    elif res_filter == '1080p':
+        where.append("v.width >= 1920 AND v.width < 3840")
+    elif res_filter == '720p':
+        where.append("v.width >= 1280 AND v.width < 1920")
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
     total = conn.execute(
         "SELECT COUNT(*) FROM videos v LEFT JOIN watch_state ws ON ws.video_id=v.id "
@@ -2036,40 +2234,46 @@ def transcode(vid):
     hw_pre = []
     vid_w = int(meta.get('width') or 0)
     vid_h = int(meta.get('height') or 0)
+    pix_fmt = (meta.get('pix_fmt') or '').lower()
+    is_10bit = 'p010' in pix_fmt or 'yuv420p10' in pix_fmt or 'yuv444p10' in pix_fmt
     if vcopy:
         video_enc_args = ["-c:v", "copy"]
     else:
         hw_enc = _detect_hw_encoder()
+        qp = _adaptive_qp()
+        crf = _adaptive_crf()
         if hw_enc == 'h264_vaapi':
             src = vcodec.replace('h265', 'hevc')
             sw, sh = _compute_vaapi_scale(vid_w, vid_h)
             if src in _detect_vaapi_decode_codecs():
-                # Full HW pipeline: GPU decode → GPU encode (zero memory copy)
+                # Full HW pipeline: GPU decode → GPU encode (zero-copy, VAAPI handles 10-bit natively)
                 hw_pre = ['-hwaccel', 'vaapi', '-hwaccel_device', RENDER_NODE,
                           '-hwaccel_output_format', 'vaapi']
                 if sw:
                     video_enc_args = ["-vf", "scale_vaapi=w=%d:h=%d" % (sw, sh),
-                                      "-c:v", "h264_vaapi", "-qp", "23"]
+                                      "-c:v", "h264_vaapi", "-qp", str(qp)]
                 else:
-                    video_enc_args = ["-c:v", "h264_vaapi", "-qp", "23"]
-                log.info("transcode encode: %s → h264_vaapi (full HW%s)", vcodec,
-                         " scaled %dx%d" % (sw, sh) if sw else "")
+                    video_enc_args = ["-c:v", "h264_vaapi", "-qp", str(qp)]
+                log.info("transcode encode: %s → h264_vaapi (full HW%s, qp=%d)", vcodec,
+                         " scaled %dx%d" % (sw, sh) if sw else "", qp)
             else:
-                # CPU decode → GPU encode
+                # CPU decode → GPU encode; use p010le for 10-bit sources
                 hw_pre = ['-vaapi_device', RENDER_NODE]
+                upload_fmt = 'p010le' if is_10bit else 'nv12'
                 if sw:
-                    video_enc_args = ["-vf", "scale=%d:%d,format=nv12,hwupload" % (sw, sh),
-                                      "-c:v", "h264_vaapi", "-qp", "23"]
+                    video_enc_args = ["-vf", "scale=%d:%d,format=%s,hwupload" % (sw, sh, upload_fmt),
+                                      "-c:v", "h264_vaapi", "-qp", str(qp)]
                 else:
-                    video_enc_args = ["-vf", "format=nv12,hwupload", "-c:v", "h264_vaapi", "-qp", "23"]
-                log.info("transcode encode: %s → h264_vaapi (CPU dec + GPU enc%s)", vcodec,
-                         " scaled %dx%d" % (sw, sh) if sw else "")
+                    video_enc_args = ["-vf", "format=%s,hwupload" % upload_fmt,
+                                      "-c:v", "h264_vaapi", "-qp", str(qp)]
+                log.info("transcode encode: %s → h264_vaapi (CPU dec + GPU enc%s, qp=%d, fmt=%s)", vcodec,
+                         " scaled %dx%d" % (sw, sh) if sw else "", qp, upload_fmt)
         elif hw_enc in ('h264_nvenc', 'h264_videotoolbox'):
-            video_enc_args = ["-c:v", hw_enc, "-preset", "fast", "-cq", "23"]
-            log.info("transcode encode: %s → %s", vcodec, hw_enc)
+            video_enc_args = ["-c:v", hw_enc, "-preset", "fast", "-cq", str(qp)]
+            log.info("transcode encode: %s → %s (qp=%d)", vcodec, hw_enc, qp)
         else:
-            video_enc_args = ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "23"]
-            log.info("transcode encode: %s → libx264 (CPU)", vcodec)
+            video_enc_args = ["-c:v", "libx264", "-preset", "ultrafast", "-crf", str(crf)]
+            log.info("transcode encode: %s → libx264 (CPU, crf=%d)", vcodec, crf)
 
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
     cmd += hw_pre
@@ -2145,7 +2349,7 @@ def hls_start(vid):
         return jsonify(error="ffmpeg nie jest zainstalowany."), 500
 
     data = request.get_json(silent=True) or {}
-    start_sec = max(0.0, float(data.get("start", 0)))
+    start_sec = max(0.0, float(data.get("start") or 0))
     audio_idx = data.get("audio", None)
 
     # Stop any existing HLS session for this video
@@ -2169,37 +2373,42 @@ def hls_start(vid):
     meta = json.loads(r["metadata_json"] or '{}')
     vid_w = int(meta.get('width') or 0)
     vid_h = int(meta.get('height') or 0)
+    pix_fmt = (meta.get('pix_fmt') or '').lower()
+    is_10bit = 'p010' in pix_fmt or 'yuv420p10' in pix_fmt or 'yuv444p10' in pix_fmt
 
     if vcopy:
         v_enc_arg = "copy"
     else:
         hw_enc = _detect_hw_encoder()
+        qp = _adaptive_qp()
+        crf = _adaptive_crf()
         if hw_enc == 'h264_vaapi':
             src = vcodec.replace('h265', 'hevc')
             sw, sh = _compute_vaapi_scale(vid_w, vid_h)
             if src in _detect_vaapi_decode_codecs():
-                # Full HW pipeline: GPU decode → GPU encode (zero memory copy)
+                # Full HW pipeline: GPU decode → GPU encode (zero-copy, VAAPI handles 10-bit natively)
                 pre_input_args = "-hwaccel vaapi -hwaccel_device %s -hwaccel_output_format vaapi" % RENDER_NODE
                 vf_arg = "-vf scale_vaapi=w=%d:h=%d" % (sw, sh) if sw else ""
-                v_enc_arg = "h264_vaapi -qp 23"
-                log.info("HLS encode: %s → h264_vaapi (full HW%s)", vcodec,
-                         " scaled %dx%d" % (sw, sh) if sw else "")
+                v_enc_arg = "h264_vaapi -qp %d" % qp
+                log.info("HLS encode: %s → h264_vaapi (full HW%s, qp=%d)", vcodec,
+                         " scaled %dx%d" % (sw, sh) if sw else "", qp)
             else:
-                # CPU decode → GPU encode
+                # CPU decode → GPU encode; use p010le for 10-bit sources
                 pre_input_args = "-vaapi_device %s" % RENDER_NODE
+                upload_fmt = 'p010le' if is_10bit else 'nv12'
                 if sw:
-                    vf_arg = "-vf scale=%d:%d,format=nv12,hwupload" % (sw, sh)
+                    vf_arg = "-vf scale=%d:%d,format=%s,hwupload" % (sw, sh, upload_fmt)
                 else:
-                    vf_arg = "-vf format=nv12,hwupload"
-                v_enc_arg = "h264_vaapi -qp 23"
-                log.info("HLS encode: %s → h264_vaapi (CPU dec + GPU enc%s)", vcodec,
-                         " scaled %dx%d" % (sw, sh) if sw else "")
+                    vf_arg = "-vf format=%s,hwupload" % upload_fmt
+                v_enc_arg = "h264_vaapi -qp %d" % qp
+                log.info("HLS encode: %s → h264_vaapi (CPU dec + GPU enc%s, qp=%d, fmt=%s)", vcodec,
+                         " scaled %dx%d" % (sw, sh) if sw else "", qp, upload_fmt)
         elif hw_enc in ('h264_nvenc', 'h264_videotoolbox'):
-            v_enc_arg = "%s -preset fast -cq 23" % hw_enc
-            log.info("HLS encode: %s → %s", vcodec, hw_enc)
+            v_enc_arg = "%s -preset fast -cq %d" % (hw_enc, qp)
+            log.info("HLS encode: %s → %s (qp=%d)", vcodec, hw_enc, qp)
         else:
-            v_enc_arg = "libx264 -preset ultrafast -crf 23"
-            log.info("HLS encode: %s → libx264 (CPU)", vcodec)
+            v_enc_arg = "libx264 -preset ultrafast -crf %d" % crf
+            log.info("HLS encode: %s → libx264 (CPU, crf=%d)", vcodec, crf)
 
     session_id = "%d_%s" % (vid, os.urandom(4).hex())
     tmpdir = tempfile.mkdtemp(prefix="vs_hls_")
@@ -2720,7 +2929,7 @@ def rescan_metadata():
 
 
 @video_station_bp.route("/remove/<int:vid>", methods=["POST"])
-
+@admin_required
 def remove_from_library(vid):
     """Remove video from library without deleting the file."""
     conn = _get_db()
@@ -2743,8 +2952,53 @@ def remove_from_library(vid):
     return jsonify({"ok": True})
 
 
+@video_station_bp.route("/delete/<int:vid>", methods=["POST"])
+@admin_required
+def delete_from_disk(vid):
+    """Remove video from library AND permanently delete the file from disk."""
+    conn = _get_db()
+    r = conn.execute("SELECT id, path FROM videos WHERE id=?", (vid,)).fetchone()
+    if not r:
+        conn.close()
+        return jsonify({"error": "Nie znaleziono."}), 404
+    file_path = r["path"]
+    conn.execute("DELETE FROM watch_state WHERE video_id=?", (vid,))
+    conn.execute("DELETE FROM videos WHERE id=?", (vid,))
+    conn.commit()
+    conn.close()
+    for d in (_THUMB_DIR, _POSTER_DIR, _BACKDROP_DIR):
+        p = os.path.join(d, str(vid) + '.jpg')
+        if os.path.isfile(p):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+    deleted = False
+    if file_path and os.path.isfile(file_path):
+        try:
+            os.remove(file_path)
+            deleted = True
+        except OSError as e:
+            return jsonify({"error": "Usunięto z bazy, ale nie można usunąć pliku: " + str(e)}), 500
+    return jsonify({"ok": True, "deleted": deleted, "path": file_path})
+
+
+@video_station_bp.route("/parse-title/<int:vid>", methods=["GET"])
+@admin_required
+def parse_title(vid):
+    """Parse video filename into a clean title and year for TMDb search."""
+    conn = _get_db()
+    r = conn.execute("SELECT filename FROM videos WHERE id=?", (vid,)).fetchone()
+    conn.close()
+    if not r:
+        return jsonify({"error": "Nie znaleziono."}), 404
+    title, year = _parse_filename(r["filename"])
+    return jsonify({"title": title, "year": year, "filename": r["filename"]})
+
+
 # ── batch operations ───────────────────────────────────────────
 @video_station_bp.route("/batch", methods=["POST"])
+@admin_required
 def batch_action():
     """Batch operations on multiple videos: watched, unwatched, remove, hide, unhide."""
     d = request.json or {}
@@ -2813,6 +3067,7 @@ def _count_hidden():
 
 
 @video_station_bp.route("/hide-password", methods=["POST"])
+@admin_required
 def hide_password_set():
     """Set or change the hide password."""
     d = request.json or {}
@@ -2830,6 +3085,7 @@ def hide_password_set():
 
 
 @video_station_bp.route("/hide-password", methods=["DELETE"])
+@admin_required
 def hide_password_remove():
     """Remove hide password and unhide all videos."""
     d = request.json or {}
@@ -3006,6 +3262,7 @@ def watcher_status():
 
 
 @video_station_bp.route("/scan-folder", methods=["POST"])
+@admin_required
 def scan_folder():
     """Trigger an incremental scan of a specific folder path.
 
@@ -3078,14 +3335,24 @@ def tmdb_match_one(vid):
     return jsonify({"ok": True, "match": result})
 
 
-@video_station_bp.route("/tmdb-match-all", methods=["POST"])
+# Rate limit for tmdb-match-all (once per 60s)
+_last_tmdb_match_all = 0
 
+
+@video_station_bp.route("/tmdb-match-all", methods=["POST"])
+@admin_required
 def tmdb_match_all():
+    global _last_tmdb_match_all
     api_key = _load_tmdb_key()
     if not api_key:
         return jsonify({"error": "Brak klucza TMDb."}), 400
     if _scan_state["running"]:
         return jsonify({"error": "Skan juz trwa, poczekaj az sie skonczy."}), 409
+    now = time.time()
+    if now - _last_tmdb_match_all < 60:
+        remaining = int(60 - (now - _last_tmdb_match_all))
+        return jsonify({"error": "Poczekaj %ds przed kolejnym dopasowaniem." % remaining}), 429
+    _last_tmdb_match_all = now
     import gevent
 
     def _do_match():
@@ -3129,6 +3396,7 @@ def tmdb_match_all():
 def tmdb_search_list():
     """Search TMDb and return a list of results for manual selection."""
     query = request.args.get("q", "").strip()
+    year  = request.args.get("year", "").strip()
     if not query:
         return jsonify({"results": []})
     api_key = _load_tmdb_key()
@@ -3137,10 +3405,10 @@ def tmdb_search_list():
     results = []
     for endpoint, media_type in [('/search/movie', 'movie'), ('/search/tv', 'tv')]:
         try:
-            params = urllib.parse.urlencode({
-                'api_key': api_key, 'query': query, 'language': 'pl-PL', 'page': 1,
-            })
-            url = _TMDB_BASE + endpoint + '?' + params
+            params = {'api_key': api_key, 'query': query, 'language': 'pl-PL', 'page': 1}
+            if year:
+                params['year' if media_type == 'movie' else 'first_air_date_year'] = year
+            url = _TMDB_BASE + endpoint + '?' + urllib.parse.urlencode(params)
             req = urllib.request.Request(url, headers={'User-Agent': 'EthOS/1.0'})
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
@@ -3229,7 +3497,7 @@ def tmdb_apply(vid):
 
 
 @video_station_bp.route("/rename/<int:vid>", methods=["POST"])
-
+@admin_required
 def rename_video(vid):
     """Rename a video file on disk and update DB path/filename."""
     d = request.json or {}

@@ -137,7 +137,7 @@ def api_docker_action():
     return jsonify(result)
 
 
-@resources_bp.route('/history/<table')
+@resources_bp.route('/history/<table>')
 def api_history(table):
     allowed = ['cpu_history', 'ram_history', 'gpu_history', 'disk_history', 'network_history', 'process_history', 'docker_history']
     if table not in allowed:

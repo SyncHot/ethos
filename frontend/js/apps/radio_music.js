@@ -32,6 +32,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     let _renderNpQueueFn = null; // ref to _renderNpQueue inside the overlay closure
     let _npSyncFav = null;       // ref to sync NP favorite button state
     let _npSyncDownload = null;  // ref to sync NP download button state
+    let _npSyncDislike = null;   // ref to sync NP dislike button state
     let _npReloadSimilar = null;  // ref to reload similar artists on track change
     let _activePolls = [];       // download poll intervals to clear on close
     let _sleepTimer = null;      // sleep timer timeout ID
@@ -42,6 +43,40 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     let _syncedLyrics = null;    // parsed LRC lines: [{time: ms, text: ''}, ...]
     let _lyrSyncInterval = null; // lyrics auto-scroll timer
     let _epProgress = {};        // podcast episode progress: {url: {pos: sec, dur: sec, done: bool}}
+    let _onMoreSheetMouseRef = null;  // for cleanup in onClose
+    let _aiDjActive = false;         // true when AI DJ infinite playlist is active
+    let _aiDjQueueThreshold = 5;     // auto-fetch when remaining tracks <= this
+    let _aiDjSeenUrls = new Set();   // URLs already in queue (avoid duplicates)
+    let _aiDjBaseArtist = '';        // current artist for similarity seeding
+    let _aiDjFetching = false;       // concurrency guard — prevent duplicate fetches
+    let _aiDjScrollWired = false;   // drag-to-scroll listeners attached (once)
+    let _dislikedArtists = new Set(); // AI DJ disliked artist names
+    let _dislikedUrls = new Set();    // AI DJ disliked track URLs
+    let _skipTrackStart = 0;          // timestamp when current track playback started
+    (function _loadDisliked() {
+        try {
+            var da = JSON.parse(localStorage.getItem('rm_ai_dj_disliked_artists') || '[]');
+            if (Array.isArray(da)) _dislikedArtists = new Set(da);
+            var du = JSON.parse(localStorage.getItem('rm_ai_dj_disliked_urls') || '[]');
+            if (Array.isArray(du)) _dislikedUrls = new Set(du);
+        } catch (e) { /* ignore corrupt localStorage */ }
+    })();
+    function _saveDisliked() {
+        try {
+            localStorage.setItem('rm_ai_dj_disliked_artists', JSON.stringify(Array.from(_dislikedArtists)));
+            localStorage.setItem('rm_ai_dj_disliked_urls', JSON.stringify(Array.from(_dislikedUrls)));
+        } catch (e) { /* quota exceeded, ignore */ }
+    }
+    function _dislikeCurrent() {
+        if (!_playing) return;
+        var artist = (_playing.meta || _playing.channel || '').trim().toLowerCase();
+        if (artist) _dislikedArtists.add(artist);
+        if (_playing.url) _dislikedUrls.add(_playing.url);
+        _saveDisliked();
+    }
+    let _miniPlayerEl = null;        // floating mini-player DOM element
+    let _miniPlayerUnsub = null;     // _rmStore unsubscribe for mini-player sync
+    let _miniLastSynced = null;     // cache to skip no-op DOM writes in _syncMiniPlayerNow
 
     // ── Local radio logo cache (UUID → /img/radio-logos/filename) ──
     let _logoManifest = null;
@@ -63,6 +98,21 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
     // Web Audio API — shared across plays (createMediaElementSource can only be called once per element)
     let _audioCtx = null, _analyser = null, _audioSource = null, _visRafId = null;
+
+    // 5-Band Equalizer state (declared here to avoid TDZ — referenced during mini-player state restore)
+    let _eqEnabled = false;
+    let _eqFilters = [];
+    let _eqBands = [60, 230, 910, 3600, 14000];
+    let _eqGains = [0, 0, 0, 0, 0];
+    const _EQ_PRESETS = {
+        'Flat': [0, 0, 0, 0, 0],
+        'Bass Boost': [6, 4, 0, 0, 0],
+        'Treble Boost': [0, 0, 0, 4, 6],
+        'Rock': [4, 2, -1, 3, 4],
+        'Vocal': [-2, 0, 4, 3, 1],
+        'Dance': [5, 3, 0, 2, 4],
+        'Acoustic': [3, 1, 0, 2, 3],
+    };
 
     const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
         ? NAS.logClient('radio-music', level, msg, details) : console.log('[radio-music]', msg, details || '');
@@ -99,6 +149,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             { key: 'music', icon: 'fab fa-youtube', label: 'Szukaj' },
             { key: 'local', icon: 'fas fa-folder-open', label: 'Lokalna muzyka' },
             { key: 'artists', icon: 'fas fa-user-circle', label: 'Artyści' },
+            { key: 'ai-dj', icon: 'fas fa-robot', label: 'AI DJ' },
             { key: 'recently-added', icon: 'fas fa-clock', label: 'Ostatnio dodane' },
             { key: 'local-audiobooks', icon: 'fas fa-book-reader', label: 'Lok. audiobooki' },
             { key: 'playlists', icon: 'fas fa-list', label: 'Playlisty' },
@@ -431,7 +482,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-wrap{--rm-accent:#1DB954;--rm-accent-hover:#1ed760;--rm-accent-active:#0f9240;--rm-accent-rgb:29,185,84;--rm-bg:#121212;--rm-bg-sidebar:#000;--rm-bg-surface:#282828;--rm-bg-elevated:#181818;--rm-bg-card:#282828;--rm-text:#fff;--rm-text-secondary:rgba(255,255,255,.65);--rm-text-muted:rgba(255,255,255,.35);--rm-text-dim:rgba(255,255,255,.2);--rm-border:rgba(255,255,255,.08);--rm-error:#ef4444;--rm-warning:#f59e0b;--rm-overlay:rgba(0,0,0,.85)}',
 '[data-theme="light"] .rm-wrap{--rm-bg:#f5f5f5;--rm-bg-sidebar:#e8e8e8;--rm-bg-surface:#fff;--rm-bg-elevated:#f0f0f0;--rm-bg-card:#fff;--rm-text:#1a1a1a;--rm-text-secondary:rgba(0,0,0,.65);--rm-text-muted:rgba(0,0,0,.4);--rm-text-dim:rgba(0,0,0,.2);--rm-border:rgba(0,0,0,.1);--rm-overlay:rgba(255,255,255,.9)}',
 /* ── Spotify-inspired layout ─────────────────────────── */
-'.rm-wrap{display:flex;height:100%;overflow:hidden;font-size:13px;background:var(--rm-bg);color:var(--rm-text);border-radius:0}',
+'.rm-wrap{display:flex;flex:1;min-height:0;overflow:hidden;font-size:13px;background:var(--rm-bg);color:var(--rm-text);border-radius:0}',
 '.rm-sidebar{width:220px;min-width:220px;background:var(--rm-bg-sidebar);display:flex;flex-direction:column;overflow-y:auto;padding:8px 0;scrollbar-width:thin;scrollbar-color:var(--rm-text-dim) transparent}',
 '.rm-sidebar-item{padding:10px 20px;cursor:pointer;display:flex;align-items:center;gap:10px;color:var(--rm-text-secondary);font-size:13px;transition:all .15s;border-radius:0;border-left:3px solid transparent}',
 '.rm-sidebar-item:hover{color:var(--rm-text);background:rgba(255,255,255,.05)}',
@@ -509,7 +560,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-disc-rec-info{flex:1;min-width:0}',
 '.rm-disc-rec-title{font-size:13px;font-weight:600;color:var(--rm-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
 '.rm-disc-rec-meta{font-size:11px;color:rgba(255,255,255,.4);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-'.rm-main{flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--rm-bg)}',
+'.rm-main{flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--rm-bg);min-height:0}',
 '.rm-toolbar{display:flex;align-items:center;gap:10px;padding:12px 20px;background:var(--rm-bg-elevated);border-bottom:1px solid rgba(255,255,255,.06);flex-wrap:wrap}',
 '.rm-search{flex:1;min-width:180px;padding:10px 16px;border:none;border-radius:24px;background:rgba(255,255,255,.08);color:var(--rm-text);font-size:13px;outline:none;transition:background .2s}',
 '.rm-search:focus{background:rgba(255,255,255,.14);box-shadow:0 0 0 2px rgba(var(--rm-accent-rgb),.3)}',
@@ -517,7 +568,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-select{padding:8px 12px;border:1px solid rgba(255,255,255,.1);border-radius:20px;background:rgba(255,255,255,.06);color:var(--rm-text);font-size:12px;outline:none;cursor:pointer;min-width:100px}',
 '.rm-select:focus{border-color:var(--rm-accent)}',
 '.rm-select option{background:var(--rm-bg-surface);color:var(--rm-text)}',
-'.rm-content{position:relative;flex:1;overflow-y:auto;padding:20px;scrollbar-width:thin;scrollbar-color:var(--rm-text-dim) transparent}',
+'.rm-content{position:relative;flex:1;overflow-y:auto;padding:20px;scrollbar-width:thin;scrollbar-color:var(--rm-text-dim) transparent;min-height:0}',
 
 /* ── station / podcast cards ─────────────────────────── */
 '.rm-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}',
@@ -833,6 +884,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-hscroll::-webkit-scrollbar{display:none}',
 '.rm-hcard{scroll-snap-align:start;min-width:150px;max-width:170px;flex-shrink:0;cursor:pointer;transition:all .15s;padding:10px;background:rgba(255,255,255,.04);border-radius:8px}',
 '.rm-hcard:hover{background:rgba(255,255,255,.08);transform:translateY(-3px)}',
+'.rm-hcard:hover .rm-hcard-dislike{opacity:1 !important}',
 '.rm-hcard-art{width:130px;height:130px;border-radius:6px;overflow:hidden;background:var(--rm-bg-surface);margin-bottom:8px;position:relative;box-shadow:0 4px 16px rgba(0,0,0,.3)}',
 '.rm-hcard-art img{width:100%;height:100%;object-fit:cover}',
 '.rm-hcard-art .rm-letter-icon{width:100%;height:100%;font-size:40px}',
@@ -928,8 +980,23 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-exit-fs{display:none;position:absolute;top:8px;right:8px;z-index:200;width:40px;height:40px;border-radius:50%;background:rgba(0,0,0,.55);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.12);color:rgba(255,255,255,.7);font-size:15px;cursor:pointer;align-items:center;justify-content:center;transition:all .2s}',
 '.rm-exit-fs:active{transform:scale(.9);background:rgba(0,0,0,.8)}',
 
+/* AI DJ section */
+'.rm-ai-dj-hero{display:flex;flex-direction:column;align-items:center;padding:32px 16px;text-align:center}',
+/* Mini-Player floating bar */
+'.rm-mini-player{position:fixed;bottom:var(--taskbar-h,56px);left:0;right:0;height:64px;background:var(--rm-bg-surface);border-top:1px solid var(--rm-border);display:flex;align-items:center;padding:0 12px;gap:10px;z-index:99999;transform:translateY(100%);transition:transform .3s cubic-bezier(0.32,0.72,0,1);box-shadow:0 -4px 20px rgba(0,0,0,.4)}',
+'.rm-mini-player.rm-mini-visible{transform:translateY(0)}',
+'.rm-mini-art{width:48px;height:48px;min-width:48px;border-radius:6px;overflow:hidden;background:var(--rm-bg-elevated);display:flex;align-items:center;justify-content:center;color:var(--rm-text-muted);font-size:18px;cursor:pointer}',
+'.rm-mini-art img{width:100%;height:100%;object-fit:cover}',
+'.rm-mini-info{flex:1;min-width:0;cursor:pointer;overflow:hidden}',
+'.rm-mini-title{font-size:13px;font-weight:600;color:var(--rm-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+'.rm-mini-meta{font-size:11px;color:var(--rm-text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+'.rm-mini-controls{display:flex;align-items:center;gap:4px;flex-shrink:0}',
+'.rm-mini-btn{width:36px;height:36px;border:none;border-radius:50%;background:none;color:var(--rm-text);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s}',
+'.rm-mini-btn:active{background:rgba(255,255,255,.1)}',
+'.rm-mini-btn.rm-mini-close{color:var(--rm-text-muted);font-size:14px}',
+'.rm-mini-btn.rm-mini-close:active{color:var(--rm-error)}',
 /* responsive — mobile-first touch-friendly overrides */
-'@media(max-width:768px){.rm-wrap{height:100%;max-height:100%}.rm-sidebar{display:none}.rm-mobile-nav{display:flex;order:10}.rm-exit-fs{display:flex}.rm-main{min-height:0}.rm-toolbar{padding:10px 12px;flex-shrink:0}.rm-content{position:relative;padding:12px;min-height:0;flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}.rm-grid{grid-template-columns:1fr}.rm-search{padding:12px 16px;font-size:14px;border-radius:12px}.rm-select{padding:10px 14px;font-size:13px;min-height:44px}.rm-card{padding:12px;gap:12px;min-height:60px}.rm-card-btn{padding:10px;font-size:16px;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center}.rm-chip{padding:10px 16px;font-size:13px;min-height:40px;display:inline-flex;align-items:center}.rm-track{padding:10px 12px;min-height:56px}.rm-track-thumb{width:44px;height:44px}.rm-track-btn{padding:10px;min-width:44px;min-height:44px;font-size:15px;display:flex;align-items:center;justify-content:center}.rm-dl-btn{padding:10px;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center}.rm-player{padding:8px 12px;gap:10px;min-height:56px;flex-shrink:0;cursor:pointer}.rm-vol-wrap{display:none}.rm-player-art{width:44px;height:44px;min-width:44px}.rm-player-info{min-width:0;flex:1}.rm-player-name{font-size:13px}.rm-player-meta{font-size:11px}.rm-player-controls{gap:2px;flex-shrink:0}#rm-shuffle-btn{display:none}#rm-repeat-btn{display:none}.rm-player-btn{padding:8px;font-size:16px;min-width:40px;min-height:40px;display:flex;align-items:center;justify-content:center}.rm-player-btn.rm-btn-play{width:40px;height:40px;font-size:18px;min-width:40px}.rm-player-eq{display:none}.rm-seekbar{padding:0 12px;height:20px}.rm-seek-time{font-size:10px;min-width:32px}.rm-seek-track{height:6px}.rm-seek-thumb{width:16px;height:16px;opacity:1}.rm-pod-header{flex-direction:column;align-items:center;text-align:center;gap:16px}.rm-pod-art{width:120px;height:120px}.rm-pod-sub-btn{padding:10px 24px;font-size:14px;min-height:44px}.rm-ep-item{padding:14px 12px;min-height:56px}.rm-ep-play{font-size:20px;width:44px}.rm-hcard{min-width:140px;padding:10px}.rm-hcard-art{width:120px;height:120px}.rm-section-title{font-size:16px;margin:16px 0 10px}.rm-np-art{width:min(260px,65vw);height:min(260px,65vw)}.rm-np-title{font-size:20px}.rm-np-meta{font-size:14px}.rm-np-btn{font-size:24px;padding:12px;min-width:48px;min-height:48px;display:flex;align-items:center;justify-content:center}.rm-np-btn.rm-np-play{width:72px;height:72px;font-size:28px}.rm-np-close{padding:12px 16px;min-width:48px;min-height:48px}.rm-np-action{padding:10px 18px;font-size:13px;min-height:44px}.rm-np-seek .rm-seek-track{height:6px}.rm-np-seek .rm-seek-thumb{width:16px;height:16px;opacity:1}.rm-pl-card{padding:12px;min-height:56px}.rm-pl-btn{padding:10px;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center}.rm-pl-create input{padding:10px 14px;font-size:14px;min-height:44px}.rm-pl-create button{padding:10px 18px;font-size:13px;min-height:44px}.rm-queue-item{padding:10px 12px;min-height:48px;font-size:13px}.rm-queue-item-rm{padding:10px;min-width:44px;min-height:44px;font-size:14px;display:flex;align-items:center;justify-content:center}.rm-folder-chip{padding:8px 12px;font-size:12px;min-height:36px}.rm-add-folder-btn{padding:8px 14px;font-size:12px;min-height:36px}.rm-modal{min-width:min(320px,90vw);padding:20px}.rm-modal-item{padding:12px;min-height:48px;font-size:14px}.rm-modal-close{padding:12px;font-size:14px;min-height:48px}.rm-install-btn{padding:14px 28px;font-size:15px;min-height:48px}}',
+'@media(max-width:768px){.rm-wrap{height:100%;max-height:100%}.rm-sidebar{display:none}.rm-mobile-nav{display:flex;order:10}.rm-exit-fs{display:flex}.rm-main{min-height:0}.rm-toolbar{padding:10px 12px;flex-shrink:0}.rm-content{position:relative;padding:12px;min-height:0;flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}.rm-grid{grid-template-columns:1fr}.rm-search{padding:12px 16px;font-size:14px;border-radius:12px}.rm-select{padding:10px 14px;font-size:13px;min-height:44px}.rm-card{padding:12px;gap:12px;min-height:60px}.rm-card-btn{padding:10px;font-size:16px;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center}.rm-chip{padding:10px 16px;font-size:13px;min-height:40px;display:inline-flex;align-items:center}.rm-track{padding:10px 12px;min-height:56px}.rm-track-thumb{width:44px;height:44px}.rm-track-btn{padding:10px;min-width:44px;min-height:44px;font-size:15px;display:flex;align-items:center;justify-content:center}.rm-dl-btn{padding:10px;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center}.rm-player{padding:8px 12px;gap:10px;min-height:56px;flex-shrink:0;cursor:pointer}.rm-vol-wrap{display:flex}.rm-vol-slider{width:60px}.rm-player-art{width:44px;height:44px;min-width:44px}.rm-player-info{min-width:0;flex:1}.rm-player-name{font-size:13px}.rm-player-meta{font-size:11px}.rm-player-controls{gap:2px;flex-shrink:0}#rm-shuffle-btn{display:none}#rm-repeat-btn{display:none}.rm-player-btn{padding:8px;font-size:16px;min-width:40px;min-height:40px;display:flex;align-items:center;justify-content:center}.rm-player-btn.rm-btn-play{width:40px;height:40px;font-size:18px;min-width:40px}.rm-player-eq{display:none}.rm-seekbar{padding:0 12px;height:20px}.rm-seek-time{font-size:10px;min-width:32px}.rm-seek-track{height:6px}.rm-seek-thumb{width:16px;height:16px;opacity:1}.rm-pod-header{flex-direction:column;align-items:center;text-align:center;gap:16px}.rm-pod-art{width:120px;height:120px}.rm-pod-sub-btn{padding:10px 24px;font-size:14px;min-height:44px}.rm-ep-item{padding:14px 12px;min-height:56px}.rm-ep-play{font-size:20px;width:44px}.rm-hcard{min-width:140px;padding:10px}.rm-hcard-art{width:120px;height:120px}.rm-section-title{font-size:16px;margin:16px 0 10px}.rm-np-art{width:min(260px,65vw);height:min(260px,65vw)}.rm-np-title{font-size:20px}.rm-np-meta{font-size:14px}.rm-np-btn{font-size:24px;padding:12px;min-width:48px;min-height:48px;display:flex;align-items:center;justify-content:center}.rm-np-btn.rm-np-play{width:72px;height:72px;font-size:28px}.rm-np-close{padding:12px 16px;min-width:48px;min-height:48px}.rm-np-action{padding:10px 18px;font-size:13px;min-height:44px}.rm-np-seek .rm-seek-track{height:6px}.rm-np-seek .rm-seek-thumb{width:16px;height:16px;opacity:1}.rm-pl-card{padding:12px;min-height:56px}.rm-pl-btn{padding:10px;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center}.rm-pl-create input{padding:10px 14px;font-size:14px;min-height:44px}.rm-pl-create button{padding:10px 18px;font-size:13px;min-height:44px}.rm-queue-item{padding:10px 12px;min-height:48px;font-size:13px}.rm-queue-item-rm{padding:10px;min-width:44px;min-height:44px;font-size:14px;display:flex;align-items:center;justify-content:center}.rm-folder-chip{padding:8px 12px;font-size:12px;min-height:36px}.rm-add-folder-btn{padding:8px 14px;font-size:12px;min-height:36px}.rm-modal{min-width:min(320px,90vw);padding:20px}.rm-modal-item{padding:12px;min-height:48px;font-size:14px}.rm-modal-close{padding:12px;font-size:14px;min-height:48px}.rm-install-btn{padding:14px 28px;font-size:15px;min-height:48px}}',
     ].join('\n'); }
 
     createWindow('radio-music', {
@@ -960,6 +1027,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
           <button class="rm-more-btn" data-section="playlists"><i class="fas fa-list"></i><span>${t('Playlisty')}</span></button>
           <button class="rm-more-btn" data-section="queue"><i class="fas fa-list-ol"></i><span>${t('Kolejka')}</span></button>
           <button class="rm-more-btn" data-section="history"><i class="fas fa-history"></i><span>${t('Historia')}</span></button>
+          <button class="rm-more-btn" data-section="ai-dj"><i class="fas fa-robot"></i><span>${t('AI DJ')}</span></button>
           <button class="rm-more-btn" data-section="audiobooks"><i class="fas fa-book-open"></i><span>${t('Audiobooki')}</span></button>
           <button class="rm-more-btn" id="rm-add-homescreen"><i class="fas fa-plus-square"></i><span>${t('Skrót')}</span></button>
         </div>
@@ -998,6 +1066,11 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
   </div>
 </div>
 <button class="rm-exit-fs" id="rm-exit-fs" title="${t('Tryb okienkowy')}"><i class="fas fa-compress"></i></button>`;
+
+                // Ensure the window body acts as a flex column container so .rm-wrap flex:1 resolves correctly
+                body.style.display = 'flex';
+                body.style.flexDirection = 'column';
+                body.style.overflow = 'hidden';
 
             // Fullscreen mode on mobile — hides window chrome & taskbar
             const _isMobile = window.matchMedia('(max-width: 768px)').matches;
@@ -1057,20 +1130,16 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             };
 
             // Close "More" sheet on outside tap
-            document.addEventListener('mousedown', (e) => {
+            const _onMoreSheetMouse = (e) => {
                 const sheet = body.querySelector('#rm-more-sheet');
                 const moreBtn = body.querySelector('#rm-mobile-nav > .rm-mnav-btn[data-section="more"]');
                 if (sheet && sheet.classList.contains('open') && !sheet.contains(e.target) && (!moreBtn || !moreBtn.contains(e.target))) {
                     sheet.classList.remove('open');
                 }
-            });
-            document.addEventListener('touchstart', (e) => {
-                const sheet = body.querySelector('#rm-more-sheet');
-                const moreBtn = body.querySelector('#rm-mobile-nav > .rm-mnav-btn[data-section="more"]');
-                if (sheet && sheet.classList.contains('open') && !sheet.contains(e.target) && (!moreBtn || !moreBtn.contains(e.target))) {
-                    sheet.classList.remove('open');
-                }
-            }, { passive: true });
+            };
+            document.addEventListener('mousedown', _onMoreSheetMouse);
+            document.addEventListener('touchstart', _onMoreSheetMouse, { passive: true });
+            _onMoreSheetMouseRef = _onMoreSheetMouse;
 
             // Player controls — optimistic toggle: icon flips instantly, reverts if play() rejects
             const playPauseBtn = body.querySelector('#rm-play-pause');
@@ -1194,19 +1263,112 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             _onKeyDownRef = _onKeyDown;
             _onVisWakeLockRef = _onVisWakeLock;
             _onVisFocusLossRef = _onVisFocusLoss;
+
+            // Mini-Player: absorb state when window reopens
+            if (window.__rmState && window.__rmState.audio && window.__rmState.playing) {
+                const s = window.__rmState;
+                window.__rmState = null;
+                // Remove mini-player DOM
+                const oldMini = document.getElementById('rm-mini-player');
+                if (oldMini) { oldMini.classList.remove('rm-mini-visible'); setTimeout(() => oldMini.remove(), 300); }
+                // Absorb state
+                _audio = s.audio;
+                _playing = s.playing;
+                _musicQueue = s.musicQueue || [];
+                _musicQueueIdx = s.musicQueueIdx ?? -1;
+                _audioCtx = s.audioCtx;
+                _eqFilters = s.eqFilters;
+                _audioSource = s.audioSource;
+                _analyser = s.analyser;
+                _saveStateInterval = s.saveStateInterval;
+                _bc = s.bc;
+                _wakeLock = s.wakeLock;
+                _aiDjActive = s.aiDjActive || false;
+                _aiDjSeenUrls = s.aiDjSeenUrls || new Set();
+                _aiDjBaseArtist = s.aiDjBaseArtist || '';
+                _castSession = s.castSession;
+                _isCasting = s.isCasting || false;
+                _playbackRate = s.playbackRate || 1;
+                if (_audio) _audio.volume = s.volume ?? 0.8;
+                // Re-show player bar
+                const player = body.querySelector('#rm-player');
+                if (player) {
+                    player.style.display = 'flex';
+                    body.querySelector('#rm-player-name').textContent = _playing.name || '';
+                    const metaEl = body.querySelector('#rm-player-meta');
+                    if (metaEl) {
+                        if (_aiDjActive) {
+                            metaEl.innerHTML = _formatAiDjMeta(_playing);
+                        } else {
+                            metaEl.textContent = _playing.meta || _playing.channel || '';
+                        }
+                    }
+                    const art = body.querySelector('#rm-player-art');
+                    if (art) {
+                        const img = _playing.image || _playing.thumbnail;
+                        art.innerHTML = img
+                            ? '<img src="' + escH(img) + '" onerror="this.outerHTML=\'<i class=\\\'fas fa-music\\\'></i>\'">'
+                            : '<i class="fas fa-music"></i>';
+                    }
+                    body.querySelector('#rm-play-pause').innerHTML = '<i class="fas fa-pause"></i>';
+                }
+                _updateSeekbar();
+                _showEq(!_audio?.paused);
+                // Re-register event listeners
+                window.addEventListener('popstate', _onPopStateRef, true);
+                window.addEventListener('keydown', _onKeyDownRef);
+                document.addEventListener('visibilitychange', _onVisWakeLockRef);
+                document.addEventListener('visibilitychange', _onVisFocusLossRef);
+                if (_onMoreSheetMouseRef) {
+                    document.addEventListener('mousedown', _onMoreSheetMouseRef);
+                    document.addEventListener('touchstart', _onMoreSheetMouseRef, { passive: true });
+                }
+                // Re-wire mini-player unsubscribe (store uses old closure, create new sub)
+                if (_miniPlayerUnsub) { _miniPlayerUnsub(); _miniPlayerUnsub = null; }
+            }
         },
         onClose() {
-            // Stop audio immediately — do NOT call stopPlayback() here because it's
-            // defined inside onRender and not accessible from onClose (separate scope).
-            // Same for _savePlaybackState, _hideLockScreen, _releaseWakeLock — all inlined below.
+            // Mini-Player: if audio is actively playing, keep it alive in a floating bar
+            if (_audio && !_audio.paused && _playing && !_miniPlayerEl) {
+                if (!window.matchMedia('(max-width: 768px)').matches) {
+                    _createMiniPlayer();
+                }
+                // Clean up window-specific resources
+                if (_lockOverlay) { _lockOverlay.remove(); _lockOverlay = null; }
+                if (_onPopStateRef) window.removeEventListener('popstate', _onPopStateRef, true);
+                if (_onKeyDownRef) window.removeEventListener('keydown', _onKeyDownRef);
+                if (_onVisWakeLockRef) document.removeEventListener('visibilitychange', _onVisWakeLockRef);
+                if (_onVisFocusLossRef) document.removeEventListener('visibilitychange', _onVisFocusLossRef);
+                if (_onMoreSheetMouseRef) {
+                    document.removeEventListener('mousedown', _onMoreSheetMouseRef);
+                    document.removeEventListener('touchstart', _onMoreSheetMouseRef);
+                }
+                if (_onDeviceChange && navigator.mediaDevices) {
+                    navigator.mediaDevices.removeEventListener('devicechange', _onDeviceChange);
+                }
+                _activePolls.forEach(p => clearInterval(p));
+                _activePolls = [];
+                document.body.classList.remove('app-fullscreen-active');
+                // Minimize Now Playing overlay if visible
+                if (_npOverlay && !_npOverlay.classList.contains('rm-np-minimized')) {
+                    _minimizeNowPlaying();
+                }
+                return;
+            }
+
+            // Original: full cleanup
             if (_audio) {
                 _audio.pause();
                 _audio.src = ''; _audio.load();
                 _audio = null;
             }
+            if (_audioCtx) { try { _audioCtx.close(); } catch(_) {} _audioCtx = null; }
+            _eqFilters = null;
+            _audioSource = null; _analyser = null;
             _playing = null;
             if (_saveStateInterval) { clearInterval(_saveStateInterval); _saveStateInterval = null; }
-            clearTimeout(_radioRetryTimer); _radioRetryTimer = null;
+            clearTimeout(_radioRetryTimer); _radioRetryTimer = null; _radioRetries = 0;
+            clearTimeout(_bufferingSafetyTimer); _bufferingSafetyTimer = null;
             if (_preloadAudio) { _preloadAudio.src = ''; _preloadAudio = null; }
             if (_castSession) { try { _castSession.endSession(true); } catch(e) {} }
             _isCasting = false; _castSession = null;
@@ -1220,6 +1382,10 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             if (_onKeyDownRef) window.removeEventListener('keydown', _onKeyDownRef);
             if (_onVisWakeLockRef) document.removeEventListener('visibilitychange', _onVisWakeLockRef);
             if (_onVisFocusLossRef) document.removeEventListener('visibilitychange', _onVisFocusLossRef);
+            if (_onMoreSheetMouseRef) {
+                document.removeEventListener('mousedown', _onMoreSheetMouseRef);
+                document.removeEventListener('touchstart', _onMoreSheetMouseRef);
+            }
             if (_onDeviceChange && navigator.mediaDevices) {
                 navigator.mediaDevices.removeEventListener('devicechange', _onDeviceChange);
             }
@@ -1255,7 +1421,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         const content = bodyEl.querySelector('#rm-content');
         if (content) {
             content.classList.add('rm-fade-out');
-            setTimeout(() => { loadSection(section); content.classList.remove('rm-fade-out'); }, 150);
+            setTimeout(() => { try { loadSection(section); } finally { content.classList.remove('rm-fade-out'); } }, 150);
         } else {
             loadSection(section);
         }
@@ -1381,8 +1547,10 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     }
 
     function loadSection(section) {
+        if (!bodyEl) return;
         const toolbar = bodyEl.querySelector('#rm-toolbar');
         const content = bodyEl.querySelector('#rm-content');
+        if (!toolbar || !content) return;
         toolbar.innerHTML = '';
         content.innerHTML = '';
         _syncSidebarActive(section);
@@ -1413,6 +1581,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             case 'podcasts': loadPodcasts(toolbar, content); break;
             case 'subscriptions': loadSubscriptions(content); break;
             case 'music': loadMusic(toolbar, content); break;
+            case 'ai-dj': loadAiDj(toolbar, content); break;
             case 'local': loadLocal(toolbar, content); break;
             case 'local-audiobooks': loadLocalAudiobooks(toolbar, content); break;
             case 'playlists': loadPlaylists(toolbar, content); break;
@@ -2060,8 +2229,10 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             el.className = 'rm-track' + (isPlaying ? ' rm-playing' : '');
             if (tr.url) el.dataset.url = tr.url;
             // Store metadata for archive use
-            if (tr.url) _archiveDb[tr.url] = _archiveDb[tr.url] || {};
-            if (tr.url && tr.title) (_archiveDb[tr.url] || {}).title = tr.title;
+            if (tr.url) {
+                if (!_archiveDb[tr.url]) _archiveDb[tr.url] = {};
+                if (tr.title) _archiveDb[tr.url].title = tr.title;
+            }
             el.innerHTML = `
                 <img class="rm-track-thumb" src="${escH(tr.thumbnail)}" loading="lazy" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 48 48%22><rect fill=%22%231a1a2e%22 width=%2248%22 height=%2248%22/><text x=%2224%22 y=%2230%22 fill=%22%23666%22 text-anchor=%22middle%22 font-size=%2220%22>♪</text></svg>'">
                 <div class="rm-track-info">
@@ -2102,6 +2273,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     }
 
     function playMusicTrack(tr) {
+        _aiDjActive = false; // exit AI DJ on manual track selection
         // Queue entry from history list — route via original item
         if (tr._histItem) {
             const it = tr._histItem;
@@ -2112,11 +2284,18 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             }
             return;
         }
-        if (tr.source === 'local') {
+        if (tr.source === 'local' || tr.type === 'local') {
+            // Resolve raw file path: prefer tr.path, fall back to tr.url only if it's not an API URL
+            const rawPath = tr.path || (tr.url && !tr.url.startsWith('/api/') ? tr.url : null);
             playAudio({
-                name: tr.title, type: 'local', path: tr.url,
-                url: '/api/radio-music/local/stream?path=' + encodeURIComponent(tr.url) + '&token=' + (NAS.token || ''),
-                meta: tr.channel,
+                name: tr.title || tr.name,
+                type: 'local',
+                path: rawPath,
+                url: rawPath
+                    ? '/api/radio-music/local/stream?path=' + encodeURIComponent(rawPath) + '&token=' + (NAS.token || '')
+                    : tr.url,
+                meta: tr.channel || tr.meta,
+                image: tr.thumbnail || tr.image,
             });
             return;
         }
@@ -2318,7 +2497,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 const idx = folderFiles.indexOf(file);
                 _musicQueue = folderFiles.slice(idx >= 0 ? idx : 0).map(f => {
                     const fArt = f.has_art ? '/api/radio-music/local/artwork?path=' + encodeURIComponent(f.path) + '&token=' + (NAS.token || '') : '';
-                    return { id: f.path, title: f.name, channel: f._meta || f.filename, url: f.path, thumbnail: fArt, duration: f.duration || 0, duration_fmt: f.duration ? _fmtSecs(f.duration) : '', source: 'local' };
+                    return { id: f.path, title: f.name, channel: f._meta || f.filename, url: f.path, thumbnail: fArt, duration: f.duration || 0, duration_fmt: f.duration ? _fmtSecs(f.duration) : '', source: 'local', type: 'local' };
                 });
                 _musicQueueIdx = 0;
                 const fileArt = file.has_art ? '/api/radio-music/local/artwork?path=' + encodeURIComponent(file.path) + '&token=' + (NAS.token || '') : '';
@@ -2327,7 +2506,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             el.querySelector('.rm-add-queue-btn').onclick = (e) => {
                 e.stopPropagation();
                 const fArt = file.has_art ? '/api/radio-music/local/artwork?path=' + encodeURIComponent(file.path) + '&token=' + (NAS.token || '') : '';
-                _musicQueue.push({ id: file.path, title: file.name, channel: file._meta, url: file.path, thumbnail: fArt, duration: file.duration || 0, duration_fmt: file.duration ? _fmtSecs(file.duration) : '', source: 'local' });
+                _musicQueue.push({ id: file.path, title: file.name, channel: file._meta, url: file.path, thumbnail: fArt, duration: file.duration || 0, duration_fmt: file.duration ? _fmtSecs(file.duration) : '', source: 'local', type: 'local' });
                 toast(t('Dodano do kolejki: ') + file.name, 'success');
             };
             const plBtn = el.querySelector('.rm-track-btn[title="' + t('Playlista') + '"]');
@@ -2554,7 +2733,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                     return {
                         id: f.path, title: f.name, channel: [f.artist, f.album].filter(Boolean).join(' · ') || f.filename,
                         url: f.path, thumbnail: fArt, duration: f.duration || 0, duration_fmt: f.duration ? _fmtSecs(f.duration) : '',
-                        source: 'local',
+                        source: 'local', type: 'local',
                     };
                 });
                 _musicQueueIdx = 0;
@@ -2572,7 +2751,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 _musicQueue.push({
                     id: file.path, title: file.name, channel: [file.artist, file.album].filter(Boolean).join(' · ') || file.filename,
                     url: file.path, thumbnail: fArt, duration: file.duration || 0, duration_fmt: file.duration ? _fmtSecs(file.duration) : '',
-                    source: 'local',
+                    source: 'local', type: 'local',
                 });
                 toast(t('Dodano do kolejki: ') + file.name, 'success');
             };
@@ -2673,6 +2852,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             const delBtn = card.querySelector('.rm-pl-del');
             if (delBtn) delBtn.onclick = async (e) => {
                 e.stopPropagation();
+                if (!confirm(t('Usunąć tę playlistę? Tej operacji nie można cofnąć.'))) return;
                 await api('/radio-music/playlists/' + plId, { method: 'DELETE' });
                 loadPlaylists(toolbar, content);
             };
@@ -2799,6 +2979,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     }
 
     function _playTrackFromPlaylist(tr) {
+        _aiDjActive = false; // exit AI DJ on manual playlist track selection
         if (tr.type === 'radio') {
             playStation(tr);
         } else {
@@ -3178,6 +3359,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     /* ── History ────────────────────────────────────── */
 
     async function loadHistory(content) {
+        content.innerHTML = '<div class="rm-empty"><i class="fas fa-spinner fa-spin"></i><p>' + t('Ładowanie historii…') + '</p></div>';
         const data = await api('/radio-music/history');
         const items = data.items || [];
         if (!items.length) {
@@ -3199,6 +3381,210 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             card.onclick = () => _playHistoryItem(item, items, idx);
             grid.appendChild(card);
         });
+    }
+
+    /* ── AI DJ (Infinite Smart Playlist) ─────────────── */
+
+    async function loadAiDj(toolbar, content) {
+        _aiDjActive = true;
+        _aiDjSeenUrls = new Set();
+        _aiDjBaseArtist = _playing ? (_playing.meta || _playing.channel || '') : '';
+
+        toolbar.innerHTML = ''
+            + '<div style="display:flex;align-items:center;gap:12px;padding:0 16px;flex-wrap:wrap">'
+            + '<span style="font-size:16px;font-weight:700"><i class="fas fa-robot" style="color:var(--rm-accent)"></i> AI DJ</span>'
+            + '<span style="font-size:12px;color:var(--rm-text-secondary)">' + t('Nieskończona inteligentna playlista') + '</span>'
+            + '<button class="rm-chip" id="rm-ai-dj-stop" style="margin-left:auto;color:var(--rm-error);border-color:rgba(239,68,68,.3)"><i class="fas fa-stop"></i> ' + t('Zatrzymaj') + '</button>'
+            + '</div>';
+
+        content.innerHTML = ''
+            + '<div class="rm-ai-dj-hero" style="padding-bottom:12px">'
+            + '<i class="fas fa-robot" style="font-size:52px;color:var(--rm-accent);margin-bottom:16px;display:block"></i>'
+            + '<h2 style="margin:0 0 8px;font-size:22px">' + t('AI DJ') + '</h2>'
+            + '<p style="margin:0 0 8px;font-size:14px;color:var(--rm-text-secondary)">' + t('Nieskończona playlista na podstawie Twoich ulubionych artystów') + '</p>'
+            + '<div id="rm-ai-dj-status" style="font-size:12px;color:var(--rm-text-muted);margin-top:12px">' + t('Szukam utworów…') + '</div>'
+            + '</div>'
+            + '<div id="rm-ai-dj-queue" style="margin-top:8px"></div>';
+
+        toolbar.querySelector('#rm-ai-dj-stop').onclick = () => {
+            _aiDjActive = false;
+            _aiDjSeenUrls = new Set();
+            _aiDjBaseArtist = '';
+            _musicQueue = [];
+            _musicQueueIdx = -1;
+            if (_audio) { _audio.pause(); _audio.src = ''; }
+            _playing = null;
+            bodyEl.querySelector('#rm-player').style.display = 'none';
+            _clearSeek();
+            bodyEl.querySelector('#rm-play-pause').innerHTML = '<i class="fas fa-play"></i>';
+            toast(t('AI DJ zatrzymany'), 'info');
+            loadSection('most-played');
+        };
+
+        // Fetch initial batch
+        await _fetchAiDjMore();
+        if (_musicQueue.length > 0) {
+            _musicQueueIdx = 0;
+            playAudio(_musicQueue[0]);
+        }
+        _renderAiDjQueue(content);
+    }
+
+    async function _fetchAiDjMore() {
+        if (!_aiDjActive || _aiDjFetching) return;
+        _aiDjFetching = true;
+        const count = 15;
+        const exclude = Array.from(_aiDjSeenUrls).slice(0, 200).join(',');
+        const artist = _aiDjBaseArtist || (_playing ? (_playing.meta || _playing.channel || '') : '');
+        try {
+            const dislikedArtists = Array.from(_dislikedArtists).slice(0, 50).join(',');
+            const data = await api('/radio-music/ai-dj/next?count=' + count
+                + '&artist=' + encodeURIComponent(artist)
+                + '&exclude=' + encodeURIComponent(exclude)
+                + (dislikedArtists ? '&disliked_artists=' + encodeURIComponent(dislikedArtists) : ''));
+            const items = data.items || [];
+            if (!items.length) return;
+            const tracks = items
+                .filter(tr => !_dislikedUrls.has(tr.url) && !_dislikedArtists.has((tr.channel || '').trim().toLowerCase()))
+                .map(tr => ({
+                id: tr.id,
+                name: tr.title,
+                url: tr.url,
+                type: 'music',
+                meta: tr.channel,
+                image: tr.thumbnail,
+                duration: tr.duration || 0,
+                source: tr.source || 'youtube',
+            }));
+            tracks.forEach(t => {
+                _aiDjSeenUrls.add(t.url);
+                _musicQueue.push(t);
+            });
+            const statusEl = bodyEl && bodyEl.querySelector('#rm-ai-dj-status');
+            if (statusEl) statusEl.textContent = t('Kolejka: {n} utworów').replace('{n}', _musicQueue.length);
+            _renderAiDjQueue(bodyEl && bodyEl.querySelector('#rm-content'));
+        } catch (e) {
+            _cl('error', 'AI DJ fetch failed', { error: e.message });
+        } finally {
+            _aiDjFetching = false;
+            // Cap seen URLs to prevent unbounded memory growth
+            if (_aiDjSeenUrls.size > 500) {
+                const arr = Array.from(_aiDjSeenUrls);
+                _aiDjSeenUrls = new Set(arr.slice(arr.length - 300));
+            }
+        }
+    }
+
+    function _formatAiDjMeta(item) {
+        return '<span style="color:var(--rm-accent)"><i class="fas fa-robot"></i> AI DJ</span> • ' + escH(item.meta || item.channel || '');
+    }
+
+    function _renderAiDjQueue(container) {
+        if (!container) return;
+        const queueEl = container.querySelector('#rm-ai-dj-queue');
+        if (!queueEl) return;
+        const upcoming = _musicQueue.slice(Math.max(0, _musicQueueIdx + 1));
+        if (!upcoming.length && _musicQueueIdx < 0) { queueEl.innerHTML = ''; return; }
+        let html = '<div class="rm-section-title"><i class="fas fa-robot" style="color:var(--rm-accent)"></i> AI DJ · ' + t('Kolejka: {n}').replace('{n}', _musicQueue.length) + '</div>';
+        html += '<div class="rm-hscroll" style="padding-bottom:12px">';
+        // Currently playing card (highlighted)
+        if (_musicQueueIdx >= 0 && _musicQueue[_musicQueueIdx]) {
+            const cur = _musicQueue[_musicQueueIdx];
+            html += '<div class="rm-hcard rm-ai-dj-now" style="border:1px solid var(--rm-accent);min-width:155px;max-width:160px">'
+                + '<div class="rm-hcard-art" style="position:relative">'
+                + (cur.image ? '<img src="' + escH(cur.image) + '" onerror="this.outerHTML=\'<i class=\\\'fas fa-music\\\'></i>\'">' : '<i class="fas fa-music"></i>')
+                + '<span class="rm-hcard-badge" style="background:var(--rm-accent);color:#000">' + t('Gra') + '</span>'
+                + '</div>'
+                + '<div class="rm-hcard-title">' + escH(cur.name) + '</div>'
+                + '<div class="rm-hcard-meta">' + escH(cur.meta || '') + '</div>'
+                + '</div>';
+        }
+        // Upcoming tracks
+        upcoming.forEach((tr, i) => {
+            const idx = _musicQueueIdx + 1 + i;
+            html += '<div class="rm-hcard rm-ai-dj-track" data-qidx="' + idx + '" style="min-width:150px;max-width:160px">'
+                + '<div class="rm-hcard-art">'
+                + (tr.image ? '<img src="' + escH(tr.image) + '" loading="lazy" onerror="this.outerHTML=\'<i class=\\\'fas fa-music\\\'></i>\'">' : '<i class="fas fa-music"></i>')
+                + '<span class="rm-hcard-badge">' + (idx + 1) + '</span>'
+                + '<button class="rm-hcard-dislike" data-dislike-idx="' + idx + '" title="' + t('Nie lubię') + '" style="position:absolute;top:2px;right:2px;width:20px;height:20px;border:none;background:rgba(0,0,0,.55);border-radius:50%;color:rgba(255,255,255,.8);font-size:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .15s"><i class="fas fa-thumbs-down"></i></button>'
+                + '</div>'
+                + '<div class="rm-hcard-title">' + escH(tr.name) + '</div>'
+                + '<div class="rm-hcard-meta">' + escH(tr.meta || '') + '</div>'
+                + '</div>';
+        });
+        html += '</div>';
+        queueEl.innerHTML = html;
+        // Wire click handlers: jump to clicked track in queue
+        queueEl.querySelectorAll('.rm-ai-dj-track').forEach(el => {
+            const qIdx = parseInt(el.dataset.qidx);
+            if (!isNaN(qIdx) && qIdx >= 0 && qIdx < _musicQueue.length) {
+                el.onclick = () => {
+                    _musicQueueIdx = qIdx;
+                    playAudio(_musicQueue[qIdx]);
+                };
+            }
+        });
+        // Wire thumbs-down buttons on carousel cards
+        queueEl.querySelectorAll('.rm-hcard-dislike').forEach(btn => {
+            const qIdx = parseInt(btn.dataset.dislikeIdx);
+            btn.onclick = (e) => {
+                e.stopPropagation();
+                if (qIdx >= 0 && qIdx < _musicQueue.length) {
+                    const tr = _musicQueue[qIdx];
+                    if (tr.meta) _dislikedArtists.add(tr.meta.trim().toLowerCase());
+                    if (tr.url) _dislikedUrls.add(tr.url);
+                    _saveDisliked();
+                    // Visual feedback
+                    btn.innerHTML = '<i class="fas fa-check"></i>';
+                    btn.style.color = 'var(--rm-accent)';
+                    toast(t('AI DJ dostosuje rekomendacje'), 'info');
+                }
+            };
+        });
+        // Mouse drag-to-scroll for desktop
+        if (!_aiDjScrollWired) {
+            _aiDjScrollWired = true;
+            let dragging = false, startX = 0, scrollStart = 0, didDrag = false, activeScroll = null;
+            document.addEventListener('mousedown', e => {
+                if (e.button !== 0) return;
+                const card = e.target.closest('#rm-ai-dj-queue .rm-hcard');
+                if (!card) return;
+                activeScroll = document.querySelector('#rm-ai-dj-queue .rm-hscroll');
+                if (!activeScroll) return;
+                dragging = true; startX = e.clientX; scrollStart = activeScroll.scrollLeft;
+                activeScroll.style.cursor = 'grabbing';
+                didDrag = false;
+                e.preventDefault();
+            });
+            document.addEventListener('mousemove', e => {
+                if (!dragging || !activeScroll) return;
+                const dx = startX - e.clientX;
+                if (Math.abs(dx) > 3) didDrag = true;
+                activeScroll.scrollLeft = scrollStart + dx;
+            });
+            document.addEventListener('mouseup', () => {
+                if (dragging) {
+                    dragging = false;
+                    if (activeScroll) {
+                        activeScroll.style.cursor = '';
+                        if (didDrag) {
+                            activeScroll.style.pointerEvents = 'none';
+                            setTimeout(() => { if (activeScroll) activeScroll.style.pointerEvents = ''; }, 0);
+                        }
+                    }
+                    activeScroll = null;
+                }
+            });
+            // Mouse wheel → horizontal scroll on the carousel
+            document.addEventListener('wheel', e => {
+                const scroll = e.target.closest('#rm-ai-dj-queue .rm-hscroll');
+                if (!scroll) return;
+                if (Math.abs(e.deltaY) >= Math.abs(e.deltaX)) {
+                    scroll.scrollLeft += e.deltaY;
+                    e.preventDefault();
+                }
+            }, { passive: false });
+        }
     }
 
     /* ── Discovery (Personalized) ─────────────────── */
@@ -3489,7 +3875,10 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                     onclick: () => playAudio(tr)
                 }));
             });
-        }).catch(() => {});
+        }).catch(() => {
+            const carousel = musicSec.querySelector('#rm-disc-music-carousel');
+            if (carousel?.isConnected) carousel.innerHTML = '<div class="rm-disc-empty"><i class="fas fa-exclamation-circle"></i> ' + t('yt-dlp nie jest zainstalowane lub wystąpił błąd sieci') + '</div>';
+        });
 
         if (!stations.length && !pods.length && !hasPersonal) {
             content.innerHTML += '<div class="rm-disc-empty" style="padding:60px 20px"><i class="fas fa-compass" style="font-size:40px;margin-bottom:16px;display:block"></i>'
@@ -3844,29 +4233,15 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
     /* ── 5-Band Equalizer ──────────────────────────── */
 
-    let _eqEnabled = false;
-    let _eqCtx = null;        // AudioContext
-    let _eqSource = null;     // MediaElementSourceNode
-    let _eqFilters = [];      // BiquadFilterNode[]
-    let _eqBands = [60, 230, 910, 3600, 14000];
-    let _eqGains = [0, 0, 0, 0, 0];
-    const _EQ_PRESETS = {
-        'Flat': [0, 0, 0, 0, 0],
-        'Bass Boost': [6, 4, 0, 0, 0],
-        'Treble Boost': [0, 0, 0, 4, 6],
-        'Rock': [4, 2, -1, 3, 4],
-        'Vocal': [-2, 0, 4, 3, 1],
-        'Dance': [5, 3, 0, 2, 4],
-        'Acoustic': [3, 1, 0, 2, 3],
-    };
-
     function _initEq() {
-        if (_eqCtx) return;
-        try {
-            _eqCtx = new (window.AudioContext || window.webkitAudioContext)();
-        } catch(e) { return; }
+        if (!_audioCtx) {
+            try {
+                _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            } catch(e) { return; }
+        }
+        if (_eqFilters) return;
         _eqFilters = _eqBands.map((freq, i) => {
-            const f = _eqCtx.createBiquadFilter();
+            const f = _audioCtx.createBiquadFilter();
             f.type = i === 0 ? 'lowshelf' : i === _eqBands.length - 1 ? 'highshelf' : 'peaking';
             f.frequency.value = freq;
             f.gain.value = _eqGains[i];
@@ -3877,23 +4252,28 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         for (let i = 0; i < _eqFilters.length - 1; i++) {
             _eqFilters[i].connect(_eqFilters[i + 1]);
         }
-        _eqFilters[_eqFilters.length - 1].connect(_eqCtx.destination);
+        _eqFilters[_eqFilters.length - 1].connect(_audioCtx.destination);
     }
 
     function _connectEq() {
-        if (!_eqCtx || !_audio || !_eqEnabled) return;
+        if (!_audioCtx || !_audio || !_eqEnabled) return;
         try {
-            if (_eqSource) { try { _eqSource.disconnect(); } catch(_) {} }
-            _eqSource = _eqCtx.createMediaElementSource(_audio);
-            _eqSource.connect(_eqFilters[0]);
+            if (_audioCtx.state === 'suspended') _audioCtx.resume();
+            // Use existing _audioSource if visualizer already created it, otherwise create new
+            if (!_audioSource || _audioSource.mediaElement !== _audio) {
+                if (_audioSource) { try { _audioSource.disconnect(); } catch(_) {} }
+                _audioSource = _audioCtx.createMediaElementSource(_audio);
+            }
+            _audioSource.disconnect();
+            _audioSource.connect(_eqFilters[0]);
         } catch(e) {
-            // MediaElementSource can only be created once per element
+            // MediaElementSource already connected elsewhere
         }
     }
 
     function _disconnectEq() {
-        if (_eqSource) {
-            try { _eqSource.disconnect(); _eqSource.connect(_eqCtx.destination); } catch(_) {}
+        if (_audioSource) {
+            try { _audioSource.disconnect(); _audioSource.connect(_audioCtx.destination); } catch(_) {}
         }
     }
 
@@ -4047,6 +4427,10 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     /* ── Playback Engine ───────────────────────────── */
 
     function playStation(station) {
+        _aiDjActive = false; // exit AI DJ on manual station selection
+        if (!_recentStations.some(s => s.uuid && s.uuid === station.uuid)) {
+            _recentStations.push(station);
+        }
         playAudio({
             name: station.name,
             url: station.url,
@@ -4095,6 +4479,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             title: it.name || it.title || '', channel: it.meta || it.channel || '',
             url: it.url || '', thumbnail: it.image || it.favicon || '',
             source: it.type === 'local' ? 'local' : undefined,
+            uuid: it.uuid,  // preserved for station prev/next navigation
             _histItem: it,  // keep original for playback routing
         };
     }
@@ -4104,7 +4489,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         if (_advanceLock) return false;
         if (!_musicQueue.length || _musicQueueIdx < 0) return false;
         _advanceLock = true;
-        setTimeout(() => { _advanceLock = false; }, 500);
+        let _advLockTimer = setTimeout(() => { _advanceLock = false; }, 500);
         _cl('debug', 'advanceQueue', { from: _musicQueueIdx, queueLen: _musicQueue.length, shuffle: _shuffle, repeat: _repeatMode });
 
         let nextIdx;
@@ -4117,16 +4502,37 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         if (nextIdx < _musicQueue.length) {
             _musicQueueIdx = nextIdx;
             const nxt = _musicQueue[nextIdx];
-            nxt._plItem ? _playTrackFromPlaylist(nxt) : playMusicTrack(nxt);
+            // AI DJ: play directly to preserve _aiDjActive and use correct property names
+            if (_aiDjActive) {
+                playAudio(nxt);
+            } else {
+                nxt._plItem ? _playTrackFromPlaylist(nxt) : playMusicTrack(nxt);
+            }
             return true;
         }
         if (_repeatMode === 1 && _musicQueue.length > 0) {
             _musicQueueIdx = _shuffle ? Math.floor(Math.random() * _musicQueue.length) : 0;
             const nxt = _musicQueue[_musicQueueIdx];
-            nxt._plItem ? _playTrackFromPlaylist(nxt) : playMusicTrack(nxt);
+            if (_aiDjActive) {
+                playAudio(nxt);
+            } else {
+                nxt._plItem ? _playTrackFromPlaylist(nxt) : playMusicTrack(nxt);
+            }
             return true;
         }
+        clearTimeout(_advLockTimer);
         _advanceLock = false;
+        // AI DJ: auto-fetch when queue exhausted
+        if (_aiDjActive) {
+            const oldLen = _musicQueue.length;
+            _fetchAiDjMore().then(() => {
+                if (_musicQueue.length > oldLen) {
+                    _musicQueueIdx = oldLen;
+                    playAudio(_musicQueue[oldLen]);
+                }
+            });
+            return true;
+        }
         return false;
     }
 
@@ -4185,15 +4591,20 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         _audio = new Audio();
         _audio.volume = _isCasting ? 0 : (bodyEl.querySelector('#rm-vol')?.value || 80) / 100;
         if (_playbackRate !== 1) _audio.playbackRate = _playbackRate;
-        _playing = item;
+        // Copy item so mutations (url token refresh) don't corrupt the original queue entry
+        _playing = { ...item };
+        _skipTrackStart = Date.now();        // for auto-downvote on rapid skip
+        // Use _playing from here on — do not mutate item
+        item = _playing;
+        // AI DJ: track current artist for similarity seeding
+        if (_aiDjActive && (item.meta || item.channel)) {
+            _aiDjBaseArtist = item.meta || item.channel;
+        }
         _seekLocked = true; // unlock on onplay/oncanplay — prevents seekbar jumping to 0
 
-        // Connect EQ if enabled
-        if (_eqEnabled && _eqCtx) {
-            try {
-                _eqSource = _eqCtx.createMediaElementSource(_audio);
-                _eqSource.connect(_eqFilters[0]);
-            } catch(_) {}
+        // Connect EQ if enabled (uses shared _audioSource from _connectEq)
+        if (_eqEnabled && _audioCtx) {
+            _connectEq();
         }
 
         // Reset reconnect state and preload on each new playback
@@ -4237,6 +4648,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         // ── Buffering state helpers ──
         function _setBuffering(on) {
             _isBuffering = on;
+            if (!bodyEl) return;
             // Safety net: auto-release buffering after 20s to prevent permanently stuck controls
             clearTimeout(_bufferingSafetyTimer);
             if (on) {
@@ -4266,7 +4678,15 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 });
             }
             const meta = bodyEl.querySelector('#rm-player-meta');
-            if (meta) meta.textContent = on ? t('Buforowanie…') : (item.meta || '');
+            if (meta) {
+                if (on) {
+                    meta.textContent = t('Buforowanie…');
+                } else if (_aiDjActive) {
+                    meta.innerHTML = _formatAiDjMeta(item);
+                } else {
+                    meta.textContent = item.meta || item.channel || '';
+                }
+            }
         }
 
         function tryUrl(idx) {
@@ -4302,6 +4722,12 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 src = '/api/radio-music/music/stream?url=' + encodeURIComponent(urls[idx])
                     + '&token=' + (NAS.token || '');
             } else {
+                // Safety: never proxy an internal API URL — it means item.type is wrong
+                if (urls[idx] && urls[idx].startsWith('/')) {
+                    _cl('warning', 'tryUrl: blocked internal URL from reaching radio proxy', { url: urls[idx]?.substring(0, 80), type: item?.type });
+                    setTimeout(() => _advanceQueue(), 100);
+                    return;
+                }
                 src = '/api/radio-music/radio/proxy?url=' + encodeURIComponent(urls[idx])
                     + '&token=' + (NAS.token || '');
             }
@@ -4374,6 +4800,10 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             _npOverlay?.querySelector('#rm-np-playpause')?.innerHTML && (_npOverlay.querySelector('#rm-np-playpause').innerHTML = '<i class="fas fa-play"></i>');
             _showEq(false);
             _savePlaybackState();
+            // Save podcast episode progress on pause
+            if (_playing?._podcast && _audio.duration > 0) {
+                _updateEpProgress(_playing.url || _playing.stream_url, _audio.currentTime, _audio.duration);
+            }
             if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
             // E-12: Audio Focus Loss detection — if pause was NOT user-initiated
             // (hasPlayed=true means we were actually playing), show subtle resume hint
@@ -4381,6 +4811,11 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 // System took audio focus (another app started playing) — nothing to do,
                 // user will resume from lock screen MediaSession controls
                 _cl('info', 'Audio paused by system (audio focus loss / hidden page)');
+            }
+        };
+        _audio.onseeked = () => {
+            if (_playing?._podcast && _audio.duration > 0) {
+                _updateEpProgress(_playing.url || _playing.stream_url, _audio.currentTime, _audio.duration);
             }
         };
         _audio.onstalled = () => {
@@ -4446,7 +4881,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                     const meta = bodyEl.querySelector('#rm-player-meta');
                     if (meta) meta.textContent = t('Błąd połączenia');
                     toast(t('Nie można połączyć ze stacją. Spróbuj ponownie.'), 'error');
-                } else {
+                } else if (!_endedHandled) {
                     setTimeout(() => _advanceQueue(), 800);
                 }
             }
@@ -4476,6 +4911,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             // Podcast — advance pod queue; music — advance music queue
             if (isPodcast) { if (_advancePodQueue()) return; }
             else { if (_advanceQueue()) return; }
+            // AI DJ: queue is refilling, don't show play button yet
+            if (_aiDjActive) return;
             bodyEl.querySelector('#rm-play-pause').innerHTML = '<i class="fas fa-play"></i>';
         };
         _audio.ontimeupdate = () => {
@@ -4521,8 +4958,22 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                                 if (pctNow >= 0.95) {
                                     _cl('info', 'Gapless crossfade triggered at ' + Math.round(pctNow * 100) + '%', { next: nextItem.name });
                                     _crossfade(_audio, _preloadAudio, targetVol, _crossfadeDuration, () => {
-                                        // After crossfade, officially switch to next track
-                                        _audio.onended?.(); // trigger queue advance
+                                        // After crossfade, handle queue advance directly
+                                        // (not via _audio.onended) to avoid double-advance race
+                                        _endedHandled = true;
+                                        _showEq(false);
+                                        _clearSeek();
+                                        if (_onTrackEndedSleepCheck()) {
+                                            bodyEl.querySelector('#rm-play-pause').innerHTML = '<i class="fas fa-play"></i>';
+                                            return;
+                                        }
+                                        if (_repeatMode === 2) {
+                                            _endedHandled = false;
+                                            _audio.currentTime = 0;
+                                            _audio.play().then(() => _showEq(true)).catch(() => {});
+                                            return;
+                                        }
+                                        if (isPodcast) { _advancePodQueue(); } else { _advanceQueue(); }
                                     });
                                 }
                             };
@@ -4546,6 +4997,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                             return;
                         }
                         if (_advanceQueue()) return;
+                        if (_aiDjActive) return;
                         bodyEl.querySelector('#rm-play-pause').innerHTML = '<i class="fas fa-play"></i>';
                     } else { _endedHandled = false; }
                 }, 1500);
@@ -4567,22 +5019,36 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         _saveStateInterval = setInterval(_savePlaybackState, 30000); // save every 30s (was 5s)
 
         // Update player bar — show immediately with buffering indicator
-        const player = bodyEl.querySelector('#rm-player');
-        player.style.display = 'flex';
-        bodyEl.querySelector('#rm-player-name').textContent = item.name;
+        if (bodyEl) {
+            const player = bodyEl.querySelector('#rm-player');
+            if (player) player.style.display = 'flex';
+            const nameEl = bodyEl.querySelector('#rm-player-name');
+            if (nameEl) nameEl.textContent = item.name;
+            // AI DJ indicator in player bar meta
+            const metaEl = bodyEl.querySelector('#rm-player-meta');
+            if (metaEl) {
+                if (_aiDjActive) {
+                    metaEl.innerHTML = _formatAiDjMeta(item);
+                } else {
+                    metaEl.textContent = item.meta || item.channel || '';
+                }
+            }
+        }
         _setBuffering(true);  // show "Buforowanie…" until audio plays
 
         // Player art — use thumbnail for music, logo cascade for radio
-        const art = bodyEl.querySelector('#rm-player-art');
-        if (isMusic || item.type === 'local') {
-            const artSrc = item.image || item.thumbnail || '';
-            art.innerHTML = artSrc
-                ? '<img src="' + escH(artSrc) + '" onerror="this.outerHTML=\'<i class=\\\'fas fa-music\\\'></i>\'">'
-                : '<i class="fas fa-music"></i>';
-        } else {
-            // Radio / podcast — use station icon with logo manifest lookup
-            const _fItem = { name: item.name, favicon: item.image || item.favicon, homepage: item.homepage || '', url: item.url, stationuuid: item.uuid || item.stationuuid || '' };
-            art.innerHTML = _stationIconHtml(_fItem);
+        if (bodyEl) {
+            const art = bodyEl.querySelector('#rm-player-art');
+            if (isMusic || item.type === 'local') {
+                const artSrc = item.image || item.thumbnail || '';
+                if (art) art.innerHTML = artSrc
+                    ? '<img src="' + escH(artSrc) + '" onerror="this.outerHTML=\'<i class=\\\'fas fa-music\\\'></i>\'">'
+                    : '<i class="fas fa-music"></i>';
+            } else if (art) {
+                // Radio / podcast — use station icon with logo manifest lookup
+                const _fItem = { name: item.name, favicon: item.image || item.favicon, homepage: item.homepage || '', url: item.url, stationuuid: item.uuid || item.stationuuid || '' };
+                art.innerHTML = _stationIconHtml(_fItem);
+            }
         }
 
         // Save to history
@@ -4599,6 +5065,10 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         // Update shared state store (subscribers like queue view react instantly)
         _rmStore.set({ currentTrack: item, currentTrackIndex: _musicQueueIdx });
 
+        // AI DJ: auto-refill when queue runs low
+        if (_aiDjActive && _musicQueue.length - _musicQueueIdx <= _aiDjQueueThreshold) {
+            _fetchAiDjMore();
+        }
         // Start playback with fallback chain
         tryUrl(0);
 
@@ -4607,23 +5077,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     }
 
     // Update player bar UI without starting playback (for Cast queue sync)
-    function _updatePlayerBar(item) {
-        if (!item || !bodyEl) return;
-        const nameEl = bodyEl.querySelector('#rm-player-name');
-        if (nameEl) nameEl.textContent = item.name || item.title || '';
-        const metaEl = bodyEl.querySelector('#rm-player-meta');
-        if (metaEl) metaEl.textContent = item.meta || item.channel || '';
-        const art = bodyEl.querySelector('#rm-player-art');
-        if (art) {
-            const img = item.image || item.thumbnail;
-            if (img) {
-                art.innerHTML = '<img src="' + escH(img) + '" onerror="this.outerHTML=\'<i class=\\\'fas fa-music\\\'></i>\'">';
-            } else {
-                art.innerHTML = '<i class="fas fa-music"></i>';
-            }
-        }
-        _savePlaybackState();
-    }
 
     // Highlight the currently playing element in the list and scroll it into view.
     // Uses data-url attributes (set during render) to find the matching element.
@@ -4659,6 +5112,11 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         if (now - _prevNextTs < 1500) return;
         _prevNextTs = now;
 
+        // Auto-downvote: if AI DJ active and user skips within 30s, treat as dislike
+        if (_aiDjActive && _playing && _skipTrackStart && (now - _skipTrackStart < 30000)) {
+            _dislikeCurrent();
+        }
+
         // Podcast queue has priority when a podcast is playing
         if (_playing && _playing._podcast && _podQueue.length > 0) {
             let nextIdx = _podQueueIdx + dir;
@@ -4686,11 +5144,11 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             if (nextIdx >= 0 && nextIdx < _musicQueue.length) {
                 _musicQueueIdx = nextIdx;
                 const nxt = _musicQueue[nextIdx];
-                nxt._plItem ? _playTrackFromPlaylist(nxt) : playMusicTrack(nxt);
+                if (_aiDjActive) { playAudio(nxt); } else { nxt._plItem ? _playTrackFromPlaylist(nxt) : playMusicTrack(nxt); }
             } else if (_repeatMode === 1 && _musicQueue.length > 0) {
                 _musicQueueIdx = dir > 0 ? 0 : _musicQueue.length - 1;
                 const nxt = _musicQueue[_musicQueueIdx];
-                nxt._plItem ? _playTrackFromPlaylist(nxt) : playMusicTrack(nxt);
+                if (_aiDjActive) { playAudio(nxt); } else { nxt._plItem ? _playTrackFromPlaylist(nxt) : playMusicTrack(nxt); }
             }
             return;
         }
@@ -4798,12 +5256,168 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         setTimeout(() => toast.remove(), withResumeBtn ? 8000 : 3000);
     }
 
+    // ── Mini-Player (floating bar when window is closed) ──
+
+    function _createMiniPlayer() {
+        if (document.getElementById('rm-mini-player')) return;
+        _miniLastSynced = null;  // force initial sync
+
+        // Persist critical state for absorption on reopen
+        window.__rmState = {
+            audio: _audio,
+            playing: _playing,
+            musicQueue: _musicQueue,
+            musicQueueIdx: _musicQueueIdx,
+            audioCtx: _audioCtx,
+            eqFilters: _eqFilters,
+            audioSource: _audioSource,
+            analyser: _analyser,
+            saveStateInterval: _saveStateInterval,
+            bc: _bc,
+            wakeLock: _wakeLock,
+            aiDjActive: _aiDjActive,
+            aiDjSeenUrls: _aiDjSeenUrls,
+            aiDjBaseArtist: _aiDjBaseArtist,
+            castSession: _castSession,
+            isCasting: _isCasting,
+            playbackRate: _playbackRate,
+            volume: _audio ? _audio.volume : 0.8,
+        };
+
+        const el = document.createElement('div');
+        el.id = 'rm-mini-player';
+        el.className = 'rm-mini-player';
+        el.innerHTML = ''
+            + '<div class="rm-mini-art" id="rm-mini-art"><i class="fas fa-music"></i></div>'
+            + '<div class="rm-mini-info">'
+            + '<div class="rm-mini-title" id="rm-mini-title">' + escH(_playing?.name || '') + '</div>'
+            + '<div class="rm-mini-meta" id="rm-mini-meta">' + escH(_playing?.meta || _playing?.channel || '') + '</div>'
+            + '</div>'
+            + '<div class="rm-mini-controls">'
+            + '<button class="rm-mini-btn" id="rm-mini-playpause"><i class="fas ' + (_audio && !_audio.paused ? 'fa-pause' : 'fa-play') + '"></i></button>'
+            + '<button class="rm-mini-btn" id="rm-mini-next"><i class="fas fa-step-forward"></i></button>'
+            + '<button class="rm-mini-btn rm-mini-close" id="rm-mini-close"><i class="fas fa-times"></i></button>'
+            + '</div>';
+
+        // Click art/info to reopen full window
+        el.querySelector('#rm-mini-art').onclick = () => _reopenFromMiniPlayer();
+        el.querySelector('.rm-mini-info').onclick = () => _reopenFromMiniPlayer();
+
+        // Play/Pause
+        el.querySelector('#rm-mini-playpause').onclick = (e) => {
+            e.stopPropagation();
+            if (!_audio) return;
+            const ppBtn = el.querySelector('#rm-mini-playpause');
+            if (_audio.paused) {
+                _audio.play().then(() => {
+                    if (ppBtn) ppBtn.innerHTML = '<i class="fas fa-pause"></i>';
+                }).catch(() => {});
+            } else {
+                _audio.pause();
+                if (ppBtn) ppBtn.innerHTML = '<i class="fas fa-play"></i>';
+            }
+        };
+
+        // Next track
+        el.querySelector('#rm-mini-next').onclick = (e) => {
+            e.stopPropagation();
+            _skipStation(1);
+        };
+
+        // Close — fully stop playback
+        el.querySelector('#rm-mini-close').onclick = (e) => {
+            e.stopPropagation();
+            window.__rmState = null;
+            if (_audio) {
+                _audio.pause();
+                _audio.src = ''; _audio.load();
+                _audio = null;
+            }
+            if (_audioCtx) { try { _audioCtx.close(); } catch(_) {} _audioCtx = null; }
+            _eqFilters = null;
+            _audioSource = null; _analyser = null;
+            _playing = null;
+            _musicQueue = [];
+            _musicQueueIdx = -1;
+            _aiDjActive = false;
+            _clearSeek();
+            if (_saveStateInterval) { clearInterval(_saveStateInterval); _saveStateInterval = null; }
+            _releaseWakeLock();
+            if ('mediaSession' in navigator) {
+                navigator.mediaSession.metadata = null;
+                navigator.mediaSession.playbackState = 'none';
+            }
+            if (_bc) { _bc.close(); _bc = null; }
+            _removeMiniPlayer();
+        };
+
+        document.body.appendChild(el);
+        requestAnimationFrame(() => { el.classList.add('rm-mini-visible'); });
+        _miniPlayerEl = el;
+
+        // Subscribe to track changes for auto-sync
+        _miniPlayerUnsub = _rmStore.subscribe(() => { _syncMiniPlayerNow(); });
+
+        // Sync art now
+        _syncMiniPlayerNow();
+    }
+
+    function _syncMiniPlayerNow() {
+        if (!_miniPlayerEl || !_playing) return;
+        const ident = _playing.url || _playing.id || '';
+        const state = ident + '|' + _aiDjActive;
+        if (state === _miniLastSynced) return;
+        _miniLastSynced = state;
+        const titleEl = _miniPlayerEl.querySelector('#rm-mini-title');
+        const metaEl = _miniPlayerEl.querySelector('#rm-mini-meta');
+        const artEl = _miniPlayerEl.querySelector('#rm-mini-art');
+        if (titleEl) titleEl.textContent = _playing.name || '';
+        if (metaEl) {
+            if (_aiDjActive) {
+                metaEl.innerHTML = _formatAiDjMeta(_playing);
+            } else {
+                metaEl.textContent = _playing.meta || _playing.channel || '';
+            }
+        }
+        if (artEl) {
+            const img = _playing.image || _playing.thumbnail;
+            artEl.innerHTML = img
+                ? '<img src="' + escH(img) + '" onerror="this.outerHTML=\'<i class=\\\'fas fa-music\\\'></i>\'">'
+                : '<i class="fas fa-music"></i>';
+        }
+        const ppBtn = _miniPlayerEl.querySelector('#rm-mini-playpause');
+        if (ppBtn) {
+            ppBtn.innerHTML = '<i class="fas ' + (_audio && !_audio.paused ? 'fa-pause' : 'fa-play') + '"></i>';
+        }
+    }
+
+    function _removeMiniPlayer() {
+        if (_miniPlayerEl) {
+            _miniPlayerEl.classList.remove('rm-mini-visible');
+            const el = _miniPlayerEl;
+            setTimeout(() => { el.remove(); }, 300);
+            _miniPlayerEl = null;
+        }
+        if (_miniPlayerUnsub) { _miniPlayerUnsub(); _miniPlayerUnsub = null; }
+    }
+
+    function _reopenFromMiniPlayer() {
+        if (typeof openApp === 'function') {
+            openApp('radio-music', {});
+        }
+    }
+
     function stopPlayback() {
         _savePlaybackState();
         _clearSleepTimer();
         _stopLyricsSync();
         if (_saveStateInterval) { clearInterval(_saveStateInterval); _saveStateInterval = null; }
         clearTimeout(_radioRetryTimer); _radioRetryTimer = null; _radioRetries = 0;
+        clearTimeout(_bufferingSafetyTimer); _bufferingSafetyTimer = null;
+        _prevNextTs = 0;
+        _seekThrottleTs = 0;
+        _advanceLock = false;
+        _isBuffering = false;
         if (_preloadAudio) { _preloadAudio.src = ''; _preloadAudio = null; }
         if (_castSession) { try { _castSession.endSession(true); } catch(e) {} }
         _castSession = null;
@@ -5681,8 +6295,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         let title = t('Archiwizuj na NAS');
         if (st === 'downloading') { iconClass = 'fa-cloud'; btnClass = 'rm-arch-loading'; title = t('Pobieranie...') + ' ' + (entry.progress || 0) + '%'; }
         else if (st === 'done' && entry.phoneCache) { iconClass = 'fa-mobile-screen-button'; btnClass = 'rm-arch-phone'; title = t('Na NAS i na telefonie'); }
-        else if (st === 'done') { iconClass = 'fa-cloud-check'; btnClass = 'rm-arch-nas'; title = t('Zarchiwizowano na NAS'); }
-        else if (st === 'error') { iconClass = 'fa-cloud-exclamation'; btnClass = 'rm-arch-error'; title = entry.error || t('Błąd archiwizacji'); }
+        else if (st === 'done') { iconClass = 'fa-circle-check'; btnClass = 'rm-arch-nas'; title = t('Zarchiwizowano na NAS'); }
+        else if (st === 'error') { iconClass = 'fa-circle-exclamation'; btnClass = 'rm-arch-error'; title = entry.error || t('Błąd archiwizacji'); }
 
         const circumference = 87.96;
         const offset = st === 'downloading'
@@ -5722,11 +6336,11 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             } else if (st === 'done') {
                 btn.classList.add('rm-arch-nas');
                 btn.title = t('Zarchiwizowano na NAS — dotknij aby zapisać na telefon');
-                icon.className = 'fas fa-cloud-check rm-arch-icon';
+                icon.className = 'fas fa-circle-check rm-arch-icon';
             } else if (st === 'error') {
                 btn.classList.add('rm-arch-error');
                 btn.title = entry.error || t('Błąd archiwizacji');
-                icon.className = 'fas fa-cloud-exclamation rm-arch-icon';
+                icon.className = 'fas fa-circle-exclamation rm-arch-icon';
             } else {
                 btn.title = t('Archiwizuj na NAS');
                 icon.className = 'fas fa-cloud-arrow-down rm-arch-icon';
@@ -6003,6 +6617,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             // Step 8: sync NP favorite and download buttons to new track
             if (_npSyncFav) _npSyncFav();
             if (_npSyncDownload) _npSyncDownload();
+            if (_npSyncDislike) _npSyncDislike();
             if (_npReloadSimilar) _npReloadSimilar();
 
             // Step 9: update MediaSession with new track
@@ -6083,6 +6698,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                     <button class="rm-np-action" id="rm-np-addpl"><i class="fas fa-plus"></i> ${t('Playlista')}</button>
                     <button class="rm-np-action rm-np-cast-action" id="rm-np-cast"><i class="fab fa-chromecast"></i> Chromecast</button>
                     <button class="rm-np-action" id="rm-np-fav"><i class="fas fa-heart"></i> ${t('Ulubione')}</button>
+                    <button class="rm-np-action" id="rm-np-dislike" title="${t('Nie lubię – dostosuj AI DJ')}"><i class="fas fa-thumbs-down"></i></button>
                     <button class="rm-np-action" id="rm-np-download"><i class="fas fa-cloud-arrow-down"></i> ${t('Pobierz')}</button>
                 </div>
                 <div class="rm-lyrics-panel" id="rm-np-lyrics-panel"></div>
@@ -6130,6 +6746,27 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             _syncNpFav();
         }
 
+        // Thumbs down button — dislike current track for AI DJ learning
+        const dislikeBtn = ov.querySelector('#rm-np-dislike');
+        function _syncNpDislike() {
+            if (!dislikeBtn || !_playing) return;
+            const urlIsDisliked = _playing.url && _dislikedUrls.has(_playing.url);
+            const artist = (_playing.meta || _playing.channel || '').trim().toLowerCase();
+            const artistIsDisliked = artist && _dislikedArtists.has(artist);
+            dislikeBtn.classList.toggle('rm-lyrics-active', urlIsDisliked || artistIsDisliked);
+        }
+        if (dislikeBtn) {
+            dislikeBtn.onclick = () => {
+                if (!_playing) return;
+                _dislikeCurrent();
+                _syncNpDislike();
+                toast(t('AI DJ dostosuje rekomendacje'), 'info');
+            };
+            _syncNpDislike();
+        }
+        // Also expose for _updateNowPlayingContent
+        _npSyncDislike = _syncNpDislike;
+
         // Download/Archive button — trigger NAS archive for music tracks
         const dlBtn = ov.querySelector('#rm-np-download');
         function _syncNpDownload() {
@@ -6140,7 +6777,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             const entry = _archiveDb[_playing.url] || {};
             const st = entry.status || 'none';
             if (st === 'done') {
-                dlBtn.innerHTML = '<i class="fas fa-cloud-check" style="color:var(--rm-accent)"></i> ' + t('Pobrano');
+                dlBtn.innerHTML = '<i class="fas fa-circle-check" style="color:var(--rm-accent)"></i> ' + t('Pobrano');
                 dlBtn.classList.add('rm-lyrics-active');
             } else if (st === 'downloading') {
                 dlBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + (entry.progress || 0) + '%';
@@ -6578,6 +7215,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         _renderNpQueueFn = null;
         _npSyncFav = null;
         _npSyncDownload = null;
+        _npSyncDislike = null;
         _npReloadSimilar = null;
         localStorage.removeItem('rm_np_open');
     }
@@ -6647,14 +7285,24 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     function _startVisualizer(canvas) {
         _stopVisualizer();
         try {
-            // Create AudioContext once; reuse across plays
+            // Create AudioContext once; reuse across plays (shared with EQ)
             if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             // Connect current _audio element (only if not already connected)
             if (!_audioSource || _audioSource.mediaElement !== _audio) {
                 try { if (_audioSource) _audioSource.disconnect(); } catch(e) {}
                 _audioSource = _audioCtx.createMediaElementSource(_audio);
+            }
+            if (!_analyser) {
                 _analyser = _audioCtx.createAnalyser();
                 _analyser.fftSize = 64;
+            }
+            // If EQ is active, patch analyser between EQ output and destination
+            if (_eqEnabled && _eqFilters.length) {
+                try { _eqFilters[_eqFilters.length - 1].disconnect(); } catch(_) {}
+                _eqFilters[_eqFilters.length - 1].connect(_analyser);
+                _analyser.connect(_audioCtx.destination);
+            } else if (_audioSource) {
+                try { _audioSource.disconnect(); } catch(_) {}
                 _audioSource.connect(_analyser);
                 _analyser.connect(_audioCtx.destination);
             }

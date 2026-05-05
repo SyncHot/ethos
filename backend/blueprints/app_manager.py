@@ -251,7 +251,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/surveillance/status',
     },
     {
-        'id': 'ai-chat', 'name': 'AI Assistant', 'version': '1.0.2',
+        'id': 'ai-chat', 'name': 'AI Assistant', 'version': '1.0.3',
         'icon': 'fa-robot', 'color': '#8b5cf6', 'category': 'Tools', 'admin_only': False,
         'description': 'Asystent AI z obsługą GPT, Claude i lokalnych modeli LLM.',
         'apt_deps': [], 'pip_deps': ['openai', 'anthropic', 'huggingface_hub'],
@@ -359,7 +359,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/flasher/pkg-status',
     },
     {
-        'id': 'builder', 'name': 'Builder', 'version': '1.0.19',
+        'id': 'builder', 'name': 'Builder', 'version': '1.0.21',
         'icon': 'fa-hammer', 'color': '#f97316', 'category': 'System', 'admin_only': True,
         'description': 'Budowanie wydan EthOS i obrazow systemowych przez interfejs webowy.',
         'apt_deps': ['squashfs-tools', 'genisoimage', 'rsync'], 'pip_deps': [],
@@ -387,7 +387,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/remote-log/pkg-status',
     },
     {
-        'id': 'sharing-samba', 'name': 'File Sharing (Samba)', 'version': '1.0.20',
+        'id': 'sharing-samba', 'name': 'File Sharing (Samba)', 'version': '1.0.21',
         'icon': 'fa-windows', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Udostepnianie plikow przez siec (Windows, Mac, Linux).',
         'apt_deps': ['samba'], 'pip_deps': [],
@@ -561,13 +561,13 @@ BUILTIN_CATALOG = [
         'apt_deps': [], 'pip_deps': [], 'simple': True,
     },
     {
-        'id': 'tickets', 'name': 'Tickets', 'version': '1.0.1',
+        'id': 'tickets', 'name': 'Tickets', 'version': '1.0.2',
         'icon': 'fa-tasks', 'color': '#06b6d4', 'category': 'Tools', 'admin_only': False,
         'description': 'Kanban — zarządzanie projektami i zadaniami.',
         'apt_deps': [], 'pip_deps': [], 'simple': True,
     },
     {
-        'id': 'video-station', 'name': 'Video Station', 'version': '0.0.9',
+        'id': 'video-station', 'name': 'Video Station', 'version': '0.0.11',
         'icon': 'fa-film', 'color': '#7c3aed', 'category': 'Media', 'admin_only': False,
         'description': 'Biblioteka filmow z miniaturkami, streamingiem i sledzeniem postepu.',
         'apt_deps': ['ffmpeg'], 'pip_deps': [],
@@ -576,7 +576,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/video-station/pkg-status',
     },
     {
-        'id': 'radio-music', 'name': 'Radio & Music', 'version': '0.0.7',
+        'id': 'radio-music', 'name': 'Radio & Music', 'version': '0.0.8',
         'icon': 'fa-broadcast-tower', 'color': '#10b981', 'category': 'Media', 'admin_only': False,
         'description': 'Radio internetowe z całego świata, podcasty i odtwarzacz muzyki.',
         'apt_deps': ['ffmpeg'], 'pip_deps': ['yt-dlp'],
@@ -2122,7 +2122,14 @@ def _ensure_installed_apps():
         if not (os.path.isfile(local_py) and os.path.getsize(local_py) > 0):
             continue
 
+        cat_entry = catalog_by_id.get(app_id, {})
+
         if app_id not in installed:
+            # Skip auto-registration for apps that have pip/apt deps —
+            # those must be explicitly installed so deps get satisfied.
+            has_deps = bool(cat_entry.get('apt_deps') or cat_entry.get('pip_deps'))
+            if has_deps:
+                continue
             installed[app_id] = {
                 'version': 'bundled',
                 'source': 'bundled',

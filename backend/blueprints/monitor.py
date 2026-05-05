@@ -696,7 +696,15 @@ _USB_CLASS_NAMES = {
 }
 
 
+_usb_devices_cache = {'data': None, 'ts': 0}
+_USB_DEVICES_CACHE_TTL = 60  # seconds — USB topology rarely changes
+
+
 def get_usb_devices():
+    now = time.time()
+    if _usb_devices_cache['data'] is not None and now - _usb_devices_cache['ts'] < _USB_DEVICES_CACHE_TTL:
+        return _usb_devices_cache['data']
+
     devices = []
     try:
         result = subprocess.run(['lsusb'], capture_output=True, text=True, timeout=5)
@@ -751,6 +759,8 @@ def get_usb_devices():
     # Filter out root hub controllers (device_class 09) for cleaner display
     devices = [d for d in devices if d.get('device_class') != '09']
 
+    _usb_devices_cache['data'] = devices
+    _usb_devices_cache['ts'] = now
     return devices
 
 

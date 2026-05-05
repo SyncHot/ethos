@@ -520,6 +520,9 @@ def toggle_keepalive():
 _drives_cache = {'data': None, 'ts': 0}
 _DRIVES_CACHE_TTL = 10  # seconds
 
+def _invalidate_drives_cache():
+    _drives_cache['ts'] = 0
+
 @storage_bp.route('/drives')
 def list_drives():
     """List block devices with useful info (including main system disk)."""
@@ -687,7 +690,7 @@ def list_drives():
     return jsonify(result)
 
 
-# /mounts endpoint removed — fstab no longer managed for USB drives
+# USB auto-mount is handled by devmon; fstab entries are reserved for network mounts only
 
 
 @storage_bp.route('/mount', methods=['POST'])
@@ -703,6 +706,7 @@ def mount_drive():
     # Validate drive name to prevent command injection
     if not _validate_drive_name(drive_name):
         return jsonify({"error": "Invalid device name"}), 400
+    if not mount_path.startswith('/'):
         return jsonify({"error": "path must be absolute"}), 400
     if '..' in mount_path:
         return jsonify({"error": "Path cannot contain '..'"}), 400
@@ -751,9 +755,9 @@ def mount_drive():
         host_run(f"chown {uid}:{gid} {Q(mount_path)}")
 
     auto_mount = data.get("auto_mount", False)
-    if auto_mount and uuid:
-        _fstab_add(uuid, mount_path, fstype, mount_opts)
+    # USB auto-mount at boot is handled by devmon; fstab entries are reserved for network mounts
 
+    _invalidate_drives_cache()
     return jsonify({
         "success": True,
         "device": f"/dev/{drive_name}",
@@ -789,25 +793,8 @@ def toggle_auto_mount():
     if not mount_path:
         return jsonify({"error": "path required"}), 400
 
-    if enable:
-        r = host_run(f"findmnt -n -o SOURCE {Q(mount_path)} 2>/dev/null")
-        device = r.stdout.strip()
-        if not device:
-            return jsonify({"error": "Not mounted"}), 400
-        uuid_r = host_run(f"lsblk -no UUID {Q(device)}")
-        uuid = uuid_r.stdout.strip()
-        fs_r = host_run(f"lsblk -no FSTYPE {Q(device)}")
-        fstype = fs_r.stdout.strip() or "auto"
-        if not uuid:
-            return jsonify({"error": "No UUID found"}), 400
-        opts = "defaults,nofail,noatime"
-        if fstype in ("ntfs", "ntfs3", "ntfs-3g"):
-            opts = "rw,uid=1000,gid=1000,umask=000,nofail"
-        _fstab_add(uuid, mount_path, fstype, opts)
-    else:
-        _fstab_remove(mount_path)
-
-    return jsonify({"ok": True, "auto_mount": enable})
+    # USB auto-mount at boot is handled by devmon; fstab is reserved for network mounts
+    return jsonify({"ok": True, "auto_mount": enable, "note": "USB auto-mount is managed by devmon"})
 
 
 @storage_bp.route('/unmount', methods=['POST'])
@@ -884,6 +871,7 @@ def eject_drive():
         # Fallback: remove device via sysfs
         host_run(f"echo 1 > /sys/block/{disk_name}/device/delete 2>/dev/null")
 
+    _invalidate_drives_cache()
     return jsonify({
         "success": True,
         "disk": disk_name,
@@ -3847,6 +3835,7 @@ def pool_delete(pool_name):
     _save_pools(pools)
     steps.append("Pool removed from configuration")
 
+    _invalidate_drives_cache()
     return jsonify({"ok": True, "steps": steps})
 
 
@@ -4877,6 +4866,7 @@ def network_mount_add():
     if auto_mount:
         _netmount_fstab_add(cfg)
 
+    _invalidate_drives_cache()
     return jsonify({
         'ok': True,
         'id': mount_id,
@@ -4900,6 +4890,7 @@ def network_mount_unmount():
         if r.returncode != 0:
             return jsonify({'error': f'Unmount failed: {r.stderr.strip()}'}), 500
 
+    _invalidate_drives_cache()
     return jsonify({'ok': True})
 
 
@@ -4960,6 +4951,7 @@ def network_mount_remove():
 
     _netmount_fstab_remove(mount_id)
 
+    _invalidate_drives_cache()
     return jsonify({'ok': True})
 
 

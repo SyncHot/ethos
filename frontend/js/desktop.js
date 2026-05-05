@@ -2428,6 +2428,29 @@ function connectSocket() {
 
 let desktopInitialized = false;
 
+function applyTheme() {
+    const stored = localStorage.getItem('ethos_theme') || 'auto';
+    let theme = stored;
+    if (stored === 'auto') {
+        theme = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    }
+    document.documentElement.setAttribute('data-theme', theme);
+
+    // Update theme button icon
+    const btn = document.getElementById('theme-btn');
+    if (btn) {
+        const icons = { auto: 'fa-circle-half-stroke', light: 'fa-sun', dark: 'fa-moon' };
+        btn.querySelector('i').className = 'fas ' + (icons[stored] || 'fa-circle-half-stroke');
+        btn.title = 'Theme: ' + stored;
+    }
+
+    // Update meta theme-color for browser chrome
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) {
+        meta.content = theme === 'light' ? '#ffffff' : '#1e293b';
+    }
+}
+
 async function initDesktop() {
     if (desktopInitialized) return;
     desktopInitialized = true;
@@ -2502,9 +2525,27 @@ async function initDesktop() {
         }
     });
 
+    // Apply saved theme and listen for system changes
+    applyTheme();
+    window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+        if ((localStorage.getItem('ethos_theme') || 'auto') === 'auto') applyTheme();
+    });
+
     // First-login Storage Setup — show once after first real login
     if (!localStorage.getItem('storage_welcome_shown')) {
         setTimeout(() => showStorageWelcome(), 1500);
+    }
+
+    // Theme toggle button
+    const themeBtn = document.getElementById('theme-btn');
+    if (themeBtn) {
+        themeBtn.onclick = () => {
+            const modes = ['auto', 'light', 'dark'];
+            const cur = localStorage.getItem('ethos_theme') || 'auto';
+            const next = modes[(modes.indexOf(cur) + 1) % modes.length];
+            localStorage.setItem('ethos_theme', next);
+            applyTheme();
+        };
     }
 }
 

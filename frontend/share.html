@@ -448,6 +448,7 @@
         const shareToken = pathParts[pathParts.indexOf('share') + 1];
         let currentPath = '';
         let currentItems = [];
+        let sharePassword = '';
         let viewMode = localStorage.getItem('share_view') || 'grid';
 
         const IMAGE_EXTS = ['jpg','jpeg','png','gif','bmp','webp','svg','ico'];
@@ -464,10 +465,13 @@
         function previewUrl(subPath, w, h) {
             let url = `/api/public/share/${shareToken}/preview?path=${encodeURIComponent(subPath)}`;
             if (w && h) url += `&w=${w}&h=${h}`;
+            if (sharePassword) url += `&password=${encodeURIComponent(sharePassword)}`;
             return url;
         }
         function downloadUrl(subPath) {
-            return `/api/public/share/${shareToken}/download?path=${encodeURIComponent(subPath)}`;
+            let url = `/api/public/share/${shareToken}/download?path=${encodeURIComponent(subPath)}`;
+            if (sharePassword) url += `&password=${encodeURIComponent(sharePassword)}`;
+            return url;
         }
         function itemPath(item) {
             return currentPath ? currentPath + '/' + item.name : item.name;
@@ -509,10 +513,15 @@
         async function loadShare(subPath) {
             currentPath = subPath || '';
             try {
-                const url = `/api/public/share/${shareToken}?path=${encodeURIComponent(currentPath)}`;
+                let url = `/api/public/share/${shareToken}?path=${encodeURIComponent(currentPath)}`;
+                if (sharePassword) url += `&password=${encodeURIComponent(sharePassword)}`;
                 const resp = await fetch(url);
                 if (!resp.ok) {
                     const err = await resp.json().catch(() => ({}));
+                    if (resp.status === 401 && err.password_protected) {
+                        showPasswordPrompt();
+                        return;
+                    }
                     showError(err.error || 'Nie znaleziono');
                     return;
                 }
@@ -522,6 +531,42 @@
             } catch(e) {
                 showError('Błąd połączenia');
             }
+        }
+
+        function showPasswordPrompt() {
+            container.innerHTML = `
+                <div class="error-page">
+                    <i class="fas fa-lock" style="font-size:48px;color:var(--accent, #6c5ce7)"></i>
+                    <h2 style="margin-top:16px">Ten link jest chroniony hasłem</h2>
+                    <p style="margin-top:8px;color:var(--text-muted, #94a3b8)">Wprowadź hasło, aby uzyskać dostęp</p>
+                    <form id="pw-form" style="margin-top:20px;display:flex;gap:8px;justify-content:center">
+                        <input type="password" id="pw-input" placeholder="Hasło" style="padding:8px 14px;border-radius:8px;border:1px solid var(--border, #475569);background:var(--bg-input, #1e293b);color:var(--text, #e2e8f0);font-size:14px;min-width:200px" autofocus>
+                        <button type="submit" style="padding:8px 18px;border-radius:8px;border:none;background:var(--accent, #6c5ce7);color:#fff;cursor:pointer;font-size:14px;font-weight:600">Otwórz</button>
+                    </form>
+                    <p id="pw-error" style="margin-top:10px;color:#ef4444;font-size:13px;display:none">Nieprawidłowe hasło</p>
+                </div>
+            `;
+            document.getElementById('pw-form').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                sharePassword = document.getElementById('pw-input').value.trim();
+                if (!sharePassword) return;
+                // Retry with password
+                try {
+                    const url = `/api/public/share/${shareToken}?path=&password=${encodeURIComponent(sharePassword)}`;
+                    const resp = await fetch(url);
+                    if (!resp.ok) {
+                        document.getElementById('pw-error').style.display = 'block';
+                        sharePassword = '';
+                        return;
+                    }
+                    const data = await resp.json();
+                    currentItems = data.items || [];
+                    render(data);
+                } catch(ex) {
+                    document.getElementById('pw-error').style.display = 'block';
+                    sharePassword = '';
+                }
+            });
         }
 
         function showError(msg) {

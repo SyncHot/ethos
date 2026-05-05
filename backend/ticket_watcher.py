@@ -963,6 +963,7 @@ def _fix_with_aider(ticket: dict, source_path: str, model: str, ollama_url: str)
         '--message', message,
         '--yes-always',
         '--no-auto-commits',
+        '--edit-format', 'whole',  # whole-file replacement; ollama models mis-wrap lines in diff SEARCH blocks
         '--map-tokens', '32768',
         '--max-chat-history-tokens', '65536',
         '--model-metadata-file', '/opt/ethos/data/aider_model_metadata.json',
@@ -1241,6 +1242,16 @@ def _resolve_ticket_with_ai(ticket: dict, project: dict, ollama_url: str) -> boo
     Returns False if no source file is found (caller falls back to analysis-only flow).
     """
     ticket_id = ticket['id']
+
+    # Feature/inspiration tickets need human design decisions — skip aider entirely
+    ticket_labels = ticket.get('labels') or []
+    is_feature_ticket = any(
+        lbl.startswith('inspiration:') or lbl == 'feature'
+        for lbl in ticket_labels
+    )
+    if is_feature_ticket:
+        log.info(f'Ticket {ticket_id} is a feature/inspiration ticket — skipping Aider, using analysis only')
+        return False
 
     source_path, source_label = _get_source_for_ticket(ticket)
     if not source_path or not os.path.exists(source_path):

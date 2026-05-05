@@ -92,6 +92,116 @@
     --transition-slow: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+[data-theme="light"] {
+    --bg-desktop: #f0f2f5;
+    --bg-surface: #ffffff;
+    --bg-surface-alt: #f8f9fa;
+    --bg-elevated: #ffffff;
+    --bg-input: #f0f2f5;
+    --bg-hover: #e4e6ea;
+    --bg-active: #3b82f6;
+    --border: #d1d5db;
+    --border-light: #e5e7eb;
+    --border-focus: #3b82f6;
+    --text-primary: #111827;
+    --text-secondary: #4b5563;
+    --text-muted: #9ca3af;
+    --text-inverse: #f1f5f9;
+    --accent: #2563eb;
+    --accent-hover: #1d4ed8;
+    --accent-dark: #1e40af;
+    --accent-glow: rgba(37, 99, 235, 0.2);
+    --accent-green: #16a34a;
+    --accent-orange: #ea580c;
+    --accent-purple: #7c3aed;
+    --accent-cyan: #0891b2;
+    --accent-pink: #db2777;
+    --success: #16a34a;
+    --warning: #ca8a04;
+    --danger: #dc2626;
+    --info: #0891b2;
+    --overlay-1: rgba(0, 0, 0, 0.02);
+    --overlay-2: rgba(0, 0, 0, 0.04);
+    --overlay-3: rgba(0, 0, 0, 0.06);
+    --overlay-4: rgba(0, 0, 0, 0.1);
+    --window-bg: #ffffff;
+    --window-header: #f8f9fa;
+    --taskbar-bg: rgba(255, 255, 255, 0.9);
+    --taskbar-blur: 20px;
+    --glass: rgba(255, 255, 255, 0.85);
+    --glass-border: rgba(0, 0, 0, 0.08);
+    --hover-overlay: rgba(0, 0, 0, 0.06);
+    --hover-subtle: rgba(0, 0, 0, 0.03);
+    --hover-strong: rgba(0, 0, 0, 0.1);
+    --active-overlay: rgba(37, 99, 235, 0.12);
+    --selected-overlay: rgba(37, 99, 235, 0.1);
+    --accent-subtle: rgba(37, 99, 235, 0.06);
+    --accent-bg: rgba(37, 99, 235, 0.08);
+    --danger-hover: #b91c1c;
+    --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.06);
+    --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.08);
+    --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.1);
+    --shadow-xl: 0 24px 64px rgba(0, 0, 0, 0.12);
+    --taskbar-h: 48px;
+    --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-fast: 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-slow: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@media (prefers-color-scheme: light) {
+    :root:not([data-theme]) {
+        --bg-desktop: #f0f2f5;
+        --bg-surface: #ffffff;
+        --bg-surface-alt: #f8f9fa;
+        --bg-elevated: #ffffff;
+        --bg-input: #f0f2f5;
+        --bg-hover: #e4e6ea;
+        --bg-active: #3b82f6;
+        --border: #d1d5db;
+        --border-light: #e5e7eb;
+        --border-focus: #3b82f6;
+        --text-primary: #111827;
+        --text-secondary: #4b5563;
+        --text-muted: #9ca3af;
+        --text-inverse: #f1f5f9;
+        --accent: #2563eb;
+        --accent-hover: #1d4ed8;
+        --accent-dark: #1e40af;
+        --accent-glow: rgba(37, 99, 235, 0.2);
+        --accent-green: #16a34a;
+        --accent-orange: #ea580c;
+        --accent-purple: #7c3aed;
+        --accent-cyan: #0891b2;
+        --accent-pink: #db2777;
+        --success: #16a34a;
+        --warning: #ca8a04;
+        --danger: #dc2626;
+        --info: #0891b2;
+        --overlay-1: rgba(0, 0, 0, 0.02);
+        --overlay-2: rgba(0, 0, 0, 0.04);
+        --overlay-3: rgba(0, 0, 0, 0.06);
+        --overlay-4: rgba(0, 0, 0, 0.1);
+        --window-bg: #ffffff;
+        --window-header: #f8f9fa;
+        --taskbar-bg: rgba(255, 255, 255, 0.9);
+        --glass: rgba(255, 255, 255, 0.85);
+        --glass-border: rgba(0, 0, 0, 0.08);
+        --hover-overlay: rgba(0, 0, 0, 0.06);
+        --hover-subtle: rgba(0, 0, 0, 0.03);
+        --hover-strong: rgba(0, 0, 0, 0.1);
+        --active-overlay: rgba(37, 99, 235, 0.12);
+        --selected-overlay: rgba(37, 99, 235, 0.1);
+        --accent-subtle: rgba(37, 99, 235, 0.06);
+        --accent-bg: rgba(37, 99, 235, 0.08);
+        --danger-hover: #b91c1c;
+        --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.06);
+        --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.08);
+        --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.1);
+        --shadow-xl: 0 24px 64px rgba(0, 0, 0, 0.12);
+    }
+}
+
 /* ─── Reset & Base ─── */
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }

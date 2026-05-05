@@ -40,3 +40,5 @@ Thumbs.db
 
 # Specific directories
 cups-config/ssl/
+.aider*
+.env

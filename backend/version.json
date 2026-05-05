@@ -1,8 +1,24 @@
 {
-  "version": "1.0.144",
+  "version": "1.0.147",
   "codename": "Eatheros",
-  "build_date": "2026-04-23",
+  "build_date": "2026-05-04",
   "changelog": [
+    {
+      "version": "1.0.147",
+      "date": "2026-05-04",
+      "title": "changes",
+      "changes": [
+        "changes"
+      ]
+    },
+    {
+      "version": "1.0.145",
+      "date": "2026-05-04",
+      "title": "OTA - aktualizacja systemu",
+      "changes": [
+        "OTA - aktualizacja systemu"
+      ]
+    },
     {
       "version": "1.0.144",
       "date": "2026-04-23",

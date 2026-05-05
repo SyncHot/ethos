@@ -66,6 +66,7 @@ import logging
 import mimetypes
 import os
 import pathlib
+import random
 import re
 import shutil
 import hashlib
@@ -105,6 +106,7 @@ _DOWNLOAD_LOCK = threading.Lock()
 _meta_cache = {}  # {path: {mtime: float, meta: dict}}
 _meta_cache_file = None
 _meta_cache_dirty = False
+_meta_cache_lock = threading.Lock()
 
 
 def _meta_cache_path():
@@ -117,34 +119,38 @@ def _meta_cache_path():
 
 def _load_meta_cache():
     global _meta_cache
-    try:
-        with open(_meta_cache_path(), 'r') as f:
-            _meta_cache = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        _meta_cache = {}
+    with _meta_cache_lock:
+        try:
+            with open(_meta_cache_path(), 'r') as f:
+                _meta_cache = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            _meta_cache = {}
 
 
 def _save_meta_cache():
     global _meta_cache_dirty
-    if not _meta_cache_dirty:
-        return
-    try:
-        with open(_meta_cache_path(), 'w') as f:
-            json.dump(_meta_cache, f)
-        _meta_cache_dirty = False
-    except OSError:
-        pass
+    with _meta_cache_lock:
+        if not _meta_cache_dirty:
+            return
+        try:
+            with open(_meta_cache_path(), 'w') as f:
+                json.dump(_meta_cache, f)
+            _meta_cache_dirty = False
+        except OSError:
+            pass
 
 
 def _probe_audio_cached(fpath, mtime):
     """Return cached ffprobe result if file unchanged, else probe and cache."""
     global _meta_cache_dirty
-    cached = _meta_cache.get(fpath)
-    if cached and abs(cached.get('mtime', 0) - mtime) < 0.01:
-        return cached['meta']
+    with _meta_cache_lock:
+        cached = _meta_cache.get(fpath)
+        if cached and abs(cached.get('mtime', 0) - mtime) < 0.01:
+            return cached['meta']
     meta = _probe_audio(fpath)
-    _meta_cache[fpath] = {'mtime': mtime, 'meta': meta}
-    _meta_cache_dirty = True
+    with _meta_cache_lock:
+        _meta_cache[fpath] = {'mtime': mtime, 'meta': meta}
+        _meta_cache_dirty = True
     return meta
 
 
@@ -1306,7 +1312,7 @@ def local_stream():
         return jsonify({'error': 'Brak ścieżki'}), 400
 
     # Validate path is within one of the configured music or audiobook folders
-    fpath = os.path.abspath(fpath)
+    fpath = os.path.realpath(fpath)
     folders = _get_all_local_folders()
     allowed = False
     for base in folders:
@@ -1338,7 +1344,7 @@ def local_artwork():
     if not fpath:
         return jsonify({'error': 'Brak ścieżki'}), 400
 
-    fpath = os.path.abspath(fpath)
+    fpath = os.path.realpath(fpath)
     folders = _get_all_local_folders()
     allowed = False
     for base in folders:
@@ -1790,7 +1796,10 @@ def playlists_import():
     if 'file' not in request.files:
         return jsonify({'error': 'Brak pliku'}), 400
     f = request.files['file']
-    text = f.read().decode('utf-8', errors='replace')
+    chunk = f.read(10 * 1024 * 1024 + 1)  # 10 MB limit
+    if len(chunk) > 10 * 1024 * 1024:
+        return jsonify({'error': 'Plik M3U jest zbyt duży (max 10 MB)'}), 413
+    text = chunk.decode('utf-8', errors='replace')
     lines = text.splitlines()
     name = os.path.splitext(f.filename or 'Import')[0]
     tracks = []
@@ -2010,6 +2019,135 @@ def music_search():
                 'source': 'youtube',
             })
     return jsonify({'items': items})
+
+
+@radio_music_bp.route('/ai-dj/next', methods=['GET'])
+def ai_dj_next():
+    """Generate next batch of AI DJ tracks from user history + Deezer similarity."""
+    count = _safe_int(request.args.get('count', 10), 10, hi=30)
+    artist = request.args.get('artist', '').strip()
+    exclude_raw = request.args.get('exclude', '')
+    exclude_set = set(u for u in exclude_raw.split(',') if u)
+    disliked_raw = request.args.get('disliked_artists', '')
+    disliked_artists = set(a.strip().lower() for a in disliked_raw.split(',') if a.strip())
+
+    hfile = _user_file('history.json')
+    hist = _load_json(hfile, [])
+
+    # Extract top artists from history (same logic as /recommendations)
+    artist_counts = {}
+    for h in hist:
+        art = (h.get('meta') or h.get('channel') or '').strip()
+        if art and h.get('type') in ('music', 'local'):
+            artist_counts[art] = artist_counts.get(art, 0) + h.get('play_count', 1)
+    top_artists = sorted(artist_counts, key=artist_counts.get, reverse=True)[:5]
+
+    # Build artist list: current artist first, then top from history
+    search_artists = []
+    if artist:
+        search_artists.append(artist)
+    for a in top_artists:
+        if a not in search_artists:
+            search_artists.append(a)
+
+    # Get similar artists via Deezer (reuse _deezer_get)
+    def _get_deezer_similar(art_name, limit=3):
+        search = _deezer_get('/search/artist', {'q': art_name, 'limit': 1})
+        results = search.get('data', [])
+        if not results:
+            return []
+        aid = results[0].get('id')
+        related = _deezer_get(f'/artist/{aid}/related', {'limit': limit})
+        return [a.get('name', '') for a in related.get('data', [])]
+
+    # Build YouTube search queries from similar artists — parallel per artist
+    queries = []
+    seen_artists = set()
+
+    def _fetch_similar(art):
+        return art, _get_deezer_similar(art, 3)
+
+    d_threads = [gevent.spawn(_fetch_similar, art) for art in search_artists[:3]]
+    gevent.joinall(d_threads, timeout=10)
+
+    for t in d_threads:
+        if t.value:
+            art, similar = t.value
+            for s in similar:
+                if s not in seen_artists and s.lower() not in disliked_artists:
+                    seen_artists.add(s)
+                    queries.append(f'{s} music')
+
+    # If no Deezer results, fall back to tags from history/favorites
+    if not queries:
+        favs = _load_json(_user_file('favorites.json'), [])
+        tag_counts = {}
+        for fav in favs:
+            for tag in (fav.get('tags') or '').split(','):
+                tag = tag.strip().lower()
+                if tag and len(tag) > 1:
+                    tag_counts[tag] = tag_counts.get(tag, 0) + 1
+        top_tags = sorted(tag_counts, key=tag_counts.get, reverse=True)[:5]
+        for t in top_tags:
+            queries.append(f'{t} music 2025')
+
+    # Absolute fallback
+    if not queries:
+        queries.append('popular music hits 2025')
+
+    # Search YouTube via yt-dlp in parallel per query
+    ytdlp = _find_ytdlp()
+    if not ytdlp:
+        return jsonify({'items': [], 'error': 'yt-dlp not installed'}), 503
+
+    from host import host_run
+
+    def _search_query(q, limit_per_q):
+        search_arg = f'ytsearch{limit_per_q}:{q}'
+        cmd = (f'{shq(ytdlp)} --dump-json --flat-playlist --no-warnings '
+               f'--no-download {shq(search_arg)}')
+        r = host_run(cmd, timeout=20)
+        results = []
+        if r.stdout:
+            for line in r.stdout.strip().splitlines():
+                try:
+                    d = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                vid_id = d.get('id', '')
+                dur = d.get('duration') or 0
+                url = d.get('url', '') or d.get('webpage_url', '') or f'https://www.youtube.com/watch?v={vid_id}'
+                if url in exclude_set:
+                    continue
+                results.append({
+                    'id': vid_id,
+                    'title': d.get('title', ''),
+                    'channel': d.get('channel', d.get('uploader', '')),
+                    'duration': dur,
+                    'duration_fmt': _fmt_secs(dur),
+                    'thumbnail': (d.get('thumbnails', [{}])[-1].get('url', '')
+                                  or f'https://i.ytimg.com/vi/{vid_id}/hqdefault.jpg'),
+                    'url': url,
+                    'type': 'music',
+                    'source': 'youtube',
+                })
+        return results
+
+    items = []
+    seen_urls = set(exclude_set)
+    per_query = max(3, count // max(1, len(queries)))
+    threads = [gevent.spawn(lambda q=q: _search_query(q, per_query)) for q in queries[:6]]
+    gevent.joinall(threads, timeout=25)
+
+    for t in threads:
+        if t.value:
+            for it in t.value:
+                if it['url'] not in seen_urls and (it.get('channel', '') or '').lower() not in disliked_artists:
+                    seen_urls.add(it['url'])
+                    items.append(it)
+
+    random.shuffle(items)
+    return jsonify({'items': items[:count]})
 
 
 def _fmt_secs(s):
