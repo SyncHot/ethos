@@ -1,0 +1,5568 @@
+/* ═══════════════════════════════════════════════════════════
+   EthOS — File Manager
+   ═══════════════════════════════════════════════════════════ */
+
+window.AppRegistry = window.AppRegistry || {};
+const AppRegistry = window.AppRegistry;
+
+AppRegistry['file-manager'] = function (appDef, launchOpts) {
+    const defaultHomePath = NAS.user?.home_path || `/home/${NAS.user?.username || 'home'}`;
+    const sudoMode = !!(NAS.sudoMode || NAS.user?.sudo_mode);
+    const requestedPath = launchOpts?.path;
+    const initialSelect = launchOpts?.select;
+    const defaultPath = defaultHomePath;
+    const initialPath = (!requestedPath || requestedPath === '/') ? defaultPath : requestedPath;
+
+    // If already open, navigate to the requested path and focus
+    if (WM.windows.has('file-manager')) {
+        const w = WM.windows.get('file-manager');
+        focusWindow('file-manager');
+        if (w.minimized) restoreWindow('file-manager');
+        if (launchOpts?.path) {
+            const fmBody = w.el.querySelector('.window-body');
+            const targetPath = (launchOpts.path === '/' && !sudoMode) ? defaultHomePath : launchOpts.path;
+            if (fmBody?._fmNavigateTo) fmBody._fmNavigateTo(targetPath);
+        }
+        return;
+    }
+
+    const state = {
+        me: NAS.user?.username || 'home',
+        homePath: defaultHomePath,
+        sudoMode,
+        path: initialPath,
+        initialSelect,
+        history: [initialPath],
+        historyIndex: 0,
+        items: [],
+        selected: new Set(),
+        sortCol: 'name',
+        sortAsc: true,
+        dragActive: false,
+        clipboard: null,       // { mode: 'copy'|'cut', paths: [...], basePath: '...' }
+        lastClickedIndex: -1,  // for shift-click range selection
+        focusedIndex: -1,      // keyboard-focused item index
+        selectMode: false,     // mobile select mode
+        sambaShares: [],       // [{ name, path, ... }] loaded from backend
+        storagePools: [],      // [{ name, mount_path, usage, ... }] from pool/list
+        networkMounts: [],     // [{ id, name, protocol, host, share, mount_path, mounted }]
+        favorites: [],         // [{ path, label }]
+        photoFavorites: [],    // ['/path/to/img.jpg', ...]
+        gallerySources: [],    // [{ path, label }] gallery folders
+        // Pagination
+        page: 0,
+        pageSize: 200,
+        // Search
+        searchQuery: '',
+        searchResults: null,   // null = not searching, [] = no results
+        // Folder sizes
+        dirSizes: {},          // { '/path': size }
+        // Background dir-size job tracking
+        _dirSizeJobs: {},      // { '/path': 'job_id' } for pending jobs
+        _dirSizePollTimer: null,    // setTimeout handle for polling
+        _dirSizePollInterval: 1500, // current poll interval (ms), grows with backoff
+        // Lazy thumbnail IntersectionObserver
+        _thumbObserver: null,
+        // Navigation version counter — only the latest navigateTo renders
+        _navVersion: 0,
+    };
+
+    createWindow('file-manager', {
+        title: t('Menedżer plików'),
+        icon: appDef.icon,
+        iconColor: appDef.color,
+        width: 1050,
+        height: 650,
+        onRender: (body) => renderFM(body, state),
+    });
+};
+
+// ── FM listing prefetch cache (hover-prefetch optimisation) ──
+const _fmPrefetchCache = new Map(); // path → { data, ts }
+const _FM_PREFETCH_TTL = 25000;     // 25 s — slightly shorter than server cache TTL
+
+function _fmPregenerateThumbs(path) {
+    if (!path || path.startsWith('/__')) return;
+    api('/files/pregenerate-thumbs', { method: 'POST', body: { path, w: 120, h: 120 } })
+        .catch(() => {});  // fire-and-forget background pre-generation
+}
+
+// ── FM thumbnail concurrency limiter ──
+// Avoids opening hundreds of simultaneous HTTP connections for thumbnails.
+const _FM_THUMB_CONCURRENCY = 4;
+let _fmThumbActive = 0;
+const _fmThumbQueue = [];
+
+function _fmThumbLoadNext() {
+    while (_fmThumbActive < _FM_THUMB_CONCURRENCY && _fmThumbQueue.length) {
+        const { img, src } = _fmThumbQueue.shift();
+        if (!img.isConnected || img.src) continue;  // skip detached / already loaded imgs
+        _fmThumbActive++;
+        const onDone = () => { _fmThumbActive--; _fmThumbLoadNext(); };
+        img.onload = onDone;
+        img.onerror = onDone;
+        img.src = src;
+        img.removeAttribute('data-src');
+        img.classList.remove('fm-thumb-lazy');
+    }
+}
+
+function _fmThumbEnqueue(img, src) {
+    _fmThumbQueue.push({ img, src });
+    _fmThumbLoadNext();
+}
+
+function renderFM(body, state) {
+    // View mode state
+    if (!state.viewMode) {
+        state.viewMode = localStorage.getItem('fmViewMode') || 'list';
+    }
+    function setViewMode(mode) {
+        state.viewMode = mode;
+        localStorage.setItem('fmViewMode', mode);
+        renderFileList();
+        updateViewModeButtons();
+        if (mode === 'thumb') _fmPregenerateThumbs(state.path);
+    }
+
+    function openDLMForFolder(targetPath) {
+        const destination = (targetPath || state.path || '/home').replace(/\/$/, '') || '/home';
+        if (destination.startsWith('/__')) {
+            toast(t('Nie można pobrać do tej lokalizacji'), 'warning');
+            return;
+        }
+        openApp('download-manager', { dest_dir: destination });
+    }
+    body.innerHTML = `
+        <div class="fm">
+            <div class="fm-toolbar">
+                <button class="fm-toolbar-btn fm-sidebar-toggle" id="fm-sidebar-toggle" title="${t('Nawigacja')}" aria-label="${t('Pokaż/ukryj panel nawigacji')}" aria-expanded="false"><i class="fas fa-bars"></i></button>
+                <button class="fm-toolbar-btn" id="fm-back" title="${t('Wstecz')}" aria-label="${t('Wstecz')}"><i class="fas fa-arrow-left"></i></button>
+                <button class="fm-toolbar-btn" id="fm-forward" title="${t('Dalej')}" aria-label="${t('Dalej')}"><i class="fas fa-arrow-right"></i></button>
+                <button class="fm-toolbar-btn" id="fm-up" title="${t('Folder nadrzędny')}" aria-label="${t('Folder nadrzędny')}"><i class="fas fa-arrow-up"></i></button>
+                <button class="fm-toolbar-btn" id="fm-refresh" title="${t('Odśwież')}" aria-label="${t('Odśwież')}"><i class="fas fa-sync-alt"></i></button>
+                <div class="fm-toolbar-sep"></div>
+                <div class="fm-breadcrumb" id="fm-breadcrumb" aria-label="${t('Ścieżka nawigacji')}" role="navigation"></div>
+                <div class="fm-toolbar-sep"></div>
+                <button class="fm-toolbar-btn" id="fm-newfolder" title="${t('New Folder')} (Ctrl+N)" aria-label="${t('New Folder')}"><i class="fas fa-folder-plus"></i></button>
+                <button class="fm-toolbar-btn" id="fm-upload" title="${t('Prześlij pliki')} (Ctrl+U)" aria-label="${t('Prześlij pliki')}"><i class="fas fa-upload"></i></button>
+                <button class="fm-toolbar-btn" id="fm-upload-folder" title="${t('Prześlij folder')}" aria-label="${t('Prześlij folder')}"><i class="fas fa-folder"></i><i class="fas fa-arrow-up fm-folder-upload-arrow"></i></button>
+                <button class="fm-toolbar-btn" id="fm-download" title="${t('Pobierz zaznaczone')}" aria-label="${t('Pobierz zaznaczone')}"><i class="fas fa-download"></i></button>
+                <button class="fm-toolbar-btn" id="fm-download-here" title="${t('Pobierz tutaj')}" aria-label="${t('Pobierz do bieżącego folderu')}"><i class="fas fa-folder-open"></i></button>
+                <button class="fm-toolbar-btn" id="fm-delete" title="${t('Move to Trash')} (Delete)" aria-label="${t('Move to Trash')}"><i class="fas fa-trash"></i></button>
+                <button class="fm-toolbar-btn fm-select-mode-btn" id="fm-select-mode-btn" title="${t('Tryb zaznaczania')}" aria-label="${t('Tryb zaznaczania')}" aria-pressed="false"><i class="fas fa-check-square"></i></button>
+                <div class="fm-toolbar-sep"></div>
+                <div class="fm-view-switcher" id="fm-view-switcher" role="group" aria-label="${t('Tryb widoku')}">
+                    <button class="fm-view-btn" data-view="list" title="${t('Widok listy')}" aria-label="${t('Widok listy')}"><i class="fas fa-list"></i></button>
+                    <button class="fm-view-btn" data-view="grid" title="${t('Widok ikon')}" aria-label="${t('Widok ikon')}"><i class="fas fa-th"></i></button>
+                    <button class="fm-view-btn" data-view="thumb" title="${t('Miniatury')}" aria-label="${t('Widok miniatur')}"><i class="fas fa-th-large"></i></button>
+                </div>
+                <div class="fm-sort-dropdown" id="fm-sort-dropdown">
+                    <button class="fm-toolbar-btn" id="fm-sort-btn" title="${t('Sortuj')}" aria-expanded="false" aria-haspopup="listbox" aria-controls="fm-sort-menu">
+                        <i class="fas fa-sort-amount-down-alt"></i>
+                        <span id="fm-sort-label">${t('Nazwa')}</span>
+                        <i class="fas fa-chevron-down app-chevron-tiny"></i>
+                    </button>
+                    <div class="fm-sort-menu hidden" id="fm-sort-menu">
+                        <div class="fm-sort-option" data-sort="name"><i class="fas fa-font"></i> ${t('Nazwa')}</div>
+                        <div class="fm-sort-option" data-sort="size"><i class="fas fa-weight-hanging"></i> ${t('Rozmiar')}</div>
+                        <div class="fm-sort-option" data-sort="modified"><i class="fas fa-clock"></i> ${t('Data modyfikacji')}</div>
+                        <div class="fm-sort-option" data-sort="permissions"><i class="fas fa-lock"></i> ${t('Prawa')}</div>
+                        <div class="fm-sort-divider"></div>
+                        <div class="fm-sort-option" data-dir="asc"><i class="fas fa-sort-amount-up-alt"></i> ${t('Rosnąco')}</div>
+                        <div class="fm-sort-option" data-dir="desc"><i class="fas fa-sort-amount-down-alt"></i> ${t('Malejąco')}</div>
+                    </div>
+                </div>
+                <div class="fm-toolbar-sep"></div>
+                <button class="fm-toolbar-btn" id="fm-analyze" title="${t('Analiza dysku')}" aria-label="${t('Analiza dysku')}"><i class="fas fa-chart-pie"></i></button>
+                <button class="fm-toolbar-btn" id="fm-logs" title="${t('Logi zdarzeń')}" aria-label="${t('Logi zdarzeń')}"><i class="fas fa-history"></i></button>
+                <button class="fm-toolbar-btn fm-shortcuts-btn" id="fm-shortcuts-btn" title="${t('Skróty klawiszowe')} (F1)" aria-label="${t('Skróty klawiszowe')}"><i class="fas fa-keyboard"></i></button>
+                <div class="fm-toolbar-sep"></div>
+                <div class="fm-search-box" id="fm-search-box" role="search">
+                    <i class="fas fa-search fm-search-icon" aria-hidden="true"></i>
+                    <input type="text" id="fm-search-input" placeholder="${t('Szukaj...')}" autocomplete="off" aria-label="${t('Szukaj plików')}">
+                    <button class="fm-search-clear hidden" id="fm-search-clear" title="${t('Wyczyść')}" aria-label="${t('Wyczyść wyszukiwanie')}"><i class="fas fa-times"></i></button>
+                </div>
+            </div>
+            <!-- Clipboard indicator -->
+            <div class="fm-clipboard-bar hidden" id="fm-clipboard-bar">
+                <i class="fas fa-clipboard"></i>
+                <span id="fm-clipboard-text"></span>
+                <button class="fm-toolbar-btn fm-btn-accent" id="fm-clipboard-paste"><i class="fas fa-paste"></i> ${t('Paste Here')}</button>
+                <button class="fm-toolbar-btn" id="fm-clipboard-cancel"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="fm-content">
+                <div class="fm-sidebar" id="fm-sidebar"></div>
+                <div class="fm-main fm-main-flex">
+                    <div class="fm-list-header" id="fm-list-header">
+                        <span class="fm-col-checkbox">
+                            <label class="fm-checkbox-label" id="fm-header-select-all" title="${t('Zaznacz wszystko')}">
+                                <input type="checkbox" id="fm-header-cb" aria-label="${t('Zaznacz wszystkie pliki')}">
+                                <span class="fm-cb-custom"></span>
+                            </label>
+                        </span>
+                        <span class="fm-header-columns" id="fm-header-columns">
+                            <span data-sort="name" aria-sort="ascending" role="columnheader" tabindex="0">${t('Nazwa')} <i class="fas fa-sort"></i></span>
+                            <span data-sort="size" aria-sort="none" role="columnheader" tabindex="0">${t('Rozmiar')} <i class="fas fa-sort"></i></span>
+                            <span data-sort="modified" aria-sort="none" role="columnheader" tabindex="0">${t('Data modyfikacji')} <i class="fas fa-sort"></i></span>
+                            <span data-sort="permissions" role="columnheader">${t('Prawa')}</span>
+                        </span>
+                        <div class="fm-header-selection hidden" id="fm-header-selection">
+                            <span class="fm-sel-count" id="fm-sel-count">0 ${t('selected')}</span>
+                            <button class="fm-sel-clear" id="fm-sel-clear" title="${t('Deselect')}"><i class="fas fa-times"></i> ${t('Deselect')}</button>
+                            <div class="fm-sel-actions">
+                                <button class="fm-toolbar-btn" id="fm-sel-copy" title="${t('Copy')}"><i class="fas fa-copy"></i> ${t('Copy')}</button>
+                                <button class="fm-toolbar-btn" id="fm-sel-cut" title="${t('Cut')}"><i class="fas fa-cut"></i> ${t('Cut')}</button>
+                                <button class="fm-toolbar-btn" id="fm-sel-download" title="${t('Pobierz')}"><i class="fas fa-download"></i></button>
+                                <button class="fm-toolbar-btn fm-btn-danger" id="fm-sel-delete" title="${t('Move to Trash')}"><i class="fas fa-trash"></i> <span>${t('Move to Trash')}</span></button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="fm-file-list" id="fm-file-list"></div>
+                    <div class="fm-pagination hidden" id="fm-pagination">
+                        <button class="fm-page-btn" id="fm-page-prev" title="${t('Poprzednia strona')}"><i class="fas fa-chevron-left"></i></button>
+                        <span class="fm-page-info" id="fm-page-info"></span>
+                        <button class="fm-page-btn" id="fm-page-next" title="${t('Następna strona')}"><i class="fas fa-chevron-right"></i></button>
+                    </div>
+                    <div class="fm-statusbar" id="fm-statusbar" aria-live="polite" aria-atomic="true"></div>
+                    <!-- Disk analytics panel (hidden) -->
+                    <div class="fm-ana-panel fm-ana-overlay hidden" id="fm-ana-panel">
+                        <div class="fm-ana-header">
+                            <button class="fm-toolbar-btn" id="fm-ana-back-btn" title="${t('Zamknij analizę')}"><i class="fas fa-arrow-left"></i></button>
+                            <span class="app-title-sm"><i class="fas fa-chart-pie app-btn-icon app-icon-accent"></i>${t('Analiza dysku')}</span>
+                            <div class="app-flex-1"></div>
+                            <button class="fm-toolbar-btn btn-green fm-toolbar-btn-compact" id="fm-ana-scan"><i class="fas fa-search"></i> ${t('Skanuj')}</button>
+                        </div>
+                        <div id="fm-ana-breadcrumbs" class="fm-ana-breadcrumbs"></div>
+                        <div id="fm-ana-summary" class="fm-ana-summary hidden"></div>
+                        <div id="fm-ana-tabs" class="fm-ana-tabs hidden">
+                            <button class="fm-ana-sub-tab active" data-anatab="dirs"><i class="fas fa-folder"></i> ${t('Katalogi')}</button>
+                            <button class="fm-ana-sub-tab" data-anatab="files"><i class="fas fa-file"></i> ${t('Największe pliki')}</button>
+                        </div>
+                        <div id="fm-ana-content" class="fm-ana-content">
+                            <div class="app-empty">
+                                <i class="fas fa-chart-pie app-empty-icon"></i>
+                                ${t('Click')} <b>${t('Scan')}</b> ${t('to analyze current directory')}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // ─── Favorites ───
+    async function loadFavorites() {
+        try {
+            const data = await api('/files/favorites');
+            state.favorites = Array.isArray(data) ? data : [];
+        } catch(e) {
+            state.favorites = [];
+        }
+    }
+
+    async function addFavorite(path, label) {
+        try {
+            const r = await api('/files/favorites', { method: 'POST', body: { path, label } });
+            if (r.favorites) state.favorites = r.favorites;
+            else await loadFavorites();
+            renderSidebar();
+            toast('Dodano do ulubionych', 'success');
+        } catch(e) {
+            toast(t('Błąd dodawania do ulubionych'), 'error');
+        }
+    }
+
+    async function removeFavorite(path) {
+        try {
+            const r = await api('/files/favorites', { method: 'DELETE', body: { path } });
+            if (r.favorites) state.favorites = r.favorites;
+            else await loadFavorites();
+            renderSidebar();
+            toast(t('Usunięto z ulubionych'), 'success');
+        } catch(e) {
+            toast(t('Błąd usuwania z ulubionych'), 'error');
+        }
+    }
+
+    function isFavorite(path) {
+        return state.favorites.some(f => f.path === path);
+    }
+
+    // ─── Photo Favorites ───
+    async function loadPhotoFavorites() {
+        try {
+            const data = await api('/photos/favorites');
+            state.photoFavorites = Array.isArray(data) ? data : [];
+        } catch (e) {
+            state.photoFavorites = [];
+        }
+    }
+
+    function isPhotoFavorite(filePath) {
+        return state.photoFavorites.includes(filePath);
+    }
+
+    function isSpecialPath(path) {
+        return path === '/__photo_favorites__' || path === '/__trash__' || path === '/__shared_with_me__';
+    }
+
+    function isRegularPath(path = state.path) {
+        return !isSpecialPath(path);
+    }
+
+    function isAtHomeRoot(path = state.path) {
+        if (state.sudoMode) return path === '/';
+        return path === state.homePath;
+    }
+
+    function joinCurrentPath(name) {
+        const base = (state.path || '/').replace(/\/$/, '');
+        return `${base}/${name}`;
+    }
+
+    async function togglePhotoFavorite(filePath) {
+        const isFav = isPhotoFavorite(filePath);
+        try {
+            const r = await api('/photos/favorites', {
+                method: isFav ? 'DELETE' : 'POST',
+                body: { path: filePath }
+            });
+            if (r.favorites) state.photoFavorites = r.favorites;
+            else await loadPhotoFavorites();
+            toast(isFav ? t('Usunięto z ulubionych zdjęć') : t('Dodano do ulubionych zdjęć'), 'success');
+        } catch {
+            toast(t('Błąd operacji na ulubionych'), 'error');
+        }
+    }
+
+    // ─── Sidebar ───
+    function _fmPoolIcon(pool) {
+        if (pool.type === 'usb') return 'fa-usb';
+        if (pool.system) return 'fa-server';
+        if (pool.raid_level) return 'fa-shield-halved';
+        return 'fa-hard-drive';
+    }
+    function _fmPoolColor(pool) {
+        if (pool.type === 'usb') return '#60a5fa';
+        if (pool.system) return '#6366f1';
+        if (pool.raid_level) return '#a78bfa';
+        return '#34d399';
+    }
+    function _fmUsageBar(usage) {
+        if (!usage) return '';
+        const pct = Math.round(usage.percent || 0);
+        const color = pct > 90 ? '#ef4444' : pct > 75 ? '#f59e0b' : 'var(--accent)';
+        const total = usage.total >= 1e12 ? (usage.total / 1e12).toFixed(1) + ' TB'
+                    : usage.total >= 1e9 ? (usage.total / 1e9).toFixed(1) + ' GB'
+                    : (usage.total / 1e6).toFixed(0) + ' MB';
+        return `<div class="fm-pool-usage" title="${pct}% — ${total}"><div class="fm-pool-usage-fill" style="width:${pct}%;background:${color}"></div></div>`;
+    }
+
+    function renderSidebar() {
+        const sidebar = body.querySelector('#fm-sidebar');
+        state.sudoMode = !!(NAS.sudoMode || NAS.user?.sudo_mode);
+        const isAdmin = NAS.user?.role === 'admin';
+        const roots = [
+            { icon: 'fa-home', label: state.me, path: state.homePath },
+        ];
+        // Home-only sandbox: do not expose global media/mnt roots in File Manager.
+
+        const favHtml = state.favorites.length > 0 ? `
+            <div class="fm-sidebar-section">
+                <div class="fm-sidebar-label"><i class="fas fa-star"></i> ${t('Ulubione')}</div>
+                ${state.favorites.map(f => `
+                    <div class="fm-fav-row${state.path === f.path ? ' active' : ''}">
+                        <button class="fm-tree-item fm-fav-item${state.path === f.path ? ' active' : ''}" data-path="${f.path}" title="${f.path}">
+                            <i class="fas fa-folder app-icon-accent"></i> ${f.label}
+                        </button>
+                        <button class="fm-fav-remove" data-fav-path="${f.path}" title="${t('Usuń z ulubionych')}">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                `).join('')}
+            </div>
+            <div class="fm-sidebar-divider"></div>
+        ` : '';
+
+        sidebar.innerHTML = `
+            ${favHtml}
+            <div class="fm-sidebar-section">
+                <button class="fm-tree-item fm-photo-favs-btn${state.path === '/__photo_favorites__' ? ' active' : ''}" data-path="/__photo_favorites__">
+                    <i class="fas fa-heart app-icon-heart"></i> ${t('Favorite Photos')}
+                </button>
+            </div>
+            <div class="fm-sidebar-divider"></div>
+            <div class="fm-sidebar-section">
+                <button class="fm-tree-item fm-shared-with-me-btn${state.path === '/__shared_with_me__' ? ' active' : ''}" data-path="/__shared_with_me__">
+                    <i class="fas fa-share-alt app-icon-share"></i> ${t('Shared with Me')}
+                </button>
+                <button class="fm-tree-item" onclick="openApp('naslink')">
+                    <i class="fas fa-network-wired app-icon-violet"></i> Transfer NAS
+                </button>
+            </div>
+            <div class="fm-sidebar-divider"></div>
+            ${state.sudoMode ? `<button class="fm-tree-item${state.path === '/' ? ' active' : ''}" data-path="/">
+                <i class="fas fa-hard-drive"></i> System (/)
+            </button>` : ''}
+            ${roots.map(r => `
+                <button class="fm-tree-item${state.path.startsWith(r.path) ? ' active' : ''}" data-path="${r.path}">
+                    <i class="fas ${r.icon}"></i> ${r.label}
+                </button>
+            `).join('')}
+            ${state.storagePools.length > 0 ? `
+                <div class="fm-sidebar-divider"></div>
+                <div class="fm-sidebar-section">
+                    <div class="fm-sidebar-label"><i class="fas fa-database" style="color:#34d399"></i> ${t('Dyski')}</div>
+                    ${state.storagePools.map(p => `
+                        <button class="fm-tree-item fm-pool-item${state.path.startsWith(p.mount_path) ? ' active' : ''}" data-path="${p.mount_path}" title="${p.mount_path}${p.usage ? ' — ' + Math.round(p.usage.percent) + '% ' + t('zajęte') : ''}">
+                            <i class="fas ${_fmPoolIcon(p)}" style="color:${_fmPoolColor(p)}"></i>
+                            <span class="fm-pool-label">${p.name}${_fmUsageBar(p.usage)}</span>
+                        </button>
+                    `).join('')}
+                </div>
+            ` : ''}
+            <div class="fm-sidebar-divider"></div>
+            <div class="fm-sidebar-section">
+                <div class="fm-sidebar-label">
+                    <i class="fas fa-network-wired" style="color:#60a5fa"></i> ${t('Dyski sieciowe')}
+                    ${isAdmin ? `<button class="fm-net-add-btn" id="fm-add-network-drive" title="${t('Dodaj dysk sieciowy')}"><i class="fas fa-plus"></i></button>` : ''}
+                </div>
+                ${state.networkMounts.map(m => `
+                    <div class="fm-net-drive-row${m.mounted && state.path.startsWith(m.mount_path) ? ' active' : ''}">
+                        <button class="fm-tree-item fm-net-item${m.mounted && state.path.startsWith(m.mount_path) ? ' active' : ''}${!m.mounted ? ' fm-net-offline' : ''}" ${m.mounted ? `data-path="${m.mount_path}"` : ''} title="${m.protocol.toUpperCase()}: //${m.host}/${m.share}${m.usage ? ' — ' + Math.round(m.usage.percent) + '% ' + t('zajęte') : ''}${!m.mounted ? ' (' + t('rozłączony') + ')' : ''}">
+                            <i class="fas ${m.mounted ? 'fa-server' : 'fa-unlink'}" style="color:${m.mounted ? '#60a5fa' : '#6b7280'}"></i>
+                            <span class="fm-pool-label">${m.name}${m.mounted && m.usage ? _fmUsageBar(m.usage) : ''}</span>
+                        </button>
+                        ${isAdmin ? `<button class="fm-net-action-btn" data-net-id="${m.id}" data-net-action="${m.mounted ? 'menu' : 'reconnect'}" title="${m.mounted ? t('Opcje') : t('Połącz')}">
+                            <i class="fas ${m.mounted ? 'fa-ellipsis-v' : 'fa-plug'}"></i>
+                        </button>` : ''}
+                    </div>
+                `).join('')}
+                ${state.networkMounts.length === 0 && isAdmin ? `
+                    <div class="fm-net-empty">${t('Brak dysków sieciowych')}</div>
+                ` : ''}
+            </div>
+            <div class="fm-sidebar-divider"></div>
+            <button class="fm-tree-item fm-trash-btn${state.path === '/__trash__' ? ' active' : ''}" data-path="/__trash__">
+                <i class="fas fa-trash-alt app-icon-danger"></i> ${t('Kosz')}
+            </button>
+            ${isAdmin ? `<div class="fm-sidebar-divider"></div>
+            <button class="fm-tree-item fm-dup-btn" id="fm-open-dup-app">
+                <i class="fas fa-clone app-icon-purple"></i> ${t('Duplikaty zdjęć')}
+            </button>` : ''}
+        `;
+        sidebar.querySelectorAll('.fm-tree-item[data-path]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                console.log(`[FM] sidebar click: "${btn.textContent.trim()}" → path="${btn.dataset.path}"`);
+                navigateTo(btn.dataset.path);
+            });
+        });
+        sidebar.querySelector('#fm-open-dup-app')?.addEventListener('click', () => {
+            const dupApp = NAS.apps?.find(a => a.id === 'duplicates') || { id: 'duplicates', name: t('Duplikaty zdjęć'), icon: 'fa-clone', color: '#a78bfa', type: 'builtin' };
+            openApp(dupApp);
+        });
+        sidebar.querySelectorAll('.fm-fav-remove').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                removeFavorite(btn.dataset.favPath);
+            });
+        });
+        // Network drives
+        sidebar.querySelector('#fm-add-network-drive')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            showNetworkDriveModal();
+        });
+        sidebar.querySelectorAll('.fm-net-action-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const id = btn.dataset.netId;
+                const action = btn.dataset.netAction;
+                if (action === 'reconnect') {
+                    reconnectNetworkDrive(id);
+                } else {
+                    showNetDriveMenu(btn, id);
+                }
+            });
+        });
+    }
+
+    // ─── Breadcrumb ───
+    // Helper: get full path for item (supports photo favorites with embedded path)
+    function itemFullPath(nameOrItem) {
+        const name = typeof nameOrItem === 'string' ? nameOrItem : nameOrItem.name;
+        if (state.path === '/__photo_favorites__') {
+            const item = typeof nameOrItem === 'object' ? nameOrItem : state.items.find(i => i.name === name);
+            if (item && item.path) return item.path;
+        }
+        return joinCurrentPath(name);
+    }
+
+    function renderBreadcrumb() {
+        const bc = body.querySelector('#fm-breadcrumb');
+        if (state.path === '/__photo_favorites__') {
+            bc.innerHTML = `<button class="fm-breadcrumb-item" data-path="/__photo_favorites__"><i class="fas fa-heart app-icon-heart"></i> ${t('Favorite Photos')}</button>`;
+            bc.querySelector('.fm-breadcrumb-item')?.addEventListener('click', () => navigateTo('/__photo_favorites__'));
+            return;
+        }
+        if (state.path === '/__trash__') {
+            bc.innerHTML = `<button class="fm-breadcrumb-item" data-path="/__trash__"><i class="fas fa-trash-alt app-icon-danger"></i> ${t('Trash')}</button>`;
+            bc.querySelector('.fm-breadcrumb-item')?.addEventListener('click', () => navigateTo('/__trash__'));
+            return;
+        }
+        if (state.path === '/__shared_with_me__') {
+            bc.innerHTML = `<button class="fm-breadcrumb-item" data-path="/__shared_with_me__"><i class="fas fa-share-alt app-icon-share"></i> ${t('Shared with Me')}</button>`;
+            bc.querySelector('.fm-breadcrumb-item')?.addEventListener('click', () => navigateTo('/__shared_with_me__'));
+            return;
+        }
+
+        if (!state.sudoMode && state.path.startsWith(state.homePath)) {
+            const rel = state.path.slice(state.homePath.length).replace(/^\//, '');
+            const relParts = rel ? rel.split('/') : [];
+            const crumbs = [`<button class="fm-breadcrumb-item" data-path="${state.homePath}"><i class="fas fa-home"></i> ${state.me}</button>`];
+            relParts.forEach((part, i) => {
+                const path = `${state.homePath}/${relParts.slice(0, i + 1).join('/')}`;
+                crumbs.push(`<span class="fm-breadcrumb-sep"><i class="fas fa-chevron-right"></i></span>`);
+                crumbs.push(`<button class="fm-breadcrumb-item" data-path="${path}">${part}</button>`);
+            });
+            bc.innerHTML = crumbs.join('');
+        } else {
+            const parts = state.path === '/' ? [''] : state.path.split('/');
+            bc.innerHTML = parts.map((part, i) => {
+                const path = i === 0 ? '/' : parts.slice(0, i + 1).join('/');
+                const label = i === 0 ? '<i class="fas fa-server"></i>' : part;
+                return `<button class="fm-breadcrumb-item" data-path="${path}">${label}</button>${i < parts.length - 1 ? '<span class="fm-breadcrumb-sep"><i class="fas fa-chevron-right"></i></span>' : ''}`;
+            }).join('');
+        }
+        bc.querySelectorAll('.fm-breadcrumb-item').forEach(btn => {
+            btn.addEventListener('click', () => navigateTo(btn.dataset.path));
+        });
+    }
+
+    // ─── File List ───
+    function getFileIcon(item) {
+        if (item.is_dir) {
+            if (item.locked) return 'fa-lock';
+            if (item.protected) return 'fa-folder-open';
+            return 'fa-folder';
+        }
+        const ext = item.name.split('.').pop().toLowerCase();
+        const map = {
+            'jpg,jpeg,png,gif,bmp,webp,svg,ico': 'fa-file-image',
+            'mp4,mkv,avi,mov,wmv,flv,webm': 'fa-file-video',
+            'mp3,wav,flac,aac,ogg,wma,m4a': 'fa-file-audio',
+            'pdf': 'fa-file-pdf',
+            'zip,rar,7z,tar,gz,bz2,xz': 'fa-file-archive',
+            'js,ts,py,html,css,json,xml,sh,yaml,yml,md,sql,php,java,c,cpp,h,rb,go,rs': 'fa-file-code',
+            'txt,log,csv,ini,cfg,conf': 'fa-file-alt',
+            'doc,docx,odt': 'fa-file-word',
+            'xls,xlsx,ods': 'fa-file-excel',
+            'ppt,pptx,odp': 'fa-file-powerpoint',
+        };
+        for (const [exts, icon] of Object.entries(map)) {
+            if (exts.split(',').includes(ext)) return icon;
+        }
+        return 'fa-file';
+    }
+
+    function sortItems(items) {
+        return [...items].sort((a, b) => {
+            // Folders first
+            if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+            let cmp = 0;
+            switch (state.sortCol) {
+                case 'name': cmp = a.name.localeCompare(b.name, 'pl'); break;
+                case 'size': cmp = a.size - b.size; break;
+                case 'modified': cmp = a.modified - b.modified; break;
+                case 'permissions': cmp = (a.permissions || '').localeCompare(b.permissions || ''); break;
+            }
+            return state.sortAsc ? cmp : -cmp;
+        });
+    }
+
+    function getShareForItem(item) {
+        if (!item.is_dir) return null;
+        const fullPath = itemFullPath(item);
+        return state.sambaShares.find(s => s.path === fullPath || s.path === fullPath.toLowerCase());
+    }
+
+    async function loadSambaShares() {
+        try {
+            const data = await api('/storage/samba/shares');
+            state.sambaShares = Array.isArray(data) ? data : (data.shares || []);
+        } catch (e) {
+            state.sambaShares = [];
+        }
+    }
+
+    async function loadStoragePools() {
+        try {
+            const data = await api('/storage/pool/list');
+            const pools = data?.pools || [];
+            const isAdmin = NAS.user?.role === 'admin';
+            // USB/external drives: only shown to admins (Synology default)
+            let usbDrives = [];
+            if (isAdmin) {
+                try {
+                    const diskData = await api('/resources/disks');
+                    const disks = diskData?.disks || diskData || [];
+                    for (const d of disks) {
+                        if (d.is_usb && d.mountpoint && d.mountpoint.startsWith('/media/')) {
+                            usbDrives.push({
+                                name: d.label || d.model || d.device,
+                                mount_path: d.mountpoint,
+                                type: 'usb',
+                                device: (d.device || '').replace('/dev/', '').replace(/[0-9]+$/, ''),
+                                usage: d.total ? {
+                                    total: d.total,
+                                    used: d.used || 0,
+                                    percent: d.percent || 0,
+                                } : null,
+                            });
+                        }
+                    }
+                } catch (_) {}
+            }
+            state.storagePools = [
+                ...pools.filter(p => p.mounted && !p.system).map(p => ({ ...p, type: 'pool' })),
+                ...usbDrives,
+            ];
+            renderSidebar();
+        } catch (e) {
+            state.storagePools = [];
+        }
+    }
+
+    async function loadNetworkMounts() {
+        if (NAS.user?.role !== 'admin') return;
+        try {
+            const data = await api('/storage/network/mounts');
+            state.networkMounts = data?.mounts || [];
+            renderSidebar();
+        } catch (e) {
+            state.networkMounts = [];
+        }
+    }
+
+    async function _fmLoadGallerySources() {
+        try {
+            const data = await api('/gallery/folders');
+            state.gallerySources = Array.isArray(data) ? data : [];
+        } catch (e) {
+            state.gallerySources = [];
+        }
+    }
+
+    // ─── Network Drive functions ───
+
+    async function showNetworkDriveModal(prefill) {
+        const overlay = document.createElement('div');
+        overlay.className = 'fm-net-overlay';
+        overlay.innerHTML = `
+            <div class="fm-net-modal">
+                <div class="fm-net-modal-header">
+                    <h3><i class="fas fa-network-wired"></i> ${t('Dodaj dysk sieciowy')}</h3>
+                    <button class="fm-net-modal-close" id="fm-net-close"><i class="fas fa-times"></i></button>
+                </div>
+                <div class="fm-net-modal-body">
+                    <div class="fm-net-tabs">
+                        <button class="fm-net-tab active" data-tab="manual">${t('Ręcznie')}</button>
+                        <button class="fm-net-tab" data-tab="scan">${t('Skanuj sieć')}</button>
+                    </div>
+                    <div class="fm-net-tab-content" id="fm-net-tab-manual">
+                        <div class="fm-net-field">
+                            <label>${t('Protokół')}</label>
+                            <select id="fm-net-protocol" class="fm-input">
+                                <option value="smb" ${prefill?.protocol === 'nfs' ? '' : 'selected'}>SMB / CIFS (Windows)</option>
+                                <option value="nfs" ${prefill?.protocol === 'nfs' ? 'selected' : ''}>NFS (Linux/Unix)</option>
+                            </select>
+                        </div>
+                        <div class="fm-net-field">
+                            <label>${t('Adres serwera')}</label>
+                            <div class="fm-net-host-row">
+                                <input type="text" id="fm-net-host" class="fm-input" placeholder="192.168.1.100" value="${prefill?.host || ''}">
+                                <button class="fm-toolbar-btn" id="fm-net-browse-shares" title="${t('Przeglądaj udziały')}"><i class="fas fa-search"></i></button>
+                            </div>
+                        </div>
+                        <div class="fm-net-field">
+                            <label>${t('Nazwa udziału / ścieżka eksportu')}</label>
+                            <input type="text" id="fm-net-share" class="fm-input" placeholder="${t('np. Photos lub /volume1/data')}" value="${prefill?.share || ''}">
+                            <div class="fm-net-shares-list" id="fm-net-shares-list" style="display:none"></div>
+                        </div>
+                        <div class="fm-net-field" id="fm-net-creds-section">
+                            <label>${t('Użytkownik')} <span class="fm-net-optional">(${t('opcjonalne')})</span></label>
+                            <input type="text" id="fm-net-user" class="fm-input" placeholder="guest" value="${prefill?.username || ''}">
+                        </div>
+                        <div class="fm-net-field" id="fm-net-pass-section">
+                            <label>${t('Hasło')}</label>
+                            <input type="password" id="fm-net-pass" class="fm-input" value="${prefill?.password || ''}">
+                        </div>
+                        <div class="fm-net-field">
+                            <label>${t('Nazwa wyświetlana')} <span class="fm-net-optional">(${t('opcjonalne')})</span></label>
+                            <input type="text" id="fm-net-name" class="fm-input" placeholder="${t('np. NAS Photos')}" value="${prefill?.name || ''}">
+                        </div>
+                        <div class="fm-net-field fm-net-check-row">
+                            <label><input type="checkbox" id="fm-net-automount" checked> ${t('Montuj automatycznie przy starcie')}</label>
+                        </div>
+                    </div>
+                    <div class="fm-net-tab-content" id="fm-net-tab-scan" style="display:none">
+                        <div class="fm-net-scan-status" id="fm-net-scan-status">
+                            <i class="fas fa-spinner fa-spin"></i> ${t('Skanowanie sieci...')}
+                        </div>
+                        <div class="fm-net-scan-results" id="fm-net-scan-results"></div>
+                    </div>
+                </div>
+                <div class="fm-net-modal-footer">
+                    <div class="fm-net-error" id="fm-net-error"></div>
+                    <button class="fm-toolbar-btn" id="fm-net-cancel">${t('Anuluj')}</button>
+                    <button class="fm-toolbar-btn fm-net-connect-btn" id="fm-net-connect"><i class="fas fa-plug"></i> ${t('Połącz')}</button>
+                </div>
+            </div>
+        `;
+        body.appendChild(overlay);
+
+        const close = () => overlay.remove();
+        overlay.querySelector('#fm-net-close').addEventListener('click', close);
+        overlay.querySelector('#fm-net-cancel').addEventListener('click', close);
+        overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
+        // Tab switching
+        overlay.querySelectorAll('.fm-net-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                overlay.querySelectorAll('.fm-net-tab').forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+                const manual = overlay.querySelector('#fm-net-tab-manual');
+                const scan = overlay.querySelector('#fm-net-tab-scan');
+                if (tab.dataset.tab === 'scan') {
+                    manual.style.display = 'none';
+                    scan.style.display = '';
+                    startNetworkScan(overlay);
+                } else {
+                    manual.style.display = '';
+                    scan.style.display = 'none';
+                }
+            });
+        });
+
+        // Protocol toggle — hide creds for NFS
+        overlay.querySelector('#fm-net-protocol').addEventListener('change', (e) => {
+            const isNfs = e.target.value === 'nfs';
+            overlay.querySelector('#fm-net-creds-section').style.display = isNfs ? 'none' : '';
+            overlay.querySelector('#fm-net-pass-section').style.display = isNfs ? 'none' : '';
+            overlay.querySelector('#fm-net-share').placeholder = isNfs ? t('np. /volume1/data') : t('np. Photos');
+        });
+
+        // Browse shares on server
+        overlay.querySelector('#fm-net-browse-shares').addEventListener('click', async () => {
+            const host = overlay.querySelector('#fm-net-host').value.trim();
+            if (!host) { toast(t('Podaj adres serwera'), 'warning'); return; }
+            const user = overlay.querySelector('#fm-net-user').value.trim();
+            const pass = overlay.querySelector('#fm-net-pass').value;
+            const list = overlay.querySelector('#fm-net-shares-list');
+            list.innerHTML = `<div class="fm-net-loading"><i class="fas fa-spinner fa-spin"></i> ${t('Szukam udziałów...')}</div>`;
+            list.style.display = '';
+            const data = await api('/storage/network/browse', { method: 'POST', body: { host, username: user, password: pass } });
+            if (data?.shares?.length) {
+                list.innerHTML = data.shares.map(s => `
+                    <button class="fm-net-share-option" data-share="${s.name}">
+                        <i class="fas fa-folder"></i> ${s.name}${s.comment ? ` <span class="fm-net-share-comment">${s.comment}</span>` : ''}
+                    </button>
+                `).join('');
+                list.querySelectorAll('.fm-net-share-option').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        overlay.querySelector('#fm-net-share').value = btn.dataset.share;
+                        list.style.display = 'none';
+                    });
+                });
+            } else {
+                list.innerHTML = `<div class="fm-net-loading">${t('Nie znaleziono udziałów')}</div>`;
+            }
+        });
+
+        // Connect
+        overlay.querySelector('#fm-net-connect').addEventListener('click', async () => {
+            const protocol = overlay.querySelector('#fm-net-protocol').value;
+            const host = overlay.querySelector('#fm-net-host').value.trim();
+            const share = overlay.querySelector('#fm-net-share').value.trim();
+            const username = overlay.querySelector('#fm-net-user').value.trim();
+            const password = overlay.querySelector('#fm-net-pass').value;
+            const name = overlay.querySelector('#fm-net-name').value.trim();
+            const autoMount = overlay.querySelector('#fm-net-automount').checked;
+            const errEl = overlay.querySelector('#fm-net-error');
+            errEl.textContent = '';
+
+            if (!host) { errEl.textContent = t('Podaj adres serwera'); return; }
+            if (!share) { errEl.textContent = t('Podaj nazwę udziału'); return; }
+
+            const btn = overlay.querySelector('#fm-net-connect');
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${t('Łączenie...')}`;
+
+            const data = await api('/storage/network/mount', {
+                method: 'POST',
+                body: JSON.stringify({ protocol, host, share, username, password, name, auto_mount: autoMount }),
+            });
+            if (data?.ok) {
+                close();
+                toast(t('Dysk sieciowy podłączony'), 'success');
+                await loadNetworkMounts();
+                if (data.mount_path) navigateTo(data.mount_path);
+            } else {
+                errEl.textContent = data?.error || t('Połączenie nieudane');
+                btn.disabled = false;
+                btn.innerHTML = `<i class="fas fa-plug"></i> ${t('Połącz')}`;
+            }
+        });
+    }
+
+    async function startNetworkScan(overlay) {
+        const status = overlay.querySelector('#fm-net-scan-status');
+        const results = overlay.querySelector('#fm-net-scan-results');
+        status.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${t('Skanowanie sieci...')}`;
+        results.innerHTML = '';
+
+        const data = await api('/storage/network/scan');
+        const servers = data?.servers || [];
+        if (servers.length === 0) {
+            status.innerHTML = `<i class="fas fa-info-circle"></i> ${t('Nie znaleziono serwerów w sieci')}`;
+            return;
+        }
+        status.innerHTML = `<i class="fas fa-check"></i> ${t('Znaleziono')} ${servers.length} ${t('serwerów')}`;
+        results.innerHTML = servers.map(s => `
+            <button class="fm-net-scan-item" data-host="${s.host}">
+                <i class="fas fa-server"></i>
+                <div class="fm-net-scan-info">
+                    <div class="fm-net-scan-host">${s.hostname || s.host}</div>
+                    <div class="fm-net-scan-addr">${s.host} · ${s.protocols.join(', ').toUpperCase()}</div>
+                </div>
+                <i class="fas fa-chevron-right"></i>
+            </button>
+        `).join('');
+        results.querySelectorAll('.fm-net-scan-item').forEach(btn => {
+            btn.addEventListener('click', () => {
+                overlay.querySelector('#fm-net-host').value = btn.dataset.host;
+                overlay.querySelectorAll('.fm-net-tab').forEach(t => t.classList.remove('active'));
+                overlay.querySelector('[data-tab="manual"]').classList.add('active');
+                overlay.querySelector('#fm-net-tab-manual').style.display = '';
+                overlay.querySelector('#fm-net-tab-scan').style.display = 'none';
+            });
+        });
+    }
+
+    async function reconnectNetworkDrive(id) {
+        toast(t('Łączenie...'), 'info');
+        const data = await api('/storage/network/reconnect', { method: 'POST', body: { id } });
+        if (data?.ok) {
+            toast(t('Połączono'), 'success');
+            await loadNetworkMounts();
+        } else {
+            toast(data?.error || t('Nie udało się połączyć'), 'error');
+        }
+    }
+
+    function showNetDriveMenu(anchorBtn, id) {
+        // Close any existing menu
+        body.querySelectorAll('.fm-net-ctx-menu').forEach(m => m.remove());
+        const mount = state.networkMounts.find(m => m.id === id);
+        if (!mount) return;
+
+        const menu = document.createElement('div');
+        menu.className = 'fm-net-ctx-menu';
+        menu.innerHTML = `
+            ${mount.mounted ? `<button class="fm-net-ctx-item" data-action="open"><i class="fas fa-folder-open"></i> ${t('Otwórz')}</button>` : ''}
+            ${mount.mounted ? `<button class="fm-net-ctx-item" data-action="disconnect"><i class="fas fa-eject"></i> ${t('Rozłącz')}</button>` : `<button class="fm-net-ctx-item" data-action="reconnect"><i class="fas fa-plug"></i> ${t('Połącz')}</button>`}
+            <button class="fm-net-ctx-item fm-net-ctx-danger" data-action="remove"><i class="fas fa-trash"></i> ${t('Usuń')}</button>
+        `;
+        const rect = anchorBtn.getBoundingClientRect();
+        const sidebar = body.querySelector('#fm-sidebar');
+        const sRect = sidebar.getBoundingClientRect();
+        menu.style.position = 'absolute';
+        menu.style.top = (rect.bottom - sRect.top) + 'px';
+        menu.style.left = (rect.left - sRect.left) + 'px';
+        sidebar.style.position = 'relative';
+        sidebar.appendChild(menu);
+
+        const dismiss = (e) => { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('click', dismiss); } };
+        setTimeout(() => document.addEventListener('click', dismiss), 0);
+
+        menu.querySelectorAll('.fm-net-ctx-item').forEach(item => {
+            item.addEventListener('click', async () => {
+                const action = item.dataset.action;
+                menu.remove();
+                if (action === 'open' && mount.mount_path) {
+                    navigateTo(mount.mount_path);
+                } else if (action === 'disconnect') {
+                    const data = await api('/storage/network/unmount', { method: 'POST', body: { id } });
+                    if (data?.ok) { toast(t('Rozłączono'), 'success'); await loadNetworkMounts(); }
+                    else toast(data?.error || t('Błąd'), 'error');
+                } else if (action === 'reconnect') {
+                    await reconnectNetworkDrive(id);
+                } else if (action === 'remove') {
+                    if (!confirm(t('Usunąć dysk sieciowy') + ` "${mount.name}"?`)) return;
+                    const data = await api('/storage/network/remove', { method: 'POST', body: { id } });
+                    if (data?.ok) { toast(t('Usunięto'), 'success'); await loadNetworkMounts(); }
+                    else toast(data?.error || t('Błąd'), 'error');
+                }
+            });
+        });
+    }
+
+    function renderFileList() {
+        console.log(`[FM] renderFileList: path="${state.path}", items=${state.items?.length}`);
+        const list = body.querySelector('#fm-file-list');
+        list.style.opacity = '1';  // restore from loading indicator
+        // Set ARIA attributes on list container
+        list.setAttribute('role', 'listbox');
+        list.setAttribute('tabindex', '0');
+        list.setAttribute('aria-multiselectable', 'true');
+        list.setAttribute('aria-label', t('Pliki i foldery'));
+        // Ensure file list is visible (may have been hidden by trash/shared views)
+        list.style.display = '';
+        // Restore list header visibility after special views (trash/shared hide it)
+        const listHeader = body.querySelector('#fm-list-header');
+        if (listHeader) listHeader.style.display = state.viewMode === 'list' ? '' : 'none';
+        // Restore select mode class after re-render
+        list.classList.toggle('fm-select-mode', !!state.selectMode);
+        const allItems = state.searchResults !== null ? state.searchResults : state.items;
+        const sorted = sortItems(allItems);
+
+        // ── Pagination ──
+        const totalPages = Math.max(1, Math.ceil(sorted.length / state.pageSize));
+        if (state.page >= totalPages) state.page = totalPages - 1;
+        if (state.page < 0) state.page = 0;
+        const pageStart = state.page * state.pageSize;
+        const pageItems = sorted.slice(pageStart, pageStart + state.pageSize);
+
+        // Pagination UI
+        const pagEl = body.querySelector('#fm-pagination');
+        if (sorted.length > state.pageSize) {
+            pagEl.classList.remove('hidden');
+            body.querySelector('#fm-page-info').textContent = `${state.page + 1} / ${totalPages}  (${sorted.length} elem.)`;
+            body.querySelector('#fm-page-prev').disabled = state.page <= 0;
+            body.querySelector('#fm-page-next').disabled = state.page >= totalPages - 1;
+        } else {
+            pagEl.classList.add('hidden');
+        }
+
+        if (!sorted.length) {
+            list.innerHTML = state.searchResults !== null
+                ? `<div class="fm-empty"><i class="fas fa-search"></i><span>${t('Brak wyników')}</span></div>`
+                : '<div class="fm-empty"><i class="fas fa-folder-open"></i><span>Folder jest pusty</span></div>';
+            return;
+        }
+
+        // Helper: folder size display
+        const _dirSize = (item) => {
+            if (!item.is_dir) return formatBytes(item.size);
+            const p = itemFullPath(item);
+            if (p in state.dirSizes) return formatBytes(state.dirSizes[p]);
+            return '—';
+        };
+
+        // Helper: for search results, show the parent path
+        const _searchPath = (item) => {
+            if (state.searchResults === null || !item.path) return '';
+            const parent = item.path.substring(0, item.path.lastIndexOf('/')) || '/';
+            return ` <span class="fm-search-path" title="${item.path}">${parent}/</span>`;
+        };
+
+        if (state.viewMode === 'list') {
+            list.className = 'fm-file-list fm-list-view';
+            list.innerHTML = pageItems.map((item, localIdx) => {
+                const idx = pageStart + localIdx;
+                const icon = getFileIcon(item);
+                const selected = state.selected.has(item.name);
+                const focused = idx === state.focusedIndex;
+                const share = getShareForItem(item);
+                const sharedBadge = share ? ` <span class="fm-shared-badge" title="${t('Udostępniony jako:')} ${share.name}"><i class="fas fa-share-alt"></i></span>` : '';
+                const galBadge = item.is_dir && state.gallerySources.some(s => s.path === itemFullPath(item)) ? ` <span class="fm-shared-badge app-icon-gallery" title="${t('Folder multimedialny')}"><i class="fas fa-images"></i></span>` : '';
+                const lockBadge = item.protected ? ` <span class="fm-shared-badge" title="${item.locked ? t('Folder chroniony hasłem (zablokowany)') : t('Folder chroniony hasłem (odblokowany)')}" style="color:${item.locked ? 'var(--danger)' : 'var(--success, #22c55e)'}"><i class="fas ${item.locked ? 'fa-lock' : 'fa-lock-open'}"></i></span>` : '';
+                return `
+                    <div class="fm-file-item${selected ? ' selected' : ''}${focused ? ' fm-focused' : ''}" id="fm-item-${idx}" role="option" aria-selected="${selected}" data-name="${item.name}" data-isdir="${item.is_dir}" data-idx="${idx}"${item.path ? ` data-path="${item.path}"` : ''}>
+                        <div class="fm-col-checkbox">
+                            <label class="fm-checkbox-label" data-cb-name="${item.name}" aria-label="${t('Zaznacz')} ${item.name}">
+                                <input type="checkbox" ${selected ? 'checked' : ''}>
+                                <span class="fm-cb-custom"></span>
+                            </label>
+                        </div>
+                        <div class="fm-file-name">
+                            <i class="fas ${icon}${item.locked ? ' app-text-danger' : ''}" aria-hidden="true"></i>
+                            <span>${item.name}</span>${_searchPath(item)}${lockBadge}${sharedBadge}${galBadge}
+                        </div>
+                        <div class="fm-file-size">${_dirSize(item)}</div>
+                        <div class="fm-file-date">${formatDate(item.modified)}</div>
+                        <div class="fm-file-perms" title="${item.permissions_symbolic || item.permissions || ''}${item.owner ? ` | ${item.owner}:${item.group}` : ''}">
+                            <span style="font-family:monospace">${item.permissions_symbolic || ''}</span>
+                            <span style="opacity:0.6;font-size:0.85em;margin-left:6px">${item.permissions_octal || item.permissions || ''}</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        } else if (state.viewMode === 'grid') {
+            list.className = 'fm-file-list fm-grid-view';
+            list.innerHTML = pageItems.map((item, localIdx) => {
+                const idx = pageStart + localIdx;
+                const icon = getFileIcon(item);
+                const selected = state.selected.has(item.name);
+                const focused = idx === state.focusedIndex;
+                const share = getShareForItem(item);
+                const sharedBadge = share ? ` <span class="fm-shared-badge" title="${t('Udostępniony jako:')} ${share.name}"><i class="fas fa-share-alt"></i></span>` : '';
+                const galBadge = item.is_dir && state.gallerySources.some(s => s.path === itemFullPath(item)) ? ` <span class="fm-shared-badge app-icon-gallery" title="${t('Folder multimedialny')}"><i class="fas fa-images"></i></span>` : '';
+                const lockBadge = item.protected ? ` <span class="fm-shared-badge" title="${item.locked ? t('Zablokowany') : t('Odblokowany')}" style="color:${item.locked ? 'var(--danger)' : 'var(--success, #22c55e)'}"><i class="fas ${item.locked ? 'fa-lock' : 'fa-lock-open'}"></i></span>` : '';
+                return `
+                    <div class="fm-grid-item${selected ? ' selected' : ''}${focused ? ' fm-focused' : ''}" id="fm-item-${idx}" role="option" aria-selected="${selected}" data-name="${item.name}" data-isdir="${item.is_dir}" data-idx="${idx}"${item.path ? ` data-path="${item.path}"` : ''}>
+                        <div class="fm-grid-icon"><i class="fas ${icon}${item.locked ? ' app-text-danger' : ''}" aria-hidden="true"></i></div>
+                        <div class="fm-grid-label">${item.name}${lockBadge}${sharedBadge}${galBadge}</div>
+                        <div class="fm-grid-checkbox">
+                            <label class="fm-checkbox-label" data-cb-name="${item.name}" aria-label="${t('Zaznacz')} ${item.name}">
+                                <input type="checkbox" ${selected ? 'checked' : ''}>
+                                <span class="fm-cb-custom"></span>
+                            </label>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        } else if (state.viewMode === 'thumb') {
+            list.className = 'fm-file-list fm-thumb-view';
+            list.innerHTML = pageItems.map((item, localIdx) => {
+                const idx = pageStart + localIdx;
+                const isImage = /\.(jpg|jpeg|png|gif|bmp|webp|svg|ico)$/i.test(item.name);
+                const selected = state.selected.has(item.name);
+                const focused = idx === state.focusedIndex;
+                const share = getShareForItem(item);
+                const sharedBadge = share ? ` <span class="fm-shared-badge" title="${t('Udostępniony jako:')} ${share.name}"><i class="fas fa-share-alt"></i></span>` : '';
+                const galBadge = item.is_dir && state.gallerySources.some(s => s.path === itemFullPath(item)) ? ` <span class="fm-shared-badge app-icon-gallery" title="${t('Folder multimedialny')}"><i class="fas fa-images"></i></span>` : '';
+                const lockBadge = item.protected ? ` <span class="fm-shared-badge" title="${item.locked ? t('Zablokowany') : t('Odblokowany')}" style="color:${item.locked ? 'var(--danger)' : 'var(--success, #22c55e)'}"><i class="fas ${item.locked ? 'fa-lock' : 'fa-lock-open'}"></i></span>` : '';
+                let thumbHtml = '';
+                if (isImage && !item.is_dir) {
+                    // Lazy-loaded image: src will be set by IntersectionObserver
+                    const imgSrc = `/api/files/preview?path=${encodeURIComponent(itemFullPath(item))}&w=120&h=120`;
+                    thumbHtml = `<img data-src="${imgSrc}" class="fm-thumb-img fm-thumb-lazy" alt="${item.name}">`;
+                } else {
+                    const icon = getFileIcon(item);
+                    thumbHtml = `<div class="fm-thumb-icon"><i class="fas ${icon}${item.locked ? ' app-text-danger' : ''}" aria-hidden="true"></i></div>`;
+                }
+                return `
+                    <div class="fm-thumb-item${selected ? ' selected' : ''}${focused ? ' fm-focused' : ''}" id="fm-item-${idx}" role="option" aria-selected="${selected}" data-name="${item.name}" data-isdir="${item.is_dir}" data-idx="${idx}"${item.path ? ` data-path="${item.path}"` : ''}>
+                        <div class="fm-thumb-preview">${thumbHtml}</div>
+                        <div class="fm-thumb-label">${item.name}${lockBadge}${sharedBadge}${galBadge}</div>
+                        <div class="fm-thumb-checkbox">
+                            <label class="fm-checkbox-label" data-cb-name="${item.name}" aria-label="${t('Zaznacz')} ${item.name}">
+                                <input type="checkbox" ${selected ? 'checked' : ''}>
+                                <span class="fm-cb-custom"></span>
+                            </label>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Update status bar
+        const _src = state.searchResults !== null ? state.searchResults : state.items;
+        const dirs = _src.filter(i => i.is_dir).length;
+        const files = _src.filter(i => !i.is_dir).length;
+        const totalSize = _src.filter(i => !i.is_dir).reduce((s, i) => s + i.size, 0);
+        const selectedCount = state.selected.size;
+
+        let selectedSizeInfo = '';
+        if (selectedCount) {
+            const selSize = _src.filter(i => state.selected.has(i.name) && !i.is_dir).reduce((s, i) => s + i.size, 0);
+            selectedSizeInfo = ` | ${t('Zaznaczono:')} ${selectedCount} (${formatBytes(selSize)})`;
+        }
+        const searchLabel = state.searchResults !== null ? `${t('Wyniki')} (${_src.length}) — ` : '';
+        body.querySelector('#fm-statusbar').textContent =
+            searchLabel + `${_src.length} ${t('elementów')} (${dirs} ${t('folderów')}, ${files} ${t('plików')}) — ${formatBytes(totalSize)}` + selectedSizeInfo;
+
+        // Update selection bar visibility
+        updateSelectionBar();
+
+        // Update header checkbox state
+        const headerCb = body.querySelector('#fm-header-cb');
+        if (headerCb) {
+            headerCb.checked = state.items.length > 0 && state.selected.size === state.items.length;
+            headerCb.indeterminate = state.selected.size > 0 && state.selected.size < state.items.length;
+        }
+
+        // Show/hide list header depending on view mode (re-check after render)
+        {
+            const lh = body.querySelector('#fm-list-header');
+            if (lh) lh.style.display = state.viewMode === 'list' ? '' : 'none';
+        }
+        // Show sort dropdown only for grid/thumb, hide for list
+        const sortDropdown = body.querySelector('#fm-sort-dropdown');
+        if (sortDropdown) {
+            sortDropdown.style.display = state.viewMode === 'list' ? 'none' : '';
+        }
+        updateSortLabel();
+
+        // ── Lazy thumbnail loading via IntersectionObserver ──
+        if (state.viewMode === 'thumb') {
+            // Disconnect previous observer if any
+            if (state._thumbObserver) {
+                state._thumbObserver.disconnect();
+                state._thumbObserver = null;
+            }
+            const lazyImgs = list.querySelectorAll('img.fm-thumb-lazy');
+            if (lazyImgs.length > 0) {
+                const obs = new IntersectionObserver((entries) => {
+                    entries.forEach(entry => {
+                        if (entry.isIntersecting) {
+                            const img = entry.target;
+                            if (img.dataset.src) {
+                                // Use concurrency-limited loader to avoid hundreds of parallel requests
+                                _fmThumbEnqueue(img, img.dataset.src);
+                            }
+                            obs.unobserve(img);
+                        }
+                    });
+                }, { root: list, rootMargin: '200px', threshold: 0 });
+                lazyImgs.forEach(img => obs.observe(img));
+                state._thumbObserver = obs;
+            }
+        } else if (state._thumbObserver) {
+            state._thumbObserver.disconnect();
+            state._thumbObserver = null;
+        }
+
+        // Update aria-activedescendant for keyboard focus
+        const activeId = state.focusedIndex >= 0 ? `fm-item-${state.focusedIndex}` : '';
+        list.setAttribute('aria-activedescendant', activeId);
+
+        // Initialize drag & drop on newly rendered items
+        _initDragOnItems();
+
+    }
+
+    /* ─── Lightweight selection update (no DOM rebuild) ─── */
+    function updateSelection() {
+        const list = body.querySelector('#fm-file-list');
+        const itemSelector = '.fm-file-item, .fm-grid-item, .fm-thumb-item';
+        list.querySelectorAll(itemSelector).forEach(el => {
+            const name = el.dataset.name;
+            const isSelected = state.selected.has(name);
+            el.classList.toggle('selected', isSelected);
+            el.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+            const cb = el.querySelector('input[type="checkbox"]');
+            if (cb) cb.checked = isSelected;
+        });
+
+        // Status bar
+        const dirs = state.items.filter(i => i.is_dir).length;
+        const files = state.items.filter(i => !i.is_dir).length;
+        const totalSize = state.items.filter(i => !i.is_dir).reduce((s, i) => s + i.size, 0);
+        let selectedSizeInfo = '';
+        if (state.selected.size) {
+            const selSize = state.items.filter(i => state.selected.has(i.name) && !i.is_dir).reduce((s, i) => s + i.size, 0);
+            selectedSizeInfo = ` | ${t('Zaznaczono:')} ${state.selected.size} (${formatBytes(selSize)})`;
+        }
+        body.querySelector('#fm-statusbar').textContent =
+            `${state.items.length} ${t('elementów')} (${dirs} ${t('folderów')}, ${files} ${t('plików')}) — ${formatBytes(totalSize)}` + selectedSizeInfo;
+
+        updateSelectionBar();
+
+        const headerCb = body.querySelector('#fm-header-cb');
+        if (headerCb) {
+            headerCb.checked = state.items.length > 0 && state.selected.size === state.items.length;
+            headerCb.indeterminate = state.selected.size > 0 && state.selected.size < state.items.length;
+        }
+    }
+
+    function updateSelectionBar() {
+        const selPanel = body.querySelector('#fm-header-selection');
+        const colPanel = body.querySelector('#fm-header-columns');
+        const header = body.querySelector('#fm-list-header');
+        const count = state.selected.size;
+        // In select mode, use floating batch bar — hide header selection panel
+        if (state.selectMode) {
+            selPanel.classList.add('hidden');
+            colPanel.classList.remove('hidden');
+            header.classList.remove('fm-header-selecting');
+        } else if (count > 0) {
+            selPanel.classList.remove('hidden');
+            colPanel.classList.add('hidden');
+            header.classList.add('fm-header-selecting');
+            body.querySelector('#fm-sel-count').textContent = count + ' ' + t('selected');
+        } else {
+            selPanel.classList.add('hidden');
+            colPanel.classList.remove('hidden');
+            header.classList.remove('fm-header-selecting');
+        }
+        updateFMBatchBar();
+        updateClipboardBar();
+    }
+
+    function updateFMBatchBar() {
+        const main = body.querySelector('.fm-main');
+        if (!main) return;
+        let bar = main.querySelector('.fm-batch-bar');
+        const count = state.selected.size;
+        // Show batch bar only in select mode with items selected
+        if (!state.selectMode || count === 0) {
+            if (bar) bar.remove();
+            return;
+        }
+        if (!bar) {
+            bar = document.createElement('div');
+            bar.className = 'fm-batch-bar';
+            bar.innerHTML = `
+                <span class="fm-batch-count"></span>
+                <button class="fm-toolbar-btn fm-batch-copy" title="${t('Copy')}"><i class="fas fa-copy"></i> ${t('Copy')}</button>
+                <button class="fm-toolbar-btn fm-batch-cut" title="${t('Cut')}"><i class="fas fa-cut"></i> ${t('Cut')}</button>
+                <button class="fm-toolbar-btn fm-batch-download" title="${t('Pobierz')}"><i class="fas fa-download"></i></button>
+                <button class="fm-toolbar-btn fm-btn-danger fm-batch-delete" title="${t('Move to Trash')}"><i class="fas fa-trash"></i></button>
+                <button class="fm-batch-cancel">${t('Anuluj')}</button>
+            `;
+            bar.querySelector('.fm-batch-copy').addEventListener('click', clipboardCopy);
+            bar.querySelector('.fm-batch-cut').addEventListener('click', clipboardCut);
+            bar.querySelector('.fm-batch-download').addEventListener('click', downloadSelected);
+            bar.querySelector('.fm-batch-delete').addEventListener('click', deleteSelected);
+            bar.querySelector('.fm-batch-cancel').addEventListener('click', () => {
+                setFMSelectMode(false);
+            });
+            main.appendChild(bar);
+        }
+        bar.querySelector('.fm-batch-count').textContent = count + ' ' + t('zaznaczonych');
+    }
+
+    /* ─── Keyboard focus indicator (roving highlight) ─── */
+    function setFocusedIndex(idx, scrollIntoView = true) {
+        state.focusedIndex = idx;
+        const list = body.querySelector('#fm-file-list');
+        const itemSel = '.fm-file-item, .fm-grid-item, .fm-thumb-item';
+        const activeId = idx >= 0 ? `fm-item-${idx}` : '';
+        list.setAttribute('aria-activedescendant', activeId);
+        list.querySelectorAll(itemSel).forEach(el => {
+            const isActive = parseInt(el.dataset.idx) === idx;
+            el.classList.toggle('fm-focused', isActive);
+            if (isActive && scrollIntoView) {
+                el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            }
+        });
+    }
+
+    function updateClipboardBar() {
+        const bar = body.querySelector('#fm-clipboard-bar');
+        if (state.clipboard) {
+            bar.classList.remove('hidden');
+            const modeText = state.clipboard.mode === 'copy' ? t('Copied') : t('Cut');
+            body.querySelector('#fm-clipboard-text').textContent = modeText + ': ' + state.clipboard.paths.length + ' ' + t('item(s)');
+        } else {
+            bar.classList.add('hidden');
+        }
+    }
+
+    function previewFile(name) {
+        const ext = name.split('.').pop().toLowerCase();
+        const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg', 'ico'];
+        const textExts = ['txt', 'log', 'md', 'json', 'xml', 'yaml', 'yml', 'csv', 'ini', 'cfg', 'conf', 'sh', 'py', 'js', 'ts', 'html', 'css', 'sql', 'php', 'java', 'c', 'cpp', 'h', 'rb', 'go', 'rs'];
+        const docExts = ['docx'];
+        const videoExts = ['mp4', 'webm', 'mkv', 'avi', 'mov'];
+        const audioExts = ['mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a'];
+        const mediaExts = [...imageExts, ...videoExts];
+
+        // If it's a document file, open in the editor
+        if (docExts.includes(ext)) {
+            const filePath = itemFullPath(name);
+            const appDef = NAS.apps?.find(a => a.id === 'doc-editor') || { id: 'doc-editor', icon: 'fa-file-word', color: '#2563eb' };
+            openApp(appDef, { path: filePath, filename: name });
+            return;
+        }
+
+        // If it's a media file, open the media viewer
+        if (mediaExts.includes(ext)) {
+            openMediaViewer(name);
+            return;
+        }
+
+        const path = itemFullPath(name);
+
+        if (audioExts.includes(ext)) {
+            createWindow('preview-' + name, {
+                title: name,
+                icon: 'fa-music',
+                iconColor: '#34d399',
+                width: 400,
+                height: 150,
+                minHeight: 150,
+                singleton: false,
+                content: `<div class="app-player-wrap"><audio controls autoplay class="app-w-full"><source src="/api/files/preview?path=${encodeURIComponent(path)}"></audio></div>`,
+            });
+        } else if (textExts.includes(ext)) {
+            // Open in code editor
+            const filePath = itemFullPath(name);
+            const appDef = NAS.apps?.find(a => a.id === 'code-editor') || { id: 'code-editor', icon: 'fa-code', color: '#22d3ee' };
+            openApp(appDef, { path: filePath, filename: name });
+        } else {
+            // Just download
+            downloadSelected();
+        }
+    }
+
+    /* ─── Media Viewer (images + videos with navigation & delete) ─── */
+    function openMediaViewer(startName) {
+        const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg', 'ico'];
+        const videoExts = ['mp4', 'webm', 'mkv', 'avi', 'mov'];
+        const mediaExts = [...imageExts, ...videoExts];
+
+        // Collect all media files in current folder, sorted same as file list
+        let mediaFiles = sortItems(state.items).filter(item => {
+            if (item.is_dir) return false;
+            const e = item.name.split('.').pop().toLowerCase();
+            return mediaExts.includes(e);
+        });
+
+        if (!mediaFiles.length) return;
+
+        let currentIdx = mediaFiles.findIndex(f => f.name === startName);
+        if (currentIdx < 0) currentIdx = 0;
+
+        const winId = 'media-viewer';
+
+        function getFilePath(name) {
+            // Photo favorites have full path on each item
+            const file = mediaFiles[currentIdx];
+            if (file && file.path) return file.path;
+            return joinCurrentPath(name);
+        }
+
+        function isImage(name) {
+            return imageExts.includes(name.split('.').pop().toLowerCase());
+        }
+
+        function renderMedia(bodyEl) {
+            const file = mediaFiles[currentIdx];
+            if (!file) return;
+            const filePath = getFilePath(file.name);
+            const src = `/api/files/preview?path=${encodeURIComponent(filePath)}`;
+
+            // Update window title
+            const winData = WM.windows.get(winId);
+            if (winData) {
+                const titleSpan = winData.el.querySelector('.window-title span');
+                if (titleSpan) titleSpan.textContent = file.name;
+            }
+
+            let mediaHtml;
+            if (isImage(file.name)) {
+                mediaHtml = `<img class="mv-media mv-img" src="${src}" alt="${file.name}" draggable="false">`;
+            } else {
+                mediaHtml = `<video class="mv-media mv-video" controls autoplay><source src="${src}"></video>`;
+            }
+
+            bodyEl.innerHTML = `
+                <div class="mv-container">
+                    <div class="mv-content">${mediaHtml}</div>
+                    <div class="mv-overlay mv-nav-left" title="${t('Poprzedni')}"><i class="fas fa-chevron-left"></i></div>
+                    <div class="mv-overlay mv-nav-right" title="${t('Następny')}"><i class="fas fa-chevron-right"></i></div>
+                    <div class="mv-topbar">
+                        <span class="mv-counter">${currentIdx + 1} / ${mediaFiles.length}</span>
+                        <span class="mv-filename">${file.name}</span>
+                        <div class="mv-actions">
+                            <button class="mv-btn mv-fav-btn${isPhotoFavorite(filePath) ? ' active' : ''}" id="mv-favorite" title="${t('Ulubione')} (F)"><i class="fas fa-heart"></i></button>
+                            <button class="mv-btn" id="mv-delete" title="${t('Usuń')} (Delete)"><i class="fas fa-trash"></i></button>
+                            <button class="mv-btn" id="mv-download" title="${t('Pobierz')}"><i class="fas fa-download"></i></button>
+                            <button class="mv-btn" id="mv-close" title="${t('Zamknij')} (Esc)"><i class="fas fa-times"></i></button>
+                        </div>
+                    </div>
+                    <div class="mv-bottombar">
+                        <button class="mv-nav-btn" id="mv-prev" ${currentIdx <= 0 ? 'disabled' : ''}><i class="fas fa-arrow-left"></i> ${t('Poprzedni')}</button>
+                        <span class="mv-info">${file.is_dir ? '' : formatBytes(file.size)}</span>
+                        <button class="mv-nav-btn" id="mv-next" ${currentIdx >= mediaFiles.length - 1 ? 'disabled' : ''}>${t('Następny')} <i class="fas fa-arrow-right"></i></button>
+                    </div>
+                </div>
+            `;
+
+            // Nav click handlers
+            bodyEl.querySelector('.mv-nav-left')?.addEventListener('click', goPrev);
+            bodyEl.querySelector('.mv-nav-right')?.addEventListener('click', goNext);
+            bodyEl.querySelector('#mv-prev')?.addEventListener('click', goPrev);
+            bodyEl.querySelector('#mv-next')?.addEventListener('click', goNext);
+            bodyEl.querySelector('#mv-favorite')?.addEventListener('click', toggleFavCurrent);
+            bodyEl.querySelector('#mv-delete')?.addEventListener('click', deleteCurrent);
+            bodyEl.querySelector('#mv-download')?.addEventListener('click', downloadCurrent);
+            bodyEl.querySelector('#mv-close')?.addEventListener('click', () => closeWindow(winId));
+
+            // Touch swipe support (mobile) — skip when touching video controls
+            const container = bodyEl.querySelector('.mv-container');
+            let touchStartX = 0, touchStartY = 0, touchDeltaX = 0, touchDeltaY = 0;
+            let swipeDir = null; // 'h' horizontal, 'v' vertical, null = undecided
+            let touchOnVideo = false; // true if touch started on <video>
+            const SWIPE_THRESHOLD = 50;
+            const LOCK_ANGLE = 8; // px movement before locking direction
+
+            container.addEventListener('touchstart', (e) => {
+                if (e.touches.length !== 1) return;
+                // Don't intercept touches on video element (let native controls work)
+                touchOnVideo = e.target.closest('video') !== null;
+                if (touchOnVideo) return;
+                touchStartX = e.touches[0].clientX;
+                touchStartY = e.touches[0].clientY;
+                touchDeltaX = 0;
+                touchDeltaY = 0;
+                swipeDir = null;
+            }, { passive: true });
+
+            container.addEventListener('touchmove', (e) => {
+                if (touchOnVideo) return; // let video handle its own gestures
+                if (e.touches.length !== 1) return;
+                touchDeltaX = e.touches[0].clientX - touchStartX;
+                touchDeltaY = e.touches[0].clientY - touchStartY;
+                const ax = Math.abs(touchDeltaX), ay = Math.abs(touchDeltaY);
+
+                // Lock direction after small movement
+                if (!swipeDir && (ax > LOCK_ANGLE || ay > LOCK_ANGLE)) {
+                    swipeDir = ax >= ay ? 'h' : 'v';
+                }
+                if (!swipeDir) return;
+                e.preventDefault();
+
+                const media = container.querySelector('.mv-content');
+                if (!media) return;
+                if (swipeDir === 'h') {
+                    media.style.transform = `translateX(${touchDeltaX}px)`;
+                } else {
+                    // Vertical: translate Y + opacity hint
+                    const progress = Math.min(Math.abs(touchDeltaY) / 150, 1);
+                    media.style.transform = `translateY(${touchDeltaY}px)`;
+                    media.style.opacity = `${1 - progress * 0.4}`;
+                }
+            }, { passive: false });
+
+            container.addEventListener('touchend', () => {
+                if (touchOnVideo) { touchOnVideo = false; return; }
+                const media = container.querySelector('.mv-content');
+                if (!swipeDir || !media) {
+                    if (media) { media.style.transform = ''; media.style.opacity = ''; }
+                    return;
+                }
+
+                if (swipeDir === 'h') {
+                    if (Math.abs(touchDeltaX) >= SWIPE_THRESHOLD) {
+                        media.style.transition = 'transform 0.2s ease-out';
+                        media.style.transform = `translateX(${touchDeltaX > 0 ? '100%' : '-100%'})`;
+                        setTimeout(() => {
+                            if (touchDeltaX > 0) goPrev();
+                            else goNext();
+                        }, 150);
+                    } else {
+                        // Snap back
+                        media.style.transition = 'transform 0.2s ease-out';
+                        media.style.transform = '';
+                        setTimeout(() => { media.style.transition = ''; }, 200);
+                    }
+                } else {
+                    // Vertical swipe
+                    if (Math.abs(touchDeltaY) >= SWIPE_THRESHOLD) {
+                        // Animate out
+                        media.style.transition = 'transform 0.2s ease-out, opacity 0.2s ease-out';
+                        media.style.transform = `translateY(${touchDeltaY > 0 ? '100%' : '-100%'})`;
+                        media.style.opacity = '0';
+                        setTimeout(() => {
+                            if (touchDeltaY > 0) {
+                                // Swipe down → delete without confirmation
+                                deleteCurrentNoConfirm();
+                            } else {
+                                // Swipe up → toggle favorite
+                                toggleFavCurrent();
+                            }
+                        }, 150);
+                    } else {
+                        // Snap back
+                        media.style.transition = 'transform 0.2s ease-out, opacity 0.2s ease-out';
+                        media.style.transform = '';
+                        media.style.opacity = '';
+                        setTimeout(() => { media.style.transition = ''; }, 200);
+                    }
+                }
+                swipeDir = null;
+            }, { passive: true });
+        }
+
+        function goPrev() {
+            if (currentIdx > 0) {
+                currentIdx--;
+                const bodyEl = document.getElementById('win-body-' + winId);
+                if (bodyEl) renderMedia(bodyEl);
+            }
+        }
+
+        function goNext() {
+            if (currentIdx < mediaFiles.length - 1) {
+                currentIdx++;
+                const bodyEl = document.getElementById('win-body-' + winId);
+                if (bodyEl) renderMedia(bodyEl);
+            }
+        }
+
+        async function deleteCurrent() {
+            const file = mediaFiles[currentIdx];
+            if (!file) return;
+            const sure = await confirmDialog(t('Usuń'), `${t('Czy na pewno usunąć')} "${file.name}"?`);
+            if (!sure) return;
+            await _doDelete(file);
+        }
+
+        async function deleteCurrentNoConfirm() {
+            const file = mediaFiles[currentIdx];
+            if (!file) return;
+            await _doDelete(file);
+        }
+
+        async function _doDelete(file) {
+            const filePath = getFilePath(file.name);
+            try {
+                await api('/files/delete', { method: 'DELETE', body: { paths: [filePath] } });
+                toast(t('Przeniesiono do kosza:') + ` "${file.name}"`, 'success');
+
+                // Also remove from photo favorites if it was favorited
+                if (isPhotoFavorite(filePath)) {
+                    try { await api('/photos/favorites', { method: 'DELETE', body: { path: filePath } }); } catch {}
+                    await loadPhotoFavorites();
+                }
+
+                // Remove from media list
+                mediaFiles.splice(currentIdx, 1);
+                // Also refresh file manager state
+                state.items = state.items.filter(i => i.name !== file.name);
+                state.selected.delete(file.name);
+                renderFileList();
+
+                if (mediaFiles.length === 0) {
+                    closeWindow(winId);
+                    return;
+                }
+                if (currentIdx >= mediaFiles.length) currentIdx = mediaFiles.length - 1;
+                const bodyEl = document.getElementById('win-body-' + winId);
+                if (bodyEl) renderMedia(bodyEl);
+            } catch {
+                toast(t('Błąd usuwania'), 'error');
+            }
+        }
+
+        function downloadCurrent() {
+            const file = mediaFiles[currentIdx];
+            if (!file) return;
+            const filePath = getFilePath(file.name);
+            const tk = NAS.token || '';
+            const a = document.createElement('a');
+            a.href = `/api/files/download?path=${encodeURIComponent(filePath)}&token=${encodeURIComponent(tk)}`;
+            a.download = file.name;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+        }
+
+        async function toggleFavCurrent() {
+            const file = mediaFiles[currentIdx];
+            if (!file) return;
+            const filePath = getFilePath(file.name);
+            await togglePhotoFavorite(filePath);
+            // Update the heart button state
+            const btn = document.getElementById('mv-favorite');
+            if (btn) btn.classList.toggle('active', isPhotoFavorite(filePath));
+        }
+
+        // Keyboard handler
+        function onKeyDown(e) {
+            // Only handle if this window is focused
+            const winData = WM.windows.get(winId);
+            if (!winData || WM.activeId !== winId) return;
+
+            if (e.key === 'ArrowLeft') { e.preventDefault(); goPrev(); }
+            else if (e.key === 'ArrowRight') { e.preventDefault(); goNext(); }
+            else if (e.key === 'Delete') { e.preventDefault(); deleteCurrent(); }
+            else if (e.key === 'Escape') { e.preventDefault(); closeWindow(winId); }
+            else if (e.key === 'f' || e.key === 'F') { e.preventDefault(); toggleFavCurrent(); }
+        }
+
+        // Close existing viewer if open (remove old keydown listener first)
+        if (WM.windows.has(winId)) closeWindow(winId);
+
+        document.addEventListener('keydown', onKeyDown);
+
+        createWindow(winId, {
+            title: mediaFiles[currentIdx].name,
+            icon: 'fa-images',
+            iconColor: '#a78bfa',
+            width: 900,
+            height: 650,
+            singleton: false,
+            onRender: (bodyEl) => renderMedia(bodyEl),
+            onClose: () => {
+                document.removeEventListener('keydown', onKeyDown);
+            },
+        });
+
+        // Auto-maximize on small screens (phones)
+        if (window.innerWidth <= 768) {
+            toggleMaximize(winId);
+        }
+    }
+
+    function escapeHtml(str) {
+        return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    // ─── Context menu ───
+    function showFMContextMenu(x, y) {
+        let existing = document.querySelector('.fm-ctx-menu');
+        if (existing) existing.remove();
+
+        const menu = document.createElement('div');
+        menu.className = 'fm-ctx-menu';
+        menu.style.cssText = `position:fixed;left:${x}px;top:${y}px;z-index:9999;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--r-md);box-shadow:var(--shadow-lg);padding:4px 0;min-width:200px;max-height:80vh;overflow-y:auto;`;
+
+        const selCount = state.selected.size;
+        const singleSelected = selCount === 1 ? [...state.selected][0] : null;
+        const singleItem = singleSelected ? state.items.find(i => i.name === singleSelected) : null;
+
+        const items = [];
+
+        // New file / New folder — on empty space right-click (no selection)
+        if (selCount === 0) {
+            items.push({ icon: 'fa-folder-plus', label: t('Nowy folder'), action: 'newfolder', cls: 'accent' });
+            items.push({ icon: 'fa-file-medical', label: t('Nowy plik'), action: 'newfile', cls: 'accent' });
+            items.push({ sep: true });
+            items.push({ icon: 'fa-upload', label: t('Prześlij pliki'), action: 'upload' });
+            items.push({ icon: 'fa-folder', label: t('Prześlij folder'), action: 'upload-folder' });
+            items.push({ sep: true });
+        }
+
+        // Open — only for single selection
+        if (singleSelected) {
+            items.push({ icon: 'fa-folder-open', label: t('Otwórz'), action: 'open' });
+        }
+
+        // Download
+        if (selCount > 0) {
+            const dlLabel = selCount > 1 ? t('Pobierz') + ` (${selCount}) jako ZIP` : (singleItem?.is_dir ? t('Pobierz folder jako ZIP') : t('Pobierz'));
+            items.push({ icon: 'fa-download', label: dlLabel, action: 'download' });
+            items.push({ icon: 'fa-network-wired', label: t('Prześlij do NAS'), action: 'send-to-nas' });
+        }
+
+        items.push({ sep: true });
+
+        // Select all
+        items.push({ icon: 'fa-check-double', label: t('Zaznacz wszystko'), action: 'selectall' });
+
+        // Open in Gallery
+        if (singleItem && singleItem.is_dir) {
+             items.push({ icon: 'fa-images', label: t('Pokaż w Galerii'), action: 'open-gallery-folder' });
+        }
+        const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg', 'ico'];
+        const ext = singleItem ? singleItem.name.split('.').pop().toLowerCase() : '';
+        if (singleItem && !singleItem.is_dir && imageExts.includes(ext)) {
+             items.push({ icon: 'fa-image', label: t('Pokaż w Galerii'), action: 'open-gallery-file' });
+        }
+
+        items.push({ sep: true });
+
+        // Copy / Cut
+        items.push({ icon: 'fa-copy', label: selCount > 1 ? t('Kopiuj') + ` (${selCount})` : t('Kopiuj'), action: 'copy' });
+        items.push({ icon: 'fa-cut', label: selCount > 1 ? t('Wytnij') + ` (${selCount})` : t('Wytnij'), action: 'cut' });
+
+        // Paste — if clipboard has items
+        if (state.clipboard) {
+            const pMode = state.clipboard.mode === 'copy' ? t('Wklej') : t('Przenieś tutaj');
+            items.push({ icon: 'fa-paste', label: pMode + ' (' + state.clipboard.paths.length + ')', action: 'paste' });
+        }
+
+        items.push({ sep: true });
+
+        // Archive operations
+        if (selCount > 0) {
+            items.push({ icon: 'fa-file-archive', label: selCount > 1 ? t('Kompresuj do ZIP') + ` (${selCount})` : t('Kompresuj do ZIP'), action: 'compress-zip' });
+            items.push({ icon: 'fa-file-archive', label: selCount > 1 ? t('Kompresuj do TAR.GZ') + ` (${selCount})` : t('Kompresuj do TAR.GZ'), action: 'compress-targz' });
+        }
+        // Extract — single archive file
+        if (singleItem && !singleItem.is_dir) {
+            const ext = singleItem.name.split('.').pop().toLowerCase();
+            const archiveExts = ['zip', 'rar', '7z', 'gz', 'tgz', 'tbz2', 'txz', 'bz2', 'xz', 'tar', 'cab', 'iso'];
+            const fullName = singleItem.name.toLowerCase();
+            if (archiveExts.includes(ext) || fullName.endsWith('.tar.gz') || fullName.endsWith('.tar.bz2') || fullName.endsWith('.tar.xz') || /\.part\d+\.rar$/i.test(fullName) || /\.r\d+$/i.test(fullName)) {
+                items.push({ icon: 'fa-box-open', label: t('Rozpakuj tutaj'), action: 'extract' });
+            }
+        }
+
+        items.push({ sep: true });
+
+        // Favorites — only for single folder
+        if (singleItem && singleItem.is_dir) {
+            const folderPath = itemFullPath(singleItem);
+            if (isFavorite(folderPath)) {
+                items.push({ icon: 'fa-star', label: t('Usuń z ulubionych'), action: 'fav-remove', cls: 'accent' });
+            } else {
+                items.push({ icon: 'fa-star', label: t('Dodaj do ulubionych'), action: 'fav-add', cls: 'accent' });
+            }
+        }
+        // Also allow adding current directory from empty-space right-click
+        if (selCount === 0 && isRegularPath() && !isAtHomeRoot()) {
+            if (isFavorite(state.path)) {
+                items.push({ icon: 'fa-star', label: t('Usuń ten folder z ulubionych'), action: 'fav-remove-current', cls: 'accent' });
+            } else {
+                items.push({ icon: 'fa-star', label: t('Dodaj ten folder do ulubionych'), action: 'fav-add-current', cls: 'accent' });
+            }
+        }
+
+        // Share / Unshare via Samba — only for single folder
+
+        // Public share link — for single file or folder
+        if (singleSelected) {
+            items.push({ icon: 'fa-link', label: t('Udostępnij (Link)'), action: 'share-link', cls: 'accent' });
+        }
+
+        // Share / Unshare via Samba — only for single folder
+        if (singleItem && singleItem.is_dir) {
+            const existingShare = getShareForItem(singleItem);
+            if (existingShare) {
+                items.push({ icon: 'fa-share-alt-slash', label: t('Cofnij udostępnianie') + ` („${existingShare.name}”)`, action: 'samba-unshare', cls: 'danger' });
+            }
+            items.push({ icon: 'fa-share-alt', label: t('Udostępnij (Samba)'), action: 'samba-share', cls: 'accent' });
+        }
+
+        items.push({ sep: true });
+
+        // Rename — only single item
+        if (singleSelected) {
+            items.push({ icon: 'fa-pen', label: t('Zmień nazwę'), action: 'rename' });
+        }
+
+        // Gallery folder toggle — only for single folder
+        if (singleItem && singleItem.is_dir) {
+            const galPath = itemFullPath(singleItem);
+            const isGal = state.gallerySources && state.gallerySources.some(s => s.path === galPath);
+            if (isGal) {
+                items.push({ icon: 'fa-images', label: t('Otwórz w galerii'), action: 'gallery-open', cls: 'accent' });
+                items.push({ icon: 'fa-images', label: t('Usuń z galerii'), action: 'gallery-remove', cls: 'accent' });
+            } else {
+                items.push({ icon: 'fa-images', label: t('Oznacz jako multimedialny'), action: 'gallery-add', cls: 'accent' });
+            }
+        }
+
+        // Open image/video file in gallery
+        if (singleItem && !singleItem.is_dir) {
+            const _fmExt = singleItem.name.split('.').pop().toLowerCase();
+            const _fmMediaExts = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg', 'mp4', 'webm', 'mkv', 'avi', 'mov'];
+            if (_fmMediaExts.includes(_fmExt)) {
+                items.push({ icon: 'fa-images', label: t('Otwórz w galerii'), action: 'open-in-gallery', cls: 'accent' });
+            }
+        }
+
+        // Scan for duplicates — only for single folder
+        if (singleItem && singleItem.is_dir) {
+            items.push({ icon: 'fa-clone', label: t('Skanuj duplikaty'), action: 'scan-duplicates', cls: 'accent' });
+        }
+
+        // Folder password protection — only for single folder
+        if (singleItem && singleItem.is_dir) {
+            items.push({ sep: true });
+            if (singleItem.protected) {
+                items.push({ icon: 'fa-lock-open', label: t('Usuń hasło folderu'), action: 'folder-pw-remove', cls: 'danger' });
+                if (singleItem.locked) {
+                    items.push({ icon: 'fa-unlock', label: t('Odblokuj folder'), action: 'folder-unlock', cls: 'accent' });
+                } else {
+                    items.push({ icon: 'fa-lock', label: t('Zablokuj ponownie'), action: 'folder-lock', cls: 'accent' });
+                }
+            } else {
+                items.push({ icon: 'fa-lock', label: t('Zabezpiecz hasłem'), action: 'folder-pw-set', cls: 'accent' });
+            }
+        }
+
+        // Properties — single item
+        if (singleItem) {
+            items.push({ sep: true });
+            items.push({ icon: 'fa-info-circle', label: t('Właściwości'), action: 'properties' });
+        }
+
+        // Eject USB — when browsing inside a USB drive
+        const _usbPool = state.storagePools.find(p => p.type === 'usb' && state.path.startsWith(p.mount_path));
+        if (_usbPool) {
+            items.push({ icon: 'fa-eject', label: t('Wysuń USB') + ` (${_usbPool.name})`, action: 'eject-usb', cls: 'danger' });
+        }
+
+        // Delete
+        items.push({ sep: true });
+        if (selCount > 0) {
+            items.push({ icon: 'fa-cloud-upload-alt', label: selCount > 1 ? t('Transferuj do NAS') + ` (${selCount})` : t('Transferuj do NAS'), action: 'transfer-remote', cls: 'accent' });
+        }
+        items.push({ icon: 'fa-trash', label: selCount > 1 ? t('Do kosza') + ` (${selCount})` : t('Do kosza'), action: 'delete', cls: 'danger' });
+
+        menu.innerHTML = items.map(item => {
+            if (item.sep) return '<div class="app-divider"></div>';
+            const color = item.cls === 'danger' ? 'var(--danger)' : item.cls === 'accent' ? 'var(--accent)' : item.cls === 'accent-purple' ? 'var(--accent-purple)' : 'var(--text-primary)';
+            const iconColor = item.cls === 'danger' ? 'var(--danger)' : item.cls === 'accent' ? 'var(--accent)' : item.cls === 'accent-purple' ? 'var(--accent-purple)' : 'var(--text-muted)';
+            return `<button data-action="${item.action}" class="app-ctx-btn" style="color:${color}" onmouseover="this.style.background='rgba(255,255,255,0.06)'" onmouseout="this.style.background='none'">
+                <i class="fas ${item.icon} app-icon-fixed" style="color:${iconColor}"></i>
+                ${item.label}
+            </button>`;
+        }).join('');
+
+        menu.addEventListener('click', async (e) => {
+            const btn = e.target.closest('[data-action]');
+            if (!btn) return;
+            menu.remove();
+            switch (btn.dataset.action) {
+                case 'open':
+                    const selected = [...state.selected][0];
+                    const item = state.items.find(i => i.name === selected);
+                    if (item?.is_dir) navigateTo(itemFullPath(item));
+                    else if (item) previewFile(item.name);
+                    break;
+                case 'download': downloadSelected(); break;
+                case 'dl-download-here': {
+                    if (singleItem && singleItem.is_dir) {
+                        openDLMForFolder(itemFullPath(singleItem));
+                    }
+                    break;
+                }
+                case 'rename': renameSelected(); break;
+                case 'delete': deleteSelected(); break;
+                case 'send-to-nas': {
+                    const paths = [...state.selected].map(name => {
+                        const it = state.items.find(i => i.name === name);
+                        return it ? itemFullPath(it) : null;
+                    }).filter(Boolean);
+                    openApp('naslink', { tab: 'transfer', paths });
+                    break;
+                }
+                case 'open-gallery-folder':
+                    if (singleItem) openApp('gallery', { folder: itemFullPath(singleItem) });
+                    break;
+                case 'open-gallery-file':
+                    openApp('gallery', { folder: state.path, file: itemFullPath(singleItem) });
+                    break;
+                case 'copy': clipboardCopy(); break;
+                case 'cut': clipboardCut(); break;
+                case 'paste': clipboardPaste(); break;
+                case 'selectall': selectAll(); break;
+                case 'newfolder': createNewFolder(); break;
+                case 'newfile': createNewFile(); break;
+                case 'upload': uploadFiles(); break;
+                case 'upload-folder': uploadFolder(); break;
+                case 'fav-add': {
+                    const s = [...state.selected][0];
+                    const fp = joinCurrentPath(s);
+                    addFavorite(fp, s);
+                    break;
+                }
+                case 'fav-remove': {
+                    const s2 = [...state.selected][0];
+                    const fp2 = joinCurrentPath(s2);
+                    removeFavorite(fp2);
+                    break;
+                }
+                case 'fav-add-current': addFavorite(state.path, state.path.split('/').pop()); break;
+                case 'fav-remove-current': removeFavorite(state.path); break;
+                case 'samba-share': shareSamba(); break;
+                case 'samba-unshare': unshareSamba(); break;
+                case 'share-link': shareLink(); break;
+                case 'compress-zip': compressSelected('zip'); break;
+                case 'compress-targz': compressSelected('tar.gz'); break;
+                case 'extract': extractSelected(); break;
+                case 'gallery-add': {
+                    const gs = [...state.selected][0];
+                    const gPath = itemFullPath(gs);
+                    const gLabel = typeof gs === 'string' ? gs : gs.name || gPath.split('/').pop();
+                    try {
+                        await api('/gallery/folders', { method: 'POST', body: { path: gPath, label: gLabel } });
+                        toast('Folder dodany do galerii', 'success');
+                        _fmLoadGallerySources();
+                    } catch (e) { toast(t('Błąd: ') + (e.message || e), 'error'); }
+                    break;
+                }
+                case 'gallery-open': {
+                    const goItem = [...state.selected][0];
+                    const goPath = itemFullPath(goItem);
+                    const galApp = NAS.apps?.find(a => a.id === 'gallery') || { id: 'gallery', type: 'builtin' };
+                    openApp(galApp, { folder: goPath });
+                    break;
+                }
+                case 'gallery-remove': {
+                    const gr = [...state.selected][0];
+                    const grPath = itemFullPath(gr);
+                    try {
+                        await api('/gallery/folders', { method: 'DELETE', body: { path: grPath } });
+                        toast(t('Folder usunięty z galerii'), 'info');
+                        _fmLoadGallerySources();
+                    } catch (e) { toast(t('Błąd: ') + (e.message || e), 'error'); }
+                    break;
+                }
+                case 'scan-duplicates': {
+                    const s = [...state.selected][0];
+                    const folderPath = itemFullPath(s);
+                    const dupApp = NAS.apps?.find(a => a.id === 'duplicates') || { id: 'duplicates', name: t('Duplikaty zdjęć'), icon: 'fa-clone', color: '#a78bfa', type: 'builtin' };
+                    openApp(dupApp, { scanPath: folderPath, forceScan: true });
+                    break;
+                }
+                case 'folder-pw-set': {
+                    const fpPath = itemFullPath([...state.selected][0]);
+                    const pw = await promptDialog(t('Zabezpiecz hasłem'), t('Podaj hasło dla folderu (min. 4 znaki):'));
+                    if (!pw) break;
+                    if (pw.length < 4) { toast(t('Hasło musi mieć minimum 4 znaki'), 'error'); break; }
+                    const pw2 = await promptDialog(t('Potwierdź hasło'), t('Powtórz hasło:'));
+                    if (pw !== pw2) { toast(t('Hasła nie są identyczne'), 'error'); break; }
+                    const setRes = await api('/files/folder-password', { method: 'POST', body: { path: fpPath, password: pw } });
+                    if (setRes.ok) { toast(t('Hasło ustawione'), 'success'); navigateTo(state.path); }
+                    else toast(setRes.error || t('Błąd'), 'error');
+                    break;
+                }
+                case 'folder-pw-remove': {
+                    const frPath = itemFullPath([...state.selected][0]);
+                    const isAdmin = NAS.user?.role === 'admin';
+                    let rpw = '';
+                    if (isAdmin) {
+                        // Admin override check
+                        const override = await new Promise(resolve => {
+                            const overlay = document.createElement('div');
+                            overlay.className = 'app-modal-overlay';
+                            overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9999;display:flex;align-items:center;justify-content:center';
+                            overlay.innerHTML = `
+                                <div class="app-modal" style="background:var(--bg-surface,#1e1e2e);padding:20px;border-radius:10px;border:1px solid var(--border,#333);min-width:300px">
+                                    <h3 style="margin-top:0">${t('Usuń hasło folderu')}</h3>
+                                    <p>${t('Podaj aktualne hasło:')}</p>
+                                    <input type="password" id="pw-remove-input" class="app-input" style="width:100%;margin-bottom:10px" autofocus>
+                                    <div style="margin-bottom:15px">
+                                        <label style="display:flex;align-items:center;gap:8px;font-size:0.9em;color:var(--text-muted)">
+                                            <input type="checkbox" id="pw-admin-force"> ${t('Wymuś usunięcie (Admin)')}
+                                        </label>
+                                    </div>
+                                    <div style="display:flex;justify-content:flex-end;gap:10px">
+                                        <button id="pw-cancel" class="app-btn">${t('Anuluj')}</button>
+                                        <button id="pw-confirm" class="app-btn app-btn-primary">${t('Usuń')}</button>
+                                    </div>
+                                </div>
+                            `;
+                            document.body.appendChild(overlay);
+
+                            const inp = overlay.querySelector('#pw-remove-input');
+                            const forceCb = overlay.querySelector('#pw-admin-force');
+
+                            const close = (res) => { overlay.remove(); resolve(res); };
+                            overlay.querySelector('#pw-cancel').onclick = () => close(null);
+                            overlay.querySelector('#pw-confirm').onclick = () => close({ pw: inp.value, force: forceCb.checked });
+                            inp.onkeydown = e => { if(e.key === 'Enter') close({ pw: inp.value, force: forceCb.checked }); };
+                        });
+
+                        if (!override) break;
+                        const rmRes = await api('/files/folder-password', { method: 'DELETE', body: { path: frPath, password: override.pw, force: override.force } });
+                        if (rmRes.ok) { toast(t('Hasło usunięte'), 'success'); navigateTo(state.path); }
+                        else toast(rmRes.error || t('Nieprawidłowe hasło'), 'error');
+                        break;
+                    }
+
+                    rpw = await promptDialog(t('Usuń hasło folderu'), t('Podaj aktualne hasło:'));
+                    if (!rpw) break;
+                    const rmRes = await api('/files/folder-password', { method: 'DELETE', body: { path: frPath, password: rpw } });
+                    if (rmRes.ok) { toast(t('Hasło usunięte'), 'success'); navigateTo(state.path); }
+                    else toast(rmRes.error || t('Nieprawidłowe hasło'), 'error');
+                    break;
+                }
+                case 'folder-unlock': {
+                    const fuPath = itemFullPath([...state.selected][0]);
+                    const upw = await promptDialog(t('Odblokuj folder'), t('Podaj hasło:'));
+                    if (!upw) break;
+                    const ulRes = await api('/files/folder-unlock', { method: 'POST', body: { path: fuPath, password: upw } });
+                    if (ulRes.ok) { toast(t('Folder odblokowany'), 'success'); navigateTo(state.path); }
+                    else toast(ulRes.error || t('Nieprawidłowe hasło'), 'error');
+                    break;
+                }
+                case 'folder-lock': {
+                    const flPath = itemFullPath([...state.selected][0]);
+                    const lkRes = await api('/files/folder-lock', { method: 'POST', body: { path: flPath } });
+                    if (lkRes.ok) { toast(t('Folder zablokowany'), 'success'); navigateTo(state.path); }
+                    else toast(lkRes.error || t('Błąd'), 'error');
+                    break;
+                }
+                case 'properties': {
+                    const propItem = singleItem;
+                    if (!propItem) break;
+                    const propPath = itemFullPath(propItem);
+                    await showPropertiesDialog(propItem, propPath);
+                    break;
+                }
+                case 'transfer-remote': transferToRemoteNAS(); break;
+                case 'eject-usb': {
+                    const usbPool = state.storagePools.find(p => p.type === 'usb' && state.path.startsWith(p.mount_path));
+                    if (!usbPool || !usbPool.device) { toast(t('Nie znaleziono dysku USB'), 'error'); break; }
+                    const doEject = await confirmDialog(t('Wysuń USB'), t('Czy na pewno chcesz wysunąć') + ` "${usbPool.name}"?`);
+                    if (!doEject) break;
+                    try {
+                        const res = await api('/storage/eject', { method: 'POST', body: { disk: usbPool.device } });
+                        if (res.success || res.ok) {
+                            toast(`${t('Bezpiecznie wysunięto')} ${usbPool.name}`, 'success');
+                            navigateTo(state.homePath || '/home/' + (NAS.user?.username || 'user'));
+                            loadStoragePools();
+                        } else {
+                            toast(res.error || t('Błąd wysuwania'), 'error');
+                        }
+                    } catch (err) {
+                        toast(t('Błąd wysuwania: ') + (err.message || err), 'error');
+                    }
+                    break;
+                }
+            }
+        });
+
+        document.body.appendChild(menu);
+        // Clamp to viewport
+        requestAnimationFrame(() => {
+            const rect = menu.getBoundingClientRect();
+            if (rect.bottom > window.innerHeight) {
+                menu.style.top = Math.max(4, window.innerHeight - rect.height - 4) + 'px';
+            }
+            if (rect.right > window.innerWidth) {
+                menu.style.left = Math.max(4, window.innerWidth - rect.width - 4) + 'px';
+            }
+        });
+        setTimeout(() => {
+            document.addEventListener('click', function handler() {
+                menu.remove();
+                document.removeEventListener('click', handler);
+            }, { once: true });
+        }, 50);
+    }
+
+    // ─── Trash View (Kosz) ───
+    async function renderTrashView() {
+        const list = body.querySelector('#fm-file-list');
+        const header = body.querySelector('#fm-list-header');
+        if (header) header.style.display = 'none';
+
+        list.className = 'fm-file-list fm-trash-view';
+        list.innerHTML = `<div class="fm-empty"><i class="fas fa-spinner fa-spin"></i><span>${t('Ładowanie kosza…')}</span></div>`;
+
+        let data;
+        try {
+            data = await api('/files/trash');
+        } catch {
+            list.innerHTML = `<div class="fm-empty"><i class="fas fa-exclamation-triangle"></i><span>${t('Błąd ładowania kosza')}</span></div>`;
+            return;
+        }
+
+        const items = data.items || [];
+        const retentionDays = data.retention_days || 30;
+
+        if (!items.length) {
+            list.innerHTML = `<div class="fm-empty"><i class="fas fa-trash-alt"></i><span>${t('Trash is empty')}</span></div>`;
+            body.querySelector('#fm-statusbar').textContent = t('Trash is empty');
+            return;
+        }
+
+        const totalSize = items.reduce((s, i) => s + (i.size || 0), 0);
+
+        list.innerHTML = `
+            <div class="fm-trash-header">
+                <div class="fm-trash-info">
+                    <i class="fas fa-info-circle"></i>
+                    ${t('Elementy w koszu są automatycznie usuwane po')} ${retentionDays} ${t('dniach.')}
+                </div>
+                <div class="fm-trash-actions">
+                    <button class="fm-trash-btn fm-trash-restore-all" title="${t('Przywróć wszystko')}">
+                        <i class="fas fa-undo"></i> ${t('Przywróć wszystko')}
+                    </button>
+                    <button class="fm-trash-btn fm-trash-empty-btn" title="${t('Opróżnij kosz')}">
+                        <i class="fas fa-trash"></i> ${t('Opróżnij kosz')}
+                    </button>
+                </div>
+            </div>
+            <div class="fm-trash-items">
+                ${items.map(item => {
+                    const icon = item.is_dir ? 'fa-folder' : 'fa-file';
+                    const daysClass = item.days_left <= 3 ? 'fm-trash-days-danger' : item.days_left <= 7 ? 'fm-trash-days-warn' : '';
+                    const isImage = /\.(jpg|jpeg|png|gif|bmp|webp|svg|ico)$/i.test(item.name);
+                    const thumbSrc = isImage && !item.is_dir ? `/api/files/trash/preview?id=${encodeURIComponent(item.trash_id)}&w=48&h=48` : '';
+                    return `
+                        <div class="fm-trash-item" data-trash-id="${item.trash_id}">
+                            <div class="fm-trash-item-icon">${isImage && !item.is_dir ? `<img src="${thumbSrc}" class="fm-trash-thumb" alt="">` : `<i class="fas ${icon}"></i>`}</div>
+                            <div class="fm-trash-item-info">
+                                <div class="fm-trash-item-name">${item.name}</div>
+                                <div class="fm-trash-item-meta">
+                                    <span class="fm-trash-item-path" title="${item.original_path}"><i class="fas fa-folder-open"></i> ${item.original_path}</span>
+                                    <span><i class="fas fa-calendar"></i> ${item.deleted_date}</span>
+                                    <span>${formatBytes(item.size || 0)}</span>
+                                    <span class="fm-trash-days ${daysClass}"><i class="fas fa-clock"></i> ${item.days_left} ${t('dni')}</span>
+                                </div>
+                            </div>
+                            <div class="fm-trash-item-actions">
+                                <button class="fm-trash-btn fm-trash-restore-one" data-trash-id="${item.trash_id}" title="${t('Przywróć')}">
+                                    <i class="fas fa-undo"></i>
+                                </button>
+                                <button class="fm-trash-btn fm-trash-delete-one" data-trash-id="${item.trash_id}" title="${t('Usuń trwale')}">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+        `;
+
+        body.querySelector('#fm-statusbar').textContent =
+            `${t('Kosz:')} ${items.length} ${t('elementów')} — ${formatBytes(totalSize)}`;
+
+        // Restore all
+        list.querySelector('.fm-trash-restore-all')?.addEventListener('click', async () => {
+            const sure = await confirmDialog(t('Przywróć wszystko'), `${t('Przywrócić')} ${items.length} ${t('elementów z kosza?')}`);
+            if (!sure) return;
+            try {
+                const r = await api('/files/trash/restore', { method: 'POST', body: { trash_ids: items.map(i => i.trash_id) } });
+                toast(`${t('Przywrócono')} ${(r.restored || []).length} ${t('elementów')}`, 'success');
+                if (r.errors?.length) toast(`${t('Błędy:')} ${r.errors.join(', ')}`, 'warning');
+                renderTrashView();
+            } catch { toast(t('Błąd przywracania'), 'error'); }
+        });
+
+        // Empty trash
+        list.querySelector('.fm-trash-empty-btn')?.addEventListener('click', async () => {
+            const sure = await confirmDialog(t('Opróżnij kosz'), `${t('Permanently delete')} ${items.length} ${t('items? This cannot be undone.')}`);
+            if (!sure) return;
+            try {
+                const r = await api('/files/trash/empty', { method: 'POST' });
+                toast(`${t('Kosz opróżniony')} (${r.removed || 0} ${t('elementów')})`, 'success');
+                renderTrashView();
+            } catch { toast(t('Błąd opróżniania kosza'), 'error'); }
+        });
+
+        // Restore single
+        list.querySelectorAll('.fm-trash-restore-one').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const tid = btn.dataset.trashId;
+                try {
+                    const r = await api('/files/trash/restore', { method: 'POST', body: { trash_ids: [tid] } });
+                    toast(`${t('Przywrócono:')} ${(r.restored || []).join(', ')}`, 'success');
+                    if (r.errors?.length) toast(r.errors.join(', '), 'warning');
+                    renderTrashView();
+                } catch { toast(t('Błąd przywracania'), 'error'); }
+            });
+        });
+
+        // Delete single permanently
+        list.querySelectorAll('.fm-trash-delete-one').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const tid = btn.dataset.trashId;
+                const item = items.find(i => i.trash_id === tid);
+                const sure = await confirmDialog(t('Usuń trwale'), `${t('Permanently delete')} "${item?.name || ''}"? ${t('This cannot be undone.')}`);
+                if (!sure) return;
+                try {
+                    await api('/files/trash/delete', { method: 'DELETE', body: { trash_ids: [tid] } });
+                    toast(t('Trwale usunięto'), 'success');
+                    renderTrashView();
+                } catch { toast(t('Błąd usuwania'), 'error'); }
+            });
+        });
+    }
+
+    // ─── Shared with me ───
+
+    async function renderSharedWithMe() {
+        const list = body.querySelector('#fm-file-list');
+        const header = body.querySelector('#fm-list-header');
+        if (header) header.style.display = 'none';
+
+        list.className = 'fm-file-list fm-trash-view';
+        list.innerHTML = `<div class="fm-empty"><i class="fas fa-spinner fa-spin"></i><span>${t('Ładowanie…')}</span></div>`;
+
+        let shares;
+        try {
+            shares = await api('/files/shares/received');
+        } catch {
+            list.innerHTML = `<div class="fm-empty"><i class="fas fa-exclamation-triangle"></i><span>${t('Błąd ładowania')}</span></div>`;
+            return;
+        }
+
+        if (!shares || !shares.length) {
+            list.innerHTML = `<div class="fm-empty"><i class="fas fa-share-alt"></i><span>${t('Nikt Ci jeszcze nic nie udostępnił')}</span></div>`;
+            body.querySelector('#fm-statusbar').textContent = t('Brak udostępnień');
+            return;
+        }
+
+        list.innerHTML = `
+            <div class="fm-trash-header">
+                <div class="fm-trash-info">
+                    <i class="fas fa-share-alt app-icon-share"></i>
+                    ${t('Pliki i foldery udostępnione Ci przez innych użytkowników.')}
+                </div>
+            </div>
+            <div class="fm-trash-items">
+                ${shares.map(s => {
+                    const icon = s.is_dir ? 'fa-folder' : 'fa-file';
+                    const expiryText = s.expires ? new Date(s.expires).toLocaleString(getLocale()) : 'Nigdy';
+                    return `
+                        <div class="fm-trash-item fm-shared-item" data-share-token="${s.token}">
+                            <div class="fm-trash-item-icon"><i class="fas ${icon} app-icon-accent"></i></div>
+                            <div class="fm-trash-item-info">
+                                <div class="fm-trash-item-name">${s.name}</div>
+                                <div class="fm-trash-item-meta">
+                                    <span><i class="fas fa-user"></i> Od: <strong>${s.creator || '?'}</strong></span>
+                                    <span><i class="fas fa-clock"></i> Wygasa: ${expiryText}</span>
+                                    <span><i class="fas fa-calendar"></i> ${new Date(s.created).toLocaleString(getLocale())}</span>
+                                </div>
+                            </div>
+                            <div class="fm-trash-item-actions">
+                                <button class="fm-trash-btn fm-shared-open" data-share-token="${s.token}" title="${t('Otwórz')}">
+                                    <i class="fas fa-external-link-alt"></i>
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+        `;
+
+        body.querySelector('#fm-statusbar').textContent = `${shares.length} ${t('shares')}`;
+
+        // Open shared item in new tab via share page
+        list.querySelectorAll('.fm-shared-open').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const token = btn.dataset.shareToken;
+                window.open(`/share/${token}`, '_blank');
+            });
+        });
+
+        // Click on item row also opens
+        list.querySelectorAll('.fm-shared-item').forEach(el => {
+            el.addEventListener('click', (e) => {
+                if (e.target.closest('.fm-shared-open')) return;
+                const token = el.dataset.shareToken;
+                window.open(`/share/${token}`, '_blank');
+            });
+            el.style.cursor = 'pointer';
+        });
+    }
+
+    // ─── Navigation ───
+    // (Duplicate Photo Finder is now a standalone app — see apps/duplicates.js)
+
+    async function navigateTo(path) {
+        // Bump version so any in-flight navigation knows it's stale
+        const myVersion = ++state._navVersion;
+        console.log(`[FM] navigateTo("${path}") v${myVersion}, current="${state.path}"`);
+        // Show loading indicator immediately so user sees response
+        const _fmList = body.querySelector('#fm-file-list');
+        if (_fmList) _fmList.style.opacity = '0.5';
+        // Exit select mode on navigation
+        if (state.selectMode) {
+            state.selectMode = false;
+            const list = body.querySelector('#fm-file-list');
+            const btn = body.querySelector('#fm-select-mode-btn');
+            if (list) list.classList.remove('fm-select-mode');
+            if (btn) { btn.classList.remove('active'); btn.setAttribute('aria-pressed', 'false'); }
+        }
+        try {
+            let data;
+            if (path === '/__photo_favorites__') {
+                data = await api('/photos/favorites/files');
+                if (myVersion !== state._navVersion) return;
+            } else if (path === '/__shared_with_me__') {
+                state.path = '/__shared_with_me__';
+                state.items = [];
+                state.selected.clear();
+                // Update history
+                if (state.historyIndex < state.history.length - 1) {
+                    state.history = state.history.slice(0, state.historyIndex + 1);
+                }
+                state.history.push(path);
+                state.historyIndex = state.history.length - 1;
+                renderBreadcrumb();
+                renderSidebar();
+                updateNavButtons();
+                await renderSharedWithMe();
+                return;
+            } else if (path === '/__trash__') {
+                state.path = '/__trash__';
+                state.items = [];
+                state.selected.clear();
+                // Update history
+                if (state.historyIndex < state.history.length - 1) {
+                    state.history = state.history.slice(0, state.historyIndex + 1);
+                }
+                state.history.push(path);
+                state.historyIndex = state.history.length - 1;
+                renderBreadcrumb();
+                renderSidebar();
+                updateNavButtons();
+                await renderTrashView();
+                return;
+            } else {
+                // Use hover-prefetched listing if available and fresh (avoids redundant request)
+                const _prefetched = _fmPrefetchCache.get(path);
+                if (_prefetched && (Date.now() - _prefetched.ts) < _FM_PREFETCH_TTL) {
+                    data = _prefetched.data;
+                    _fmPrefetchCache.delete(path);  // consume the cached entry
+                    console.log(`[FM] navigateTo: using PREFETCH cache for "${path}", ${data.items?.length} items`);
+                } else {
+                    console.log(`[FM] navigateTo: fetching API for "${path}"`);
+                    data = await api(`/files/list?path=${encodeURIComponent(path)}`);
+                    console.log(`[FM] navigateTo: API returned path="${data?.path}", ${data?.items?.length} items`);
+                    // Auto-retry once for sleeping USB disks
+                    if (data?.error && path.startsWith('/media/') && !state._usbRetrying) {
+                        state._usbRetrying = true;
+                        const retryList = body.querySelector('#fm-file-list');
+                        if (retryList) retryList.innerHTML = `<div class="fm-empty"><i class="fas fa-spinner fa-spin"></i><span>${t('Budzenie dysku USB…')}</span></div>`;
+                        await new Promise(r => setTimeout(r, 3000));
+                        data = await api(`/files/list?path=${encodeURIComponent(path)}`);
+                        state._usbRetrying = false;
+                    }
+                    // If a newer navigation started while we were waiting, bail out
+                    if (myVersion !== state._navVersion) {
+                        console.log(`[FM] navigateTo: STALE v${myVersion} (current v${state._navVersion}), bailing`);
+                        return;
+                    }
+                }
+                // Handle locked folder response
+                if (data.locked) {
+                    const pw = await promptDialog(t('Folder chroniony'), t('Podaj hasło aby otworzyć:'));
+                    if (!pw) return;
+                    const unlockResult = await api('/files/folder-unlock', { method: 'POST', body: { path: data.protected_path || path, password: pw } });
+                    if (unlockResult.ok) {
+                        return navigateTo(path);  // retry after unlock
+                    }
+                    toast(unlockResult.error || t('Nieprawidłowe hasło'), 'error');
+                    return;
+                }
+            }
+            const oldPath = state.path;
+            state.path = data.path;
+            state._lastRealPath = data.path;  // remember for dup scanner
+            state.items = data.items;
+            state.selected.clear();
+            console.log(`[FM] navigateTo: loaded "${data.path}", ${data.items?.length} items (was "${oldPath}")`);
+
+            // Restore focus if going up
+            state.focusedIndex = -1;
+            if (oldPath && oldPath.startsWith(state.path) && oldPath !== state.path) {
+                const rel = oldPath.slice(state.path.length).replace(/^\//, '');
+                const folderName = rel.split('/')[0];
+                const idx = state.items.findIndex(i => i.name === folderName);
+                if (idx >= 0) state.focusedIndex = idx;
+            }
+            state.lastClickedIndex = state.focusedIndex;
+
+            // Reset pagination, search, dir sizes on navigation
+            state.page = 0;
+            state.searchResults = null;
+            state.dirSizes = {};
+            // Stop any previous background dir-size polling
+            if (state._dirSizePollTimer) {
+                clearTimeout(state._dirSizePollTimer);
+                state._dirSizePollTimer = null;
+            }
+            state._dirSizeJobs = {};
+            state._dirSizePollInterval = 1500;
+            const si = body.querySelector('#fm-search-input');
+            if (si) { si.value = ''; }
+            const sc = body.querySelector('#fm-search-clear');
+            if (sc) sc.classList.add('hidden');
+
+            // Update history
+            if (state.historyIndex < state.history.length - 1) {
+                state.history = state.history.slice(0, state.historyIndex + 1);
+            }
+            state.history.push(path);
+            state.historyIndex = state.history.length - 1;
+
+            renderBreadcrumb();
+            renderSidebar();
+            renderFileList();
+            updateNavButtons();
+            // Auto-start background dir-size calculation for directories
+            startBgDirSizes();
+            // Pre-generate thumbnails in background if already in thumb view
+            if (state.viewMode === 'thumb') _fmPregenerateThumbs(state.path);
+        } catch (err) {
+            console.error('[FM] navigateTo error:', err);
+            toast(t('Nie można otworzyć folderu'), 'error');
+        }
+    }
+
+    function updateNavButtons() {
+        body.querySelector('#fm-back').disabled = state.historyIndex <= 0;
+        body.querySelector('#fm-forward').disabled = state.historyIndex >= state.history.length - 1;
+        body.querySelector('#fm-up').disabled = isSpecialPath(state.path) || isAtHomeRoot();
+    }
+
+    // ─── Actions ───
+
+    async function createNewFolder() {
+        const name = await promptDialog(t('New Folder'), t('Folder name:'), t('New Folder'));
+        if (!name) return;
+        try {
+            await api('/files/mkdir', { method: 'POST', body: { path: joinCurrentPath(name) } });
+            toast(t('Folder utworzony:') + ` "${name}"`, 'success');
+            navigateTo(state.path);
+        } catch {
+            toast(t('Błąd tworzenia folderu'), 'error');
+        }
+    }
+
+    async function createNewFile() {
+        const name = await promptDialog(t('Nowy plik'), t('Nazwa pliku:'), 'nowy_plik.txt');
+        if (!name) return;
+        try {
+            const blob = new Blob([''], { type: 'text/plain' });
+            const formData = new FormData();
+            formData.append('files', blob, name);
+            formData.append('path', state.path);
+            const resp = await fetch('/api/files/upload', {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${NAS.token}` },
+                body: formData
+            });
+            const data = await resp.json();
+            if (data.ok || data.uploaded) {
+                toast(t('Plik utworzony:') + ` "${name}"`, 'success');
+                navigateTo(state.path);
+            } else {
+                toast(data.error || t('Błąd tworzenia pliku'), 'error');
+            }
+        } catch {
+            toast(t('Błąd tworzenia pliku'), 'error');
+        }
+    }
+
+    function uploadFiles() {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.multiple = true;
+        input.addEventListener('change', () => {
+            if (!input.files.length) return;
+            _doUpload(input.files);
+        });
+        input.click();
+    }
+
+    function uploadFolder() {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.webkitdirectory = true;
+        input.multiple = true;
+        input.addEventListener('change', () => {
+            if (!input.files.length) return;
+            _doUploadWithPaths(input.files);
+        });
+        input.click();
+    }
+
+    async function _doUploadWithPaths(files) {
+        const filesArr = Array.from(files);
+        const total = filesArr.length;
+        // Separate large files (need chunked upload) from small ones (batch)
+        const largeFiles = filesArr.filter(f => f.size >= _CHUNK_THRESHOLD);
+        const smallFiles = filesArr.filter(f => f.size < _CHUNK_THRESHOLD);
+        let done = 0;
+        let cancelled = false;
+
+        const allDone = () => {
+            finishFileOpProgress(true, { channel: 'fm', message: `${t('Przesłano')} ${total} ${t('plik(ów)')}` });
+            _fmPrefetchCache.delete(state.path);
+            navigateTo(state.path);
+        };
+        if (largeFiles.length > 0) {
+            showFileOpProgress({ operation: 'upload', channel: 'fm', percent: 0, done: 0, total, current_file: largeFiles[0]?.name || '' });
+            window._fileopUploadXhr = window._fileopUploadXhr || {};
+            window._fileopUploadXhr['fm'] = { abort: () => { cancelled = true; } };
+
+            for (const f of largeFiles) {
+                if (cancelled) break;
+                // Compute destination directory from relative path (e.g. "Photos/2024/beach.jpg" → destDir includes "Photos/2024")
+                const relPath = (f.webkitRelativePath || f.name).replace(/\\/g, '/');
+                const parts = relPath.split('/').filter(p => p && p !== '..');
+                let destDir = state.path.replace(/\/$/, '');
+                if (parts.length > 1) {
+                    destDir = destDir + '/' + parts.slice(0, -1).join('/');
+                }
+
+                const overallPct = Math.round(done / total * 100);
+                showFileOpProgress({ operation: 'upload', channel: 'fm', percent: overallPct, done, total, current_file: f.name });
+                const ok = await _doChunkedUpload(f, destDir, (pct) => {
+                    const pctNow = Math.min(99, Math.round((done / total + pct / 100 / total) * 100));
+                    showFileOpProgress({ operation: 'upload', channel: 'fm', percent: pctNow, done, total, current_file: `${f.name} — ${pct}%` });
+                }, () => cancelled, true /* create_dir */);
+
+                if (ok === 'abort') {
+                    cancelled = true;
+                    delete (window._fileopUploadXhr || {})['fm'];
+                    finishFileOpProgress(false, { channel: 'fm', message: t('Przerwano') });
+                    return;
+                }
+                if (ok) done++;
+            }
+            delete (window._fileopUploadXhr || {})['fm'];
+        }
+
+        if (cancelled) return;
+
+        if (smallFiles.length === 0) {
+            allDone();
+            return;
+        }
+
+        // Batch upload small files, preserving relative paths for folder structure
+        const smallRelPaths = smallFiles.map(f => f.webkitRelativePath || f.name);
+        _doUploadBatch(smallFiles, total, allDone, done, smallRelPaths);
+    }
+
+    const _CHUNK_THRESHOLD = 10 * 1024 * 1024; // 10 MB — use chunked upload for larger files
+    const _CHUNK_SIZE = 5 * 1024 * 1024;        // 5 MB chunks
+    const _CHUNK_MAX_RETRIES = 3;
+
+    function _doUpload(files) {
+        const largeFiles = Array.from(files).filter(f => f.size >= _CHUNK_THRESHOLD);
+        const smallFiles = Array.from(files).filter(f => f.size < _CHUNK_THRESHOLD);
+        const total = files.length;
+        let done = 0;
+
+        const allDone = () => {
+            finishFileOpProgress(true, { channel: 'fm', message: `${t('Przesłano')} ${total} ${t('plik(ów)')}` });
+            _fmPrefetchCache.delete(state.path);
+            navigateTo(state.path);
+        };
+
+        // Upload all files, chunked for large ones, then regular for small
+        if (largeFiles.length === 0) {
+            // All small files — single XHR for efficiency
+            _doUploadBatch(smallFiles, total, allDone);
+            return;
+        }
+
+        // Mixed: upload large files one by one (chunked), then batch small ones
+        let cancelled = false;
+
+        const uploadNext = async (idx) => {
+            if (cancelled) return;
+            if (idx >= largeFiles.length) {
+                // Done with large files, now batch-upload small ones
+                if (smallFiles.length === 0) { allDone(); return; }
+                _doUploadBatch(smallFiles, total, allDone, done);
+                return;
+            }
+            const f = largeFiles[idx];
+            showFileOpProgress({ operation: 'upload', channel: 'fm', percent: Math.round(done / total * 100), done, total, current_file: f.name });
+            const ok = await _doChunkedUpload(f, state.path, (pct) => {
+                const overallPct = Math.round((done / total * 100) + pct / total);
+                showFileOpProgress({ operation: 'upload', channel: 'fm', percent: Math.min(99, overallPct), done, total, current_file: `${f.name} — ${pct}%` });
+            }, () => cancelled);
+            if (ok === 'abort') { cancelled = true; finishFileOpProgress(false, { channel: 'fm', message: t('Przerwano') }); return; }
+            if (ok) { done++; }
+            await uploadNext(idx + 1);
+        };
+
+        showFileOpProgress({ operation: 'upload', channel: 'fm', percent: 0, done: 0, total, current_file: largeFiles[0]?.name || '' });
+        // Store cancel hook for large file uploads
+        window._fileopUploadXhr = window._fileopUploadXhr || {};
+        window._fileopUploadXhr['fm'] = { abort: () => { cancelled = true; } };
+        uploadNext(0).finally(() => {
+            delete (window._fileopUploadXhr || {})['fm'];
+        });
+    }
+
+    function _doUploadBatch(files, totalOverall, onDone, startDone = 0, relPaths = null) {
+        if (files.length === 0) { onDone(); return; }
+        const _BATCH_MAX_RETRIES = 2;
+        let retriesLeft = _BATCH_MAX_RETRIES;
+
+        const attempt = () => {
+            const form = new FormData();
+            form.append('path', state.path);
+            for (let i = 0; i < files.length; i++) {
+                form.append('files', files[i]);
+                if (relPaths && relPaths[i]) form.append('rel_paths', relPaths[i]);
+            }
+
+            const xhr = new XMLHttpRequest();
+            window._fileopUploadXhr = window._fileopUploadXhr || {};
+            window._fileopUploadXhr['fm'] = xhr;
+            showFileOpProgress({ operation: 'upload', channel: 'fm', percent: Math.round(startDone / totalOverall * 100), done: startDone, total: totalOverall, current_file: files[0]?.name || '' });
+
+            xhr.upload.addEventListener('progress', (e) => {
+                if (e.lengthComputable) {
+                    const batchPct = e.loaded / e.total;
+                    const overallPct = Math.round((startDone + batchPct * files.length) / totalOverall * 100);
+                    const doneSoFar = startDone + Math.min(Math.round(batchPct * files.length), files.length);
+                    showFileOpProgress({ operation: 'upload', channel: 'fm', percent: Math.min(99, overallPct), done: doneSoFar, total: totalOverall, current_file: `${formatBytes(e.loaded)} / ${formatBytes(e.total)}` });
+                }
+            });
+
+            xhr.addEventListener('load', () => {
+                delete (window._fileopUploadXhr || {})['fm'];
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    let resp = null;
+                    try { resp = JSON.parse(xhr.responseText); } catch {}
+                    if (resp && resp.errors && resp.errors.length > 0) {
+                        // Partial success: some files uploaded, some failed
+                        const uploaded = (resp.uploaded || []).length;
+                        const failed = resp.errors.length;
+                        if (uploaded > 0) {
+                            // Show warning toast for failures but still refresh listing
+                            const firstErr = resp.errors[0].error;
+                            toast(`${t('Przesłano')} ${uploaded}, ${t('błąd')}: ${firstErr}`, 'warning');
+                            _fmPrefetchCache.delete(state.path);
+                            onDone();
+                        } else {
+                            finishFileOpProgress(false, { channel: 'fm', message: resp.errors[0].error || t('Błąd przesyłania') });
+                        }
+                    } else {
+                        onDone();
+                    }
+                } else if (xhr.status >= 500 && retriesLeft > 0) {
+                    retriesLeft--;
+                    setTimeout(attempt, 1500 * (_BATCH_MAX_RETRIES - retriesLeft));
+                } else {
+                    let msg = t('Błąd przesyłania');
+                    try { msg = JSON.parse(xhr.responseText).error || msg; } catch {}
+                    finishFileOpProgress(false, { channel: 'fm', message: msg });
+                }
+            });
+
+            xhr.addEventListener('error', () => {
+                delete (window._fileopUploadXhr || {})['fm'];
+                if (retriesLeft > 0) {
+                    retriesLeft--;
+                    setTimeout(attempt, 1500 * (_BATCH_MAX_RETRIES - retriesLeft));
+                } else {
+                    finishFileOpProgress(false, { channel: 'fm', message: t('Błąd sieci') });
+                }
+            });
+
+            xhr.addEventListener('abort', () => {
+                delete (window._fileopUploadXhr || {})['fm'];
+                finishFileOpProgress(false, { channel: 'fm', message: t('Przerwano') });
+            });
+
+            xhr.open('POST', '/api/files/upload');
+            if (NAS.token) xhr.setRequestHeader('Authorization', `Bearer ${NAS.token}`);
+            xhr.send(form);
+        };
+
+        attempt();
+    }
+
+    async function _doChunkedUpload(file, destPath, onProgress, isCancelled, createDir = false) {
+        /**
+         * Upload a single large file in chunks with retry and resume support.
+         * createDir: if true, create destination directory if missing (for folder uploads).
+         * Returns true on success, false on error, 'abort' if cancelled.
+         */
+        const numChunks = Math.max(1, Math.ceil(file.size / _CHUNK_SIZE));
+        const MAX_SESSION_RESTARTS = 1; // allow one full restart on session expiry
+
+        async function _initSession() {
+            const init = await api('/files/upload-chunk-init', {
+                method: 'POST',
+                body: { path: destPath, filename: file.name, size: file.size, chunk_size: _CHUNK_SIZE, create_dir: createDir }
+            });
+            if (init.error) throw new Error(init.error);
+            return { sessionId: init.session_id, uploadedChunks: init.uploaded_chunks || [] };
+        }
+
+        // Initialize session
+        let sessionId;
+        let uploadedChunks = [];
+        let sessionRestarts = 0;
+        try {
+            ({ sessionId, uploadedChunks } = await _initSession());
+        } catch (e) {
+            toast(t('Błąd inicjalizacji przesyłania') + ': ' + (e.message || e), 'error');
+            return false;
+        }
+
+        // Upload missing chunks
+        for (let i = 0; i < numChunks; i++) {
+            if (isCancelled && isCancelled()) {
+                // Abort session server-side
+                try { await api('/files/upload-abort', { method: 'POST', body: { session_id: sessionId } }); } catch {}
+                return 'abort';
+            }
+            if (uploadedChunks.includes(i)) {
+                // Already uploaded (resume)
+                if (onProgress) onProgress(Math.round((i + 1) / numChunks * 100));
+                continue;
+            }
+
+            const start = i * _CHUNK_SIZE;
+            const end = Math.min(start + _CHUNK_SIZE, file.size);
+            const chunk = file.slice(start, end);
+
+            // Compute SHA-256 checksum for integrity verification
+            let chunkChecksum = '';
+            try {
+                const buf = await chunk.arrayBuffer();
+                const hash = await crypto.subtle.digest('SHA-256', buf);
+                chunkChecksum = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+            } catch {
+                chunkChecksum = ''; // crypto.subtle not available (non-HTTPS) — skip checksum
+            }
+
+            let retries = 0;
+            let chunkOk = false;
+            while (retries < _CHUNK_MAX_RETRIES && !chunkOk) {
+                if (isCancelled && isCancelled()) {
+                    try { await api('/files/upload-abort', { method: 'POST', body: { session_id: sessionId } }); } catch {}
+                    return 'abort';
+                }
+                try {
+                    const form = new FormData();
+                    form.append('session_id', sessionId);
+                    form.append('chunk_index', i);
+                    form.append('chunk', chunk, file.name);
+                    if (chunkChecksum) form.append('checksum', chunkChecksum);
+                    const res = await new Promise((resolve, reject) => {
+                        const xhr = new XMLHttpRequest();
+                        window._fileopUploadXhr = window._fileopUploadXhr || {};
+                        window._fileopUploadXhr['fm'] = xhr;
+                        xhr.addEventListener('load', () => {
+                            delete (window._fileopUploadXhr || {})['fm'];
+                            try { resolve(JSON.parse(xhr.responseText)); } catch { resolve({ error: 'parse error' }); }
+                        });
+                        xhr.addEventListener('error', () => {
+                            delete (window._fileopUploadXhr || {})['fm'];
+                            reject(new Error('network'));
+                        });
+                        xhr.addEventListener('abort', () => {
+                            delete (window._fileopUploadXhr || {})['fm'];
+                            reject(new Error('abort'));
+                        });
+                        xhr.open('POST', '/api/files/upload-chunk');
+                        if (NAS.token) xhr.setRequestHeader('Authorization', `Bearer ${NAS.token}`);
+                        xhr.send(form);
+                    });
+                    if (res.ok) {
+                        uploadedChunks = res.uploaded_chunks || uploadedChunks;
+                        chunkOk = true;
+                    } else if (res.expired) {
+                        // Session expired (e.g. server restart) — restart with a new session once
+                        if (sessionRestarts < MAX_SESSION_RESTARTS) {
+                            sessionRestarts++;
+                            try {
+                                ({ sessionId, uploadedChunks } = await _initSession());
+                                i = -1; // restart chunk loop (for-loop will i++ to 0)
+                            } catch (e) {
+                                toast(t('Błąd inicjalizacji przesyłania') + ': ' + (e.message || e), 'error');
+                                return false;
+                            }
+                            break; // break retry loop, restart outer for-loop
+                        }
+                        toast(t('Sesja przesyłania wygasła'), 'error');
+                        return false;
+                    } else {
+                        throw new Error(res.error || 'chunk error');
+                    }
+                } catch (e) {
+                    if (e.message === 'abort') return 'abort';
+                    retries++;
+                    if (retries >= _CHUNK_MAX_RETRIES) {
+                        toast(`${t('Błąd przesyłania fragmentu')} ${i + 1}/${numChunks}: ${e.message}`, 'error');
+                        try { await api('/files/upload-abort', { method: 'POST', body: { session_id: sessionId } }); } catch {}
+                        return false;
+                    }
+                    // Wait before retry
+                    await new Promise(r => setTimeout(r, 1000 * retries));
+                }
+            }
+            if (onProgress) onProgress(Math.round((i + 1) / numChunks * 100));
+        }
+
+        // Finalize
+        try {
+            const fin = await api('/files/upload-complete', { method: 'POST', body: { session_id: sessionId, verify_checksum: true } });
+            if (fin.error) {
+                if (!fin.missing_chunks) {
+                    toast(t('Błąd finalizacji przesyłania') + ': ' + fin.error, 'error');
+                }
+                return false;
+            }
+            return true;
+        } catch (e) {
+            toast(t('Błąd finalizacji przesyłania') + ': ' + (e.message || e), 'error');
+            return false;
+        }
+    }
+
+    async function downloadSelected() {
+        const sel = [...state.selected];
+        if (!sel.length) { toast(t('Zaznacz elementy do pobrania'), 'warning'); return; }
+
+        // Single regular file — direct download (fast, no zip)
+        if (sel.length === 1) {
+            const item = state.items.find(i => i.name === sel[0]);
+            if (item && !item.is_dir) {
+                const path = joinCurrentPath(sel[0]);
+                const tk = NAS.token || '';
+                const a = document.createElement('a');
+                a.href = `/api/files/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(tk)}`;
+                a.download = sel[0];
+                a.click();
+                return;
+            }
+        }
+
+        // Multiple items or folder(s) — download as ZIP (async with progress)
+        const paths = getSelectedPaths();
+        try {
+            const r = await api('/files/download-zip', {
+                method: 'POST',
+                body: { sources: paths }
+            });
+            if (r.error) { toast(r.error, 'error'); return; }
+            // Show initial progress bar immediately (socket.io updates will follow)
+            showFileOpProgress({ operation: 'download', channel: 'bg', percent: 0, done: 0, total: 1, current_file: t('Przygotowywanie archiwum…') });
+            // Poll for readiness, then trigger browser download
+            if (r.download_id) {
+                _pollDownloadReady(r.download_id);
+            }
+        } catch {
+            toast(t('Błąd pobierania'), 'error');
+        }
+    }
+
+    function _pollDownloadReady(downloadId) {
+        let attempts = 0;
+        const maxAttempts = 300; // 5 minutes max (300 × 1s)
+        const iv = setInterval(async () => {
+            attempts++;
+            if (attempts > maxAttempts) {
+                clearInterval(iv);
+                finishFileOpProgress(false, { channel: 'bg', message: t('Timeout przygotowania archiwum') });
+                return;
+            }
+            try {
+                const r = await api(`/files/download-zip/${downloadId}/status`);
+                if (r.ready) {
+                    clearInterval(iv);
+                    const tk = NAS.token || '';
+                    const url = `/api/files/download-zip/${downloadId}?token=${encodeURIComponent(tk)}`;
+                    // Use hidden iframe to trigger download — most reliable method
+                    const iframe = document.createElement('iframe');
+                    iframe.style.display = 'none';
+                    iframe.src = url;
+                    document.body.appendChild(iframe);
+                    setTimeout(() => { try { iframe.remove(); } catch(e) {} }, 120000);
+                    toast(`${t('Pobieranie')} ${r.name || 'archiwum'} ${t('rozpoczęte')}`, 'success');
+                } else if (r.error) {
+                    clearInterval(iv);
+                    finishFileOpProgress(false, { channel: 'bg', message: r.error });
+                }
+            } catch(e) {
+                // network error — keep trying
+            }
+        }, 1000);
+    }
+
+    async function deleteSelected() {
+        if (!state.selected.size) { toast(t('Zaznacz elementy do usunięcia'), 'warning'); return; }
+        const count = state.selected.size;
+        const sure = await confirmDialog(t('Przenieś do kosza'), `${t('Move')} ${count} ${t('item(s) to trash?')}`);
+        if (!sure) return;
+
+        const paths = [...state.selected].map(name => itemFullPath(name));
+        try {
+            await api('/files/delete', { method: 'DELETE', body: { paths } });
+            toast(t('Moved') + ' ' + count + ' ' + t('item(s) to trash'), 'success');
+            navigateTo(state.path);
+        } catch {
+            toast(t('Błąd przenoszenia do kosza'), 'error');
+        }
+    }
+
+    async function renameSelected() {
+        const name = [...state.selected][0];
+        if (!name) { toast(t('Zaznacz element do zmiany nazwy'), 'warning'); return; }
+        // Try inline rename first
+        if (_startInlineRename(name)) return;
+        // Fallback to dialog
+        const newName = await promptDialog(t('Zmień nazwę'), t('New name:'), name);
+        if (!newName || newName === name) return;
+        await _doRename(name, newName);
+    }
+
+    async function _doRename(oldName, newName) {
+        if (!newName || newName === oldName) return;
+        const path = itemFullPath(oldName);
+        try {
+            await api('/files/rename', { method: 'POST', body: { path, new_name: newName } });
+            toast(`${t('Zmieniono nazwę na')} "${newName}"`, 'success');
+            navigateTo(state.path);
+        } catch {
+            toast(t('Błąd zmiany nazwy'), 'error');
+        }
+    }
+
+    function _startInlineRename(name) {
+        const _itemSel = '.fm-file-item, .fm-grid-item, .fm-thumb-item';
+        const list = body.querySelector('#fm-file-list');
+        const el = [...list.querySelectorAll(_itemSel)].find(e => e.dataset.name === name);
+        if (!el) return false;
+
+        // Find the name text container
+        const nameEl = el.querySelector('.fm-file-name span, .fm-grid-label, .fm-thumb-label');
+        if (!nameEl) return false;
+
+        const origText = nameEl.textContent;
+        // For grid/thumb labels, save badges HTML
+        const isListView = !!el.querySelector('.fm-file-name');
+        let savedBadges = '';
+        if (!isListView) {
+            // Extract badges (spans) from the label
+            savedBadges = nameEl.innerHTML.replace(origText, '');
+        }
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = name;
+        input.className = 'fm-inline-rename';
+
+        // Select filename without extension for files
+        const item = state.items.find(i => i.name === name);
+        if (item && !item.is_dir) {
+            const dotIdx = name.lastIndexOf('.');
+            if (dotIdx > 0) {
+                setTimeout(() => input.setSelectionRange(0, dotIdx), 0);
+            }
+        }
+
+        if (isListView) {
+            nameEl.textContent = '';
+            nameEl.appendChild(input);
+        } else {
+            nameEl.innerHTML = '';
+            nameEl.appendChild(input);
+        }
+        input.focus();
+        if (!item || item.is_dir) input.select();
+
+        let committed = false;
+        const commit = () => {
+            if (committed) return;
+            committed = true;
+            const newName = input.value.trim();
+            // Restore original text
+            if (isListView) {
+                nameEl.textContent = newName || origText;
+            } else {
+                nameEl.innerHTML = (newName || origText) + savedBadges;
+            }
+            if (newName && newName !== name) {
+                _doRename(name, newName);
+            }
+        };
+
+        input.addEventListener('blur', commit);
+        input.addEventListener('keydown', (e) => {
+            e.stopPropagation();
+            if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+            if (e.key === 'Escape') { e.preventDefault(); input.value = name; input.blur(); }
+        });
+        return true;
+    }
+
+    // ─── Clipboard (Copy/Cut/Paste) ───
+
+    function getSelectedPaths() {
+        return [...state.selected].map(name => itemFullPath(name));
+    }
+
+    function clipboardCopy() {
+        if (!state.selected.size) { toast(t('Zaznacz elementy'), 'warning'); return; }
+        state.clipboard = { mode: 'copy', paths: getSelectedPaths(), basePath: state.path };
+        toast(t('Copied') + ' ' + state.clipboard.paths.length + ' ' + t('item(s)') + ' ' + t('to clipboard'), 'info');
+        updateClipboardBar();
+    }
+
+    function clipboardCut() {
+        if (!state.selected.size) { toast(t('Zaznacz elementy'), 'warning'); return; }
+        state.clipboard = { mode: 'cut', paths: getSelectedPaths(), basePath: state.path };
+        toast(t('Cut') + ' ' + state.clipboard.paths.length + ' ' + t('item(s)'), 'info');
+        updateClipboardBar();
+    }
+
+    async function clipboardPaste() {
+        if (!state.clipboard) { toast('Schowek jest pusty', 'warning'); return; }
+        const { mode, paths } = state.clipboard;
+        const dest = state.path;
+
+        // Check for conflicts first
+        let onConflict = 'rename';
+        try {
+            const check = await api('/files/check-conflicts', { method: 'POST', body: { sources: paths, dest } });
+            if (check.conflicts && check.conflicts.length > 0) {
+                onConflict = await showConflictDialog(check.conflicts, mode);
+                if (onConflict === null) return; // cancelled
+            }
+        } catch { /* proceed without conflict check */ }
+
+        try {
+            if (mode === 'copy') {
+                const r = await api('/files/copy', { method: 'POST', body: { sources: paths, dest, on_conflict: onConflict } });
+                if (r.error) { toast(r.error, 'error'); return; }
+                if (r.async) {
+                    toast(r.message || t('Kopiowanie w tle…'), 'info');
+                    state.clipboard = null;
+                    updateClipboardBar();
+                    return;
+                }
+                const count = (r.copied || []).length;
+                const skipCount = (r.skipped || []).length;
+                let msg = t('Copied') + ' ' + count + ' ' + t('item(s)');
+                if (skipCount) msg += `, ${t('pominięto')} ${skipCount}`;
+                toast(msg, 'success');
+                if (r.errors && r.errors.length) toast(r.errors.join('; '), 'warning');
+            } else {
+                const r = await api('/files/move-multi', { method: 'POST', body: { sources: paths, dest, on_conflict: onConflict } });
+                if (r.error) { toast(r.error, 'error'); return; }
+                if (r.async) {
+                    toast(r.message || t('Przenoszenie w tle…'), 'info');
+                    state.clipboard = null;
+                    updateClipboardBar();
+                    return;
+                }
+                const count = (r.moved || []).length;
+                const skipCount = (r.skipped || []).length;
+                let msg = t('Moved') + ' ' + count + ' ' + t('item(s)');
+                if (skipCount) msg += `, ${t('pominięto')} ${skipCount}`;
+                toast(msg, 'success');
+                if (r.errors && r.errors.length) toast(r.errors.join('; '), 'warning');
+                state.clipboard = null;
+            }
+            navigateTo(state.path);
+        } catch (e) {
+            toast(t('Błąd operacji') + (e?.message ? ': ' + e.message : ''), 'error');
+        }
+    }
+
+    function showConflictDialog(conflicts, mode) {
+        const modeLabel = mode === 'copy' ? 'kopiowaniu' : 'przenoszeniu';
+        return new Promise((resolve) => {
+            const overlay = document.createElement('div');
+            overlay.className = 'modal-overlay';
+            const listHtml = conflicts.map(c => {
+                const icon = c.is_dir ? 'fa-folder' : 'fa-file';
+                return `<div class="app-list-row">
+                    <i class="fas ${icon} app-icon-fixed app-icon-accent"></i>
+                    <span class="app-filename">${c.name}</span>
+                </div>`;
+            }).join('');
+
+            overlay.innerHTML = `
+                <div class="modal app-modal-md">
+                    <div class="modal-header"><i class="fas fa-exclamation-triangle app-hdr-icon app-hdr-icon--warning"></i>Konflikty przy ${modeLabel}</div>
+                    <div class="modal-body">
+                        <div class="app-desc">
+                            ${conflicts.length === 1 ? t('Poniższy element już istnieje') : `${t('Poniższe')} ${conflicts.length} ${t('elementy już istnieją')}`} w docelowym folderze:
+                        </div>
+                        <div class="app-scroll-box">
+                            ${listHtml}
+                        </div>
+                        <div class="app-sublabel">${t('Co chcesz zrobić?')}</div>
+                    </div>
+                    <div class="modal-footer app-row-wrap">
+                        <button class="btn app-mr-auto" id="conflict-cancel">Anuluj</button>
+                        <button class="btn" id="conflict-skip" title="${t('Nie kopiuj istniejących')}"><i class="fas fa-forward"></i> ${t('Pomiń')}</button>
+                        <button class="btn" id="conflict-rename" title="${t('Zachowaj oba z nową nazwą')}"><i class="fas fa-clone"></i> ${t('Zachowaj oba')}</button>
+                        <button class="btn btn-primary" id="conflict-overwrite" title="${t('Zastąp istniejące')}"><i class="fas fa-sync-alt"></i> ${t('Nadpisz')}</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+            overlay.querySelector('#conflict-cancel').addEventListener('click', () => { overlay.remove(); resolve(null); });
+            overlay.querySelector('#conflict-skip').addEventListener('click', () => { overlay.remove(); resolve('skip'); });
+            overlay.querySelector('#conflict-rename').addEventListener('click', () => { overlay.remove(); resolve('rename'); });
+            overlay.querySelector('#conflict-overwrite').addEventListener('click', () => { overlay.remove(); resolve('overwrite'); });
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) { overlay.remove(); resolve(null); } });
+        });
+    }
+
+    // ─── Compress / Extract ───
+
+    async function compressSelected(format) {
+        const paths = getSelectedPaths();
+        if (!paths.length) { toast(t('Zaznacz elementy do kompresji'), 'warning'); return; }
+
+        const ext = format === 'zip' ? '.zip' : '.tar.gz';
+
+        // Suggest a name
+        let suggestion = '';
+        const sel = [...state.selected];
+        if (sel.length === 1) {
+            // Single item — use its name without extension
+            const n = sel[0];
+            const dotIdx = n.lastIndexOf('.');
+            suggestion = (dotIdx > 0 ? n.substring(0, dotIdx) : n);
+        } else {
+            // Multiple items — use current folder name
+            const parts = state.path.split('/').filter(Boolean);
+            suggestion = parts.length ? parts[parts.length - 1] : 'archiwum';
+        }
+
+        // Show name dialog
+        const archiveName = await new Promise((resolve) => {
+            const overlay = document.createElement('div');
+            overlay.className = 'modal-overlay';
+            overlay.innerHTML = `
+                <div class="modal">
+                    <div class="modal-header"><i class="fas fa-file-archive app-hdr-icon"></i>${t('Kompresuj do')} ${ext}</div>
+                    <div class="modal-body">
+                        <div class="app-note">
+                            ${sel.length} element${sel.length > 1 ? t('ów') : ''} ${t('selected')}
+                        </div>
+                        <label class="modal-label">${t('Nazwa archiwum:')}</label>
+                        <div class="app-input-group">
+                            <input class="modal-input app-input-prefix" id="compress-name-input" value="${suggestion}">
+                            <span class="app-input-suffix">${ext}</span>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn" id="compress-dlg-cancel">${t('Anuluj')}</button>
+                        <button class="btn btn-primary" id="compress-dlg-ok"><i class="fas fa-compress app-btn-icon"></i>${t('Kompresuj')}</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+            const inp = overlay.querySelector('#compress-name-input');
+            inp.focus();
+            inp.select();
+
+            const submit = () => {
+                const val = inp.value.trim();
+                overlay.remove();
+                resolve(val || null);
+            };
+            inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') { overlay.remove(); resolve(null); } });
+            overlay.querySelector('#compress-dlg-cancel').addEventListener('click', () => { overlay.remove(); resolve(null); });
+            overlay.querySelector('#compress-dlg-ok').addEventListener('click', submit);
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) { overlay.remove(); resolve(null); } });
+        });
+
+        if (!archiveName) return;
+
+        try {
+            const r = await api('/files/compress', {
+                method: 'POST',
+                body: { sources: paths, format: format, name: archiveName }
+            });
+            if (r.error) { toast(r.error, 'error'); return; }
+            toast(r.message || t('Kompresja w tle…'), 'info');
+        } catch {
+            toast(t('Błąd kompresji'), 'error');
+        }
+    }
+
+    async function extractSelected() {
+        const sel = [...state.selected];
+        if (sel.length !== 1) { toast(t('Zaznacz jeden plik archiwum'), 'warning'); return; }
+        const archivePath = joinCurrentPath(sel[0]);
+        try {
+            const r = await api('/files/extract', {
+                method: 'POST',
+                body: { path: archivePath }
+            });
+            if (r.error) { toast(r.error, 'error'); return; }
+            toast(r.message || t('Rozpakowywanie w tle…'), 'info');
+        } catch {
+            toast(t('Błąd rozpakowywania'), 'error');
+        }
+    }
+
+    // ─── Logs Dialog ──────────────────────────────────────────────────────────
+
+    async function showLogsDialog(path) {
+        const overlay = document.createElement('div');
+        overlay.className = 'app-modal-overlay';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9999;display:flex;align-items:center;justify-content:center';
+
+        const dialog = document.createElement('div');
+        dialog.className = 'app-modal';
+        dialog.style.cssText = 'background:var(--bg-surface,#1e1e2e);border:1px solid var(--border,#333);border-radius:12px;padding:20px;width:700px;max-width:95vw;height:80vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,0.5)';
+
+        dialog.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+                <h3 style="margin:0;font-size:1.2em"><i class="fas fa-history"></i> ${t('Dziennik zdarzeń plików')}</h3>
+                <button class="app-btn-icon" id="fm-logs-close"><i class="fas fa-times"></i></button>
+            </div>
+            <div style="display:flex;gap:10px;margin-bottom:12px">
+                <input type="text" id="fm-logs-search" placeholder="${t('Szukaj...')}" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border,#444);background:var(--bg-base,#181825);color:var(--text-primary)">
+                <select id="fm-logs-filter" class="fm-input" title="${t('Kategoria logów')}">
+                    <option value="">${t('Wszystkie')}</option>
+                    <option value="files" selected>${t('Operacje plików')}</option>
+                    <option value="security">${t('Bezpieczeństwo')}</option>
+                    <option value="error">${t('Błędy')}</option>
+                </select>
+                <button id="fm-logs-refresh" class="app-btn"><i class="fas fa-sync-alt"></i></button>
+            </div>
+            <div id="fm-logs-list" style="flex:1;overflow-y:auto;border:1px solid var(--border,#333);border-radius:6px;background:var(--bg-base,#0f0f15);padding:8px;font-family:monospace;font-size:0.9em">
+                <div style="padding:20px;text-align:center;color:var(--text-muted)">${t('Ładowanie...')}</div>
+            </div>
+        `;
+
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        const close = () => overlay.remove();
+        overlay.querySelector('#fm-logs-close').onclick = close;
+        overlay.onclick = e => { if (e.target === overlay) close(); };
+
+        const listEl = overlay.querySelector('#fm-logs-list');
+        const searchInput = overlay.querySelector('#fm-logs-search');
+        const filterSelect = overlay.querySelector('#fm-logs-filter');
+        const refreshBtn = overlay.querySelector('#fm-logs-refresh');
+
+        async function loadLogs() {
+            listEl.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-muted)">${t('Ładowanie...')}</div>`;
+            try {
+                const search = searchInput.value.trim();
+                const category = filterSelect.value;
+                const url = `/api/eventlog?limit=100&category=${category}&search=${encodeURIComponent(search)}`;
+                const res = await api(url);
+                if (!res.events || !res.events.length) {
+                    listEl.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-muted)">${t('Brak zdarzeń')}</div>`;
+                    return;
+                }
+
+                listEl.innerHTML = res.events.map(e => {
+                    const time = e.time || new Date(e.ts * 1000).toLocaleString();
+                    const color = e.level === 'error' ? '#ef4444' : e.level === 'warning' ? '#eab308' : '#a6accd';
+                    const icon = e.level === 'error' ? 'fa-exclamation-circle' : e.level === 'warning' ? 'fa-exclamation-triangle' : 'fa-info-circle';
+                    return `
+                        <div style="display:flex;gap:10px;padding:8px;border-bottom:1px solid var(--border,#222);align-items:start">
+                            <div style="color:var(--text-muted);white-space:nowrap;width:140px;font-size:0.85em">${time}</div>
+                            <div style="color:${color};width:20px;text-align:center"><i class="fas ${icon}"></i></div>
+                            <div style="flex:1;word-break:break-word">
+                                <div style="font-weight:500">${escapeHtml(e.message)}</div>
+                                ${e.details ? `<div style="font-size:0.85em;color:var(--text-muted);margin-top:4px;white-space:pre-wrap">${escapeHtml(JSON.stringify(e.details, null, 2))}</div>` : ''}
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } catch (e) {
+                listEl.innerHTML = `<div style="padding:20px;text-align:center;color:var(--danger)">${t('Błąd ładowania logów')}</div>`;
+            }
+        }
+
+        refreshBtn.onclick = loadLogs;
+        searchInput.onkeydown = e => { if(e.key === 'Enter') loadLogs(); };
+        filterSelect.onchange = loadLogs;
+
+        loadLogs();
+    }
+
+    // ─── Transfer to remote NAS ───
+
+
+    // ─── File Properties Dialog ───────────────────────────────────────────────
+
+    async function showPropertiesDialog(item, itemPath) {
+        const isAdmin = NAS.user?.role === 'admin';
+        let perms = {};
+        try {
+            perms = await api(`/files/permissions?path=${encodeURIComponent(itemPath)}`);
+        } catch (e) {
+            perms = {
+                permissions: item.permissions || '',
+                permissions_symbolic: item.permissions_symbolic || '',
+                owner: item.owner || '',
+                group: item.group || '',
+            };
+        }
+
+        const overlay = document.createElement('div');
+        overlay.className = 'app-modal-overlay';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9999;display:flex;align-items:center;justify-content:center';
+
+        const dialog = document.createElement('div');
+        dialog.className = 'app-modal';
+        dialog.style.cssText = 'background:var(--bg-surface,#1e1e2e);border:1px solid var(--border,#333);border-radius:12px;padding:24px;min-width:420px;max-width:500px;width:90vw;box-shadow:0 8px 32px rgba(0,0,0,0.5)';
+
+        const symPerm = perms.permissions_symbolic || item.permissions_symbolic || '';
+        const octPerm = perms.permissions || item.permissions || '';
+        const owner = perms.owner || item.owner || '—';
+        const group = perms.group || item.group || '—';
+
+        // Helper to generate checkboxes for permissions
+        const getPermChecks = (oct) => {
+            const p = parseInt(oct || '0', 8);
+            const check = (mask) => (p & mask) ? 'checked' : '';
+            return `
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:center;margin:10px 0;font-size:0.9em">
+                    <div></div><div>R</div><div>W</div><div>X</div>
+                    <div style="text-align:left">${t('Właściciel')}</div>
+                    <div><input type="checkbox" class="perm-cb" data-val="400" ${check(0o400)} ${!isAdmin ? 'disabled' : ''}></div>
+                    <div><input type="checkbox" class="perm-cb" data-val="200" ${check(0o200)} ${!isAdmin ? 'disabled' : ''}></div>
+                    <div><input type="checkbox" class="perm-cb" data-val="100" ${check(0o100)} ${!isAdmin ? 'disabled' : ''}></div>
+
+                    <div style="text-align:left">${t('Grupa')}</div>
+                    <div><input type="checkbox" class="perm-cb" data-val="40" ${check(0o040)} ${!isAdmin ? 'disabled' : ''}></div>
+                    <div><input type="checkbox" class="perm-cb" data-val="20" ${check(0o020)} ${!isAdmin ? 'disabled' : ''}></div>
+                    <div><input type="checkbox" class="perm-cb" data-val="10" ${check(0o010)} ${!isAdmin ? 'disabled' : ''}></div>
+
+                    <div style="text-align:left">${t('Inni')}</div>
+                    <div><input type="checkbox" class="perm-cb" data-val="4" ${check(0o004)} ${!isAdmin ? 'disabled' : ''}></div>
+                    <div><input type="checkbox" class="perm-cb" data-val="2" ${check(0o002)} ${!isAdmin ? 'disabled' : ''}></div>
+                    <div><input type="checkbox" class="perm-cb" data-val="1" ${check(0o001)} ${!isAdmin ? 'disabled' : ''}></div>
+                </div>
+            `;
+        };
+
+        const chmodSection = `
+            <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border,#333)">
+                <div style="font-weight:600;margin-bottom:8px;color:var(--text-primary)">${t('Uprawnienia')} ${!isAdmin ? '<span style="font-size:0.75em;color:var(--text-muted)">(tylko do odczytu)</span>' : ''}</div>
+                ${getPermChecks(octPerm)}
+                <div style="display:flex;align-items:center;gap:10px;margin-top:10px">
+                    <span style="font-size:0.9em;color:var(--text-muted)">Octal:</span>
+                    <input id="fm-chmod-input" type="text" value="${octPerm}" maxlength="4" pattern="[0-7]{3,4}"
+                        style="width:60px;padding:4px 8px;background:var(--bg-base,#181825);border:1px solid var(--border,#444);border-radius:4px;color:var(--text-primary);font-family:monospace" ${!isAdmin ? 'disabled' : ''}>
+                </div>
+            </div>
+        `;
+
+        const chownSection = isAdmin ? `
+            <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border,#333)">
+                 <div style="font-weight:600;margin-bottom:8px;color:var(--text-primary)">${t('Właściciel')}</div>
+                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                    <div>
+                        <label style="font-size:0.8em;color:var(--text-muted)">User</label>
+                        <input id="fm-chown-user" type="text" value="${owner}" style="width:100%;padding:6px;background:var(--bg-base,#181825);border:1px solid var(--border,#444);border-radius:4px;color:var(--text-primary)">
+                    </div>
+                    <div>
+                        <label style="font-size:0.8em;color:var(--text-muted)">Group</label>
+                        <input id="fm-chown-group" type="text" value="${group}" style="width:100%;padding:6px;background:var(--bg-base,#181825);border:1px solid var(--border,#444);border-radius:4px;color:var(--text-primary)">
+                    </div>
+                 </div>
+            </div>
+        ` : '';
+
+        dialog.innerHTML = `
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+                <i class="fas ${item.is_dir ? 'fa-folder' : 'fa-file'}" style="font-size:1.5em;color:var(--accent)"></i>
+                <div style="font-size:1.1em;font-weight:600;word-break:break-all">${item.name}</div>
+            </div>
+            <table style="width:100%;border-collapse:collapse;font-size:0.92em">
+                <tr><td style="color:var(--text-muted);padding:4px 0;width:120px">${t('Typ')}</td><td style="color:var(--text-primary)">${item.is_dir ? t('Folder') : t('Plik')}</td></tr>
+                <tr><td style="color:var(--text-muted);padding:4px 0">${t('Rozmiar')}</td><td style="color:var(--text-primary)">${typeof fmtBytes !== 'undefined' ? fmtBytes(item.size) : item.size + ' B'}</td></tr>
+                <tr><td style="color:var(--text-muted);padding:4px 0">${t('Zmieniony')}</td><td style="color:var(--text-primary)">${formatDate(item.modified)}</td></tr>
+                ${!isAdmin ? `<tr><td style="color:var(--text-muted);padding:4px 0">${t('Właściciel')}</td><td style="color:var(--text-primary)">${owner}:${group}</td></tr>` : ''}
+                ${item.protected ? `<tr><td style="color:var(--text-muted);padding:4px 0">${t('Ochrona')}</td><td style="color:${item.locked ? 'var(--danger)' : 'var(--success,#22c55e)'}"><i class="fas ${item.locked ? 'fa-lock' : 'fa-lock-open'}"></i> ${item.locked ? t('Zablokowany') : t('Odblokowany')}</td></tr>` : ''}
+            </table>
+            ${chmodSection}
+            ${chownSection}
+            ${isAdmin ? `
+            <div id="fm-acl-section" style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border,#333)">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+                    <div style="font-weight:600;color:var(--text-primary)"><i class="fas fa-shield-alt" style="margin-right:6px;opacity:0.7"></i>${t('Lista kontroli dostępu (ACL)')}</div>
+                </div>
+                <div id="fm-acl-loading" style="text-align:center;padding:12px;color:var(--text-muted)"><i class="fas fa-spinner fa-spin"></i> ${t('Ładowanie...')}</div>
+            </div>
+            ` : ''}
+            <div style="margin-top:20px;text-align:right;display:flex;gap:10px;justify-content:flex-end">
+                <button id="fm-props-close" class="app-btn" style="padding:8px 20px">${t('Zamknij')}</button>
+                ${isAdmin ? `<button id="fm-props-save" class="app-btn app-btn-primary" style="padding:8px 20px">${t('Zapisz')}</button>` : ''}
+            </div>
+        `;
+
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        const close = () => overlay.remove();
+        overlay.querySelector('#fm-props-close').addEventListener('click', close);
+        overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
+        if (isAdmin) {
+            const checkboxes = overlay.querySelectorAll('.perm-cb');
+            const octInput = overlay.querySelector('#fm-chmod-input');
+
+            const updateOct = () => {
+                let oct = 0;
+                checkboxes.forEach(cb => {
+                    if (cb.checked) oct += parseInt(cb.dataset.val, 8);
+                });
+                octInput.value = '0' + oct.toString(8);
+            };
+
+            checkboxes.forEach(cb => cb.addEventListener('change', updateOct));
+
+            octInput.addEventListener('input', () => {
+                let val = parseInt(octInput.value, 8);
+                if (isNaN(val)) return;
+                checkboxes.forEach(cb => {
+                    const mask = parseInt(cb.dataset.val, 8);
+                    cb.checked = (val & mask) !== 0;
+                });
+            });
+
+            overlay.querySelector('#fm-props-save').addEventListener('click', async () => {
+                const modeVal = octInput.value.trim();
+                const newUser = overlay.querySelector('#fm-chown-user')?.value.trim();
+                const newGroup = overlay.querySelector('#fm-chown-group')?.value.trim();
+
+                let success = true;
+
+                // chmod
+                if (modeVal !== octPerm) {
+                     const r = await api('/files/chmod', { method: 'POST', body: { path: itemPath, mode: modeVal } });
+                     if (!r.ok && !r.permissions) { toast(r.error || t('Błąd uprawnień'), 'error'); success = false; }
+                }
+
+                // chown
+                if (newUser !== owner || newGroup !== group) {
+                     const r = await api('/files/chown', { method: 'POST', body: { path: itemPath, owner: newUser, group: newGroup } });
+                     if (r.error) { toast(r.error || t('Błąd właściciela'), 'error'); success = false; }
+                }
+
+                // ACL entries
+                const aclSection = overlay.querySelector('#fm-acl-section');
+                if (aclSection) {
+                    const rows = aclSection.querySelectorAll('.fm-acl-row');
+                    const entries = [];
+                    rows.forEach(row => {
+                        const etype = row.dataset.type;
+                        const ename = row.dataset.name;
+                        const sel = row.querySelector('.fm-acl-access');
+                        if (etype && ename && sel) {
+                            entries.push({ type: etype, name: ename, access: sel.value });
+                        }
+                    });
+                    const inheritCb = aclSection.querySelector('#fm-acl-inherit');
+                    const recursiveCb = aclSection.querySelector('#fm-acl-recursive');
+                    if (entries.length > 0) {
+                        const r = await api('/files/acl', {
+                            method: 'PUT',
+                            body: {
+                                path: itemPath,
+                                entries,
+                                inherit: inheritCb ? inheritCb.checked : false,
+                                recursive: recursiveCb ? recursiveCb.checked : false,
+                            }
+                        });
+                        if (r.error) { toast(r.error, 'error'); success = false; }
+                    }
+                }
+
+                if (success) {
+                    toast(t('Zapisano zmiany'), 'success');
+                    close();
+                    if (state.path) renderFileList();
+                }
+            });
+
+            // ── Load ACL section asynchronously ──
+            const aclContainer = overlay.querySelector('#fm-acl-section');
+            if (aclContainer) {
+                _loadAclSection(aclContainer, itemPath, item.is_dir);
+            }
+        }
+    }
+
+    async function _loadAclSection(container, itemPath, isDir) {
+        const loadingEl = container.querySelector('#fm-acl-loading');
+        try {
+            const [aclData, usersData, groupsData] = await Promise.all([
+                api(`/files/acl?path=${encodeURIComponent(itemPath)}`),
+                api('/users/list'),
+                api('/users/groups'),
+            ]);
+
+            if (aclData.error) {
+                loadingEl.innerHTML = `<span style="color:var(--text-muted)">${aclData.error}</span>`;
+                return;
+            }
+
+            const users = Array.isArray(usersData) ? usersData.map(u => u.username) : [];
+            const groups = Array.isArray(groupsData) ? groupsData.map(g => g.name) : [];
+            const entries = aclData.entries || [];
+
+            const accessOpts = (val) => `
+                <option value="rw" ${val === 'rw' ? 'selected' : ''}>${t('Pełny dostęp')}</option>
+                <option value="ro" ${val === 'ro' ? 'selected' : ''}>${t('Tylko odczyt')}</option>
+                <option value="none" ${val === 'none' ? 'selected' : ''}>${t('Brak dostępu')}</option>
+            `;
+
+            const renderRow = (e) => `
+                <div class="fm-acl-row" data-type="${e.type}" data-name="${e.name}" style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                    <i class="fas ${e.type === 'user' ? 'fa-user' : 'fa-users'}" style="width:18px;text-align:center;opacity:0.6;font-size:0.85em"></i>
+                    <span style="flex:1;font-size:0.9em;color:var(--text-primary)">${e.name}</span>
+                    <select class="fm-acl-access" style="padding:4px 8px;background:var(--bg-base,#181825);border:1px solid var(--border,#444);border-radius:4px;color:var(--text-primary);font-size:0.85em">
+                        ${accessOpts(e.access)}
+                    </select>
+                    <button class="fm-acl-remove" title="${t('Usuń')}" style="background:none;border:none;color:var(--danger,#ef4444);cursor:pointer;padding:4px"><i class="fas fa-times"></i></button>
+                </div>
+            `;
+
+            const hasDefaults = (aclData.defaults || []).length > 0;
+
+            loadingEl.outerHTML = `
+                <div id="fm-acl-entries">
+                    ${entries.length > 0 ? entries.map(renderRow).join('') : `<div style="color:var(--text-muted);font-size:0.85em;padding:4px 0">${t('Brak dodatkowych reguł ACL')}</div>`}
+                </div>
+                <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                    <select id="fm-acl-add-type" style="padding:4px 8px;background:var(--bg-base,#181825);border:1px solid var(--border,#444);border-radius:4px;color:var(--text-primary);font-size:0.85em">
+                        <option value="user">${t('Użytkownik')}</option>
+                        <option value="group">${t('Grupa')}</option>
+                    </select>
+                    <select id="fm-acl-add-name" style="padding:4px 8px;background:var(--bg-base,#181825);border:1px solid var(--border,#444);border-radius:4px;color:var(--text-primary);font-size:0.85em;min-width:100px">
+                        ${users.map(u => `<option value="${u}">${u}</option>`).join('')}
+                    </select>
+                    <button id="fm-acl-add-btn" class="app-btn" style="padding:4px 12px;font-size:0.85em"><i class="fas fa-plus"></i> ${t('Dodaj')}</button>
+                </div>
+                ${isDir ? `
+                <div style="margin-top:12px;display:flex;flex-direction:column;gap:6px">
+                    <label style="display:flex;align-items:center;gap:8px;font-size:0.85em;color:var(--text-primary);cursor:pointer">
+                        <input type="checkbox" id="fm-acl-inherit" ${hasDefaults ? 'checked' : ''}>
+                        <span>${t('Dziedziczenie — nowe pliki/foldery przejmą te reguły')}</span>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:8px;font-size:0.85em;color:var(--text-primary);cursor:pointer">
+                        <input type="checkbox" id="fm-acl-recursive">
+                        <span>${t('Zastosuj rekurencyjnie do istniejącej zawartości')}</span>
+                    </label>
+                </div>
+                ` : ''}
+            `;
+
+            // Wire up type switcher to change name dropdown
+            const typeSelect = container.querySelector('#fm-acl-add-type');
+            const nameSelect = container.querySelector('#fm-acl-add-name');
+            if (typeSelect && nameSelect) {
+                typeSelect.addEventListener('change', () => {
+                    const opts = typeSelect.value === 'user' ? users : groups;
+                    nameSelect.innerHTML = opts.map(n => `<option value="${n}">${n}</option>`).join('');
+                });
+            }
+
+            // Add entry button
+            const addBtn = container.querySelector('#fm-acl-add-btn');
+            if (addBtn) {
+                addBtn.addEventListener('click', () => {
+                    const etype = typeSelect.value;
+                    const ename = nameSelect.value;
+                    if (!ename) return;
+                    // Check duplicate
+                    const existing = container.querySelector(`.fm-acl-row[data-type="${etype}"][data-name="${ename}"]`);
+                    if (existing) { toast(t('Ta reguła już istnieje'), 'warning'); return; }
+                    const entriesDiv = container.querySelector('#fm-acl-entries');
+                    // Remove "no rules" message if present
+                    const noRules = entriesDiv.querySelector('div[style*="text-muted"]');
+                    if (noRules && !entriesDiv.querySelector('.fm-acl-row')) noRules.remove();
+                    const tmp = document.createElement('div');
+                    tmp.innerHTML = renderRow({ type: etype, name: ename, access: 'rw' });
+                    const newRow = tmp.firstElementChild;
+                    entriesDiv.appendChild(newRow);
+                    _wireAclRemove(newRow);
+                });
+            }
+
+            // Wire remove buttons
+            container.querySelectorAll('.fm-acl-remove').forEach(btn => {
+                _wireAclRemove(btn.closest('.fm-acl-row'));
+            });
+
+        } catch (err) {
+            loadingEl.innerHTML = `<span style="color:var(--danger)">${t('Błąd ładowania ACL')}</span>`;
+        }
+    }
+
+    function _wireAclRemove(row) {
+        if (!row) return;
+        const btn = row.querySelector('.fm-acl-remove');
+        if (btn) {
+            btn.addEventListener('click', () => {
+                // Set access to 'none' instead of removing (so save will remove the ACL)
+                const sel = row.querySelector('.fm-acl-access');
+                if (sel) sel.value = 'none';
+                row.style.opacity = '0.4';
+                row.style.textDecoration = 'line-through';
+                btn.disabled = true;
+            });
+        }
+    }
+
+    async function transferToRemoteNAS() {
+        const paths = getSelectedPaths();
+        if (!paths.length) { toast(t('Zaznacz elementy do transferu'), 'warning'); return; }
+
+        // Fetch available servers
+        let servers = [];
+        try {
+            const r = await api('/files/remote-servers');
+            servers = r.servers || [];
+        } catch (e) {
+            toast(t('Nie udało się załadować listy serwerów'), 'error'); return;
+        }
+        if (!servers.length) {
+            toast(t('Brak skonfigurowanych serwerów. Dodaj serwer w Ustawieniach > Zdalne serwery.'), 'warning');
+            return;
+        }
+
+        // Build transfer dialog
+        const selNames = [...state.selected];
+        const selLabel = selNames.length > 3
+            ? `${selNames.slice(0, 3).join(', ')} +${selNames.length - 3} ${t('więcej')}`
+            : selNames.join(', ');
+
+        const result = await new Promise((resolve) => {
+            const overlay = document.createElement('div');
+            overlay.className = 'modal-overlay';
+            overlay.innerHTML = `
+                <div class="modal app-modal-md">
+                    <div class="modal-header">
+                        <i class="fas fa-cloud-upload-alt app-hdr-icon"></i>${t('Transferuj do NAS')}
+                    </div>
+                    <div class="modal-body">
+                        <div class="app-info-box">
+                            <div class="app-sublabel">${t('Zaznaczone pliki:')}</div>
+                            <div class="app-filename">${selLabel}</div>
+                        </div>
+                        <label class="modal-label">${t('Serwer docelowy:')}</label>
+                        <select class="modal-input app-mb-md" id="transfer-server">
+                            ${servers.map(s => `<option value="${s.id}">${s.name} (${s.host})</option>`).join('')}
+                        </select>
+                        <label class="modal-label">${t('Ścieżka zdalna:')}</label>
+                        <input class="modal-input" id="transfer-remote-path" value="${servers[0]?.remote_path || '~/'}" placeholder="${t('np.')} ~/received">
+                        <div class="app-hint app-mt-xs">
+                            ${t('Folder docelowy na zdalnym serwerze. Zostanie utworzony automatycznie.')}
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn" id="transfer-cancel">${t('Anuluj')}</button>
+                        <button class="btn btn-primary" id="transfer-start">
+                            <i class="fas fa-paper-plane app-btn-icon"></i>${t('Transferuj')}
+                        </button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+
+            const serverSelect = overlay.querySelector('#transfer-server');
+            const remotePath = overlay.querySelector('#transfer-remote-path');
+
+            // Update remote path when server changes
+            serverSelect.addEventListener('change', () => {
+                const srv = servers.find(s => s.id === serverSelect.value);
+                if (srv) remotePath.value = srv.remote_path || '~/';
+            });
+
+            const submit = () => {
+                const val = { server_id: serverSelect.value, remote_path: remotePath.value.trim() || '~/' };
+                overlay.remove();
+                resolve(val);
+            };
+
+            remotePath.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') { overlay.remove(); resolve(null); } });
+            overlay.querySelector('#transfer-cancel').addEventListener('click', () => { overlay.remove(); resolve(null); });
+            overlay.querySelector('#transfer-start').addEventListener('click', submit);
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) { overlay.remove(); resolve(null); } });
+
+            serverSelect.focus();
+        });
+
+        if (!result) return;
+
+        try {
+            const r = await api('/files/transfer-remote', {
+                method: 'POST',
+                body: { server_id: result.server_id, paths, remote_path: result.remote_path }
+            });
+            if (r.error) { toast(r.error, 'error'); return; }
+            toast(r.message || t('Transfer rozpoczęty…'), 'info');
+        } catch (e) {
+            toast(t('Błąd transferu: ') + (e.message || e), 'error');
+        }
+    }
+
+    // ─── SocketIO file operation listeners ───
+
+    function _initFileOpListeners() {
+        if (!window.NAS || !NAS.socket) return;
+        NAS.socket.on('fileop_complete', (data) => {
+            const op = data.operation || '';
+            if (op === 'download') return; // handled by fileop_download_ready
+            const labels = { copy: t('Kopiowanie'), move: t('Przenoszenie'), compress: t('Kompresja'), extract: t('Rozpakowywanie'), transfer: t('Transfer do NAS') };
+            toast(`${labels[op] || t('Operacja')} ${t('zakończona:')} ${data.message || ''}`, 'success');
+            navigateTo(state.path);
+        });
+        NAS.socket.on('fileop_error', (data) => {
+            const op = data.operation || '';
+            const labels = { copy: t('Kopiowanie'), move: t('Przenoszenie'), compress: t('Kompresja'), extract: t('Rozpakowywanie'), download: t('Pobieranie ZIP'), transfer: t('Transfer do NAS') };
+            toast(`${labels[op] || t('Operacja')} — ${t('błąd:')} ${data.message || ''}`, 'error');
+            navigateTo(state.path);
+        });
+        NAS.socket.on('fileop_download_ready', (data) => {
+            // Notification only — actual download triggered by polling in downloadSelected
+            toast(t('Archiwum gotowe do pobrania:') + ` ${data.name || ''}`, 'success');
+        });
+    }
+
+    // Attach listeners when app is opened
+    _initFileOpListeners();
+
+    async function shareLink() {
+        const name = [...state.selected][0];
+        if (!name) return;
+        const fullPath = itemFullPath(name);
+
+        // Fetch user list for "share with user" option
+        let allUsers = [];
+        try {
+            const ulist = await api('/users/list');
+            const me = (typeof NAS !== 'undefined' && NAS.user) ? NAS.user.username : '';
+            allUsers = (ulist || []).filter(u => u.nasos_user && u.username !== me);
+        } catch(e) {}
+
+        const result = await new Promise((resolve) => {
+            const overlay = document.createElement('div');
+            overlay.className = 'modal-overlay';
+            overlay.innerHTML = `
+                <div class="modal">
+                    <div class="modal-header"><i class="fas fa-link app-hdr-icon"></i>${t('Udostępnij przez link')}</div>
+                    <div class="modal-body">
+                        <div class="app-mb-md">
+                            <span class="app-label-muted">Plik/folder:</span><br>
+                            <code class="app-path">${fullPath}</code>
+                        </div>
+                        <label class="modal-label">${t('Wygaśnięcie:')}</label>
+                        <select class="modal-input" id="share-link-expiry">
+                            <option value="0">Nigdy</option>
+                            <option value="1">1 godzina</option>
+                            <option value="24" selected>24 godziny</option>
+                            <option value="168">7 dni</option>
+                            <option value="720">30 dni</option>
+                        </select>
+                        ${allUsers.length ? `
+                        <div class="app-mt-md">
+                            <label class="modal-label app-label-row">
+                                <input type="checkbox" id="share-link-user-toggle"> ${t('Udostępnij konkretnemu użytkownikowi')}
+                            </label>
+                            <div id="share-link-users" class="app-user-list hidden">
+                                ${allUsers.map(u => `
+                                    <label class="app-check-label">
+                                        <input type="checkbox" class="share-user-cb" value="${u.username}">
+                                        <i class="fas fa-user app-icon-muted-sm"></i> ${u.username}
+                                    </label>
+                                `).join('')}
+                            </div>
+                        </div>` : ''}
+                        <div class="app-mt-md">
+                            <label class="modal-label app-label-row">
+                                <input type="checkbox" id="share-link-pw-toggle"> ${t('Chroń hasłem')}
+                            </label>
+                            <div id="share-link-pw-wrap" style="display:none;margin-top:8px">
+                                <input type="password" class="modal-input" id="share-link-password" placeholder="${t('Hasło do linku')}" autocomplete="new-password">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn" id="share-link-cancel">Anuluj</button>
+                        <button class="btn btn-primary" id="share-link-ok"><i class="fas fa-link"></i> ${t('Utwórz link')}</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+
+            // Toggle user list visibility
+            const toggle = overlay.querySelector('#share-link-user-toggle');
+            const userList = overlay.querySelector('#share-link-users');
+            if (toggle && userList) {
+                toggle.addEventListener('change', () => { userList.style.display = toggle.checked ? 'block' : 'none'; });
+            }
+            // Toggle password input
+            const pwToggle = overlay.querySelector('#share-link-pw-toggle');
+            const pwWrap = overlay.querySelector('#share-link-pw-wrap');
+            if (pwToggle && pwWrap) {
+                pwToggle.addEventListener('change', () => { pwWrap.style.display = pwToggle.checked ? 'block' : 'none'; });
+            }
+
+            overlay.querySelector('#share-link-cancel').addEventListener('click', () => { overlay.remove(); resolve(null); });
+            overlay.querySelector('#share-link-ok').addEventListener('click', () => {
+                const hours = overlay.querySelector('#share-link-expiry').value;
+                const selectedUsers = [];
+                if (toggle && toggle.checked) {
+                    overlay.querySelectorAll('.share-user-cb:checked').forEach(cb => selectedUsers.push(cb.value));
+                }
+                const password = (pwToggle && pwToggle.checked) ? overlay.querySelector('#share-link-password').value.trim() : '';
+                overlay.remove();
+                resolve({ hours, shared_with: selectedUsers, password });
+            });
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) { overlay.remove(); resolve(null); } });
+        });
+
+        if (result === null) return;
+
+        try {
+            const body = { path: fullPath, expires_hours: parseInt(result.hours) };
+            if (result.shared_with && result.shared_with.length > 0) {
+                body.shared_with = result.shared_with;
+            }
+            if (result.password) {
+                body.password = result.password;
+            }
+            const share = await api('/files/shares', {
+                method: 'POST',
+                body
+            });
+            if (share.error) { toast(t('Błąd: ') + share.error, 'error'); return; }
+
+            const shareUrl = `${window.location.origin}/share/${share.token}`;
+            const isUserShare = result.shared_with && result.shared_with.length > 0;
+
+            // Show result modal with copy button
+            const overlay2 = document.createElement('div');
+            overlay2.className = 'modal-overlay';
+            overlay2.innerHTML = `
+                <div class="modal">
+                    <div class="modal-header"><i class="fas fa-check-circle app-hdr-icon app-hdr-icon--success"></i>Link utworzony</div>
+                    <div class="modal-body">
+                        <div class="app-note">${t('Udostępniono:')} <strong>${name}</strong></div>
+                        ${isUserShare ? `<div class="app-note app-note--accent"><i class="fas fa-users"></i> Dla: ${result.shared_with.join(', ')}</div>` : ''}
+                        <div class="app-row">
+                            <input class="modal-input app-mono-input" id="share-link-url" value="${shareUrl}" readonly>
+                            <button class="btn btn-primary app-nowrap" id="share-link-copy"><i class="fas fa-copy"></i> ${t('Copy')}</button>
+                        </div>
+                        ${parseInt(result.hours) > 0 ? `<div class="app-hint"><i class="fas fa-clock"></i> Wygasa za ${result.hours === '1' ? t('1 godzinę') : result.hours + ' godz.'}</div>` : '<div class="app-hint"><i class="fas fa-infinity"></i> Link nie wygasa</div>'}
+                        ${isUserShare ? `<div class="app-hint app-mt-xs"><i class="fas fa-lock"></i> ${t('Dostępny tylko dla wybranych użytkowników')}</div>` : ''}
+                        ${result.password ? `<div class="app-hint app-mt-xs"><i class="fas fa-key"></i> ${t('Chroniony hasłem')}</div>` : ''}
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-primary" id="share-link-close">Zamknij</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(overlay2);
+
+            const urlInput = overlay2.querySelector('#share-link-url');
+            urlInput.select();
+
+            overlay2.querySelector('#share-link-copy').addEventListener('click', () => {
+                navigator.clipboard.writeText(shareUrl).then(() => {
+                    toast('Link skopiowany do schowka', 'success');
+                }).catch(() => {
+                    urlInput.select();
+                    document.execCommand('copy');
+                    toast('Link skopiowany', 'success');
+                });
+            });
+            overlay2.querySelector('#share-link-close').addEventListener('click', () => overlay2.remove());
+            overlay2.addEventListener('click', (e) => { if (e.target === overlay2) overlay2.remove(); });
+        } catch (e) {
+            toast(t('Błąd tworzenia linku: ') + (e.message || 'nieznany'), 'error');
+        }
+    }
+
+    async function shareSamba() {
+        const name = [...state.selected][0];
+        if (!name) return;
+        const item = state.items.find(i => i.name === name);
+        if (!item || !item.is_dir) { toast(t('Wybierz folder do udostępnienia'), 'warning'); return; }
+
+        // Check if Samba is installed
+        try {
+            const sambaStatus = await api('/storage/samba/status');
+            if (!sambaStatus.installed) {
+                if (await confirmDialog(t('Samba nie jest zainstalowana.\nCzy chcesz przejść do instalacji?'))) {
+                    if (typeof openApp === 'function') openApp('sharing');
+                    else toast(t('Przejdź do aplikacji Dyski → Samba aby zainstalować'), 'info');
+                }
+                return;
+            }
+        } catch (e) { /* continue anyway */ }
+
+        const fullPath = itemFullPath(name);
+
+        // Custom modal that captures values before DOM removal
+        const result = await new Promise((resolve) => {
+            const overlay = document.createElement('div');
+            overlay.className = 'modal-overlay';
+            overlay.innerHTML = `
+                <div class="modal">
+                    <div class="modal-header">${t('Udostępnij folder (Samba)')}</div>
+                    <div class="modal-body">
+                        <div class="app-mb-md">
+                            <span class="app-label-muted">${t('Ścieżka:')}</span><br>
+                            <code class="app-path">${fullPath}</code>
+                        </div>
+                        <label class="modal-label">${t('Nazwa udziału sieciowego:')}</label>
+                        <input class="modal-input" id="samba-share-name" value="${name}">
+                        <div class="app-mt-md">
+                            <label class="app-check-label app-check-label--secondary">
+                                <input type="checkbox" id="samba-guest-ok" checked class="app-checkbox">
+                                ${t('Dostęp jako gość (bez hasła)')}
+                            </label>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn" id="samba-dlg-cancel">Anuluj</button>
+                        <button class="btn btn-primary" id="samba-dlg-ok">${t('Udostępnij')}</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+            overlay.querySelector('#samba-share-name').focus();
+
+            overlay.querySelector('#samba-dlg-cancel').addEventListener('click', () => {
+                overlay.remove();
+                resolve(null);
+            });
+            overlay.querySelector('#samba-dlg-ok').addEventListener('click', () => {
+                const shareName = overlay.querySelector('#samba-share-name').value.trim();
+                const guestOk = overlay.querySelector('#samba-guest-ok').checked;
+                overlay.remove();
+                resolve(shareName ? { shareName, guestOk } : null);
+            });
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) { overlay.remove(); resolve(null); }
+            });
+        });
+
+        if (!result) return;
+
+        try {
+            const resp = await api('/storage/samba/share', {
+                method: 'POST',
+                body: { name: result.shareName, path: fullPath, guest_ok: result.guestOk }
+            });
+            if (resp.error) {
+                toast(t('Błąd: ') + resp.error, 'error');
+            } else {
+                toast(`${t('Folder')} "${name}" ${t('udostępniony jako')} "${result.shareName}"`, 'success');
+                await loadSambaShares();
+                renderFileList();
+            }
+        } catch (e) {
+            toast(t('Błąd udostępniania: ') + (e.message || 'nieznany'), 'error');
+        }
+    }
+
+    async function unshareSamba() {
+        const sel = [...state.selected];
+        if (sel.length !== 1) return;
+        const name = sel[0];
+        const item = state.items.find(i => i.name === name);
+        if (!item) return;
+        const share = getShareForItem(item);
+        if (!share) { toast(t('Ten folder nie jest udostępniony'), 'error'); return; }
+
+        const ok = await confirmDialog(t('Cofnij udostępnianie'),
+            `${t('Czy na pewno chcesz cofnąć udostępnianie')} "${share.name}"?`);
+        if (!ok) return;
+
+        try {
+            const resp = await api('/storage/samba/share', {
+                method: 'DELETE',
+                body: { name: share.name }
+            });
+            if (resp.error) {
+                toast(t('Błąd: ') + resp.error, 'error');
+            } else {
+                toast(`${t('Udostępnianie')} "${share.name}" ${t('cofnięte')}`, 'success');
+                await loadSambaShares();
+                renderFileList();
+            }
+        } catch (e) {
+            toast(t('Błąd: ') + (e.message || 'nieznany'), 'error');
+        }
+    }
+
+    function selectAll() {
+        state.items.forEach(i => state.selected.add(i.name));
+        updateSelection();
+    }
+
+    function clearSelection() {
+        state.selected.clear();
+        state.lastClickedIndex = -1;
+        updateSelection();
+    }
+
+    // ─── Event Bindings ───
+    body.querySelector('#fm-back').addEventListener('click', () => {
+        if (state.historyIndex > 0) {
+            state.historyIndex--;
+            navigateTo(state.history[state.historyIndex]);
+        }
+    });
+    body.querySelector('#fm-forward').addEventListener('click', () => {
+        if (state.historyIndex < state.history.length - 1) {
+            state.historyIndex++;
+            navigateTo(state.history[state.historyIndex]);
+        }
+    });
+    body.querySelector('#fm-up').addEventListener('click', () => {
+        if (isRegularPath() && !isAtHomeRoot()) {
+            const parent = state.path.split('/').slice(0, -1).join('/') || (state.sudoMode ? '/' : state.homePath);
+            navigateTo(parent);
+        }
+    });
+    body.querySelector('#fm-logs').addEventListener('click', () => showLogsDialog(state.path));
+    body.querySelector('#fm-refresh').addEventListener('click', () => navigateTo(state.path));
+    body.querySelector('#fm-newfolder').addEventListener('click', createNewFolder);
+    body.querySelector('#fm-upload').addEventListener('click', uploadFiles);
+    body.querySelector('#fm-upload-folder').addEventListener('click', uploadFolder);
+    body.querySelector('#fm-download').addEventListener('click', downloadSelected);
+    body.querySelector('#fm-delete').addEventListener('click', deleteSelected);
+
+    // View mode buttons
+    function updateViewModeButtons() {
+        body.querySelectorAll('.fm-view-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.view === state.viewMode);
+        });
+    }
+    body.querySelectorAll('.fm-view-btn').forEach(btn => {
+        btn.addEventListener('click', () => setViewMode(btn.dataset.view));
+    });
+    updateViewModeButtons();
+
+    // Mobile sidebar toggle
+    body.querySelector('#fm-sidebar-toggle')?.addEventListener('click', () => {
+        const sidebar = body.querySelector('#fm-sidebar');
+        const btn = body.querySelector('#fm-sidebar-toggle');
+        const isOpen = sidebar.classList.toggle('fm-sidebar-open');
+        btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+    });
+    // Close sidebar when clicking outside on mobile
+    body.querySelector('#fm-file-list')?.addEventListener('click', () => {
+        const sidebar = body.querySelector('#fm-sidebar');
+        if (sidebar.classList.contains('fm-sidebar-open') && window.innerWidth <= 600) {
+            sidebar.classList.remove('fm-sidebar-open');
+            body.querySelector('#fm-sidebar-toggle')?.setAttribute('aria-expanded', 'false');
+        }
+    });
+
+    // Sort dropdown logic
+    const sortLabels = { name: t('Nazwa'), size: t('Rozmiar'), modified: t('Data mod.'), permissions: t('Prawa') };
+    function updateSortLabel() {
+        const label = body.querySelector('#fm-sort-label');
+        if (label) label.textContent = sortLabels[state.sortCol] || 'Nazwa';
+        // Highlight active sort option
+        body.querySelectorAll('#fm-sort-menu .fm-sort-option[data-sort]').forEach(opt => {
+            opt.classList.toggle('active', opt.dataset.sort === state.sortCol);
+        });
+        body.querySelectorAll('#fm-sort-menu .fm-sort-option[data-dir]').forEach(opt => {
+            opt.classList.toggle('active', (opt.dataset.dir === 'asc') === state.sortAsc);
+        });
+        // Update icon on button
+        const icon = body.querySelector('#fm-sort-btn > i:first-child');
+        if (icon) icon.className = state.sortAsc ? 'fas fa-sort-amount-up-alt' : 'fas fa-sort-amount-down-alt';
+        // Update aria-sort on column headers
+        body.querySelectorAll('#fm-header-columns span[data-sort]').forEach(span => {
+            if (span.dataset.sort === state.sortCol) {
+                span.setAttribute('aria-sort', state.sortAsc ? 'ascending' : 'descending');
+            } else {
+                span.setAttribute('aria-sort', 'none');
+            }
+        });
+    }
+    body.querySelector('#fm-sort-btn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        const menu = body.querySelector('#fm-sort-menu');
+        const sortBtn = body.querySelector('#fm-sort-btn');
+        const isHidden = menu.classList.toggle('hidden');
+        sortBtn.setAttribute('aria-expanded', !isHidden ? 'true' : 'false');
+        // Close on outside click
+        const closeMenu = (ev) => {
+            if (!menu.contains(ev.target)) {
+                menu.classList.add('hidden');
+                sortBtn.setAttribute('aria-expanded', 'false');
+                document.removeEventListener('click', closeMenu);
+            }
+        };
+        if (!menu.classList.contains('hidden')) {
+            setTimeout(() => document.addEventListener('click', closeMenu), 0);
+        }
+    });
+    body.querySelector('#fm-sort-menu').addEventListener('click', (e) => {
+        const opt = e.target.closest('.fm-sort-option');
+        if (!opt) return;
+        if (opt.dataset.sort) {
+            state.sortCol = opt.dataset.sort;
+        } else if (opt.dataset.dir) {
+            state.sortAsc = opt.dataset.dir === 'asc';
+        }
+        updateSortLabel();
+        renderFileList();
+        body.querySelector('#fm-sort-menu').classList.add('hidden');
+        body.querySelector('#fm-sort-btn').setAttribute('aria-expanded', 'false');
+    });
+    updateSortLabel();
+
+    // Selection action bindings (inside header)
+    body.querySelector('#fm-sel-copy').addEventListener('click', clipboardCopy);
+    body.querySelector('#fm-sel-cut').addEventListener('click', clipboardCut);
+    body.querySelector('#fm-sel-download').addEventListener('click', downloadSelected);
+    body.querySelector('#fm-sel-delete').addEventListener('click', deleteSelected);
+    body.querySelector('#fm-sel-clear').addEventListener('click', clearSelection);
+    body.querySelector('#fm-clipboard-paste').addEventListener('click', clipboardPaste);
+    body.querySelector('#fm-clipboard-cancel').addEventListener('click', () => {
+        state.clipboard = null;
+        updateClipboardBar();
+    });
+
+    // Header checkbox — select/deselect all
+    body.querySelector('#fm-header-cb').addEventListener('change', (e) => {
+        if (e.target.checked) selectAll();
+        else clearSelection();
+    });
+
+    // ─── Delegated event handlers on #fm-file-list (registered once) ───
+    const _fmList = body.querySelector('#fm-file-list');
+    const _itemSel = '.fm-file-item, .fm-grid-item, .fm-thumb-item';
+
+
+
+    _fmList.addEventListener('keydown', (e) => {
+        // Keyboard navigation
+        const _allItems = state.searchResults !== null ? state.searchResults : state.items;
+        const total = _allItems.length;
+        if (total === 0) return;
+
+        let processed = true;
+
+        const getCols = () => {
+            if (state.viewMode === 'list') return 1;
+            const items = _fmList.querySelectorAll('.fm-grid-item, .fm-thumb-item');
+            if (items.length < 2) return 1;
+
+            // Robust way: find first item on the next row
+            const firstTop = items[0].getBoundingClientRect().top;
+            for (let i = 1; i < items.length; i++) {
+                if (items[i].getBoundingClientRect().top > firstTop + 10) {
+                    return i;
+                }
+            }
+            return items.length; // All items on one row
+        };
+
+        const handleMove = (newIdx) => {
+            if (newIdx < 0) newIdx = 0;
+            if (newIdx >= total) newIdx = total - 1;
+
+            if (e.shiftKey) {
+                // Range selection
+                if (state.lastClickedIndex === -1) state.lastClickedIndex = state.focusedIndex;
+                const start = Math.min(state.lastClickedIndex, newIdx);
+                const end = Math.max(state.lastClickedIndex, newIdx);
+
+                // If not holding Ctrl, Shift+Arrow usually clears previous discontinuous selections
+                if (!e.ctrlKey && !e.metaKey) state.selected.clear();
+
+                const sorted = sortItems(_allItems);
+                for (let i = start; i <= end; i++) {
+                    if (sorted[i]) state.selected.add(sorted[i].name);
+                }
+                updateSelection();
+            } else {
+                // Move anchor if not selecting
+                state.lastClickedIndex = newIdx;
+
+                // Standard desktop behavior: moving focus selects item (unless Ctrl is held)
+                if (!e.ctrlKey && !e.metaKey) {
+                    state.selected.clear();
+                    const sorted = sortItems(_allItems);
+                    if (sorted[newIdx]) state.selected.add(sorted[newIdx].name);
+                    updateSelection();
+                }
+            }
+            state.focusedIndex = newIdx;
+        };
+
+        switch(e.key) {
+            case 'ArrowDown':
+                handleMove(state.focusedIndex + getCols());
+                break;
+            case 'ArrowUp':
+                handleMove(state.focusedIndex - getCols());
+                break;
+            case 'ArrowRight':
+                handleMove(state.focusedIndex + 1);
+                break;
+            case 'ArrowLeft':
+                handleMove(state.focusedIndex - 1);
+                break;
+            case 'Home':
+                handleMove(0);
+                break;
+            case 'End':
+                handleMove(total - 1);
+                break;
+            case 'Backspace':
+                e.stopPropagation();
+                e.preventDefault();
+                if (state.selected.size === 0 || document.activeElement === _fmList) {
+                   // Go Up
+                   const upBtn = body.querySelector('#fm-up');
+                   if (upBtn && !upBtn.disabled) upBtn.click();
+                }
+                break;
+            case 'Enter':
+                e.stopPropagation();
+                e.preventDefault();
+                if (state.focusedIndex >= 0) {
+                    const sorted = sortItems(_allItems);
+                    const item = sorted[state.focusedIndex];
+                    if (item) {
+                        if (item.is_dir) navigateTo(itemFullPath(item));
+                        else previewFile(item.name);
+                    }
+                }
+                break;
+            case ' ': // Space to toggle selection
+                if (state.focusedIndex >= 0) {
+                    e.stopPropagation();
+                    e.preventDefault(); // prevent scroll
+                    const sorted = sortItems(_allItems);
+                    const item = sorted[state.focusedIndex];
+                    if (item) {
+                        if (state.selected.has(item.name)) state.selected.delete(item.name);
+                        else state.selected.add(item.name);
+                        state.lastClickedIndex = state.focusedIndex;
+                        updateSelection();
+                    }
+                }
+                break;
+            case 'a':
+                if (e.ctrlKey || e.metaKey) {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    state.selected = new Set(_allItems.map(i => i.name));
+                    updateSelection();
+                } else processed = false;
+                break;
+            case 'Delete':
+                e.stopPropagation();
+                e.preventDefault();
+                if (state.selected.size > 0) {
+                    deleteSelected();
+                } else if (state.focusedIndex >= 0) {
+                     // Delete focused item if nothing selected
+                     const sorted = sortItems(_allItems);
+                     const item = sorted[state.focusedIndex];
+                     if (item) {
+                         state.selected.add(item.name);
+                         updateSelection();
+                         deleteSelected();
+                     }
+                }
+                break;
+            default:
+                processed = false;
+        }
+
+        if (processed) {
+            if (e.key.startsWith('Arrow') || e.key === 'Home' || e.key === 'End') {
+                e.stopPropagation();
+                e.preventDefault();
+                // Ensure page change if focused item is not on current page
+                const newPage = Math.floor(state.focusedIndex / state.pageSize);
+                if (newPage !== state.page) {
+                    state.page = newPage;
+                    renderFileList();
+                }
+                setFocusedIndex(state.focusedIndex);
+            }
+        }
+    });
+
+    _fmList.addEventListener('click', (e) => {
+        // Checkbox click
+        const cbLabel = e.target.closest('.fm-checkbox-label');
+        if (cbLabel) {
+            e.preventDefault();
+            e.stopPropagation();
+            const name = cbLabel.dataset.cbName;
+            if (state.selected.has(name)) state.selected.delete(name);
+            else state.selected.add(name);
+            const el = cbLabel.closest(_itemSel);
+            if (el) {
+                state.lastClickedIndex = parseInt(el.dataset.idx);
+                state.focusedIndex = state.lastClickedIndex;
+            }
+            updateSelection();
+            return;
+        }
+
+        const el = e.target.closest(_itemSel);
+        if (!el) {
+            // Click on empty space — deselect all
+            state.selected.clear();
+            state.lastClickedIndex = -1;
+            state.focusedIndex = -1;
+            updateSelection();
+            return;
+        }
+
+        // Prevent browser text-selection on shift-click
+        if (e.shiftKey) e.preventDefault();
+
+        // Item click — single/ctrl/shift select
+        const name = el.dataset.name;
+        const idx = parseInt(el.dataset.idx);
+
+        // Mobile/Touch: if in selection mode, behave like Ctrl-click
+        const isMultiSelect = e.ctrlKey || e.metaKey || state.selectMode;
+
+        if (e.shiftKey && state.lastClickedIndex >= 0) {
+            const _allItems = state.searchResults !== null ? state.searchResults : state.items;
+            const sorted = sortItems(_allItems);
+            const start = Math.min(state.lastClickedIndex, idx);
+            const end = Math.max(state.lastClickedIndex, idx);
+            if (!isMultiSelect) state.selected.clear();
+            for (let i = start; i <= end; i++) {
+                if (sorted[i]) state.selected.add(sorted[i].name);
+            }
+        } else if (isMultiSelect) {
+            if (state.selected.has(name)) state.selected.delete(name);
+            else state.selected.add(name);
+        } else {
+            state.selected.clear();
+            state.selected.add(name);
+        }
+        state.lastClickedIndex = idx;
+        state.focusedIndex = idx;
+        // Update focused visual indicator without scroll (user clicked, already visible)
+        const list = body.querySelector('#fm-file-list');
+        list.querySelectorAll('.fm-focused').forEach(el => el.classList.remove('fm-focused'));
+        el.classList.add('fm-focused');
+        list.setAttribute('aria-activedescendant', `fm-item-${idx}`);
+        updateSelection();
+    });
+
+    _fmList.addEventListener('dblclick', (e) => {
+        // Skip if clicking a size cell (folder size calc)
+        if (e.target.closest('.fm-file-size')) return;
+        const el = e.target.closest(_itemSel);
+        if (!el) return;
+        const name = el.dataset.name;
+        // If in search mode, use the full path from search results
+        if (state.searchResults !== null && el.dataset.path) {
+            if (el.dataset.isdir === 'true') {
+                navigateTo(el.dataset.path);
+            } else {
+                // Navigate to parent folder, then preview
+                const parent = el.dataset.path.substring(0, el.dataset.path.lastIndexOf('/')) || '/';
+                navigateTo(parent);
+            }
+            return;
+        }
+        if (el.dataset.isdir === 'true') {
+            navigateTo(itemFullPath(name));
+        } else {
+            previewFile(name);
+        }
+    });
+
+    _fmList.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        const el = e.target.closest(_itemSel);
+        if (el) {
+            const name = el.dataset.name;
+            if (!state.selected.has(name)) {
+                state.selected.clear();
+                state.selected.add(name);
+                state.lastClickedIndex = parseInt(el.dataset.idx);
+                updateSelection();
+            }
+        } else {
+            // Clicked on empty space — clear selection
+            state.selected.clear();
+            updateSelection();
+        }
+        showFMContextMenu(e.clientX, e.clientY);
+    });
+
+    // Sort headers
+    body.querySelector('#fm-list-header').addEventListener('click', (e) => {
+        const span = e.target.closest('[data-sort]');
+        if (!span) return;
+        const col = span.dataset.sort;
+        if (state.sortCol === col) state.sortAsc = !state.sortAsc;
+        else { state.sortCol = col; state.sortAsc = true; }
+        renderFileList();
+    });
+
+    // ── Drag & drop MIME type for internal file moves ──
+    const _FM_DRAG_MIME = 'application/x-ethos-fm-paths';
+
+    // Drag & drop upload (external files only — skip internal FM drags)
+    const main = body.querySelector('.fm-main');
+    let dropOverlay = null;
+
+    main.addEventListener('dragover', (e) => {
+        // Skip overlay for internal FM drag (file move/copy between folders)
+        if (e.dataTransfer.types.includes(_FM_DRAG_MIME)) return;
+        e.preventDefault();
+        if (!dropOverlay) {
+            dropOverlay = document.createElement('div');
+            dropOverlay.className = 'fm-dropzone';
+            dropOverlay.innerHTML = `<i class="fas fa-cloud-upload-alt"></i>&nbsp; ${t('Upuść pliki tutaj')}`;
+            main.appendChild(dropOverlay);
+        }
+    });
+    main.addEventListener('dragleave', (e) => {
+        if (!main.contains(e.relatedTarget)) {
+            dropOverlay?.remove();
+            dropOverlay = null;
+        }
+    });
+    main.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        dropOverlay?.remove();
+        dropOverlay = null;
+
+        // Skip external upload handling for internal FM drags
+        if (e.dataTransfer.types.includes(_FM_DRAG_MIME)) return;
+
+        // Check if any dropped items are directories (use DataTransferItem API)
+        const items = e.dataTransfer.items;
+        let hasDir = false;
+        if (items) {
+            for (let i = 0; i < items.length; i++) {
+                const entry = items[i].webkitGetAsEntry?.();
+                if (entry?.isDirectory) { hasDir = true; break; }
+            }
+        }
+
+        if (hasDir && items) {
+            // Collect all files recursively from dropped folders
+            const allFiles = [];
+            const readEntry = (entry, pathPrefix) => {
+                return new Promise((resolve) => {
+                    if (entry.isFile) {
+                        entry.file(f => {
+                            Object.defineProperty(f, '_relPath', { value: pathPrefix + f.name });
+                            allFiles.push(f);
+                            resolve();
+                        }, () => resolve());
+                    } else if (entry.isDirectory) {
+                        const reader = entry.createReader();
+                        const readAll = (entries = []) => {
+                            reader.readEntries(batch => {
+                                if (!batch.length) {
+                                    Promise.all(entries.map(e => readEntry(e, pathPrefix + entry.name + '/'))).then(resolve);
+                                } else {
+                                    readAll([...entries, ...batch]);
+                                }
+                            }, () => resolve());
+                        };
+                        readAll();
+                    } else {
+                        resolve();
+                    }
+                });
+            };
+            const promises = [];
+            for (let i = 0; i < items.length; i++) {
+                const entry = items[i].webkitGetAsEntry?.();
+                if (entry) promises.push(readEntry(entry, ''));
+            }
+            await Promise.all(promises);
+            if (allFiles.length) {
+                // Attach relative paths as webkitRelativePath-compatible property
+                // and delegate to _doUploadWithPaths which handles chunked upload for large files
+                allFiles.forEach(f => {
+                    if (!f.webkitRelativePath && f._relPath) {
+                        Object.defineProperty(f, 'webkitRelativePath', { value: f._relPath, configurable: true });
+                    }
+                });
+                _doUploadWithPaths(allFiles);
+            }
+        } else {
+            const files = e.dataTransfer.files;
+            if (!files.length) return;
+            _doUpload(files);
+        }
+    });
+
+    // ── Drag & drop: move/copy files between folders ──
+    let _dragGhost = null;
+
+    function _initDragOnItems() {
+        const list = body.querySelector('#fm-file-list');
+        if (!list) return;
+        const itemSel = '.fm-file-item, .fm-grid-item, .fm-thumb-item';
+
+        // Make all items draggable
+        list.querySelectorAll(itemSel).forEach(el => {
+            el.draggable = true;
+
+            el.addEventListener('dragstart', (e) => {
+                const name = el.dataset.name;
+                if (!name) return;
+
+                // If the dragged item is not selected, select only it
+                if (!state.selected.has(name)) {
+                    state.selected.clear();
+                    state.selected.add(name);
+                }
+
+                const paths = getSelectedPaths();
+                e.dataTransfer.setData(_FM_DRAG_MIME, JSON.stringify(paths));
+                e.dataTransfer.setData('text/plain', paths.join('\n'));
+                e.dataTransfer.effectAllowed = 'copyMove';
+
+                // Custom drag ghost
+                _dragGhost = document.createElement('div');
+                _dragGhost.style.cssText = 'position:fixed;left:-9999px;top:-9999px;background:var(--accent);color:#fff;padding:4px 12px;border-radius:8px;font-size:12px;font-weight:600;z-index:99999;pointer-events:none';
+                _dragGhost.textContent = paths.length > 1 ? `${paths.length} ${t('elementów')}` : name;
+                document.body.appendChild(_dragGhost);
+                e.dataTransfer.setDragImage(_dragGhost, 0, 0);
+
+                el.classList.add('fm-dragging');
+            });
+
+            el.addEventListener('dragend', () => {
+                el.classList.remove('fm-dragging');
+                if (_dragGhost) { _dragGhost.remove(); _dragGhost = null; }
+                // Remove all drag-over highlights
+                list.querySelectorAll('.fm-drag-over').forEach(d => d.classList.remove('fm-drag-over'));
+            });
+
+            // Drop targets: only folders
+            if (el.dataset.isdir === 'true') {
+                el.addEventListener('dragover', (e) => {
+                    // Only accept internal FM drags
+                    if (!e.dataTransfer.types.includes(_FM_DRAG_MIME)) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = e.ctrlKey ? 'copy' : 'move';
+                    el.classList.add('fm-drag-over');
+                });
+
+                el.addEventListener('dragleave', () => {
+                    el.classList.remove('fm-drag-over');
+                });
+
+                el.addEventListener('drop', async (e) => {
+                    el.classList.remove('fm-drag-over');
+                    const raw = e.dataTransfer.getData(_FM_DRAG_MIME);
+                    if (!raw) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+
+                    const paths = JSON.parse(raw);
+                    const dest = itemFullPath(el.dataset.name);
+                    const isCopy = e.ctrlKey;
+
+                    // Don't drop onto itself
+                    if (paths.includes(dest)) return;
+
+                    try {
+                        let onConflict = 'rename';
+                        const check = await api('/files/check-conflicts', { method: 'POST', body: { sources: paths, dest } });
+                        if (check.conflicts && check.conflicts.length > 0) {
+                            onConflict = await showConflictDialog(check.conflicts, isCopy ? 'copy' : 'cut');
+                            if (onConflict === null) return;
+                        }
+                        if (isCopy) {
+                            const r = await api('/files/copy', { method: 'POST', body: { sources: paths, dest, on_conflict: onConflict } });
+                            if (r.error) { toast(r.error, 'error'); return; }
+                            if (r.async) { toast(r.message || t('Kopiowanie w tle…'), 'info'); return; }
+                            toast(t('Copied') + ' ' + (r.copied || []).length + ' ' + t('item(s)'), 'success');
+                        } else {
+                            const r = await api('/files/move-multi', { method: 'POST', body: { sources: paths, dest, on_conflict: onConflict } });
+                            if (r.error) { toast(r.error, 'error'); return; }
+                            if (r.async) { toast(r.message || t('Przenoszenie w tle…'), 'info'); return; }
+                            toast(t('Moved') + ' ' + (r.moved || []).length + ' ' + t('item(s)'), 'success');
+                        }
+                        navigateTo(state.path);
+                    } catch (err) {
+                        toast(t('Błąd operacji') + (err?.message ? ': ' + err.message : ''), 'error');
+                    }
+                });
+            }
+        });
+    }
+
+    // Also allow drop on breadcrumb segments
+    const breadcrumb = body.querySelector('#fm-breadcrumb');
+    if (breadcrumb) {
+        breadcrumb.addEventListener('dragover', (e) => {
+            if (!e.dataTransfer.types.includes(_FM_DRAG_MIME)) return;
+            const btn = e.target.closest('.fm-breadcrumb-item');
+            if (!btn) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = e.ctrlKey ? 'copy' : 'move';
+            btn.classList.add('fm-drag-over');
+        });
+        breadcrumb.addEventListener('dragleave', (e) => {
+            const btn = e.target.closest('.fm-breadcrumb-item');
+            if (btn) btn.classList.remove('fm-drag-over');
+        });
+        breadcrumb.addEventListener('drop', async (e) => {
+            const btn = e.target.closest('.fm-breadcrumb-item');
+            if (btn) btn.classList.remove('fm-drag-over');
+            const raw = e.dataTransfer.getData(_FM_DRAG_MIME);
+            if (!raw || !btn) return;
+            e.preventDefault();
+            e.stopPropagation();
+
+            const paths = JSON.parse(raw);
+            const dest = btn.dataset.path;
+            if (!dest || dest === state.path) return;
+            const isCopy = e.ctrlKey;
+
+            try {
+                const endpoint = isCopy ? '/files/copy' : '/files/move-multi';
+                const r = await api(endpoint, { method: 'POST', body: { sources: paths, dest, on_conflict: 'rename' } });
+                if (r.error) { toast(r.error, 'error'); return; }
+                if (r.async) { toast(r.message || (isCopy ? t('Kopiowanie w tle…') : t('Przenoszenie w tle…')), 'info'); return; }
+                toast((isCopy ? t('Copied') : t('Moved')) + ' ' + (r.copied || r.moved || []).length + ' ' + t('item(s)'), 'success');
+                navigateTo(state.path);
+            } catch (err) {
+                toast(t('Błąd operacji') + (err?.message ? ': ' + err.message : ''), 'error');
+            }
+        });
+    }
+
+    // Also allow drop on sidebar favorites
+    const sidebar = body.querySelector('#fm-sidebar');
+    if (sidebar) {
+        sidebar.addEventListener('dragover', (e) => {
+            if (!e.dataTransfer.types.includes(_FM_DRAG_MIME)) return;
+            const btn = e.target.closest('.fm-tree-item');
+            if (!btn || !btn.dataset.path) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = e.ctrlKey ? 'copy' : 'move';
+            btn.classList.add('fm-drag-over');
+        });
+        sidebar.addEventListener('dragleave', (e) => {
+            const btn = e.target.closest('.fm-tree-item');
+            if (btn) btn.classList.remove('fm-drag-over');
+        });
+        sidebar.addEventListener('drop', async (e) => {
+            const btn = e.target.closest('.fm-tree-item');
+            if (btn) btn.classList.remove('fm-drag-over');
+            const raw = e.dataTransfer.getData(_FM_DRAG_MIME);
+            if (!raw || !btn) return;
+            e.preventDefault();
+            e.stopPropagation();
+
+            const paths = JSON.parse(raw);
+            const dest = btn.dataset.path;
+            if (!dest || dest === state.path || dest.startsWith('/__')) return;
+            const isCopy = e.ctrlKey;
+
+            try {
+                const endpoint = isCopy ? '/files/copy' : '/files/move-multi';
+                const r = await api(endpoint, { method: 'POST', body: { sources: paths, dest, on_conflict: 'rename' } });
+                if (r.error) { toast(r.error, 'error'); return; }
+                if (r.async) { toast(r.message || (isCopy ? t('Kopiowanie w tle…') : t('Przenoszenie w tle…')), 'info'); return; }
+                toast((isCopy ? t('Copied') : t('Moved')) + ' ' + (r.copied || r.moved || []).length + ' ' + t('item(s)'), 'success');
+                navigateTo(state.path);
+            } catch (err) {
+                toast(t('Błąd operacji') + (err?.message ? ': ' + err.message : ''), 'error');
+            }
+        });
+    }
+
+    // Keyboard shortcuts
+    body.closest('.window').addEventListener('keydown', (e) => {
+        // Ctrl+F — focus search
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
+            e.preventDefault();
+            body.querySelector('#fm-search-input').focus();
+            return;
+        }
+        // Escape — clear search or selection
+        if (e.key === 'Escape') {
+            if (document.activeElement === body.querySelector('#fm-search-input')) {
+                body.querySelector('#fm-search-clear').click();
+                document.activeElement.blur();
+            } else {
+                clearSelection();
+            }
+            return;
+        }
+
+        if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
+
+        // Ctrl+A — Select All
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
+            e.preventDefault();
+            const allItems = state.searchResults !== null ? state.searchResults : state.items;
+            state.selected.clear();
+            allItems.forEach(i => state.selected.add(i.name));
+            updateSelection();
+            return;
+        }
+
+        // Delete
+        if (e.key === 'Delete') {
+            if (state.selected.size > 0) deleteSelected();
+            return;
+        }
+
+        // Enter — Open
+        if (e.key === 'Enter') {
+             e.preventDefault();
+             if (state.selected.size === 1) {
+                 const name = [...state.selected][0];
+                 const item = state.items.find(i => i.name === name);
+                 if (item) {
+                     if (item.is_dir) navigateTo(itemFullPath(item));
+                     else previewFile(item.name);
+                 }
+             } else if (state.focusedIndex >= 0) {
+                 const allItems = state.searchResults !== null ? state.searchResults : state.items;
+                 const sorted = sortItems(allItems);
+                 const item = sorted[state.focusedIndex];
+                 if (item) {
+                     if (item.is_dir) navigateTo(itemFullPath(item));
+                     else previewFile(item.name);
+                 }
+             }
+             return;
+        }
+
+        // Space — Toggle Selection
+        if (e.key === ' ' || e.key === 'Spacebar') {
+            e.preventDefault();
+            if (state.focusedIndex >= 0) {
+                const allItems = state.searchResults !== null ? state.searchResults : state.items;
+                const sorted = sortItems(allItems);
+                const item = sorted[state.focusedIndex];
+                if (item) {
+                    if (state.selected.has(item.name)) state.selected.delete(item.name);
+                    else state.selected.add(item.name);
+                    state.lastClickedIndex = state.focusedIndex;
+                    updateSelection();
+                    // Ensure focus remains
+                    setFocusedIndex(state.focusedIndex);
+                }
+            }
+            return;
+        }
+
+        // Backspace — Go Up
+        if (e.key === 'Backspace') {
+             e.preventDefault();
+             if (isRegularPath() && !isAtHomeRoot()) {
+                 const parent = state.path.split('/').slice(0, -1).join('/') || (state.sudoMode ? '/' : state.homePath);
+                 navigateTo(parent);
+             }
+             return;
+        }
+
+        // F2 — Rename
+        if (e.key === 'F2') {
+            e.preventDefault();
+            if (state.selected.size === 1) {
+                renameSelected();
+            }
+            return;
+        }
+
+        // F5 or Ctrl+R — Refresh
+        if (e.key === 'F5' || ((e.ctrlKey || e.metaKey) && (e.key === 'r' || e.key === 'R'))) {
+            e.preventDefault();
+            navigateTo(state.path);
+            return;
+        }
+
+        // Ctrl+N — New Folder
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'n' || e.key === 'N')) {
+            e.preventDefault();
+            createNewFolder();
+            return;
+        }
+
+        // Ctrl+U — Upload
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'u' || e.key === 'U')) {
+            e.preventDefault();
+            uploadFiles();
+            return;
+        }
+
+        // Clipboard
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) {
+            e.preventDefault();
+            clipboardCopy();
+            return;
+        }
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'x' || e.key === 'X')) {
+            e.preventDefault();
+            clipboardCut();
+            return;
+        }
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'v' || e.key === 'V')) {
+            e.preventDefault();
+            clipboardPaste();
+            return;
+        }
+
+        // Arrow Navigation & Paging
+        if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown'].includes(e.key)) {
+            e.preventDefault();
+            body.querySelector('#fm-file-list').focus({ preventScroll: true });
+
+            const allItems = state.searchResults !== null ? state.searchResults : state.items;
+            const sorted = sortItems(allItems);
+            if (!sorted.length) return;
+
+            let newIdx = state.focusedIndex;
+            if (newIdx < 0) newIdx = 0;
+
+            if (state.viewMode === 'list') {
+                 if (e.key === 'ArrowUp') newIdx--;
+                 else if (e.key === 'ArrowDown') newIdx++;
+                 else if (e.key === 'PageUp') newIdx -= 10;
+                 else if (e.key === 'PageDown') newIdx += 10;
+                 else if (e.key === 'ArrowLeft') {
+                     // Go to parent
+                     if (isRegularPath() && !isAtHomeRoot()) {
+                         const parent = state.path.split('/').slice(0, -1).join('/') || (state.sudoMode ? '/' : state.homePath);
+                         navigateTo(parent);
+                         return;
+                     }
+                 }
+                 else if (e.key === 'ArrowRight') {
+                      // Enter folder
+                      const item = sorted[newIdx];
+                      if (item && item.is_dir) {
+                          navigateTo(itemFullPath(item));
+                          return;
+                      }
+                 }
+            } else {
+                 // Grid/Thumb view
+                 const list = body.querySelector('#fm-file-list');
+                 const items = Array.from(list.querySelectorAll('.fm-grid-item, .fm-thumb-item'));
+                 if (!items.length) return;
+
+                 // Robust column calculation by checking y-offset
+                 const firstTop = items[0].getBoundingClientRect().top;
+                 let cols = 0;
+                 for (const it of items) {
+                     if (Math.abs(it.getBoundingClientRect().top - firstTop) < 5) cols++;
+                     else break;
+                 }
+                 cols = Math.max(1, cols);
+
+                 if (e.key === 'ArrowLeft') newIdx--;
+                 else if (e.key === 'ArrowRight') newIdx++;
+                 else if (e.key === 'ArrowUp') newIdx -= cols;
+                 else if (e.key === 'ArrowDown') newIdx += cols;
+                 else if (e.key === 'PageUp') newIdx -= (cols * 5);
+                 else if (e.key === 'PageDown') newIdx += (cols * 5);
+            }
+
+            // Clamp
+            if (newIdx < 0) newIdx = 0;
+            if (newIdx >= sorted.length) newIdx = sorted.length - 1;
+
+            // Update selection
+            if (e.shiftKey) {
+                const anchor = state.lastClickedIndex >= 0 ? state.lastClickedIndex : (state.focusedIndex >= 0 ? state.focusedIndex : 0);
+                const start = Math.min(anchor, newIdx);
+                const end = Math.max(anchor, newIdx);
+                state.selected.clear();
+                for (let i = start; i <= end; i++) {
+                    if (sorted[i]) state.selected.add(sorted[i].name);
+                }
+            } else if (!e.ctrlKey && !e.metaKey) {
+                state.selected.clear();
+                if (sorted[newIdx]) {
+                    state.selected.add(sorted[newIdx].name);
+                    state.lastClickedIndex = newIdx;
+                }
+            }
+
+            setFocusedIndex(newIdx);
+            updateSelection();
+
+            // Scroll into view
+            const targetEl = body.querySelector(`#fm-item-${newIdx}`);
+            if (targetEl) targetEl.scrollIntoView({ block: 'nearest' });
+            return;
+        }
+
+        // Home/End
+        if (e.key === 'Home') {
+            e.preventDefault();
+            const allItems = state.searchResults !== null ? state.searchResults : state.items;
+            const sorted = sortItems(allItems);
+            if (!sorted.length) return;
+            // Similar logic...
+            const newIdx = 0;
+            if (e.shiftKey) {
+                const anchor = state.lastClickedIndex >= 0 ? state.lastClickedIndex : 0;
+                state.selected.clear();
+                for (let i = 0; i <= anchor; i++) {
+                     if (sorted[i]) state.selected.add(sorted[i].name);
+                }
+            } else if (!e.ctrlKey) {
+                state.selected.clear();
+                state.selected.add(sorted[0].name);
+                state.lastClickedIndex = 0;
+            }
+            setFocusedIndex(newIdx);
+            updateSelection();
+            body.querySelector(`#fm-item-${newIdx}`)?.scrollIntoView({ block: 'nearest' });
+            return;
+        }
+
+        if (e.key === 'End') {
+            e.preventDefault();
+            const allItems = state.searchResults !== null ? state.searchResults : state.items;
+            const sorted = sortItems(allItems);
+            if (!sorted.length) return;
+            const newIdx = sorted.length - 1;
+             if (e.shiftKey) {
+                const anchor = state.lastClickedIndex >= 0 ? state.lastClickedIndex : 0;
+                state.selected.clear();
+                for (let i = anchor; i <= newIdx; i++) {
+                     if (sorted[i]) state.selected.add(sorted[i].name);
+                }
+            } else if (!e.ctrlKey) {
+                state.selected.clear();
+                state.selected.add(sorted[newIdx].name);
+                state.lastClickedIndex = newIdx;
+            }
+            setFocusedIndex(newIdx);
+            updateSelection();
+            body.querySelector(`#fm-item-${newIdx}`)?.scrollIntoView({ block: 'nearest' });
+            return;
+        }
+
+        if (e.ctrlKey && e.shiftKey && e.key === 'S') { e.preventDefault(); calcDirSizes(); }
+        if (e.key === 'F1') { e.preventDefault(); showFMShortcutsHelp(); }
+    });
+
+    // ─── Keyboard Shortcuts Help ───
+    function showFMShortcutsHelp() {
+        const existing = body.querySelector('.fm-shortcuts-overlay');
+        if (existing) { existing.remove(); return; }
+        const overlay = document.createElement('div');
+        overlay.className = 'fm-shortcuts-overlay';
+        overlay.setAttribute('role', 'dialog');
+        overlay.setAttribute('aria-modal', 'true');
+        overlay.setAttribute('aria-label', t('Skróty klawiszowe'));
+        overlay.innerHTML = `
+            <div class="fm-shortcuts-panel">
+                <div class="fm-shortcuts-header">
+                    <span><i class="fas fa-keyboard"></i> ${t('Skróty klawiszowe')}</span>
+                    <button class="fm-shortcuts-close" aria-label="Zamknij"><i class="fas fa-times"></i></button>
+                </div>
+                <div class="fm-shortcuts-body">
+                    <div class="fm-shortcuts-col">
+                        <div class="fm-shortcuts-section">Nawigacja</div>
+                        <div class="fm-shortcut-row"><kbd>↑</kbd><kbd>↓</kbd> <span>${t('Poruszaj się po liście')}</span></div>
+                        <div class="fm-shortcut-row"><kbd>←</kbd> <span>${t('Folder nadrzędny')}</span></div>
+                        <div class="fm-shortcut-row"><kbd>→</kbd> <span>${t('Otwórz folder')}</span></div>
+                        <div class="fm-shortcut-row"><kbd>Enter</kbd> <span>${t('Otwórz plik/folder')}</span></div>
+                        <div class="fm-shortcut-row"><kbd>Backspace</kbd> <span>${t('Folder nadrzędny')}</span></div>
+                        <div class="fm-shortcut-row"><kbd>Home</kbd><kbd>End</kbd> <span>Pierwszy/ostatni</span></div>
+                        <div class="fm-shortcut-row"><kbd>PageUp</kbd><kbd>PageDown</kbd> <span>${t('Strona wyników')}</span></div>
+                        <div class="fm-shortcut-row"><kbd>F5</kbd> <span>${t('Odśwież')}</span></div>
+                    </div>
+                    <div class="fm-shortcuts-col">
+                        <div class="fm-shortcuts-section">Zaznaczanie</div>
+                        <div class="fm-shortcut-row"><kbd>Space</kbd> <span>Zaznacz/odznacz</span></div>
+                        <div class="fm-shortcut-row"><kbd>Ctrl+A</kbd> <span>Zaznacz wszystko</span></div>
+                        <div class="fm-shortcut-row"><kbd>Shift+↑↓</kbd> <span>Zaznacz zakres</span></div>
+                        <div class="fm-shortcut-row"><kbd>Shift+Home/End</kbd> <span>${t('Zaznacz do końca')}</span></div>
+                        <div class="fm-shortcut-row"><kbd>Escape</kbd> <span>${t('Deselect All')}</span></div>
+                        <div class="fm-shortcuts-section" style="margin-top:10px">Operacje</div>
+                        <div class="fm-shortcut-row"><kbd>Ctrl+C</kbd> <span>${t('Copy')}</span></div>
+                        <div class="fm-shortcut-row"><kbd>Ctrl+X</kbd> <span>${t('Cut')}</span></div>
+                        <div class="fm-shortcut-row"><kbd>Ctrl+V</kbd> <span>Wklej</span></div>
+                        <div class="fm-shortcut-row"><kbd>Delete</kbd> <span>${t('Move to Trash')}</span></div>
+                        <div class="fm-shortcut-row"><kbd>F2</kbd> <span>${t('Zmień nazwę')}</span></div>
+                        <div class="fm-shortcut-row"><kbd>Ctrl+N</kbd> <span>Nowy folder</span></div>
+                        <div class="fm-shortcut-row"><kbd>Ctrl+U</kbd> <span>${t('Prześlij pliki')}</span></div>
+                        <div class="fm-shortcut-row"><kbd>Ctrl+F</kbd> <span>Wyszukaj</span></div>
+                        <div class="fm-shortcut-row"><kbd>F1</kbd> <span>Ten ekran pomocy</span></div>
+                    </div>
+                </div>
+            </div>
+        `;
+        overlay.querySelector('.fm-shortcuts-close').addEventListener('click', () => overlay.remove());
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+        overlay.addEventListener('keydown', (e) => { if (e.key === 'Escape') overlay.remove(); });
+        body.appendChild(overlay);
+        overlay.querySelector('.fm-shortcuts-close').focus();
+    }
+    body.querySelector('#fm-shortcuts-btn')?.addEventListener('click', showFMShortcutsHelp);
+
+    // ─── Mobile Select Mode ───
+    function setFMSelectMode(on) {
+        state.selectMode = on;
+        const list = body.querySelector('#fm-file-list');
+        const btn = body.querySelector('#fm-select-mode-btn');
+        list.classList.toggle('fm-select-mode', on);
+        if (btn) {
+            btn.classList.toggle('active', on);
+            btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+        }
+        if (!on) clearSelection();
+    }
+    body.querySelector('#fm-select-mode-btn')?.addEventListener('click', () => {
+        setFMSelectMode(!state.selectMode);
+    });
+
+    // ─── Mobile Long-Press to Select ───
+    {
+        const _fmList2 = body.querySelector('#fm-file-list');
+        const _itemSel2 = '.fm-file-item, .fm-grid-item, .fm-thumb-item';
+        let _lpTimer = null;
+        let _lpStartX = 0, _lpStartY = 0;
+        let _lpMoved = false;
+
+        _fmList2.addEventListener('touchstart', (e) => {
+            if (e.touches.length !== 1) return;
+            const el = e.target.closest(_itemSel2);
+            if (!el) return;
+            _lpStartX = e.touches[0].clientX;
+            _lpStartY = e.touches[0].clientY;
+            _lpMoved = false;
+            _lpTimer = setTimeout(() => {
+                if (_lpMoved) return;
+                // Long press: enter select mode and toggle this item
+                if (!state.selectMode) setFMSelectMode(true);
+                const name = el.dataset.name;
+                if (state.selected.has(name)) state.selected.delete(name);
+                else state.selected.add(name);
+                state.lastClickedIndex = parseInt(el.dataset.idx);
+                state.focusedIndex = state.lastClickedIndex;
+                updateSelection();
+                // Haptic feedback if available
+                if (navigator.vibrate) navigator.vibrate(30);
+            }, 500);
+        }, { passive: true });
+
+        _fmList2.addEventListener('touchmove', (e) => {
+            if (!_lpTimer) return;
+            const dx = Math.abs(e.touches[0].clientX - _lpStartX);
+            const dy = Math.abs(e.touches[0].clientY - _lpStartY);
+            if (dx > 8 || dy > 8) {
+                _lpMoved = true;
+                clearTimeout(_lpTimer);
+                _lpTimer = null;
+            }
+        }, { passive: true });
+
+        _fmList2.addEventListener('touchend', () => {
+            clearTimeout(_lpTimer);
+            _lpTimer = null;
+        }, { passive: true });
+
+        _fmList2.addEventListener('touchcancel', () => {
+            clearTimeout(_lpTimer);
+            _lpTimer = null;
+        }, { passive: true });
+
+        // In select mode, single tap toggles selection
+        _fmList2.addEventListener('click', (e) => {
+            if (!state.selectMode) return;
+            const el = e.target.closest(_itemSel2);
+            if (!el) return;
+            // Prevent default double-open behavior in select mode
+            e.stopImmediatePropagation();
+            const name = el.dataset.name;
+            if (state.selected.has(name)) state.selected.delete(name);
+            else state.selected.add(name);
+            state.lastClickedIndex = parseInt(el.dataset.idx);
+            state.focusedIndex = state.lastClickedIndex;
+            updateSelection();
+        }, true);
+    }
+
+    // ─── Mobile Swipe Navigation (back/forward) ───
+    {
+        const _fmMain = body.querySelector('.fm-main');
+        let _swStartX = 0, _swStartY = 0, _swMoved = false, _swOnItem = false;
+
+        _fmMain.addEventListener('touchstart', (e) => {
+            if (e.touches.length !== 1) return;
+            _swStartX = e.touches[0].clientX;
+            _swStartY = e.touches[0].clientY;
+            _swMoved = false;
+            // Only activate swipe from left/right edges (within 40px of edge) or anywhere
+            _swOnItem = !!e.target.closest('.fm-file-item, .fm-grid-item, .fm-thumb-item');
+        }, { passive: true });
+
+        _fmMain.addEventListener('touchmove', (e) => {
+            if (e.touches.length !== 1) return;
+            const dx = e.touches[0].clientX - _swStartX;
+            const dy = Math.abs(e.touches[0].clientY - _swStartY);
+            if (Math.abs(dx) > 10 && dy < Math.abs(dx)) _swMoved = true;
+        }, { passive: true });
+
+        _fmMain.addEventListener('touchend', (e) => {
+            if (!_swMoved) return;
+            const dx = e.changedTouches[0].clientX - _swStartX;
+            const dy = Math.abs(e.changedTouches[0].clientY - _swStartY);
+            const SWIPE_THRESHOLD = 80;
+            if (Math.abs(dx) < SWIPE_THRESHOLD || dy > Math.abs(dx) * 0.8) return;
+            // Swipe right = go back
+            if (dx > 0 && state.historyIndex > 0) {
+                state.historyIndex--;
+                navigateTo(state.history[state.historyIndex]);
+            }
+            // Swipe left = go forward
+            if (dx < 0 && state.historyIndex < state.history.length - 1) {
+                state.historyIndex++;
+                navigateTo(state.history[state.historyIndex]);
+            }
+        }, { passive: true });
+    }
+
+    // ─── Search ───
+    let _searchDebounce = null;
+    const searchInput = body.querySelector('#fm-search-input');
+    const searchClear = body.querySelector('#fm-search-clear');
+
+    searchInput.addEventListener('input', () => {
+        clearTimeout(_searchDebounce);
+        const q = searchInput.value.trim();
+        searchClear.classList.toggle('hidden', !q);
+        if (!q) {
+            state.searchResults = null;
+            state.page = 0;
+            renderFileList();
+            return;
+        }
+        _searchDebounce = setTimeout(async () => {
+            try {
+                searchInput.classList.add('fm-searching');
+                const data = await api(`/files/search?path=${encodeURIComponent(state.path)}&q=${encodeURIComponent(q)}`);
+                state.searchResults = data.items || [];
+                state.page = 0;
+                renderFileList();
+                if (data.truncated) {
+                    toast(`${t('Pokazano')} ${state.searchResults.length} ${t('wyników (więcej wyników obcięto)')}`, 'info');
+                }
+            } catch {
+                toast(t('Błąd wyszukiwania'), 'error');
+            } finally {
+                searchInput.classList.remove('fm-searching');
+            }
+        }, 400);
+    });
+
+    searchClear.addEventListener('click', () => {
+        searchInput.value = '';
+        searchClear.classList.add('hidden');
+        state.searchResults = null;
+        state.page = 0;
+        renderFileList();
+        searchInput.focus();
+    });
+
+    // ─── Pagination ───
+    body.querySelector('#fm-page-prev').addEventListener('click', () => {
+        if (state.page > 0) { state.page--; renderFileList(); body.querySelector('#fm-file-list').scrollTop = 0; }
+    });
+    body.querySelector('#fm-page-next').addEventListener('click', () => {
+        const allItems = state.searchResults !== null ? state.searchResults : state.items;
+        const totalPages = Math.ceil(allItems.length / state.pageSize);
+        if (state.page < totalPages - 1) { state.page++; renderFileList(); body.querySelector('#fm-file-list').scrollTop = 0; }
+    });
+
+    // ─── Folder sizes ───
+
+    // Update only the size cells for known dir sizes (avoids full DOM rebuild)
+    function _updateDirSizesInPlace(newSizes) {
+        if (!newSizes || !Object.keys(newSizes).length) return;
+        if (state.viewMode !== 'list') return;  // only list view shows size column
+        const list = body.querySelector('#fm-file-list');
+        if (!list) return;
+        const dirItems = list.querySelectorAll('.fm-file-item[data-isdir="true"]');
+        for (const el of dirItems) {
+            const fullPath = itemFullPath({ name: el.dataset.name, is_dir: true });
+            if (fullPath in newSizes) {
+                const sizeCell = el.querySelector('.fm-file-size');
+                if (sizeCell) sizeCell.textContent = formatBytes(newSizes[fullPath]);
+            }
+        }
+    }
+
+    // Background dir-size: start async calculation, poll until done
+    async function startBgDirSizes() {
+        const dirs = state.items.filter(i => i.is_dir);
+        if (!dirs.length) return;
+        // Skip pseudo-filesystem paths that would block the server
+        const _skipPaths = new Set(['/proc', '/sys', '/dev', '/run', '/snap']);
+        const paths = dirs.map(d => itemFullPath(d)).filter(p =>
+            !(p in state.dirSizes) && !_skipPaths.has(p)
+        );
+        if (!paths.length) return;
+        state._dirSizePollInterval = 1500;  // reset backoff
+        try {
+            const data = await api('/files/dir-sizes-start', { method: 'POST', body: { paths } });
+            if (!data || data.error) return;
+            // Apply immediately available cached results (partial DOM update)
+            if (data.cached && Object.keys(data.cached).length) {
+                Object.assign(state.dirSizes, data.cached);
+                _updateDirSizesInPlace(data.cached);
+            }
+            // Set up polling for pending jobs
+            if (data.jobs && Object.keys(data.jobs).length) {
+                Object.assign(state._dirSizeJobs, data.jobs);
+                if (!state._dirSizePollTimer) {
+                    state._dirSizePollTimer = setTimeout(pollBgDirSizes, state._dirSizePollInterval);
+                }
+            }
+        } catch {
+            // silently ignore — background operation
+        }
+    }
+
+    async function pollBgDirSizes() {
+        state._dirSizePollTimer = null;
+        if (!Object.keys(state._dirSizeJobs).length) return;
+        try {
+            const data = await api('/files/dir-sizes-result', { method: 'POST', body: { jobs: state._dirSizeJobs } });
+            if (!data || data.error) return;
+            if (data.sizes && Object.keys(data.sizes).length) {
+                Object.assign(state.dirSizes, data.sizes);
+                // Remove completed jobs
+                for (const path of Object.keys(data.sizes)) {
+                    delete state._dirSizeJobs[path];
+                }
+                // Partial DOM update instead of full rebuild
+                _updateDirSizesInPlace(data.sizes);
+                // Reset backoff when we get results
+                state._dirSizePollInterval = 1500;
+            } else {
+                // No new results — apply exponential backoff (1.5s → 3s → 6s → 10s max)
+                state._dirSizePollInterval = Math.min((state._dirSizePollInterval || 1500) * 2, 10000);
+            }
+            // Remove paths that have no pending jobs (server discarded)
+            if (data.pending) {
+                const pendingSet = new Set(data.pending);
+                for (const path of Object.keys(state._dirSizeJobs)) {
+                    if (!pendingSet.has(path)) delete state._dirSizeJobs[path];
+                }
+            }
+            if (Object.keys(state._dirSizeJobs).length) {
+                state._dirSizePollTimer = setTimeout(pollBgDirSizes, state._dirSizePollInterval);
+            }
+        } catch {
+            // silently ignore — retry with backoff
+            state._dirSizePollInterval = Math.min((state._dirSizePollInterval || 1500) * 2, 10000);
+            if (Object.keys(state._dirSizeJobs).length) {
+                state._dirSizePollTimer = setTimeout(pollBgDirSizes, state._dirSizePollInterval);
+            }
+        }
+    }
+
+    async function calcDirSizes() {
+        const dirs = state.items.filter(i => i.is_dir);
+        if (!dirs.length) { toast(t('Brak folderów'), 'info'); return; }
+        toast(`${t('Obliczanie rozmiaru')} ${dirs.length} ${t('folder(ów)...')}`, 'info');
+        const paths = dirs.map(d => itemFullPath(d));
+        try {
+            const data = await api('/files/dir-sizes', { method: 'POST', body: { paths } });
+            if (data.sizes) {
+                Object.assign(state.dirSizes, data.sizes);
+                renderFileList();
+            }
+        } catch {
+            toast(t('Błąd obliczania rozmiarów'), 'error');
+        }
+    }
+
+    // double-click on dash-size "—" to calc single folder size
+    body.querySelector('#fm-file-list').addEventListener('dblclick', async (e) => {
+        const sizeCell = e.target.closest('.fm-file-size');
+        if (!sizeCell) return;
+        const row = sizeCell.closest('[data-isdir="true"]');
+        if (!row) return;
+        const name = row.dataset.name;
+        const item = state.items.find(i => i.name === name && i.is_dir);
+        if (!item) return;
+        const fp = itemFullPath(item);
+        if (fp in state.dirSizes) return; // already calculated
+        sizeCell.textContent = '...';
+        try {
+            const data = await api('/files/dir-sizes', { method: 'POST', body: { paths: [fp] } });
+            if (data.sizes) {
+                Object.assign(state.dirSizes, data.sizes);
+                sizeCell.textContent = formatBytes(state.dirSizes[fp] || 0);
+            }
+        } catch { sizeCell.textContent = 'err'; }
+    }, true);
+
+    // ── Hover-prefetch: pre-load listing when user hovers a folder for 300 ms ──
+    body.querySelector('#fm-file-list').addEventListener('mouseover', (e) => {
+        const item = e.target.closest('[data-isdir="true"]');
+        if (!item || item._prefetchTimer !== undefined) return;
+        item._prefetchTimer = setTimeout(() => {
+            delete item._prefetchTimer;
+            const name = item.dataset.name;
+            const folderItem = state.items.find(i => i.name === name && i.is_dir);
+            if (!folderItem) return;
+            const fp = itemFullPath(folderItem);
+            const cached = _fmPrefetchCache.get(fp);
+            if (cached && (Date.now() - cached.ts) < _FM_PREFETCH_TTL) return;
+            // Pre-fetch listing in background and store in cache
+            api(`/files/list?path=${encodeURIComponent(fp)}`)
+                .then(d => { if (d && !d.error) _fmPrefetchCache.set(fp, { data: d, ts: Date.now() }); })
+                .catch(() => {});
+            // Also pre-populate server listing cache for subdirs
+            api('/files/preload-cache', { method: 'POST', body: { path: fp } }).catch(() => {});
+        }, 300);
+    }, true);
+    body.querySelector('#fm-file-list').addEventListener('mouseout', (e) => {
+        const item = e.target.closest('[data-isdir="true"]');
+        if (!item || item._prefetchTimer === undefined) return;
+        clearTimeout(item._prefetchTimer);
+        delete item._prefetchTimer;
+    }, true);
+
+    // Ctrl+Shift+S to calculate all dir sizes
+    body.closest('.window').addEventListener('keydown', (e) => {
+        if (e.ctrlKey && e.shiftKey && e.key === 'S') {
+            e.preventDefault();
+            calcDirSizes();
+        }
+    });
+
+
+
+    // ─── Disk Analytics Panel ───
+    const anaPanel = body.querySelector('#fm-ana-panel');
+    const anaState = { path: '/', entries: [], files: [], totalSize: 0, history: [], activeTab: 'dirs', loading: false };
+
+    body.querySelector('#fm-analyze').onclick = () => {
+        anaPanel.classList.remove('hidden');
+        anaState.path = state.path;
+        anaState.history = [];
+        renderAnaBreadcrumbs();
+        runAnalysis();
+    };
+    body.querySelector('#fm-ana-back-btn').onclick = () => {
+        if (anaState.history.length) {
+            const prev = anaState.history.pop();
+            runAnalysis(prev);
+        } else {
+            anaPanel.classList.add('hidden');
+        }
+    };
+    body.querySelector('#fm-ana-scan').onclick = () => {
+        anaState.history = [];
+        anaState.path = state.path;
+        runAnalysis();
+    };
+
+    // Sub-tab switching
+    body.querySelectorAll('.fm-ana-sub-tab[data-anatab]').forEach(tab => {
+        tab.onclick = () => {
+            body.querySelectorAll('.fm-ana-sub-tab[data-anatab]').forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            anaState.activeTab = tab.dataset.anatab;
+            if (anaState.activeTab === 'dirs') renderAnaDirs(); else renderAnaFiles();
+        };
+    });
+
+    function anaFmtSize(b) {
+        if (b == null) return '-';
+        const u = ['B','KB','MB','GB','TB']; let i = 0, s = b;
+        while (s >= 1024 && i < u.length - 1) { s /= 1024; i++; }
+        return s.toFixed(i > 0 ? 1 : 0) + ' ' + u[i];
+    }
+
+    async function runAnalysis(path) {
+        if (anaState.loading) return;
+        anaState.loading = true;
+        anaState.path = path || state.path || '/';
+        const content = body.querySelector('#fm-ana-content');
+        let sec = 0;
+        const timerId = setInterval(() => { sec++; const el = content.querySelector('.ana-timer'); if (el) el.textContent = sec + 's'; }, 1000);
+        content.innerHTML = `<div class="app-empty"><i class="fas fa-spinner fa-spin app-spinner-lg"></i><div class="app-mt-md">${t('Analizowanie')} <b>${anaState.path}</b>... <span class="ana-timer">0s</span></div></div>`;
+        try {
+            const [dirData, fileData] = await Promise.all([
+                api(`/storage/analyze?path=${encodeURIComponent(anaState.path)}&limit=60`),
+                api(`/storage/analyze/files?path=${encodeURIComponent(anaState.path)}&limit=40`)
+            ]);
+            anaState.entries = dirData.entries || [];
+            anaState.totalSize = dirData.total_size || 0;
+            anaState.files = fileData.files || [];
+            body.querySelector('#fm-ana-summary').style.display = '';
+            body.querySelector('#fm-ana-tabs').style.display = '';
+            renderAnaSummary(dirData);
+            renderAnaBreadcrumbs();
+            if (anaState.activeTab === 'dirs') renderAnaDirs(); else renderAnaFiles();
+        } catch (e) {
+            content.innerHTML = `<div class="app-empty app-empty--error"><i class="fas fa-exclamation-triangle app-spinner-lg"></i><div class="app-mt-md">${t('Błąd:')} ${e.message}</div></div>`;
+        } finally { clearInterval(timerId); anaState.loading = false; }
+    }
+
+    function renderAnaSummary(data) {
+        const el = body.querySelector('#fm-ana-summary');
+        const palette = ['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899','#06b6d4','#84cc16','#f97316','#6366f1'];
+        const top5 = anaState.entries.slice(0, 8);
+        const topSum = top5.reduce((a, e) => a + e.size, 0);
+        const other = Math.max(0, anaState.totalSize - topSum);
+        el.innerHTML = `
+            <div class="app-summary-row">
+                <div class="app-stat-block"><div class="app-stat-hero">${data.total_size_human}</div><div class="app-sublabel">${t('Łącznie')}</div></div>
+                <div class="app-flex-fill-200">
+                    <div class="app-bar-track">
+                        ${top5.map((e, i) => `<div title="${e.name}: ${e.size_human} (${e.percent}%)" style="width:${e.percent}%;background:${palette[i]};min-width:${e.percent > 0.5 ? '2px' : '0'}"></div>`).join('')}
+                        ${other > 0 ? `<div title="Inne: ${anaFmtSize(other)}" class="app-bar-other"></div>` : ''}
+                    </div>
+                    <div class="app-legend">
+                        ${top5.map((e, i) => `<span class="app-legend-item"><span class="app-swatch" style="background:${palette[i]}"></span>${e.name}</span>`).join('')}
+                    </div>
+                </div>
+            </div>`;
+    }
+
+    function renderAnaBreadcrumbs() {
+        const el = body.querySelector('#fm-ana-breadcrumbs');
+        const parts = anaState.path.split('/').filter(Boolean);
+        let crumbs = ['<a href="#" data-anapath="/" class="fm-ana-crumb">/</a>'];
+        let cum = '';
+        parts.forEach(p => { cum += '/' + p; crumbs.push(`<span class="app-crumb-sep">/</span><a href="#" data-anapath="${cum}" class="fm-ana-crumb">${p}</a>`); });
+        el.innerHTML = crumbs.join('');
+        el.querySelectorAll('a[data-anapath]').forEach(a => { a.onclick = (e) => { e.preventDefault(); anaDrill(a.dataset.anapath); }; });
+    }
+
+    function anaDrill(path) { anaState.history.push(anaState.path); runAnalysis(path); }
+
+    function renderAnaDirs() {
+        const content = body.querySelector('#fm-ana-content');
+        if (!anaState.entries.length) { content.innerHTML = `<div class="app-empty app-empty--sm">${t('Brak podkatalogów')}</div>`; return; }
+        content.innerHTML = `<div class="fm-ana-list">${anaState.entries.map(e => {
+            const barW = Math.max(1, (e.size / anaState.totalSize) * 100);
+            const color = e.percent > 50 ? '#ef4444' : e.percent > 25 ? '#f59e0b' : '#3b82f6';
+            return `<div class="fm-ana-row" data-anapath="${e.path}"><div class="fm-ana-row-icon"><i class="fas fa-folder app-icon-amber"></i></div><div class="fm-ana-row-info"><div class="fm-ana-row-name">${e.name}</div><div class="fm-ana-row-bar"><div class="fm-ana-row-bar-fill" style="width:${barW}%;background:${color}"></div></div></div><div class="fm-ana-row-size">${e.size_human}</div><div class="fm-ana-row-pct">${e.percent}%</div></div>`;
+        }).join('')}</div>`;
+        content.querySelectorAll('.fm-ana-row[data-anapath]').forEach(row => { row.onclick = () => anaDrill(row.dataset.anapath); });
+    }
+
+    function anaFileIcon(ext) {
+        const m = {'.mp4':'fa-film','.mkv':'fa-film','.avi':'fa-film','.mov':'fa-film','.mp3':'fa-music','.flac':'fa-music','.wav':'fa-music','.jpg':'fa-image','.jpeg':'fa-image','.png':'fa-image','.gif':'fa-image','.webp':'fa-image','.zip':'fa-file-archive','.tar':'fa-file-archive','.gz':'fa-file-archive','.rar':'fa-file-archive','.7z':'fa-file-archive','.pdf':'fa-file-pdf','.iso':'fa-compact-disc','.db':'fa-database','.sql':'fa-database'};
+        return m[ext] || 'fa-file';
+    }
+    function anaFileColor(ext) {
+        if (['.mp4','.mkv','.avi','.mov','.ts'].includes(ext)) return '#a78bfa';
+        if (['.mp3','.flac','.wav','.aac','.ogg'].includes(ext)) return '#ec4899';
+        if (['.jpg','.jpeg','.png','.gif','.webp','.svg'].includes(ext)) return '#10b981';
+        if (['.zip','.tar','.gz','.rar','.7z','.xz'].includes(ext)) return '#f97316';
+        return '#64748b';
+    }
+
+    function renderAnaFiles() {
+        const content = body.querySelector('#fm-ana-content');
+        if (!anaState.files.length) { content.innerHTML = `<div class="app-empty app-empty--sm">${t('Nie znaleziono plików')}</div>`; return; }
+        const maxSize = anaState.files[0]?.size || 1;
+        content.innerHTML = `<div class="fm-ana-list">${anaState.files.map(f => {
+            const barW = Math.max(1, (f.size / maxSize) * 100);
+            const relPath = f.path.replace(anaState.path.replace(/\/$/, ''), '').replace(/^\//, '');
+            const dir = relPath.includes('/') ? relPath.substring(0, relPath.lastIndexOf('/')) : '';
+            return `<div class="fm-ana-row fm-ana-file-row"><div class="fm-ana-row-icon"><i class="fas ${anaFileIcon(f.ext)}" style="color:${anaFileColor(f.ext)}"></i></div><div class="fm-ana-row-info"><div class="fm-ana-row-name" title="${f.path}">${f.name}</div><div class="app-file-subpath">${dir || '.'}</div><div class="fm-ana-row-bar"><div class="fm-ana-row-bar-fill" style="width:${barW}%;background:${anaFileColor(f.ext)}"></div></div></div><div class="fm-ana-row-size">${f.size_human}</div><div class="fm-ana-row-pct"><span class="fm-badge app-text-2xs">${f.ext || '?'}</span></div></div>`;
+        }).join('')}</div>`;
+    }
+
+    // Initial load
+    loadFavorites();
+    loadPhotoFavorites();
+    loadSambaShares();
+    loadStoragePools();
+    loadNetworkMounts();
+    _fmLoadGallerySources();
+    navigateTo(state.path).then(() => {
+        if (state.initialSelect) {
+            state.selected.clear();
+            state.selected.add(state.initialSelect);
+            renderFileList();
+            setTimeout(() => {
+                const itemEl = body.querySelector(`.fm-file-item[data-name="${CSS.escape(state.initialSelect)}"]`);
+                if (itemEl) itemEl.scrollIntoView({block: 'center', behavior: 'smooth'});
+            }, 100);
+            state.initialSelect = null;
+        }
+    });
+
+    // Expose navigateTo for external callers (notifications, etc.)
+    body._fmNavigateTo = navigateTo;
+
+    // ─── Marquee Selection (Drag Select) ───
+    function initMarqueeSelection() {
+        const list = body.querySelector('#fm-file-list');
+        if (!list) return;
+
+        let selectionBox = null;
+        let startX, startY;
+        let initialSelected;
+
+        const onMouseMove = (e) => {
+            if (!selectionBox) return;
+
+            const currentX = e.clientX;
+            const currentY = e.clientY;
+
+            const x = Math.min(startX, currentX);
+            const y = Math.min(startY, currentY);
+            const w = Math.abs(currentX - startX);
+            const h = Math.abs(currentY - startY);
+
+            selectionBox.style.left = x + 'px';
+            selectionBox.style.top = y + 'px';
+            selectionBox.style.width = w + 'px';
+            selectionBox.style.height = h + 'px';
+
+            const boxRect = selectionBox.getBoundingClientRect();
+            const items = list.querySelectorAll('.fm-file-item, .fm-grid-item, .fm-thumb-item');
+
+            state.selected = new Set(initialSelected);
+            let changed = false;
+
+            items.forEach(item => {
+                const itemRect = item.getBoundingClientRect();
+                if (rectsIntersect(boxRect, itemRect)) {
+                    state.selected.add(item.dataset.name);
+                    changed = true;
+                }
+            });
+
+            if (changed || state.selected.size !== initialSelected.size) {
+                updateSelection();
+            }
+        };
+
+        const onMouseUp = (e) => {
+             if (selectionBox) selectionBox.remove();
+             selectionBox = null;
+             document.removeEventListener('mousemove', onMouseMove);
+             document.removeEventListener('mouseup', onMouseUp);
+        };
+
+        list.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            if (e.target.closest('.fm-file-item, .fm-grid-item, .fm-thumb-item')) return;
+            if (e.target.closest('.fm-checkbox-label')) return;
+            // Ignore if clicking scrollbar
+            if (e.target === list && e.offsetX > list.clientWidth) return;
+
+            e.preventDefault(); // prevent text selection
+
+            startX = e.clientX;
+            startY = e.clientY;
+
+            if (!e.ctrlKey && !e.metaKey) {
+                state.selected.clear();
+                updateSelection();
+                initialSelected = new Set();
+            } else {
+                initialSelected = new Set(state.selected);
+            }
+
+            selectionBox = document.createElement('div');
+            selectionBox.className = 'fm-selection-box';
+            selectionBox.style.left = startX + 'px';
+            selectionBox.style.top = startY + 'px';
+            selectionBox.style.width = '0px';
+            selectionBox.style.height = '0px';
+            document.body.appendChild(selectionBox);
+
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+        });
+    }
+
+    function rectsIntersect(r1, r2) {
+        return !(r2.left > r1.right ||
+                 r2.right < r1.left ||
+                 r2.top > r1.bottom ||
+                 r2.bottom < r1.top);
+    }
+
+    // Initialize Marquee
+    initMarqueeSelection();
+}

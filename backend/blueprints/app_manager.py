@@ -175,14 +175,14 @@ _FRONTEND_FILENAME = {
     'sharing-webdav':   'storage',
     'sharing-sftp':     'storage',
     'sharing-ftp':      'storage',
-    # W apps.js monolicie
-    'file-manager':     None,
+    # Rozdzielone z apps.js na osobne pliki
+    'file-manager':     'file-manager',
     'docker-manager':   'docker-manager',
     'vm-manager':       'vm-manager',
-    'event-log':        None,
-    'app-store':        None,
+    'event-log':        'event-log',
+    'app-store':        'app-store',
     'remote-log':       'remote-log',
-    'system-settings':  None,
+    'system-settings':  'system-settings',
     'security-advisor': 'security_advisor',
     'photos-ai':        'photos_ai',
     'video-station':    'video_station',
@@ -190,6 +190,14 @@ _FRONTEND_FILENAME = {
     'packages':         'packages',
     'services':         'services',
     'naslink':          'naslink',
+}
+
+# Maps app_id → list of EXTRA JS filenames (without .js) beyond the primary.
+# The primary is already determined by _FRONTEND_FILENAME / app_id convention.
+# Extra files are published as frontend_2.js, frontend_3.js, … on GitHub,
+# and downloaded alongside the primary during App Store install.
+_FRONTEND_EXTRA_FILES: dict = {
+    # 'gallery': ['gallery_lightbox', 'gallery_people'],  # example
 }
 
 # Maps app_id → (module_filename, blueprint_var, init_func_or_None, socketio_attr_needed)
@@ -509,7 +517,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/security-advisor/pkg-status',
     },
     {
-        'id': 'photos-ai', 'name': 'Photos AI', 'version': '0.0.8',
+        'id': 'photos-ai', 'name': 'Photos AI', 'version': '0.0.9',
         'icon': 'fa-brain', 'color': '#8b5cf6', 'category': 'Media', 'admin_only': False,
         'description': 'Rozpoznawanie twarzy, wykrywanie obiektow i inteligentne albumy dla Galerii.',
         'apt_deps': ['cmake', 'libopenblas-dev'], 'pip_deps': ['face_recognition', 'onnxruntime', 'scipy'],
@@ -567,7 +575,7 @@ BUILTIN_CATALOG = [
         'apt_deps': [], 'pip_deps': [], 'simple': True,
     },
     {
-        'id': 'video-station', 'name': 'Video Station', 'version': '0.0.11',
+        'id': 'video-station', 'name': 'Video Station', 'version': '0.0.12',
         'icon': 'fa-film', 'color': '#7c3aed', 'category': 'Media', 'admin_only': False,
         'description': 'Biblioteka filmow z miniaturkami, streamingiem i sledzeniem postepu.',
         'apt_deps': ['ffmpeg'], 'pip_deps': [],
@@ -576,7 +584,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/video-station/pkg-status',
     },
     {
-        'id': 'radio-music', 'name': 'Radio & Music', 'version': '0.0.8',
+        'id': 'radio-music', 'name': 'Radio & Music', 'version': '0.0.9',
         'icon': 'fa-broadcast-tower', 'color': '#10b981', 'category': 'Media', 'admin_only': False,
         'description': 'Radio internetowe z całego świata, podcasty i odtwarzacz muzyki.',
         'apt_deps': ['ffmpeg'], 'pip_deps': ['yt-dlp'],
@@ -763,6 +771,16 @@ def _get_frontend_filename(app_id):
     return app_id
 
 
+def _get_frontend_filenames(app_id):
+    """Return list of ALL JS filenames (without .js) for an app.
+    First element is the primary file; remaining are extras defined in
+    _FRONTEND_EXTRA_FILES.  Returns [] when the app lives in apps.js (fn=None)."""
+    primary = _get_frontend_filename(app_id)
+    if primary is None:
+        return []
+    return [primary] + list(_FRONTEND_EXTRA_FILES.get(app_id, []))
+
+
 def _load_catalog_cache():
     try:
         if not os.path.isfile(CATALOG_CACHE_FILE):
@@ -926,11 +944,14 @@ def _get_catalog(force_refresh=False):
 # ─── Install helpers ─────────────────────────────────────────
 
 def _is_bundled(app_id):
-    fn = _get_frontend_filename(app_id)
-    if fn is None:
-        return True
-    fp = os.path.join(_FRONTEND_APPS_DIR, fn + '.js')
-    return os.path.isfile(fp) and os.path.getsize(fp) > 0
+    fns = _get_frontend_filenames(app_id)
+    if not fns:
+        return True  # lives in apps.js monolith
+    return all(
+        os.path.isfile(os.path.join(_FRONTEND_APPS_DIR, fn + '.js')) and
+        os.path.getsize(os.path.join(_FRONTEND_APPS_DIR, fn + '.js')) > 0
+        for fn in fns
+    )
 
 
 def _download_file(url, dest_path):
@@ -961,25 +982,26 @@ def _repair_missing_app_files():
         for app_id in list(installed):
             if app_id in CORE_APPS:
                 continue
-            fn = _get_frontend_filename(app_id)
-            if fn is None:
+            fns = _get_frontend_filenames(app_id)
+            if not fns:
                 continue
             app_def = catalog_map.get(app_id, {})
             base_url = _get_app_base_for_source(app_def)
-            # Check frontend JS
-            js_path = os.path.join(_FRONTEND_APPS_DIR, fn + '.js')
-            if not os.path.isfile(js_path):
-                url = base_url + '/' + app_id + '/frontend.js'
-                if _download_file(url, js_path):
-                    repaired.append(app_id + '/frontend.js')
-                    # Also sync to frontend_dist
-                    dist_path = os.path.join(_ETHOS_ROOT, 'frontend_dist', 'js', 'apps', fn + '.js')
-                    if os.path.isdir(os.path.dirname(dist_path)):
-                        try:
-                            import shutil
-                            shutil.copy2(js_path, dist_path)
-                        except Exception:
-                            pass
+            # Check each frontend JS file (primary = frontend.js, extras = frontend_2.js, …)
+            for idx, fn in enumerate(fns):
+                remote_name = 'frontend.js' if idx == 0 else f'frontend_{idx + 1}.js'
+                js_path = os.path.join(_FRONTEND_APPS_DIR, fn + '.js')
+                if not os.path.isfile(js_path):
+                    url = base_url + '/' + app_id + '/' + remote_name
+                    if _download_file(url, js_path):
+                        repaired.append(f'{app_id}/{remote_name}')
+                        dist_path = os.path.join(_ETHOS_ROOT, 'frontend_dist', 'js', 'apps', fn + '.js')
+                        if os.path.isdir(os.path.dirname(dist_path)):
+                            try:
+                                import shutil
+                                shutil.copy2(js_path, dist_path)
+                            except Exception:
+                                pass
             # Check backend .py
             bp_info = _OPTIONAL_BLUEPRINTS.get(app_id)
             if bp_info:
@@ -1354,14 +1376,18 @@ def _bg_install(app_id, app_def, task_id):
         # Pobierz pliki z GitHub jesli nie ma na dysku
         if not _was_bundled:
             emit({'stage': 'download', 'percent': 10, 'message': 'Pobieranie pliku frontend...', 'status': 'running'})
-            fn = _get_frontend_filename(app_id)
-            if fn:
-                url = app_base_url + '/' + app_id + '/frontend.js'
-                dest = os.path.join(_FRONTEND_APPS_DIR, fn + '.js')
-                if not _download_file(url, dest):
-                    emit({'stage': 'error', 'percent': 0, 'message': 'Bląd pobierania frontend', 'status': 'error'})
-                    return
-                _downloaded_frontend = dest
+            fns = _get_frontend_filenames(app_id)
+            if fns:
+                _downloaded_frontend = []
+                for idx, fn in enumerate(fns):
+                    remote_name = 'frontend.js' if idx == 0 else f'frontend_{idx + 1}.js'
+                    url = app_base_url + '/' + app_id + '/' + remote_name
+                    dest = os.path.join(_FRONTEND_APPS_DIR, fn + '.js')
+                    if not os.path.isfile(dest):
+                        if not _download_file(url, dest):
+                            emit({'stage': 'error', 'percent': 0, 'message': 'Bląd pobierania frontend', 'status': 'error'})
+                            return
+                        _downloaded_frontend.append(dest)
         else:
             emit({'stage': 'download', 'percent': 15, 'message': 'Pliki juz dostepne (bundled)', 'status': 'running'})
 
@@ -1388,21 +1414,23 @@ def _bg_install(app_id, app_def, task_id):
 
         if apt_deps and not _install_apt_deps(apt_deps, emit):
             # Clean up freshly downloaded files — app isn't usable without its deps
-            for p in (_downloaded_backend, _downloaded_frontend):
-                if p:
-                    try:
-                        os.remove(p)
-                    except OSError:
-                        pass
+            for p in (([_downloaded_backend] if _downloaded_backend else []) +
+                      (_downloaded_frontend if isinstance(_downloaded_frontend, list) else
+                       [_downloaded_frontend] if _downloaded_frontend else [])):
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
             return
 
         if pip_deps and not _install_pip_deps(pip_deps, emit):
-            for p in (_downloaded_backend, _downloaded_frontend):
-                if p:
-                    try:
-                        os.remove(p)
-                    except OSError:
-                        pass
+            for p in (([_downloaded_backend] if _downloaded_backend else []) +
+                      (_downloaded_frontend if isinstance(_downloaded_frontend, list) else
+                       [_downloaded_frontend] if _downloaded_frontend else [])):
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
             return
 
         # Hot-load blueprint so its routes are available immediately
@@ -1436,7 +1464,7 @@ def _bg_install(app_id, app_def, task_id):
 
         # Notify all clients — enables hot-load without page refresh
         if _socketio:
-            fn = _get_frontend_filename(app_id)
+            fns = _get_frontend_filenames(app_id)
             _socketio.emit('app_installed', {
                 'id': app_id,
                 'name': app_def.get('name', app_id),
@@ -1445,7 +1473,8 @@ def _bg_install(app_id, app_def, task_id):
                 'category': app_def.get('category', 'Tools'),
                 'description': app_def.get('description', ''),
                 'admin_only': app_def.get('admin_only', False),
-                'js_file': (fn + '.js') if fn else None,
+                'js_file': (fns[0] + '.js') if fns else None,
+                'js_files': [fn + '.js' for fn in fns],
             })
 
         # Sync frontend_dist — non-critical cache sync, done after completion events
@@ -1595,16 +1624,16 @@ def _bg_uninstall(app_id, app_def, task_id, wipe_data=False):
         was_external = installed_info.get('source') == 'github'
 
         emit({'stage': 'remove', 'percent': 60, 'message': 'Usuwanie plikow apki...', 'status': 'running'})
-        fn = _get_frontend_filename(app_id)
-        if fn and was_external:
-            # Don't remove shared frontend files used by core apps (e.g. storage.js)
-            core_uses_same = any(
-                _get_frontend_filename(cid) == fn for cid in CORE_APPS
-            )
-            if not core_uses_same:
-                fp = os.path.join(_FRONTEND_APPS_DIR, fn + '.js')
-                if os.path.isfile(fp):
-                    os.remove(fp)
+        if was_external:
+            for fn in _get_frontend_filenames(app_id):
+                # Don't remove shared frontend files used by core apps (e.g. storage.js)
+                core_uses_same = any(
+                    _get_frontend_filename(cid) == fn for cid in CORE_APPS
+                )
+                if not core_uses_same:
+                    fp = os.path.join(_FRONTEND_APPS_DIR, fn + '.js')
+                    if os.path.isfile(fp):
+                        os.remove(fp)
         # Remove backend blueprint only for external apps
         bp_info = _OPTIONAL_BLUEPRINTS.get(app_id)
         if bp_info and was_external:
@@ -2224,15 +2253,16 @@ def _check_github_updates(repo):
             if local_sha != remote_tree[remote_py_path]:
                 backend_changed = True
 
-        # Compare frontend .js
-        fn = _get_frontend_filename(app_id)
-        if fn:
+        # Compare frontend .js (primary + extras)
+        for idx, fn in enumerate(_get_frontend_filenames(app_id)):
+            remote_name = 'frontend.js' if idx == 0 else f'frontend_{idx + 1}.js'
             local_js = os.path.join(_FRONTEND_APPS_DIR, fn + '.js')
-            remote_js_path = f'apps/{app_id}/frontend.js'
+            remote_js_path = f'apps/{app_id}/{remote_name}'
             if os.path.isfile(local_js) and remote_js_path in remote_tree:
                 local_sha = _git_blob_sha(local_js)
                 if local_sha != remote_tree[remote_js_path]:
                     frontend_changed = True
+                    break
 
         if backend_changed or frontend_changed:
             updates.append({
@@ -2308,14 +2338,15 @@ def check_app_updates():
                 has_update = True
                 detail['backend_changed'] = True
 
-        fn = _get_frontend_filename(app_id)
-        if fn:
+        for idx, fn in enumerate(_get_frontend_filenames(app_id)):
             local_js = os.path.join(_FRONTEND_APPS_DIR, fn + '.js')
-            if os.path.isfile(local_js) and remote.get('frontend_sha256'):
+            sha_key = 'frontend_sha256' if idx == 0 else f'frontend_{idx + 1}_sha256'
+            if os.path.isfile(local_js) and remote.get(sha_key):
                 local_hash = _file_sha256(local_js)
-                if local_hash != remote['frontend_sha256']:
+                if local_hash != remote[sha_key]:
                     has_update = True
                     detail['frontend_changed'] = True
+                    break
 
         if has_update:
             updates.append(detail)
@@ -2428,10 +2459,10 @@ def _bg_update_apps(app_ids, base_url, task_id, source='ota'):
                 log.warning('[app_manager] Backend download failed: %s', app_id)
                 ok = False
 
-            # Download frontend .js
-            fn = _get_frontend_filename(app_id)
-            if fn:
-                js_url = base_url + f'/{app_id}/frontend.js'
+            # Download frontend .js (primary + extras)
+            for idx, fn in enumerate(_get_frontend_filenames(app_id)):
+                remote_name = 'frontend.js' if idx == 0 else f'frontend_{idx + 1}.js'
+                js_url = base_url + f'/{app_id}/{remote_name}'
                 js_dest = os.path.join(_FRONTEND_APPS_DIR, fn + '.js')
                 emit({'stage': 'updating', 'percent': pct_base + 4, 'app_id': app_id,
                       'status': 'running', 'message': f'{app_id}: pobieranie frontend...'})

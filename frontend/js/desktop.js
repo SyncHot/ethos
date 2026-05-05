@@ -2352,21 +2352,24 @@ function connectSocket() {
                 admin_only: data.admin_only || false,
             };
 
-            // Dynamically load the app's JS file
-            if (data.js_file) {
-                const script = document.createElement('script');
-                script.src = 'js/apps/' + data.js_file + '?v=' + Date.now();
-                script.onload = () => {
+            // Dynamically load the app's JS files (primary + extras)
+            const jsFiles = data.js_files && data.js_files.length ? data.js_files
+                          : data.js_file ? [data.js_file] : [];
+            if (jsFiles.length) {
+                let loaded = 0;
+                const onAllLoaded = () => {
                     NAS.apps.push(app);
                     renderMenuGrid();
                     toast(t('{name} zainstalowano', { name: t(app.name) }), 'success');
                 };
-                script.onerror = () => {
-                    NAS.apps.push(app);
-                    renderMenuGrid();
-                    toast(t('{name} zainstalowano', { name: t(app.name) }), 'success');
-                };
-                document.body.appendChild(script);
+                jsFiles.forEach((jsFile, i) => {
+                    const script = document.createElement('script');
+                    script.src = 'js/apps/' + jsFile + '?v=' + Date.now();
+                    const done = () => { if (++loaded === jsFiles.length) onAllLoaded(); };
+                    script.onload = done;
+                    script.onerror = done;
+                    document.body.appendChild(script);
+                });
             } else {
                 NAS.apps.push(app);
                 renderMenuGrid();
