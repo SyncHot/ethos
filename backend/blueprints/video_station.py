@@ -2042,6 +2042,15 @@ def backdrop(vid):
 
 
 _thumbstrip_generating = set()  # video IDs currently being generated
+_thumbstrip_sem = None          # gevent.Semaphore(2) — set in init_video_station
+
+
+def _get_thumbstrip_sem():
+    global _thumbstrip_sem
+    if _thumbstrip_sem is None:
+        import gevent.lock
+        _thumbstrip_sem = gevent.lock.Semaphore(2)
+    return _thumbstrip_sem
 
 
 @video_station_bp.route("/thumbstrip/<int:vid>", methods=["GET"])
@@ -2087,8 +2096,13 @@ def thumbstrip(vid):
 
 
 def _generate_thumbstrip(vid, fp, duration, sprite_path):
-    """Generate thumbnail sprite using fast keyframe seeks (background task)."""
+    """Generate thumbnail sprite using fast keyframe seeks (background task).
+
+    At most 2 generations run in parallel (controlled by _thumbstrip_sem)
+    to avoid saturating the CPU with concurrent ffmpeg decode jobs.
+    """
     tmpdir = None
+    _get_thumbstrip_sem().acquire()
     try:
         from PIL import Image
         os.makedirs(_THUMBSTRIP_DIR, exist_ok=True)
@@ -2135,6 +2149,7 @@ def _generate_thumbstrip(vid, fp, duration, sprite_path):
         log.warning('Thumbstrip generation error for vid %s: %s', vid, e)
     finally:
         _thumbstrip_generating.discard(vid)
+        _get_thumbstrip_sem().release()
         if tmpdir and os.path.isdir(tmpdir):
             shutil.rmtree(tmpdir, ignore_errors=True)
 
