@@ -2,8 +2,6 @@
    EthOS — System Settings
    ═══════════════════════════════════════════════════════════ */
 
-window.AppRegistry = window.AppRegistry || {};
-const AppRegistry = window.AppRegistry;
 
 
 AppRegistry['system-settings'] = function (appDef) {

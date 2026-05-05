@@ -2,8 +2,6 @@
    EthOS — Event Log
    ═══════════════════════════════════════════════════════════ */
 
-window.AppRegistry = window.AppRegistry || {};
-const AppRegistry = window.AppRegistry;
 
 
 AppRegistry['event-log'] = function (appDef) {

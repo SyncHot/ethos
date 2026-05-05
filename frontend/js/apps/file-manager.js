@@ -2,8 +2,6 @@
    EthOS — File Manager
    ═══════════════════════════════════════════════════════════ */
 
-window.AppRegistry = window.AppRegistry || {};
-const AppRegistry = window.AppRegistry;
 
 AppRegistry['file-manager'] = function (appDef, launchOpts) {
     const defaultHomePath = NAS.user?.home_path || `/home/${NAS.user?.username || 'home'}`;

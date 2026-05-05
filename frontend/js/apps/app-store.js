@@ -2,8 +2,6 @@
    EthOS — App Store (Package Center)
    ═══════════════════════════════════════════════════════════ */
 
-window.AppRegistry = window.AppRegistry || {};
-const AppRegistry = window.AppRegistry;
 
 /* ═══════════════════════════════════════════════════════════════
    PACKAGE CENTER  — instalowanie i zarządzanie paczkami EthOS
