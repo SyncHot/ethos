@@ -205,7 +205,10 @@ _FRONTEND_EXTRA_FILES: dict = {
 # Extras are published as backend_2.py, backend_3.py … on GitHub,
 # and downloaded/removed/updated alongside the primary during App Store ops.
 _BACKEND_EXTRA_FILES: dict = {
-    # 'video-station': ['video_station_library', 'video_station_hls', ...],
+    'video-station': ['video_station_library', 'video_station_streaming', 'video_station_thumbnails', 'video_station_tmdb', 'video_station_extras'],
+    'download-manager': ['downloads_config', 'downloads_debrid', 'downloads_extract', 'downloads_history'],
+    'vm-manager': ['vm_boot', 'vm_disks', 'vm_network', 'vm_console'],
+    'radio-music': ['radio_music_radio', 'radio_music_podcasts', 'radio_music_youtube', 'radio_music_local', 'radio_music_playlist'],
 }
 
 # Maps app_id → (module_filename, blueprint_var, init_func_or_None, socketio_attr_needed)
