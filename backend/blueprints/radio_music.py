@@ -25,11 +25,6 @@ Routes:
   POST /api/radio-music/music/download-playlist - download all tracks in a playlist
   GET  /api/radio-music/music/downloads    - list active/recent downloads
   GET  /api/radio-music/local/folders      - list configured music folders
-  POST /api/radio-music/archive/start      - start archiving a YT track to NAS offline-archive/
-  POST /api/radio-music/archive/batch      - batch status for a list of YT URLs
-  POST /api/radio-music/archive/delete     - delete archived track from NAS
-  GET  /api/radio-music/archive/quota      - disk usage of offline archive
-  GET  /api/radio-music/archive/file/<key> - stream archived audio file
   POST /api/radio-music/local/folders      - add/remove music folder
   GET  /api/radio-music/local/scan         - scan folders for audio files
   GET  /api/radio-music/local/stream       - stream local audio file (?path=)
@@ -158,40 +153,6 @@ def _safe_int(val, default, lo=1, hi=200):
         return max(lo, min(int(val), hi))
     except (ValueError, TypeError):
         return default
-
-# ── Offline Archive ──────────────────────────────────────────
-_ARCHIVE_LOCK = threading.Lock()
-_ARCHIVE_SEM = _GeventBoundedSemaphore(2)   # max 2 concurrent yt-dlp downloads
-
-
-def _archive_dir():
-    d = data_path('offline-archive')
-    os.makedirs(d, exist_ok=True)
-    return d
-
-
-def _archive_db_path():
-    return data_path('rm_archive.json')
-
-
-def _load_archive():
-    try:
-        with open(_archive_db_path()) as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-
-def _save_archive(db):
-    tmp = _archive_db_path() + '.tmp'
-    with open(tmp, 'w') as f:
-        json.dump(db, f)
-    os.replace(tmp, _archive_db_path())
-
-
-def _archive_key(url):
-    """16-char hex key derived from URL — stable across restarts."""
-    return hashlib.md5(url.encode('utf-8')).hexdigest()[:16]
 
 
 def _sio():

@@ -23,8 +23,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     let _seekThrottleTs = 0;   // throttle seekbar DOM updates (ms)
     let _radioRetryTimer = null;
     let _radioRetries = 0;
-    // Offline archive: keyed by YT URL → {key, status, progress, size_bytes}
-    let _archiveDb = {};
     let _swReady = false;      // Service Worker available for offline caching
     let _nasSpinTimer = null;  // detect slow NAS wake (>3s)
     let _queueContent = null;  // DOM node of the queue panel (null when not visible)
@@ -682,26 +680,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-dl-toast{position:fixed;bottom:80px;right:16px;background:var(--rm-bg-surface);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:10px 16px;font-size:12px;color:var(--rm-text);box-shadow:0 4px 20px rgba(0,0,0,.5);z-index:9998;display:flex;align-items:center;gap:8px;max-width:300px}',
 '.rm-dl-toast i{color:var(--rm-accent);font-size:14px}',
 
-/* ── Offline Archive button (rm-arch-btn) ──────────────────── */
-/* Wrapper: relative + fixed size so SVG ring is always aligned */
-'.rm-arch-btn{position:relative;background:none;border:none;cursor:pointer;padding:4px;border-radius:50%;transition:background .12s;flex-shrink:0;width:30px;height:30px;display:flex;align-items:center;justify-content:center}',
-'.rm-arch-btn:hover{background:rgba(255,255,255,.08)}',
-/* SVG progress ring — hidden by default */
-'.rm-arch-ring{position:absolute;inset:0;width:100%;height:100%;transform:rotate(-90deg);pointer-events:none;opacity:0;transition:opacity .2s}',
-'.rm-arch-btn.rm-arch-loading .rm-arch-ring{opacity:1}',
-'.rm-arch-ring circle{stroke-dasharray:87.96;stroke-dashoffset:87.96;transition:stroke-dashoffset .4s ease}',
-/* Icon colour per state */
-'.rm-arch-icon{font-size:13px;color:rgba(255,255,255,.4);transition:color .15s,transform .15s}',
-'.rm-arch-btn:hover .rm-arch-icon{color:rgba(255,255,255,.7)}',
-/* State: loading */
-'.rm-arch-btn.rm-arch-loading .rm-arch-icon{color:var(--rm-accent);animation:rm-pulse 1.2s infinite}',
-/* State: archived on NAS */
-'.rm-arch-btn.rm-arch-nas .rm-arch-icon{color:var(--rm-accent)}',
-/* State: archived on NAS + cached on phone (brightest) */
-'.rm-arch-btn.rm-arch-phone .rm-arch-icon{color:var(--rm-accent);filter:drop-shadow(0 0 4px rgba(var(--rm-accent-rgb),.7))}',
-/* Error state */
-'.rm-arch-btn.rm-arch-error .rm-arch-icon{color:var(--rm-error)}',
-
 /* local music folder chips */
 '.rm-folder-chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}',
 '.rm-folder-chip{display:inline-flex;align-items:center;gap:4px;padding:5px 10px;border-radius:16px;background:rgba(255,255,255,.06);border:none;font-size:11px;color:rgba(255,255,255,.8);cursor:default}',
@@ -1116,10 +1094,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
             // Pre-load liked songs so NP heart works immediately
             api('/radio-music/music/liked').then(d => { _likedSongs = d.items || []; }).catch(() => {});
-
-            // Initialize offline archive manager (SocketIO listeners + SW readiness)
-            try { _initArchive(); } catch(e) { _cl('error', 'Archive init failed', { error: e.message }); }
-
             // Subscribe store → auto-refresh queue highlights when track changes via Next/Prev
             _rmStore.subscribe(() => {
                 _refreshQueueHighlight();
@@ -2083,20 +2057,11 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
     function renderMusicResults(tracks, container, dlFolder) {
         container.innerHTML = '<div style="display:flex;flex-direction:column;gap:6px" id="rm-tracks-list"></div>';
-        const list = container.querySelector('#rm-tracks-list');
-        // Pre-load archive status for all visible tracks
-        _loadArchiveBatch(tracks.map(tr => tr.url).filter(Boolean));
-        tracks.forEach((tr, idx) => {
+        const list = container.querySelector('#rm-tracks-list');        tracks.forEach((tr, idx) => {
             const isPlaying = _playing && _playing.id === tr.id;
             const el = document.createElement('div');
             el.className = 'rm-track' + (isPlaying ? ' rm-playing' : '');
-            if (tr.url) el.dataset.url = tr.url;
-            // Store metadata for archive use
-            if (tr.url) {
-                if (!_archiveDb[tr.url]) _archiveDb[tr.url] = {};
-                if (tr.title) _archiveDb[tr.url].title = tr.title;
-            }
-            el.innerHTML = `
+            if (tr.url) el.dataset.url = tr.url;            el.innerHTML = `
                 <img class="rm-track-thumb" src="${escH(tr.thumbnail)}" loading="lazy" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 48 48%22><rect fill=%22%231a1a2e%22 width=%2248%22 height=%2248%22/><text x=%2224%22 y=%2230%22 fill=%22%23666%22 text-anchor=%22middle%22 font-size=%2220%22>♪</text></svg>'">
                 <div class="rm-track-info">
                     <div class="rm-track-title">${escH(tr.title)}</div>
@@ -2104,11 +2069,10 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 </div>
                 <span class="rm-track-dur">${escH(tr.duration_fmt)}</span>
                 <div class="rm-track-actions">
-                    ${_archiveBtnHtml(tr.url)}
                     <button class="rm-track-more" title="${t('Opcje')}"><i class="fas fa-ellipsis-v"></i></button>
                 </div>`;
             el.onclick = (e) => {
-                if (e.target.closest('.rm-arch-btn') || e.target.closest('.rm-track-more')) return;
+                if (e.target.closest('.rm-track-more')) return;
                 // F-02 playContext: clicking any track loads full folder as queue context
                 playContext(tracks.map(t => t), idx);
             };
@@ -2118,20 +2082,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                     name: tr.title, url: tr.url, type: 'music',
                     meta: tr.channel, image: tr.thumbnail, source: 'youtube',
                 });
-            };
-            const archBtn = el.querySelector('.rm-arch-btn');
-            if (archBtn) archBtn.onclick = (e) => {
-                e.stopPropagation();
-                // Store track metadata for archive start
-                if (tr.url) {
-                    _archiveDb[tr.url] = {
-                        ..._archiveDb[tr.url] || {},
-                        title: tr.title, artist: tr.channel, thumbnail: tr.thumbnail
-                    };
-                }
-                _onArchiveBtnClick(tr.url, archBtn);
-            };
-            list.appendChild(el);
+            };            list.appendChild(el);
         });
     }
 
@@ -2851,11 +2802,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
     function _showTrackSheet(track, opts = {}) {
         /* opts: { inPlaylist: plId, trackIdx: number, onRemoved: fn } */
-        const archEntry = track.url ? (_archiveDb[track.url] || null) : null;
-        const archKey = archEntry?.key || null;
         const isYT = track.type === 'music';
-        const isDone = archEntry?.status === 'done';
-        const isDling = archEntry?.status === 'downloading';
 
         const overlay = document.createElement('div');
         overlay.className = 'rm-tsheet-overlay';
@@ -2868,15 +2815,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             { icon: 'fa-list-ol', label: t('Dodaj do kolejki'), action: 'queue' },
             { icon: 'fa-list', label: t('Dodaj do playlisty'), action: 'playlist' },
         ];
-        if (isYT && !isDone && !isDling) {
-            rows.push({ icon: 'fa-cloud-download-alt', label: t('Pobierz do folderu Muzyka'), action: 'archive' });
-        }
-        if (isYT && isDling) {
-            rows.push({ icon: 'fa-cloud-download-alt', label: t('Pobieranie…'), action: 'archive', extra: (archEntry.progress || 0) + '%', disabled: true });
-        }
-        if (isDone && archKey) {
-            rows.push({ icon: 'fa-download', label: t('Zapisz plik na dysku'), action: 'download' });
-        }
         if (opts.inPlaylist != null) {
             rows.push({ icon: 'fa-trash', label: t('Usuń z playlisty'), action: 'remove', danger: true });
         }
@@ -2915,13 +2853,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                     toast(t('Dodano do kolejki'), 'success');
                 } else if (action === 'playlist') {
                     _showAddToPlaylistModal(track);
-                } else if (action === 'archive') {
-                    _onArchiveBtnClick(track.url, null);
-                } else if (action === 'download' && archKey) {
-                    const a = document.createElement('a');
-                    a.href = `/api/radio-music/archive/download/${archKey}?token=${NAS.token || ''}`;
-                    a.download = (track.name || track.title || archKey) + '.mp3';
-                    document.body.appendChild(a); a.click(); a.remove();
                 } else if (action === 'remove' && opts.inPlaylist != null) {
                     await api('/radio-music/playlists/' + opts.inPlaylist + '/tracks/' + opts.trackIdx, { method: 'DELETE' });
                     if (opts.onRemoved) opts.onRemoved();
@@ -4148,17 +4079,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
         function tryUrl(idx) {
             if (idx >= urls.length) {
-                // All network URLs failed — try NAS archive as last resort (Fallback Logic)
-                const archEntry = isMusic && item.url ? _archiveDb[item.url] : null;
-                if (archEntry && archEntry.status === 'done' && archEntry.key) {
-                    const archSrc = `/api/radio-music/archive/file/${archEntry.key}?token=${NAS.token || ''}`;
-                    _cl('info', 'YouTube failed — falling back to NAS archive', { key: archEntry.key });
-                    _audio.src = archSrc;
-                    _audio.play().catch(() => {});
-                    // Subtle icon change to indicate using archived version
-                    _refreshArchiveBtn(item.url);
-                    return;
-                }
                 _cl('error', 'All URLs failed', { name: item?.name, type: item?.type, urlCount: urls.length });
                 toast(t('Nie udało się odtworzyć żadnego źródła'), 'error');
                 _showEq(false);
@@ -4167,13 +4087,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 return;
             }
             let src;
-            // Source priority: NAS archive (if done) > YouTube proxy > fallback URLs
-            const archEntry = isMusic && item.url ? _archiveDb[item.url] : null;
-            if (idx === 0 && archEntry && archEntry.status === 'done' && archEntry.key) {
-                // Silently play from NAS — faster and doesn't consume YouTube quota
-                src = `/api/radio-music/archive/file/${archEntry.key}?token=${NAS.token || ''}`;
-                _cl('debug', 'Playing from NAS archive', { key: archEntry.key });
-            } else if (isLocal) {
+            if (isLocal) {
                 src = item.url;
             } else if (isMusic) {
                 src = '/api/radio-music/music/stream?url=' + encodeURIComponent(urls[idx])
@@ -5042,7 +4956,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         // Ensure every item has type set — items from music search may lack it
         const normalised = items.map(it => {
             if (!it.type) {
-                // Infer type: YouTube/archive → music, local path → local
+                // Infer type: YouTube → music, local path → local
                 const isYt = it.source === 'youtube' || (it.url && (it.url.includes('youtube.com') || it.url.includes('youtu.be')));
                 return { ...it, type: isYt ? 'music' : (it.path ? 'local' : 'music') };
             }
@@ -5059,231 +4973,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         s = Math.floor(s);
         if (s >= 3600) return Math.floor(s / 3600) + ':' + String(Math.floor((s % 3600) / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
         return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
-    }
-
-    /* ── Offline Archive ──────────────────────────────────────────────────── */
-
-    /** Build archive button HTML for a YT music track. */
-    function _archiveBtnHtml(url) {
-        const entry = _archiveDb[url] || {};
-        const st = entry.status || 'none';
-        let iconClass = 'fa-cloud-arrow-down'; // default: not archived
-        let btnClass = '';
-        let title = t('Archiwizuj na NAS');
-        if (st === 'downloading') { iconClass = 'fa-cloud'; btnClass = 'rm-arch-loading'; title = t('Pobieranie...') + ' ' + (entry.progress || 0) + '%'; }
-        else if (st === 'done' && entry.phoneCache) { iconClass = 'fa-mobile-screen-button'; btnClass = 'rm-arch-phone'; title = t('Na NAS i na telefonie'); }
-        else if (st === 'done') { iconClass = 'fa-circle-check'; btnClass = 'rm-arch-nas'; title = t('Zarchiwizowano na NAS'); }
-        else if (st === 'error') { iconClass = 'fa-circle-exclamation'; btnClass = 'rm-arch-error'; title = entry.error || t('Błąd archiwizacji'); }
-
-        const circumference = 87.96;
-        const offset = st === 'downloading'
-            ? circumference - (circumference * (entry.progress || 0) / 100)
-            : circumference;
-
-        return `<button class="rm-arch-btn ${btnClass}" data-arch-url="${escH(url)}" title="${escH(title)}">
-            <i class="fas ${iconClass} rm-arch-icon"></i>
-            <svg class="rm-arch-ring" viewBox="0 0 36 36" xmlns="http://www.w3.org/2000/svg">
-                <circle cx="18" cy="18" r="14" fill="none" stroke="#1DB954" stroke-width="2.5"
-                    stroke-dasharray="${circumference}" stroke-dashoffset="${offset}" stroke-linecap="round"/>
-            </svg>
-        </button>`;
-    }
-
-    /** Update archive button DOM element to reflect current _archiveDb state. */
-    function _refreshArchiveBtn(url) {
-        bodyEl.querySelectorAll(`.rm-arch-btn[data-arch-url="${CSS.escape(url)}"]`).forEach(btn => {
-            const entry = _archiveDb[url] || {};
-            const st = entry.status || 'none';
-            btn.classList.remove('rm-arch-loading', 'rm-arch-nas', 'rm-arch-phone', 'rm-arch-error');
-            const icon = btn.querySelector('.rm-arch-icon');
-            if (!icon) return;
-            const ring = btn.querySelector('.rm-arch-ring circle');
-            if (st === 'downloading') {
-                btn.classList.add('rm-arch-loading');
-                btn.title = t('Pobieranie...') + ' ' + (entry.progress || 0) + '%';
-                icon.className = 'fas fa-cloud rm-arch-icon';
-                if (ring) {
-                    const c = 87.96;
-                    ring.style.strokeDashoffset = c - (c * (entry.progress || 0) / 100);
-                }
-            } else if (st === 'done' && entry.phoneCache) {
-                btn.classList.add('rm-arch-phone');
-                btn.title = t('Na NAS i na telefonie — dotknij aby usunąć');
-                icon.className = 'fas fa-mobile-screen-button rm-arch-icon';
-            } else if (st === 'done') {
-                btn.classList.add('rm-arch-nas');
-                btn.title = t('Zarchiwizowano na NAS — dotknij aby zapisać na telefon');
-                icon.className = 'fas fa-circle-check rm-arch-icon';
-            } else if (st === 'error') {
-                btn.classList.add('rm-arch-error');
-                btn.title = entry.error || t('Błąd archiwizacji');
-                icon.className = 'fas fa-circle-exclamation rm-arch-icon';
-            } else {
-                btn.title = t('Archiwizuj na NAS');
-                icon.className = 'fas fa-cloud-arrow-down rm-arch-icon';
-            }
-        });
-    }
-
-    /** Handle archive button click — cycles: none→NAS | NAS→phone | phone→delete menu */
-    async function _onArchiveBtnClick(url, btnEl) {
-        const entry = _archiveDb[url] || {};
-        const st = entry.status || 'none';
-
-        if (st === 'none' || st === 'error') {
-            // Start NAS archive
-            _archiveDb[url] = { ...(entry || {}), status: 'downloading', progress: 0 };
-            _refreshArchiveBtn(url);
-            const res = await api('/radio-music/archive/start', {
-                method: 'POST',
-                body: { url, title: entry.title || url, artist: entry.artist || '', thumbnail: entry.thumbnail || '' }
-            });
-            if (res.error) {
-                _archiveDb[url] = { ..._archiveDb[url], status: 'error', error: res.error };
-                _refreshArchiveBtn(url);
-                toast(res.error, 'error');
-            } else {
-                _archiveDb[url] = { ..._archiveDb[url], key: res.key, status: res.status };
-                _refreshArchiveBtn(url);
-                if (res.status === 'done') toast(t('Już zarchiwizowane!'), 'success');
-            }
-            return;
-        }
-
-        if (st === 'downloading') {
-            toast(t('Pobieranie w toku...') + ' ' + (entry.progress || 0) + '%', 'info');
-            return;
-        }
-
-        if (st === 'done' && !entry.phoneCache) {
-            // Cache to phone via SW
-            if (!navigator.serviceWorker?.controller) {
-                toast(t('Service Worker niedostępny'), 'error'); return;
-            }
-            toast(t('Zapisuję na telefon...'), 'info');
-            const archiveUrl = `/api/radio-music/archive/file/${entry.key}?token=${NAS.token || ''}`;
-            navigator.serviceWorker.controller.postMessage({
-                type: 'RM_CACHE_AUDIO', key: entry.key, url: archiveUrl
-            });
-            // Response comes via SW message event in _initArchive()
-            return;
-        }
-
-        if (st === 'done' && entry.phoneCache) {
-            // Show delete menu
-            _showArchiveDeleteMenu(url, entry, btnEl);
-        }
-    }
-
-    function _showArchiveDeleteMenu(url, entry, anchor) {
-        const existing = bodyEl.querySelector('.rm-arch-menu');
-        if (existing) existing.remove();
-        const menu = document.createElement('div');
-        menu.className = 'rm-arch-menu';
-        menu.style.cssText = 'position:fixed;background:#1e1e1e;border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:4px 0;z-index:9999;min-width:180px;box-shadow:0 4px 24px rgba(0,0,0,.5);font-size:13px;color:#fff';
-        menu.innerHTML = `
-            <button class="rm-arch-menu-item" data-action="del-phone"><i class="fas fa-mobile-screen-button" style="color:var(--rm-warning);width:18px"></i> ${t('Usuń z telefonu')}</button>
-            <button class="rm-arch-menu-item" data-action="del-nas"><i class="fas fa-trash" style="color:var(--rm-error);width:18px"></i> ${t('Usuń z NAS')}</button>
-            <button class="rm-arch-menu-item" data-action="cancel"><i class="fas fa-times" style="color:rgba(255,255,255,.4);width:18px"></i> ${t('Anuluj')}</button>`;
-        const rect = anchor.getBoundingClientRect();
-        menu.style.left = Math.min(rect.right, window.innerWidth - 190) + 'px';
-        menu.style.top = (rect.bottom + 6) + 'px';
-        menu.querySelectorAll('.rm-arch-menu-item').forEach(btn => {
-            btn.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 14px;background:none;border:none;color:#fff;cursor:pointer;width:100%;text-align:left';
-            btn.onmouseenter = () => { btn.style.background = 'rgba(255,255,255,.06)'; };
-            btn.onmouseleave = () => { btn.style.background = ''; };
-        });
-        menu.querySelector('[data-action="del-phone"]').onclick = () => {
-            menu.remove();
-            navigator.serviceWorker?.controller?.postMessage({ type: 'RM_UNCACHE_AUDIO', key: entry.key });
-            _archiveDb[url] = { ..._archiveDb[url], phoneCache: false };
-            _refreshArchiveBtn(url);
-            toast(t('Usunięto z telefonu'), 'success');
-        };
-        menu.querySelector('[data-action="del-nas"]').onclick = async () => {
-            menu.remove();
-            if (!entry.key) return;
-            await api('/radio-music/archive/delete', { method: 'POST', body: { key: entry.key } });
-            navigator.serviceWorker?.controller?.postMessage({ type: 'RM_UNCACHE_AUDIO', key: entry.key });
-            delete _archiveDb[url];
-            _refreshArchiveBtn(url);
-            toast(t('Usunięto archiwum'), 'success');
-        };
-        menu.querySelector('[data-action="cancel"]').onclick = () => menu.remove();
-        document.body.appendChild(menu);
-        setTimeout(() => document.addEventListener('click', () => menu.remove(), { once: true }), 10);
-    }
-
-    /** Load archive status for an array of YT URLs (batch). */
-    async function _loadArchiveBatch(urls) {
-        if (!urls || !urls.length) return;
-        const toFetch = urls.filter(u => u && !_archiveDb[u]);
-        if (!toFetch.length) return;
-        try {
-            const res = await api('/radio-music/archive/batch', { method: 'POST', body: { urls: toFetch } });
-            if (res.results) {
-                for (const [url, info] of Object.entries(res.results)) {
-                    if (info.status !== 'none') {
-                        _archiveDb[url] = info;
-                    }
-                }
-            }
-        } catch (_) {}
-    }
-
-    /** Wire SocketIO listeners for archive progress/done/error events. */
-    function _initArchive() {
-        // Listen for SW messages (cache done/error)
-        if (navigator.serviceWorker) {
-            navigator.serviceWorker.ready.then(() => { _swReady = true; });
-            navigator.serviceWorker.addEventListener('message', (evt) => {
-                const { type, key } = evt.data || {};
-                if (type === 'RM_CACHE_DONE' && key) {
-                    // Find URL by key in _archiveDb
-                    for (const [url, entry] of Object.entries(_archiveDb)) {
-                        if (entry.key === key) {
-                            _archiveDb[url] = { ...entry, phoneCache: true };
-                            _refreshArchiveBtn(url);
-                            break;
-                        }
-                    }
-                    toast(t('Zapisano na telefon!'), 'success');
-                }
-                if (type === 'RM_CACHE_ERROR') {
-                    toast(t('Błąd zapisu na telefon'), 'error');
-                }
-            });
-        }
-
-        // SocketIO events from backend
-        if (NAS.socket) {
-            NAS.socket.on('rm_archive_progress', (d) => {
-                if (!d.url) return;
-                _archiveDb[d.url] = { ..._archiveDb[d.url] || {}, key: d.key, status: 'downloading', progress: d.progress };
-                _refreshArchiveBtn(d.url);
-            });
-            NAS.socket.on('rm_archive_done', (d) => {
-                if (!d.url) return;
-                _archiveDb[d.url] = { ..._archiveDb[d.url] || {}, key: d.key, status: 'done', progress: 100 };
-                _refreshArchiveBtn(d.url);
-                toast('✅ ' + (d.title || t('Utwór')) + ' — ' + t('zarchiwizowano na NAS'), 'success');
-                // If this track is currently playing from YT, silently switch source to NAS
-                if (_playing && _playing.url === d.url && _audio) {
-                    const nasUrl = `/api/radio-music/archive/file/${d.key}?token=${NAS.token || ''}`;
-                    const pos = _audio.currentTime;
-                    const wasPlaying = !_audio.paused;
-                    _audio.src = nasUrl;
-                    _audio.currentTime = pos;
-                    if (wasPlaying) _audio.play().catch(() => {});
-                }
-            });
-            NAS.socket.on('rm_archive_error', (d) => {
-                if (!d.url) return;
-                _archiveDb[d.url] = { ..._archiveDb[d.url] || {}, status: 'error', error: d.error };
-                _refreshArchiveBtn(d.url);
-                toast(t('Błąd archiwizacji: ') + (d.error || ''), 'error');
-            });
-        }
     }
 
     /* ── Now Playing Overlay ──────────────────────── */
@@ -5558,30 +5247,31 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         }
         _npSyncLike = _syncNpLike;
 
-        // Download/Archive button — trigger NAS archive for music tracks
+        // Download button — trigger YouTube download for music tracks
         const dlBtn = ov.querySelector('#rm-np-download');
         function _syncNpDownload() {
             if (!dlBtn || !_playing) return;
             const isMusic = _playing.type === 'music';
             if (!isMusic) { dlBtn.style.display = 'none'; return; }
             dlBtn.style.display = '';
-            const entry = _archiveDb[_playing.url] || {};
-            const st = entry.status || 'none';
-            if (st === 'done') {
-                dlBtn.innerHTML = '<i class="fas fa-circle-check" style="color:var(--rm-accent)"></i> ' + t('Pobrano');
-                dlBtn.classList.add('rm-lyrics-active');
-            } else if (st === 'downloading') {
-                dlBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + (entry.progress || 0) + '%';
-            } else {
-                dlBtn.innerHTML = '<i class="fas fa-cloud-arrow-down"></i> ' + t('Pobierz');
-                dlBtn.classList.remove('rm-lyrics-active');
-            }
+            dlBtn.innerHTML = '<i class="fas fa-cloud-arrow-down"></i> ' + t('Pobierz');
+            dlBtn.classList.remove('rm-lyrics-active');
         }
         if (dlBtn) {
-            dlBtn.onclick = () => {
+            dlBtn.onclick = async () => {
                 if (!_playing || !_playing.url) return;
-                _onArchiveBtnClick(_playing.url, dlBtn);
-                setTimeout(_syncNpDownload, 500);
+                dlBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('Pobieranie...');
+                try {
+                    await api('/radio-music/music/download', {
+                        method: 'POST',
+                        body: { url: _playing.url, title: _playing.name || 'Unknown', artist: _playing.meta || '' }
+                    });
+                    toast(t('Pobieranie rozpoczęte'), 'success');
+                    setTimeout(_syncNpDownload, 500);
+                } catch (e) {
+                    toast(t('Błąd pobierania'), 'error');
+                    _syncNpDownload();
+                }
             };
             _syncNpDownload();
         }
