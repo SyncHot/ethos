@@ -34,9 +34,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     let _npSyncDislike = null;   // ref to sync NP dislike button state
     let _npReloadSimilar = null;  // ref to reload similar artists on track change
     let _activePolls = [];       // download poll intervals to clear on close
-    let _sleepTimer = null;      // sleep timer timeout ID
-    let _sleepEnd = 0;           // timestamp when sleep timer fires (0 = off)
-    let _sleepMode = '';         // 'time' or 'track'
     let _playbackRate = 1;       // current playback speed (0.5–2)
     let _syncedLyrics = null;    // parsed LRC lines: [{time: ms, text: ''}, ...]
     let _lyrSyncInterval = null; // lyrics auto-scroll timer
@@ -917,16 +914,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-track.rm-dnd-dragging{opacity:.4}',
 '.rm-pl-edit-btn{background:none;border:1px solid rgba(255,255,255,.2);color:var(--rm-text-secondary);font-size:12px;padding:6px 14px;border-radius:20px;cursor:pointer;transition:all .15s}',
 '.rm-pl-edit-btn.active{background:var(--rm-accent);color:#000;border-color:var(--rm-accent)}',
-
-/* sleep timer dropdown */
-'.rm-sleep-dropdown{position:absolute;bottom:100%;left:50%;transform:translateX(-50%);background:var(--rm-bg-surface);border-radius:12px;padding:6px 0;min-width:180px;box-shadow:0 8px 32px rgba(0,0,0,.6);z-index:10;display:none}',
-'.rm-sleep-dropdown.open{display:block}',
-'.rm-sleep-option{padding:10px 16px;font-size:13px;color:rgba(255,255,255,.8);cursor:pointer;transition:background .1s;display:flex;align-items:center;justify-content:space-between}',
-'.rm-sleep-option:hover{background:rgba(255,255,255,.08)}',
-'.rm-sleep-option.active{color:var(--rm-accent);font-weight:600}',
-'.rm-sleep-option .rm-sleep-check{font-size:11px}',
-'.rm-np-action.rm-sleep-active{background:rgba(var(--rm-accent-rgb),.15);color:var(--rm-accent)}',
-'.rm-sleep-remaining{font-size:10px;color:var(--rm-accent);margin-left:4px}',
 
 /* playback speed button */
 '.rm-speed-btn{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15);color:var(--rm-text-secondary);font-size:12px;font-weight:700;cursor:pointer;padding:4px 10px;border-radius:12px;transition:all .12s;min-width:38px;text-align:center}',
@@ -4840,12 +4827,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             _showEq(false);
             _clearSeek();
 
-            // Sleep timer — end of track mode: stop playback
-            if (_onTrackEndedSleepCheck()) {
-                bodyEl.querySelector('#rm-play-pause').innerHTML = '<i class="fas fa-play"></i>';
-                return;
-            }
-
             // Repeat one — replay current track
             if (_repeatMode === 2) {
                 _endedHandled = false;
@@ -5326,7 +5307,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
     function stopPlayback() {
         _savePlaybackState();
-        _clearSleepTimer();
         _stopLyricsSync();
         if (_saveStateInterval) { clearInterval(_saveStateInterval); _saveStateInterval = null; }
         clearTimeout(_radioRetryTimer); _radioRetryTimer = null; _radioRetries = 0;
@@ -5362,102 +5342,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     function _showEq(show) {
         const eq = bodyEl?.querySelector('#rm-player-eq');
         if (eq) eq.style.display = show ? 'flex' : 'none';
-    }
-
-    /* ── Sleep Timer ───────────────────────────────────── */
-    const _SLEEP_PRESETS = [
-        { label: '15 min', mins: 15 },
-        { label: '30 min', mins: 30 },
-        { label: '45 min', mins: 45 },
-        { label: '60 min', mins: 60 },
-        { label: '90 min', mins: 90 },
-    ];
-
-    function _setSleepTimer(mins) {
-        _clearSleepTimer();
-        if (!mins) return;
-        _sleepMode = 'time';
-        _sleepEnd = Date.now() + mins * 60000;
-        _sleepTimer = setTimeout(() => {
-            if (_audio) { _audio.pause(); }
-            toast(t('Wyłącznik czasowy — zatrzymano odtwarzanie'), 'info');
-            _clearSleepTimer();
-        }, mins * 60000);
-        _syncSleepUi();
-    }
-
-    function _setSleepEndOfTrack() {
-        _clearSleepTimer();
-        _sleepMode = 'track';
-        _sleepEnd = -1;
-        _syncSleepUi();
-    }
-
-    function _clearSleepTimer() {
-        if (_sleepTimer) { clearTimeout(_sleepTimer); _sleepTimer = null; }
-        _sleepEnd = 0;
-        _sleepMode = '';
-        _syncSleepUi();
-    }
-
-    function _onTrackEndedSleepCheck() {
-        if (_sleepMode === 'track') {
-            _clearSleepTimer();
-            toast(t('Wyłącznik czasowy — zatrzymano po utworze'), 'info');
-            return true;
-        }
-        return false;
-    }
-
-    function _syncSleepUi() {
-        const btn = bodyEl?.querySelector('#rm-np-sleep');
-        if (!btn) return;
-        if (_sleepEnd || _sleepMode) {
-            btn.classList.add('rm-sleep-active');
-            if (_sleepMode === 'track') {
-                btn.innerHTML = '<i class="fas fa-moon"></i> ' + t('Po utworze');
-            } else if (_sleepEnd > 0) {
-                const mins = Math.ceil((_sleepEnd - Date.now()) / 60000);
-                btn.innerHTML = '<i class="fas fa-moon"></i> ' + mins + ' min';
-            }
-        } else {
-            btn.classList.remove('rm-sleep-active');
-            btn.innerHTML = '<i class="fas fa-moon"></i> ' + t('Timer');
-        }
-    }
-
-    function _showSleepDropdown(anchorBtn) {
-        let dd = bodyEl?.querySelector('.rm-sleep-dropdown');
-        if (dd && dd.classList.contains('open')) { dd.classList.remove('open'); return; }
-        if (!dd) {
-            dd = document.createElement('div');
-            dd.className = 'rm-sleep-dropdown';
-            anchorBtn.style.position = 'relative';
-            anchorBtn.appendChild(dd);
-        }
-        let html = '';
-        _SLEEP_PRESETS.forEach(p => {
-            const active = _sleepMode === 'time' && _sleepEnd > 0 && Math.abs(Math.ceil((_sleepEnd - Date.now()) / 60000) - p.mins) < 2;
-            html += `<div class="rm-sleep-option${active ? ' active' : ''}" data-mins="${p.mins}">${p.label}${active ? ' <span class="rm-sleep-check">✓</span>' : ''}</div>`;
-        });
-        const trackActive = _sleepMode === 'track';
-        html += `<div class="rm-sleep-option${trackActive ? ' active' : ''}" data-action="track">${t('Po bieżącym utworze')}${trackActive ? ' <span class="rm-sleep-check">✓</span>' : ''}</div>`;
-        if (_sleepEnd || _sleepMode) {
-            html += `<div class="rm-sleep-option" data-action="off" style="color:var(--rm-error)">${t('Wyłącz timer')}</div>`;
-        }
-        dd.innerHTML = html;
-        dd.classList.add('open');
-        dd.querySelectorAll('.rm-sleep-option').forEach(opt => {
-            opt.onclick = (e) => {
-                e.stopPropagation();
-                dd.classList.remove('open');
-                if (opt.dataset.action === 'off') { _clearSleepTimer(); }
-                else if (opt.dataset.action === 'track') { _setSleepEndOfTrack(); }
-                else { _setSleepTimer(parseInt(opt.dataset.mins, 10)); }
-            };
-        });
-        const closeDd = (e) => { if (!dd.contains(e.target)) { dd.classList.remove('open'); document.removeEventListener('click', closeDd, true); } };
-        setTimeout(() => document.addEventListener('click', closeDd, true), 0);
     }
 
     /* ── Playback Speed ────────────────────────────────── */
@@ -5514,8 +5398,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             case 'Escape': {
                 const np = bodyEl.querySelector('.rm-np-overlay');
                 if (np) _hideNowPlaying();
-                const dd = bodyEl.querySelector('.rm-sleep-dropdown.open');
-                if (dd) dd.classList.remove('open');
                 break;
             }
         }
@@ -6559,7 +6441,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                     <button class="rm-np-btn" id="rm-np-repeat" title="${t('Powtarzaj')}"><i class="fas fa-redo"></i></button>
                 </div>
                 <div class="rm-np-actions">
-                    <button class="rm-np-action" id="rm-np-sleep"><i class="fas fa-moon"></i> ${t('Timer')}</button>
                     <button class="rm-speed-btn" id="rm-np-speed">${_playbackRate === 1 ? '1x' : _playbackRate + 'x'}</button>
                     <button class="rm-np-action" id="rm-np-queue-btn"><i class="fas fa-list-ol"></i> ${t('Kolejka')}</button>
                     <button class="rm-np-action" id="rm-np-lyrics"><i class="fas fa-align-left"></i> ${t('Tekst')}</button>
@@ -6692,11 +6573,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         // Expose sync functions for track changes
         _npSyncFav = _syncNpFav;
         _npSyncDownload = _syncNpDownload;
-
-        // Sleep timer button
-        const sleepBtn = ov.querySelector('#rm-np-sleep');
-        if (sleepBtn) sleepBtn.onclick = (e) => { e.stopPropagation(); _showSleepDropdown(sleepBtn); };
-        _syncSleepUi();
 
         // Playback speed button
         const speedBtn = ov.querySelector('#rm-np-speed');
