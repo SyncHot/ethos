@@ -18,7 +18,7 @@ from blueprints.radio_music import (
     _find_ytdlp, _fmt_secs, _extract_audio_url,
     _archive_dir, _archive_key, _load_archive, _save_archive,
     _ARCHIVE_LOCK, _ARCHIVE_SEM,
-    _safe_int, _deezer_get, _get_deezer_similar_artists,
+    _safe_int,
     _user_file, _load_json,
     _DOWNLOAD_JOBS, _DOWNLOAD_LOCK, _DATA_DIR,
     _YTDLP_URL_CACHE, _VARIOUS_ARTISTS_PLAYLIST, _SSL_CTX,
@@ -374,119 +374,6 @@ def music_search():
                 'source': 'youtube',
             })
     return jsonify({'items': items})
-
-
-@radio_music_bp.route('/ai-dj/next', methods=['GET'])
-def ai_dj_next():
-    """Generate next batch of AI DJ tracks from user history + Deezer similarity."""
-    count = _safe_int(request.args.get('count', 10), 10, hi=30)
-    artist = request.args.get('artist', '').strip()
-    exclude_raw = request.args.get('exclude', '')
-    exclude_set = set(u for u in exclude_raw.split(',') if u)
-    disliked_raw = request.args.get('disliked_artists', '')
-    disliked_artists = set(a.strip().lower() for a in disliked_raw.split(',') if a.strip())
-    # Also merge with stored per-user preferences
-    prefs = _load_json(_user_file('ai_dj_prefs.json'), {'liked_urls': [], 'disliked_urls': [], 'disliked_artists': []})
-    disliked_artists.update(prefs.get('disliked_artists', []))
-    disliked_urls_stored = set(prefs.get('disliked_urls', []))
-
-    hfile = _user_file('history.json')
-    hist = _load_json(hfile, [])
-
-    # Extract top artists from history (same logic as /recommendations)
-    artist_counts = {}
-    for h in hist:
-        art = (h.get('meta') or h.get('channel') or '').strip()
-        if art and h.get('type') in ('music', 'local'):
-            artist_counts[art] = artist_counts.get(art, 0) + h.get('play_count', 1)
-    top_artists = sorted(artist_counts, key=artist_counts.get, reverse=True)[:5]
-
-    # Use ONE seed artist: currently playing (from param) OR top-1 from history.
-    # Using a single seed keeps the playlist stylistically coherent.
-    seed_artist = artist or (top_artists[0] if top_artists else None)
-
-    # Build YouTube search queries from similar artists of the single seed
-    queries = []
-
-    if seed_artist:
-        similar = [a['name'] for a in _get_deezer_similar_artists(seed_artist, limit=6)]
-        # Seed itself comes first so the playlist anchors around it
-        if seed_artist.lower() not in disliked_artists:
-            queries.append('%s best songs' % seed_artist)
-        for s in similar:
-            if s.lower() not in disliked_artists:
-                queries.append('%s music' % s)
-
-    # If no Deezer results, fall back to tags from history/favorites
-    if not queries:
-        favs = _load_json(_user_file('favorites.json'), [])
-        tag_counts = {}
-        for fav in favs:
-            for tag in (fav.get('tags') or '').split(','):
-                tag = tag.strip().lower()
-                if tag and len(tag) > 1:
-                    tag_counts[tag] = tag_counts.get(tag, 0) + 1
-        top_tags = sorted(tag_counts, key=tag_counts.get, reverse=True)[:5]
-        for tag in top_tags:
-            queries.append('%s music 2025' % tag)
-
-    # Absolute fallback
-    if not queries:
-        queries.append('popular music hits 2025')
-
-    # Search YouTube via yt-dlp in parallel per query
-    ytdlp = _find_ytdlp()
-    if not ytdlp:
-        return jsonify({'items': [], 'error': 'yt-dlp not installed'}), 503
-
-    from host import host_run
-
-    def _search_query(q, limit_per_q):
-        search_arg = f'ytsearch{limit_per_q}:{q}'
-        cmd = (f'{shq(ytdlp)} --dump-json --flat-playlist --no-warnings '
-               f'--no-download {shq(search_arg)}')
-        r = host_run(cmd, timeout=20)
-        results = []
-        if r.stdout:
-            for line in r.stdout.strip().splitlines():
-                try:
-                    d = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                vid_id = d.get('id', '')
-                dur = d.get('duration') or 0
-                url = d.get('url', '') or d.get('webpage_url', '') or f'https://www.youtube.com/watch?v={vid_id}'
-                if url in exclude_set:
-                    continue
-                results.append({
-                    'id': vid_id,
-                    'title': d.get('title', ''),
-                    'channel': d.get('channel', d.get('uploader', '')),
-                    'duration': dur,
-                    'duration_fmt': _fmt_secs(dur),
-                    'thumbnail': (d.get('thumbnails', [{}])[-1].get('url', '')
-                                  or f'https://i.ytimg.com/vi/{vid_id}/hqdefault.jpg'),
-                    'url': url,
-                    'type': 'music',
-                    'source': 'youtube',
-                })
-        return results
-
-    items = []
-    seen_urls = set(exclude_set)
-    per_query = max(3, count // max(1, len(queries)))
-    threads = [gevent.spawn(lambda q=q: _search_query(q, per_query)) for q in queries[:6]]
-    gevent.joinall(threads, timeout=25)
-
-    for t in threads:
-        if t.value:
-            for it in t.value:
-                if it['url'] not in seen_urls and it['url'] not in disliked_urls_stored and (it.get('channel', '') or '').lower() not in disliked_artists:
-                    seen_urls.add(it['url'])
-                    items.append(it)
-
-    # Keep order: seed artist tracks first, then similar artists in sequence
-    return jsonify({'items': items[:count]})
 
 
 @radio_music_bp.route('/music/stream', methods=['GET'])

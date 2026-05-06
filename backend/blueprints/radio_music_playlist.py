@@ -14,7 +14,6 @@ from blueprints.radio_music import (
     radio_music_bp, log,
     _user_file, _load_json, _save_json, _safe_int,
     _MAX_HISTORY, _radio_api, _aggregate_stations,
-    _deezer_get, _get_deezer_similar_artists,
     _get_music_folders, _probe_audio_cached, _ensure_meta_cache,
     _AUDIO_EXTS, _find_ytdlp, _fmt_secs, _ITUNES_API,
 )
@@ -64,61 +63,6 @@ def music_liked_edit():
 
     _save_json(_user_file('liked_songs.json'), liked)
     return jsonify({'ok': True, 'items': liked})
-
-
-@radio_music_bp.route('/ai-dj/preferences', methods=['GET'])
-def ai_dj_preferences_get():
-    prefs = _load_json(_user_file('ai_dj_prefs.json'), {'liked_urls': [], 'disliked_urls': [], 'disliked_artists': []})
-    return jsonify(prefs)
-
-
-@radio_music_bp.route('/ai-dj/preferences', methods=['POST'])
-def ai_dj_preferences_edit():
-    data = request.get_json(silent=True) or {}
-    action = data.get('action', '')
-    url = data.get('url', '').strip()
-    artist = (data.get('artist') or data.get('name') or '').strip().lower()
-
-    prefs = _load_json(_user_file('ai_dj_prefs.json'), {'liked_urls': [], 'disliked_urls': [], 'disliked_artists': []})
-
-    if action == 'like_url' and url:
-        if url not in prefs['liked_urls']:
-            prefs['liked_urls'].insert(0, url)
-        prefs['disliked_urls'] = [u for u in prefs['disliked_urls'] if u != url]
-    elif action == 'unlike_url' and url:
-        prefs['liked_urls'] = [u for u in prefs['liked_urls'] if u != url]
-    elif action == 'dislike_url' and url:
-        if url not in prefs['disliked_urls']:
-            prefs['disliked_urls'].append(url)
-        prefs['liked_urls'] = [u for u in prefs['liked_urls'] if u != url]
-    elif action == 'undislike_url' and url:
-        prefs['disliked_urls'] = [u for u in prefs['disliked_urls'] if u != url]
-    elif action == 'dislike_artist' and artist:
-        if artist not in prefs['disliked_artists']:
-            prefs['disliked_artists'].append(artist)
-    elif action == 'undislike_artist' and artist:
-        prefs['disliked_artists'] = [a for a in prefs['disliked_artists'] if a != artist]
-    elif action == 'clear_all':
-        prefs = {'liked_urls': [], 'disliked_urls': [], 'disliked_artists': []}
-    else:
-        return jsonify({'error': 'Unknown action'}), 400
-
-    _save_json(_user_file('ai_dj_prefs.json'), prefs)
-    return jsonify({'ok': True, 'prefs': prefs})
-
-
-@radio_music_bp.route('/ai-dj/seeds', methods=['GET'])
-def ai_dj_seeds():
-    """Return top seed artists from user's music history (no yt-dlp, fast)."""
-    count = _safe_int(request.args.get('count', 10), 10, hi=20)
-    hist = _load_json(_user_file('history.json'), [])
-    artist_counts = {}
-    for h in hist:
-        art = (h.get('meta') or h.get('channel') or '').strip()
-        if art and h.get('type') in ('music', 'local'):
-            artist_counts[art] = artist_counts.get(art, 0) + h.get('play_count', 1)
-    top_artists = sorted(artist_counts, key=artist_counts.get, reverse=True)[:count]
-    return jsonify({'artists': top_artists})
 
 
 # ── Play history ─────────────────────────────────────────────
@@ -204,38 +148,8 @@ def save_playback_state():
 
 @radio_music_bp.route('/similar-artists', methods=['GET'])
 def similar_artists():
-    """Find similar artists via Deezer API (free, no key).
-    Returns similar artists with their top tracks."""
-    artist = request.args.get('artist', '').strip()
-    limit = _safe_int(request.args.get('limit', 8), 8, hi=25)
-    if not artist:
-        return jsonify({'items': []})
-
-    # 1. Find artist on Deezer
-    search = _deezer_get('/search/artist', {'q': artist, 'limit': 1})
-    results = search.get('data', [])
-    if not results:
-        return jsonify({'items': []})
-
-    artist_id = results[0].get('id')
-    artist_name = results[0].get('name', artist)
-    artist_picture = results[0].get('picture_medium', '')
-
-    # 2. Get related artists
-    related = _deezer_get(f'/artist/{artist_id}/related', {'limit': limit})
-    items = []
-    for a in related.get('data', []):
-        items.append({
-            'id': a.get('id'),
-            'name': a.get('name', ''),
-            'picture': a.get('picture_medium', ''),
-            'fans': a.get('nb_fan', 0),
-        })
-
-    return jsonify({
-        'source': {'id': artist_id, 'name': artist_name, 'picture': artist_picture},
-        'items': items[:limit],
-    })
+    """Find similar artists (deprecated: Deezer API removed)."""
+    return jsonify({'items': []})
 
 
 @radio_music_bp.route('/recommendations', methods=['GET'])
@@ -289,23 +203,11 @@ def recommendations():
     threads = [gevent.spawn(_fetch_tag_radio, tag) for tag in top_tags[:3]]
     gevent.joinall(threads, timeout=12)
 
-    # ── Build artist-based music recommendations ──
-    artist_recs = []
-    if top_artists:
-        # Pick top 2 artists, find similar via Deezer
-        for art_name in top_artists[:2]:
-            for a in _get_deezer_similar_artists(art_name, limit=4):
-                artist_recs.append({
-                    'name': a['name'],
-                    'picture': a['picture'],
-                    'because': art_name,
-                })
-
     return jsonify({
         'top_tags': top_tags,
         'tag_radios': tag_radios,
         'top_artists': top_artists,
-        'artist_recs': artist_recs,
+        'artist_recs': [],
         'pod_genres': list(pod_genres),
         'has_data': bool(top_tags or top_artists or pod_genres),
     })

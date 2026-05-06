@@ -374,36 +374,6 @@ def _ensure_meta_cache():
     if not _meta_cache:
         _load_meta_cache()
 
-# ── Deezer-based recommendations (free, no API key) ─────────
-
-_DEEZER_API = 'https://api.deezer.com'
-
-
-def _deezer_get(path, params=None):
-    """GET request to Deezer API, returns parsed JSON or empty dict."""
-    url = _DEEZER_API + path
-    if params:
-        url += '?' + urllib.parse.urlencode(params)
-    try:
-        req = urllib.request.Request(url, headers={'User-Agent': 'EthOS-RadioMusic/1.0'})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return json.loads(resp.read().decode('utf-8'))
-    except Exception as e:
-        log.debug('Deezer API error for %s: %s', path, e)
-        return {}
-
-
-def _get_deezer_similar_artists(art_name, limit=4):
-    """Return list of similar artists [{name, picture}] for art_name via Deezer."""
-    search = _deezer_get('/search/artist', {'q': art_name, 'limit': 1})
-    results = search.get('data', [])
-    if not results:
-        return []
-    aid = results[0].get('id')
-    related = _deezer_get(f'/artist/{aid}/related', {'limit': limit})
-    return [{'name': a.get('name', ''), 'picture': a.get('picture_medium', '')}
-            for a in related.get('data', [])]
-
 # ── Music folders config (per-user) ─────────────────────────
 
 def _music_folders_file():
