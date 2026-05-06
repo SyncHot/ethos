@@ -107,21 +107,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     // Web Audio API — shared across plays (createMediaElementSource can only be called once per element)
     let _audioCtx = null, _analyser = null, _audioSource = null, _visRafId = null;
 
-    // 5-Band Equalizer state (declared here to avoid TDZ — referenced during mini-player state restore)
-    let _eqEnabled = false;
-    let _eqFilters = [];
-    let _eqBands = [60, 230, 910, 3600, 14000];
-    let _eqGains = [0, 0, 0, 0, 0];
-    const _EQ_PRESETS = {
-        'Flat': [0, 0, 0, 0, 0],
-        'Bass Boost': [6, 4, 0, 0, 0],
-        'Treble Boost': [0, 0, 0, 4, 6],
-        'Rock': [4, 2, -1, 3, 4],
-        'Vocal': [-2, 0, 4, 3, 1],
-        'Dance': [5, 3, 0, 2, 4],
-        'Acoustic': [3, 1, 0, 2, 3],
-    };
-
     const _cl = (level, msg, details) => typeof NAS !== 'undefined' && NAS.logClient
         ? NAS.logClient('radio-music', level, msg, details) : console.log('[radio-music]', msg, details || '');
 
@@ -638,14 +623,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-vol-wrap{display:flex;align-items:center;gap:6px}',
 '.rm-vol-wrap i{font-size:13px;color:rgba(255,255,255,.5)}',
 '.rm-vol-slider{width:80px;accent-color:var(--rm-accent);height:4px}',
-'.rm-player-eq{display:flex;align-items:flex-end;gap:2px;height:18px;margin-left:4px}',
-'.rm-player-eq span{width:3px;background:var(--rm-accent);border-radius:1px;animation:rm-eq .6s ease-in-out infinite alternate}',
-'.rm-player-eq span:nth-child(1){animation-delay:0s;height:6px}',
-'.rm-player-eq span:nth-child(2){animation-delay:.15s;height:12px}',
-'.rm-player-eq span:nth-child(3){animation-delay:.3s;height:8px}',
-'.rm-player-eq span:nth-child(4){animation-delay:.45s;height:14px}',
-'.rm-player-eq span:nth-child(5){animation-delay:.1s;height:10px}',
-'@keyframes rm-eq{0%{height:4px}100%{height:18px}}',
 
 /* podcast episode list */
 '.rm-ep-list{display:flex;flex-direction:column;gap:8px}',
@@ -1057,7 +1034,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         <div class="rm-player-name" id="rm-player-name"></div>
         <div class="rm-player-meta" id="rm-player-meta"></div>
       </div>
-      <div class="rm-player-eq" id="rm-player-eq" style="display:none"><span></span><span></span><span></span><span></span><span></span></div>
       <div class="rm-player-controls">
         <button class="rm-player-btn" id="rm-shuffle-btn" title="${t('Losowo')}"><i class="fas fa-random"></i></button>
         <button class="rm-player-btn" id="rm-prev-btn" title="${t('Poprzednia')}"><i class="fas fa-step-backward"></i></button>
@@ -1250,7 +1226,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             _restoreAndShowLastTrack(body);
             _loadCrossfadeSetting();
             _loadEpProgress();
-            _loadEqSettings();
 
             // Android back button: prevent exiting the app
             // Push sentinel history entry so the first back press fires popstate instead of navigating away
@@ -1286,7 +1261,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 _musicQueue = s.musicQueue || [];
                 _musicQueueIdx = s.musicQueueIdx ?? -1;
                 _audioCtx = s.audioCtx;
-                _eqFilters = s.eqFilters;
                 _audioSource = s.audioSource;
                 _analyser = s.analyser;
                 _saveStateInterval = s.saveStateInterval;
@@ -1373,7 +1347,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 _audio = null;
             }
             if (_audioCtx) { try { _audioCtx.close(); } catch(_) {} _audioCtx = null; }
-            _eqFilters = null;
             _audioSource = null; _analyser = null;
             _playing = null;
             if (_saveStateInterval) { clearInterval(_saveStateInterval); _saveStateInterval = null; }
@@ -4112,8 +4085,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                     <button class="rm-chip" id="rm-clear-ep-progress" style="margin-top:8px"><i class="fas fa-trash"></i> ${t('Wyczyść postępy podcastów')}</button>
                 </div>
             </div>`;
-        // Equalizer section
-        html += _renderEqSection();
         content.innerHTML = html;
         content.querySelector('#rm-cf-slider').oninput = (e) => {
             const sec = parseInt(e.target.value, 10);
@@ -4125,7 +4096,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             _saveEpProgress();
             toast(t('Postępy podcastów wyczyszczone'), 'success');
         };
-        _wireEqHandlers(content);
     }
 
     /* ── Unified Search ────────────────────────────── */
@@ -4366,124 +4336,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
     /* ── 5-Band Equalizer ──────────────────────────── */
 
-    function _initEq() {
-        if (!_audioCtx) {
-            try {
-                _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            } catch(e) { return; }
-        }
-        if (_eqFilters) return;
-        _eqFilters = _eqBands.map((freq, i) => {
-            const f = _audioCtx.createBiquadFilter();
-            f.type = i === 0 ? 'lowshelf' : i === _eqBands.length - 1 ? 'highshelf' : 'peaking';
-            f.frequency.value = freq;
-            f.gain.value = _eqGains[i];
-            if (f.type === 'peaking') f.Q.value = 1.4;
-            return f;
-        });
-        // Chain filters
-        for (let i = 0; i < _eqFilters.length - 1; i++) {
-            _eqFilters[i].connect(_eqFilters[i + 1]);
-        }
-        _eqFilters[_eqFilters.length - 1].connect(_audioCtx.destination);
-    }
-
-    function _connectEq() {
-        if (!_audioCtx || !_audio || !_eqEnabled) return;
-        try {
-            if (_audioCtx.state === 'suspended') _audioCtx.resume();
-            // Use existing _audioSource if visualizer already created it, otherwise create new
-            if (!_audioSource || _audioSource.mediaElement !== _audio) {
-                if (_audioSource) { try { _audioSource.disconnect(); } catch(_) {} }
-                _audioSource = _audioCtx.createMediaElementSource(_audio);
-            }
-            _audioSource.disconnect();
-            _audioSource.connect(_eqFilters[0]);
-        } catch(e) {
-            // MediaElementSource already connected elsewhere
-        }
-    }
-
-    function _disconnectEq() {
-        if (_audioSource) {
-            try { _audioSource.disconnect(); _audioSource.connect(_audioCtx.destination); } catch(_) {}
-        }
-    }
-
-    function _setEqGain(bandIdx, val) {
-        _eqGains[bandIdx] = val;
-        if (_eqFilters[bandIdx]) _eqFilters[bandIdx].gain.value = val;
-        localStorage.setItem('rm_eq_gains', JSON.stringify(_eqGains));
-    }
-
-    function _loadEqSettings() {
-        try {
-            const saved = JSON.parse(localStorage.getItem('rm_eq_gains') || 'null');
-            if (Array.isArray(saved) && saved.length === 5) _eqGains = saved;
-            _eqEnabled = localStorage.getItem('rm_eq_enabled') === '1';
-        } catch(_) {}
-    }
-
-    function _renderEqSection() {
-        const labels = ['60', '230', '910', '3.6k', '14k'];
-        let html = '<div class="rm-section-title"><i class="fas fa-sliders-h"></i> ' + t('Equalizer') + '</div>';
-        html += '<div style="max-width:480px;padding:8px 0">';
-        // Enable toggle
-        html += '<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">'
-            + '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px;color:var(--rm-text-secondary)">'
-            + '<input type="checkbox" id="rm-eq-toggle" ' + (_eqEnabled ? 'checked' : '') + ' style="accent-color:var(--rm-accent);width:18px;height:18px">'
-            + t('Włącz equalizer') + '</label></div>';
-        // Presets
-        html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px">';
-        Object.keys(_EQ_PRESETS).forEach(name => {
-            html += '<button class="rm-chip rm-eq-preset" data-preset="' + name + '">' + name + '</button>';
-        });
-        html += '</div>';
-        // Sliders
-        html += '<div style="display:flex;gap:16px;justify-content:center;padding:8px 0">';
-        _eqBands.forEach((freq, i) => {
-            html += '<div style="display:flex;flex-direction:column;align-items:center;gap:4px">'
-                + '<span id="rm-eq-val-' + i + '" style="font-size:11px;color:var(--rm-accent);min-width:28px;text-align:center">' + (_eqGains[i] > 0 ? '+' : '') + _eqGains[i] + 'dB</span>'
-                + '<input type="range" class="rm-eq-slider" data-band="' + i + '" min="-12" max="12" step="1" value="' + _eqGains[i] + '" '
-                + 'style="writing-mode:vertical-lr;direction:rtl;height:120px;width:28px;accent-color:var(--rm-accent)">'
-                + '<span style="font-size:11px;color:var(--rm-text-muted)">' + labels[i] + '</span></div>';
-        });
-        html += '</div></div>';
-        return html;
-    }
-
-    function _wireEqHandlers(content) {
-        content.querySelector('#rm-eq-toggle').onchange = (e) => {
-            _eqEnabled = e.target.checked;
-            localStorage.setItem('rm_eq_enabled', _eqEnabled ? '1' : '0');
-            if (_eqEnabled) { _initEq(); _connectEq(); _eqFilters.forEach((f, i) => f.gain.value = _eqGains[i]); }
-            else { _disconnectEq(); }
-        };
-        content.querySelectorAll('.rm-eq-slider').forEach(slider => {
-            slider.oninput = (e) => {
-                const band = parseInt(e.target.dataset.band);
-                const val = parseInt(e.target.value);
-                _setEqGain(band, val);
-                const lbl = content.querySelector('#rm-eq-val-' + band);
-                if (lbl) lbl.textContent = (val > 0 ? '+' : '') + val + 'dB';
-            };
-        });
-        content.querySelectorAll('.rm-eq-preset').forEach(btn => {
-            btn.onclick = () => {
-                const gains = _EQ_PRESETS[btn.dataset.preset];
-                if (!gains) return;
-                gains.forEach((g, i) => {
-                    _setEqGain(i, g);
-                    const slider = content.querySelector('.rm-eq-slider[data-band="' + i + '"]');
-                    if (slider) slider.value = g;
-                    const lbl = content.querySelector('#rm-eq-val-' + i);
-                    if (lbl) lbl.textContent = (g > 0 ? '+' : '') + g + 'dB';
-                });
-                content.querySelectorAll('.rm-eq-preset').forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-            };
-        });
-    }
 
     /* ── Audiobooks for Kids ───────────────────────── */
 
@@ -4734,11 +4586,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             _aiDjBaseArtist = item.meta || item.channel;
         }
         _seekLocked = true; // unlock on onplay/oncanplay — prevents seekbar jumping to 0
-
-        // Connect EQ if enabled (uses shared _audioSource from _connectEq)
-        if (_eqEnabled && _audioCtx) {
-            _connectEq();
-        }
 
         // Reset reconnect state and preload on each new playback
         clearTimeout(_radioRetryTimer); _radioRetryTimer = null; _radioRetries = 0;
@@ -5425,7 +5272,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             musicQueue: _musicQueue,
             musicQueueIdx: _musicQueueIdx,
             audioCtx: _audioCtx,
-            eqFilters: _eqFilters,
             audioSource: _audioSource,
             analyser: _analyser,
             saveStateInterval: _saveStateInterval,
@@ -5490,7 +5336,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 _audio = null;
             }
             if (_audioCtx) { try { _audioCtx.close(); } catch(_) {} _audioCtx = null; }
-            _eqFilters = null;
             _audioSource = null; _analyser = null;
             _playing = null;
             _musicQueue = [];
@@ -7495,12 +7340,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 _analyser = _audioCtx.createAnalyser();
                 _analyser.fftSize = 64;
             }
-            // If EQ is active, patch analyser between EQ output and destination
-            if (_eqEnabled && _eqFilters.length) {
-                try { _eqFilters[_eqFilters.length - 1].disconnect(); } catch(_) {}
-                _eqFilters[_eqFilters.length - 1].connect(_analyser);
-                _analyser.connect(_audioCtx.destination);
-            } else if (_audioSource) {
+            // Connect audio source to analyser
+            if (_audioSource) {
                 try { _audioSource.disconnect(); } catch(_) {}
                 _audioSource.connect(_analyser);
                 _analyser.connect(_audioCtx.destination);
