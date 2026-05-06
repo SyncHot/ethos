@@ -11,6 +11,7 @@ from flask import jsonify, request
 from blueprints.radio_music import (
     radio_music_bp, log, _safe_int, _user_file, _load_json, _save_json, _ITUNES_API,
 )
+from blueprints.radio_music_playlist import _migrate_old_subscriptions
 
 
 # iTunes podcast genre IDs
@@ -223,28 +224,49 @@ def podcasts_feed():
 
 @radio_music_bp.route('/podcasts/subscriptions', methods=['GET'])
 def podcasts_subs():
-    return jsonify({'items': _load_json(_user_file('subscriptions.json'), [])})
+    """
+    PHASE 2: Get podcast subscriptions.
+    Automatically migrates old subscriptions.json to unified favorites.json.
+    Returns items with source='podcast' from unified favorites.json.
+    """
+    _migrate_old_subscriptions()
+    all_favs = _load_json(_user_file('favorites.json'), [])
+    # Filter only podcast subscriptions (source='podcast')
+    pod_subs = [f for f in all_favs if f.get('source') == 'podcast']
+    return jsonify({'items': pod_subs})
 
 
 @radio_music_bp.route('/podcasts/subscribe', methods=['POST'])
 def podcasts_subscribe():
+    """
+    PHASE 2: Add/remove podcast subscription to unified favorites.json.
+    Automatically adds source='podcast' and type='subscription' fields.
+    """
     body = request.get_json(force=True, silent=True) or {}
     action = body.get('action', 'add')
     podcast = body.get('podcast')
     if not podcast or not podcast.get('feed_url'):
         return jsonify({'error': 'Brak danych podcastu.'}), 400
 
-    subs = _load_json(_user_file('subscriptions.json'), [])
+    _migrate_old_subscriptions()
+    favs = _load_json(_user_file('favorites.json'), [])
 
     if action == 'remove':
-        subs = [s for s in subs if s.get('feed_url') != podcast['feed_url']]
+        favs = [f for f in favs if f.get('feed_url') != podcast['feed_url']]
     else:
-        if not any(s.get('feed_url') == podcast['feed_url'] for s in subs):
-            podcast['subscribed_at'] = time.time()
-            subs.insert(0, podcast)
+        if not any(f.get('feed_url') == podcast['feed_url'] for f in favs):
+            # Ensure source and type are set
+            podcast = dict(podcast)
+            podcast.setdefault('source', 'podcast')
+            podcast.setdefault('type', 'subscription')
+            podcast.setdefault('subscribed_at', time.time())
+            # Normalize title field
+            if 'title' not in podcast and 'name' in podcast:
+                podcast['title'] = podcast['name']
+            favs.insert(0, podcast)
 
-    _save_json(_user_file('subscriptions.json'), subs)
-    return jsonify({'ok': True, 'items': subs})
+    _save_json(_user_file('favorites.json'), favs)
+    return jsonify({'ok': True, 'items': favs})
 
 
 # ── Podcast auto-download ────────────────────────────────────

@@ -20,17 +20,11 @@ Routes:
   GET  /api/radio-music/music/check-deps   - check if yt-dlp is installed
   POST /api/radio-music/music/install-deps - install yt-dlp
   GET  /api/radio-music/music/search       - search YouTube music (?q=, ?limit=)
-  GET  /api/radio-music/music/direct-url   - get direct CDN audio URL for Chromecast (?url=)
   GET  /api/radio-music/music/stream       - proxy audio from YouTube (?url=)
   POST /api/radio-music/music/download     - download track to music folder
   POST /api/radio-music/music/download-playlist - download all tracks in a playlist
   GET  /api/radio-music/music/downloads    - list active/recent downloads
   GET  /api/radio-music/local/folders      - list configured music folders
-  POST /api/radio-music/archive/start      - start archiving a YT track to NAS offline-archive/
-  POST /api/radio-music/archive/batch      - batch status for a list of YT URLs
-  POST /api/radio-music/archive/delete     - delete archived track from NAS
-  GET  /api/radio-music/archive/quota      - disk usage of offline archive
-  GET  /api/radio-music/archive/file/<key> - stream archived audio file
   POST /api/radio-music/local/folders      - add/remove music folder
   GET  /api/radio-music/local/scan         - scan folders for audio files
   GET  /api/radio-music/local/stream       - stream local audio file (?path=)
@@ -52,7 +46,6 @@ Routes:
   POST /api/radio-music/music/liked       - add/remove liked song
   GET  /api/radio-music/similar-artists   - similar artists via Deezer (?artist=, ?limit=)
   GET  /api/radio-music/recommendations   - personalized recs from history/favorites/subs
-  GET  /api/radio-music/lyrics             - fetch song lyrics (?title=, ?artist=)
   GET  /api/radio-music/search/all         - unified search across radio+podcasts+local (?q=)
   GET  /api/radio-music/playlists/<id>/export - export playlist as M3U8
   POST /api/radio-music/playlists/import   - import M3U/M3U8 playlist
@@ -160,40 +153,6 @@ def _safe_int(val, default, lo=1, hi=200):
         return max(lo, min(int(val), hi))
     except (ValueError, TypeError):
         return default
-
-# ── Offline Archive ──────────────────────────────────────────
-_ARCHIVE_LOCK = threading.Lock()
-_ARCHIVE_SEM = _GeventBoundedSemaphore(2)   # max 2 concurrent yt-dlp downloads
-
-
-def _archive_dir():
-    d = data_path('offline-archive')
-    os.makedirs(d, exist_ok=True)
-    return d
-
-
-def _archive_db_path():
-    return data_path('rm_archive.json')
-
-
-def _load_archive():
-    try:
-        with open(_archive_db_path()) as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-
-def _save_archive(db):
-    tmp = _archive_db_path() + '.tmp'
-    with open(tmp, 'w') as f:
-        json.dump(db, f)
-    os.replace(tmp, _archive_db_path())
-
-
-def _archive_key(url):
-    """16-char hex key derived from URL — stable across restarts."""
-    return hashlib.md5(url.encode('utf-8')).hexdigest()[:16]
 
 
 def _sio():
@@ -374,36 +333,6 @@ def _ensure_meta_cache():
     """Ensure meta cache is loaded. Used by sub-modules to avoid stale binding."""
     if not _meta_cache:
         _load_meta_cache()
-
-# ── Deezer-based recommendations (free, no API key) ─────────
-
-_DEEZER_API = 'https://api.deezer.com'
-
-
-def _deezer_get(path, params=None):
-    """GET request to Deezer API, returns parsed JSON or empty dict."""
-    url = _DEEZER_API + path
-    if params:
-        url += '?' + urllib.parse.urlencode(params)
-    try:
-        req = urllib.request.Request(url, headers={'User-Agent': 'EthOS-RadioMusic/1.0'})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return json.loads(resp.read().decode('utf-8'))
-    except Exception as e:
-        log.debug('Deezer API error for %s: %s', path, e)
-        return {}
-
-
-def _get_deezer_similar_artists(art_name, limit=4):
-    """Return list of similar artists [{name, picture}] for art_name via Deezer."""
-    search = _deezer_get('/search/artist', {'q': art_name, 'limit': 1})
-    results = search.get('data', [])
-    if not results:
-        return []
-    aid = results[0].get('id')
-    related = _deezer_get(f'/artist/{aid}/related', {'limit': limit})
-    return [{'name': a.get('name', ''), 'picture': a.get('picture_medium', '')}
-            for a in related.get('data', [])]
 
 # ── Music folders config (per-user) ─────────────────────────
 

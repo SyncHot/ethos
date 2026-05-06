@@ -11,6 +11,7 @@ from blueprints.radio_music import (
     radio_music_bp, log, _safe_int, _radio_api, _aggregate_stations,
     _user_file, _load_json, _save_json, _SSL_CTX,
 )
+from blueprints.radio_music_playlist import _migrate_old_subscriptions
 
 
 def _open_icy_stream(url, timeout=10):
@@ -135,23 +136,41 @@ def radio_top():
 
 @radio_music_bp.route('/radio/favorites', methods=['GET'])
 def radio_favorites():
-    return jsonify({'items': _load_json(_user_file('favorites.json'), [])})
+    """
+    PHASE 2: Get radio favorites (radio stations only).
+    Automatically migrates old subscriptions.json if present.
+    Returns only items with source='radio' from unified favorites.json.
+    """
+    _migrate_old_subscriptions()
+    all_favs = _load_json(_user_file('favorites.json'), [])
+    # Filter only radio stations (source='radio')
+    radio_favs = [f for f in all_favs if f.get('source') == 'radio' or not f.get('source')]
+    return jsonify({'items': radio_favs})
 
 
 @radio_music_bp.route('/radio/favorites', methods=['POST'])
 def radio_favorites_edit():
+    """
+    PHASE 2: Add/remove radio station from unified favorites.json.
+    Automatically adds source='radio' field if not present.
+    """
     body = request.get_json(force=True, silent=True) or {}
     action = body.get('action', 'add')
     station = body.get('station')
     if not station or not station.get('uuid'):
         return jsonify({'error': 'Brak danych stacji.'}), 400
 
+    _migrate_old_subscriptions()
     favs = _load_json(_user_file('favorites.json'), [])
 
     if action == 'remove':
         favs = [f for f in favs if f.get('uuid') != station['uuid']]
     else:
         if not any(f.get('uuid') == station['uuid'] for f in favs):
+            # Ensure source='radio' is set
+            station = dict(station)
+            station.setdefault('source', 'radio')
+            station.setdefault('type', 'station')
             favs.insert(0, station)
 
     _save_json(_user_file('favorites.json'), favs)

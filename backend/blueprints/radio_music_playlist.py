@@ -14,7 +14,6 @@ from blueprints.radio_music import (
     radio_music_bp, log,
     _user_file, _load_json, _save_json, _safe_int,
     _MAX_HISTORY, _radio_api, _aggregate_stations,
-    _deezer_get, _get_deezer_similar_artists,
     _get_music_folders, _probe_audio_cached, _ensure_meta_cache,
     _AUDIO_EXTS, _find_ytdlp, _fmt_secs, _ITUNES_API,
 )
@@ -33,6 +32,137 @@ def _fix_history_types(items):
                 it['type'] = 'music'
                 changed = True
     return changed
+
+
+def _migrate_old_subscriptions():
+    """
+    PHASE 2: Migrate old subscriptions.json to unified favorites.json format.
+    Converts podcast subscriptions from subscriptions.json to favorites.json with source='podcast'.
+    Idempotent: safe to call multiple times.
+    Returns: (migrated_count, errors_list)
+    """
+    sub_file = _user_file('subscriptions.json')
+    fav_file = _user_file('favorites.json')
+    old_sub_backup = _user_file('old_subscriptions.json')
+    
+    # Check if old subscriptions.json exists and hasn't been migrated
+    if not os.path.exists(sub_file):
+        return (0, [])  # Already migrated or never existed
+    
+    try:
+        # Load old subscriptions
+        subs = _load_json(sub_file, [])
+        if not subs:
+            return (0, [])  # Empty, nothing to migrate
+        
+        # Load existing favorites
+        favs = _load_json(fav_file, [])
+        
+        # Track existing podcast feed URLs to avoid duplicates
+        existing_feeds = {f.get('feed_url') for f in favs if f.get('source') == 'podcast'}
+        
+        migrated = 0
+        for sub in subs:
+            feed_url = sub.get('feed_url', '')
+            if not feed_url or feed_url in existing_feeds:
+                continue
+            
+            # Convert subscription to unified favorites entry
+            fav_entry = {
+                'id': 'fav-podcast-' + str(hash(feed_url))[-10:].lstrip('-'),
+                'title': sub.get('name') or sub.get('title', 'Untitled'),
+                'source': 'podcast',
+                'type': 'subscription',
+                'url': feed_url,
+                'feed_url': feed_url,
+                'image': sub.get('artwork') or sub.get('image', ''),
+                'meta': sub.get('artist') or sub.get('author', ''),
+                'added_at': sub.get('subscribed_at', time.time()),
+                'genre': sub.get('genre', ''),
+                'explicit': sub.get('explicit', False),
+                'language': sub.get('language', ''),
+            }
+            favs.insert(0, fav_entry)
+            existing_feeds.add(feed_url)
+            migrated += 1
+        
+        # Save merged favorites
+        if migrated > 0:
+            _save_json(fav_file, favs)
+            
+            # Backup old subscriptions.json before deleting
+            try:
+                subs_backup = _load_json(sub_file, [])
+                _save_json(old_sub_backup, subs_backup)
+            except Exception:
+                pass
+            
+            # Delete old subscriptions.json
+            try:
+                os.remove(sub_file)
+            except OSError:
+                pass
+        
+        return (migrated, [])
+    except Exception as e:
+        return (0, [str(e)])
+
+
+def _normalize_entry(item, source_hint=None):
+    """
+    PHASE 2: Normalize a queue/history/favorites entry to unified format.
+    - Auto-generates ID if missing
+    - Infers source from URL patterns if not provided
+    - Normalizes field aliases (name→title, favicon→image, etc.)
+    - Ensures required fields are present
+    Returns: normalized entry dict
+    """
+    if not item:
+        return {}
+    
+    # Work with a copy to avoid mutations
+    entry = dict(item)
+    
+    # Normalize title (from name, title, or default)
+    if 'title' not in entry:
+        entry['title'] = entry.get('name', entry.get('title', 'Untitled'))
+    entry['name'] = entry['title']  # Keep both for compatibility
+    
+    # Normalize image (from image, favicon, artwork, thumbnail, etc.)
+    if 'image' not in entry:
+        entry['image'] = (entry.get('favicon') or entry.get('artwork') 
+                         or entry.get('thumbnail') or '')
+    
+    # Normalize meta (from meta, channel, author, artist)
+    if 'meta' not in entry:
+        entry['meta'] = (entry.get('channel') or entry.get('author') 
+                        or entry.get('artist') or '')
+    
+    # Infer source if not provided
+    if 'source' not in entry and source_hint:
+        entry['source'] = source_hint
+    elif 'source' not in entry:
+        url = entry.get('url', '')
+        if '/local/stream' in url:
+            entry['source'] = 'local'
+        elif 'youtube.com' in url or 'youtu.be' in url:
+            entry['source'] = 'youtube'
+        elif entry.get('feed_url'):
+            entry['source'] = 'podcast'
+        elif entry.get('uuid'):
+            entry['source'] = 'radio'
+        else:
+            entry['source'] = 'local'  # Default
+    
+    # Generate ID if missing (format: item-{source}-{hash})
+    if 'id' not in entry:
+        title = entry.get('title', '')
+        url = entry.get('url', '')
+        key = (title + '|' + url).encode()
+        hash_val = str(hash(key))[-10:].lstrip('-')
+        entry['id'] = 'item-' + entry.get('source', 'unknown') + '-' + hash_val
+    
+    return entry
 
 
 def _playlists_file():
@@ -66,70 +196,36 @@ def music_liked_edit():
     return jsonify({'ok': True, 'items': liked})
 
 
-@radio_music_bp.route('/ai-dj/preferences', methods=['GET'])
-def ai_dj_preferences_get():
-    prefs = _load_json(_user_file('ai_dj_prefs.json'), {'liked_urls': [], 'disliked_urls': [], 'disliked_artists': []})
-    return jsonify(prefs)
-
-
-@radio_music_bp.route('/ai-dj/preferences', methods=['POST'])
-def ai_dj_preferences_edit():
-    data = request.get_json(silent=True) or {}
-    action = data.get('action', '')
-    url = data.get('url', '').strip()
-    artist = (data.get('artist') or data.get('name') or '').strip().lower()
-
-    prefs = _load_json(_user_file('ai_dj_prefs.json'), {'liked_urls': [], 'disliked_urls': [], 'disliked_artists': []})
-
-    if action == 'like_url' and url:
-        if url not in prefs['liked_urls']:
-            prefs['liked_urls'].insert(0, url)
-        prefs['disliked_urls'] = [u for u in prefs['disliked_urls'] if u != url]
-    elif action == 'unlike_url' and url:
-        prefs['liked_urls'] = [u for u in prefs['liked_urls'] if u != url]
-    elif action == 'dislike_url' and url:
-        if url not in prefs['disliked_urls']:
-            prefs['disliked_urls'].append(url)
-        prefs['liked_urls'] = [u for u in prefs['liked_urls'] if u != url]
-    elif action == 'undislike_url' and url:
-        prefs['disliked_urls'] = [u for u in prefs['disliked_urls'] if u != url]
-    elif action == 'dislike_artist' and artist:
-        if artist not in prefs['disliked_artists']:
-            prefs['disliked_artists'].append(artist)
-    elif action == 'undislike_artist' and artist:
-        prefs['disliked_artists'] = [a for a in prefs['disliked_artists'] if a != artist]
-    elif action == 'clear_all':
-        prefs = {'liked_urls': [], 'disliked_urls': [], 'disliked_artists': []}
-    else:
-        return jsonify({'error': 'Unknown action'}), 400
-
-    _save_json(_user_file('ai_dj_prefs.json'), prefs)
-    return jsonify({'ok': True, 'prefs': prefs})
-
-
-@radio_music_bp.route('/ai-dj/seeds', methods=['GET'])
-def ai_dj_seeds():
-    """Return top seed artists from user's music history (no yt-dlp, fast)."""
-    count = _safe_int(request.args.get('count', 10), 10, hi=20)
-    hist = _load_json(_user_file('history.json'), [])
-    artist_counts = {}
-    for h in hist:
-        art = (h.get('meta') or h.get('channel') or '').strip()
-        if art and h.get('type') in ('music', 'local'):
-            artist_counts[art] = artist_counts.get(art, 0) + h.get('play_count', 1)
-    top_artists = sorted(artist_counts, key=artist_counts.get, reverse=True)[:count]
-    return jsonify({'artists': top_artists})
-
-
 # ── Play history ─────────────────────────────────────────────
 
 @radio_music_bp.route('/history', methods=['GET'])
 def history():
+    """
+    PHASE 2: Unified history endpoint.
+    Supports sorting by date (default) or play_count (most-played).
+    Query params:
+      - sort=plays → sort by play_count descending (most-played)
+      - sort=date → sort by played_at descending (default)
+      - limit=N → return top N items
+    """
     hfile = _user_file('history.json')
     items = _load_json(hfile, [])
     if _fix_history_types(items):
         _save_json(hfile, items)
-    return jsonify({'items': items})
+    
+    # Get sort and limit parameters
+    sort = request.args.get('sort', 'date').lower()
+    limit = _safe_int(request.args.get('limit', 1000), 1000, hi=10000)
+    
+    # Sort items
+    if sort == 'plays':
+        # Sort by play_count descending (most-played)
+        items = sorted(items, key=lambda h: h.get('play_count', 1), reverse=True)
+    else:
+        # Sort by played_at descending (most recent)
+        items = sorted(items, key=lambda h: h.get('played_at', 0), reverse=True)
+    
+    return jsonify({'items': items[:limit]})
 
 
 @radio_music_bp.route('/history', methods=['POST'])
@@ -139,13 +235,8 @@ def history_add():
     if not item:
         return jsonify({'error': 'Brak danych.'}), 400
 
-    # Normalize field aliases so history entries are always consistent
-    if not item.get('name') and item.get('title'):
-        item['name'] = item['title']
-    if not item.get('image') and item.get('thumbnail'):
-        item['image'] = item['thumbnail']
-    if not item.get('meta') and item.get('channel'):
-        item['meta'] = item['channel']
+    # Normalize using Phase 2 helper
+    item = _normalize_entry(item)
 
     item['played_at'] = time.time()
     hfile = _user_file('history.json')
@@ -166,7 +257,10 @@ def history_add():
 
 @radio_music_bp.route('/most-played', methods=['GET'])
 def most_played():
-    """Return history items sorted by play_count descending."""
+    """
+    PHASE 2: Deprecated endpoint - redirects to /history?sort=plays
+    Kept for backwards compatibility.
+    """
     limit = _safe_int(request.args.get('limit', 30), 30, hi=100)
     hfile = _user_file('history.json')
     hist = _load_json(hfile, [])
@@ -204,55 +298,32 @@ def save_playback_state():
 
 @radio_music_bp.route('/similar-artists', methods=['GET'])
 def similar_artists():
-    """Find similar artists via Deezer API (free, no key).
-    Returns similar artists with their top tracks."""
-    artist = request.args.get('artist', '').strip()
-    limit = _safe_int(request.args.get('limit', 8), 8, hi=25)
-    if not artist:
-        return jsonify({'items': []})
-
-    # 1. Find artist on Deezer
-    search = _deezer_get('/search/artist', {'q': artist, 'limit': 1})
-    results = search.get('data', [])
-    if not results:
-        return jsonify({'items': []})
-
-    artist_id = results[0].get('id')
-    artist_name = results[0].get('name', artist)
-    artist_picture = results[0].get('picture_medium', '')
-
-    # 2. Get related artists
-    related = _deezer_get(f'/artist/{artist_id}/related', {'limit': limit})
-    items = []
-    for a in related.get('data', []):
-        items.append({
-            'id': a.get('id'),
-            'name': a.get('name', ''),
-            'picture': a.get('picture_medium', ''),
-            'fans': a.get('nb_fan', 0),
-        })
-
-    return jsonify({
-        'source': {'id': artist_id, 'name': artist_name, 'picture': artist_picture},
-        'items': items[:limit],
-    })
+    """Find similar artists (deprecated: Deezer API removed)."""
+    return jsonify({'items': []})
 
 
 @radio_music_bp.route('/recommendations', methods=['GET'])
 def recommendations():
-    """Build personalized recommendations from user's history, favorites and subscriptions."""
+    """
+    PHASE 2: Build personalized recommendations from user's history and favorites.
+    Uses unified favorites.json (radio + podcasts).
+    Automatically migrates old subscriptions.json if present.
+    """
+    # Migrate old subscriptions if present (Phase 2)
+    _migrate_old_subscriptions()
+    
     hfile = _user_file('history.json')
     hist = _load_json(hfile, [])
     favs = _load_json(_user_file('favorites.json'), [])
-    subs = _load_json(_user_file('subscriptions.json'), [])
 
-    # ── Extract top tags from favorites (radio stations have 'tags' field) ──
+    # ── Extract top tags from radio favorites (only source='radio') ──
     tag_counts = {}
     for fav in favs:
-        for tag in (fav.get('tags') or '').split(','):
-            tag = tag.strip().lower()
-            if tag and len(tag) > 1:
-                tag_counts[tag] = tag_counts.get(tag, 0) + 1
+        if fav.get('source') == 'radio':
+            for tag in (fav.get('tags') or '').split(','):
+                tag = tag.strip().lower()
+                if tag and len(tag) > 1:
+                    tag_counts[tag] = tag_counts.get(tag, 0) + 1
     top_tags = sorted(tag_counts, key=tag_counts.get, reverse=True)[:5]
 
     # ── Extract top artists from history ──
@@ -263,12 +334,13 @@ def recommendations():
             artist_counts[art] = artist_counts.get(art, 0) + h.get('play_count', 1)
     top_artists = sorted(artist_counts, key=artist_counts.get, reverse=True)[:5]
 
-    # ── Extract podcast genres from subscriptions ──
+    # ── Extract podcast genres from podcast favorites (source='podcast') ──
     pod_genres = set()
-    for sub in subs:
-        g = (sub.get('genre') or sub.get('category') or '').strip().lower()
-        if g:
-            pod_genres.add(g)
+    for fav in favs:
+        if fav.get('source') == 'podcast':
+            g = (fav.get('genre') or fav.get('category') or '').strip().lower()
+            if g:
+                pod_genres.add(g)
 
     # ── Build tag-based radio recommendations (parallel) ──
     tag_radios = {}
@@ -281,107 +353,23 @@ def recommendations():
             'countrycode': country,
         })
         items = _aggregate_stations(data)
-        # Exclude stations already in favorites
-        fav_uuids = {f.get('uuid') for f in favs}
+        # Exclude stations already in favorites (check only radio favorites)
+        fav_uuids = {f.get('uuid') for f in favs if f.get('source') == 'radio'}
         items = [s for s in items if s.get('uuid') not in fav_uuids]
         tag_radios[tag] = items[:6]
 
     threads = [gevent.spawn(_fetch_tag_radio, tag) for tag in top_tags[:3]]
     gevent.joinall(threads, timeout=12)
 
-    # ── Build artist-based music recommendations ──
-    artist_recs = []
-    if top_artists:
-        # Pick top 2 artists, find similar via Deezer
-        for art_name in top_artists[:2]:
-            for a in _get_deezer_similar_artists(art_name, limit=4):
-                artist_recs.append({
-                    'name': a['name'],
-                    'picture': a['picture'],
-                    'because': art_name,
-                })
-
     return jsonify({
         'top_tags': top_tags,
         'tag_radios': tag_radios,
         'top_artists': top_artists,
-        'artist_recs': artist_recs,
+        'artist_recs': [],
         'pod_genres': list(pod_genres),
         'has_data': bool(top_tags or top_artists or pod_genres),
     })
 
-
-@radio_music_bp.route('/lyrics', methods=['GET'])
-def lyrics_search():
-    """Fetch song lyrics from lrclib.net (free, no API key needed)."""
-    title = request.args.get('title', '').strip()
-    artist = request.args.get('artist', '').strip()
-    if not title:
-        return jsonify({'error': 'Brak tytułu.'}), 400
-
-    def _clean_lyrics(text):
-        lines = text.replace('\r\n', '\n').split('\n')
-        cleaned = []
-        for line in lines:
-            line = re.sub(r'\[\d{2}:\d{2}\.\d{2,3}\]', '', line)
-            if re.match(r'^\[(?:ti|ar|al|by|offset):.*\]$', line):
-                continue
-            cleaned.append(line.strip())
-        return '\n'.join(cleaned).strip()
-
-    def _search_lrclib(track, art):
-        params = urllib.parse.urlencode({
-            'track_name': track,
-            'artist_name': art,
-        })
-        url = 'https://lrclib.net/api/search?' + params
-        req = urllib.request.Request(url, headers={
-            'User-Agent': 'EthOS-RadioMusic/1.0',
-        })
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            results = json.loads(resp.read().decode('utf-8'))
-        if results and isinstance(results, list):
-            best = results[0]
-            plain = best.get('plainLyrics', '') or ''
-            synced = best.get('syncedLyrics', '') or ''
-            display = _clean_lyrics(plain) if plain else _clean_lyrics(synced)
-            if display:
-                return {
-                    'ok': True, 'lyrics': display,
-                    'syncedLyrics': synced,
-                    'title': best.get('trackName', track),
-                    'artist': best.get('artistName', art),
-                }
-        return None
-
-    try:
-        # Primary search
-        result = _search_lrclib(title, artist)
-        if result:
-            return jsonify(result)
-
-        # Fallback: try splitting "Artist - Title" from the title field
-        if ' - ' in title:
-            parts = title.split(' - ', 1)
-            fb_artist = parts[0].strip()
-            fb_title = parts[1].strip()
-            # Strip common YT suffixes
-            fb_title = re.sub(
-                r'\s*[\(\[](official\s*(video|audio|music\s*video|lyric\s*video|'
-                r'visualizer)|lyrics?|teledysk|audio|video|clip|hd|hq|4k|'
-                r'remastered|live)[\)\]]',
-                '', fb_title, flags=re.IGNORECASE).strip()
-            result = _search_lrclib(fb_title, fb_artist)
-            if result:
-                return jsonify(result)
-
-        return jsonify({'ok': True, 'lyrics': '', 'not_found': True})
-    except Exception as exc:
-        log.warning('Lyrics fetch error: %s', exc)
-        return jsonify({'ok': True, 'lyrics': '', 'not_found': True})
-
-
-# ── Playlists (per-user) ─────────────────────────────────────
 
 @radio_music_bp.route('/playlists', methods=['GET'])
 def playlists_list():
