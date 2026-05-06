@@ -21,7 +21,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     let _playlists = [];       // user's playlists
     let _saveStateInterval = null;
     let _seekThrottleTs = 0;   // throttle seekbar DOM updates (ms)
-    let _preloadAudio = null;  // preload next track for near-gapless playback
     let _radioRetryTimer = null;
     let _radioRetries = 0;
     // Offline archive: keyed by YT URL → {key, status, progress, size_bytes}
@@ -39,7 +38,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     let _sleepEnd = 0;           // timestamp when sleep timer fires (0 = off)
     let _sleepMode = '';         // 'time' or 'track'
     let _playbackRate = 1;       // current playback speed (0.5–2)
-    let _crossfadeDuration = 1500; // crossfade ms, user-configurable 0–12000
     let _syncedLyrics = null;    // parsed LRC lines: [{time: ms, text: ''}, ...]
     let _lyrSyncInterval = null; // lyrics auto-scroll timer
     let _epProgress = {};        // podcast episode progress: {url: {pos: sec, dur: sec, done: bool}}
@@ -955,12 +953,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-ep-progress-bar{height:100%;background:var(--rm-accent);border-radius:2px;transition:width .3s}',
 '.rm-ep-done{color:var(--rm-accent);font-size:11px;margin-left:auto;flex-shrink:0}',
 
-/* crossfade setting */
-'.rm-crossfade-wrap{display:flex;align-items:center;gap:12px;padding:12px 0}',
-'.rm-crossfade-slider{flex:1;height:4px;-webkit-appearance:none;appearance:none;background:rgba(255,255,255,.15);border-radius:2px;outline:none}',
-'.rm-crossfade-slider::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--rm-accent);cursor:pointer}',
-'.rm-crossfade-val{color:rgba(255,255,255,.5);font-size:12px;min-width:28px;text-align:right}',
-
 /* exit fullscreen toggle (mobile only) */
 '.rm-exit-fs{display:none;position:absolute;top:8px;right:8px;z-index:200;width:40px;height:40px;border-radius:50%;background:rgba(0,0,0,.55);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.12);color:rgba(255,255,255,.7);font-size:15px;cursor:pointer;align-items:center;justify-content:center;transition:all .2s}',
 '.rm-exit-fs:active{transform:scale(.9);background:rgba(0,0,0,.8)}',
@@ -1224,7 +1216,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
             // Restore previous playback state (paused, showing last track)
             _restoreAndShowLastTrack(body);
-            _loadCrossfadeSetting();
             _loadEpProgress();
 
             // Android back button: prevent exiting the app
@@ -1352,7 +1343,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             if (_saveStateInterval) { clearInterval(_saveStateInterval); _saveStateInterval = null; }
             clearTimeout(_radioRetryTimer); _radioRetryTimer = null; _radioRetries = 0;
             clearTimeout(_bufferingSafetyTimer); _bufferingSafetyTimer = null;
-            if (_preloadAudio) { _preloadAudio.src = ''; _preloadAudio = null; }
             if (_castSession) { try { _castSession.endSession(true); } catch(e) {} }
             _isCasting = false; _castSession = null;
             if (_wakeLock) { _wakeLock.release(); _wakeLock = null; }
@@ -4060,20 +4050,9 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     /* ── Settings ───────────────────────────────────── */
 
     function loadSettings(content) {
-        const cfSec = Math.round(_crossfadeDuration / 1000);
         let html = `
             <div class="rm-section-title"><i class="fas fa-cog"></i> ${t('Ustawienia')}</div>
             <div style="max-width:480px;display:flex;flex-direction:column;gap:24px;padding:8px 0">
-                <div>
-                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-                        <span style="font-size:14px;color:rgba(255,255,255,.85)">${t('Przenikanie (crossfade)')}</span>
-                        <span id="rm-cf-val" style="font-size:13px;color:var(--rm-accent);min-width:28px;text-align:right">${cfSec}s</span>
-                    </div>
-                    <input type="range" id="rm-cf-slider" class="rm-crossfade-slider" min="0" max="12" step="1" value="${cfSec}">
-                    <div style="display:flex;justify-content:space-between;font-size:11px;color:rgba(255,255,255,.35);margin-top:4px">
-                        <span>${t('Wył.')}</span><span>12s</span>
-                    </div>
-                </div>
                 <div>
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
                         <span style="font-size:14px;color:rgba(255,255,255,.85)">${t('Prędkość odtwarzania')}</span>
@@ -4086,11 +4065,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 </div>
             </div>`;
         content.innerHTML = html;
-        content.querySelector('#rm-cf-slider').oninput = (e) => {
-            const sec = parseInt(e.target.value, 10);
-            content.querySelector('#rm-cf-val').textContent = sec + 's';
-            _saveCrossfadeSetting(sec * 1000);
-        };
         content.querySelector('#rm-clear-ep-progress').onclick = () => {
             _epProgress = {};
             _saveEpProgress();
@@ -4565,13 +4539,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             _audio.pause(); _audio.src = ''; _audio.load(); // release media resource
         }
         if (_hlsInstance) { try { _hlsInstance.destroy(); } catch (_) {} _hlsInstance = null; }
-        // F-04 RAM cleanup: immediately release preload buffer on every new play
-        if (_preloadAudio) {
-            _preloadAudio.oncanplaythrough = null;
-            _preloadAudio.src = '';
-            _preloadAudio.load();
-            _preloadAudio = null;
-        }
         _clearSeek();
         _audio = new Audio();
         _audio.volume = _isCasting ? 0 : (bodyEl.querySelector('#rm-vol')?.value || 80) / 100;
@@ -4589,7 +4556,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
         // Reset reconnect state and preload on each new playback
         clearTimeout(_radioRetryTimer); _radioRetryTimer = null; _radioRetries = 0;
-        if (_preloadAudio) { _preloadAudio.src = ''; _preloadAudio = null; }
 
         // Build ordered list of URLs to try (primary + fallbacks)
         const isMusic = item.type === 'music';
@@ -4910,56 +4876,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                         && isFinite(_audio.duration) && _audio.duration > 0) {
                     try { navigator.mediaSession.setPositionState({ duration: _audio.duration, playbackRate: 1, position: _audio.currentTime }); }
                     catch(e) {}
-                }
-            }
-            // F-03 GAPLESS: preload at 90% of track (or 30s remaining, whichever first)
-            // On NAS this gives ~8-12s for HDD spin-up before the track ends
-            if ((isMusic || isLocal) && !_preloadAudio && _audio && isFinite(_audio.duration) && _audio.duration > 0) {
-                const remaining = _audio.duration - _audio.currentTime;
-                const pct = _audio.currentTime / _audio.duration;
-                const shouldPreload = remaining < 30 || pct >= 0.9;
-                if (shouldPreload && remaining > 0) {
-                    const nextIdx = _musicQueueIdx + 1;
-                    const nextItem = _musicQueue[nextIdx];
-                    if (nextItem) {
-                        const nextSrc = nextItem.type === 'local'
-                            ? (nextItem.url || ('/api/radio-music/local/stream?path=' + encodeURIComponent(nextItem.path || '') + '&token=' + (NAS.token || '')))
-                            : (nextItem.url ? '/api/radio-music/music/stream?url=' + encodeURIComponent(nextItem.url) + '&token=' + (NAS.token || '') : null);
-                        if (nextSrc) {
-                            _preloadAudio = new Audio();
-                            _preloadAudio.preload = 'auto';
-                            _preloadAudio.volume = 0; // silent until crossfade starts
-                            _preloadAudio.src = nextSrc;
-                            const targetVol = _audio.volume;
-                            // When preload is buffered enough AND we're in final 5%, crossfade immediately
-                            _preloadAudio.oncanplaythrough = () => {
-                                if (!_preloadAudio || _playing !== item) return;
-                                const pctNow = _audio.currentTime / _audio.duration;
-                                if (pctNow >= 0.95) {
-                                    _cl('info', 'Gapless crossfade triggered at ' + Math.round(pctNow * 100) + '%', { next: nextItem.name });
-                                    _crossfade(_audio, _preloadAudio, targetVol, _crossfadeDuration, () => {
-                                        // After crossfade, handle queue advance directly
-                                        // (not via _audio.onended) to avoid double-advance race
-                                        _endedHandled = true;
-                                        _showEq(false);
-                                        _clearSeek();
-                                        if (_onTrackEndedSleepCheck()) {
-                                            bodyEl.querySelector('#rm-play-pause').innerHTML = '<i class="fas fa-play"></i>';
-                                            return;
-                                        }
-                                        if (_repeatMode === 2) {
-                                            _endedHandled = false;
-                                            _audio.currentTime = 0;
-                                            _audio.play().then(() => _showEq(true)).catch(() => {});
-                                            return;
-                                        }
-                                        if (isPodcast) { _advancePodQueue(); } else { _advanceQueue(); }
-                                    });
-                                }
-                            };
-                            _cl('debug', 'Preloading next track at ' + Math.round(pct * 100) + '%', { name: nextItem.name });
-                        }
-                    }
                 }
             }
             // Fallback: detect track finished (onended may not fire for proxied streams)
@@ -5419,7 +5335,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         _seekThrottleTs = 0;
         _advanceLock = false;
         _isBuffering = false;
-        if (_preloadAudio) { _preloadAudio.src = ''; _preloadAudio = null; }
         if (_castSession) { try { _castSession.endSession(true); } catch(e) {} }
         _castSession = null;
         _isCasting = false;
@@ -5712,19 +5627,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         const p = _epProgress[url];
         if (!p || !p.dur) return 0;
         return p.done ? 100 : Math.floor(p.pos / p.dur * 100);
-    }
-
-    /* ── Crossfade User Setting ────────────────────────── */
-    function _loadCrossfadeSetting() {
-        try {
-            const v = parseInt(localStorage.getItem('rm_crossfade_ms'), 10);
-            if (v >= 0 && v <= 12000) _crossfadeDuration = v;
-        } catch(_) {}
-    }
-
-    function _saveCrossfadeSetting(ms) {
-        _crossfadeDuration = ms;
-        try { localStorage.setItem('rm_crossfade_ms', String(ms)); } catch(_) {}
     }
 
     /* ── Chromecast / Google Cast SDK ──────────────────── */
@@ -6241,41 +6143,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         _musicQueueIdx = idx;
         _cl('info', 'playContext', { total: normalised.length, startIdx: idx, name: normalised[idx]?.name });
         playAudio(normalised[idx]);
-    }
-
-    /**
-     * F-03 _crossfade — Double-buffer crossfade between two HTMLAudioElement instances.
-     * Uses rAF for smooth volume ramp on the main thread.
-     * @param {HTMLAudioElement} outAudio  Currently playing element (fades to 0)
-     * @param {HTMLAudioElement} inAudio   Preloaded next element (fades to targetVol)
-     * @param {number}           targetVol Final volume for inAudio (0–1)
-     * @param {number}           durationMs Crossfade duration in ms (default 1500)
-     * @param {Function}         onDone   Called after crossfade completes
-     */
-    function _crossfade(outAudio, inAudio, targetVol, durationMs = 1500, onDone) {
-        if (!outAudio || !inAudio) { onDone?.(); return; }
-        const startTime = performance.now();
-        const startVol = outAudio.volume;
-        inAudio.volume = 0;
-        inAudio.play().catch(e => {
-            _cl('warning', 'Crossfade inAudio.play failed', { error: e.message });
-            onDone?.();
-        });
-        function tick(now) {
-            const t = Math.min(1, (now - startTime) / durationMs);
-            // Ease in/out for smoother transition
-            const eased = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
-            if (outAudio && !outAudio.paused) outAudio.volume = Math.max(0, startVol * (1 - eased));
-            if (inAudio) inAudio.volume = Math.min(targetVol, targetVol * eased);
-            if (t < 1) {
-                requestAnimationFrame(tick);
-            } else {
-                try { outAudio.pause(); outAudio.src = ''; outAudio.load(); } catch(e) {}
-                if (inAudio) inAudio.volume = targetVol;
-                onDone?.();
-            }
-        }
-        requestAnimationFrame(tick);
     }
 
     function _fmtTime(s) {
