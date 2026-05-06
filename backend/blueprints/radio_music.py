@@ -51,7 +51,6 @@ Routes:
   POST /api/radio-music/music/liked       - add/remove liked song
   GET  /api/radio-music/similar-artists   - similar artists via Deezer (?artist=, ?limit=)
   GET  /api/radio-music/recommendations   - personalized recs from history/favorites/subs
-  GET  /api/radio-music/lyrics             - fetch song lyrics (?title=, ?artist=)
   GET  /api/radio-music/search/all         - unified search across radio+podcasts+local (?q=)
   GET  /api/radio-music/playlists/<id>/export - export playlist as M3U8
   POST /api/radio-music/playlists/import   - import M3U/M3U8 playlist

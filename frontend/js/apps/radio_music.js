@@ -35,8 +35,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     let _npReloadSimilar = null;  // ref to reload similar artists on track change
     let _activePolls = [];       // download poll intervals to clear on close
     let _playbackRate = 1;       // current playback speed (0.5–2)
-    let _syncedLyrics = null;    // parsed LRC lines: [{time: ms, text: ''}, ...]
-    let _lyrSyncInterval = null; // lyrics auto-scroll timer
     let _epProgress = {};        // podcast episode progress: {url: {pos: sec, dur: sec, done: bool}}
     let _onMoreSheetMouseRef = null;  // for cleanup in onClose
     let _npSyncLike = null;              // ref to sync NP like button state
@@ -761,15 +759,9 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-np-actions{display:flex;gap:10px;margin-top:4px;flex-wrap:wrap;justify-content:center;touch-action:manipulation}',
 '.rm-np-action{background:rgba(255,255,255,.06);border:none;color:rgba(255,255,255,.5);font-size:13px;cursor:pointer;padding:8px 16px;border-radius:20px;transition:all .12s;display:flex;align-items:center;gap:6px;touch-action:manipulation;-webkit-tap-highlight-color:transparent}',
 '.rm-np-action:hover{background:rgba(255,255,255,.12);color:var(--rm-text)}',
-'.rm-np-action.rm-lyrics-active{background:rgba(var(--rm-accent-rgb),.15);color:var(--rm-accent)}',
 '.rm-np-count{font-size:11px;color:var(--rm-text-muted);margin-top:2px}',
 '.rm-np-vis{display:block;width:100%;max-width:260px;height:48px;border-radius:6px;opacity:.85}',
 
-/* ── Lyrics panel ── */
-'.rm-lyrics-panel{display:none;width:100%;max-height:40vh;overflow-y:auto;padding:16px 8px;text-align:center;font-size:15px;line-height:1.8;color:rgba(255,255,255,.75);white-space:pre-line;-webkit-overflow-scrolling:touch;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.15) transparent}',
-'.rm-lyrics-panel.rm-lyrics-visible{display:block}',
-'.rm-lyrics-panel .rm-lyrics-loading{color:var(--rm-text-muted);font-style:italic}',
-'.rm-lyrics-panel .rm-lyrics-empty{color:var(--rm-text-muted);font-style:italic}',
 /* now-playing queue panel */
 '.rm-np-queue{display:none;width:100%;max-height:40vh;overflow-y:auto;padding:8px 0;-webkit-overflow-scrolling:touch;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.15) transparent}',
 '.rm-np-queue.rm-np-queue-visible{display:block}',
@@ -875,11 +867,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 /* section transition */
 '.rm-content{transition:opacity .15s ease}',
 '.rm-content.rm-fade-out{opacity:0}',
-
-/* synced lyrics */
-'.rm-lyrics-line{padding:4px 0;transition:all .25s ease;opacity:.35;transform:scale(.95)}',
-'.rm-lyrics-line.rm-lyr-active{opacity:1;color:var(--rm-text);font-weight:600;font-size:17px;transform:scale(1)}',
-'.rm-lyrics-line.rm-lyr-near{opacity:.6}',
 
 /* queue drag & drop */
 '.rm-np-q-item-drag{width:20px;text-align:center;color:rgba(255,255,255,.2);font-size:14px;cursor:grab;flex-shrink:0;touch-action:none}',
@@ -4806,7 +4793,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
     function stopPlayback() {
         _savePlaybackState();
-        _stopLyricsSync();
         if (_saveStateInterval) { clearInterval(_saveStateInterval); _saveStateInterval = null; }
         clearTimeout(_radioRetryTimer); _radioRetryTimer = null; _radioRetries = 0;
         clearTimeout(_bufferingSafetyTimer); _bufferingSafetyTimer = null;
@@ -4895,50 +4881,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 break;
             }
         }
-    }
-
-    /* ── Synced Lyrics (LRC) ───────────────────────────── */
-    function _parseLrc(lrc) {
-        if (!lrc) return null;
-        const lines = [];
-        lrc.split('\n').forEach(line => {
-            const m = line.match(/^\[(\d{2}):(\d{2})\.(\d{2,3})\]\s*(.*)/);
-            if (m) {
-                const ms = parseInt(m[1]) * 60000 + parseInt(m[2]) * 1000 + parseInt(m[3].padEnd(3, '0'));
-                lines.push({ time: ms, text: m[4] });
-            }
-        });
-        return lines.length > 3 ? lines : null;
-    }
-
-    function _renderSyncedLyrics(panel, lines) {
-        panel.innerHTML = lines.map((l, i) =>
-            '<div class="rm-lyrics-line" data-idx="' + i + '">' + escH(l.text || '♪') + '</div>'
-        ).join('');
-    }
-
-    function _startLyricsSync(panel) {
-        _stopLyricsSync();
-        if (!_syncedLyrics || !_audio) return;
-        _lyrSyncInterval = setInterval(() => {
-            if (!_audio || _audio.paused) return;
-            const ms = _audio.currentTime * 1000;
-            let active = 0;
-            for (let i = _syncedLyrics.length - 1; i >= 0; i--) {
-                if (_syncedLyrics[i].time <= ms) { active = i; break; }
-            }
-            panel.querySelectorAll('.rm-lyrics-line').forEach((el, i) => {
-                el.classList.toggle('rm-lyr-active', i === active);
-                el.classList.toggle('rm-lyr-near', i === active - 1 || i === active + 1);
-            });
-            const activeEl = panel.querySelector('.rm-lyr-active');
-            if (activeEl) activeEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
-        }, 300);
-    }
-
-    function _stopLyricsSync() {
-        if (_lyrSyncInterval) { clearInterval(_lyrSyncInterval); _lyrSyncInterval = null; }
-        _syncedLyrics = null;
     }
 
     /* ── Queue Drag & Drop ─────────────────────────────── */
@@ -5438,12 +5380,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             if (cur)  cur.textContent = '0:00';
             if (dur)  dur.textContent = '0:00';
 
-            // Step 7: clear stale lyrics and similar from previous track
-            _stopLyricsSync();
-            const lyrPanel = _npOverlay.querySelector('#rm-np-lyrics-panel');
-            if (lyrPanel) { lyrPanel.innerHTML = ''; lyrPanel.classList.remove('rm-lyrics-visible'); }
-            const lyrBtn = _npOverlay.querySelector('#rm-np-lyrics');
-            if (lyrBtn) lyrBtn.classList.remove('rm-lyrics-active');
+            // Step 7: clear stale similar from previous track
             const simPanel = _npOverlay.querySelector('#rm-np-similar-panel');
             if (simPanel) { simPanel.innerHTML = ''; simPanel.classList.remove('rm-np-similar-visible'); }
             const simBtn = _npOverlay.querySelector('#rm-np-similar-btn');
@@ -5528,7 +5465,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                 <div class="rm-np-actions">
                     <button class="rm-speed-btn" id="rm-np-speed">${_playbackRate === 1 ? '1x' : _playbackRate + 'x'}</button>
                     <button class="rm-np-action" id="rm-np-queue-btn"><i class="fas fa-list-ol"></i> ${t('Kolejka')}</button>
-                    <button class="rm-np-action" id="rm-np-lyrics"><i class="fas fa-align-left"></i> ${t('Tekst')}</button>
                     <button class="rm-np-action" id="rm-np-similar-btn"><i class="fas fa-users"></i> ${t('Podobni')}</button>
                     <button class="rm-np-action" id="rm-np-addpl"><i class="fas fa-plus"></i> ${t('Playlista')}</button>
                     <button class="rm-np-action" id="rm-np-fav"><i class="fas fa-heart"></i> ${t('Ulubione')}</button>
@@ -5536,7 +5472,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
                     <button class="rm-np-action" id="rm-np-dislike" title="${t('Nie lubię – dostosuj rekomendacje')}"><i class="fas fa-thumbs-down"></i></button>
                     <button class="rm-np-action" id="rm-np-download"><i class="fas fa-cloud-arrow-down"></i> ${t('Pobierz')}</button>
                 </div>
-                <div class="rm-lyrics-panel" id="rm-np-lyrics-panel"></div>
                 <div class="rm-np-queue" id="rm-np-queue-panel"></div>
                 <div class="rm-np-similar" id="rm-np-similar-panel"></div>
             </div>`;
@@ -5757,67 +5692,6 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         // Add to playlist — use live _playing
         ov.querySelector('#rm-np-addpl').onclick = () => {
             if (typeof _showAddToPlaylistModal === 'function' && _playing) _showAddToPlaylistModal(_playing);
-        };
-
-        // Lyrics toggle — always uses live _playing, not stale closure item
-        ov.querySelector('#rm-np-lyrics').onclick = async () => {
-            const lyrBtn = ov.querySelector('#rm-np-lyrics');
-            const panel = ov.querySelector('#rm-np-lyrics-panel');
-            // Close other panels
-            queuePanel.classList.remove('rm-np-queue-visible');
-            queueBtn.classList.remove('rm-lyrics-active');
-            simPanel.classList.remove('rm-np-similar-visible');
-            if (simBtn) simBtn.classList.remove('rm-lyrics-active');
-
-            if (panel.classList.contains('rm-lyrics-visible')) {
-                panel.classList.remove('rm-lyrics-visible');
-                lyrBtn.classList.remove('rm-lyrics-active');
-                return;
-            }
-            lyrBtn.classList.add('rm-lyrics-active');
-            panel.classList.add('rm-lyrics-visible');
-            panel.innerHTML = '<div class="rm-lyrics-loading"><i class="fas fa-spinner fa-spin"></i> ' + t('Szukam tekstu...') + '</div>';
-
-            const curItem = _playing;
-            if (!curItem) { panel.innerHTML = '<div class="rm-lyrics-empty"><i class="fas fa-music"></i> ' + t('Nic nie gra') + '</div>'; return; }
-
-            // Parse artist/title from name — YouTube titles are often "Artist - Title (Official Video)"
-            let rawName = curItem.name || '';
-            // Strip common YouTube suffixes
-            let cleanName = rawName.replace(/\s*[\(\[](official\s*(video|audio|music\s*video|lyric\s*video|visualizer)|lyrics?|teledysk|audio|video|clip|hd|hq|4k|remastered|live)[\)\]]/gi, '').trim();
-
-            let title = cleanName;
-            let artist = '';
-            if (cleanName.includes(' - ')) {
-                const parts = cleanName.split(' - ');
-                artist = parts[0].trim();
-                title = parts.slice(1).join(' - ').trim();
-            }
-            // If no artist from name, try meta (YouTube channel)
-            if (!artist && curItem.meta) artist = curItem.meta;
-
-            // Try search with parsed artist+title first
-            let data = await api('/radio-music/lyrics?title=' + encodeURIComponent(title) + '&artist=' + encodeURIComponent(artist));
-            // Bail if track changed during fetch
-            if (_playing !== curItem) return;
-            // Fallback: try with just the clean name if not found
-            if (!data.lyrics && title !== cleanName) {
-                data = await api('/radio-music/lyrics?title=' + encodeURIComponent(cleanName) + '&artist=');
-                if (_playing !== curItem) return;
-            }
-            if (data.lyrics) {
-                _stopLyricsSync();
-                const parsed = _parseLrc(data.syncedLyrics || '');
-                if (parsed) {
-                    _syncedLyrics = parsed;
-                    _renderSyncedLyrics(panel, parsed);
-                    _startLyricsSync(panel);
-                } else {
-                    panel.textContent = data.lyrics;
-                }
-            } else {
-                panel.innerHTML = '<div class="rm-lyrics-empty"><i class="fas fa-music"></i> ' + t('Nie znaleziono tekstu') + '</div>';
-            }
         };
 
         // Queue panel toggle
