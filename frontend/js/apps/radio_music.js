@@ -431,7 +431,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-wrap{--rm-accent:#1DB954;--rm-accent-hover:#1ed760;--rm-accent-active:#0f9240;--rm-accent-rgb:29,185,84;--rm-bg:#121212;--rm-bg-sidebar:#000;--rm-bg-surface:#282828;--rm-bg-elevated:#181818;--rm-bg-card:#282828;--rm-text:#fff;--rm-text-secondary:rgba(255,255,255,.65);--rm-text-muted:rgba(255,255,255,.35);--rm-text-dim:rgba(255,255,255,.2);--rm-border:rgba(255,255,255,.08);--rm-error:#ef4444;--rm-warning:#f59e0b;--rm-overlay:rgba(0,0,0,.85)}',
 '[data-theme="light"] .rm-wrap{--rm-bg:#f5f5f5;--rm-bg-sidebar:#e8e8e8;--rm-bg-surface:#fff;--rm-bg-elevated:#f0f0f0;--rm-bg-card:#fff;--rm-text:#1a1a1a;--rm-text-secondary:rgba(0,0,0,.65);--rm-text-muted:rgba(0,0,0,.4);--rm-text-dim:rgba(0,0,0,.2);--rm-border:rgba(0,0,0,.1);--rm-overlay:rgba(255,255,255,.9)}',
 /* ── Spotify-inspired layout ─────────────────────────── */
-'.rm-wrap{display:flex;flex:1;min-height:0;overflow:hidden;font-size:13px;background:var(--rm-bg);color:var(--rm-text);border-radius:0}',
+'.rm-wrap{display:flex;flex:1;min-height:0;overflow:hidden;font-size:13px;background:var(--rm-bg);color:var(--rm-text);border-radius:0;flex-direction:row}',
+'@media(max-width:599px){.rm-wrap{flex-direction:column}}',
 '.rm-sidebar{width:220px;min-width:220px;background:var(--rm-bg-sidebar);display:flex;flex-direction:column;overflow-y:auto;padding:8px 0;scrollbar-width:thin;scrollbar-color:var(--rm-text-dim) transparent}',
 '.rm-sidebar-item{padding:10px 20px;cursor:pointer;display:flex;align-items:center;gap:10px;color:var(--rm-text-secondary);font-size:13px;transition:all .15s;border-radius:0;border-left:3px solid transparent}',
 '.rm-sidebar-item:hover{color:var(--rm-text);background:rgba(255,255,255,.05)}',
@@ -577,6 +578,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-vol-wrap{display:flex;align-items:center;gap:6px}',
 '.rm-vol-wrap i{font-size:13px;color:rgba(255,255,255,.5)}',
 '.rm-vol-slider{width:80px;accent-color:var(--rm-accent);height:4px}',
+'@media(max-width:599px){.rm-vol-wrap{display:none}.rm-vol-slider{display:none}#rm-shuffle-btn{display:none}#rm-repeat-btn{display:none}}',
+'@media(min-width:600px)and(max-width:1023px){.rm-vol-wrap{display:none}.rm-vol-slider{display:none}#rm-shuffle-btn{display:none}#rm-repeat-btn{display:none}}',
 
 /* podcast episode list */
 '.rm-ep-list{display:flex;flex-direction:column;gap:8px}',
@@ -701,6 +704,9 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 
 /* ── Now Playing overlay ───────────────────────── */
 '.rm-np-overlay{position:absolute;inset:0;z-index:100;display:flex;flex-direction:column;overflow:hidden;background:var(--rm-bg);padding-bottom:max(0px,env(safe-area-inset-bottom))}',
+'@media(max-width:599px){.rm-np-overlay{position:fixed;bottom:0;left:0;right:0;height:70vh;width:100%;border-radius:16px 16px 0 0;inset:auto}}',
+'@media(min-width:600px)and(max-width:1023px){.rm-np-overlay{position:fixed;right:0;top:0;bottom:0;width:50vw;height:100vh;inset:auto;border-radius:0}}',
+'@media(min-width:1024px){.rm-np-overlay{position:absolute;inset:0;border-radius:0}}',
 '.rm-np-minimized{transform:translateY(100%);pointer-events:none;opacity:0}',
 /* Background: smooth colour transition between tracks */
 '.rm-np-bg{position:absolute;inset:-40px;background-size:cover;background-position:center;filter:blur(40px) brightness(.25) saturate(1.4);z-index:0;transition:opacity 300ms ease}',
@@ -708,6 +714,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-np-inner::before{content:"";flex:1 1 0;min-height:0;pointer-events:none}',
 '.rm-np-inner::after{content:"";flex:2 1 0;min-height:0;pointer-events:none}',
 '.rm-np-close{position:absolute;top:max(50px,calc(env(safe-area-inset-top,0px) + 12px));left:12px;background:rgba(255,255,255,.08);border:none;color:var(--rm-text);font-size:18px;cursor:pointer;padding:8px 12px;border-radius:50%;z-index:2;backdrop-filter:blur(8px);transition:background .15s}',
+'@media(max-width:599px){.rm-np-close{top:12px;left:12px}}',
+'@media(min-width:600px)and(max-width:1023px){.rm-np-close{top:12px;right:12px;left:auto}}',
 '.rm-np-close:hover{background:rgba(255,255,255,.15)}',
 /* Fixed aspect-ratio art box — never causes layout shift */
 '.rm-np-art{width:min(260px,55vw);height:min(260px,55vw);aspect-ratio:1/1;border-radius:8px;overflow:hidden;box-shadow:0 8px 40px rgba(0,0,0,.6);flex-shrink:0;background:var(--rm-bg-surface);display:flex;align-items:center;justify-content:center;position:relative}',
@@ -1252,16 +1260,13 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     const _MORE_SECTIONS = ['local','local-audiobooks','playlists','queue','history'];
 
     function _syncMobileNav(section) {
-        if (!bodyEl) return;
-        bodyEl.querySelectorAll('#rm-mobile-nav > .rm-mnav-btn').forEach(b => {
-            if (b.dataset.section === 'more') {
-                b.classList.toggle('active', _MORE_SECTIONS.includes(section));
-            } else {
-                b.classList.toggle('active', b.dataset.section === section);
-            }
-        });
-        const sheet = bodyEl.querySelector('#rm-more-sheet');
-        if (sheet) sheet.classList.remove('open');
+        // Close sidebar on mobile when section selected
+        if (bodyEl && window.matchMedia('(max-width: 599px)').matches) {
+            const sidebar = bodyEl.querySelector('#rm-sidebar');
+            if (sidebar) sidebar.classList.remove('rm-sidebar-open');
+            const overlay = bodyEl.querySelector('#rm-nav-overlay');
+            if (overlay) overlay.classList.remove('rm-nav-overlay-open');
+        }
     }
 
     function _navTo(section) {
