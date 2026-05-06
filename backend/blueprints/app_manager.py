@@ -44,6 +44,9 @@ from flask import Blueprint, request, jsonify, g
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from host import host_run, host_run_stream, data_path, app_path, q, _apt_exec, apt_install as _host_apt_install
 
+# Import split modules (catalog, fileops, install orchestration)
+from blueprints import app_manager_catalog, app_manager_fileops, app_manager_install
+
 log = logging.getLogger('app_manager')
 app_manager_bp = Blueprint('app_manager', __name__, url_prefix='/api/app-manager')
 
@@ -59,6 +62,20 @@ _running_task_lock = threading.Lock()
 def init_app_manager(sio):
     global _socketio
     _socketio = sio
+    
+    # Initialize sub-modules with shared context
+    app_manager_fileops.set_paths(data_path=data_path, app_path=app_path)
+    app_manager_install.set_emit_fn(_emit_progress)
+    app_manager_install.set_flask_app(_flask_app)
+    app_manager_install.set_socketio(_socketio)
+    app_manager_install.set_constants(
+        _BACKEND_EXTRA_FILES=_BACKEND_EXTRA_FILES,
+        _OPTIONAL_BLUEPRINTS=_OPTIONAL_BLUEPRINTS,
+        host_run=host_run,
+        host_run_stream=host_run_stream,
+        q=q,
+    )
+    
     # Auto-repair missing files for "installed" apps in background
     try:
         from gevent import spawn_later
@@ -1787,8 +1804,20 @@ def refresh_catalog():
     err = _require_admin()
     if err:
         return err
+    # Invalidate cache to force fresh fetch
+    app_manager_catalog._invalidate_catalog_cache()
     apps = _get_catalog(force_refresh=True)
     return jsonify({'ok': True, 'count': len(apps)})
+
+
+@app_manager_bp.route('/catalog/invalidate-cache', methods=['POST'])
+def invalidate_catalog_cache():
+    """Manually invalidate app catalog cache."""
+    err = _require_admin()
+    if err:
+        return err
+    app_manager_catalog._invalidate_catalog_cache()
+    return jsonify({'ok': True, 'message': 'Cache invalidated'})
 
 
 @app_manager_bp.route('/installed')
