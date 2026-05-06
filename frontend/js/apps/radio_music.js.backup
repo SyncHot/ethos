@@ -76,34 +76,40 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         };
     })();
 
-    // Phase 3: 3-section sidebar structure (Library | Radio | Podcasts)
-    const _SIDEBAR_SECTIONS = [
-        { id: 'library', label: '📚 Library', icon: 'fas fa-book', items: [
-            { key: 'search', icon: 'fas fa-search', label: 'Search' },
-            { key: 'discovery', icon: 'fas fa-compass', label: 'Discover' },
-            { key: 'music', icon: 'fab fa-youtube', label: 'Music' },
-            { key: 'local', icon: 'fas fa-folder-open', label: 'Local Music' },
-            { key: 'artists', icon: 'fas fa-user-circle', label: 'Artists' },
-            { key: 'playlists', icon: 'fas fa-list', label: 'Playlists' },
-            { key: 'queue', icon: 'fas fa-list-ol', label: 'Queue' },
-            { key: 'most-played', icon: 'fas fa-fire', label: 'Most Played' },
-            { key: 'history', icon: 'fas fa-history', label: 'History' },
+    // Sidebar group definitions — order is user-customisable via DnD (saved in localStorage)
+    const _SIDEBAR_GROUPS = [
+        { id: 'discover', label: 'Odkrywaj', items: [
+            { key: 'search', icon: 'fas fa-search', label: 'Szukaj wszędzie' },
+            { key: 'discovery', icon: 'fas fa-compass', label: 'Odkrywaj' },
         ]},
-        { id: 'radio', label: '📻 Radio', icon: 'fas fa-broadcast-tower', items: [
-            { key: 'radio', icon: 'fas fa-broadcast-tower', label: 'Browse' },
-            { key: 'favorites', icon: 'fas fa-heart', label: 'Favorites' },
-            { key: 'countries', icon: 'fas fa-globe', label: 'Countries' },
-            { key: 'tags', icon: 'fas fa-tags', label: 'Genres' },
+        { id: 'music', label: 'Muzyka', items: [
+            { key: 'music', icon: 'fab fa-youtube', label: 'Szukaj' },
+            { key: 'local', icon: 'fas fa-folder-open', label: 'Lokalna muzyka' },
+            { key: 'artists', icon: 'fas fa-user-circle', label: 'Artyści' },
+            { key: 'ai-dj', icon: 'fas fa-robot', label: 'Rekomendowane' },
+            { key: 'recently-added', icon: 'fas fa-clock', label: 'Ostatnio dodane' },
+            { key: 'local-audiobooks', icon: 'fas fa-book-reader', label: 'Lok. audiobooki' },
+            { key: 'playlists', icon: 'fas fa-list', label: 'Playlisty' },
+            { key: 'queue', icon: 'fas fa-list-ol', label: 'Kolejka' },
         ]},
-        { id: 'podcasts', label: '🎙️ Podcasts', icon: 'fas fa-podcast', items: [
-            { key: 'podcasts', icon: 'fas fa-podcast', label: 'Search' },
-            { key: 'subscriptions', icon: 'fas fa-rss', label: 'Subscriptions' },
-            { key: 'pod-queue', icon: 'fas fa-list-ul', label: 'Episode Queue' },
+        { id: 'radio', label: 'Radio', items: [
+            { key: 'radio', icon: 'fas fa-broadcast-tower', label: 'Przeglądaj' },
+            { key: 'favorites', icon: 'fas fa-heart', label: 'Ulubione' },
+            { key: 'countries', icon: 'fas fa-globe', label: 'Kraje' },
+            { key: 'tags', icon: 'fas fa-tags', label: 'Gatunki' },
+        ]},
+        { id: 'podcasts', label: 'Podcasty', items: [
+            { key: 'podcasts', icon: 'fas fa-podcast', label: 'Szukaj' },
+            { key: 'subscriptions', icon: 'fas fa-rss', label: 'Subskrypcje' },
+            { key: 'pod-queue', icon: 'fas fa-list-ul', label: 'Kolejka odcinków' },
+        ]},
+        { id: 'other', label: 'Inne', items: [
+            { key: 'most-played', icon: 'fas fa-fire', label: 'Najczęściej grane' },
+            { key: 'audiobooks', icon: 'fas fa-book-open', label: 'Audiobooki' },
+            { key: 'history', icon: 'fas fa-history', label: 'Historia' },
+            { key: 'settings', icon: 'fas fa-cog', label: 'Ustawienia' },
         ]},
     ];
-    
-    // Keep old _SIDEBAR_GROUPS for backward compatibility
-    const _SIDEBAR_GROUPS = _SIDEBAR_SECTIONS;
 
     // Detect user's country from browser language (e.g. 'pl-PL' → 'PL')
     function _detectCountry() {
@@ -887,24 +893,8 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
 '.rm-mini-btn:active{background:rgba(255,255,255,.1)}',
 '.rm-mini-btn.rm-mini-close{color:var(--rm-text-muted);font-size:14px}',
 '.rm-mini-btn.rm-mini-close:active{color:var(--rm-error)}',
-
-/* ── Phase 3: Hamburger menu and responsive sidebar ─────────────────────── */
-'.rm-hamburger{display:none;position:absolute;top:0;left:0;z-index:100;padding:12px;background:var(--rm-bg-elevated);border-bottom:1px solid rgba(255,255,255,.06)}',
-'.rm-hamburger-btn{background:none;border:none;color:var(--rm-text);font-size:20px;cursor:pointer;padding:8px;display:flex;align-items:center;justify-content:center;border-radius:6px;transition:all .15s}',
-'.rm-hamburger-btn:hover{background:rgba(255,255,255,.1)}',
-'.rm-nav-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:98;pointer-events:none}',
-'.rm-nav-overlay.rm-nav-overlay-open{display:block;pointer-events:auto}',
-'.rm-sidebar{position:relative;z-index:99;transition:all .3s ease;width:240px}',
-'.rm-sidebar-section{padding-top:12px}',
-'.rm-sidebar-section-header{padding:12px 16px 8px;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--rm-text-muted);text-align:left}',
-
-/* ── Responsive breakpoints ─────────────────────── */
-'@media(max-width:599px){.rm-hamburger{display:flex;flex-direction:column;align-items:center;justify-content:center}.rm-wrap{flex-direction:column}.rm-sidebar{position:fixed;left:0;top:0;bottom:0;height:100vh;transform:translateX(-100%);box-shadow:2px 0 8px rgba(0,0,0,.4);overflow-y:auto}.rm-sidebar.rm-sidebar-open{transform:translateX(0)}.rm-main{padding-top:50px;flex:1}.rm-exit-fs{display:flex}}',
-'@media(min-width:600px)and(max-width:1023px){.rm-sidebar{width:240px}}',
-'@media(min-width:1024px){.rm-sidebar{width:220px}}',
-
 /* responsive — mobile-first touch-friendly overrides */
-'@media(max-width:768px){.rm-wrap{height:100%;max-height:100%;flex-direction:column}.rm-hamburger{display:flex}.rm-sidebar{display:none;position:fixed;left:0;top:0;bottom:0;width:240px;height:100vh;transform:translateX(-100%);z-index:99;box-shadow:2px 0 8px rgba(0,0,0,.4)}.rm-sidebar.rm-sidebar-open{display:flex;transform:translateX(0)}.rm-nav-overlay{display:none}.rm-nav-overlay.rm-nav-overlay-open{display:block}.rm-mobile-nav{display:none}.rm-exit-fs{display:flex}.rm-main{min-height:0;padding-top:50px}.rm-toolbar{padding:10px 12px;flex-shrink:0}.rm-content{position:relative;padding:12px;min-height:0;flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}.rm-grid{grid-template-columns:1fr}.rm-search{padding:12px 16px;font-size:14px;border-radius:12px}.rm-select{padding:10px 14px;font-size:13px;min-height:44px}.rm-card{padding:12px;gap:12px;min-height:60px}.rm-card-btn{padding:10px;font-size:16px;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center}.rm-chip{padding:10px 16px;font-size:13px;min-height:40px;display:inline-flex;align-items:center}.rm-track{padding:10px 12px;min-height:56px}.rm-track-thumb{width:44px;height:44px}.rm-track-btn{padding:10px;min-width:44px;min-height:44px;font-size:15px;display:flex;align-items:center;justify-content:center}.rm-dl-btn{padding:10px;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center}.rm-player{padding:8px 12px;gap:10px;min-height:56px;flex-shrink:0;cursor:pointer}.rm-vol-wrap{display:flex}.rm-vol-slider{width:60px}.rm-player-art{width:44px;height:44px;min-width:44px}.rm-player-info{min-width:0;flex:1}.rm-player-name{font-size:13px}.rm-player-meta{font-size:11px}.rm-player-controls{gap:2px;flex-shrink:0}#rm-shuffle-btn{display:none}#rm-repeat-btn{display:none}.rm-player-btn{padding:8px;font-size:16px;min-width:40px;min-height:40px;display:flex;align-items:center;justify-content:center}.rm-player-btn.rm-btn-play{width:40px;height:40px;font-size:18px;min-width:40px}.rm-player-eq{display:none}.rm-seekbar{padding:0 12px;height:20px}.rm-seek-time{font-size:10px;min-width:32px}.rm-seek-track{height:6px}.rm-seek-thumb{width:16px;height:16px;opacity:1}.rm-pod-header{flex-direction:column;align-items:center;text-align:center;gap:16px}.rm-pod-art{width:120px;height:120px}.rm-pod-sub-btn{padding:10px 24px;font-size:14px;min-height:44px}.rm-ep-item{padding:14px 12px;min-height:56px}.rm-ep-play{font-size:20px;width:44px}.rm-hcard{min-width:140px;padding:10px}.rm-hcard-art{width:120px;height:120px}.rm-section-title{font-size:16px;margin:16px 0 10px}.rm-np-art{width:min(260px,65vw);height:min(260px,65vw)}.rm-np-title{font-size:20px}.rm-np-meta{font-size:14px}.rm-np-btn{font-size:24px;padding:12px;min-width:48px;min-height:48px;display:flex;align-items:center;justify-content:center}.rm-np-btn.rm-np-play{width:72px;height:72px;font-size:28px}.rm-np-close{padding:12px 16px;min-width:48px;min-height:48px}.rm-np-action{padding:10px 18px;font-size:13px;min-height:44px}.rm-np-seek .rm-seek-track{height:6px}.rm-np-seek .rm-seek-thumb{width:16px;height:16px;opacity:1}.rm-pl-card{padding:12px;min-height:56px}.rm-pl-btn{padding:10px;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center}.rm-pl-create input{padding:10px 14px;font-size:14px;min-height:44px}.rm-pl-create button{padding:10px 18px;font-size:13px;min-height:44px}.rm-queue-item{padding:10px 12px;min-height:48px;font-size:13px}.rm-queue-item-rm{padding:10px;min-width:44px;min-height:44px;font-size:14px;display:flex;align-items:center;justify-content:center}.rm-folder-chip{padding:8px 12px;font-size:12px;min-height:36px}.rm-add-folder-btn{padding:8px 14px;font-size:12px;min-height:36px}.rm-modal{min-width:min(320px,90vw);padding:20px}.rm-modal-item{padding:12px;min-height:48px;font-size:14px}.rm-modal-close{padding:12px;font-size:14px;min-height:48px}.rm-install-btn{padding:14px 28px;font-size:15px;min-height:48px}}',
+'@media(max-width:768px){.rm-wrap{height:100%;max-height:100%}.rm-sidebar{display:none}.rm-mobile-nav{display:flex;order:10}.rm-exit-fs{display:flex}.rm-main{min-height:0}.rm-toolbar{padding:10px 12px;flex-shrink:0}.rm-content{position:relative;padding:12px;min-height:0;flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}.rm-grid{grid-template-columns:1fr}.rm-search{padding:12px 16px;font-size:14px;border-radius:12px}.rm-select{padding:10px 14px;font-size:13px;min-height:44px}.rm-card{padding:12px;gap:12px;min-height:60px}.rm-card-btn{padding:10px;font-size:16px;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center}.rm-chip{padding:10px 16px;font-size:13px;min-height:40px;display:inline-flex;align-items:center}.rm-track{padding:10px 12px;min-height:56px}.rm-track-thumb{width:44px;height:44px}.rm-track-btn{padding:10px;min-width:44px;min-height:44px;font-size:15px;display:flex;align-items:center;justify-content:center}.rm-dl-btn{padding:10px;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center}.rm-player{padding:8px 12px;gap:10px;min-height:56px;flex-shrink:0;cursor:pointer}.rm-vol-wrap{display:flex}.rm-vol-slider{width:60px}.rm-player-art{width:44px;height:44px;min-width:44px}.rm-player-info{min-width:0;flex:1}.rm-player-name{font-size:13px}.rm-player-meta{font-size:11px}.rm-player-controls{gap:2px;flex-shrink:0}#rm-shuffle-btn{display:none}#rm-repeat-btn{display:none}.rm-player-btn{padding:8px;font-size:16px;min-width:40px;min-height:40px;display:flex;align-items:center;justify-content:center}.rm-player-btn.rm-btn-play{width:40px;height:40px;font-size:18px;min-width:40px}.rm-player-eq{display:none}.rm-seekbar{padding:0 12px;height:20px}.rm-seek-time{font-size:10px;min-width:32px}.rm-seek-track{height:6px}.rm-seek-thumb{width:16px;height:16px;opacity:1}.rm-pod-header{flex-direction:column;align-items:center;text-align:center;gap:16px}.rm-pod-art{width:120px;height:120px}.rm-pod-sub-btn{padding:10px 24px;font-size:14px;min-height:44px}.rm-ep-item{padding:14px 12px;min-height:56px}.rm-ep-play{font-size:20px;width:44px}.rm-hcard{min-width:140px;padding:10px}.rm-hcard-art{width:120px;height:120px}.rm-section-title{font-size:16px;margin:16px 0 10px}.rm-np-art{width:min(260px,65vw);height:min(260px,65vw)}.rm-np-title{font-size:20px}.rm-np-meta{font-size:14px}.rm-np-btn{font-size:24px;padding:12px;min-width:48px;min-height:48px;display:flex;align-items:center;justify-content:center}.rm-np-btn.rm-np-play{width:72px;height:72px;font-size:28px}.rm-np-close{padding:12px 16px;min-width:48px;min-height:48px}.rm-np-action{padding:10px 18px;font-size:13px;min-height:44px}.rm-np-seek .rm-seek-track{height:6px}.rm-np-seek .rm-seek-thumb{width:16px;height:16px;opacity:1}.rm-pl-card{padding:12px;min-height:56px}.rm-pl-btn{padding:10px;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center}.rm-pl-create input{padding:10px 14px;font-size:14px;min-height:44px}.rm-pl-create button{padding:10px 18px;font-size:13px;min-height:44px}.rm-queue-item{padding:10px 12px;min-height:48px;font-size:13px}.rm-queue-item-rm{padding:10px;min-width:44px;min-height:44px;font-size:14px;display:flex;align-items:center;justify-content:center}.rm-folder-chip{padding:8px 12px;font-size:12px;min-height:36px}.rm-add-folder-btn{padding:8px 14px;font-size:12px;min-height:36px}.rm-modal{min-width:min(320px,90vw);padding:20px}.rm-modal-item{padding:12px;min-height:48px;font-size:14px}.rm-modal-close{padding:12px;font-size:14px;min-height:48px}.rm-install-btn{padding:14px 28px;font-size:15px;min-height:48px}}',
     ].join('\n'); }
 
     createWindow('radio-music', {
@@ -919,12 +909,28 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             body.innerHTML = `
 <style>${getCSS()}</style>
 <div class="rm-wrap">
-  <div class="rm-hamburger" id="rm-hamburger">
-    <button class="rm-hamburger-btn" id="rm-hamburger-btn" title="Menu"><i class="fas fa-bars"></i></button>
-  </div>
-  <div class="rm-nav-overlay" id="rm-nav-overlay"></div>
   <div class="rm-sidebar" id="rm-sidebar"></div>
   <div class="rm-main">
+    <div class="rm-mobile-nav" id="rm-mobile-nav">
+      <button class="rm-mnav-btn active" data-section="most-played"><i class="fas fa-fire"></i><span>${t('Home')}</span></button>
+      <button class="rm-mnav-btn" data-section="music"><i class="fab fa-youtube"></i><span>${t('Muzyka')}</span></button>
+      <button class="rm-mnav-btn" data-section="radio"><i class="fas fa-broadcast-tower"></i><span>${t('Radio')}</span></button>
+      <button class="rm-mnav-btn" data-section="podcasts"><i class="fas fa-podcast"></i><span>${t('Podcasty')}</span></button>
+      <button class="rm-mnav-btn" data-section="more"><i class="fas fa-ellipsis-h"></i><span>${t('Więcej')}</span></button>
+      <div class="rm-more-sheet" id="rm-more-sheet">
+        <div class="rm-more-sheet-handle"></div>
+        <div class="rm-more-sheet-grid">
+          <button class="rm-more-btn" data-section="local"><i class="fas fa-folder-open"></i><span>${t('Lokalne')}</span></button>
+          <button class="rm-more-btn" data-section="local-audiobooks"><i class="fas fa-book-reader"></i><span>${t('Audiobooki lok.')}</span></button>
+          <button class="rm-more-btn" data-section="playlists"><i class="fas fa-list"></i><span>${t('Playlisty')}</span></button>
+          <button class="rm-more-btn" data-section="queue"><i class="fas fa-list-ol"></i><span>${t('Kolejka')}</span></button>
+          <button class="rm-more-btn" data-section="history"><i class="fas fa-history"></i><span>${t('Historia')}</span></button>
+          <button class="rm-more-btn" data-section="ai-dj"><i class="fas fa-robot"></i><span>${t('Rekomendowane')}</span></button>
+          <button class="rm-more-btn" data-section="audiobooks"><i class="fas fa-book-open"></i><span>${t('Audiobooki')}</span></button>
+          <button class="rm-more-btn" id="rm-add-homescreen"><i class="fas fa-plus-square"></i><span>${t('Skrót')}</span></button>
+        </div>
+      </div>
+    </div>
     <div class="rm-toolbar" id="rm-toolbar"></div>
     <div class="rm-content" id="rm-content"></div>
     <div class="rm-seekbar" id="rm-seekbar">
@@ -942,11 +948,12 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         <div class="rm-player-meta" id="rm-player-meta"></div>
       </div>
       <div class="rm-player-controls">
-        <button class="rm-player-btn" id="rm-shuffle-btn" title="Shuffle"><i class="fas fa-random"></i></button>
-        <button class="rm-player-btn" id="rm-prev-btn" title="Previous"><i class="fas fa-step-backward"></i></button>
+        <button class="rm-player-btn" id="rm-shuffle-btn" title="${t('Losowo')}"><i class="fas fa-random"></i></button>
+        <button class="rm-player-btn" id="rm-prev-btn" title="${t('Poprzednia')}"><i class="fas fa-step-backward"></i></button>
         <button class="rm-player-btn rm-btn-play" id="rm-play-pause"><i class="fas fa-play"></i></button>
-        <button class="rm-player-btn" id="rm-next-btn" title="Next"><i class="fas fa-step-forward"></i></button>
-        <button class="rm-player-btn" id="rm-repeat-btn" title="Repeat"><i class="fas fa-redo"></i></button>
+        <button class="rm-player-btn" id="rm-next-btn" title="${t('Następna')}"><i class="fas fa-step-forward"></i></button>
+        <button class="rm-player-btn" id="rm-repeat-btn" title="${t('Powtarzaj')}"><i class="fas fa-redo"></i></button>
+
       </div>
       <div class="rm-vol-wrap">
         <i class="fas fa-volume-up"></i>
@@ -955,7 +962,7 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
     </div>
   </div>
 </div>
-<button class="rm-exit-fs" id="rm-exit-fs" title="Fullscreen"><i class="fas fa-compress"></i></button>`;
+<button class="rm-exit-fs" id="rm-exit-fs" title="${t('Tryb okienkowy')}"><i class="fas fa-compress"></i></button>`;
 
                 // Ensure the window body acts as a flex column container so .rm-wrap flex:1 resolves correctly
                 body.style.display = 'flex';
@@ -983,45 +990,53 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
             };
             if (_isMobile) _enterFullscreen();
 
-            // Hamburger menu for mobile (<600px)
-            const _isMobileBreakpoint = window.matchMedia('(max-width: 599px)').matches;
-            const hamburgerBtn = body.querySelector('#rm-hamburger-btn');
-            const hamburger = body.querySelector('#rm-hamburger');
-            const navOverlay = body.querySelector('#rm-nav-overlay');
-            const sidebar = body.querySelector('#rm-sidebar');
-            
-            function _toggleSidebarMobile() {
-                sidebar.classList.toggle('rm-sidebar-open');
-                navOverlay.classList.toggle('rm-nav-overlay-open');
-            }
-            
-            function _closeSidebarMobile() {
-                sidebar.classList.remove('rm-sidebar-open');
-                navOverlay.classList.remove('rm-nav-overlay-open');
-            }
-            
-            if (hamburgerBtn) {
-                hamburgerBtn.onclick = _toggleSidebarMobile;
-            }
-            if (navOverlay) {
-                navOverlay.onclick = _closeSidebarMobile;
-            }
-            
-            // Hide hamburger on desktop, show on mobile
-            if (hamburger) {
-                if (!_isMobileBreakpoint) hamburger.style.display = 'none';
-                window.addEventListener('resize', () => {
-                    const isMobile = window.matchMedia('(max-width: 599px)').matches;
-                    hamburger.style.display = isMobile ? 'flex' : 'none';
-                    if (!isMobile) _closeSidebarMobile();
-                });
-            }
-            
-            // Close sidebar when section clicked on mobile
-            const _closeSidebarOnMobileNav = () => {
-                if (_isMobileBreakpoint) _closeSidebarMobile();
+            // Sidebar navigation is wired in _renderSidebar() below
+
+            // Mobile bottom tab bar
+            body.querySelectorAll('#rm-mobile-nav > .rm-mnav-btn').forEach(btn => {
+                btn.onclick = () => {
+                    if (btn.dataset.section === 'more') {
+                        const sheet = body.querySelector('#rm-more-sheet');
+                        if (sheet) sheet.classList.toggle('open');
+                        return;
+                    }
+                    _syncMobileNav(btn.dataset.section);
+                    body.querySelectorAll('.rm-sidebar-item').forEach(e => e.classList.toggle('active', e.dataset.section === btn.dataset.section));
+                    activeSection = btn.dataset.section;
+                    loadSection(activeSection);
+                };
+            });
+
+            // "More" sheet section buttons
+            body.querySelectorAll('.rm-more-btn[data-section]').forEach(btn => {
+                btn.onclick = () => {
+                    const section = btn.dataset.section;
+                    _syncMobileNav(section);
+                    body.querySelectorAll('.rm-sidebar-item').forEach(e => e.classList.toggle('active', e.dataset.section === section));
+                    activeSection = section;
+                    loadSection(section);
+                };
+            });
+
+            // "Add to Home Screen" shortcut button
+            const addHsBtn = body.querySelector('#rm-add-homescreen');
+            if (addHsBtn) addHsBtn.onclick = () => {
+                const sheet = body.querySelector('#rm-more-sheet');
+                if (sheet) sheet.classList.remove('open');
+                _showAddToHomescreenPrompt();
             };
-            _onMoreSheetMouseRef = _closeSidebarOnMobileNav;
+
+            // Close "More" sheet on outside tap
+            const _onMoreSheetMouse = (e) => {
+                const sheet = body.querySelector('#rm-more-sheet');
+                const moreBtn = body.querySelector('#rm-mobile-nav > .rm-mnav-btn[data-section="more"]');
+                if (sheet && sheet.classList.contains('open') && !sheet.contains(e.target) && (!moreBtn || !moreBtn.contains(e.target))) {
+                    sheet.classList.remove('open');
+                }
+            };
+            document.addEventListener('mousedown', _onMoreSheetMouse);
+            document.addEventListener('touchstart', _onMoreSheetMouse, { passive: true });
+            _onMoreSheetMouseRef = _onMoreSheetMouse;
 
             // Player controls — optimistic toggle: icon flips instantly, reverts if play() rejects
             const playPauseBtn = body.querySelector('#rm-play-pause');
@@ -1281,31 +1296,114 @@ AppRegistry['radio-music'] = function(appDef, launchOpts) {
         const sidebar = bodyEl.querySelector('#rm-sidebar');
         if (!sidebar) return;
 
+        // Load saved group order (array of group IDs)
+        let order;
+        try { order = JSON.parse(localStorage.getItem('rm_menu_order') || 'null'); } catch(_) { order = null; }
+        const defaultOrder = _SIDEBAR_GROUPS.map(g => g.id);
+        const groupOrder = Array.isArray(order) ? order : defaultOrder;
+
+        // Build ordered group list (filter out unknowns, append any new groups at end)
+        const groupMap = Object.fromEntries(_SIDEBAR_GROUPS.map(g => [g.id, g]));
+        const orderedGroups = [
+            ...groupOrder.filter(id => groupMap[id]).map(id => groupMap[id]),
+            ..._SIDEBAR_GROUPS.filter(g => !groupOrder.includes(g.id)),
+        ];
+
         sidebar.innerHTML = '';
-        
-        // Render 3 fixed sections (no drag-and-drop for now)
-        _SIDEBAR_SECTIONS.forEach(section => {
-            const sectionEl = document.createElement('div');
-            sectionEl.className = 'rm-sidebar-section';
-            sectionEl.dataset.sectionId = section.id;
+        let editMode = false;
 
-            // Section header
-            const headerEl = document.createElement('div');
-            headerEl.className = 'rm-sidebar-section-header';
-            headerEl.textContent = section.label;
-            sectionEl.appendChild(headerEl);
+        // Edit button in sidebar header
+        const editBtn = document.createElement('button');
+        editBtn.className = 'rm-sidebar-edit-btn';
+        editBtn.style.cssText = 'margin:12px 12px 0;display:block;text-align:right';
+        editBtn.innerHTML = '<i class="fas fa-sliders-h"></i> ' + t('Edytuj');
+        editBtn.onclick = () => { editMode = !editMode; sidebar.classList.toggle('rm-sidebar-edit-mode', editMode); };
+        sidebar.appendChild(editBtn);
 
-            // Section items
-            section.items.forEach(item => {
-                const itemEl = document.createElement('div');
-                itemEl.className = 'rm-sidebar-item' + (item.key === activeSection ? ' active' : '');
-                itemEl.dataset.section = item.key;
-                itemEl.innerHTML = `<i class="${item.icon}"></i> <span>${t(item.label)}</span>`;
-                itemEl.onclick = () => _navTo(item.key);
-                sectionEl.appendChild(itemEl);
+        // Done button (shown in edit mode)
+        const doneBtn = document.createElement('button');
+        doneBtn.className = 'rm-sidebar-done-btn';
+        doneBtn.textContent = t('✓ Gotowe');
+        doneBtn.onclick = () => { editMode = false; sidebar.classList.remove('rm-sidebar-edit-mode'); };
+        sidebar.appendChild(doneBtn);
+
+        let dragSrc = null;
+
+        orderedGroups.forEach(group => {
+            const groupEl = document.createElement('div');
+            groupEl.className = 'rm-sidebar-group';
+            groupEl.dataset.groupId = group.id;
+
+            // Group label row with drag handle
+            const labelRow = document.createElement('div');
+            labelRow.className = 'rm-sidebar-label';
+            labelRow.innerHTML = `<span>${t(group.label)}</span>`;
+
+            const handle = document.createElement('span');
+            handle.className = 'rm-sidebar-drag-handle';
+            handle.innerHTML = '<i class="fas fa-grip-vertical"></i>';
+            labelRow.appendChild(handle);
+
+            groupEl.appendChild(labelRow);
+
+            // Group items
+            group.items.forEach(item => {
+                const el = document.createElement('div');
+                el.className = 'rm-sidebar-item' + (item.key === activeSection ? ' active' : '');
+                el.dataset.section = item.key;
+                el.innerHTML = `<i class="${item.icon}"></i> ${t(item.label)}`;
+                el.onclick = () => { if (!editMode) _navTo(item.key); };
+                groupEl.appendChild(el);
             });
 
-            sidebar.appendChild(sectionEl);
+            // HTML5 Drag & Drop — only active when in edit mode
+            // Guard: ignore drags starting within 20px of left/right edge (Motorola system gestures)
+            groupEl.setAttribute('draggable', 'true');
+
+            groupEl.addEventListener('dragstart', (e) => {
+                if (!editMode) { e.preventDefault(); return; }
+                // Motorola edge guard: ignore if drag starts near left (<20px) or right (>win-20px) edge
+                if (e.clientX < 20 || e.clientX > window.innerWidth - 20) { e.preventDefault(); return; }
+                dragSrc = groupEl;
+                groupEl.classList.add('rm-dnd-dragging');
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', group.id);
+            });
+
+            groupEl.addEventListener('dragend', () => {
+                groupEl.classList.remove('rm-dnd-dragging');
+                sidebar.querySelectorAll('.rm-dnd-over').forEach(el => el.classList.remove('rm-dnd-over'));
+            });
+
+            groupEl.addEventListener('dragover', (e) => {
+                if (!editMode || !dragSrc || dragSrc === groupEl) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                sidebar.querySelectorAll('.rm-dnd-over').forEach(el => el.classList.remove('rm-dnd-over'));
+                groupEl.classList.add('rm-dnd-over');
+            });
+
+            groupEl.addEventListener('dragleave', () => {
+                groupEl.classList.remove('rm-dnd-over');
+            });
+
+            groupEl.addEventListener('drop', (e) => {
+                if (!editMode || !dragSrc || dragSrc === groupEl) return;
+                e.preventDefault();
+                groupEl.classList.remove('rm-dnd-over');
+                // Reorder DOM
+                const groups = [...sidebar.querySelectorAll('.rm-sidebar-group')];
+                const srcIdx = groups.indexOf(dragSrc);
+                const dstIdx = groups.indexOf(groupEl);
+                if (srcIdx < dstIdx) groupEl.after(dragSrc);
+                else groupEl.before(dragSrc);
+                // Save new order to localStorage
+                const newOrder = [...sidebar.querySelectorAll('.rm-sidebar-group')].map(el => el.dataset.groupId);
+                localStorage.setItem('rm_menu_order', JSON.stringify(newOrder));
+                dragSrc = null;
+            });
+
+            sidebar.appendChild(groupEl);
         });
     }
 
