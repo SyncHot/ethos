@@ -489,18 +489,6 @@ def ai_dj_next():
     return jsonify({'items': items[:count]})
 
 
-@radio_music_bp.route('/music/direct-url', methods=['GET'])
-def music_direct_url():
-    """Return the direct CDN audio URL (for Chromecast — bypasses proxy)."""
-    url = request.args.get('url', '').strip()
-    if not url:
-        return jsonify({'error': 'Brak URL'}), 400
-    audio_url, ct = _extract_audio_url(url)
-    if not audio_url:
-        return jsonify({'error': 'Extraction failed'}), 502
-    return jsonify({'ok': True, 'audio_url': audio_url, 'content_type': ct or 'audio/mp4'})
-
-
 @radio_music_bp.route('/music/stream', methods=['GET'])
 def music_stream():
     """Stream audio from YouTube/other sources. Extracts URL via yt-dlp, caches, proxies."""

@@ -20,7 +20,6 @@ Routes:
   GET  /api/radio-music/music/check-deps   - check if yt-dlp is installed
   POST /api/radio-music/music/install-deps - install yt-dlp
   GET  /api/radio-music/music/search       - search YouTube music (?q=, ?limit=)
-  GET  /api/radio-music/music/direct-url   - get direct CDN audio URL for Chromecast (?url=)
   GET  /api/radio-music/music/stream       - proxy audio from YouTube (?url=)
   POST /api/radio-music/music/download     - download track to music folder
   POST /api/radio-music/music/download-playlist - download all tracks in a playlist
