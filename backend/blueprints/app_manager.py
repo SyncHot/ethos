@@ -301,7 +301,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/med-assistant/pkg-status',
     },
     {
-        'id': 'gallery', 'name': 'Gallery', 'version': '1.0.4',
+        'id': 'gallery', 'name': 'Gallery', 'version': '1.0.5',
         'icon': 'fa-images', 'color': '#ec4899', 'category': 'Media', 'admin_only': False,
         'description': 'Galeria zdjec i filmow z EXIF, miniaturkami i haslami folderow.',
         'apt_deps': [], 'pip_deps': [],
@@ -310,7 +310,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/gallery/pkg-status',
     },
     {
-        'id': 'download-manager', 'name': 'Download Manager', 'version': '1.0.3',
+        'id': 'download-manager', 'name': 'Download Manager', 'version': '1.0.4',
         'icon': 'fa-cloud-download-alt', 'color': '#10b981', 'category': 'Tools', 'admin_only': False,
         'description': 'Pobieranie plikow z HTTP, torrent, magnet i serwisow premium.',
         'apt_deps': [], 'pip_deps': [],
@@ -337,7 +337,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/docker/pkg-status',
     },
     {
-        'id': 'vm-manager', 'name': 'VM Manager', 'version': '1.0.10',
+        'id': 'vm-manager', 'name': 'VM Manager', 'version': '1.0.12',
         'icon': 'fa-desktop', 'color': '#8b5cf6', 'category': 'System', 'admin_only': True,
         'description': 'Maszyny wirtualne QEMU/KVM z migawkami i dostepem VNC.',
         'apt_deps': ['qemu-system-x86', 'qemu-utils', 'ovmf'], 'pip_deps': [],
@@ -378,7 +378,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/flasher/pkg-status',
     },
     {
-        'id': 'builder', 'name': 'Builder', 'version': '1.0.21',
+        'id': 'builder', 'name': 'Builder', 'version': '1.0.22',
         'icon': 'fa-hammer', 'color': '#f97316', 'category': 'System', 'admin_only': True,
         'description': 'Budowanie wydan EthOS i obrazow systemowych przez interfejs webowy.',
         'apt_deps': ['squashfs-tools', 'genisoimage', 'rsync'], 'pip_deps': [],
@@ -387,7 +387,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/builder/pkg-status',
     },
     {
-        'id': 'disk-repair', 'name': 'Disk Repair', 'version': '1.0.20',
+        'id': 'disk-repair', 'name': 'Disk Repair', 'version': '1.0.21',
         'icon': 'fa-wrench', 'color': '#ef4444', 'category': 'Storage', 'admin_only': True,
         'description': 'Diagnostyka SMART i sprawdzanie systemu plikow z narzedziami naprawczymi.',
         'apt_deps': ['smartmontools', 'e2fsprogs'], 'pip_deps': [],
@@ -406,7 +406,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/remote-log/pkg-status',
     },
     {
-        'id': 'sharing-samba', 'name': 'File Sharing (Samba)', 'version': '1.0.21',
+        'id': 'sharing-samba', 'name': 'File Sharing (Samba)', 'version': '1.0.22',
         'icon': 'fa-windows', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Udostepnianie plikow przez siec (Windows, Mac, Linux).',
         'apt_deps': ['samba'], 'pip_deps': [],
@@ -416,7 +416,7 @@ BUILTIN_CATALOG = [
         'hidden': True,
     },
     {
-        'id': 'sharing-nfs', 'name': 'NFS', 'version': '1.0.20',
+        'id': 'sharing-nfs', 'name': 'NFS', 'version': '1.0.21',
         'icon': 'fa-network-wired', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Szybkie udostepnianie plikow dla Linux/Unix przez NFS.',
         'apt_deps': ['nfs-kernel-server'], 'pip_deps': [],
@@ -426,7 +426,7 @@ BUILTIN_CATALOG = [
         'hidden': True,
     },
     {
-        'id': 'sharing-dlna', 'name': 'DLNA (MiniDLNA)', 'version': '1.0.21',
+        'id': 'sharing-dlna', 'name': 'DLNA (MiniDLNA)', 'version': '1.0.22',
         'icon': 'fa-photo-video', 'color': '#6366f1', 'category': 'Media', 'admin_only': True,
         'description': 'Serwer DLNA do strumieniowania multimediow na TV i odtwarzacze.',
         'apt_deps': ['minidlna'], 'pip_deps': [],
@@ -436,7 +436,7 @@ BUILTIN_CATALOG = [
         'hidden': True,
     },
     {
-        'id': 'sharing-webdav', 'name': 'WebDAV', 'version': '1.0.20',
+        'id': 'sharing-webdav', 'name': 'WebDAV', 'version': '1.0.21',
         'icon': 'fa-globe', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Serwer WebDAV z dostepem do plikow przez HTTP.',
         'apt_deps': ['lighttpd'], 'pip_deps': [],
@@ -446,7 +446,7 @@ BUILTIN_CATALOG = [
         'hidden': True,
     },
     {
-        'id': 'sharing-sftp', 'name': 'SFTP', 'version': '1.0.20',
+        'id': 'sharing-sftp', 'name': 'SFTP', 'version': '1.0.21',
         'icon': 'fa-lock', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Bezpieczny transfer plikow przez SSH.',
         'apt_deps': ['openssh-server'], 'pip_deps': [],
@@ -456,7 +456,7 @@ BUILTIN_CATALOG = [
         'hidden': True,
     },
     {
-        'id': 'sharing-ftp', 'name': 'FTP', 'version': '1.0.20',
+        'id': 'sharing-ftp', 'name': 'FTP', 'version': '1.0.21',
         'icon': 'fa-upload', 'color': '#6366f1', 'category': 'Network', 'admin_only': True,
         'description': 'Klasyczny serwer FTP z obsługa vsftpd.',
         'apt_deps': ['vsftpd'], 'pip_deps': [],
@@ -493,7 +493,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/cloud-backup/pkg-status',
     },
     {
-        'id': 'raid-lvm', 'name': 'RAID / LVM', 'version': '1.0.20',
+        'id': 'raid-lvm', 'name': 'RAID / LVM', 'version': '1.0.21',
         'icon': 'fa-layer-group', 'color': '#f59e0b', 'category': 'Storage', 'admin_only': True,
         'description': 'Macierze RAID z mdadm i wolumeny LVM.',
         'apt_deps': ['mdadm', 'lvm2'], 'pip_deps': [],
@@ -528,7 +528,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/security-advisor/pkg-status',
     },
     {
-        'id': 'photos-ai', 'name': 'Photos AI', 'version': '0.0.9',
+        'id': 'photos-ai', 'name': 'Photos AI', 'version': '0.0.10',
         'icon': 'fa-brain', 'color': '#8b5cf6', 'category': 'Media', 'admin_only': False,
         'description': 'Rozpoznawanie twarzy, wykrywanie obiektow i inteligentne albumy dla Galerii.',
         'apt_deps': ['cmake', 'libopenblas-dev'], 'pip_deps': ['face_recognition', 'onnxruntime', 'scipy'],
@@ -580,13 +580,13 @@ BUILTIN_CATALOG = [
         'apt_deps': [], 'pip_deps': [], 'simple': True,
     },
     {
-        'id': 'tickets', 'name': 'Tickets', 'version': '1.0.2',
+        'id': 'tickets', 'name': 'Tickets', 'version': '1.0.3',
         'icon': 'fa-tasks', 'color': '#06b6d4', 'category': 'Tools', 'admin_only': False,
         'description': 'Kanban — zarządzanie projektami i zadaniami.',
         'apt_deps': [], 'pip_deps': [], 'simple': True,
     },
     {
-        'id': 'video-station', 'name': 'Video Station', 'version': '0.0.12',
+        'id': 'video-station', 'name': 'Video Station', 'version': '0.0.13',
         'icon': 'fa-film', 'color': '#7c3aed', 'category': 'Media', 'admin_only': False,
         'description': 'Biblioteka filmow z miniaturkami, streamingiem i sledzeniem postepu.',
         'apt_deps': ['ffmpeg'], 'pip_deps': [],
@@ -595,7 +595,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/video-station/pkg-status',
     },
     {
-        'id': 'radio-music', 'name': 'Radio & Music', 'version': '0.0.9',
+        'id': 'radio-music', 'name': 'Radio & Music', 'version': '0.0.10',
         'icon': 'fa-broadcast-tower', 'color': '#10b981', 'category': 'Media', 'admin_only': False,
         'description': 'Radio internetowe z całego świata, podcasty i odtwarzacz muzyki.',
         'apt_deps': ['ffmpeg'], 'pip_deps': ['yt-dlp'],
