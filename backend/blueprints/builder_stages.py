@@ -98,7 +98,7 @@ def _x86_wrapper_script(nasos: str) -> str:
     spec = load_spec()
     spec_vars = spec_to_shell_vars(spec)
 
-    return f"""
+    return rf"""
 set -e
 set -o pipefail
 export DEBIAN_FRONTEND=noninteractive
