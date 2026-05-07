@@ -223,7 +223,8 @@ _FRONTEND_EXTRA_FILES: dict = {
 # and downloaded/removed/updated alongside the primary during App Store ops.
 _BACKEND_EXTRA_FILES: dict = {
     'video-station': ['video_station_library', 'video_station_streaming', 'video_station_thumbnails', 'video_station_tmdb', 'video_station_extras'],
-    'download-manager': ['downloads_config', 'downloads_debrid', 'downloads_extract', 'downloads_history'],
+    'download-manager': ['downloads_config', 'downloads_debrid', 'downloads_extract', 'downloads_history', 'downloads_worker', 'downloads_torrent'],
+    'builder': ['builder_sbom', 'builder_signing', 'builder_spec', 'builder_secureboot', 'builder_resources', 'builder_stages'],
     'vm-manager': ['vm_boot', 'vm_disks', 'vm_network', 'vm_console'],
     'radio-music': ['radio_music_radio', 'radio_music_podcasts', 'radio_music_youtube', 'radio_music_local', 'radio_music_playlist'],
 }
