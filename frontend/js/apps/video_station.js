@@ -2823,9 +2823,14 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         // Start backend HLS session
         const body = { start: startSec || 0 };
         if (audioIdx != null) body.audio = audioIdx;
-        const res = await api('/video-station/hls/' + vid + '/start', { method: 'POST', body });
+        const res = await api('/video-station/hls/' + vid + '/start', { method: 'POST', body }).catch(err => {
+            _cl('error', 'HLS start API error', { vid, error: err?.message || String(err) });
+            return { ok: false, error: err?.message || t('Błąd sieciowy') };
+        });
         if (!res.ok) {
-            toast(res.error || t('Błąd transkodowania'), 'error');
+            const errMsg = (res.error || t('Błąd transkodowania'));
+            _cl('error', 'HLS transcoding failed', { vid, error: errMsg });
+            toast(errMsg, 'error');
             return;
         }
         _hlsSessionId = res.session_id;
