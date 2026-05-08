@@ -14,3 +14,4 @@ installer/releases/*.zip
 cups-config/
 frontend_dist/
 .password_changed
+.aider*
