@@ -1,0 +1,1090 @@
+"""
+EthOS — OTA Update Apply & Slot Management
+Handles update application, slot switching, factory reset, and background update checks.
+"""
+
+import os
+import json
+import tarfile
+import subprocess
+import threading
+import time
+import re
+from datetime import datetime
+from pathlib import Path
+
+from flask import jsonify, request
+
+import sys as _sys
+_sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from host import host_run as _host_run, ETHOS_ROOT, app_path as _app_path, data_path as _data_path, q as _q
+from utils import sio_emit
+from blueprints.admin_required import admin_required
+import logging
+log = logging.getLogger('ethos.updater')
+
+# Import from main updater module
+from updater import (
+    update_bp, _read_status, _write_status, _emit,
+    _get_current_version, _update_lock, INSTALL_DIR, UPDATE_DIR,
+    VERSION_FILE, GRUBENV_PATHS, _load_config, _save_config, _version_tuple
+)
+
+_socketio = None
+
+def init_updater_apply(socketio):
+    """Set SocketIO reference for async events."""
+    global _socketio
+    _socketio = socketio
+
+
+# ════════════════════════════════════════════════════════════
+#  Update Application
+# ════════════════════════════════════════════════════════════
+
+@update_bp.route('/apply', methods=['POST'])
+def apply_update():
+    """Download and apply update."""
+    if not _update_lock.acquire(blocking=False):
+        return jsonify({'error': 'Update already in progress'}), 409
+
+    try:
+        manifest = _read_status().get('available')
+        if not manifest:
+            _update_lock.release()
+            return jsonify({'error': 'No update available — check first'}), 400
+
+        # Start background update
+        import gevent
+        gevent.spawn(_do_apply_update, manifest)
+        return jsonify({'status': 'ok'})
+
+    except Exception as e:
+        _update_lock.release()
+        return jsonify({'error': str(e)}), 500
+
+def _do_apply_update(manifest):
+    """Download and apply update in background."""
+    try:
+        _st = _read_status()
+        _st['downloading'] = True
+        _st['progress'] = 0
+        _st['error'] = None
+        _st['message'] = 'Preparing download…'
+        _write_status(_st)
+        _emit('update_status', _st)
+
+        filename = manifest['filename']
+        expected_sha = manifest.get('sha256', '')
+        expected_size = manifest.get('size', 0)
+
+        # Resolve download URL — GitHub stores it directly, plain uses base + filename
+        if manifest.get('download_url'):
+            download_url = manifest['download_url']
+        else:
+            resolved_url = manifest.get('_resolved_url', '')
+            download_url = resolved_url + '/' + filename
+
+        os.makedirs(UPDATE_DIR, exist_ok=True)
+        pkg_path = os.path.join(UPDATE_DIR, filename)
+
+        # Check if a delta is available and we're in squashfs mode
+        delta_info = manifest.get('delta')
+        delta_path = None
+        if delta_info and _is_squashfs_mode():
+            delta_filename = delta_info.get('filename', '')
+            if delta_filename:
+                try:
+                    import urllib.request
+                    delta_url = (manifest.get('_resolved_url', '') + '/' + delta_filename)
+                    delta_path = os.path.join(UPDATE_DIR, delta_filename)
+                    _emit('update_log', {'message': f'Delta available ({delta_info.get("ratio_pct", "?")}% of full). Downloading delta…'})
+                    req = urllib.request.Request(delta_url, headers={'User-Agent': 'EthOS-Updater'})
+                    with urllib.request.urlopen(req, timeout=300) as resp:
+                        with open(delta_path, 'wb') as out:
+                            while True:
+                                chunk = resp.read(65536)
+                                if not chunk:
+                                    break
+                                out.write(chunk)
+                    _emit('update_log', {'message': f'Delta downloaded: {os.path.getsize(delta_path) // 1024} KB'})
+                except Exception as e:
+                    _emit('update_log', {'message': f'Delta download failed: {e}. Falling back to full download.'})
+                    delta_path = None
+
+        # Download with progress
+        import urllib.request
+        _st = _read_status()
+        _st['message'] = f'Downloading {filename}…'
+        _write_status(_st)
+        _emit('update_log', {'message': f'Downloading {filename}...'})
+        _emit('update_status', _st)
+
+        req = urllib.request.Request(download_url, headers={'User-Agent': 'EthOS-Updater'})
+        with urllib.request.urlopen(req, timeout=300) as resp:
+            total = int(resp.headers.get('Content-Length', expected_size) or expected_size)
+            downloaded = 0
+            hasher = hashlib.sha256()
+
+            with open(pkg_path, 'wb') as out:
+                last_pct = -1
+                while True:
+                    chunk = resp.read(65536)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+                    hasher.update(chunk)
+                    downloaded += len(chunk)
+                    if total > 0:
+                        pct = int(downloaded * 50 / total)
+                        if pct != last_pct:
+                            last_pct = pct
+                            dl_mb = downloaded / 1048576
+                            tot_mb = total / 1048576
+                            _st = _read_status()
+                            _st['progress'] = pct
+                            _st['message'] = f'Downloading… {dl_mb:.1f} / {tot_mb:.1f} MB'
+                            _write_status(_st)
+                            _emit('update_status', _st)
+
+        _emit('update_log', {'message': f'Downloaded {downloaded} bytes'})
+
+        # Verify checksum
+        if expected_sha:
+            _st = _read_status()
+            _st['message'] = 'Verifying checksum…'
+            _write_status(_st)
+            _emit('update_status', _st)
+            actual_sha = hasher.hexdigest()
+            if actual_sha != expected_sha:
+                raise ValueError(f'Checksum error: expected {expected_sha[:16]}..., got {actual_sha[:16]}...')
+            _emit('update_log', {'message': 'Checksum OK'})
+
+        _st = _read_status()
+        _st['downloading'] = False
+        _write_status(_st)
+        _do_apply_from_file(pkg_path)
+
+    except Exception as e:
+        _st = _read_status()
+        _st['downloading'] = False
+        _st['applying'] = False
+        _st['error'] = str(e)
+        _st['progress'] = 0
+        _st['message'] = ''
+        _write_status(_st)
+        _emit('update_status', _st)
+        _emit('update_log', {'message': f'ERROR: {e}', 'error': True})
+        _update_lock.release()
+
+
+def _do_apply_from_file(pkg_path):
+    """Apply update from a local .tar.gz file.
+
+    Supports two modes:
+    - A/B slot update: if /opt/ethos/data/ab_slots.json exists, writes to
+      inactive root partition, flips grubenv, and reboots.
+    - Legacy in-place: replaces backend/ and frontend/ on the live system
+      and restarts the service (backward compat for pre-A/B installs).
+    """
+    try:
+        # ── Extract and verify package ──
+        _st = _read_status()
+        _st['applying'] = True
+        _st['progress'] = 55
+        _st['message'] = 'Extracting package…'
+        _write_status(_st)
+        _emit('update_status', _st)
+        _emit('update_log', {'message': 'Extracting...'})
+
+        extract_dir = os.path.join(UPDATE_DIR, 'extracted')
+        if os.path.exists(extract_dir):
+            shutil.rmtree(extract_dir)
+        os.makedirs(extract_dir)
+
+        with tarfile.open(pkg_path, 'r:gz') as tar:
+            tar.extractall(extract_dir)
+
+        subdirs = [d for d in os.listdir(extract_dir) if os.path.isdir(os.path.join(extract_dir, d))]
+        if not subdirs:
+            raise ValueError('Empty package — no directory inside')
+        pkg_dir = os.path.join(extract_dir, subdirs[0])
+
+        _st = _read_status()
+        _st['progress'] = 60
+        _st['message'] = 'Verifying package…'
+        _write_status(_st)
+        _emit('update_status', _st)
+
+        for required in ['backend/app.py', 'backend/version.json', 'frontend/index.html']:
+            if not os.path.exists(os.path.join(pkg_dir, required)):
+                raise ValueError(f'Invalid package — missing {required}')
+
+        _emit('update_log', {'message': 'Package verified'})
+
+        with open(os.path.join(pkg_dir, 'backend', 'version.json')) as f:
+            new_ver = json.load(f).get('version', '?')
+        _emit('update_log', {'message': f'New version: {new_ver}'})
+
+        # Copy any delta file from UPDATE_DIR into pkg_dir
+        for f in os.listdir(UPDATE_DIR):
+            if f.endswith('.xdelta3'):
+                delta_src = os.path.join(UPDATE_DIR, f)
+                shutil.copy2(delta_src, os.path.join(pkg_dir, 'root.sqsh.xdelta3'))
+                _emit('update_log', {'message': f'Delta file available: {f}'})
+                break
+
+        # ── Decide: A/B slot or legacy? ──
+        ab_slots_file = _data_path('ab_slots.json')
+        if os.path.isfile(ab_slots_file):
+            _do_ab_slot_update(pkg_dir, new_ver, ab_slots_file)
+        else:
+            _do_legacy_update(pkg_dir, new_ver)
+
+        # Cleanup
+        shutil.rmtree(UPDATE_DIR, ignore_errors=True)
+
+    except Exception as e:
+        _st = _read_status()
+        _st['applying'] = False
+        _st['error'] = str(e)
+        _st['progress'] = 0
+        _st['message'] = ''
+        _write_status(_st)
+        _emit('update_status', _st)
+        _emit('update_log', {'message': f'ERROR: {e}', 'error': True})
+    finally:
+        try:
+            _update_lock.release()
+        except RuntimeError:
+            pass
+
+
+# ── A/B Slot Update ──────────────────────────────────────────
+
+_AB_MOUNT = '/mnt/ethos-update'
+_DATA_OVERLAY_BASE = '/mnt/data/ethos/overlay'  # per-slot overlay on data partition
+
+
+def _get_overlay_dirs(slot, ab_mount=None):
+    """Return (upper_dir, work_dir) for the given slot's overlay.
+
+    Prefers the data partition (Synology-style: root never fills up).
+    Falls back to the Root-A/B ext4 partition when data disk unavailable.
+
+    For the inactive slot during an OTA update pass ab_mount (the mounted
+    inactive root).  For the running system pass ab_mount=None.
+    """
+    data_slot_dir = os.path.join(_DATA_OVERLAY_BASE, slot)
+    if os.path.ismount('/mnt/data') and os.path.isdir(_DATA_OVERLAY_BASE):
+        upper = os.path.join(data_slot_dir, 'upper')
+        work = os.path.join(data_slot_dir, 'work')
+        os.makedirs(upper, exist_ok=True)
+        os.makedirs(work, exist_ok=True)
+        return upper, work
+    # Fallback: overlay dirs on the root partition (old behaviour)
+    base = ab_mount if ab_mount else '/.rootfs'
+    upper = os.path.join(base, 'overlay/upper')
+    work = os.path.join(base, 'overlay/work')
+    os.makedirs(upper, exist_ok=True)
+    os.makedirs(work, exist_ok=True)
+    return upper, work
+
+
+def _get_active_slot():
+    """Return active slot ('a' or 'b') from kernel cmdline or data file."""
+    try:
+        with open('/proc/cmdline') as f:
+            for param in f.read().split():
+                if param.startswith('ethos.slot='):
+                    return param.split('=', 1)[1].strip()
+    except Exception:
+        pass
+    # Fallback: read from data file
+    try:
+        with open(_data_path('active_slot')) as f:
+            return f.read().strip()
+    except Exception:
+        return 'a'
+
+
+def _do_ab_slot_update_squashfs(pkg_dir, new_ver, ab_slots_file):
+    """Apply update to inactive A/B slot in SquashFS mode.
+
+    Instead of rsync-ing the entire root, we:
+    1. Copy the current root.sqsh to the inactive slot
+    2. Clear the overlay on the inactive slot
+    3. Apply update files (backend/frontend) to the overlay upper
+    4. Write fstab to overlay upper
+    5. Extract kernel + initrd from squashfs
+    6. Flip grubenv → reboot
+    """
+    import glob as _glob
+
+    with open(ab_slots_file) as f:
+        slots = json.load(f)
+
+    active = _get_active_slot()
+    inactive = 'b' if active == 'a' else 'a'
+    inactive_info = slots[f'slot_{inactive}']
+    inactive_part = inactive_info['partition']
+
+    _emit('update_log', {'message': f'SquashFS A/B update: writing to slot {inactive} ({inactive_part})'})
+
+    _st = _read_status()
+    _st['progress'] = 65
+    _st['message'] = f'Preparing slot {inactive.upper()}…'
+    _write_status(_st)
+    _emit('update_status', _st)
+
+    os.makedirs(_AB_MOUNT, exist_ok=True)
+    subprocess.run(['umount', _AB_MOUNT], capture_output=True, timeout=15)
+    rc = subprocess.run(['mount', inactive_part, _AB_MOUNT], capture_output=True, timeout=30)
+    if rc.returncode != 0:
+        raise RuntimeError(f'Cannot mount {inactive_part}: {rc.stderr.decode()[:200]}')
+
+    try:
+        # 1) Copy or delta-patch root.sqsh to inactive slot
+        _st['progress'] = 70
+        _st['message'] = f'Copying system image to slot {inactive.upper()}…'
+        _write_status(_st)
+        _emit('update_status', _st)
+
+        active_sqsh = '/.rootfs/root.sqsh'
+        inactive_sqsh = os.path.join(_AB_MOUNT, 'root.sqsh')
+
+        # Check for delta file in the update package (xdelta3 binary diff)
+        delta_file = os.path.join(pkg_dir, 'root.sqsh.xdelta3')
+        new_sqsh_file = os.path.join(pkg_dir, 'root.sqsh')
+
+        if os.path.isfile(new_sqsh_file):
+            # Full squashfs image in update package — direct copy
+            shutil.copy2(new_sqsh_file, inactive_sqsh)
+            _emit('update_log', {'message': 'Copied new root.sqsh from update package'})
+
+        elif os.path.isfile(delta_file) and os.path.isfile(active_sqsh):
+            # Delta update: apply xdelta3 patch
+            _emit('update_log', {'message': 'Applying delta patch to root.sqsh (this may take a minute)…'})
+            _st['message'] = f'Applying delta patch to slot {inactive.upper()}…'
+            _write_status(_st)
+            _emit('update_status', _st)
+            r = subprocess.run(
+                ['xdelta3', '-d', '-s', active_sqsh, delta_file, inactive_sqsh],
+                capture_output=True, timeout=600
+            )
+            if r.returncode != 0:
+                _emit('update_log', {'message': f'Delta patch failed: {r.stderr.decode()[:200]}, falling back to copy'})
+                if os.path.isfile(active_sqsh):
+                    shutil.copy2(active_sqsh, inactive_sqsh)
+                    _emit('update_log', {'message': 'Fallback: copied active root.sqsh'})
+                else:
+                    raise RuntimeError('Delta patch failed and no active root.sqsh for fallback')
+            else:
+                _emit('update_log', {'message': 'Delta patch applied successfully'})
+
+        elif os.path.isfile(active_sqsh):
+            # No delta, no new sqsh — copy active to inactive (overlay-only update)
+            shutil.copy2(active_sqsh, inactive_sqsh)
+            _emit('update_log', {'message': 'Copied root.sqsh to inactive slot'})
+        else:
+            raise RuntimeError('No root.sqsh source available (no delta, no active sqsh)')
+
+        # Copy dm-verity data if available in update package
+        for ext in ('.verity', '.roothash'):
+            verity_src = os.path.join(pkg_dir, f'root.sqsh{ext}')
+            if os.path.isfile(verity_src):
+                shutil.copy2(verity_src, os.path.join(_AB_MOUNT, f'root.sqsh{ext}'))
+        # Also copy roothash to ESP
+        roothash_src = os.path.join(pkg_dir, 'root.sqsh.roothash')
+        if os.path.isfile(roothash_src):
+            esp_ethos = '/boot/efi/EFI/ethos'
+            os.makedirs(esp_ethos, exist_ok=True)
+            shutil.copy2(roothash_src, os.path.join(esp_ethos, 'roothash'))
+            _emit('update_log', {'message': 'dm-verity roothash updated on ESP'})
+
+        # 2) Clear overlay on inactive slot
+        _st['progress'] = 75
+        _st['message'] = 'Clearing overlay on inactive slot…'
+        _write_status(_st)
+        _emit('update_status', _st)
+
+        overlay_upper, overlay_work = _get_overlay_dirs(inactive, ab_mount=_AB_MOUNT)
+        shutil.rmtree(overlay_upper, ignore_errors=True)
+        shutil.rmtree(overlay_work, ignore_errors=True)
+        os.makedirs(overlay_upper, exist_ok=True)
+        os.makedirs(overlay_work, exist_ok=True)
+        _emit('update_log', {'message': 'Overlay cleared'})
+
+        # 2b) Restore critical system state from active (running) system
+        # Without these, the inactive slot boots into installer/hotspot mode
+        _emit('update_log', {'message': 'Restoring system config to overlay…'})
+
+        # .installed marker — prevents preboot installer from starting
+        if os.path.isfile('/opt/ethos/.installed'):
+            _d = os.path.join(overlay_upper, 'opt/ethos/.installed')
+            os.makedirs(os.path.dirname(_d), exist_ok=True)
+            shutil.copy2('/opt/ethos/.installed', _d)
+
+        # machine-id
+        if os.path.isfile('/etc/machine-id'):
+            _d = os.path.join(overlay_upper, 'etc/machine-id')
+            os.makedirs(os.path.dirname(_d), exist_ok=True)
+            shutil.copy2('/etc/machine-id', _d)
+
+        # hostname
+        if os.path.isfile('/etc/hostname'):
+            _d = os.path.join(overlay_upper, 'etc/hostname')
+            os.makedirs(os.path.dirname(_d), exist_ok=True)
+            shutil.copy2('/etc/hostname', _d)
+
+        # ethos.service + enable it (disable preboot)
+        svc_src = '/etc/systemd/system/ethos.service'
+        if os.path.isfile(svc_src):
+            svc_dir = os.path.join(overlay_upper, 'etc/systemd/system')
+            os.makedirs(svc_dir, exist_ok=True)
+            shutil.copy2(svc_src, os.path.join(svc_dir, 'ethos.service'))
+            wants = os.path.join(svc_dir, 'multi-user.target.wants')
+            os.makedirs(wants, exist_ok=True)
+            lnk = os.path.join(wants, 'ethos.service')
+            if not os.path.exists(lnk):
+                os.symlink('/etc/systemd/system/ethos.service', lnk)
+            # Ensure preboot is NOT enabled on the updated slot
+            pb = os.path.join(wants, 'ethos-preboot.service')
+            if os.path.exists(pb):
+                os.remove(pb)
+
+        # NetworkManager connections (WiFi, Ethernet, etc.)
+        nm_src = '/etc/NetworkManager/system-connections'
+        if os.path.isdir(nm_src) and os.listdir(nm_src):
+            nm_dst = os.path.join(overlay_upper, 'etc/NetworkManager/system-connections')
+            shutil.copytree(nm_src, nm_dst, dirs_exist_ok=True)
+
+        # ethos.env and install.conf
+        for fname in ('ethos.env', 'install.conf'):
+            _s = os.path.join('/opt/ethos', fname)
+            if os.path.isfile(_s):
+                _d = os.path.join(overlay_upper, 'opt/ethos', fname)
+                os.makedirs(os.path.dirname(_d), exist_ok=True)
+                shutil.copy2(_s, _d)
+
+        _emit('update_log', {'message': 'System config restored'})
+
+        # 3) Apply update files to overlay upper
+        _st['progress'] = 80
+        _st['message'] = 'Applying update to inactive slot…'
+        _write_status(_st)
+        _emit('update_status', _st)
+
+        for d in ['backend', 'frontend']:
+            src = os.path.join(pkg_dir, d)
+            if os.path.exists(src):
+                dst = os.path.join(overlay_upper, 'opt/ethos', d)
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                if os.path.exists(dst):
+                    shutil.rmtree(dst)
+                shutil.copytree(src, dst)
+        _emit('update_log', {'message': 'Update files applied to overlay'})
+
+        # 4) Sync frontend_dist in overlay
+        fe_src = os.path.join(overlay_upper, 'opt/ethos/frontend')
+        fe_dst = os.path.join(overlay_upper, 'opt/ethos/frontend_dist')
+        if os.path.isdir(fe_src):
+            shutil.copytree(fe_src, fe_dst, dirs_exist_ok=True)
+            _emit('update_log', {'message': 'frontend_dist synced on inactive slot'})
+
+        # 5) Write fstab to overlay upper (copy from active overlay)
+        _st['progress'] = 85
+        _st['message'] = 'Configuring inactive slot…'
+        _write_status(_st)
+        _emit('update_status', _st)
+
+        # fstab for active system: data-partition overlay takes priority, else root-partition path
+        active_fstab_candidates = [
+            os.path.join(_DATA_OVERLAY_BASE, active, 'upper/etc/fstab'),  # data partition
+            '/.rootfs/overlay/upper/etc/fstab',                            # root partition (legacy)
+        ]
+        active_fstab = next((p for p in active_fstab_candidates if os.path.isfile(p)), None)
+        if active_fstab:
+            inactive_fstab_dir = os.path.join(overlay_upper, 'etc')
+            os.makedirs(inactive_fstab_dir, exist_ok=True)
+            # Read active fstab and replace active root UUID with inactive root UUID
+            with open(active_fstab) as f:
+                fstab_content = f.read()
+            active_info = slots[f'slot_{active}']
+            fstab_content = fstab_content.replace(
+                active_info.get('uuid', ''), inactive_info.get('uuid', '')
+            )
+            with open(os.path.join(inactive_fstab_dir, 'fstab'), 'w') as f:
+                f.write(fstab_content)
+            _emit('update_log', {'message': 'fstab written to overlay'})
+
+        # 6) Extract kernel + initrd from squashfs to ext4 root
+        sqsh_mount = '/tmp/sqsh-update'
+        os.makedirs(sqsh_mount, exist_ok=True)
+        rc = subprocess.run(
+            ['mount', '-t', 'squashfs', '-o', 'ro,loop', inactive_sqsh, sqsh_mount],
+            capture_output=True, timeout=30
+        )
+        if rc.returncode == 0:
+            try:
+                boot_dir = os.path.join(_AB_MOUNT, 'boot')
+                os.makedirs(boot_dir, exist_ok=True)
+                for pattern in ('vmlinuz-*', 'initrd.img-*'):
+                    files = sorted(_glob.glob(os.path.join(sqsh_mount, 'boot', pattern)))
+                    if files:
+                        shutil.copy2(files[-1], os.path.join(boot_dir, os.path.basename(files[-1])))
+                _emit('update_log', {'message': 'Kernel + initrd extracted'})
+            finally:
+                subprocess.run(['umount', sqsh_mount], capture_output=True, timeout=15)
+
+        # 7) Copy ab_slots.json to inactive overlay with updated active field
+        inactive_data_dir = os.path.join(overlay_upper, 'opt/ethos/data')
+        os.makedirs(inactive_data_dir, exist_ok=True)
+        dest_ab = os.path.join(inactive_data_dir, 'ab_slots.json')
+        try:
+            with open(ab_slots_file) as _f:
+                ab_data = json.load(_f)
+            ab_data['active'] = inactive
+            if os.path.realpath(ab_slots_file) != os.path.realpath(dest_ab):
+                with open(dest_ab, 'w') as _f:
+                    json.dump(ab_data, _f, indent=2)
+            with open(ab_slots_file, 'w') as _f:
+                json.dump(ab_data, _f, indent=2)
+        except Exception:
+            pass
+        with open(os.path.join(inactive_data_dir, 'active_slot'), 'w') as f:
+            f.write(inactive)
+
+    finally:
+        subprocess.run(['umount', '-l', _AB_MOUNT], capture_output=True, timeout=30)
+
+    # 8) Flip grubenv
+    _st = _read_status()
+    _st['progress'] = 92
+    _st['message'] = 'Switching boot slot…'
+    _write_status(_st)
+    _emit('update_status', _st)
+
+    for grubenv in GRUBENV_PATHS:
+        if os.path.exists(grubenv):
+            subprocess.run(['grub-editenv', grubenv, 'set', f'boot_slot={inactive}'],
+                           capture_output=True, timeout=10)
+            subprocess.run(['grub-editenv', grubenv, 'set', 'boot_success=0'],
+                           capture_output=True, timeout=10)
+            subprocess.run(['grub-editenv', grubenv, 'set', 'boot_counter=0'],
+                           capture_output=True, timeout=10)
+
+    _emit('update_log', {'message': f'Boot slot switched to {inactive.upper()}'})
+
+    # 9) Mark complete and reboot
+    _st = _read_status()
+    _st['progress'] = 100
+    _st['applying'] = False
+    _st['available'] = None
+    _st['message'] = f'Updated to {new_ver}! Rebooting to slot {inactive.upper()}…'
+    _write_status(_st)
+    _emit('update_status', _st)
+    _emit('update_log', {'message': f'SquashFS update to {new_ver} complete! Rebooting...'})
+    _emit('update_complete', {'version': new_ver, 'slot': inactive, 'reboot': True})
+
+    subprocess.Popen(
+        ['bash', '-c', 'sleep 3 && reboot'],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=True
+    )
+
+
+def _auto_snapshot_before_update(new_ver):
+    """Create an automatic btrfs snapshot before applying an update."""
+    data_mount = '/mnt/data'
+    snap_mount = '/mnt/snapshots'
+    try:
+        r = _host_run(f'stat -f -c %T {_q(data_mount)}', timeout=5)
+        if r.returncode != 0 or 'btrfs' not in r.stdout.lower():
+            return  # not btrfs — skip
+        if not os.path.ismount(snap_mount):
+            # Try to mount @snapshots
+            r = _host_run(f"findmnt -n -o SOURCE {_q(data_mount)}", timeout=5)
+            if r.returncode != 0:
+                return
+            dev = r.stdout.strip().split('[')[0]
+            os.makedirs(snap_mount, exist_ok=True)
+            r = _host_run(f"mount -o subvol=@snapshots,noatime,compress=zstd:3 {_q(dev)} {_q(snap_mount)}", timeout=15)
+            if r.returncode != 0:
+                return
+        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+        snap_name = f'snap_{ts}_pre_update'
+        snap_path = os.path.join(snap_mount, snap_name)
+        r = _host_run(f'btrfs subvolume snapshot -r {_q(data_mount)} {_q(snap_path)}', timeout=30)
+        if r.returncode == 0:
+            _emit('update_log', {'message': f'Auto-snapshot created: {snap_name}'})
+            log.info("Pre-update btrfs snapshot: %s", snap_name)
+            # Write metadata (may fail on read-only snapshot)
+            try:
+                import json as _json
+                with open(os.path.join(snap_path, '.snap_meta.json'), 'w') as f:
+                    _json.dump({'id': snap_name, 'label': f'Pre-update to {new_ver}',
+                                'created': datetime.now().isoformat(), 'type': 'btrfs',
+                                'auto': True}, f)
+            except OSError:
+                pass
+    except Exception as e:
+        log.warning("Auto-snapshot skipped: %s", e)
+
+
+def _do_ab_slot_update(pkg_dir, new_ver, ab_slots_file):
+    """Apply update to inactive A/B slot, flip grubenv, reboot."""
+    # Auto-snapshot data partition before any update
+    _auto_snapshot_before_update(new_ver)
+
+    if _is_squashfs_mode():
+        return _do_ab_slot_update_squashfs(pkg_dir, new_ver, ab_slots_file)
+
+    # ── Traditional ext4 update (rsync active → inactive) ──
+
+    # 1) Load slot metadata
+    with open(ab_slots_file) as f:
+        slots = json.load(f)
+
+    active = _get_active_slot()
+    inactive = 'b' if active == 'a' else 'a'
+    inactive_info = slots[f'slot_{inactive}']
+    inactive_part = inactive_info['partition']
+    inactive_uuid = inactive_info['uuid']
+
+    _emit('update_log', {'message': f'A/B update: active={active}, writing to slot {inactive} ({inactive_part})'})
+
+    # 2) Mount inactive slot
+    _st = _read_status()
+    _st['progress'] = 65
+    _st['message'] = f'Preparing slot {inactive.upper()}…'
+    _write_status(_st)
+    _emit('update_status', _st)
+
+    os.makedirs(_AB_MOUNT, exist_ok=True)
+    subprocess.run(['umount', _AB_MOUNT], capture_output=True, timeout=15)
+    rc = subprocess.run(['mount', inactive_part, _AB_MOUNT], capture_output=True, timeout=30)
+    if rc.returncode != 0:
+        raise RuntimeError(f'Cannot mount {inactive_part}: {rc.stderr.decode()[:200]}')
+    _emit('update_log', {'message': f'Mounted {inactive_part} at {_AB_MOUNT}'})
+
+    try:
+        # 3) Sync active root → inactive root (full system copy)
+        _st = _read_status()
+        _st['progress'] = 70
+        _st['message'] = f'Syncing system to slot {inactive.upper()} (this may take a while)…'
+        _write_status(_st)
+        _emit('update_status', _st)
+        _emit('update_log', {'message': 'rsync active → inactive...'})
+
+        rsync_result = subprocess.run(
+            ['rsync', '-aAXH', '--delete',
+             '--exclude=/proc', '--exclude=/sys', '--exclude=/dev',
+             '--exclude=/run', '--exclude=/tmp', '--exclude=/mnt',
+             '--exclude=/media', '--exclude=/lost+found',
+             '--exclude=/swapfile', '--exclude=/var/swap',
+             '--exclude=/opt/ethos/data/visual_qa',
+             '--exclude=/opt/ethos/logs/copilot_tickets',
+             '--exclude=/opt/ethos/installer/images/*.img',
+             '--exclude=/opt/ethos/installer/images/*.sqsh',
+             '--exclude=/opt/ethos/installer/images/*.zst',
+             '/', _AB_MOUNT + '/'],
+            capture_output=True, text=True, timeout=600
+        )
+        if rsync_result.returncode not in (0, 24):
+            _emit('update_log', {'message': f'rsync warning (rc={rsync_result.returncode})'})
+
+        # Recreate required mount points
+        for d in ('proc', 'sys', 'dev', 'run', 'tmp', 'mnt', 'media'):
+            os.makedirs(os.path.join(_AB_MOUNT, d), exist_ok=True)
+
+        _emit('update_log', {'message': 'System synced'})
+
+        # 4) Apply update files on inactive slot
+        _st = _read_status()
+        _st['progress'] = 80
+        _st['message'] = 'Updating files on inactive slot…'
+        _write_status(_st)
+        _emit('update_status', _st)
+
+        inactive_ethos = os.path.join(_AB_MOUNT, 'opt/ethos')
+        for d in ['backend', 'frontend']:
+            src = os.path.join(pkg_dir, d)
+            dst = os.path.join(inactive_ethos, d)
+            if os.path.exists(src):
+                if os.path.exists(dst):
+                    shutil.rmtree(dst)
+                shutil.copytree(src, dst)
+        _emit('update_log', {'message': 'Files updated on inactive slot'})
+
+        # 5) Sync frontend_dist on inactive slot
+        fe_src = os.path.join(inactive_ethos, 'frontend')
+        fe_dst = os.path.join(inactive_ethos, 'frontend_dist')
+        if os.path.isdir(fe_src):
+            subprocess.run(
+                ['rsync', '-a', '--delete', fe_src + '/', fe_dst + '/'],
+                capture_output=True, timeout=60
+            )
+            _emit('update_log', {'message': 'frontend_dist synced on inactive slot'})
+
+        # 6) Update pip deps if requirements changed (using chroot)
+        new_reqs = os.path.join(inactive_ethos, 'backend', 'requirements.txt')
+        old_reqs = os.path.join(INSTALL_DIR, 'backend', 'requirements.txt')
+        if os.path.isfile(new_reqs):
+            reqs_changed = True
+            if os.path.isfile(old_reqs):
+                with open(new_reqs) as f1, open(old_reqs) as f2:
+                    reqs_changed = f1.read().strip() != f2.read().strip()
+            if reqs_changed:
+                _st['progress'] = 85
+                _st['message'] = 'Installing Python dependencies…'
+                _write_status(_st)
+                _emit('update_status', _st)
+                _emit('update_log', {'message': 'Updating pip deps on inactive slot...'})
+                pip_result = subprocess.run(
+                    [os.path.join(_AB_MOUNT, 'opt/ethos/venv/bin/pip'),
+                     'install', '--no-cache-dir', '--root', _AB_MOUNT,
+                     '--prefix', '/opt/ethos/venv',
+                     '-r', new_reqs],
+                    capture_output=True, text=True, timeout=300,
+                    env={**os.environ, 'HOME': '/root'}
+                )
+                if pip_result.returncode != 0:
+                    # Fallback: run pip install on boot instead
+                    _emit('update_log', {
+                        'message': f'pip --root install skipped, will update on boot'
+                    })
+                    # Leave a marker for firstboot to pick up
+                    Path(os.path.join(inactive_ethos, '.pip_update_needed')).touch()
+                else:
+                    _emit('update_log', {'message': 'Dependencies updated'})
+
+        # 7) Fix fstab on inactive slot (replace active UUID with inactive UUID)
+        _st['progress'] = 88
+        _st['message'] = 'Configuring inactive slot…'
+        _write_status(_st)
+        _emit('update_status', _st)
+
+        active_info = slots[f'slot_{active}']
+        fstab_path = os.path.join(_AB_MOUNT, 'etc/fstab')
+        if os.path.isfile(fstab_path):
+            with open(fstab_path) as f:
+                fstab = f.read()
+            # Replace the root partition UUID
+            fstab = fstab.replace(active_info['uuid'], inactive_uuid)
+            with open(fstab_path, 'w') as f:
+                f.write(fstab)
+            _emit('update_log', {'message': f'fstab updated (root UUID={inactive_uuid[:8]}…)'})
+
+        # 8) Write active_slot marker on inactive for the app to read after boot
+        inactive_data = os.path.join(inactive_ethos, 'data')
+        os.makedirs(inactive_data, exist_ok=True)
+        with open(os.path.join(inactive_data, 'active_slot'), 'w') as f:
+            f.write(inactive)
+
+        # Copy ab_slots.json to inactive with updated active field
+        dest_ab = os.path.join(inactive_data, 'ab_slots.json')
+        try:
+            with open(ab_slots_file) as _f:
+                ab_data = json.load(_f)
+            ab_data['active'] = inactive
+            if os.path.realpath(ab_slots_file) != os.path.realpath(dest_ab):
+                with open(dest_ab, 'w') as _f:
+                    json.dump(ab_data, _f, indent=2)
+            # Update current copy so status endpoint reflects pending switch
+            with open(ab_slots_file, 'w') as _f:
+                json.dump(ab_data, _f, indent=2)
+        except Exception:
+            pass  # non-critical — shared data partition already has the file
+
+    finally:
+        # Always unmount inactive slot
+        subprocess.run(['umount', '-l', _AB_MOUNT], capture_output=True, timeout=30)
+
+    # 9) Flip grubenv to boot from inactive slot
+    _st = _read_status()
+    _st['progress'] = 92
+    _st['message'] = 'Switching boot slot…'
+    _write_status(_st)
+    _emit('update_status', _st)
+
+    for grubenv in GRUBENV_PATHS:
+        if os.path.exists(grubenv):
+            subprocess.run(['grub-editenv', grubenv, 'set', f'boot_slot={inactive}'],
+                           capture_output=True, timeout=10)
+            subprocess.run(['grub-editenv', grubenv, 'set', 'boot_success=0'],
+                           capture_output=True, timeout=10)
+            subprocess.run(['grub-editenv', grubenv, 'set', 'boot_counter=0'],
+                           capture_output=True, timeout=10)
+
+    _emit('update_log', {'message': f'Boot slot switched to {inactive.upper()}'})
+
+    # 10) Mark complete and reboot
+    _st = _read_status()
+    _st['progress'] = 100
+    _st['applying'] = False
+    _st['available'] = None
+    _st['message'] = f'Updated to {new_ver}! Rebooting to slot {inactive.upper()}…'
+    _write_status(_st)
+    _emit('update_status', _st)
+    _emit('update_log', {'message': f'Update to {new_ver} complete! Rebooting...'})
+    _emit('update_complete', {'version': new_ver, 'slot': inactive, 'reboot': True})
+
+    # Reboot (not just restart service — need to boot into new root)
+    subprocess.Popen(
+        ['bash', '-c', 'sleep 3 && reboot'],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=True
+    )
+
+
+# ── Legacy In-Place Update ───────────────────────────────────
+
+def _do_legacy_update(pkg_dir, new_ver):
+    """Apply update in-place on the live system (pre-A/B installs)."""
+
+    # Backup current files
+    _st = _read_status()
+    _st['progress'] = 70
+    _st['message'] = 'Creating backup…'
+    _write_status(_st)
+    _emit('update_status', _st)
+    _emit('update_log', {'message': 'Creating backup...'})
+
+    backup_dir = os.path.join(UPDATE_DIR, 'backup-' + datetime.now().strftime('%Y%m%d%H%M%S'))
+    os.makedirs(backup_dir)
+
+    for d in ['backend', 'frontend']:
+        src = os.path.join(INSTALL_DIR, d)
+        if os.path.exists(src):
+            shutil.copytree(src, os.path.join(backup_dir, d))
+
+    _emit('update_log', {'message': f'Backup at {backup_dir}'})
+
+    # Apply update — replace backend, frontend
+    _st = _read_status()
+    _st['progress'] = 80
+    _st['message'] = 'Updating files…'
+    _write_status(_st)
+    _emit('update_status', _st)
+    _emit('update_log', {'message': 'Updating files...'})
+
+    for d in ['backend', 'frontend']:
+        src = os.path.join(pkg_dir, d)
+        dst = os.path.join(INSTALL_DIR, d)
+        if os.path.exists(src):
+            if os.path.exists(dst):
+                shutil.rmtree(dst)
+            shutil.copytree(src, dst)
+
+    _st = _read_status()
+    _st['progress'] = 85
+    _st['message'] = 'Files updated'
+    _write_status(_st)
+    _emit('update_status', _st)
+    _emit('update_log', {'message': 'Files updated'})
+
+    # Sync frontend_dist
+    frontend_src = os.path.join(INSTALL_DIR, 'frontend')
+    frontend_dst = os.path.join(INSTALL_DIR, 'frontend_dist')
+    if os.path.isdir(frontend_src):
+        subprocess.run(
+            ['rsync', '-a', '--delete', frontend_src + '/', frontend_dst + '/'],
+            capture_output=True, timeout=60
+        )
+        _emit('update_log', {'message': 'frontend_dist synced'})
+
+    # Update Python dependencies if requirements.txt changed
+    new_reqs = os.path.join(INSTALL_DIR, 'backend', 'requirements.txt')
+    old_reqs = os.path.join(backup_dir, 'backend', 'requirements.txt')
+    venv_pip = os.path.join(INSTALL_DIR, 'venv', 'bin', 'pip')
+    if os.path.isfile(new_reqs) and os.path.isfile(venv_pip):
+        reqs_changed = True
+        if os.path.isfile(old_reqs):
+            with open(new_reqs) as f1, open(old_reqs) as f2:
+                reqs_changed = f1.read().strip() != f2.read().strip()
+        if reqs_changed:
+            _st = _read_status()
+            _st['progress'] = 88
+            _st['message'] = 'Installing Python dependencies…'
+            _write_status(_st)
+            _emit('update_status', _st)
+            _emit('update_log', {'message': 'Updating Python dependencies...'})
+            pip_result = subprocess.run(
+                [venv_pip, 'install', '--no-cache-dir', '-r', new_reqs],
+                capture_output=True, text=True, timeout=300
+            )
+            if pip_result.returncode == 0:
+                _emit('update_log', {'message': 'Dependencies updated'})
+            else:
+                _emit('update_log', {'message': f'pip install warning: {pip_result.stderr[-200:]}'})
+
+    # Ensure core system packages are installed (older images may lack them)
+    _CORE_SYSTEM_PKGS = ['ufw', 'fail2ban', 'rsync', 'cron', 'avahi-daemon', 'gnupg', 'age']
+    try:
+        _st = _read_status()
+        _st['progress'] = 90
+        _st['message'] = 'Checking core system packages…'
+        _write_status(_st)
+        _emit('update_status', _st)
+
+        check = subprocess.run(
+            ['dpkg', '-s'] + _CORE_SYSTEM_PKGS,
+            capture_output=True, text=True, timeout=15
+        )
+        missing = []
+        if check.returncode != 0:
+            for line in check.stderr.splitlines():
+                if 'is not installed' in line:
+                    parts = line.split("'")
+                    if len(parts) >= 2:
+                        missing.append(parts[1])
+        if missing:
+            _emit('update_log', {'message': f'Installing missing packages: {", ".join(missing)}'})
+            apt_result = subprocess.run(
+                ['bash', '-c',
+                 'DEBIAN_FRONTEND=noninteractive apt-get update -y -qq 2>/dev/null; '
+                 'DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ' + ' '.join(missing)],
+                capture_output=True, text=True, timeout=180
+            )
+            if apt_result.returncode == 0:
+                _emit('update_log', {'message': 'Core packages installed'})
+            else:
+                _emit('update_log', {'message': f'apt warning: {apt_result.stderr[-200:]}'})
+
+            for svc in ['ufw', 'fail2ban']:
+                if svc in missing:
+                    subprocess.run(['systemctl', 'enable', '--now', svc],
+                                   capture_output=True, timeout=30)
+            if 'ufw' in missing:
+                subprocess.run(['ufw', '--force', 'enable'], capture_output=True, timeout=15)
+                subprocess.run(['ufw', 'allow', '22/tcp'], capture_output=True, timeout=10)
+                subprocess.run(['ufw', 'allow', '9000/tcp'], capture_output=True, timeout=10)
+                _emit('update_log', {'message': 'Firewall enabled (SSH + EthOS allowed)'})
+        else:
+            _emit('update_log', {'message': 'Core packages OK'})
+    except Exception as e:
+        _emit('update_log', {'message': f'Core packages check note: {e}'})
+
+    # Fix service file if still using gunicorn (pre-1.0.30 installs)
+    svc_path = '/etc/systemd/system/ethos.service'
+    try:
+        with open(svc_path) as f:
+            svc_content = f.read()
+        if 'gunicorn' in svc_content:
+            _emit('update_log', {'message': 'Migrating service from gunicorn to python app.py...'})
+            new_svc = """[Unit]
+Description=EthOS NAS
+After=network.target
+Wants=network.target
+
+[Service]
+Type=notify
+NotifyAccess=all
+WorkingDirectory=/opt/ethos
+EnvironmentFile=/opt/ethos/ethos.env
+ExecStartPre=/bin/bash -c 'for d in data logs backups uploads venv; do p="/opt/ethos/$d"; [ -L "$p" ] && mkdir -p "$(readlink "$p")" || mkdir -p "$p"; done'
+Environment=PYTHONPATH=/opt/ethos/backend
+ExecStart=/opt/ethos/venv/bin/python /opt/ethos/backend/app.py
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
+"""
+            with open(svc_path, 'w') as f:
+                f.write(new_svc)
+            subprocess.run(['systemctl', 'daemon-reload'], capture_output=True, timeout=15)
+            _emit('update_log', {'message': 'Service migrated to python app.py'})
+    except Exception as e:
+        _emit('update_log', {'message': f'Service migration note: {e}'})
+
+    # Mark complete and restart
+    _st = _read_status()
+    _st['progress'] = 100
+    _st['applying'] = False
+    _st['available'] = None
+    _st['message'] = f'Updated to {new_ver}!'
+    _write_status(_st)
+    _emit('update_status', _st)
+    _emit('update_log', {'message': f'Update to {new_ver} complete! Restarting...'})
+
+    subprocess.Popen(
+        ['bash', '-c', 'sleep 2 && systemctl restart ethos.service'],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=True
+    )
+    _emit('update_complete', {'version': new_ver})
+
+
+# ═══════════════════════════════════════════════════════════
+#  Background auto-check (called from app.py on startup)
+# ═══════════════════════════════════════════════════════════
+
+def update_auto_check_loop():
+    """Background loop that periodically checks for updates."""
+    import gevent
+    gevent.sleep(60)  # Wait 1 min after startup
+
+    while True:
+        try:
+            config = _load_config()
+            if config.get('auto_check') and config.get('update_url'):
+                interval = config.get('auto_check_interval', 86400)
+                last = config.get('last_check')
+
+                should_check = True
+                if last:
+                    try:
+                        last_dt = datetime.fromisoformat(last)
+                        elapsed = (datetime.now() - last_dt).total_seconds()
+                        should_check = elapsed >= interval
+                    except Exception:
+                        pass
+
+                if should_check:
+                    raw_url = config['update_url']
+                    resolved_url, source_type = _resolve_update_url(raw_url)
+                    current = _get_current_version()
+
+                    if source_type == 'github':
+                        repo_path = raw_url.split(':', 1)[1]
+                        manifest = _github_check(repo_path)
+                    else:
+                        import urllib.request
+                        url = resolved_url + '/latest.json'
+                        req = urllib.request.Request(url, headers={'User-Agent': 'EthOS-Updater'})
+                        with urllib.request.urlopen(req, timeout=15) as resp:
+                            manifest = json.loads(resp.read().decode())
+
+                    remote = manifest.get('version', '0.0.0')
+
+                    config['last_check'] = datetime.now().isoformat()
+                    _save_config(config)
+                    _st = _read_status()
+                    _st['last_check'] = config['last_check']
+                    _write_status(_st)
+
+                    if _version_tuple(remote) > _version_tuple(current):
+                        manifest['_resolved_url'] = resolved_url
+                        manifest['_source_type'] = source_type
+                        _st = _read_status()
+                        _st['available'] = manifest
+                        _write_status(_st)
+                        _emit('update_available', {
+                            'current': current,
+                            'remote': remote,
+                            'changelog': manifest.get('changelog', {})
+                        })
+
+                        if config.get('auto_apply'):
+                            if _update_lock.acquire(blocking=False):
+                                import gevent as g2
+                                g2.spawn(_do_apply_update, manifest)
+        except Exception:
+            pass
+
+        import gevent
+        gevent.sleep(3600)  # Recheck every hour
