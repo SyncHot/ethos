@@ -5,6 +5,7 @@ import shutil
 import re
 import subprocess
 import tempfile
+import threading
 from flask import jsonify, request, Response, send_file
 
 from host import host_run, host_run_stream, q
@@ -19,6 +20,7 @@ from blueprints.video_station import (
     _intel_driver_needs_ppa_upgrade,
     _reset_hw_cache,
     RENDER_NODE,
+    log,
 )
 from blueprints.admin_required import admin_required
 @video_station_bp.route("/stream/<int:vid>", methods=["GET"])
@@ -69,6 +71,78 @@ def stream(vid):
         resp.headers["Accept-Ranges"] = "bytes"
         return resp
     return send_file(fp, mimetype=mime)
+
+
+def _drain_stderr(pipe, buf_list):
+    """Read all lines from ffmpeg stderr into a thread-safe list."""
+    try:
+        for line in pipe:
+            buf_list.append(line)
+    except Exception:
+        pass
+    finally:
+        try:
+            pipe.close()
+        except Exception:
+            pass
+
+
+def _wait_first_bytes(proc, stderr_buf, timeout=15):
+    """Block until ffmpeg produces output or exits with an error.
+
+    Reads and buffers the first chunk so it can be prepended by the generator.
+    Returns (first_chunk, error_string).  On success: (bytes, None).
+    On failure: (b'', "error message").
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        rc = proc.poll()
+        if rc is None:
+            # Still running — try to read first chunk without blocking long
+            chunk = proc.stdout.read1(65536) if hasattr(proc.stdout, 'read1') else proc.stdout.read(65536)
+            if chunk:
+                return chunk, None
+            # Check if any stderr accumulated (early error hint)
+            time.sleep(0.3)
+        else:
+            # ffmpeg exited before producing output
+            stderr_text = b''.join(stderr_buf).decode(errors='replace').strip()[:500]
+            if stderr_text:
+                return b'', f"exit {rc}: {stderr_text}"
+            return b'', f"ffmpeg exited with code {rc}"
+    # Timeout — ffmpeg is hanging without producing output
+    proc.terminate()
+    stderr_text = b''.join(stderr_buf).decode(errors='replace').strip()[:500]
+    return b'', (f"timeout: {stderr_text}" if stderr_text else "timeout: no output")
+
+
+def _split_hw_pre_and_enc(args):
+    """Split a flat ffmpeg arg list into (hw_pre, video_enc_args).
+
+    hw_pre are the pre-input args (hwaccel, vaapi_device).
+    video_enc_args are the encoder args (-c:v, -vf, -qp, -crf, etc.).
+    For simple cases like ['-c:v', 'copy'] there is no hw_pre.
+    """
+    # Heuristic: hw_pre args are known prefixes; everything after input is encoder
+    hw_prefixes = {'-hwaccel', '-hwaccel_device', '-hwaccel_output_format', '-vaapi_device'}
+    hw_pre = []
+    enc_start = None
+    collecting_hw = False
+    for i, a in enumerate(args):
+        if a in hw_prefixes:
+            collecting_hw = True
+            hw_pre.append(a)
+            continue
+        if collecting_hw:
+            hw_pre.append(a)
+            collecting_hw = False
+            continue
+        if a == '-c:v' and enc_start is None:
+            enc_start = i
+            break
+    if enc_start is not None:
+        return hw_pre, args[enc_start:]
+    return hw_pre, args
 
 
 @video_station_bp.route("/transcode/<int:vid>", methods=["GET"])
@@ -157,52 +231,89 @@ def transcode(vid):
             video_enc_args = ["-c:v", "libx264", "-preset", "ultrafast", "-crf", str(crf)]
             log.info("transcode encode: %s → libx264 (CPU, crf=%d)", vcodec, crf)
 
-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-probesize", "100M", "-analyzeduration", "10M"]
-    cmd += hw_pre
-    if start_sec > 0:
-        cmd += ["-ss", str(start_sec)]
-    cmd += ["-i", fp]
-    # Explicitly map first video + chosen audio to avoid subtitle stream issues
-    cmd += ["-map", "0:v:0"]
-    if audio_idx is not None:
-        cmd += ["-map", "0:%d" % audio_idx]
-    else:
-        cmd += ["-map", "0:a:0?"]
-    cmd += [
-        "-c:a", "aac", "-b:a", "192k", "-ac", "2",
-        "-movflags", "frag_keyframe+empty_moov+default_base_moof",
-        "-f", "mp4",
-        "-"
-    ]
+    # Try primary encoder; if it is a HW encoder and fails, fall back to libx264
+    attempts = [hw_pre + video_enc_args]
+    # Build CPU fallback when HW encoder was selected
+    if video_enc_args and video_enc_args[-3] not in ("libx264",):
+        cpu_crf = _adaptive_crf()
+        fallback = (["-c:v", "libx264", "-preset", "ultrafast", "-crf", str(cpu_crf)])
+        attempts.append(fallback)
+        log.debug("transcode vid=%d: prepared CPU fallback (libx264) in case HW fails", vid)
 
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    for attempt_args in attempts:
+        hw_pre, video_enc_args = _split_hw_pre_and_enc(attempt_args)
+        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error",
+               "-probesize", "100M", "-analyzeduration", "10M"]
+        cmd += hw_pre
+        if start_sec > 0:
+            cmd += ["-ss", str(start_sec)]
+        cmd += ["-i", fp]
+        cmd += ["-map", "0:v:0"]
+        if audio_idx is not None:
+            cmd += ["-map", "0:%d" % audio_idx]
+        else:
+            cmd += ["-map", "0:a:0?"]
+        cmd += video_enc_args
+        cmd += [
+            "-c:a", "aac", "-b:a", "192k", "-ac", "2",
+            "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+            "-f", "mp4",
+            "-"
+        ]
 
-    def generate():
-        try:
-            while True:
-                chunk = proc.stdout.read(65536)
-                if not chunk:
-                    break
-                yield chunk
-        except (OSError, GeneratorExit):
-            pass
-        finally:
-            proc.stdout.close()
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        stderr_buf = []
+        _ = threading.Thread(target=_drain_stderr, args=(proc.stderr, stderr_buf), daemon=True)
+
+        # Wait for first bytes to detect early failures before committing to this encoder
+        first_chunk, early_err = _wait_first_bytes(proc, stderr_buf, timeout=15)
+        if early_err:
+            proc.terminate()
             try:
-                proc.terminate()
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
+                proc.wait(timeout=3)
+            except (subprocess.TimeoutExpired, Exception):
                 proc.kill()
                 proc.wait()
-            except Exception:
-                pass
+            if attempt_args is attempts[-1]:
+                log.error("transcode vid=%d: all encoder attempts failed: %s", vid, early_err)
+                return jsonify({"error": "Transkodowanie nie powiodło się: " + early_err}), 500
+            log.warning("transcode vid=%d: encoder failed (%s) — falling back to CPU", vid, early_err)
+            continue
 
-    return Response(generate(), mimetype="video/mp4",
-                    headers={
-                        "Cache-Control": "no-cache",
-                        "Accept-Ranges": "none",
-                        "X-Content-Type-Options": "nosniff",
-                    })
+        def generate(_proc=proc, _first=first_chunk, _stderr=stderr_buf):
+            try:
+                if _first:
+                    yield _first
+                while True:
+                    chunk = _proc.stdout.read(65536)
+                    if not chunk:
+                        break
+                    yield chunk
+            except (OSError, GeneratorExit):
+                pass
+            finally:
+                _proc.stdout.close()
+                try:
+                    _proc.terminate()
+                    _proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    _proc.kill()
+                    _proc.wait()
+                rc = _proc.returncode
+                stderr_text = b''.join(_stderr).decode(errors='replace')[:500]
+                if rc and rc != -9 and stderr_text:
+                    log.error("transcode vid=%d ffmpeg exit=%d: %s", vid, rc, stderr_text.strip())
+
+        return Response(generate(), mimetype="video/mp4",
+                       headers={
+                           "Cache-Control": "no-cache",
+                           "Accept-Ranges": "none",
+                           "X-Content-Type-Options": "nosniff",
+                       })
+
+    # Should not reach here, but safety net
+    return jsonify({"error": "Transkodowanie nie powiodło się."}), 500
 
 
 # ── HLS endpoints ─────────────────────────────────────────────

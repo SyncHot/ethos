@@ -1126,7 +1126,7 @@ def _probe_video(path):
             timeout = 120 if fsize > 4 * 1024**3 else 60
         except OSError:
             timeout = 60
-        cmd = 'ffprobe -v quiet -print_format json -show_format -show_streams ' + q(path)
+        cmd = 'ffprobe -v quiet -print_format json -show_format -show_streams -probesize 100M -analyzeduration 10M ' + q(path)
         result = host_run(cmd, timeout=timeout)
         if result.returncode != 0:
             log.debug('ffprobe non-zero exit for %s: %s', path, result.stderr)
