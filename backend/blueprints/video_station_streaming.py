@@ -157,7 +157,7 @@ def transcode(vid):
             video_enc_args = ["-c:v", "libx264", "-preset", "ultrafast", "-crf", str(crf)]
             log.info("transcode encode: %s → libx264 (CPU, crf=%d)", vcodec, crf)
 
-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-probesize", "100M", "-analyzeduration", "10M"]
     cmd += hw_pre
     if start_sec > 0:
         cmd += ["-ss", str(start_sec)]
@@ -294,8 +294,7 @@ def hls_start(vid):
 
     session_id = "%d_%s" % (vid, os.urandom(4).hex())
     tmpdir = tempfile.mkdtemp(prefix="vs_hls_")
-
-    cmd = "ffmpeg -hide_banner -loglevel error"
+    cmd = "ffmpeg -hide_banner -loglevel error -probesize 100M -analyzeduration 10M"
     if pre_input_args:
         cmd += " %s" % pre_input_args
     if start_sec > 0:
