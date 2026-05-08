@@ -42,10 +42,7 @@ import gevent
 from flask import Blueprint, request, jsonify, g
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from host import host_run, host_run_stream, data_path, app_path, q, _apt_exec, apt_install as _host_apt_install
-
-# Import split modules (catalog, fileops, install orchestration)
-from blueprints import app_manager_catalog, app_manager_fileops, app_manager_install
+from host import host_run, host_run_stream, data_path, app_path, q
 
 log = logging.getLogger('app_manager')
 app_manager_bp = Blueprint('app_manager', __name__, url_prefix='/api/app-manager')
@@ -62,21 +59,6 @@ _running_task_lock = threading.Lock()
 def init_app_manager(sio):
     global _socketio
     _socketio = sio
-    
-    # Initialize sub-modules with shared context
-    app_manager_fileops.set_paths(data_path=data_path, app_path=app_path)
-    app_manager_install.set_emit_fn(_emit_progress)
-    app_manager_install.set_flask_app(_flask_app)
-    app_manager_install.set_socketio(_socketio)
-    app_manager_install.set_constants(
-        _BACKEND_EXTRA_FILES=_BACKEND_EXTRA_FILES,
-        _OPTIONAL_BLUEPRINTS=_OPTIONAL_BLUEPRINTS,
-        host_run=host_run,
-        host_run_stream=host_run_stream,
-        q=q,
-    )
-    
-    # Auto-repair missing files for "installed" apps in background
     try:
         from gevent import spawn_later
         spawn_later(15, _repair_missing_app_files)
@@ -148,14 +130,6 @@ _FRONTEND_APPS_DIR = os.path.join(_ETHOS_ROOT, 'frontend', 'js', 'apps')
 _BLUEPRINTS_DIR = os.path.join(_ETHOS_ROOT, 'backend', 'blueprints')
 
 INSTALLED_FILE = data_path('installed_apps.json')
-APP_UPDATE_CONFIG_FILE = data_path('app_update_config.json')
-CATALOG_SOURCES_FILE = data_path('catalog_sources.json')
-CATALOG_CACHE_FILE = '/tmp/ethos_app_catalog.json'
-CATALOG_CACHE_TTL = 3600 * 6
-
-DEFAULT_GITHUB_REPO = 'SyncHot/ethos-os-ethos-apps'
-GITHUB_CATALOG_URL = f'https://raw.githubusercontent.com/{DEFAULT_GITHUB_REPO}/main/catalog.json'
-GITHUB_APP_BASE    = f'https://raw.githubusercontent.com/{DEFAULT_GITHUB_REPO}/main/apps'
 
 # ─── Core Apps (wbudowane, nieusuwalne) ──────────────────────
 

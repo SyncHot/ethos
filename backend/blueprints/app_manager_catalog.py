@@ -1,7 +1,6 @@
-"""
-EthOS - App Manager Catalog Module
+"""EthOS - App Manager Catalog
 
-Handles catalog discovery, fetching, merging, and caching.
+Catalog discovery, fetching, caching, update checking.
 """
 
 import os
@@ -14,25 +13,36 @@ import urllib.error
 import threading
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from host import data_path
+from host import data_path, app_path
 
 log = logging.getLogger('app_manager')
 
-# ─── Catalog paths and settings ──────────────────────────────
-
+# Path constants
+APP_UPDATE_CONFIG_FILE = data_path('app_update_config.json')
 CATALOG_SOURCES_FILE = data_path('catalog_sources.json')
 CATALOG_CACHE_FILE = data_path('app_catalog_cache.json')
-CATALOG_CACHE_TTL = 3600  # 1 hour
+CATALOG_CACHE_TTL = 3600 * 6
 
 DEFAULT_GITHUB_REPO = 'SyncHot/ethos-os-ethos-apps'
 GITHUB_CATALOG_URL = f'https://raw.githubusercontent.com/{DEFAULT_GITHUB_REPO}/main/catalog.json'
-GITHUB_APP_BASE    = f'https://raw.githubusercontent.com/{DEFAULT_GITHUB_REPO}/main/apps'
+GITHUB_APP_BASE = f'https://raw.githubusercontent.com/{DEFAULT_GITHUB_REPO}/main/apps'
 
-# ─── Frontend extra files ────────────────────────────────────
+_ETHOS_ROOT = app_path()
+_FRONTEND_APPS_DIR = os.path.join(_ETHOS_ROOT, 'frontend', 'js', 'apps')
+_BLUEPRINTS_DIR = os.path.join(_ETHOS_ROOT, 'backend', 'blueprints')
 
-_FRONTEND_EXTRA_FILES: dict = {
-    # 'gallery': ['gallery_lightbox', 'gallery_people'],  # example
-}
+_catalog_lock = threading.RLock()
+
+
+def _main():
+    return sys.modules.get('blueprints.app_manager')
+
+
+def _fileops():
+    return sys.modules.get('blueprints.app_manager_fileops')
+
+
+# ─── Built-in catalog (fallback gdy GitHub niedostepny) ──────
 
 BUILTIN_CATALOG = [
     {
@@ -411,13 +421,9 @@ BUILTIN_CATALOG = [
     },
 ]
 
-
-
-_catalog_lock = threading.RLock()
-
+# ─── Catalog cache helpers ────────────────────────────────────
 
 def _load_catalog_cache():
-    """Return cached catalog if valid and fresh."""
     try:
         if not os.path.isfile(CATALOG_CACHE_FILE):
             return None
@@ -430,29 +436,50 @@ def _load_catalog_cache():
         return None
 
 
-def _invalidate_catalog_cache():
-    """Clear catalog cache."""
-    try:
-        os.remove(CATALOG_CACHE_FILE)
-    except FileNotFoundError:
-        pass
-    except Exception as e:
-        log.warning('[app_manager_catalog] Cannot remove cache: %s', e)
-
-
 def _save_catalog_cache(data):
-    """Save catalog to cache."""
     try:
-        os.makedirs(os.path.dirname(CATALOG_CACHE_FILE), exist_ok=True)
         tmp = CATALOG_CACHE_FILE + '.tmp'
         with open(tmp, 'w') as f:
             json.dump(data, f)
         os.replace(tmp, CATALOG_CACHE_FILE)
     except Exception as e:
-        log.warning('[app_manager_catalog] Cannot save catalog cache: %s', e)
+        log.warning('[app_manager] Cannot save catalog cache: %s', e)
 
 
-# ─── Multi-source catalog functions ──────────────────────────
+def _invalidate_catalog_cache():
+    try:
+        os.unlink(CATALOG_CACHE_FILE)
+    except OSError:
+        pass
+
+
+def _fetch_github_catalog():
+    try:
+        req = urllib.request.Request(
+            GITHUB_CATALOG_URL,
+            headers={'User-Agent': 'EthOS-AppManager/1.0'},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+        if isinstance(data, dict) and 'apps' in data:
+            return data['apps']
+        if isinstance(data, list):
+            return data
+    except Exception as e:
+        log.debug('[app_manager] GitHub catalog unavailable: %s', e)
+    return None
+
+
+# ─── Multi-source catalog ────────────────────────────────────
+
+_DEFAULT_CATALOG_SOURCE = {
+    'id': 'official',
+    'name': 'EthOS Official',
+    'type': 'github',
+    'repo': DEFAULT_GITHUB_REPO,
+    'enabled': True,
+}
+
 
 def _load_catalog_sources():
     """Load catalog sources list. Auto-creates default if missing."""
@@ -489,7 +516,6 @@ def _fetch_catalog_from_source(source):
             url = source.get('url', '')
             if not url:
                 return None
-            # Ensure URL points to catalog.json
             if not url.endswith('/catalog.json') and not url.endswith('.json'):
                 url = url.rstrip('/') + '/catalog.json'
 
@@ -501,7 +527,6 @@ def _fetch_catalog_from_source(source):
         if not isinstance(apps, list):
             return None
 
-        # Tag each app with its source info for download routing
         src_id = source.get('id', 'unknown')
         for app in apps:
             if isinstance(app, dict):
@@ -537,14 +562,11 @@ def _get_catalog(force_refresh=False):
 
         sources = _load_catalog_sources()
         enabled = [s for s in sources if s.get('enabled', True)]
-        builtin_by_id = {a['id']: a for a in BUILTIN_CATALOG}
         merged_by_id = {}
 
-        # Start with builtin catalog as baseline
         for app in BUILTIN_CATALOG:
             merged_by_id[app['id']] = dict(app)
 
-        # Layer each enabled source on top — later sources override earlier ones
         any_fetched = False
         for src in enabled:
             apps = _fetch_catalog_from_source(src)
@@ -563,28 +585,232 @@ def _get_catalog(force_refresh=False):
         return merged
 
 
-# ─── Install helpers ─────────────────────────────────────────
+# ─── Is-bundled check ────────────────────────────────────────
+
+def _is_bundled(app_id):
+    m = sys.modules.get('blueprints.app_manager_fileops')
+    if m:
+        fns = m._get_frontend_filenames(app_id)
+        apps_dir = m._FRONTEND_APPS_DIR
+    else:
+        fns = [app_id]
+        apps_dir = _FRONTEND_APPS_DIR
+    if not fns:
+        return True
+    return all(
+        os.path.isfile(os.path.join(apps_dir, fn + '.js')) and
+        os.path.getsize(os.path.join(apps_dir, fn + '.js')) > 0
+        for fn in fns
+    )
 
 
+# ─── Semver + GitHub app base ────────────────────────────────
 
-def _load_catalog_with_cache():
-    """Load catalog from cache or fetch fresh from all sources.
-    
-    Returns cached version if valid (< CATALOG_CACHE_TTL old).
-    Otherwise fetches fresh from GitHub and built-in catalogs.
-    """
-    with _catalog_lock:
-        # Try cache first
-        cached = _load_catalog_cache()
-        if cached is not None:
-            return cached
-        
-        # Fetch fresh from multiple sources
-        catalog = _get_catalog(force_refresh=True)
-        return catalog
+def _semver_key(ver):
+    """Return a sortable tuple for semver comparison (handles 1.10.0 > 1.9.0 correctly)."""
+    try:
+        parts = str(ver).split('.')
+        return tuple(int(p) for p in (parts + ['0', '0', '0'])[:3])
+    except Exception:
+        return (0, 0, 0)
 
 
-def _load_builtin_catalog():
-    """Return BUILTIN_CATALOG as a list."""
-    return list(BUILTIN_CATALOG)
+def _get_github_app_base():
+    """Get the GitHub base URL, respecting custom repo config. Fallback for non-sourced apps."""
+    try:
+        with open(APP_UPDATE_CONFIG_FILE) as f:
+            cfg = json.load(f)
+        repo = cfg.get('github_repo', DEFAULT_GITHUB_REPO)
+    except Exception:
+        repo = DEFAULT_GITHUB_REPO
+    return f'https://raw.githubusercontent.com/{repo}/main/apps'
 
+
+# ─── App update config ───────────────────────────────────────
+
+_DEFAULT_APP_UPDATE_CONFIG = {
+    'source': 'github',
+    'github_repo': DEFAULT_GITHUB_REPO,
+}
+
+
+def _load_app_update_config():
+    try:
+        if os.path.isfile(APP_UPDATE_CONFIG_FILE):
+            with open(APP_UPDATE_CONFIG_FILE) as f:
+                cfg = json.load(f)
+            if 'source' not in cfg:
+                cfg['source'] = 'github'
+            if 'github_repo' not in cfg:
+                cfg['github_repo'] = DEFAULT_GITHUB_REPO
+            return cfg
+    except Exception:
+        pass
+    return dict(_DEFAULT_APP_UPDATE_CONFIG)
+
+
+def _save_app_update_config(cfg):
+    tmp = APP_UPDATE_CONFIG_FILE + '.tmp'
+    with open(tmp, 'w') as f:
+        json.dump(cfg, f, indent=2)
+    os.replace(tmp, APP_UPDATE_CONFIG_FILE)
+
+
+# ─── OTA update helpers ──────────────────────────────────────
+
+def _get_update_url():
+    """Read update_url from updater config."""
+    cfg_path = data_path('update_config.json')
+    try:
+        if os.path.isfile(cfg_path):
+            with open(cfg_path) as f:
+                return json.load(f).get('update_url', '')
+    except Exception:
+        pass
+    return ''
+
+
+def _resolve_update_base(raw):
+    """Resolve user-friendly update source to base URL (same logic as updater)."""
+    if not raw:
+        return ''
+    raw = raw.strip().rstrip('/')
+    if raw.startswith('github:'):
+        return ''
+    if raw.startswith('http://') or raw.startswith('https://'):
+        from urllib.parse import urlparse
+        parsed = urlparse(raw)
+        path = parsed.path.rstrip('/')
+        if path == '' or path == '/':
+            return raw.rstrip('/') + '/updates'
+        return raw
+    return f'http://{raw}:9000/updates'
+
+
+# ─── SHA helpers ─────────────────────────────────────────────
+
+def _file_sha256(path):
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(65536), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _git_blob_sha(filepath):
+    """Compute git blob SHA1 for a local file (matches GitHub's blob SHA)."""
+    import hashlib
+    with open(filepath, 'rb') as f:
+        content = f.read()
+    blob = b'blob ' + str(len(content)).encode() + b'\0' + content
+    return hashlib.sha1(blob).hexdigest()
+
+
+def _github_raw_base(repo):
+    return f'https://raw.githubusercontent.com/{repo}/main'
+
+
+def _fetch_github_tree(repo):
+    """Fetch the full file tree from a public GitHub repo. Returns {path: sha} dict."""
+    url = f'https://api.github.com/repos/{repo}/git/trees/main?recursive=1'
+    req = urllib.request.Request(url, headers={'User-Agent': 'EthOS-AppManager/1.0'})
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        data = json.loads(resp.read().decode())
+    return {item['path']: item['sha'] for item in data.get('tree', [])}
+
+
+def _check_github_updates(repo):
+    """Check GitHub repo for app files that differ from local (git blob SHA comparison).
+    Returns list of dicts: [{id, name, local_version, remote_version, backend_changed, frontend_changed}]."""
+    catalog_url = _github_raw_base(repo) + '/catalog.json'
+    try:
+        req = urllib.request.Request(catalog_url, headers={'User-Agent': 'EthOS-AppManager/1.0'})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode())
+    except Exception as e:
+        raise RuntimeError(f'Nie udało się pobrać katalogu GitHub: {e}')
+
+    remote_apps = data.get('apps', data) if isinstance(data, dict) else data
+    remote_by_id = {a['id']: a for a in remote_apps if isinstance(a, dict) and 'id' in a}
+
+    try:
+        remote_tree = _fetch_github_tree(repo)
+    except Exception as e:
+        raise RuntimeError(f'Nie udało się pobrać drzewa GitHub: {e}')
+
+    local_by_id = {a['id']: a for a in BUILTIN_CATALOG}
+
+    m_main = _main()
+    CORE_APPS = getattr(m_main, 'CORE_APPS', frozenset()) if m_main else frozenset()
+    _OPTIONAL_BLUEPRINTS = getattr(m_main, '_OPTIONAL_BLUEPRINTS', {}) if m_main else {}
+
+    m_fo = _fileops()
+    m_install = sys.modules.get('blueprints.app_manager_install')
+    if m_install and hasattr(m_install, '_ensure_installed_apps'):
+        installed = m_install._ensure_installed_apps()
+    elif m_fo and hasattr(m_fo, '_load_installed'):
+        installed = m_fo._load_installed()
+    else:
+        installed = {}
+
+    updates = []
+
+    for app_id in remote_by_id:
+        if app_id in CORE_APPS:
+            continue
+        if app_id not in installed and app_id not in _OPTIONAL_BLUEPRINTS:
+            continue
+
+        bp_info = _OPTIONAL_BLUEPRINTS.get(app_id)
+        if not bp_info:
+            continue
+
+        remote = remote_by_id[app_id]
+        local = local_by_id.get(app_id, {})
+
+        backend_changed = False
+        frontend_changed = False
+
+        if m_fo:
+            backend_fns = m_fo._get_backend_filenames(app_id)
+            frontend_fns = m_fo._get_frontend_filenames(app_id)
+            fo_blueprints_dir = m_fo._BLUEPRINTS_DIR
+            fo_frontend_dir = m_fo._FRONTEND_APPS_DIR
+        else:
+            backend_fns = [bp_info[0]]
+            frontend_fns = [app_id]
+            fo_blueprints_dir = _BLUEPRINTS_DIR
+            fo_frontend_dir = _FRONTEND_APPS_DIR
+
+        for idx, module_name in enumerate(backend_fns):
+            remote_name = 'backend.py' if idx == 0 else f'backend_{idx + 1}.py'
+            local_py = os.path.join(fo_blueprints_dir, module_name + '.py')
+            remote_py_path = f'apps/{app_id}/{remote_name}'
+            if os.path.isfile(local_py) and remote_py_path in remote_tree:
+                local_sha = _git_blob_sha(local_py)
+                if local_sha != remote_tree[remote_py_path]:
+                    backend_changed = True
+                    break
+
+        for idx, fn in enumerate(frontend_fns):
+            remote_name = 'frontend.js' if idx == 0 else f'frontend_{idx + 1}.js'
+            local_js = os.path.join(fo_frontend_dir, fn + '.js')
+            remote_js_path = f'apps/{app_id}/{remote_name}'
+            if os.path.isfile(local_js) and remote_js_path in remote_tree:
+                local_sha = _git_blob_sha(local_js)
+                if local_sha != remote_tree[remote_js_path]:
+                    frontend_changed = True
+                    break
+
+        if backend_changed or frontend_changed:
+            updates.append({
+                'id': app_id,
+                'name': remote.get('name', local.get('name', app_id)),
+                'local_version': local.get('version', '?'),
+                'remote_version': remote.get('version', '?'),
+                'backend_changed': backend_changed,
+                'frontend_changed': frontend_changed,
+            })
+
+    return updates

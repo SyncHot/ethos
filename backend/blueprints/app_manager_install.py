@@ -1,7 +1,6 @@
-"""
-EthOS - App Manager Install/Uninstall Module
+"""EthOS - App Manager Install/Uninstall
 
-Handles app lifecycle: install, uninstall, repair operations.
+App lifecycle: install, uninstall, batch update, dependency management.
 """
 
 import os
@@ -9,82 +8,160 @@ import json
 import logging
 import sys
 import time
+import threading
+
+import gevent
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from host import host_run, host_run_stream, data_path, q, _apt_exec, apt_install as _host_apt_install
+from host import host_run, host_run_stream, app_path, q
 
 log = logging.getLogger('app_manager')
 
-# ─── Module state - set by main app_manager ──────────────────
+_ETHOS_ROOT = app_path()
+_FRONTEND_APPS_DIR = os.path.join(_ETHOS_ROOT, 'frontend', 'js', 'apps')
+_BLUEPRINTS_DIR = os.path.join(_ETHOS_ROOT, 'backend', 'blueprints')
 
-_emit = None
-_flask_app = None
-_socketio = None
-_ETHOS_ROOT = None
-_BLUEPRINTS_DIR = None
-_FRONTEND_APPS_DIR = None
-
-# Constants needed
-APP_UPDATE_CONFIG_FILE = None
-DEFAULT_GITHUB_REPO = 'SyncHot/ethos-os-ethos-apps'
+_MIN_FREE_MB = 300
+_active_tasks = 0
+_active_tasks_lock = threading.Lock()
 
 
-def set_emit_fn(fn):
-    """Called from app_manager.py to set the emit callback."""
-    global _emit
-    _emit = fn
+def _main():
+    return sys.modules.get('blueprints.app_manager')
 
 
-def set_flask_app(app):
-    """Called from app_manager.py."""
-    global _flask_app
-    _flask_app = app
+def _catalog():
+    return sys.modules.get('blueprints.app_manager_catalog')
 
 
-def set_socketio(sio):
-    """Called from app_manager.py."""
-    global _socketio
-    _socketio = sio
+def _fileops():
+    return sys.modules.get('blueprints.app_manager_fileops')
 
 
-def set_constants(ethos_root, blueprints_dir, frontend_apps_dir, app_update_cfg_file):
-    """Called from app_manager to set paths and constants."""
-    global _ETHOS_ROOT, _BLUEPRINTS_DIR, _FRONTEND_APPS_DIR, APP_UPDATE_CONFIG_FILE
-    _ETHOS_ROOT = ethos_root
-    _BLUEPRINTS_DIR = blueprints_dir
-    _FRONTEND_APPS_DIR = frontend_apps_dir
-    APP_UPDATE_CONFIG_FILE = app_update_cfg_file
+# ─── Runtime accessors ─────────────────────────────────────
+
+def _emit(event_data):
+    m = _main()
+    fn = getattr(m, '_emit', None) if m else None
+    if fn:
+        fn(event_data)
 
 
-# ─── Helper functions ────────────────────────────────────────
+def _get_socketio():
+    m = _main()
+    return getattr(m, '_socketio', None) if m else None
 
-def _get_github_app_base():
-    """Get the GitHub base URL, respecting custom repo config. Fallback for non-sourced apps."""
+
+def _get_flask_app():
+    m = _main()
+    return getattr(m, '_flask_app', None) if m else None
+
+
+def _hot_load_blueprint(app_id):
+    m = _main()
+    fn = getattr(m, '_hot_load_blueprint', None) if m else None
+    return fn(app_id) if fn else True
+
+
+def _load_installed():
+    m = _fileops()
+    return m._load_installed() if m else {}
+
+
+def _save_installed(state):
+    m = _fileops()
+    if m:
+        m._save_installed(state)
+
+
+def _set_installed(app_id, version, source='bundled', apt_deps=None, pip_deps=None):
+    m = _fileops()
+    if m:
+        m._set_installed(app_id, version, source, apt_deps=apt_deps, pip_deps=pip_deps)
+
+
+def _set_uninstalled(app_id):
+    m = _fileops()
+    if m:
+        m._set_uninstalled(app_id)
+
+
+def _internal_post(tc, endpoint, **kwargs):
+    m = _fileops()
+    return m._internal_post(tc, endpoint, **kwargs) if m else None
+
+
+def _get_frontend_filenames(app_id):
+    m = _fileops()
+    return m._get_frontend_filenames(app_id) if m else []
+
+
+def _get_frontend_filename(app_id):
+    m = _fileops()
+    return m._get_frontend_filename(app_id) if m else app_id
+
+
+def _get_backend_filenames(app_id):
+    m = _fileops()
+    return m._get_backend_filenames(app_id) if m else []
+
+
+def _get_optional_blueprints():
+    m = _main()
+    return getattr(m, '_OPTIONAL_BLUEPRINTS', {}) if m else {}
+
+
+def _get_core_apps():
+    m = _main()
+    return getattr(m, 'CORE_APPS', frozenset()) if m else frozenset()
+
+
+def _get_builtin_catalog():
+    m = _catalog()
+    return getattr(m, 'BUILTIN_CATALOG', []) if m else []
+
+
+def _get_catalog(force_refresh=False):
+    m = _catalog()
+    fn = getattr(m, '_get_catalog', None) if m else None
+    return fn(force_refresh=force_refresh) if fn else []
+
+
+def _get_app_base_for_source(app_def):
+    m = _catalog()
+    fn = getattr(m, '_get_app_base_for_source', None) if m else None
+    return fn(app_def) if fn else ''
+
+
+def _is_bundled(app_id):
+    m = _catalog()
+    fn = getattr(m, '_is_bundled', None) if m else None
+    return fn(app_id) if fn else False
+
+
+# ─── Download helper ──────────────────────────────────────────
+
+def _download_file(url, dest_path):
+    import urllib.request
     try:
-        cfg = json.load(open(APP_UPDATE_CONFIG_FILE))
-        repo = cfg.get('github_repo', DEFAULT_GITHUB_REPO)
-    except Exception:
-        repo = DEFAULT_GITHUB_REPO
-    return f'https://raw.githubusercontent.com/{repo}/main/apps'
+        req = urllib.request.Request(url, headers={'User-Agent': 'EthOS-AppManager/1.0'})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            content = resp.read()
+        tmp = dest_path + '.tmp'
+        with open(tmp, 'wb') as f:
+            f.write(content)
+        os.replace(tmp, dest_path)
+        return True
+    except Exception as e:
+        log.error('[app_manager] Download failed %s: %s', url, e)
+        return False
 
 
-_MIN_FREE_MB = 300  # minimum free space on root before apt/pip install
-
-
-
-def _semver_key(ver):
-    """Return a sortable tuple for semver comparison (handles 1.10.0 > 1.9.0 correctly)."""
-    try:
-        parts = str(ver).split('.')
-        return tuple(int(p) for p in (parts + ['0', '0', '0'])[:3])
-    except Exception:
-        return (0, 0, 0)
-
-
+# ─── Disk space check ─────────────────────────────────────────
 
 def _ensure_root_space(emit_fn):
     """Check root partition free space; proactively clean caches before install."""
-    _PROACTIVE_CLEAN_MB = 600  # always clean caches if less than this
+    _PROACTIVE_CLEAN_MB = 600
     try:
         st = os.statvfs('/')
         free_mb = (st.f_bavail * st.f_frsize) / (1024 * 1024)
@@ -97,8 +174,7 @@ def _ensure_root_space(emit_fn):
 
             host_run('apt-get clean 2>/dev/null', timeout=30)
             host_run('apt-get autoremove -y 2>/dev/null', timeout=60)
-            host_run('rm -rf /root/.cache/pip /tmp/pip-* 2>/dev/null', timeout=10)
-            # Remove stale __pycache__ from venv (safe, regenerated on import)
+            host_run('rm -rf /root/.cache/pip 2>/dev/null', timeout=10)
             venv_dir = os.path.join(os.environ.get('ETHOS_ROOT', '/opt/ethos'), 'venv')
             host_run(f'find {q(venv_dir)} -name __pycache__ -type d -exec rm -rf {{}} + 2>/dev/null',
                      timeout=30)
@@ -122,13 +198,13 @@ def _ensure_root_space(emit_fn):
     return True
 
 
+# ─── APT/pip dependency helpers ───────────────────────────────
 
 def _install_apt_deps(deps, emit_fn):
     """Install APT dependencies with streaming progress updates."""
     if not deps:
         return True
 
-    # Filter out already-installed packages to avoid unnecessary apt-get update
     missing = []
     for pkg in deps:
         check = host_run(f'dpkg -l {q(pkg)} 2>/dev/null | grep -q "^ii"', timeout=10)
@@ -142,13 +218,12 @@ def _install_apt_deps(deps, emit_fn):
     pkgs = ' '.join(q(d) for d in missing)
     emit_fn({'stage': 'deps_apt', 'message': 'apt-get update...', 'percent': 25, 'status': 'running'})
 
-    # Auto-recover from interrupted dpkg (common after power loss or killed installs)
     cmd = (
         f'DEBIAN_FRONTEND=noninteractive dpkg --configure -a 2>/dev/null; '
         f'DEBIAN_FRONTEND=noninteractive apt-get update -y -qq 2>/dev/null; '
         f'DEBIAN_FRONTEND=noninteractive apt-get install -y {pkgs} 2>&1'
     )
-    lock_file = '/tmp/ethos-apt.lock'
+    lock_file = '/var/lock/ethos-apt.lock'
     wrapped = f"flock -w 180 {q(lock_file)} bash -lc {q(cmd)}"
 
     exit_code = -1
@@ -165,7 +240,6 @@ def _install_apt_deps(deps, emit_fn):
         lower = stripped.lower()
         if 'e:' in lower or 'err' in lower:
             last_err = stripped
-        # Emit on keywords OR as keepalive every 4s to prevent stuck progress bar
         now = time.time()
         is_keyword = any(kw in lower for kw in ('unpacking', 'setting up', 'installing', 'get:', 'fetched', 'reading', 'building'))
         if is_keyword or (now - last_emit >= 4):
@@ -185,13 +259,11 @@ def _install_apt_deps(deps, emit_fn):
     return True
 
 
-
 def _install_pip_deps(deps, emit_fn):
     """Install pip dependencies with streaming progress updates."""
     if not deps:
         return True
 
-    # Filter out already-installed pip packages
     venv = os.path.join(_ETHOS_ROOT, 'venv')
     pip = os.path.join(venv, 'bin', 'pip') if os.path.isdir(venv) else 'pip3'
     python = os.path.join(venv, 'bin', 'python') if os.path.isdir(venv) else 'python3'
@@ -201,7 +273,6 @@ def _install_pip_deps(deps, emit_fn):
         pkg_name = pkg.split('==')[0].split('>=')[0].split('<=')[0].strip()
         check = host_run(f'{q(python)} -c "import importlib; importlib.import_module({q(pkg_name.replace("-","_"))})" 2>/dev/null', timeout=10)
         if check.returncode != 0:
-            # Also try pip show as fallback
             check2 = host_run(f'{q(pip)} show {q(pkg_name)} 2>/dev/null | grep -q "^Name:"', timeout=10)
             if check2.returncode != 0:
                 missing.append(pkg)
@@ -229,7 +300,6 @@ def _install_pip_deps(deps, emit_fn):
         lower = stripped.lower()
         if 'error' in lower:
             last_err = stripped
-        # Emit on keywords OR as keepalive every 4s to prevent stuck progress bar
         now = time.time()
         is_keyword = any(kw in lower for kw in ('collecting', 'downloading', 'installing', 'building', 'successfully', 'obtaining'))
         if is_keyword or (now - last_emit >= 4):
@@ -249,24 +319,18 @@ def _install_pip_deps(deps, emit_fn):
     return True
 
 
+# ─── Frontend sync + task counter ────────────────────────────
 
 def _sync_frontend_dist():
     frontend = os.path.join(_ETHOS_ROOT, 'frontend')
     dist = os.path.join(_ETHOS_ROOT, 'frontend_dist')
     if os.path.isdir(dist):
         host_run('rsync -a --delete ' + q(frontend + '/') + ' ' + q(dist + '/'), timeout=60)
-    # Invalidate the index.html cache so new/removed scripts are picked up
-    import sys
     app_mod = sys.modules.get('app')
     if app_mod:
         cache = getattr(app_mod, '_INDEX_CACHE', None)
         if cache:
             cache['html'] = None
-
-
-_active_tasks = 0
-_active_tasks_lock = threading.Lock()
-
 
 
 def _task_start():
@@ -276,13 +340,11 @@ def _task_start():
         _active_tasks += 1
 
 
-
 def _task_done():
     """Decrement active background task counter."""
     global _active_tasks
     with _active_tasks_lock:
         _active_tasks = max(0, _active_tasks - 1)
-
 
 
 def _restart_server():
@@ -294,96 +356,22 @@ def _restart_server():
     threading.Thread(target=_do, daemon=True).start()
 
 
-
-def _hot_load_blueprint(app_id):
-    """Load an optional blueprint at runtime without server restart.
-    Returns True if blueprint is ready (loaded or no backend needed).
-    Returns False if loading failed (caller should fall back to restart).
-    """
-    import importlib
-    import inspect
-
-    bp_info = _OPTIONAL_BLUEPRINTS.get(app_id)
-    if not bp_info:
-        return True  # No backend needed (frontend-only / simple app)
-
-    module_name, bp_var, init_fn, needs_sio = bp_info
-
-    bp_file = os.path.join(_BLUEPRINTS_DIR, module_name + '.py')
-    if not os.path.isfile(bp_file):
-        return True  # No backend file on disk — frontend-only app
-
-    if not _flask_app:
-        log.warning('[app_manager] Flask app not available for hot-load')
-        return False
-
-    # Check if already loaded (module in cache + blueprint registered)
-    mod_key = 'blueprints.' + module_name
-    if mod_key in sys.modules:
-        mod = sys.modules[mod_key]
-        bp = getattr(mod, bp_var, None)
-        if bp and bp.name in _flask_app.blueprints:
-            log.info('[app_manager] Blueprint %s already loaded, skipping hot-load', bp.name)
-            return True
-
-    try:
-        if mod_key in sys.modules:
-            mod = importlib.reload(sys.modules[mod_key])
-        else:
-            mod = importlib.import_module(mod_key)
-
-        bp = getattr(mod, bp_var)
-
-        if needs_sio and _socketio:
-            bp._socketio = _socketio
-
-        # Skip registration if blueprint name already in app (e.g. bundled reload)
-        if bp.name in _flask_app.blueprints:
-            log.info('[app_manager] Blueprint %s already registered', bp.name)
-            return True
-
-        # Temporarily bypass Flask's first-request assertion to allow
-        # runtime blueprint registration.  Gevent is cooperative so no
-        # other greenlet can interleave between the flag flip.
-        _flask_app._got_first_request = False
-        try:
-            _flask_app.register_blueprint(bp)
-        finally:
-            _flask_app._got_first_request = True
-
-        if init_fn:
-            fn = getattr(mod, init_fn, None)
-            if fn:
-                sig = inspect.signature(fn)
-                if sig.parameters and _socketio:
-                    fn(_socketio)
-                else:
-                    fn()
-
-        log.info('[app_manager] Hot-loaded blueprint: %s', module_name)
-        return True
-    except Exception as e:
-        log.error('[app_manager] Hot-load failed for %s: %s', module_name, e)
-        return False
-
-
+# ─── Background install ───────────────────────────────────────
 
 def _bg_install(app_id, app_def, task_id):
     def emit(extra):
         _emit({'task_id': task_id, 'app_id': app_id, **extra})
 
     _needs_restart = False
-    _downloaded_frontend = None   # track newly downloaded files for cleanup on failure
-    _downloaded_backend = []      # list of newly downloaded backend .py paths
+    _downloaded_frontend = None
+    _downloaded_backend = []
     _task_start()
     try:
         emit({'stage': 'start', 'percent': 5, 'message': 'Instalowanie ' + app_def['name'] + '...', 'status': 'running'})
 
-        # Determine source before downloading — was the app already on disk?
         _was_bundled = _is_bundled(app_id)
         app_base_url = _get_app_base_for_source(app_def)
 
-        # Pobierz pliki z GitHub jesli nie ma na dysku
         if not _was_bundled:
             emit({'stage': 'download', 'percent': 10, 'message': 'Pobieranie pliku frontend...', 'status': 'running'})
             fns = _get_frontend_filenames(app_id)
@@ -401,8 +389,6 @@ def _bg_install(app_id, app_def, task_id):
         else:
             emit({'stage': 'download', 'percent': 15, 'message': 'Pliki juz dostepne (bundled)', 'status': 'running'})
 
-        # Download backend .py (primary + extras) from GitHub if not on disk
-        # (Builder images keep frontend JS but remove optional backend .py)
         backend_modules = _get_backend_filenames(app_id)
         if backend_modules:
             for idx, module_name in enumerate(backend_modules):
@@ -416,7 +402,6 @@ def _bg_install(app_id, app_def, task_id):
                         return
                     _downloaded_backend.append(bp_dest)
 
-        # Instalacja zaleznosci (apt: 25-42%, pip: 45-57%)
         apt_deps = app_def.get('apt_deps', [])
         pip_deps = app_def.get('pip_deps', [])
 
@@ -424,7 +409,6 @@ def _bg_install(app_id, app_def, task_id):
             return
 
         if apt_deps and not _install_apt_deps(apt_deps, emit):
-            # Clean up freshly downloaded files — app isn't usable without its deps
             for p in (_downloaded_backend +
                       (_downloaded_frontend if isinstance(_downloaded_frontend, list) else
                        [_downloaded_frontend] if _downloaded_frontend else [])):
@@ -444,19 +428,18 @@ def _bg_install(app_id, app_def, task_id):
                     pass
             return
 
-        # Hot-load blueprint so its routes are available immediately
         emit({'stage': 'load', 'percent': 65, 'message': 'Ładowanie modułu...', 'status': 'running'})
         hot_ok = _hot_load_blueprint(app_id)
         emit({'stage': 'load', 'percent': 70, 'message': 'Moduł załadowany', 'status': 'running'})
 
-        # Call app's install endpoint with timeout
         install_ep = app_def.get('install_endpoint')
-        if install_ep and not app_def.get('simple') and _flask_app:
+        flask_app = _get_flask_app()
+        if install_ep and not app_def.get('simple') and flask_app:
             emit({'stage': 'configure', 'percent': 75, 'message': 'Konfigurowanie apki...', 'status': 'running'})
             try:
                 with gevent.Timeout(60, False):
-                    with _flask_app.app_context():
-                        with _flask_app.test_client() as tc:
+                    with flask_app.app_context():
+                        with flask_app.test_client() as tc:
                             resp = _internal_post(tc, install_ep)
                             if resp and resp.status_code >= 400:
                                 log.warning('[app_manager] install_endpoint %s returned %s', install_ep, resp.status_code)
@@ -464,7 +447,6 @@ def _bg_install(app_id, app_def, task_id):
                 log.warning('[app_manager] install_endpoint %s failed: %s', install_ep, e)
             emit({'stage': 'configure', 'percent': 80, 'message': 'Konfiguracja zakonczona', 'status': 'running'})
 
-        # Mark installed BEFORE frontend sync — rsync can disrupt SocketIO
         version = app_def.get('version', 'bundled')
         source = 'bundled' if _was_bundled else 'github'
         _set_installed(app_id, version, source,
@@ -473,10 +455,10 @@ def _bg_install(app_id, app_def, task_id):
 
         emit({'stage': 'done', 'percent': 100, 'message': app_def['name'] + ' zainstalowano pomyslnie', 'status': 'done'})
 
-        # Notify all clients — enables hot-load without page refresh
-        if _socketio:
+        socketio = _get_socketio()
+        if socketio:
             fns = _get_frontend_filenames(app_id)
-            _socketio.emit('app_installed', {
+            socketio.emit('app_installed', {
                 'id': app_id,
                 'name': app_def.get('name', app_id),
                 'icon': app_def.get('icon', 'fa-puzzle-piece'),
@@ -488,7 +470,6 @@ def _bg_install(app_id, app_def, task_id):
                 'js_files': [fn + '.js' for fn in fns],
             })
 
-        # Sync frontend_dist — non-critical cache sync, done after completion events
         gevent.sleep(0.1)
         try:
             _sync_frontend_dist()
@@ -514,21 +495,20 @@ def _bg_install(app_id, app_def, task_id):
             _restart_server()
 
 
+# ─── Orphan dependency detection ─────────────────────────────
 
 def _get_orphan_deps(app_id, app_def):
     """Return (apt_orphans, pip_orphans) — deps not needed by any other installed app."""
     installed = _load_installed()
     app_apt = set(app_def.get('apt_deps', []))
     app_pip = set(app_def.get('pip_deps', []))
-    # Also check deps stored in installed_apps.json from the app being uninstalled
     stored = installed.get(app_id, {})
     app_apt |= set(stored.get('apt_deps', []))
     app_pip |= set(stored.get('pip_deps', []))
     if not app_apt and not app_pip:
         return [], []
 
-    # Collect deps needed by other installed apps (from catalog + stored state)
-    catalog_by_id = {a['id']: a for a in BUILTIN_CATALOG}
+    catalog_by_id = {a['id']: a for a in _get_builtin_catalog()}
     needed_apt = set()
     needed_pip = set()
     for aid in installed:
@@ -544,12 +524,12 @@ def _get_orphan_deps(app_id, app_def):
     return list(app_apt - needed_apt), list(app_pip - needed_pip)
 
 
+# ─── Remove dep helpers ───────────────────────────────────────
 
 def _remove_apt_deps(deps, emit_fn):
     """Remove orphaned APT packages."""
     if not deps:
         return
-    # Only remove packages that are actually installed
     to_remove = []
     for pkg in deps:
         check = host_run(f'dpkg -l {q(pkg)} 2>/dev/null | grep -q "^ii"', timeout=10)
@@ -561,7 +541,7 @@ def _remove_apt_deps(deps, emit_fn):
     log.info('[app_manager] Removing orphan apt deps: %s', to_remove)
     emit_fn({'stage': 'deps_cleanup', 'message': f'Usuwanie apt: {", ".join(to_remove)}', 'percent': 45, 'status': 'running'})
     cmd = f'DEBIAN_FRONTEND=noninteractive apt-get remove -y {pkgs} 2>&1'
-    lock_file = '/tmp/ethos-apt.lock'
+    lock_file = '/var/lock/ethos-apt.lock'
     wrapped = f"flock -w 180 {q(lock_file)} bash -lc {q(cmd)}"
     for line in host_run_stream(wrapped):
         stripped = line.strip()
@@ -572,14 +552,12 @@ def _remove_apt_deps(deps, emit_fn):
             break
 
 
-
 def _remove_pip_deps(deps, emit_fn):
     """Remove orphaned pip packages."""
     if not deps:
         return
     venv = os.path.join(_ETHOS_ROOT, 'venv')
     pip = os.path.join(venv, 'bin', 'pip') if os.path.isdir(venv) else 'pip3'
-    # Only remove packages that are actually installed
     to_remove = []
     for pkg in deps:
         pkg_name = pkg.split('==')[0].split('>=')[0].split('<=')[0].strip()
@@ -601,6 +579,7 @@ def _remove_pip_deps(deps, emit_fn):
             break
 
 
+# ─── Background uninstall ─────────────────────────────────────
 
 def _bg_uninstall(app_id, app_def, task_id, wipe_data=False):
     def emit(extra):
@@ -610,21 +589,20 @@ def _bg_uninstall(app_id, app_def, task_id, wipe_data=False):
     try:
         emit({'stage': 'start', 'percent': 10, 'message': 'Odinstalowywanie ' + app_def['name'] + '...', 'status': 'running'})
 
-        # Wywolaj wlasny endpoint uninstall
         uninstall_ep = app_def.get('uninstall_endpoint')
-        if uninstall_ep and not app_def.get('simple') and _flask_app:
+        flask_app = _get_flask_app()
+        if uninstall_ep and not app_def.get('simple') and flask_app:
             emit({'stage': 'cleanup', 'percent': 30, 'message': 'Czyszczenie danych apki...', 'status': 'running'})
             try:
                 with gevent.Timeout(60, False):
-                    with _flask_app.app_context():
-                        with _flask_app.test_client() as tc:
+                    with flask_app.app_context():
+                        with flask_app.test_client() as tc:
                             resp = _internal_post(tc, uninstall_ep, json={'wipe_data': wipe_data})
                             if resp and resp.status_code not in (200, 204):
                                 log.warning('[app_manager] uninstall_endpoint %s returned %s', uninstall_ep, resp.status_code)
             except Exception as e:
                 log.warning('[app_manager] uninstall_endpoint %s failed: %s', uninstall_ep, e)
 
-        # Remove orphaned dependencies (apt/pip) not needed by other installed apps
         try:
             apt_orphans, pip_orphans = _get_orphan_deps(app_id, app_def)
             if apt_orphans or pip_orphans:
@@ -634,14 +612,13 @@ def _bg_uninstall(app_id, app_def, task_id, wipe_data=False):
         except Exception as e:
             log.warning('[app_manager] dep cleanup for %s failed: %s', app_id, e)
 
-        # Remove files only for externally-downloaded apps, not bundled ones
         installed_info = _load_installed().get(app_id, {})
         was_external = installed_info.get('source') == 'github'
 
         emit({'stage': 'remove', 'percent': 60, 'message': 'Usuwanie plikow apki...', 'status': 'running'})
+        CORE_APPS = _get_core_apps()
         if was_external:
             for fn in _get_frontend_filenames(app_id):
-                # Don't remove shared frontend files used by core apps (e.g. storage.js)
                 core_uses_same = any(
                     _get_frontend_filename(cid) == fn for cid in CORE_APPS
                 )
@@ -649,11 +626,11 @@ def _bg_uninstall(app_id, app_def, task_id, wipe_data=False):
                     fp = os.path.join(_FRONTEND_APPS_DIR, fn + '.js')
                     if os.path.isfile(fp):
                         os.remove(fp)
-        # Remove backend files only for externally-downloaded apps
+
+        _OPTIONAL_BLUEPRINTS = _get_optional_blueprints()
         if was_external:
             for idx, module_name in enumerate(_get_backend_filenames(app_id)):
                 bp_file = os.path.join(_BLUEPRINTS_DIR, module_name + '.py')
-                # Primary file: don't remove if another installed app shares the same module
                 if idx == 0:
                     other_using_same = [
                         aid for aid, bpi in _OPTIONAL_BLUEPRINTS.items()
@@ -670,11 +647,10 @@ def _bg_uninstall(app_id, app_def, task_id, wipe_data=False):
 
         emit({'stage': 'done', 'percent': 100, 'message': app_def['name'] + ' odinstalowano', 'status': 'done'})
 
-        # Notify all clients — hot-remove from desktop without refresh
-        if _socketio:
-            _socketio.emit('app_uninstalled', {'id': app_id})
+        socketio = _get_socketio()
+        if socketio:
+            socketio.emit('app_uninstalled', {'id': app_id})
 
-        # Sync frontend_dist — cache sync after events flushed
         gevent.sleep(0.1)
         try:
             _sync_frontend_dist()
@@ -691,5 +667,178 @@ def _bg_uninstall(app_id, app_def, task_id, wipe_data=False):
         _task_done()
 
 
-# ─── Auth helper ──────────────────────────────────────────────
+# ─── Ensure installed + repair ────────────────────────────────
 
+def _ensure_installed_apps():
+    """Ensure installed_apps.json contains all on-disk optional apps."""
+    from datetime import datetime
+    installed = _load_installed()
+    changed = False
+    now = datetime.utcnow().isoformat()
+
+    catalog_by_id = {a['id']: a for a in _get_builtin_catalog()}
+    _OPTIONAL_BLUEPRINTS = _get_optional_blueprints()
+
+    for app_id, bp_info in _OPTIONAL_BLUEPRINTS.items():
+        module_name = bp_info[0]
+        local_py = os.path.join(_BLUEPRINTS_DIR, module_name + '.py')
+        if not (os.path.isfile(local_py) and os.path.getsize(local_py) > 0):
+            continue
+
+        cat_entry = catalog_by_id.get(app_id, {})
+
+        if app_id not in installed:
+            has_deps = bool(cat_entry.get('apt_deps') or cat_entry.get('pip_deps'))
+            if has_deps:
+                continue
+            installed[app_id] = {
+                'version': 'bundled',
+                'source': 'bundled',
+                'installed_at': now,
+            }
+            changed = True
+            log.info('[app_manager] Auto-registered on-disk app: %s', app_id)
+
+        cat_ver = catalog_by_id.get(app_id, {}).get('version', '')
+        inst_ver = installed[app_id].get('version', '')
+        if cat_ver and inst_ver in ('bundled', 'core') or (cat_ver and inst_ver and cat_ver > inst_ver):
+            installed[app_id]['version'] = cat_ver
+            changed = True
+
+    if changed:
+        _save_installed(installed)
+    return installed
+
+
+def _repair_missing_app_files():
+    """Auto-repair: re-download missing frontend/backend files for installed apps."""
+    try:
+        installed = _load_installed()
+        if not installed:
+            return
+        catalog = _get_catalog()
+        catalog_map = {a['id']: a for a in catalog}
+        repaired = []
+        CORE_APPS = _get_core_apps()
+
+        for app_id in list(installed):
+            if app_id in CORE_APPS:
+                continue
+            fns = _get_frontend_filenames(app_id)
+            if not fns:
+                continue
+            app_def = catalog_map.get(app_id, {})
+            base_url = _get_app_base_for_source(app_def)
+            for idx, fn in enumerate(fns):
+                remote_name = 'frontend.js' if idx == 0 else f'frontend_{idx + 1}.js'
+                js_path = os.path.join(_FRONTEND_APPS_DIR, fn + '.js')
+                if not os.path.isfile(js_path):
+                    url = base_url + '/' + app_id + '/' + remote_name
+                    if _download_file(url, js_path):
+                        repaired.append(f'{app_id}/{remote_name}')
+                        dist_path = os.path.join(_ETHOS_ROOT, 'frontend_dist', 'js', 'apps', fn + '.js')
+                        if os.path.isdir(os.path.dirname(dist_path)):
+                            try:
+                                import shutil
+                                shutil.copy2(js_path, dist_path)
+                            except Exception:
+                                pass
+            for idx, module_name in enumerate(_get_backend_filenames(app_id)):
+                remote_name = 'backend.py' if idx == 0 else f'backend_{idx + 1}.py'
+                bp_path = os.path.join(_BLUEPRINTS_DIR, module_name + '.py')
+                if not os.path.isfile(bp_path):
+                    url = base_url + '/' + app_id + '/' + remote_name
+                    if _download_file(url, bp_path):
+                        repaired.append(f'{app_id}/{remote_name}')
+
+        if repaired:
+            log.info('[app_manager] Auto-repaired %d missing files: %s', len(repaired), ', '.join(repaired))
+        else:
+            log.debug('[app_manager] Integrity check OK — no missing files')
+    except Exception as e:
+        log.warning('[app_manager] Auto-repair error: %s', e)
+
+
+# ─── Background update ────────────────────────────────────────
+
+def _bg_update_apps(app_ids, base_url, task_id, source='ota'):
+    """Background: download updated files and hot-reload."""
+    def emit(extra):
+        _emit({'task_id': task_id, **extra})
+
+    _task_start()
+    total = len(app_ids)
+    updated = []
+    failed = []
+
+    try:
+        emit({'stage': 'start', 'percent': 2, 'status': 'running',
+              'message': f'Aktualizacja {total} aplikacji ({source})...'})
+
+        _OPTIONAL_BLUEPRINTS = _get_optional_blueprints()
+
+        for idx, app_id in enumerate(app_ids):
+            pct_base = int(5 + (idx / total) * 85)
+            emit({'stage': 'updating', 'percent': pct_base, 'app_id': app_id,
+                  'status': 'running',
+                  'message': f'Aktualizacja {app_id} ({idx+1}/{total})...'})
+
+            bp_info = _OPTIONAL_BLUEPRINTS.get(app_id)
+            if not bp_info:
+                log.warning('[app_manager] Unknown app for update: %s', app_id)
+                failed.append(app_id)
+                continue
+
+            ok = True
+
+            emit({'stage': 'updating', 'percent': pct_base + 2, 'app_id': app_id,
+                  'status': 'running', 'message': f'{app_id}: pobieranie backend...'})
+            for b_idx, module_name in enumerate(_get_backend_filenames(app_id)):
+                remote_name = 'backend.py' if b_idx == 0 else f'backend_{b_idx + 1}.py'
+                bp_url = base_url + f'/{app_id}/{remote_name}'
+                bp_dest = os.path.join(_BLUEPRINTS_DIR, module_name + '.py')
+                if not _download_file(bp_url, bp_dest):
+                    log.warning('[app_manager] Backend download failed: %s/%s', app_id, remote_name)
+                    ok = False
+                    break
+
+            for f_idx, fn in enumerate(_get_frontend_filenames(app_id)):
+                remote_name = 'frontend.js' if f_idx == 0 else f'frontend_{f_idx + 1}.js'
+                js_url = base_url + f'/{app_id}/{remote_name}'
+                js_dest = os.path.join(_FRONTEND_APPS_DIR, fn + '.js')
+                emit({'stage': 'updating', 'percent': pct_base + 4, 'app_id': app_id,
+                      'status': 'running', 'message': f'{app_id}: pobieranie frontend...'})
+                if not _download_file(js_url, js_dest):
+                    log.warning('[app_manager] Frontend download failed: %s', app_id)
+                    ok = False
+
+            if ok:
+                emit({'stage': 'updating', 'percent': pct_base + 6, 'app_id': app_id,
+                      'status': 'running', 'message': f'{app_id}: ładowanie...'})
+                _hot_load_blueprint(app_id)
+                cat_entry = next((a for a in _get_builtin_catalog() if a['id'] == app_id), {})
+                ver = cat_entry.get('version', 'latest')
+                _set_installed(app_id, ver, source)
+                updated.append(app_id)
+            else:
+                failed.append(app_id)
+
+        msg = f'Zaktualizowano {len(updated)} aplikacji'
+        if failed:
+            msg += f', {len(failed)} błędów'
+        emit({'stage': 'done', 'percent': 100, 'status': 'done',
+              'message': msg, 'updated': updated, 'failed': failed})
+
+        if updated:
+            gevent.sleep(0.1)
+            try:
+                _sync_frontend_dist()
+            except Exception as e:
+                log.warning('[app_manager] frontend sync error: %s', e)
+
+    except Exception as e:
+        log.exception('[app_manager] App update error')
+        emit({'stage': 'error', 'percent': 0, 'status': 'error',
+              'message': f'Błąd: {e}'})
+    finally:
+        _task_done()
