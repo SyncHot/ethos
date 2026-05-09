@@ -505,6 +505,44 @@ _SSL_CTX = ssl.create_default_context()
 _SSL_CTX.check_hostname = False
 _SSL_CTX.verify_mode = ssl.CERT_NONE
 
+# ── SSRF Protection ────────────────────────────────────────────
+
+import ipaddress
+
+_SAFE_IP_NETWORKS = [
+    '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16',
+    '127.0.0.0/8', '0.0.0.0/8', '169.254.0.0/16',
+    '::1/128', 'fc00::/7', 'fe80::/10',
+]
+
+def _is_safe_url(url):
+    """Check if a URL is safe to fetch (not internal, not file://, etc.)."""
+    try:
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme not in ('http', 'https'):
+            return False
+        hostname = parsed.hostname
+        if not hostname:
+            return False
+        try:
+            ip = ipaddress.ip_address(hostname)
+        except ValueError:
+            try:
+                import socket
+                addr_info = socket.getaddrinfo(hostname, None, socket.AF_INET)
+                ip = ipaddress.ip_address(addr_info[0][4][0])
+            except (socket.gaierror, IndexError):
+                try:
+                    ip = ipaddress.ip_address(hostname)
+                except ValueError:
+                    return True
+        for net in _SAFE_IP_NETWORKS:
+            if ip in ipaddress.ip_network(net, strict=False):
+                return False
+        return True
+    except Exception:
+        return False
+
 
 
 # ── Sub-module route registration ───────────────────────────

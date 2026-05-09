@@ -262,7 +262,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/surveillance/status',
     },
     {
-        'id': 'ai-chat', 'name': 'AI Assistant', 'version': '1.0.3',
+        'id': 'ai-chat', 'name': 'AI Assistant', 'version': '1.0.4',
         'icon': 'fa-robot', 'color': '#8b5cf6', 'category': 'Tools', 'admin_only': False,
         'description': 'Asystent AI z obsługą GPT, Claude i lokalnych modeli LLM.',
         'apt_deps': [], 'pip_deps': ['openai', 'anthropic', 'huggingface_hub'],
@@ -302,7 +302,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/gallery/pkg-status',
     },
     {
-        'id': 'download-manager', 'name': 'Download Manager', 'version': '1.0.4',
+        'id': 'download-manager', 'name': 'Download Manager', 'version': '1.0.5',
         'icon': 'fa-cloud-download-alt', 'color': '#10b981', 'category': 'Tools', 'admin_only': False,
         'description': 'Pobieranie plikow z HTTP, torrent, magnet i serwisow premium.',
         'apt_deps': [], 'pip_deps': [],
@@ -320,7 +320,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/printer/pkg-status',
     },
     {
-        'id': 'docker-manager', 'name': 'Docker Manager', 'version': '1.0.8',
+        'id': 'docker-manager', 'name': 'Docker Manager', 'version': '1.0.9',
         'icon': 'fa-cubes', 'color': '#2496ed', 'category': 'System', 'admin_only': True,
         'description': 'Zarządzanie kontenerami Docker, projektami Compose, obrazami i logami.',
         'apt_deps': [], 'pip_deps': [],
@@ -370,7 +370,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/flasher/pkg-status',
     },
     {
-        'id': 'builder', 'name': 'Builder', 'version': '1.0.22',
+        'id': 'builder', 'name': 'Builder', 'version': '1.0.23',
         'icon': 'fa-hammer', 'color': '#f97316', 'category': 'System', 'admin_only': True,
         'description': 'Budowanie wydan EthOS i obrazow systemowych przez interfejs webowy.',
         'apt_deps': ['squashfs-tools', 'genisoimage', 'rsync'], 'pip_deps': [],
@@ -578,7 +578,7 @@ BUILTIN_CATALOG = [
         'apt_deps': [], 'pip_deps': [], 'simple': True,
     },
     {
-        'id': 'video-station', 'name': 'Video Station', 'version': '0.0.13',
+        'id': 'video-station', 'name': 'Video Station', 'version': '0.0.14',
         'icon': 'fa-film', 'color': '#7c3aed', 'category': 'Media', 'admin_only': False,
         'description': 'Biblioteka filmow z miniaturkami, streamingiem i sledzeniem postepu.',
         'apt_deps': ['ffmpeg'], 'pip_deps': [],
@@ -587,7 +587,7 @@ BUILTIN_CATALOG = [
         'status_endpoint': '/api/video-station/pkg-status',
     },
     {
-        'id': 'radio-music', 'name': 'Radio & Music', 'version': '0.0.10',
+        'id': 'radio-music', 'name': 'Radio & Music', 'version': '0.0.11',
         'icon': 'fa-broadcast-tower', 'color': '#10b981', 'category': 'Media', 'admin_only': False,
         'description': 'Radio internetowe z całego świata, podcasty i odtwarzacz muzyki.',
         'apt_deps': ['ffmpeg'], 'pip_deps': ['yt-dlp'],

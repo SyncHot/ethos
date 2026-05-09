@@ -840,7 +840,7 @@ def _inotify_watcher_loop():
 
             def _flush_batch():
                 """Trigger scan after a short quiet period."""
-                gevent.sleep(3)  # wait for burst to settle
+                gevent.sleep(8)  # wait for burst to settle and files to finish copying
                 if _pending_paths and not _scan_state.get('running'):
                     log.info("inotify: %d new file(s) detected — triggering scan", len(_pending_paths))
                     _pending_paths.clear()
@@ -1434,6 +1434,32 @@ def _tmdb_match_video(conn, video_id, filename, api_key=''):
 
 # --- Scan worker ---
 
+def _wait_for_file_stable(path, timeout=30, check_interval=2):
+    """Wait until the file stops changing (size + mtime stable for one interval).
+
+    Returns True if the file is stable, False if timeout was reached while
+    the file was still being written.  Used to avoid indexing files that are
+    mid-copy into the library folder.
+    """
+    import time
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            sz = os.path.getsize(path)
+            mt = os.path.getmtime(path)
+        except OSError:
+            return False
+        time.sleep(check_interval)
+        try:
+            sz2 = os.path.getsize(path)
+            mt2 = os.path.getmtime(path)
+        except OSError:
+            return False
+        if sz == sz2 and abs(mt - mt2) < 0.5:
+            return True
+    return False
+
+
 def _scan_worker(folders, use_tmdb=False):
     import gevent
     t0 = time.time()
@@ -1476,7 +1502,23 @@ def _scan_worker(folders, use_tmdb=False):
         if _scan_state.get("stop_requested"):
             break
         _scan_state["current_file"] = path
-        gevent.sleep(0.1)
+
+        # New files (not yet in DB) may still be copying — wait for stability
+        if path not in existing:
+            gevent.sleep(0.1)
+            if not _wait_for_file_stable(path):
+                log.info("scan: file still being written, deferring: %s", os.path.basename(path))
+                continue
+        else:
+            gevent.sleep(0.1)
+
+        # Read fresh mtime/size after stability check
+        try:
+            mt = os.path.getmtime(path)
+            sz = os.path.getsize(path)
+        except OSError:
+            continue
+
         meta = _probe_video(path)
         fn = os.path.basename(path)
         folder = os.path.dirname(path)
