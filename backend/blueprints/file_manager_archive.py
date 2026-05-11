@@ -40,6 +40,12 @@ from blueprints.admin_required import admin_required
 from blueprints.auth import require_auth, get_current_user
 
 
+def _get_transfer_resume_file():
+    """Lazy import to avoid circular dependency."""
+    from blueprints.file_manager_ops import TRANSFER_RESUME_FILE
+    return TRANSFER_RESUME_FILE
+
+
 def _main():
     """Return the main file_manager module."""
     return _sys.modules['blueprints.file_manager']
@@ -779,6 +785,7 @@ def _bg_transfer_remote(resolved, server, remote_dest, total_bytes, total_files,
 
 def _resume_interrupted_transfer():
     """Check for a persisted transfer task and resume it after server restart."""
+    TRANSFER_RESUME_FILE = _get_transfer_resume_file()
     task = _load_json(TRANSFER_RESUME_FILE, None)
     if not task or not isinstance(task, dict):
         return

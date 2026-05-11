@@ -40,6 +40,12 @@ log = logging.getLogger(__name__)
 # main loop responsive.
 _io_pool = gevent.threadpool.ThreadPool(4)
 
+
+def _dl_worker():
+    """Return blueprints.downloads_worker without importing it directly."""
+    return sys.modules.get('blueprints.downloads_worker')
+
+
 downloads_bp = Blueprint('downloads', __name__)
 
 DATA_DIR = data_path()
@@ -107,7 +113,7 @@ def init_downloads(socketio_instance):
     threading.Thread(target=_state_saver_loop, daemon=True).start()
     # Auto-resume any pending downloads after restart
     _active_threads.clear()  # stale refs from previous run
-    _start_next()
+    _dl_worker()._start_next()
     # Start watch folder monitor
     _start_watch_folder()
 
@@ -155,6 +161,15 @@ _config_defaults = {
     'overwrite_existing': False,
     'speed_limit': 0,
     'auto_categorize': True,
+    'proxy_enabled': False,
+    'proxy_type': 'http',  # http, https, socks5
+    'proxy_host': '',
+    'proxy_port': '',
+    'proxy_username': '',
+    'proxy_password': '',
+    'multi_segment_enabled': True,
+    'multi_segment_count': 4,  # Number of parallel segments (2-8)
+    'multi_segment_min_size': 10,  # Minimum file size in MB to use multi-segment
     'categories': [
         {'id': 'movies', 'name': 'Filmy', 'path': '', 'extensions': ['mp4', 'mkv', 'avi', 'mov', 'wmv', 'm4v']},
         {'id': 'music', 'name': 'Muzyka', 'path': '', 'extensions': ['mp3', 'flac', 'wav', 'aac', 'ogg', 'wma', 'm4a']},
@@ -331,8 +346,8 @@ def _watch_handle_torrent(fpath, fname, cfg):
         with _lock:
             _downloads[dl_id] = dl
             _save_state()
-        _emit('dl:update', _sanitize(dl))
-        _start_next()
+        _emit('dl:update', _dl_worker()._sanitize(dl))
+        _dl_worker()._start_next()
         # Move to processed/ (will be moved to error/ if it fails)
         _move_watch_torrent(fpath, fname, cfg, 'processed')
     except Exception:
@@ -434,7 +449,7 @@ def _watch_handle_txt(fpath, fname, cfg):
                 _downloads[dl_id] = dl
                 _save_state()
             dl_ids.append(dl_id)
-            _emit('dl:update', _sanitize(dl))
+            _emit('dl:update', _dl_worker()._sanitize(dl))
 
         # Create package entry
         if package_id and dl_ids:
@@ -454,9 +469,9 @@ def _watch_handle_txt(fpath, fname, cfg):
             with _lock:
                 _packages[package_id] = pkg
                 _save_state()
-            _emit('dl:package_update', _sanitize_package(pkg))
+            _emit('dl:package_update', _dl_worker()._sanitize_package(pkg))
 
-        _start_next()
+        _dl_worker()._start_next()
         os.remove(fpath)
     except Exception:
         pass
@@ -869,35 +884,105 @@ def list_downloads():
     def _sort_key(d):
         status_order = {'downloading': 0, 'torrent_downloading': 0, 'torrent_uploading': 0,
                         'resolving': 0, 'paused': 1, 'pending': 2,
-                        'completed': 3, 'failed': 4, 'cancelled': 5}
-        return (status_order.get(d.get('status', ''), 9), -d.get('priority', 0), -d.get('added_at', 0))
+                        'completed': 3, 'failed': 4, 'cancelled': 5, 'merging': 0}
+        priority_order = {'high': 2, 'normal': 1, 'low': 0}
+        priority_val = priority_order.get(d.get('priority', 'normal'), 1)
+        return (status_order.get(d.get('status', ''), 9), -priority_val, -d.get('added_at', 0))
     all_items = sorted(_downloads.values(), key=_sort_key)
     # Filter by user
     items = [d for d in all_items if not me or d.get('user', '') == me or not d.get('user')]
-    pkgs = [_sanitize_package(p) for p in _packages.values()
+    pkgs = [_dl_worker()._sanitize_package(p) for p in _packages.values()
             if not me or p.get('user', '') == me or not p.get('user')]
-    return jsonify({'ok': True, 'items': [_sanitize(d) for d in items], 'packages': pkgs})
+    return jsonify({'ok': True, 'items': [_dl_worker()._sanitize(d) for d in items], 'packages': pkgs})
 
 
-@downloads_bp.route('/api/downloads/add', methods=['POST'])
-def add_download():
-    data = request.get_json(force=True)
+def _is_torrent(url):
+    """Check if a URL is a magnet link or .torrent file."""
+    return url.lower().startswith('magnet:') or url.lower().endswith('.torrent')
+
+
+def _normalize_url(url):
+    """Normalize URL for duplicate comparison (remove query params, fragments, trailing slashes for HTTP)."""
+    if url.startswith('magnet:'):
+        # For magnet links, extract info_hash (xt parameter)
+        match = re.search(r'[&?]xt=urn:btih:([a-fA-F0-9]{40}|[a-zA-Z2-7]{32})', url)
+        return match.group(1).lower() if match else url.lower()
+    
+    # For HTTP/FTP, normalize
+    parsed = urllib.parse.urlparse(url.lower())
+    # Remove query params and fragment, normalize path
+    normalized_path = parsed.path.rstrip('/')
+    return f"{parsed.scheme}://{parsed.netloc}{normalized_path}"
+
+
+def _check_duplicates(urls):
+    """Check if any URLs are duplicates (already in active downloads or history).
+    Returns list of duplicate info dicts.
+    """
+    duplicates = []
+    
+    for url in urls:
+        normalized = _normalize_url(url)
+        
+        # Check active downloads
+        with _lock:
+            for dl in _downloads.values():
+                if _normalize_url(dl['url']) == normalized:
+                    duplicates.append({
+                        'url': url,
+                        'status': dl['status'],
+                        'filename': dl.get('filename', ''),
+                        'location': 'active'
+                    })
+                    break
+        
+        # Check history (if not already found in active)
+        if not any(d['url'] == url for d in duplicates):
+            hist_mod = sys.modules.get('blueprints.downloads_history')
+            if hist_mod:
+                hist_result = hist_mod._check_url_in_history(normalized)
+                if hist_result:
+                    duplicates.append({
+                        'url': url,
+                        'status': hist_result['status'],
+                        'filename': hist_result.get('filename', ''),
+                        'location': 'history',
+                        'completed_at': hist_result.get('completed_at')
+                    })
+    
+    return duplicates
+
+
+def _add_download_common(data):
+    """Common logic for adding downloads (used by both web UI and browser extension)."""
     urls = data.get('urls', [])
     url = data.get('url', '').strip()
     if url:
         urls = [url]
     if not urls:
-        return jsonify({'error': 'No URL provided'}), 400
+        return {'error': 'No URL provided'}, 400
 
     # Validate URLs
     _valid_prefixes = ('http://', 'https://', 'ftp://', 'magnet:')
     invalid = [u for u in urls if not any(u.strip().lower().startswith(p) for p in _valid_prefixes)]
     if invalid:
-        return jsonify({'error': f'Invalid link: {invalid[0][:80]}'}), 400
+        return {'error': f'Invalid link: {invalid[0][:80]}'}, 400
 
     dest_dir = data.get('dest_dir', '').strip()
     use_debrid = data.get('use_debrid', True)
     filename = data.get('filename', '').strip()
+    priority = data.get('priority', 'normal')  # high, normal, low
+    skip_duplicate_check = data.get('skip_duplicate_check', False)
+
+    # Duplicate detection (unless explicitly skipped)
+    if not skip_duplicate_check:
+        duplicates = _check_duplicates(urls)
+        if duplicates:
+            return {
+                'error': 'duplicates_found',
+                'duplicates': duplicates,
+                'message': f'{len(duplicates)} duplicate(s) found'
+            }, 409
 
     # Package options (for multi-URL adds)
     package_name = data.get('package_name', '').strip()
@@ -952,11 +1037,12 @@ def add_download():
             'is_torrent': is_t,
             'package_id': package_id,
             'user': _get_username() or '',
+            'priority': priority,  # high, normal, low
         }
         with _lock:
             _downloads[dl_id] = dl
         dl_ids.append(dl_id)
-        added.append(_sanitize(dl))
+        added.append(_dl_worker()._sanitize(dl))
     # Batch save after all downloads added
     with _lock:
         _save_state()
@@ -981,10 +1067,130 @@ def add_download():
         with _lock:
             _packages[package_id] = pkg
             _save_state()
-        pkg_data = _sanitize_package(pkg)
+        pkg_data = _dl_worker()._sanitize_package(pkg)
 
-    _start_next()
-    return jsonify({'ok': True, 'added': added, 'package': pkg_data})
+    _dl_worker()._start_next()
+    return {'ok': True, 'added': added, 'package': pkg_data}, 200
+
+
+@downloads_bp.route('/api/downloads/add', methods=['POST'])
+def add_download():
+    data = request.get_json(force=True)
+    result, status = _add_download_common(data)
+    return jsonify(result), status
+
+
+
+
+@downloads_bp.route('/api/downloads/browser-add', methods=['POST', 'OPTIONS'])
+def browser_add():
+    """Special endpoint for browser extension with CORS support."""
+    # Handle preflight
+    if request.method == 'OPTIONS':
+        resp = jsonify({'ok': True})
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        resp.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+        resp.headers['Access-Control-Allow-Headers'] = 'Content-Type, X-EthOS-Token'
+        return resp
+
+    # Check API token
+    token = request.headers.get('X-EthOS-Token', '')
+    if not _verify_extension_token(token):
+        resp = jsonify({'error': 'Invalid or missing API token'})
+        resp.status_code = 401
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        return resp
+
+    # Parse request
+    data = request.get_json(force=True)
+    
+    # Browser extensions send page metadata
+    page_title = data.get('page_title', '')
+    page_url = data.get('page_url', '')
+    
+    # Add download
+    result, status = _add_download_common(data)
+    
+    # Log browser extension usage
+    if status == 200:
+        from blueprints.eventlog import log as elog
+        elog('downloads', 'info', 'Download added via browser extension', {
+            'url': data.get('url', '')[:100],
+            'page': page_url[:100] if page_url else None
+        })
+    
+    resp = jsonify(result)
+    resp.status_code = status
+    resp.headers['Access-Control-Allow-Origin'] = '*'
+    return resp
+
+
+def _verify_extension_token(token):
+    """Verify browser extension API token."""
+    if not token:
+        return False
+    cfg = _load_config()
+    saved_token = cfg.get('extension_api_token', '')
+    return saved_token and token == saved_token
+
+
+@downloads_bp.route('/api/downloads/extension/generate-token', methods=['POST'])
+def generate_extension_token():
+    """Generate a new API token for browser extension."""
+    new_token = base64.urlsafe_b64encode(os.urandom(32)).decode('ascii')[:43]
+    cfg = _load_config()
+    cfg['extension_api_token'] = new_token
+    _save_config(cfg)
+    return jsonify({'ok': True, 'token': new_token})
+
+
+@downloads_bp.route('/api/downloads/extension/revoke-token', methods=['POST'])
+def revoke_extension_token():
+    """Revoke the browser extension API token."""
+    cfg = _load_config()
+    cfg['extension_api_token'] = ''
+    _save_config(cfg)
+    return jsonify({'ok': True})
+
+
+@downloads_bp.route('/api/downloads/extension/download', methods=['GET'])
+def download_extension():
+    """Download browser extension as .zip file."""
+    import zipfile
+    import tempfile
+    from flask import send_file
+    
+    ext_dir = '/opt/ethos/tools/browser-extension'
+    if not os.path.isdir(ext_dir):
+        return jsonify({'error': 'Extension not found'}), 404
+    
+    # Create temporary zip file
+    tmp_zip = tempfile.NamedTemporaryFile(mode='wb', suffix='.zip', delete=False)
+    tmp_zip_path = tmp_zip.name
+    tmp_zip.close()
+    
+    try:
+        with zipfile.ZipFile(tmp_zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for root, dirs, files in os.walk(ext_dir):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    arcname = os.path.relpath(file_path, ext_dir)
+                    zf.write(file_path, arcname)
+        
+        return send_file(
+            tmp_zip_path,
+            mimetype='application/zip',
+            as_attachment=True,
+            download_name='ethos-download-manager-extension.zip'
+        )
+    except Exception as e:
+        if os.path.exists(tmp_zip_path):
+            try:
+                os.remove(tmp_zip_path)
+            except:
+                pass
+        return jsonify({'error': str(e)}), 500
+
 
 
 @downloads_bp.route('/api/downloads/check-processed', methods=['POST'])
@@ -1070,8 +1276,8 @@ def add_torrent_file():
         _downloads[dl_id] = dl
         _save_state()
 
-    _start_next()
-    return jsonify({'ok': True, 'added': [_sanitize(dl)]})
+    _dl_worker()._start_next()
+    return jsonify({'ok': True, 'added': [_dl_worker()._sanitize(dl)]})
 
 
 @downloads_bp.route('/api/downloads/cancel', methods=['POST'])
@@ -1091,7 +1297,7 @@ def cancel_download():
             _save_state()
     if to_log and dl:
         _log_history(dl, 'cancelled')
-    _emit('dl:update', _sanitize(dl))
+    _emit('dl:update', _dl_worker()._sanitize(dl))
     return jsonify({'ok': True})
 
 
@@ -1107,7 +1313,7 @@ def pause_download():
             dl['status'] = 'paused'
             dl['speed'] = 0
             _save_state()
-    _emit('dl:update', _sanitize(dl))
+    _emit('dl:update', _dl_worker()._sanitize(dl))
     return jsonify({'ok': True})
 
 
@@ -1126,8 +1332,8 @@ def resume_download():
             dl['speed'] = 0
             # Keep downloaded/progress/_actual_dest for Range resume
             _save_state()
-    _emit('dl:update', _sanitize(dl))
-    _start_next()
+    _emit('dl:update', _dl_worker()._sanitize(dl))
+    _dl_worker()._start_next()
     return jsonify({'ok': True})
 
 
@@ -1153,14 +1359,16 @@ def retry_download():
             dl['speed'] = 0
             dl.pop('_speed_samples', None)
             _save_state()
-    _emit('dl:update', _sanitize(dl))
-    _start_next()
+    _emit('dl:update', _dl_worker()._sanitize(dl))
+    _dl_worker()._start_next()
     return jsonify({'ok': True})
 
 
 @downloads_bp.route('/api/downloads/reorder', methods=['POST'])
 def reorder_download():
-    """Move a download up in priority or reorder multiple."""
+    """Move a download up in priority or reorder multiple.
+    DEPRECATED: priority is now string-based ('high', 'normal', 'low').
+    """
     data = request.get_json(force=True)
 
     # Bulk reorder
@@ -1170,26 +1378,22 @@ def reorder_download():
             return jsonify({'error': 'Invalid format'}), 400
         
         with _lock:
-            # Assign priorities: top item gets highest priority
-            total = len(ordered_ids)
+            # Legacy: ignore ordering, just notify UI
             updates = []
-            for i, dl_id in enumerate(ordered_ids):
+            for dl_id in ordered_ids:
                 dl = _downloads.get(dl_id)
                 if dl and dl['status'] in ('pending', 'paused'):
-                    # Priority = total - index (so first item has 'total', last has 1)
-                    new_prio = total - i
-                    if dl.get('priority') != new_prio:
-                        dl['priority'] = new_prio
-                        updates.append(dl)
+                    updates.append(dl)
             
             if updates:
                 _save_state()
                 # Notify clients about changes
                 for dl in updates:
-                    _emit('dl:update', _sanitize(dl))
+                    _emit('dl:update', _dl_worker()._sanitize(dl))
                     
         return jsonify({'ok': True})
 
+    # Single item reorder - map to string priorities
     dl_id = data.get('id', '')
     direction = data.get('direction', 'up')  # 'up' = higher priority, 'down' = lower
     with _lock:
@@ -1198,17 +1402,56 @@ def reorder_download():
             return jsonify({'error': 'Not found'}), 404
         if dl['status'] not in ('pending', 'paused'):
             return jsonify({'error': 'Can only reorder pending items'}), 400
-        current = dl.get('priority', 0)
-        if direction == 'up':
-            dl['priority'] = current + 1
-        elif direction == 'top':
-            max_p = max((d.get('priority', 0) for d in _downloads.values()), default=0)
-            dl['priority'] = max_p + 1
-        else:
-            dl['priority'] = max(0, current - 1)
+        
+        # Map to new string-based priority system
+        current = dl.get('priority', 'normal')
+        
+        if direction in ('up', 'top'):
+            # Upgrade priority
+            if current == 'low':
+                dl['priority'] = 'normal'
+            elif current == 'normal':
+                dl['priority'] = 'high'
+            # already high -> stays high
+        else:  # down
+            # Downgrade priority
+            if current == 'high':
+                dl['priority'] = 'normal'
+            elif current == 'normal':
+                dl['priority'] = 'low'
+            # already low -> stays low
+        
         _save_state()
-    _emit('dl:update', _sanitize(dl))
+    _emit('dl:update', _dl_worker()._sanitize(dl))
+    # Re-schedule queue
+    _dl_worker()._start_next()
     return jsonify({'ok': True})
+
+
+@downloads_bp.route('/api/downloads/set-priority', methods=['POST'])
+def set_priority():
+    """Set priority (high/normal/low) for one or more downloads."""
+    data = request.get_json(force=True)
+    dl_ids = data.get('ids', [])
+    if isinstance(dl_ids, str):
+        dl_ids = [dl_ids]
+    priority = data.get('priority', 'normal')
+    if priority not in ('high', 'normal', 'low'):
+        return jsonify({'error': 'Invalid priority'}), 400
+    
+    count = 0
+    with _lock:
+        for dl_id in dl_ids:
+            dl = _downloads.get(dl_id)
+            if dl:
+                dl['priority'] = priority
+                count += 1
+        if count:
+            _save_state()
+    
+    # Re-schedule queue (high priority items might jump ahead)
+    _dl_worker()._start_next()
+    return jsonify({'ok': True, 'updated': count})
 
 
 @downloads_bp.route('/api/downloads/remove', methods=['POST'])
@@ -1279,4 +1522,13 @@ register_pkg_routes(
 )
 
 # ─── Load sub-modules (they register additional routes on downloads_bp) ───
-from blueprints import downloads_config, downloads_debrid, downloads_extract, downloads_history, downloads_worker, downloads_torrent  # noqa: E402
+from blueprints import downloads_config, downloads_debrid, downloads_worker, downloads_torrent  # noqa: E402
+# Re-export functions and variables from downloads_worker for other sub-modules
+_enqueue_extraction = downloads_worker._enqueue_extraction
+_sanitize_package = downloads_worker._sanitize_package
+_start_next = downloads_worker._start_next
+_sanitize = downloads_worker._sanitize
+_active_threads = downloads_worker._active_threads
+# Now load remaining sub-modules that depend on functions above
+from blueprints import downloads_extract, downloads_history  # noqa: E402
+

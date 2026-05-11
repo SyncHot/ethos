@@ -16,6 +16,8 @@ import urllib.parse
 import shutil
 import subprocess
 import collections
+import threading
+import logging
 import gevent
 import gevent.threadpool
 
@@ -30,14 +32,280 @@ def _dl_torrent():
     return sys.modules.get('blueprints.downloads_torrent')
 
 
+def _get_proxy_handler(config):
+    """Build urllib proxy handler if proxy is enabled in config."""
+    if not config.get('proxy_enabled'):
+        return None
+    
+    proxy_type = config.get('proxy_type', 'http')
+    host = config.get('proxy_host', '').strip()
+    port = config.get('proxy_port', '').strip()
+    
+    if not host or not port:
+        return None
+    
+    username = config.get('proxy_username', '').strip()
+    password = config.get('proxy_password', '').strip()
+    
+    # Build proxy URL
+    if username and password:
+        proxy_url = f"{proxy_type}://{username}:{password}@{host}:{port}"
+    else:
+        proxy_url = f"{proxy_type}://{host}:{port}"
+    
+    # SOCKS5 requires PySocks library (optional)
+    if proxy_type == 'socks5':
+        try:
+            import socks
+            import socket
+            # Configure socket globally for SOCKS5
+            socks.set_default_proxy(socks.SOCKS5, host, int(port), username=username or None, password=password or None)
+            socket.socket = socks.socksocket
+            return None  # socket is already patched globally
+        except ImportError:
+            # PySocks not installed, fall back to no proxy
+            return None
+    
+    # HTTP/HTTPS proxy
+    proxies = {
+        'http': proxy_url,
+        'https': proxy_url,
+    }
+    return urllib.request.ProxyHandler(proxies)
+
+
+def _check_range_support(url, config):
+    """Check if URL supports HTTP Range requests. Returns (supports_range, filesize)."""
+    try:
+        req = urllib.request.Request(url, method='HEAD')
+        req.add_header('User-Agent', 'EthOS/1.0')
+        ctx = ssl.create_default_context()
+        
+        proxy_handler = _get_proxy_handler(config)
+        if proxy_handler:
+            opener = urllib.request.build_opener(proxy_handler, urllib.request.HTTPSHandler(context=ctx))
+            response = opener.open(req, timeout=10)
+        else:
+            response = urllib.request.urlopen(req, context=ctx, timeout=10)
+        
+        accept_ranges = response.headers.get('Accept-Ranges', '').lower()
+        content_length = int(response.headers.get('Content-Length', 0))
+        
+        supports = accept_ranges == 'bytes'
+        return supports, content_length
+    except Exception:
+        return False, 0
+
+
+def _download_segment(url, start_byte, end_byte, segment_path, dl, config, segment_idx):
+    """Download a single segment of a file. Returns True on success."""
+    try:
+        headers = {
+            'User-Agent': 'EthOS/1.0',
+            'Range': f'bytes={start_byte}-{end_byte}'
+        }
+        
+        req = urllib.request.Request(url, headers=headers)
+        ctx = ssl.create_default_context()
+        
+        proxy_handler = _get_proxy_handler(config)
+        if proxy_handler:
+            opener = urllib.request.build_opener(proxy_handler, urllib.request.HTTPSHandler(context=ctx))
+            response = opener.open(req, timeout=60)
+        else:
+            response = urllib.request.urlopen(req, context=ctx, timeout=60)
+        
+        chunk_size = 256 * 1024
+        downloaded = 0
+        segment_size = end_byte - start_byte + 1
+        
+        with open(segment_path, 'wb') as f:
+            while True:
+                if dl.get('status') in ('cancelled', 'paused'):
+                    return False
+                
+                chunk = response.read(chunk_size)
+                if not chunk:
+                    break
+                
+                _dl()._io_pool.apply(f.write, (chunk,))
+                downloaded += len(chunk)
+                
+                # Update segment progress
+                with _dl()._lock:
+                    if 'segments' not in dl:
+                        dl['segments'] = {}
+                    dl['segments'][segment_idx] = {
+                        'downloaded': downloaded,
+                        'total': segment_size,
+                        'progress': round(downloaded / segment_size * 100, 1) if segment_size > 0 else 0
+                    }
+        
+        return downloaded == segment_size
+    except Exception as e:
+        return False
+
+
+def _merge_segments(segment_paths, final_path, dl):
+    """Merge all segments into final file. Returns True on success."""
+    try:
+        with open(final_path, 'wb') as outfile:
+            for segment_path in segment_paths:
+                if dl.get('status') == 'cancelled':
+                    return False
+                
+                with open(segment_path, 'rb') as infile:
+                    shutil.copyfileobj(infile, outfile, 1024 * 1024)  # 1MB buffer
+                
+                # Remove segment file after merging
+                try:
+                    os.remove(segment_path)
+                except OSError:
+                    pass
+        
+        return True
+    except Exception as e:
+        return False
+
+
+def _download_multi_segment(dl, download_url, filename, filesize, dest_dir, config):
+    """Download file in multiple parallel segments. Returns True on success."""
+    segment_count = int(config.get('multi_segment_count', 4))
+    segment_count = max(2, min(8, segment_count))  # Clamp to 2-8
+    
+    dest_path = os.path.join(dest_dir, filename)
+    if not config.get('overwrite_existing', False):
+        base, ext = os.path.splitext(dest_path)
+        counter = 1
+        while os.path.exists(dest_path):
+            dest_path = f"{base}_{counter}{ext}"
+            counter += 1
+    elif os.path.exists(dest_path):
+        try:
+            os.remove(dest_path)
+        except OSError:
+            pass
+    
+    filename = os.path.basename(dest_path)
+    dl['filename'] = filename
+    dl['filesize'] = filesize
+    dl['dest_path'] = dest_path
+    dl['multi_segment'] = True
+    dl['segments'] = {}
+    
+    # Calculate segment sizes
+    segment_size = filesize // segment_count
+    segments = []
+    for i in range(segment_count):
+        start = i * segment_size
+        end = ((i + 1) * segment_size - 1) if i < segment_count - 1 else (filesize - 1)
+        segment_path = f"{dest_path}.part{i}"
+        segments.append((start, end, segment_path, i))
+    
+    # Download all segments in parallel using thread pool
+    def download_segment_wrapper(args):
+        start, end, seg_path, idx = args
+        return _download_segment(download_url, start, end, seg_path, dl, config, idx)
+    
+    # Use ThreadPool to download segments in parallel
+    pool = threading.Thread
+    results = []
+    threads = []
+    
+    for seg_args in segments:
+        t = threading.Thread(target=lambda a=seg_args: results.append(download_segment_wrapper(a)))
+        t.start()
+        threads.append(t)
+    
+    # Wait for all threads while monitoring progress
+    while any(t.is_alive() for t in threads):
+        time.sleep(0.5)
+        
+        # Calculate total progress from all segments
+        with _dl()._lock:
+            if 'segments' in dl:
+                total_downloaded = sum(s.get('downloaded', 0) for s in dl['segments'].values())
+                dl['downloaded'] = total_downloaded
+                dl['progress'] = round(total_downloaded / filesize * 100, 1) if filesize > 0 else 0
+                dl['speed'] = _calc_speed(dl)
+                _dl()._emit('dl:update', _sanitize(dl))
+        
+        if dl.get('status') in ('cancelled', 'paused'):
+            for t in threads:
+                t.join(timeout=1)
+            # Cleanup partial segments
+            for _, _, seg_path, _ in segments:
+                try:
+                    os.remove(seg_path)
+                except OSError:
+                    pass
+            return False
+    
+    # Join all threads
+    for t in threads:
+        t.join()
+    
+    # Check if cancelled/paused
+    if dl.get('status') in ('cancelled', 'paused'):
+        for _, _, seg_path, _ in segments:
+            try:
+                os.remove(seg_path)
+            except OSError:
+                pass
+        return False
+    
+    # Check if all segments downloaded successfully
+    if not all(results):
+        raise Exception("One or more segments failed to download")
+    
+    # Merge segments
+    dl['status'] = 'merging'
+    _dl()._emit('dl:update', _sanitize(dl))
+    
+    segment_paths = [seg_path for _, _, seg_path, _ in segments]
+    if not _merge_segments(segment_paths, dest_path, dl):
+        raise Exception("Failed to merge segments")
+    
+    dl.pop('segments', None)
+    dl.pop('multi_segment', None)
+    return True
+
+
+
 # ─── Download worker ───
 
 def _download_single_url(dl, download_url, filename, filesize, dest_dir, config):
     """Download a single file URL to dest_dir. Returns True on success.
-    Supports HTTP Range resume from partial files.
+    Supports HTTP Range resume from partial files and multi-segment downloads.
     """
+    # Check if multi-segment download is possible and enabled
+    multi_segment_enabled = config.get('multi_segment_enabled', True)
+    min_size_mb = int(config.get('multi_segment_min_size', 10))
+    min_size_bytes = min_size_mb * 1024 * 1024
+    
+    # Only use multi-segment for fresh downloads (not resumes)
     resume_offset = 0
     resume_path = dl.get('_actual_dest')
+    is_resume = resume_path and os.path.isfile(resume_path)
+    
+    # Try multi-segment if enabled and file is large enough
+    if (multi_segment_enabled and not is_resume and filesize >= min_size_bytes):
+        supports_range, detected_size = _check_range_support(download_url, config)
+        if supports_range:
+            # Use detected size if filesize is unknown
+            if not filesize and detected_size:
+                filesize = detected_size
+            
+            if filesize >= min_size_bytes:
+                try:
+                    return _download_multi_segment(dl, download_url, filename, filesize, dest_dir, config)
+                except Exception as e:
+                    # Fall back to single-threaded download on multi-segment failure
+                    dl.pop('segments', None)
+                    dl.pop('multi_segment', None)
+                    # Continue to single-threaded download below
+    
+    # Single-threaded download (classic mode or fallback)
 
     if resume_path and os.path.isfile(resume_path):
         # Resume from existing partial file
@@ -87,7 +355,16 @@ def _download_single_url(dl, download_url, filename, filesize, dest_dir, config)
 
         req = urllib.request.Request(download_url, headers=headers)
         ctx = ssl.create_default_context()
-        with urllib.request.urlopen(req, context=ctx, timeout=60) as resp:
+        
+        # Proxy support
+        proxy_handler = _get_proxy_handler(config)
+        if proxy_handler:
+            opener = urllib.request.build_opener(proxy_handler, urllib.request.HTTPSHandler(context=ctx))
+            response = opener.open(req, timeout=60)
+        else:
+            response = urllib.request.urlopen(req, context=ctx, timeout=60)
+        
+        with response as resp:
             status_code = getattr(resp, 'status', 200)
             content_length = int(resp.headers.get('content-length', 0))
 
@@ -221,6 +498,12 @@ def _download_worker(dl_id):
 
     is_torrent = dl.get('is_torrent', False) or _dl()._is_torrent(original_url)
 
+    # For torrents: don't wait for slot now - wait only before local download
+    # For direct downloads: wait for slot now
+    if not is_torrent:
+        if not _wait_for_slot(dl):
+            return
+
     with _dl()._lock:
         dl['status'] = 'resolving'
         if is_torrent:
@@ -344,7 +627,7 @@ def _download_worker(dl_id):
             _dl()._emit('dl:update', _sanitize(dl))
             _dl()._emit('dl:completed', _dl_completed_payload(dl))
             _dl()._log_history(dl, 'completed')
-            _flush_state()
+            _dl()._flush_state()
 
             # Cleanup torrent cache
             if torrent_cache and os.path.exists(torrent_cache):
@@ -365,7 +648,7 @@ def _download_worker(dl_id):
                 _dl()._save_state()
             _dl()._emit('dl:update', _sanitize(dl))
             _dl()._log_history(dl, 'failed')
-            _flush_state()
+            _dl()._flush_state()
             # Move watch torrent to error/
             _dl()._move_torrent_on_finish(dl, False)
             return
@@ -390,7 +673,7 @@ def _download_worker(dl_id):
                 _dl()._save_state()
             _dl()._emit('dl:update', _sanitize(dl))
             _dl()._log_history(dl, 'failed')
-            _flush_state()
+            _dl()._flush_state()
             return
 
     download_url = resolved['url'] if resolved else original_url
@@ -425,7 +708,7 @@ def _download_worker(dl_id):
                              dl_id, dl['_dedup_of'], filename)
                 _dl()._emit('dl:update', _sanitize(dl))
                 _dl()._log_history(dl, 'completed')
-                _flush_state()
+                _dl()._flush_state()
                 return
 
     # Auto-categorize
@@ -496,7 +779,7 @@ def _download_worker(dl_id):
                         _dl()._save_state()
                     _dl()._emit('dl:update', _sanitize(dl))
                     _dl()._log_history(dl, 'failed')
-                    _flush_state()
+                    _dl()._flush_state()
                     return
 
                 with _dl()._lock:
@@ -508,7 +791,7 @@ def _download_worker(dl_id):
                 _dl()._emit('dl:update', _sanitize(dl))
                 _dl()._emit('dl:completed', _dl_completed_payload(dl))
                 _dl()._log_history(dl, 'completed')
-                _flush_state()
+                _dl()._flush_state()
                 return
 
         except Exception as e:
@@ -533,7 +816,7 @@ def _download_worker(dl_id):
                 _dl()._save_state()
             _dl()._emit('dl:update', _sanitize(dl))
             _dl()._log_history(dl, 'failed')
-            _flush_state()
+            _dl()._flush_state()
             return
 
 
@@ -665,6 +948,8 @@ _active_threads = {}
 def _start_next():
     """Start next pending download if under concurrency limit.
     Thread-safe: holds _lock while checking counts and claiming pending downloads.
+    Torrents start immediately (debrid handles them remotely).
+    Direct downloads wait for local concurrency slots.
     """
     # Use global config for max_concurrent (system-wide limit)
     config = _dl()._load_config(username=None)
@@ -673,25 +958,32 @@ def _start_next():
     with _dl()._lock:
         # Only count LOCAL downloads toward the concurrency limit.
         # Remote debrid operations (torrent_uploading, torrent_downloading)
-        # happen on the debrid server and use no local bandwidth/disk,
-        # so they should NOT block the queue.
+        # happen on the debrid server and use no local bandwidth/disk.
         active = sum(1 for d in _dl()._downloads.values()
-                     if d['status'] in ('downloading', 'resolving'))
-        if active >= max_conc:
-            return
+                     if d['status'] in ('downloading', 'resolving', 'merging'))
 
-        # Find next pending (highest priority first, then earliest added)
+        # Find next pending (highest priority first: high=2, normal=1, low=0, then earliest added)
+        def _priority_value(d):
+            p = d.get('priority', 'normal')
+            if p == 'high': return 2
+            if p == 'low': return 0
+            return 1
+        
         pending = sorted(
             [d for d in _dl()._downloads.values() if d['status'] == 'pending'],
-            key=lambda d: (-d.get('priority', 0), d.get('added_at', 0))
+            key=lambda d: (-_priority_value(d), d.get('added_at', 0))
         )
         to_start = []
         for dl in pending:
-            if active >= max_conc:
-                break
-            dl['status'] = 'resolving'  # claim immediately to prevent double-start
-            to_start.append(dl['id'])
-            active += 1
+            # Torrents/magnets start immediately - no local slot needed
+            if _dl()._is_torrent(dl.get('url', '')):
+                dl['status'] = 'resolving'
+                to_start.append(dl['id'])
+            # Direct downloads only if slot available
+            elif active < max_conc:
+                dl['status'] = 'resolving'  # claim immediately to prevent double-start
+                to_start.append(dl['id'])
+                active += 1
 
     # Start threads outside lock
     for dl_id in to_start:

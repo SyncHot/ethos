@@ -33,6 +33,8 @@ from blueprints.auth import require_auth
 
 system_bp = Blueprint('system', __name__)
 
+SETUP_DONE_FILE = _data_path('setup_done')
+
 # ═════════════════════════════════════════════════════════════════════════════
 
 # ─────────────────────────── Language / i18n ───────────────────────────
@@ -236,6 +238,12 @@ def setup_translations(lang):
 def ethos_identify():
     """Public endpoint for NAS-to-NAS discovery. Returns basic info about this instance."""
     import socket
+    # Use sys.modules to avoid circular import
+    app = sys.modules.get('app')
+    NAS_NAME = getattr(app, 'NAS_NAME', 'EthOS') if app else 'EthOS'
+    PORT = getattr(app, 'PORT', 9000) if app else 9000
+    ETHOS_VERSION = getattr(app, 'ETHOS_VERSION', {}) if app else {}
+    
     hostname = socket.gethostname()
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -258,6 +266,14 @@ def ethos_identify():
 
 def _register_avahi_service():
     """Register EthOS as an mDNS service so other NAS instances can discover it."""
+    # Use sys.modules to avoid circular import
+    app = sys.modules.get('app')
+    if not app:
+        return
+    NAS_NAME = getattr(app, 'NAS_NAME', 'EthOS')
+    PORT = getattr(app, 'PORT', 9000)
+    ETHOS_VERSION = getattr(app, 'ETHOS_VERSION', {})
+    
     service_xml = f"""<?xml version="1.0" standalone="no"?>
 <!DOCTYPE service-group SYSTEM "avahi-service.dtd">
 <service-group>
@@ -1160,7 +1176,6 @@ def power_status():
 
 @system_bp.route('/api/system/info')
 @require_auth
-@cache.cached(timeout=5)
 def system_info():
     cpu = _mon_cpu()
     ram = _mon_ram()
@@ -1234,7 +1249,6 @@ _KNOWN_SERVICES = {
 
 @system_bp.route('/api/services/list')
 @require_auth
-@cache.cached(timeout=10)
 def services_list():
     """List only EthOS-relevant services with their status."""
     services = []

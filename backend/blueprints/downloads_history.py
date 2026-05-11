@@ -13,7 +13,7 @@ from blueprints.downloads import (
     _history_lock, DOWNLOADS_HISTORY_FILE,
     _load_history, _get_username, _emit,
     _start_next, _save_state, _is_torrent, _sanitize,
-    _atomic_write_json, _load_config,
+    _atomic_write_json, _load_config, _normalize_url,
 )
 
 
@@ -169,6 +169,21 @@ def clear_history():
         _atomic_write_json(DOWNLOADS_HISTORY_FILE, history)
 
     return jsonify({'ok': True})
+
+
+def _check_url_in_history(normalized_url):
+    """Check if a normalized URL exists in history. Returns dict with status and filename if found, None otherwise."""
+    hist = _load_history()
+    # Search from newest to oldest
+    for entry in reversed(hist):
+        entry_normalized = _normalize_url(entry.get('url', ''))
+        if entry_normalized == normalized_url:
+            return {
+                'status': entry.get('status'),
+                'filename': entry.get('filename', ''),
+                'completed_at': entry.get('completed_at', 0)
+            }
+    return None
 
 
 @downloads_bp.route('/api/downloads/history/retry', methods=['POST'])

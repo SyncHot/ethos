@@ -2910,9 +2910,23 @@ select.fm-input {
 
 /* Category badge on download item */
 .dlm-cat-badge { font-size:10px; padding:2px 7px; margin-right:var(--space-xs); border:1px solid var(--border); border-radius:10px; background:var(--overlay-3); color:var(--text-secondary); font-weight:500; }
+.dlm-priority-badge { font-size:10px; padding:2px 7px; margin-right:var(--space-xs); border-radius:10px; font-weight:600; }
+.dlm-priority-high { background:#fef3c7; color:#92400e; border:1px solid #fbbf24; }
+.dlm-priority-low { background:#e0e7ff; color:#3730a3; border:1px solid #818cf8; }
+.dlm-priority-btn { opacity:0.6; }
+.dlm-priority-btn:hover { opacity:1; color:#f59e0b; }
 
 /* Category filter select */
 .dlm-cat-filter-select { margin-left:var(--space-xs); width:120px; }
+
+/* Duplicate dialog */
+.dlm-dup-list { max-height:300px; overflow-y:auto; border:1px solid var(--border); border-radius:var(--radius); padding:var(--space-sm); margin:var(--space-sm) 0; background:var(--bg); }
+.dlm-dup-item { display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm); border-bottom:1px solid var(--border); }
+.dlm-dup-item:last-child { border-bottom:none; }
+.dlm-dup-name { font-weight:500; font-size:var(--fs-sm); }
+.dlm-dup-meta { display:flex; gap:var(--space-xs); margin-top:4px; font-size:var(--fs-xs); color:var(--text-secondary); }
+.dlm-dup-badge { background:var(--overlay-3); padding:2px 6px; border-radius:4px; }
+.dlm-dup-status { padding:2px 6px; }
 
 /* Date range inputs */
 .dlm-date-input { width:130px; }

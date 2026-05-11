@@ -44,6 +44,10 @@ from flask import Blueprint, request, jsonify, g
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from host import host_run, host_run_stream, data_path, app_path, q
 
+# Import from split module
+from blueprints import app_manager_catalog
+DEFAULT_GITHUB_REPO = app_manager_catalog.DEFAULT_GITHUB_REPO
+
 log = logging.getLogger('app_manager')
 app_manager_bp = Blueprint('app_manager', __name__, url_prefix='/api/app-manager')
 
@@ -130,6 +134,8 @@ _FRONTEND_APPS_DIR = os.path.join(_ETHOS_ROOT, 'frontend', 'js', 'apps')
 _BLUEPRINTS_DIR = os.path.join(_ETHOS_ROOT, 'backend', 'blueprints')
 
 INSTALLED_FILE = data_path('installed_apps.json')
+CATALOG_SOURCES_FILE = data_path('catalog_sources.json')
+CATALOG_CACHE_FILE = data_path('catalog_cache.json')
 
 # ─── Core Apps (wbudowane, nieusuwalne) ──────────────────────
 

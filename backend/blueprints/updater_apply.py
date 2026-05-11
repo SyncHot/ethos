@@ -24,7 +24,7 @@ import logging
 log = logging.getLogger('ethos.updater')
 
 # Import from main updater module
-from updater import (
+from blueprints.updater import (
     update_bp, _read_status, _write_status, _emit,
     _get_current_version, _update_lock, INSTALL_DIR, UPDATE_DIR,
     VERSION_FILE, GRUBENV_PATHS, _load_config, _save_config, _version_tuple

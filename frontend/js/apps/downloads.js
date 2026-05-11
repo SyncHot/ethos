@@ -316,6 +316,91 @@ function renderDownloadManager(body, launchOpts) {
                         </div>
                     </div>
                     <div class="dlm-debrid-info" id="dlm-debrid-info"></div>
+                    
+                    <!-- Multi-Segment Downloads -->
+                    <h3 class="dlm-section-title dl-section-gap"><i class="fas fa-sitemap"></i> ${t('Pobieranie wielosegmentowe')}</h3>
+                    <p class="dlm-hint">${t('Pobieraj duże pliki w wielu segmentach równolegle (aria2-style) dla szybszego transferu')}</p>
+                    
+                    <div class="dlm-setting-row">
+                        <label class="dl-row">
+                            <input type="checkbox" id="dlm-multi-segment-enabled">
+                            ${t('Włącz pobieranie wielosegmentowe')}
+                        </label>
+                    </div>
+                    
+                    <div id="dlm-multi-segment-settings" style="display:none;">
+                        <div class="dlm-setting-row">
+                            <label>${t('Liczba segmentów:')}</label>
+                            <select class="dlm-select" id="dlm-multi-segment-count" style="width:100px;">
+                                <option value="2">2</option>
+                                <option value="4">4</option>
+                                <option value="6">6</option>
+                                <option value="8">8</option>
+                            </select>
+                        </div>
+                        <div class="dlm-setting-row">
+                            <label>${t('Minimalny rozmiar pliku (MB):')}</label>
+                            <input type="number" class="dlm-input" id="dlm-multi-segment-min-size" min="1" max="1000" value="10" style="width:100px;">
+                        </div>
+                        <p class="dlm-hint">${t('Pliki większe niż podany rozmiar będą pobierane równolegle w wielu segmentach')}</p>
+                    </div>
+
+                    <h3 class="dlm-section-title dl-section-gap"><i class="fas fa-puzzle-piece"></i> ${t('Rozszerzenie przeglądarki')}</h3>
+                    <p class="dlm-hint">${t('Dodawaj pobierania jednym kliknięciem prawym przyciskiem myszy bezpośrednio z przeglądarki Chrome/Firefox/Edge.')}</p>
+                    
+                    <div class="dlm-setting-row">
+                        <label>${t('Token API:')}</label>
+                        <div class="dl-key-input-row">
+                            <input type="password" class="dlm-input" id="dlm-extension-token" readonly placeholder="${t('Wygeneruj token aby używać rozszerzenia')}">
+                            <button class="dlm-btn-sm" id="dlm-gen-token"><i class="fas fa-key"></i> ${t('Generuj')}</button>
+                            <button class="dlm-btn-sm btn-danger" id="dlm-revoke-token" style="display:none;"><i class="fas fa-trash"></i></button>
+                        </div>
+                    </div>
+                    <div class="dlm-hint" style="margin-top:8px;">
+                        <i class="fas fa-info-circle"></i> 
+                        <a href="/api/downloads/extension/download" download style="color:#3b82f6;text-decoration:underline;margin-right:15px;">
+                            <i class="fas fa-download"></i> ${t('Pobierz rozszerzenie (.zip)')}
+                        </a>
+                        <br>
+                        ${t('Instalacja: chrome://extensions/ → włącz "Tryb dewelopera" → "Wczytaj rozpakowane" → wybierz rozpakowany folder')}
+                    </div>
+
+                    <h3 class="dlm-section-title dl-section-gap"><i class="fas fa-network-wired"></i> ${t('Proxy')}</h3>
+                    <p class="dlm-hint">${t('Użyj serwera proxy dla pobierań HTTP/HTTPS (np. SOCKS5 dla geoblocked content)')}</p>
+                    
+                    <div class="dlm-setting-row">
+                        <label class="dl-row">
+                            <input type="checkbox" id="dlm-proxy-enabled">
+                            ${t('Włącz proxy')}
+                        </label>
+                    </div>
+                    
+                    <div id="dlm-proxy-settings" style="display:none;">
+                        <div class="dlm-setting-row">
+                            <label>${t('Typ proxy:')}</label>
+                            <select class="dlm-select" id="dlm-proxy-type">
+                                <option value="http">HTTP</option>
+                                <option value="https">HTTPS</option>
+                                <option value="socks5">SOCKS5</option>
+                            </select>
+                        </div>
+                        <div class="dlm-setting-row">
+                            <label>${t('Host:')}</label>
+                            <input type="text" class="dlm-input" id="dlm-proxy-host" placeholder="proxy.example.com">
+                        </div>
+                        <div class="dlm-setting-row">
+                            <label>${t('Port:')}</label>
+                            <input type="text" class="dlm-input" id="dlm-proxy-port" placeholder="1080" style="width:100px;">
+                        </div>
+                        <div class="dlm-setting-row">
+                            <label>${t('Nazwa użytkownika (opcjonalnie):')}</label>
+                            <input type="text" class="dlm-input" id="dlm-proxy-username" placeholder="">
+                        </div>
+                        <div class="dlm-setting-row">
+                            <label>${t('Hasło (opcjonalnie):')}</label>
+                            <input type="password" class="dlm-input" id="dlm-proxy-password" placeholder="">
+                        </div>
+                    </div>
 
                     <div class="dl-save-wrap">
                         <button class="btn btn-primary" id="dlm-save-config"><i class="fas fa-save"></i> ${t('Zapisz ustawienia')}</button>
@@ -395,6 +480,16 @@ function renderDownloadManager(body, launchOpts) {
     });
 
     // Save config
+    // Multi-segment enabled checkbox toggle
+    body.querySelector('#dlm-multi-segment-enabled').addEventListener('change', (e) => {
+        body.querySelector('#dlm-multi-segment-settings').style.display = e.target.checked ? '' : 'none';
+    });
+    
+    // Proxy enabled checkbox toggle
+    body.querySelector('#dlm-proxy-enabled').addEventListener('change', (e) => {
+        body.querySelector('#dlm-proxy-settings').style.display = e.target.checked ? '' : 'none';
+    });
+
     body.querySelector('#dlm-save-config').addEventListener('click', async () => {
         const svc = debridSelect.value;
         const payload = {
@@ -408,6 +503,15 @@ function renderDownloadManager(body, launchOpts) {
             debrid_service: svc,
             auto_categorize: body.querySelector('#dlm-auto-categorize').checked,
             categories: config.categories,
+            proxy_enabled: body.querySelector('#dlm-proxy-enabled').checked,
+            proxy_type: body.querySelector('#dlm-proxy-type').value,
+            proxy_host: body.querySelector('#dlm-proxy-host').value.trim(),
+            proxy_port: body.querySelector('#dlm-proxy-port').value.trim(),
+            proxy_username: body.querySelector('#dlm-proxy-username').value.trim(),
+            proxy_password: body.querySelector('#dlm-proxy-password').value.trim(),
+            multi_segment_enabled: body.querySelector('#dlm-multi-segment-enabled').checked,
+            multi_segment_count: parseInt(body.querySelector('#dlm-multi-segment-count').value),
+            multi_segment_min_size: parseInt(body.querySelector('#dlm-multi-segment-min-size').value),
         };
         // Include API key if changed
         const keyInput = body.querySelector(`#dlm-key-${svc}`);
@@ -557,6 +661,32 @@ function renderDownloadManager(body, launchOpts) {
         if (config.debridlink_api_key) body.querySelector('#dlm-key-debridlink').value = config.debridlink_api_key;
         if (config.torbox_api_key) body.querySelector('#dlm-key-torbox').value = config.torbox_api_key;
         
+        // Extension token
+        const tokenInput = body.querySelector('#dlm-extension-token');
+        const revokeBtn = body.querySelector('#dlm-revoke-token');
+        if (config.extension_api_token) {
+            tokenInput.value = config.extension_api_token;
+            revokeBtn.style.display = '';
+        } else {
+            tokenInput.value = '';
+            revokeBtn.style.display = 'none';
+        }
+        
+        // Proxy settings
+        body.querySelector('#dlm-proxy-enabled').checked = !!config.proxy_enabled;
+        body.querySelector('#dlm-proxy-type').value = config.proxy_type || 'http';
+        body.querySelector('#dlm-proxy-host').value = config.proxy_host || '';
+        body.querySelector('#dlm-proxy-port').value = config.proxy_port || '';
+        body.querySelector('#dlm-proxy-username').value = config.proxy_username || '';
+        body.querySelector('#dlm-proxy-password').value = config.proxy_password || '';
+        body.querySelector('#dlm-proxy-settings').style.display = config.proxy_enabled ? '' : 'none';
+        
+        // Multi-segment settings
+        body.querySelector('#dlm-multi-segment-enabled').checked = config.multi_segment_enabled !== false;  // default true
+        body.querySelector('#dlm-multi-segment-count').value = config.multi_segment_count || 4;
+        body.querySelector('#dlm-multi-segment-min-size').value = config.multi_segment_min_size || 10;
+        body.querySelector('#dlm-multi-segment-settings').style.display = config.multi_segment_enabled !== false ? '' : 'none';
+        
         // Categories
         body.querySelector('#dlm-auto-categorize').checked = !!config.auto_categorize;
         renderCategories();
@@ -584,6 +714,37 @@ function renderDownloadManager(body, launchOpts) {
         openDirPicker(body.querySelector('#dlm-watch-folder').value || '/home', 'Folder obserwowany', path => {
             body.querySelector('#dlm-watch-folder').value = path;
         });
+    });
+
+    // ─── Browser Extension Token ───
+    body.querySelector('#dlm-gen-token').addEventListener('click', async () => {
+        const confirmed = await confirmDialog(t('Wygenerować nowy token API? Stary token przestanie działać.'));
+        if (!confirmed) return;
+        
+        const res = await api('/downloads/extension/generate-token', { method: 'POST' });
+        if (res.ok && res.token) {
+            body.querySelector('#dlm-extension-token').value = res.token;
+            body.querySelector('#dlm-revoke-token').style.display = '';
+            toast(t('Token wygenerowany — skopiuj go do rozszerzenia przeglądarki'), 'success');
+            // Auto-select for easy copy
+            body.querySelector('#dlm-extension-token').select();
+        } else {
+            toast(t('Błąd generowania tokenu'), 'error');
+        }
+    });
+
+    body.querySelector('#dlm-revoke-token').addEventListener('click', async () => {
+        const confirmed = await confirmDialog(t('Usunąć token API? Rozszerzenie przeglądarki przestanie działać.'));
+        if (!confirmed) return;
+        
+        const res = await api('/downloads/extension/revoke-token', { method: 'POST' });
+        if (res.ok) {
+            body.querySelector('#dlm-extension-token').value = '';
+            body.querySelector('#dlm-revoke-token').style.display = 'none';
+            toast(t('Token usunięty'), 'info');
+        } else {
+            toast(t('Błąd usuwania tokenu'), 'error');
+        }
     });
 
     // ─── Add download ───
@@ -744,7 +905,29 @@ function renderDownloadManager(body, launchOpts) {
                 method: 'POST',
                 body: payload
             });
-            if (res.ok) {
+            
+            if (res.error === 'duplicates_found' && res.duplicates) {
+                // Show duplicate confirmation dialog
+                const confirmed = await _showDuplicateDialog(res.duplicates);
+                if (!confirmed) {
+                    toast(t('Anulowano — znaleziono duplikaty'), 'info');
+                    return;
+                }
+                // Re-add with skip_duplicate_check flag
+                payload.skip_duplicate_check = true;
+                const retryRes = await api('/downloads/add', {
+                    method: 'POST',
+                    body: payload
+                });
+                if (!retryRes.ok) {
+                    toast(retryRes.error || t('Błąd dodawania'), 'error');
+                    return;
+                }
+                toast(`Dodano ${retryRes.added?.length || urls.length} pobieranie(a)`, 'success');
+                urlInput.value = '';
+                _autoResizeUrlInput();
+                loadDownloads();
+            } else if (res.ok) {
                 toast(`Dodano ${res.added?.length || urls.length} pobieranie(a)`, 'success');
                 urlInput.value = '';
                 _autoResizeUrlInput();
@@ -1192,6 +1375,10 @@ function renderDownloadManager(body, launchOpts) {
 
         const cat = (config.categories || []).find(c => c.id === dl.category_id);
         const catBadge = cat ? `<span class="dlm-cat-badge">${_dlmEsc(cat.name)}</span>` : '';
+        
+        const priorityLabel = dl.priority === 'high' ? t('Wysoki') : (dl.priority === 'low' ? t('Niski') : t('Normalny'));
+        const priorityIcon = dl.priority === 'high' ? '⬆️' : (dl.priority === 'low' ? '⬇️' : '');
+        const priorityBadge = dl.priority !== 'normal' ? `<span class="dlm-priority-badge dlm-priority-${dl.priority}">${priorityIcon} ${priorityLabel}</span>` : '';
 
         return `
             <div class="dlm-item dlm-status-${dl.status}${ftypeClass ? ' ' + ftypeClass : ''}${isMovable ? ' dlm-draggable' : ''}" data-id="${dl.id}"${isMovable ? ' draggable="true"' : ''}>
@@ -1200,6 +1387,7 @@ function renderDownloadManager(body, launchOpts) {
                     <div class="dlm-item-name" title="${_dlmEsc(dl.filename || dl.url)}">${nameDisplay}</div>
                     <div class="dlm-item-meta">
                         ${catBadge}
+                        ${priorityBadge}
                         <span class="dlm-item-status">${statusLabel}</span>
                         ${dl.retry_count > 0 ? `<span class="dl-icon-amber" title="${t('Próba')} ${dl.retry_count}"><i class="fas fa-sync-alt"></i> ${dl.retry_count}</span>` : ''}
                         ${sizeInfo ? `<span class="dlm-item-size">${sizeInfo}</span>` : ''}
@@ -1214,6 +1402,11 @@ function renderDownloadManager(body, launchOpts) {
                     </div>` : ''}
                 </div>
                 <div class="dlm-item-actions">
+                    ${['pending', 'paused', 'downloading'].includes(dl.status) ? `
+                        <button class="dlm-btn-icon dlm-priority-btn" data-action="priority" title="${t('Zmień priorytet')}">
+                            <i class="fas fa-signal"></i>
+                        </button>
+                    ` : ''}
                     ${isMovable ? `
                         <button class="dlm-btn-icon" data-action="top" title="${t('Przenieś na górę')}"><i class="fas fa-angle-double-up"></i></button>
                     ` : ''}
@@ -1417,6 +1610,15 @@ function renderDownloadManager(body, launchOpts) {
             btn.addEventListener('click', async () => {
                 const id = btn.closest('.dlm-item').dataset.id;
                 const action = btn.dataset.action;
+                if (action === 'priority') {
+                    const dl = downloads.find(d => d.id === id);
+                    if (!dl) return;
+                    const current = dl.priority || 'normal';
+                    const newPriority = current === 'normal' ? 'high' : (current === 'high' ? 'low' : 'normal');
+                    await api('/downloads/set-priority', { method: 'POST', body: { ids: [id], priority: newPriority } });
+                    loadDownloads();
+                    return;
+                }
                 if (action === 'copy-url') {
                     const dl = downloads.find(d => d.id === id);
                     if (dl?.url) { navigator.clipboard.writeText(dl.url); toast(t('Skopiowano link'), 'info'); }
@@ -1989,6 +2191,64 @@ function renderDownloadManager(body, launchOpts) {
             _stopTimers();
             if (origClose) origClose();
         };
+    }
+
+    // ─── Duplicate Dialog ───
+    async function _showDuplicateDialog(duplicates) {
+        return new Promise(resolve => {
+            const overlay = document.createElement('div');
+            overlay.className = 'modal-overlay';
+            const dupList = duplicates.map(d => {
+                const statusLabel = d.status === 'completed' ? t('Ukończone') : (d.status === 'failed' ? t('Błąd') : d.status);
+                const location = d.location === 'active' ? t('W kolejce') : t('W historii');
+                const fname = d.filename ? _dlmEsc(d.filename) : _dlmEsc(d.url.substring(0, 60));
+                return `
+                    <div class="dlm-dup-item">
+                        <i class="fas fa-exclamation-triangle dl-icon-amber"></i>
+                        <div>
+                            <div class="dlm-dup-name">${fname}</div>
+                            <div class="dlm-dup-meta">
+                                <span class="dlm-dup-badge">${location}</span>
+                                <span class="dlm-dup-status">${statusLabel}</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            overlay.innerHTML = `
+                <div class="modal-box" style="width:90%;max-width:560px;">
+                    <div class="modal-header">
+                        <span><i class="fas fa-copy dl-icon-mr"></i>${t('Znaleziono duplikaty')}</span>
+                        <button class="modal-close"><i class="fas fa-times"></i></button>
+                    </div>
+                    <div class="modal-body">
+                        <p>${t('Następujące pliki zostały już pobrane lub są w kolejce:')}</p>
+                        <div class="dlm-dup-list">${dupList}</div>
+                        <p style="margin-top:16px;color:var(--text-secondary);font-size:13px;">
+                            <i class="fas fa-info-circle"></i> ${t('Czy na pewno chcesz dodać je ponownie?')}
+                        </p>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" id="dlm-dup-cancel">${t('Anuluj')}</button>
+                        <button class="btn btn-primary" id="dlm-dup-confirm">${t('Dodaj mimo to')}</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+
+            const close = (result) => {
+                overlay.remove();
+                resolve(result);
+            };
+
+            overlay.querySelector('.modal-close').addEventListener('click', () => close(false));
+            overlay.querySelector('#dlm-dup-cancel').addEventListener('click', () => close(false));
+            overlay.querySelector('#dlm-dup-confirm').addEventListener('click', () => close(true));
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) close(false);
+            });
+        });
     }
 
     // ─── Init ───

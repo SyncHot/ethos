@@ -29,6 +29,7 @@ import hashlib
 import pwd
 import grp as _grp
 import stat as _stat_mod
+import threading as _threading
 from datetime import datetime, timedelta
 from functools import wraps
 import gevent
@@ -99,11 +100,19 @@ from blueprints.users import users_bp, _load_privileges
 from blueprints.network import network_bp
 from blueprints.eventlog import eventlog_bp, init_eventlog, log as elog
 from blueprints.auth import auth_bp, security_bp, require_auth, get_current_user, get_token, generate_token, tokens
-from blueprints.system_bp import system_bp
+from blueprints.system_bp import system_bp, _register_avahi_service
 from blueprints.file_manager import files_bp
+from blueprints.file_manager_mobile import _start_trash_scheduler
+from blueprints.file_manager_archive import _resume_interrupted_transfer
+from blueprints.file_manager_ops import (
+    _resume_interrupted_copy, _resume_interrupted_compress, _resume_interrupted_zip,
+    _resume_interrupted_move, _cleanup_stale_ethos_tmp, _bg_prewarm_home_listing
+)
+from blueprints.file_manager_photos import _restore_upload_sessions
 from audit import audit_log
 from blueprints.sandbox_policy import sandbox_bp
-from blueprints.updater import update_bp, updates_public_bp, init_update, update_auto_check_loop
+from blueprints.updater import update_bp, updates_public_bp, init_update
+from blueprints.updater_apply import update_auto_check_loop
 from blueprints.ddns import ddns_bp, start_ddns
 from blueprints.settings import settings_bp
 from blueprints.ssh_manager import ssh_bp
@@ -212,6 +221,9 @@ def check_password_change():
 
 @app.after_request
 def add_header(response):
+    # Guard against None response
+    if response is None:
+        return response
     # Add Cache-Control headers
     if request.path.startswith('/~static~') or request.path.endswith('.js') or request.path.endswith('.css') or request.path.endswith('.png') or request.path.endswith('.jpg') or request.path.endswith('.woff2'):
         # Assets: Cache for 1 year
@@ -291,6 +303,10 @@ def csrf_check():
 # Security Headers (SameSite=Strict, CSP, etc.)
 @app.after_request
 def add_security_headers(response):
+    # Guard against None response
+    if response is None:
+        return response
+    
     # 5. Add SameSite=Strict to cookie policy
     # We can't easily modify existing Set-Cookie headers here without parsing,
     # so we rely on setting samesite='Strict' when creating cookies (login/verify).
@@ -371,6 +387,8 @@ _SKIP_LOG_PREFIXES = ('/api/stats', '/api/eventlog', '/api/notifications')
 @app.after_request
 def _log_api_errors(response):
     """Auto-log 4xx/5xx API responses to Event Log (except 401/404 on non-API)."""
+    if response is None:
+        return response
     try:
         if not request.path.startswith('/api/'):
             return response
@@ -562,6 +580,10 @@ def _load_version():
 
 ETHOS_VERSION = _load_version()
 
+def _is_setup_done():
+    """Check if initial setup is complete."""
+    return os.path.isfile(SETUP_DONE_FILE)
+
 
 # ─── Per-user data migration ────────────────────────────────
 def _migrate_global_to_per_user():
@@ -621,6 +643,8 @@ _migrate_global_to_per_user()
 @app.after_request
 def _no_cache_api(response):
     """Prevent browser caching on all /api/ responses (except media streams and file downloads)."""
+    if response is None:
+        return response
     if request.path.startswith('/api/'):
         # Allow caching for media preview (needed for video seeking / Range requests)
         is_media = request.path in ('/api/files/preview', '/api/files/trash/preview', '/api/gallery/stream') or \
@@ -653,6 +677,11 @@ def _no_cache_api(response):
         if is_download and response.status_code in (200, 206):
             response.headers.pop('Pragma', None)
             return response
+        # For all other API requests, disable caching
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+    return response
 
 
 # ─────────────────────────── Apps Registry ───────────────────────────
