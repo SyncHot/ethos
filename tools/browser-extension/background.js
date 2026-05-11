@@ -58,7 +58,7 @@ async function sendToEthOS(url, pageTitle, pageUrl) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-EthOS-Token': config.token
+      'Authorization': `Bearer ${config.token}`
     },
     body: JSON.stringify({
       url: url,

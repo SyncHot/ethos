@@ -1090,11 +1090,17 @@ def browser_add():
         resp = jsonify({'ok': True})
         resp.headers['Access-Control-Allow-Origin'] = '*'
         resp.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
-        resp.headers['Access-Control-Allow-Headers'] = 'Content-Type, X-EthOS-Token'
+        resp.headers['Access-Control-Allow-Headers'] = 'Content-Type, X-EthOS-Token, Authorization'
         return resp
 
-    # Check API token
+    # Check API token - support both X-EthOS-Token (legacy) and Authorization Bearer
     token = request.headers.get('X-EthOS-Token', '')
+    if not token:
+        # Try Authorization header (Bearer token)
+        auth_header = request.headers.get('Authorization', '')
+        if auth_header.startswith('Bearer '):
+            token = auth_header[7:]  # Remove "Bearer " prefix
+    
     if not _verify_extension_token(token):
         resp = jsonify({'error': 'Invalid or missing API token'})
         resp.status_code = 401
