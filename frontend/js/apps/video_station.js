@@ -255,6 +255,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         <select class="vs-nf-select" id="vs-sub-select"   style="display:none"></select>
         <button class="vs-nf-btn" id="vs-cast-btn"  title="${t('Cast na TV')}" style="display:none"><i class="fas fa-tv"></i></button>
         <button class="vs-nf-btn" id="vs-pip-btn"   title="${t('Obraz w obrazie')}"><i class="fas fa-clone"></i></button>
+        <button class="vs-nf-btn" id="vs-rotation-lock-btn" title="${t('Blokada orientacji')}" style="display:none"><i class="fas fa-mobile-alt"></i></button>
         <button class="vs-nf-btn" id="vs-stats-btn" title="${t('Statystyki')}"><i class="fas fa-chart-bar"></i></button>
         <button class="vs-nf-btn vs-nf-btn-fs" id="vs-fs-btn" title="${t('Pełny ekran')}"><i class="fas fa-expand"></i></button>
         <button class="vs-nf-btn vs-nf-btn-close" id="vs-player-close" title="${t('Zamknij')}"><i class="fas fa-times"></i></button>
@@ -2132,6 +2133,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     let _ctrlHideTimer = null;
     let _ctrlVisible = true;
     let _wakeLock = null;
+    let _orientationLocked = false;
 
     function _buildStreamUrl(vid) {
         return '/api/video-station/stream/' + vid + '?token=' + NAS.token;
@@ -2816,6 +2818,40 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             pipBtn.onclick = () => togglePiP(video);
         }
 
+        // Screen Rotation Lock button
+        const rotationLockBtn = bodyEl.querySelector('#vs-rotation-lock-btn');
+        if (rotationLockBtn && screen.orientation && screen.orientation.lock) {
+            rotationLockBtn.style.display = '';
+            
+            const toggleOrientationLock = async () => {
+                try {
+                    if (_orientationLocked) {
+                        // Unlock orientation
+                        screen.orientation.unlock();
+                        _orientationLocked = false;
+                        rotationLockBtn.innerHTML = '<i class="fas fa-mobile-alt"></i>';
+                        rotationLockBtn.title = t('Blokada orientacji');
+                        console.log('[VS] Screen orientation unlocked');
+                    } else {
+                        // Lock to current orientation
+                        const type = screen.orientation.type;
+                        // If landscape, lock to landscape-primary, if portrait, lock to portrait-primary
+                        const lockType = type.startsWith('landscape') ? 'landscape' : 'portrait';
+                        await screen.orientation.lock(lockType);
+                        _orientationLocked = true;
+                        rotationLockBtn.innerHTML = '<i class="fas fa-lock"></i>';
+                        rotationLockBtn.title = t('Orientacja zablokowana');
+                        console.log('[VS] Screen orientation locked to:', lockType);
+                    }
+                } catch (err) {
+                    console.warn('[VS] Screen orientation lock failed:', err);
+                    toast(t('Blokada orientacji niedostępna w tym trybie'), 'warning');
+                }
+            };
+            
+            rotationLockBtn.onclick = toggleOrientationLock;
+        }
+
         // Fullscreen button
         if (fsBtn) {
             fsBtn.onclick = () => toggleFullscreen(overlay);
@@ -3203,6 +3239,18 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         stopPlayer();
         _destroyHls();
         _releaseWakeLock();  // Release wake lock when closing player
+        
+        // Unlock screen orientation when closing player
+        if (_orientationLocked && screen.orientation && screen.orientation.unlock) {
+            try {
+                screen.orientation.unlock();
+                _orientationLocked = false;
+                console.log('[VS] Screen orientation unlocked on player close');
+            } catch (err) {
+                console.warn('[VS] Failed to unlock orientation:', err);
+            }
+        }
+        
         _transcoding = false;
         _currentVid = null;
         _currentAudioIdx = null;
