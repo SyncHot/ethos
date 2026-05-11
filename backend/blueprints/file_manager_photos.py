@@ -198,6 +198,22 @@ def photo_favorites_files():
 # cache decorator removed (listdir cache provides equivalent benefit)
 def files_list():
     path = request.args.get('path', '/')
+    _limit_raw = request.args.get('limit')
+    _offset_raw = request.args.get('offset')
+    _paginated = (_limit_raw is not None) or (_offset_raw is not None)
+    _limit = None
+    _offset = 0
+    if _paginated:
+        try:
+            _limit = int(_limit_raw) if _limit_raw is not None else 300
+        except (TypeError, ValueError):
+            _limit = 300
+        try:
+            _offset = int(_offset_raw) if _offset_raw is not None else 0
+        except (TypeError, ValueError):
+            _offset = 0
+        _limit = max(1, min(_limit, 1000))
+        _offset = max(0, _offset)
     # Normalize double slashes
     while '//' in path:
         path = path.replace('//', '/')
@@ -267,9 +283,9 @@ def files_list():
         if _cur:
             _home_only_user = _cur['username']
 
-    # ── Short-lived listing cache (skip for home-isolation and password-protected) ──
+    # ── Short-lived listing cache (skip for home-isolation and paginated requests) ──
     _cache_key = real_path if not _home_only_user else None
-    if _cache_key:
+    if _cache_key and not _paginated:
         cached_items = _main()._listdir_cache_get(_cache_key)
         if cached_items is not None:
             # ETag based on directory mtime — allows 304 responses on repeat polls
@@ -289,7 +305,7 @@ def files_list():
     # ETag from directory mtime (computed once, reused below)
     _etag = None
     _dir_mtime = None
-    if _cache_key:
+    if _cache_key and not _paginated:
         try:
             _dir_mtime = os.path.getmtime(real_path)
             _etag = hashlib.md5(f'{real_path}:{_dir_mtime}'.encode()).hexdigest()[:16]
@@ -307,13 +323,20 @@ def files_list():
             dir_entries = _fs_call(_do_scandir, timeout=30)
         else:
             dir_entries = _do_scandir()
+        filtered_entries = []
         for entry in dir_entries:
-            # Hide per-drive trash directories and .thumbs directories
             if entry.name in ('.trash', '.thumbs') and entry.is_dir():
                 continue
-            # Home isolation – skip other users' directories
             if _home_only_user and entry.name != _home_only_user:
                 continue
+            filtered_entries.append(entry)
+        total_entries = len(filtered_entries)
+        if _paginated and _limit is not None:
+            entries_to_render = filtered_entries[_offset:_offset + _limit]
+        else:
+            entries_to_render = filtered_entries
+
+        for entry in entries_to_render:
             try:
                 stat = entry.stat(follow_symlinks=False)
                 owner, group = _main()._get_owner_group(stat)
@@ -353,10 +376,22 @@ def files_list():
     except TimeoutError:
         return jsonify({'error': 'Disk not responding — try again shortly'}), 504
 
-    if _cache_key:
+    if _cache_key and not _paginated:
         _main()._listdir_cache_set(_cache_key, items, mtime=_dir_mtime)
 
-    resp = jsonify({'path': path, 'items': items})
+    payload = {'path': path, 'items': items}
+    if _paginated and _limit is not None:
+        next_offset = _offset + len(items)
+        payload.update({
+            'offset': _offset,
+            'limit': _limit,
+            'total': total_entries,
+            'returned': len(items),
+            'next_offset': next_offset,
+            'has_more': next_offset < total_entries,
+        })
+
+    resp = jsonify(payload)
     if _etag:
         resp.headers['ETag'] = _etag
         resp.headers['Cache-Control'] = 'no-cache'
@@ -1484,5 +1519,4 @@ def files_mkdir():
         return jsonify({'ok': True})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
 

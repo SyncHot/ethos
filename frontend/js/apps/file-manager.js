@@ -50,6 +50,11 @@ AppRegistry['file-manager'] = function (appDef, launchOpts) {
         // Pagination
         page: 0,
         pageSize: 200,
+        serverPageSize: 300,
+        totalItems: 0,
+        _nextOffset: 0,
+        _hasMore: false,
+        _loadingMore: false,
         // Search
         searchQuery: '',
         searchResults: null,   // null = not searching, [] = no results
@@ -925,19 +930,28 @@ function renderFM(body, state) {
         const sorted = sortItems(allItems);
 
         // ── Pagination ──
-        const totalPages = Math.max(1, Math.ceil(sorted.length / state.pageSize));
-        if (state.page >= totalPages) state.page = totalPages - 1;
+        const loadedPages = Math.max(1, Math.ceil(sorted.length / state.pageSize));
+        if (state.page >= loadedPages) state.page = loadedPages - 1;
         if (state.page < 0) state.page = 0;
         const pageStart = state.page * state.pageSize;
         const pageItems = sorted.slice(pageStart, pageStart + state.pageSize);
+        const knownTotal = state.searchResults !== null
+            ? sorted.length
+            : Math.max(state.totalItems || 0, sorted.length);
+        const knownTotalPages = Math.max(1, Math.ceil(knownTotal / state.pageSize));
 
         // Pagination UI
         const pagEl = body.querySelector('#fm-pagination');
-        if (sorted.length > state.pageSize) {
+        if (sorted.length > state.pageSize || (state.searchResults === null && (state._hasMore || knownTotal > sorted.length))) {
             pagEl.classList.remove('hidden');
-            body.querySelector('#fm-page-info').textContent = `${state.page + 1} / ${totalPages}  (${sorted.length} elem.)`;
+            const loadedInfo = (state.searchResults === null && knownTotal > sorted.length)
+                ? ` (${sorted.length}/${knownTotal} elem.)`
+                : ` (${sorted.length} elem.)`;
+            body.querySelector('#fm-page-info').textContent = `${state.page + 1} / ${knownTotalPages}${loadedInfo}`;
             body.querySelector('#fm-page-prev').disabled = state.page <= 0;
-            body.querySelector('#fm-page-next').disabled = state.page >= totalPages - 1;
+            body.querySelector('#fm-page-next').disabled = state.searchResults !== null
+                ? state.page >= loadedPages - 1
+                : (state.page >= loadedPages - 1 && !state._hasMore);
         } else {
             pagEl.classList.add('hidden');
         }
@@ -1068,8 +1082,9 @@ function renderFM(body, state) {
             selectedSizeInfo = ` | ${t('Zaznaczono:')} ${selectedCount} (${formatBytes(selSize)})`;
         }
         const searchLabel = state.searchResults !== null ? `${t('Wyniki')} (${_src.length}) — ` : '';
+        const loadingMoreLabel = (state.searchResults === null && state._loadingMore) ? ' | loading…' : '';
         body.querySelector('#fm-statusbar').textContent =
-            searchLabel + `${_src.length} ${t('elementów')} (${dirs} ${t('folderów')}, ${files} ${t('plików')}) — ${formatBytes(totalSize)}` + selectedSizeInfo;
+            searchLabel + `${_src.length} ${t('elementów')} (${dirs} ${t('folderów')}, ${files} ${t('plików')}) — ${formatBytes(totalSize)}` + selectedSizeInfo + loadingMoreLabel;
 
         // Update selection bar visibility
         updateSelectionBar();
@@ -2231,6 +2246,25 @@ function renderFM(body, state) {
     // ─── Navigation ───
     // (Duplicate Photo Finder is now a standalone app — see apps/duplicates.js)
 
+    async function loadMoreFromServer(path, navVersion = state._navVersion) {
+        if (state.searchResults !== null || state._loadingMore || !state._hasMore) return false;
+        state._loadingMore = true;
+        try {
+            const data = await api(
+                `/files/list?path=${encodeURIComponent(path)}&offset=${state._nextOffset}&limit=${state.serverPageSize}`
+            );
+            if (navVersion !== state._navVersion || path !== state.path) return false;
+            const incoming = Array.isArray(data?.items) ? data.items : [];
+            if (incoming.length) state.items = state.items.concat(incoming);
+            state.totalItems = Number.isFinite(data?.total) ? data.total : Math.max(state.totalItems, state.items.length);
+            state._nextOffset = Number.isFinite(data?.next_offset) ? data.next_offset : state.items.length;
+            state._hasMore = !!data?.has_more;
+            return incoming.length > 0;
+        } finally {
+            state._loadingMore = false;
+        }
+    }
+
     async function navigateTo(path) {
         // Bump version so any in-flight navigation knows it's stale
         const myVersion = ++state._navVersion;
@@ -2251,10 +2285,18 @@ function renderFM(body, state) {
             if (path === '/__photo_favorites__') {
                 data = await api('/photos/favorites/files');
                 if (myVersion !== state._navVersion) return;
+                state.totalItems = 0;
+                state._nextOffset = 0;
+                state._hasMore = false;
+                state._loadingMore = false;
             } else if (path === '/__shared_with_me__') {
                 state.path = '/__shared_with_me__';
                 state.items = [];
                 state.selected.clear();
+                state.totalItems = 0;
+                state._nextOffset = 0;
+                state._hasMore = false;
+                state._loadingMore = false;
                 // Update history
                 if (state.historyIndex < state.history.length - 1) {
                     state.history = state.history.slice(0, state.historyIndex + 1);
@@ -2270,6 +2312,10 @@ function renderFM(body, state) {
                 state.path = '/__trash__';
                 state.items = [];
                 state.selected.clear();
+                state.totalItems = 0;
+                state._nextOffset = 0;
+                state._hasMore = false;
+                state._loadingMore = false;
                 // Update history
                 if (state.historyIndex < state.history.length - 1) {
                     state.history = state.history.slice(0, state.historyIndex + 1);
@@ -2290,7 +2336,7 @@ function renderFM(body, state) {
                     console.log(`[FM] navigateTo: using PREFETCH cache for "${path}", ${data.items?.length} items`);
                 } else {
                     console.log(`[FM] navigateTo: fetching API for "${path}"`);
-                    data = await api(`/files/list?path=${encodeURIComponent(path)}`);
+                    data = await api(`/files/list?path=${encodeURIComponent(path)}&offset=0&limit=${state.serverPageSize}`);
                     console.log(`[FM] navigateTo: API returned path="${data?.path}", ${data?.items?.length} items`);
                     // Auto-retry once for sleeping USB disks
                     if (data?.error && path.startsWith('/media/') && !state._usbRetrying) {
@@ -2298,7 +2344,7 @@ function renderFM(body, state) {
                         const retryList = body.querySelector('#fm-file-list');
                         if (retryList) retryList.innerHTML = `<div class="fm-empty"><i class="fas fa-spinner fa-spin"></i><span>${t('Budzenie dysku USB…')}</span></div>`;
                         await new Promise(r => setTimeout(r, 3000));
-                        data = await api(`/files/list?path=${encodeURIComponent(path)}`);
+                        data = await api(`/files/list?path=${encodeURIComponent(path)}&offset=0&limit=${state.serverPageSize}`);
                         state._usbRetrying = false;
                     }
                     // If a newer navigation started while we were waiting, bail out
@@ -2323,6 +2369,10 @@ function renderFM(body, state) {
             state.path = data.path;
             state._lastRealPath = data.path;  // remember for dup scanner
             state.items = data.items;
+            state.totalItems = Number.isFinite(data?.total) ? data.total : (data.items?.length || 0);
+            state._nextOffset = Number.isFinite(data?.next_offset) ? data.next_offset : (data.items?.length || 0);
+            state._hasMore = !!data?.has_more;
+            state._loadingMore = false;
             state.selected.clear();
             console.log(`[FM] navigateTo: loaded "${data.path}", ${data.items?.length} items (was "${oldPath}")`);
 
@@ -2363,6 +2413,16 @@ function renderFM(body, state) {
             renderSidebar();
             renderFileList();
             updateNavButtons();
+            if (state.searchResults === null && state._hasMore) {
+                const listBefore = body.querySelector('#fm-file-list');
+                const prevTop = listBefore ? listBefore.scrollTop : 0;
+                const appended = await loadMoreFromServer(state.path, myVersion);
+                if (appended && myVersion === state._navVersion) {
+                    renderFileList();
+                    const listAfter = body.querySelector('#fm-file-list');
+                    if (listAfter) listAfter.scrollTop = prevTop;
+                }
+            }
             // Auto-start background dir-size calculation for directories
             startBgDirSizes();
             // Pre-generate thumbnails in background if already in thumb view
@@ -5143,10 +5203,22 @@ function renderFM(body, state) {
     body.querySelector('#fm-page-prev').addEventListener('click', () => {
         if (state.page > 0) { state.page--; renderFileList(); body.querySelector('#fm-file-list').scrollTop = 0; }
     });
-    body.querySelector('#fm-page-next').addEventListener('click', () => {
+    body.querySelector('#fm-page-next').addEventListener('click', async () => {
         const allItems = state.searchResults !== null ? state.searchResults : state.items;
-        const totalPages = Math.ceil(allItems.length / state.pageSize);
-        if (state.page < totalPages - 1) { state.page++; renderFileList(); body.querySelector('#fm-file-list').scrollTop = 0; }
+        const loadedPages = Math.max(1, Math.ceil(allItems.length / state.pageSize));
+        if (state.page < loadedPages - 1) {
+            state.page++;
+            renderFileList();
+            body.querySelector('#fm-file-list').scrollTop = 0;
+            return;
+        }
+        if (state.searchResults === null && state._hasMore && !state._loadingMore) {
+            renderFileList();  // show loading status
+            const appended = await loadMoreFromServer(state.path);
+            if (appended) state.page++;
+            renderFileList();
+            body.querySelector('#fm-file-list').scrollTop = 0;
+        }
     });
 
     // ─── Folder sizes ───
@@ -5287,7 +5359,7 @@ function renderFM(body, state) {
             const cached = _fmPrefetchCache.get(fp);
             if (cached && (Date.now() - cached.ts) < _FM_PREFETCH_TTL) return;
             // Pre-fetch listing in background and store in cache
-            api(`/files/list?path=${encodeURIComponent(fp)}`)
+            api(`/files/list?path=${encodeURIComponent(fp)}&offset=0&limit=${state.serverPageSize}`)
                 .then(d => { if (d && !d.error) _fmPrefetchCache.set(fp, { data: d, ts: Date.now() }); })
                 .catch(() => {});
             // Also pre-populate server listing cache for subdirs
