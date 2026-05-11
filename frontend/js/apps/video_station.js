@@ -100,11 +100,16 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     NAS.socket.on('vs_scan_done', onScanDone);
     NAS.socket.on('vs_install', onInstallProgress);
 
+    // Listen for visibility changes to re-acquire wake lock
+    document.addEventListener('visibilitychange', _handleVisibilityChange);
+
     function cleanup() {
         NAS.socket.off('vs_scan_progress', onScanProgress);
         NAS.socket.off('vs_scan_done', onScanDone);
         NAS.socket.off('vs_install', onInstallProgress);
+        document.removeEventListener('visibilitychange', _handleVisibilityChange);
         stopPlayer();
+        _releaseWakeLock();
     }
 
     /* ── init ──────────────────────────────────────────────── */
@@ -2126,6 +2131,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     let _heartbeatTimer = null;
     let _ctrlHideTimer = null;
     let _ctrlVisible = true;
+    let _wakeLock = null;
 
     function _buildStreamUrl(vid) {
         return '/api/video-station/stream/' + vid + '?token=' + NAS.token;
@@ -2344,22 +2350,40 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 
         // Custom seek via range drag
         if (seekInput) {
+            let isSeeking = false;
+            
+            seekInput.addEventListener('mousedown', () => { isSeeking = true; }, sig);
+            seekInput.addEventListener('touchstart', () => { isSeeking = true; }, sig);
+            
             seekInput.addEventListener('input', () => {
                 const dur = _knownDuration || video.duration || 0;
                 if (!dur) return;
                 const targetSec = (parseFloat(seekInput.value) / 100) * dur;
+                // Update visual preview while dragging
                 if (pbCur) pbCur.textContent = formatDuration(targetSec);
+                if (seekFill) seekFill.style.width = seekInput.value + '%';
+                if (nfThumb) nfThumb.style.left = seekInput.value + '%';
             }, sig);
-            seekInput.addEventListener('change', () => {
+            
+            const performSeek = () => {
+                if (!isSeeking) return;
+                isSeeking = false;
+                
                 const dur = _knownDuration || video.duration || 0;
                 if (!dur) return;
                 const targetSec = (parseFloat(seekInput.value) / 100) * dur;
+                
                 if (_transcoding) {
+                    _cl('info', 'User seek via range input', { targetSec, startOffset: _startOffset });
                     _startHls(_currentVid, targetSec, _currentAudioIdx);
                 } else {
                     video.currentTime = targetSec;
                 }
-            }, sig);
+            };
+            
+            seekInput.addEventListener('change', performSeek, sig);
+            seekInput.addEventListener('mouseup', performSeek, sig);
+            seekInput.addEventListener('touchend', performSeek, sig);
         }
 
         if (ccRw) ccRw.addEventListener('click', () => seekPlayer(video, -10), sig);
@@ -2527,11 +2551,24 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             if (needsTranscode) {
                 await _startHls(vid, startSec, null);
             } else {
+                // Direct stream
+                video.preload = 'metadata';
                 video.src = _buildStreamUrl(vid);
+                
                 if (startSec > 0) {
-                    video.addEventListener('loadedmetadata', function onMeta() {
-                        video.currentTime = startSec;
-                        video.removeEventListener('loadedmetadata', onMeta);
+                    // Wait for metadata to load before seeking
+                    const onMetaLoaded = () => {
+                        // Only seek if duration is known
+                        if (video.duration && !isNaN(video.duration)) {
+                            video.currentTime = Math.min(startSec, video.duration);
+                        }
+                        video.removeEventListener('loadedmetadata', onMetaLoaded);
+                    };
+                    video.addEventListener('loadedmetadata', onMetaLoaded);
+                } else {
+                    // Start from beginning - let autoplay handle it
+                    video.play().catch((err) => {
+                        _cl('warn', 'Auto-play blocked', { error: err.message });
                     });
                 }
             }
@@ -2565,11 +2602,18 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
                 const buf = video.buffered;
                 const t = video.currentTime;
                 let inBuffer = false;
+                
+                // Check all buffered ranges with small tolerance
                 for (let i = 0; i < buf.length; i++) {
-                    if (t >= buf.start(i) - 1 && t <= buf.end(i) + 1) { inBuffer = true; break; }
+                    if (t >= buf.start(i) - 0.5 && t <= buf.end(i) + 0.5) {
+                        inBuffer = true;
+                        break;
+                    }
                 }
+                
                 if (!inBuffer) {
                     const realPos = _startOffset + t;
+                    _cl('info', 'HLS seek beyond buffer', { realPos, currentTime: t, startOffset: _startOffset });
                     _startHls(vid, realPos, _currentAudioIdx);
                 }
             };
@@ -2588,11 +2632,15 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         video.addEventListener('play', () => {
             clearInterval(playerInterval);
             playerInterval = setInterval(() => savePosition(vid, video), 10000);
+            // Acquire wake lock when video starts playing
+            _requestWakeLock();
         }, sig);
         video.addEventListener('pause', () => {
             clearInterval(playerInterval);
             // Still save one last position on pause
             savePosition(vid, video);
+            // Release wake lock when paused
+            _releaseWakeLock();
         }, sig);
 
         // mark watched at >90%
@@ -2613,19 +2661,32 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 
         // Fallback: if raw stream fails, retry with HLS transcode
         video.onerror = () => {
-            if (!_transcoding && video.error) {
+            if (!video.error) return;
+            
+            const errorCode = video.error.code;
+            const errorMsg = video.error.message || 'Unknown error';
+            
+            if (!_transcoding) {
                 _cl('warn', 'Direct stream failed, falling back to HLS transcode', {
                     vid, codec: info.codec, audioCodec: info.audio_codec,
-                    errorCode: video.error.code, errorMsg: video.error.message
+                    errorCode, errorMsg, networkState: video.networkState, readyState: video.readyState
                 });
+                
+                // Clear error state
+                video.removeAttribute('src');
+                video.load();
+                
                 _transcoding = true;
                 badge.style.display = '';
                 _activateCustomControls();
-                _startHls(vid, 0, null);
-            } else if (_transcoding) {
+                
+                // Preserve current position for seamless transition
+                const currentPos = video.currentTime || 0;
+                _startHls(vid, currentPos, null);
+            } else if (_transcoding && _hlsInstance) {
                 // HLS transcode also failed — show error overlay with retry button
-                _cl('error', 'HLS transcode also failed', {
-                    vid, errorCode: video.error?.code, errorMsg: video.error?.message
+                _cl('error', 'HLS transcode failed', {
+                    vid, errorCode, errorMsg, networkState: video.networkState, readyState: video.readyState
                 });
                 _showPlayerError(vid, video);
             }
@@ -2823,21 +2884,30 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         // Start backend HLS session
         const body = { start: startSec || 0 };
         if (audioIdx != null) body.audio = audioIdx;
-        const res = await api('/video-station/hls/' + vid + '/start', { method: 'POST', body }).catch(err => {
-            _cl('error', 'HLS start API error', { vid, error: err?.message || String(err) });
-            return { ok: false, error: err?.message || t('Błąd sieciowy') };
-        });
+        
+        let res;
+        try {
+            res = await api('/video-station/hls/' + vid + '/start', { method: 'POST', body });
+        } catch (err) {
+            _cl('error', 'HLS start API network error', { vid, error: err?.message || String(err) });
+            toast(t('Błąd sieciowy podczas uruchamiania transkodowania'), 'error');
+            return;
+        }
+        
         if (!res.ok) {
             const errMsg = (res.error || t('Błąd transkodowania'));
             _cl('error', 'HLS transcoding failed', { vid, error: errMsg });
             toast(errMsg, 'error');
+            _showPlayerError(vid, video);
             return;
         }
+        
         _hlsSessionId = res.session_id;
         _startOffset = res.start_offset || 0;
         _transcoding = true;
         // Clear direct src to avoid conflicts with hls.js attachMedia
         video.removeAttribute('src');
+        video.load();
         _startHeartbeat(video);
 
         // Load embedded subtitle tracks from HLS start response
@@ -2848,7 +2918,9 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         // Safari supports HLS natively
         if (video.canPlayType('application/vnd.apple.mpegurl')) {
             video.src = playlistUrl;
-            video.play().catch(() => {});
+            video.play().catch((err) => {
+                _cl('warn', 'Auto-play blocked (Safari native HLS)', { error: err.message });
+            });
             return;
         }
 
@@ -2856,11 +2928,13 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         try {
             await _ensureHlsJs();
         } catch (e) {
+            _cl('error', 'Failed to load hls.js', { error: e.message });
             toast(t('Nie udało się załadować hls.js'), 'error');
             return;
         }
 
         if (!Hls.isSupported()) {
+            _cl('error', 'HLS not supported in this browser', {});
             toast(t('Przeglądarka nie wspiera HLS'), 'error');
             return;
         }
@@ -2871,13 +2945,32 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
                 const sep = url.includes('?') ? '&' : '?';
                 xhr.open('GET', url + sep + 'token=' + NAS.token, true);
             },
-            maxBufferLength: 60,
-            maxMaxBufferLength: 120,
-            startPosition: -1,
-            fragLoadingTimeOut: 30000,
-            fragLoadingMaxRetry: 3,
-            fragLoadingRetryDelay: 1000,
-            levelLoadingTimeOut: 15000,
+            // Buffer configuration
+            maxBufferLength: 60,           // Max buffer ahead (seconds)
+            maxMaxBufferLength: 120,       // Absolute max buffer
+            maxBufferSize: 60 * 1000 * 1000, // 60 MB
+            maxBufferHole: 0.5,            // Max gap to skip
+            
+            // Loading configuration
+            startPosition: -1,             // Auto-start from beginning of playlist
+            fragLoadingTimeOut: 30000,     // 30s timeout for fragments
+            fragLoadingMaxRetry: 5,        // Retry up to 5 times
+            fragLoadingRetryDelay: 1000,   // Start with 1s delay
+            fragLoadingMaxRetryTimeout: 64000, // Max 64s total retry time
+            
+            levelLoadingTimeOut: 15000,    // 15s timeout for playlist
+            levelLoadingMaxRetry: 4,       // Retry playlist 4 times
+            levelLoadingRetryDelay: 1000,  // Start with 1s delay
+            
+            // Manifest configuration
+            manifestLoadingTimeOut: 15000, // 15s timeout for manifest
+            manifestLoadingMaxRetry: 3,    // Retry manifest 3 times
+            manifestLoadingRetryDelay: 1000,
+            
+            // Performance tweaks
+            enableWorker: true,            // Use Web Worker for parsing
+            lowLatencyMode: false,         // Not needed for VOD
+            backBufferLength: 30,          // Keep 30s of back buffer for seeking
         });
 
         _hlsInstance = hls;
@@ -2886,19 +2979,36 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         hls.attachMedia(video);
 
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
-            video.play().catch(() => {});
+            video.play().catch((err) => {
+                _cl('warn', 'Auto-play blocked, user interaction required', { error: err.message });
+            });
         });
 
         hls.on(Hls.Events.ERROR, (event, data) => {
             if (data.fatal) {
+                _cl('error', 'HLS fatal error', { type: data.type, details: data.details, reason: data.reason });
+                
                 if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-                    // Retry — segment might not be produced yet
-                    setTimeout(() => hls.startLoad(), 2000);
+                    // Network error - retry with exponential backoff
+                    _cl('info', 'Network error detected, retrying HLS load', {});
+                    setTimeout(() => {
+                        if (_hlsInstance === hls) {
+                            hls.startLoad();
+                        }
+                    }, 2000);
                 } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+                    // Media error - try recovery
+                    _cl('info', 'Media error detected, attempting recovery', {});
                     hls.recoverMediaError();
                 } else {
-                    toast(t('Błąd odtwarzania HLS'), 'error');
+                    // Other fatal error - show error to user
+                    _cl('error', 'Unrecoverable HLS error', { type: data.type, details: data.details });
+                    toast(t('Błąd odtwarzania HLS') + ': ' + (data.details || 'Unknown'), 'error');
+                    _showPlayerError(vid, video);
                 }
+            } else {
+                // Non-fatal error - log but continue
+                _cl('warn', 'HLS non-fatal error', { type: data.type, details: data.details });
             }
         });
     }
@@ -3043,20 +3153,39 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     }
 
     function seekPlayer(video, delta) {
+        if (!video) return;
+        
         if (_transcoding) {
             // HLS: native seeking works within buffered range
             const realPos = _startOffset + (video.currentTime || 0);
             const newTime = Math.max(0, Math.min(_knownDuration, realPos + delta));
-            // If within buffer, use native seek
-            const bufferEnd = _startOffset + (video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0);
-            if (newTime >= _startOffset && newTime <= bufferEnd) {
-                video.currentTime = newTime - _startOffset;
+            
+            // Check if target is within ANY buffered range (not just the last one)
+            let inBuffer = false;
+            const buf = video.buffered;
+            for (let i = 0; i < buf.length; i++) {
+                const bufStart = _startOffset + buf.start(i);
+                const bufEnd = _startOffset + buf.end(i);
+                // Add 2s tolerance for smoother seeking near buffer edges
+                if (newTime >= bufStart - 2 && newTime <= bufEnd + 2) {
+                    inBuffer = true;
+                    break;
+                }
+            }
+            
+            if (inBuffer) {
+                // Seek within buffer - use native video seek
+                const localTime = newTime - _startOffset;
+                video.currentTime = Math.max(0, Math.min(video.duration || Infinity, localTime));
             } else {
                 // Beyond buffer: restart HLS from new position
+                _cl('info', 'Seeking beyond buffer, restarting HLS', { newTime, startOffset: _startOffset });
                 _startHls(_currentVid, newTime, _currentAudioIdx);
             }
         } else {
-            video.currentTime = Math.max(0, Math.min(video.duration || 0, video.currentTime + delta));
+            // Direct stream: native seeking
+            const newTime = Math.max(0, Math.min(video.duration || Infinity, video.currentTime + delta));
+            video.currentTime = newTime;
         }
     }
 
@@ -3073,6 +3202,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
 
         stopPlayer();
         _destroyHls();
+        _releaseWakeLock();  // Release wake lock when closing player
         _transcoding = false;
         _currentVid = null;
         _currentAudioIdx = null;
@@ -3121,6 +3251,48 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             document.exitPictureInPicture().catch(() => {});
         } else {
             video.requestPictureInPicture().catch(() => {});
+        }
+    }
+
+    /* ── Screen Wake Lock (prevents screen dimming on mobile) ──── */
+    async function _requestWakeLock() {
+        if (!('wakeLock' in navigator)) {
+            _cl('info', 'Wake Lock API not supported', {});
+            return;
+        }
+        try {
+            _wakeLock = await navigator.wakeLock.request('screen');
+            _cl('info', 'Screen wake lock acquired', {});
+            
+            _wakeLock.addEventListener('release', () => {
+                _cl('info', 'Screen wake lock released', {});
+                _wakeLock = null;
+            });
+        } catch (err) {
+            _cl('warn', 'Failed to acquire wake lock', { error: err.message });
+        }
+    }
+
+    function _releaseWakeLock() {
+        if (_wakeLock) {
+            _wakeLock.release().then(() => {
+                _wakeLock = null;
+            }).catch((err) => {
+                _cl('warn', 'Failed to release wake lock', { error: err.message });
+                _wakeLock = null;
+            });
+        }
+    }
+
+    // Re-acquire wake lock when page becomes visible again (user switches back to tab)
+    function _handleVisibilityChange() {
+        if (!document.hidden && !_wakeLock) {
+            const video = bodyEl && bodyEl.querySelector('#vs-player-video');
+            const overlay = bodyEl && bodyEl.querySelector('#vs-player-overlay');
+            // Only re-acquire if player is open and video is playing
+            if (video && overlay && overlay.style.display !== 'none' && !video.paused) {
+                _requestWakeLock();
+            }
         }
     }
 

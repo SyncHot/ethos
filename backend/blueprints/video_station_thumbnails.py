@@ -6,9 +6,21 @@ from blueprints.video_station import (
     video_station_bp,
     _get_db,
     _THUMB_DIR, _POSTER_DIR, _BACKDROP_DIR, _THUMBSTRIP_DIR,
-    _thumbstrip_generating, _get_thumbstrip_sem, _generate_thumbstrip,
 )
-@video_station_bp.route("/thumb/<int:vid>", methods=["GET"])
+
+# Thumbstrip generation state (local to this module)
+_thumbstrip_generating = set()  # video IDs currently being generated
+_thumbstrip_sem = None          # gevent.Semaphore(2) — set in init_video_station
+
+
+def _get_thumbstrip_sem():
+    """Return the thumbstrip semaphore (initialized on first call)."""
+    global _thumbstrip_sem
+    if _thumbstrip_sem is None:
+        _thumbstrip_sem = gevent.lock.Semaphore(2)
+    return _thumbstrip_sem
+
+
 
 def thumb(vid):
     p = os.path.join(_THUMB_DIR, str(vid) + ".jpg")
@@ -23,8 +35,6 @@ def poster(vid):
     p = os.path.join(_POSTER_DIR, str(vid) + ".jpg")
     if os.path.isfile(p):
         return send_file(p, mimetype="image/jpeg")
-    return jsonify({"error": "Brak plakatu."}), 404
-
 
 @video_station_bp.route("/backdrop/<int:vid>", methods=["GET"])
 

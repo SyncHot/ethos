@@ -24,7 +24,6 @@ from blueprints.video_station import (
 )
 from blueprints.admin_required import admin_required
 @video_station_bp.route("/stream/<int:vid>", methods=["GET"])
-
 def stream(vid):
     conn = _get_db()
     r = conn.execute("SELECT path FROM videos WHERE id=?", (vid,)).fetchone()
@@ -40,10 +39,12 @@ def stream(vid):
         ".mkv": "video/x-matroska", ".avi": "video/x-msvideo",
         ".mov": "video/quicktime", ".m4v": "video/mp4",
         ".ogv": "video/ogg", ".ts": "video/mp2t",
+        ".flv": "video/x-flv", ".wmv": "video/x-ms-wmv",
     }
     mime = mime_map.get(ext, "video/mp4")
     fsize = os.path.getsize(fp)
     range_header = request.headers.get("Range")
+    
     if range_header:
         byte_start = 0
         byte_end = fsize - 1
@@ -52,14 +53,18 @@ def stream(vid):
             byte_start = int(match.group(1))
             if match.group(2):
                 byte_end = int(match.group(2))
+            # Clamp to file size
+            byte_start = min(byte_start, fsize - 1)
+            byte_end = min(byte_end, fsize - 1)
         length = byte_end - byte_start + 1
 
         def gen():
             with open(fp, "rb") as f:
                 f.seek(byte_start)
                 remaining = length
+                chunk_size = 65536  # 64KB chunks
                 while remaining > 0:
-                    chunk = f.read(min(65536, remaining))
+                    chunk = f.read(min(chunk_size, remaining))
                     if not chunk:
                         break
                     remaining -= len(chunk)
@@ -69,8 +74,14 @@ def stream(vid):
         resp.headers["Content-Range"] = "bytes %d-%d/%d" % (byte_start, byte_end, fsize)
         resp.headers["Content-Length"] = str(length)
         resp.headers["Accept-Ranges"] = "bytes"
+        resp.headers["Cache-Control"] = "public, max-age=3600"
         return resp
-    return send_file(fp, mimetype=mime)
+    
+    # Full file response with Accept-Ranges header
+    resp = send_file(fp, mimetype=mime)
+    resp.headers["Accept-Ranges"] = "bytes"
+    resp.headers["Cache-Control"] = "public, max-age=3600"
+    return resp
 
 
 def _drain_stderr(pipe, buf_list):

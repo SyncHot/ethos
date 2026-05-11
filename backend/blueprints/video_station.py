@@ -1548,7 +1548,7 @@ def _scan_worker(folders, use_tmdb=False):
             if not os.path.isfile(sprite_path) and meta.get("duration", 0) > 30:
                 vid_id = vid_row["id"]
                 dur = meta.get("duration", 0)
-                gevent.spawn(_generate_thumbstrip, vid_id, path, dur, sprite_path)
+                gevent.spawn(video_station_thumbnails._generate_thumbstrip, vid_id, path, dur, sprite_path)
             # TMDb matching during scan
             if use_tmdb and _load_tmdb_key():
                 try:
