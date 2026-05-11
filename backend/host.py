@@ -84,7 +84,18 @@ def host_run(cmd, timeout=30, cwd=None):
         cp = subprocess.CompletedProcess(full_cmd, returncode=-1, stdout='', stderr='server shutting down')
         return cp
     try:
-        return future.result(timeout=timeout + 5)
+        wait_timeout = timeout + 5
+        if threading.current_thread() is threading.main_thread():
+            # In gevent main thread, avoid blocking on future.result()
+            # because it can freeze the event loop and trigger watchdog.
+            import gevent
+            deadline = time.monotonic() + wait_timeout
+            while not future.done():
+                if time.monotonic() >= deadline:
+                    raise FuturesTimeoutError()
+                gevent.sleep(0.05)
+            return future.result()
+        return future.result(timeout=wait_timeout)
     except FuturesTimeoutError:
         future.cancel()
         cp = subprocess.CompletedProcess(full_cmd, returncode=-1, stdout='', stderr='host_run timed out')
@@ -103,6 +114,15 @@ def fs_call_with_timeout(func, *args, timeout=5):
     except RuntimeError:
         raise TimeoutError("Server shutting down")
     try:
+        if threading.current_thread() is threading.main_thread():
+            # Keep gevent event loop responsive while waiting for worker thread.
+            import gevent
+            deadline = time.monotonic() + timeout
+            while not future.done():
+                if time.monotonic() >= deadline:
+                    raise FuturesTimeoutError()
+                gevent.sleep(0.05)
+            return future.result()
         return future.result(timeout=timeout)
     except FuturesTimeoutError:
         future.cancel()

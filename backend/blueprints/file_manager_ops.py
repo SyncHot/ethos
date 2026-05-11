@@ -11,6 +11,7 @@ import shutil
 import threading as _threading
 import signal
 import gevent
+import pwd
 from flask import Blueprint, request, jsonify
 from i18n import t
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -33,12 +34,20 @@ from utils import (
 )
 from blueprints.eventlog import log as elog
 from blueprints.admin_required import admin_required
-from blueprints.auth import require_auth, get_current_user
+from blueprints.auth import require_auth, get_current_user, _is_sudo_mode
 
 
 def _main():
     """Return the main file_manager module."""
     return _sys.modules['blueprints.file_manager']
+
+
+def _pending_downloads_getter():
+    """Lazy accessor for _pending_downloads from file_manager_photos."""
+    photos = _sys.modules.get('blueprints.file_manager_photos')
+    if photos:
+        return getattr(photos, '_pending_downloads', {})
+    return {}
 
 
 files_bp = _sys.modules['blueprints.file_manager'].files_bp
@@ -626,6 +635,7 @@ def fileop_status():
     st['channels'] = channels
     # Include pending downloads that haven't been picked up yet
     pending = []
+    _pending_downloads = _pending_downloads_getter()
     for did, info in list(_pending_downloads.items()):
         if os.path.isfile(info.get('path', '')):
             pending.append({'download_id': did, 'name': info.get('name', 'download.zip')})

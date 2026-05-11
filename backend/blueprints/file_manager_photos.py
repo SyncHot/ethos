@@ -1151,7 +1151,7 @@ def files_upload():
 # Server assembles chunks and writes final file atomically.
 
 _upload_sessions = {}          # session_id → session_dict
-_upload_sessions_lock = _threading.Lock()
+_upload_sessions_lock = _gevent_lock.RLock()
 _UPLOAD_SESSION_TTL = 3600     # 1 hour — stale sessions are cleaned up
 # Use persistent storage so sessions survive server restarts (/tmp is tmpfs and cleared on reboot)
 _UPLOAD_TMP_DIR = '/opt/ethos/uploads/chunks'

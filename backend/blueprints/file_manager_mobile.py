@@ -368,7 +368,7 @@ def files_delete():
 
     for p in paths:
         # Security check
-        blocked = _require_folder_access(p)
+        blocked = _main()._require_folder_access(p)
         if blocked is not None:
             errors.append(f'Access denied: {p} (protected folder)')
             continue

@@ -56,6 +56,7 @@ from blueprints.admin_required import admin_required
 from blueprints.auth import require_auth, get_current_user, get_token, _is_sudo_mode, make_user_cache_key
 from crypto_utils import hash_folder_password as _hash_folder_password_new, verify_folder_password as _verify_folder_password
 import gevent
+import gevent.lock as _gevent_lock
 import signal
 import errno
 import hashlib
@@ -117,13 +118,13 @@ class _TryWakeProxy:
 
 try_wake_path = _TryWakeProxy()
 
-_fileop_lock = _threading.RLock()
+_fileop_lock = _gevent_lock.RLock()
 
 # ── Dir-size in-memory cache ────────────────────────────────
 # Maps path → {'size': int, 'expires': monotonic_time}
 # OrderedDict preserves insertion order for O(1) FIFO eviction.
 _dirsize_cache = _ODict()
-_dirsize_cache_lock = _threading.Lock()
+_dirsize_cache_lock = _gevent_lock.RLock()
 _DIRSIZE_CACHE_TTL = 600   # seconds
 _DIRSIZE_CACHE_MAX = 1000  # max entries — increased for better hit rate
 _DIRSIZE_CACHE_PERSIST_FILE = _data_path('.dirsize_cache.json')
@@ -204,7 +205,7 @@ _dirsize_cache_restore()
 # Maps real_path → {'items': list, 'expires': monotonic_time}
 # OrderedDict preserves insertion order for O(1) FIFO eviction.
 _listdir_cache = _ODict()
-_listdir_cache_lock = _threading.Lock()
+_listdir_cache_lock = _gevent_lock.RLock()
 _LISTDIR_CACHE_TTL = 45   # seconds — slightly longer for better hit rate
 _LISTDIR_CACHE_MAX = 400  # max entries — doubled for large deployments
 
@@ -264,7 +265,7 @@ def _listdir_cache_invalidate(path):
 # ── Background dir-size jobs ────────────────────────────────
 # job_id → { path: str, size: int|None, done: bool, error: bool, ts: float }
 _dirsize_bg_jobs = {}
-_dirsize_bg_lock = _threading.Lock()
+_dirsize_bg_lock = _gevent_lock.RLock()
 _DIRSIZE_JOB_EXPIRY = 120  # seconds — stale completed jobs are cleaned up
 # path → job_id for currently running (not-yet-done) jobs — prevents duplicate spawning
 _dirsize_running_by_path = {}
@@ -363,6 +364,7 @@ from blueprints.file_manager_permissions import (   # noqa: F401
 from blueprints.file_manager_photos import (        # noqa: F401
     _bg_download_zip,
     _purge_thumb_cache,
+    _pending_downloads,
 )
 from blueprints.file_manager_duplicates import (    # noqa: F401
     _bg_copy,

@@ -4,6 +4,7 @@ import sys
 import sys as _sys
 import hashlib
 import threading as _threading
+import gevent.lock as _gevent_lock
 import stat as _stat_mod
 import grp as _grp
 import pwd
@@ -53,11 +54,11 @@ socketio = _SocketioProxy()
 # ─── Folder Passwords ────────────────────────────────────────
 FOLDER_PASSWORDS_FILE = _data_path('folder_passwords.json')
 _unlocked_folders = {}  # token -> set of unlocked folder paths
-_uf_lock = _threading.Lock()
+_uf_lock = _gevent_lock.RLock()
 
 # Brute-force protection for folder unlock (per token, keyed by token+path)
 _folder_unlock_attempts = {}  # key -> {'count': int, 'first': float, 'locked_until': float}
-_folder_unlock_lock = _threading.Lock()
+_folder_unlock_lock = _gevent_lock.RLock()
 _FU_MAX_ATTEMPTS = 5
 _FU_ATTEMPT_WINDOW = 120   # 2 minutes
 _FU_LOCKOUT_TIME = 300     # 5 minute lockout
