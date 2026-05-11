@@ -2130,6 +2130,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
     let _knownDuration = 0;
     let _startOffset = 0;
     let _heartbeatTimer = null;
+    let _sessionKeepAliveTimer = null;  // Keep session alive during playback
     let _ctrlHideTimer = null;
     let _ctrlVisible = true;
     let _wakeLock = null;
@@ -2626,6 +2627,9 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         // Set initial duration on seekbar
         _showControls();
 
+        // Start session keep-alive immediately when player opens
+        _startSessionKeepAlive();
+
         // Save position every 10 seconds while playing
         clearInterval(playerInterval);
         playerInterval = setInterval(() => savePosition(vid, video), 10000);
@@ -2636,6 +2640,8 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             playerInterval = setInterval(() => savePosition(vid, video), 10000);
             // Acquire wake lock when video starts playing
             _requestWakeLock();
+            // Start session keep-alive to prevent logout
+            _startSessionKeepAlive();
         }, sig);
         video.addEventListener('pause', () => {
             clearInterval(playerInterval);
@@ -2643,6 +2649,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             savePosition(vid, video);
             // Release wake lock when paused
             _releaseWakeLock();
+            // Keep session alive even when paused (user might resume later)
         }, sig);
 
         // mark watched at >90%
@@ -3239,6 +3246,7 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
         stopPlayer();
         _destroyHls();
         _releaseWakeLock();  // Release wake lock when closing player
+        _stopSessionKeepAlive();  // Stop session keep-alive when closing player
         
         // Unlock screen orientation when closing player
         if (_orientationLocked && screen.orientation && screen.orientation.unlock) {
@@ -3341,6 +3349,30 @@ AppRegistry['video-station'] = function (appDef, launchOpts) {
             if (video && overlay && overlay.style.display !== 'none' && !video.paused) {
                 _requestWakeLock();
             }
+        }
+    }
+
+    /* ── Session Keep-Alive (prevents logout during long videos) ──── */
+    function _startSessionKeepAlive() {
+        if (_sessionKeepAliveTimer) return;  // Already running
+        
+        // Ping backend every 5 minutes to keep session alive
+        _sessionKeepAliveTimer = setInterval(() => {
+            // Use a lightweight endpoint that just touches the session
+            api('/video-station/videos').catch(() => {
+                // If this fails, user might be logged out - stop keep-alive
+                _stopSessionKeepAlive();
+            });
+        }, 5 * 60 * 1000);  // 5 minutes
+        
+        _cl('info', 'Session keep-alive started (5min interval)', {});
+    }
+
+    function _stopSessionKeepAlive() {
+        if (_sessionKeepAliveTimer) {
+            clearInterval(_sessionKeepAliveTimer);
+            _sessionKeepAliveTimer = null;
+            _cl('info', 'Session keep-alive stopped', {});
         }
     }
 
