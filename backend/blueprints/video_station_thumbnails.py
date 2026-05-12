@@ -1,11 +1,18 @@
 import os
+import sys
+import tempfile
+import shutil
 from flask import jsonify, send_file
 import gevent
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from host import host_run, q
 
 from blueprints.video_station import (
     video_station_bp,
     _get_db,
     _THUMB_DIR, _POSTER_DIR, _BACKDROP_DIR, _THUMBSTRIP_DIR,
+    log,
 )
 
 # Thumbstrip generation state (local to this module)
@@ -29,14 +36,12 @@ def thumb(vid):
     return jsonify({"error": "Brak miniatury."}), 404
 
 
-@video_station_bp.route("/poster/<int:vid>", methods=["GET"])
-
 def poster(vid):
     p = os.path.join(_POSTER_DIR, str(vid) + ".jpg")
     if os.path.isfile(p):
         return send_file(p, mimetype="image/jpeg")
+    return jsonify({"error": "Brak plakatu."}), 404
 
-@video_station_bp.route("/backdrop/<int:vid>", methods=["GET"])
 
 def backdrop(vid):
     p = os.path.join(_BACKDROP_DIR, str(vid) + ".jpg")
@@ -45,58 +50,61 @@ def backdrop(vid):
     return jsonify({"error": "Brak tła."}), 404
 
 
-_thumbstrip_generating = set()  # video IDs currently being generated
-_thumbstrip_sem = None          # gevent.Semaphore(2) — set in init_video_station
-
-
-def _get_thumbstrip_sem():
-    global _thumbstrip_sem
-    if _thumbstrip_sem is None:
-        import gevent.lock
-        _thumbstrip_sem = gevent.lock.Semaphore(2)
-    return _thumbstrip_sem
-
-
-@video_station_bp.route("/thumbstrip/<int:vid>", methods=["GET"])
-
 def thumbstrip(vid):
-    """Serve seekbar thumbnail sprite image.
+    db = _get_db()
+    row = db.execute(
+        "SELECT path, duration FROM videos WHERE id = ?", (vid,)
+    ).fetchone()
+    if not row:
+        return jsonify({"error": "Wideo nie istnieje."}), 404
 
-    Returns the sprite image (JPEG) if cached. If not cached, kicks off
-    background generation and returns 202 — client should retry later.
-    Sprite: 160x90 thumbnails every 30s, tiled 10 columns.
-    Uses fast keyframe-seek per thumbnail instead of decoding all frames.
-    """
-    conn = _get_db()
-    r = conn.execute("SELECT path, duration FROM videos WHERE id=?", (vid,)).fetchone()
-    conn.close()
-    if not r:
-        return jsonify({"error": "Nie znaleziono."}), 404
-
+    fp, duration = row
     sprite_path = os.path.join(_THUMBSTRIP_DIR, str(vid) + ".jpg")
 
-    # Serve cached sprite
+    # Return existing sprite if present (unless browser bypasses cache with t=... param)
     if os.path.isfile(sprite_path):
-        resp = send_file(sprite_path, mimetype="image/jpeg")
-        resp.headers["Cache-Control"] = "public, max-age=604800"
-        return resp
+        return send_file(sprite_path, mimetype="image/jpeg")
 
-    fp = os.path.realpath(r["path"])
-    if not os.path.isfile(fp):
-        return jsonify({"error": "Plik nie istnieje."}), 404
-
-    duration = r["duration"] or 0
-    if duration < 30:
-        return jsonify({"error": "Film za krótki."}), 400
-
+    # Avoid duplicate generation
     if vid in _thumbstrip_generating:
         return jsonify({"status": "generating"}), 202
 
-    # Start background generation
+    # Start background generation (at most 2 in parallel)
     _thumbstrip_generating.add(vid)
-    import gevent
     gevent.spawn(_generate_thumbstrip, vid, fp, duration, sprite_path)
     return jsonify({"status": "generating"}), 202
+
+
+def get_thumbstrip_meta(vid):
+    """Return thumbstrip metadata (used by frontend for hover scrubbing)."""
+    db = _get_db()
+    row = db.execute(
+        "SELECT path, duration FROM videos WHERE id = ?", (vid,)
+    ).fetchone()
+    if not row:
+        return jsonify({"error": "Wideo nie istnieje."}), 404
+
+    fp, duration = row
+    sprite_path = os.path.join(_THUMBSTRIP_DIR, str(vid) + ".jpg")
+
+    if os.path.isfile(sprite_path):
+        # Same hardcoded layout as generator
+        interval = 30
+        thumb_w, thumb_h = 160, 90
+        cols = 10
+        num_thumbs = int(duration) // interval
+        if int(duration) % interval > 0:
+            num_thumbs += 1
+        return jsonify({
+            "url": f"/api/video-station/thumbstrip/{vid}",
+            "thumbWidth": thumb_w,
+            "thumbHeight": thumb_h,
+            "cols": cols,
+            "interval": interval,
+            "numThumbs": num_thumbs,
+        })
+    return jsonify({"error": "Thumbstrip niedostępny."}), 404
+
 
 
 def _generate_thumbstrip(vid, fp, duration, sprite_path):
