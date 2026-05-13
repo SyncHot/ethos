@@ -184,6 +184,7 @@ _FRONTEND_FILENAME = {
     'photos-ai':        'photos_ai',
     'video-station':    'video_station',
     'radio-music':      'radio_music',
+    'radio-music-v2':   'radio_music_v2',
     'packages':         'packages',
     'services':         'services',
     'naslink':          'naslink',
@@ -207,6 +208,7 @@ _BACKEND_EXTRA_FILES: dict = {
     'builder': ['builder_sbom', 'builder_signing', 'builder_spec', 'builder_secureboot', 'builder_resources', 'builder_stages'],
     'vm-manager': ['vm_boot', 'vm_disks', 'vm_network', 'vm_console'],
     'radio-music': ['radio_music_radio', 'radio_music_podcasts', 'radio_music_youtube', 'radio_music_local', 'radio_music_playlist'],
+    'radio-music-v2': ['radio_music_v2_schema', 'radio_music_v2_radio', 'radio_music_v2_youtube', 'radio_music_v2_podcasts', 'radio_music_v2_playlist'],
 }
 
 # Maps app_id → (module_filename, blueprint_var, init_func_or_None, socketio_attr_needed)
@@ -246,6 +248,7 @@ _OPTIONAL_BLUEPRINTS = {
     'photos-ai':       ('photos_ai',       'photos_ai_bp',      None,                True),
     'video-station':   ('video_station',   'video_station_bp',  '_start_hls_cleanup_loop', True),
     'radio-music':     ('radio_music',     'radio_music_bp',    None,                True),
+    'radio-music-v2':  ('radio_music_v2',  'radio_music_v2_bp', None,                False),
     'packages':        ('packages',        'packages_bp',       None,                False),
     'ldap':            ('ldap_auth',       'ldap_bp',           None,                False),
     'sync-drive':      ('sync_drive',      'sync_drive_bp',    'init_sync_drive',   True),
@@ -600,6 +603,12 @@ BUILTIN_CATALOG = [
         'install_endpoint': '/api/radio-music/install',
         'uninstall_endpoint': '/api/radio-music/uninstall',
         'status_endpoint': '/api/radio-music/pkg-status',
+    },
+    {
+        'id': 'radio-music-v2', 'name': 'Radio & Music v2', 'version': '1.0.0',
+        'icon': 'fa-music', 'color': '#1db954', 'category': 'Media', 'admin_only': False,
+        'description': 'Lekka wersja odtwarzacza: radio, YouTube, podcasty i playlisty.',
+        'apt_deps': ['ffmpeg', 'yt-dlp'], 'pip_deps': ['feedparser'],
     },
     {
         'id': 'packages', 'name': 'Package Manager', 'version': '1.0.0',
