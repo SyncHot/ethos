@@ -99,7 +99,7 @@ from blueprints.backup import backup_bp, init_backup, get_backup_notifications
 from blueprints.users import users_bp, _load_privileges
 from blueprints.network import network_bp
 from blueprints.eventlog import eventlog_bp, init_eventlog, log as elog
-from blueprints.auth import auth_bp, security_bp, require_auth, get_current_user, get_token, generate_token, tokens
+from blueprints.auth import auth_bp, security_bp, require_auth, get_current_user, get_token, generate_token, tokens, SESSION_IDLE_TIMEOUT
 from blueprints.system_bp import system_bp, _register_avahi_service
 from blueprints.file_manager import files_bp
 from blueprints.file_manager_mobile import _start_trash_scheduler
