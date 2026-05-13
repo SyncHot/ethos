@@ -2178,7 +2178,7 @@ if __name__ == '__main__':
     socketio.start_background_task(resources_background_collector, socketio)
     socketio.start_background_task(usb_monitor_loop, socketio)
     socketio.start_background_task(keepalive_loop, socketio)
-    socketio.start_background_task(update_auto_check_loop)
+    # DISABLED DUE TO BLOCKING urllib:     socketio.start_background_task(update_auto_check_loop)
     _start_trash_scheduler()
     start_ddns()
     _register_avahi_service()

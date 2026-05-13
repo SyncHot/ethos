@@ -65,7 +65,7 @@ def init_app_manager(sio):
     _socketio = sio
     try:
         from gevent import spawn_later
-        spawn_later(15, _repair_missing_app_files)
+        # spawn_later(15, _repair_missing_app_files)  # DISABLED - causes blocking urllib requests
     except Exception:
         pass
 
