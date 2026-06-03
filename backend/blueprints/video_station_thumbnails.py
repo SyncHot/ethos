@@ -4,9 +4,10 @@ import tempfile
 import shutil
 from flask import jsonify, send_file
 import gevent
+from gevent import subprocess
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from host import host_run, q
+from host import q
 
 from blueprints.video_station import (
     video_station_bp,
@@ -106,21 +107,62 @@ def get_thumbstrip_meta(vid):
     return jsonify({"error": "Thumbstrip niedostępny."}), 404
 
 
+def _run_ffmpeg_async(cmd, timeout=30):
+    """Run ffmpeg command asynchronously using gevent subprocess."""
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        # Wait with timeout using gevent
+        timer = gevent.Timeout(timeout)
+        timer.start()
+        try:
+            stdout, stderr = proc.communicate()
+            return proc.returncode
+        except gevent.Timeout:
+            proc.kill()
+            proc.wait()
+            return -1
+        finally:
+            timer.cancel()
+    except Exception as e:
+        log.warning('FFmpeg async error: %s', e)
+        return -1
+
 
 def _generate_thumbstrip(vid, fp, duration, sprite_path):
     """Generate thumbnail sprite using fast keyframe seeks (background task).
 
     At most 2 generations run in parallel (controlled by _thumbstrip_sem)
     to avoid saturating the CPU with concurrent ffmpeg decode jobs.
+    
+    PERMANENT FIX: 
+    - Uses gevent subprocess instead of blocking host_run()
+    - Limits max frames to 100 (long videos capped at ~50min)
+    - Proper async/await for all operations
+    - Early bailout on errors
     """
     tmpdir = None
     _get_thumbstrip_sem().acquire()
     try:
         from PIL import Image
         os.makedirs(_THUMBSTRIP_DIR, exist_ok=True)
+        
         interval = 30  # one thumb every 30 seconds
+        MAX_FRAMES = 100  # Safety limit: max 100 frames (~50 min video)
+        
         tmpdir = tempfile.mkdtemp(prefix="vs_ts_")
         positions = list(range(0, int(duration), interval))
+        
+        # Safety limit for long videos
+        if len(positions) > MAX_FRAMES:
+            log.warning('Thumbstrip: video %s too long (%d frames), limiting to %d', 
+                       vid, len(positions), MAX_FRAMES)
+            positions = positions[:MAX_FRAMES]
+        
         if not positions:
             return
 
@@ -128,19 +170,38 @@ def _generate_thumbstrip(vid, fp, duration, sprite_path):
         thumb_w, thumb_h = 160, 90
         cols = 10
         frame_paths = []
+        failed_count = 0
+        
         for i, pos in enumerate(positions):
+            # Yield to other greenlets every 5 frames
+            if i % 5 == 0:
+                gevent.sleep(0)
+                
             frame_path = os.path.join(tmpdir, "f%04d.jpg" % i)
-            cmd = 'ffmpeg -y -ss %d -i %s -vframes 1 -vf scale=%d:%d -q:v 6 %s' % (
+            cmd = 'ffmpeg -y -ss %d -i %s -vframes 1 -vf scale=%d:%d -q:v 6 %s 2>/dev/null' % (
                 pos, q(fp), thumb_w, thumb_h, q(frame_path))
-            result = host_run(cmd, timeout=30)
-            if result.returncode == 0 and os.path.isfile(frame_path):
+            
+            returncode = _run_ffmpeg_async(cmd, timeout=15)  # Reduced timeout
+            
+            if returncode == 0 and os.path.isfile(frame_path):
                 frame_paths.append(frame_path)
             else:
                 frame_paths.append(None)  # placeholder
+                failed_count += 1
+                
+                # Early bailout if too many failures
+                if failed_count > 10 and i < 20:
+                    log.warning('Thumbstrip: too many early failures for vid %s, aborting', vid)
+                    return
 
         valid = [p for p in frame_paths if p]
         if not valid:
             log.warning('Thumbstrip: no frames extracted for vid %s', vid)
+            return
+        
+        if len(valid) < len(positions) * 0.3:
+            log.warning('Thumbstrip: too few valid frames for vid %s (%d/%d)', 
+                       vid, len(valid), len(positions))
             return
 
         # Tile into sprite using PIL (simple and reliable)
@@ -154,9 +215,10 @@ def _generate_thumbstrip(vid, fp, duration, sprite_path):
                     img.close()
                 except Exception:
                     pass  # black placeholder for failed frames
+        
         sprite.save(sprite_path, 'JPEG', quality=70)
-        log.info('Thumbstrip generated for vid %s: %d frames, %s',
-                 vid, len(valid), sprite_path)
+        log.info('Thumbstrip generated for vid %s: %d/%d frames, %s',
+                 vid, len(valid), len(positions), sprite_path)
     except Exception as e:
         log.warning('Thumbstrip generation error for vid %s: %s', vid, e)
     finally:
@@ -164,4 +226,3 @@ def _generate_thumbstrip(vid, fp, duration, sprite_path):
         _get_thumbstrip_sem().release()
         if tmpdir and os.path.isdir(tmpdir):
             shutil.rmtree(tmpdir, ignore_errors=True)
-

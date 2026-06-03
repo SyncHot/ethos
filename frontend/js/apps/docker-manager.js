@@ -250,7 +250,9 @@ function renderDockerManager(body) {
                     toast(`${name}: ${action}`, 'success');
                     setTimeout(async () => { await loadContainers(); fillContainersTable(); }, 1000);
                 } catch (err) {
-                    toast(`${t('Błąd:')} ${action} ${name}`, 'error');
+                    const msg = err?.error || err?.message || String(err);
+                    toast(`${t('Błąd:')} ${action} ${name} — ${msg}`, 'error');
+                    _cl('error', `Container action failed: ${action} ${name}`, { error: msg });
                 }
             });
         });
@@ -623,7 +625,11 @@ function renderDockerManager(body) {
                     try {
                         await api(`/docker/projects/${project}/action`, { method: 'POST', body: { action } });
                         toast(`${project}: ${action} OK`, 'success');
-                    } catch (err) { toast(`${project}: ${t('błąd')} ${action}`, 'error'); }
+                    } catch (err) {
+                        const msg = err?.error || err?.message || String(err);
+                        toast(`${project}: ${t('błąd')} ${action} — ${msg}`, 'error');
+                        _cl('error', `Project action failed: ${action} ${project}`, { error: msg });
+                    }
                     setTimeout(async () => { await loadProjects(); fillProjects(); }, 2000);
                 });
             });
@@ -649,7 +655,9 @@ function renderDockerManager(body) {
                         await loadProjects();
                         fillProjects();
                     } catch (err) {
-                        toast(`${t('Błąd usuwania projektu')} ${project}`, 'error');
+                        const msg = err?.error || err?.message || String(err);
+                        toast(`${t('Błąd usuwania projektu')} ${project} — ${msg}`, 'error');
+                        _cl('error', 'Project delete failed', { project, error: msg });
                         b.disabled = false;
                         b.innerHTML = '<i class="fas fa-trash-alt"></i>';
                     }
@@ -896,7 +904,11 @@ services:
                 const r = await api('/docker/images/prune', { method: 'POST' });
                 toast(t('Wyczyszczono nieużywane obrazy'), 'success');
                 await loadImages(); fillImages();
-            } catch { toast(t('Błąd czyszczenia'), 'error'); }
+            } catch (err) {
+                const msg = err?.error || err?.message || String(err);
+                toast(`${t('Błąd czyszczenia')} — ${msg}`, 'error');
+                _cl('error', 'Image prune failed', { error: msg });
+            }
         });
         loadImages().then(() => fillImages());
 
@@ -925,7 +937,11 @@ services:
                         await api(`/docker/images/${encodeURIComponent(b.dataset.imgdel)}?force=true`, { method: 'DELETE' });
                         toast(t('Obraz usunięty'), 'success');
                         await loadImages(); fillImages();
-                    } catch { toast(t('Błąd usuwania obrazu'), 'error'); }
+                    } catch (err) {
+                        const msg = err?.error || err?.message || String(err);
+                        toast(`${t('Błąd usuwania obrazu')} — ${msg}`, 'error');
+                        _cl('error', 'Image delete failed', { imgId: b.dataset.imgdel, error: msg });
+                    }
                 });
             });
         }
@@ -1244,7 +1260,11 @@ services:
                 try {
                     await api('/docker/volumes/prune', { method: 'POST' });
                     toast('Wyczyszczono wolumeny', 'success');
-                } catch { toast(t('Błąd'), 'error'); }
+                } catch (err) {
+                    const msg = err?.error || err?.message || String(err);
+                    toast(`${t('Błąd')} — ${msg}`, 'error');
+                    _cl('error', 'Volume prune failed', { error: msg });
+                }
             });
         }).catch(() => { main.innerHTML = `<div class="dkr-empty">${t('Błąd połączenia z Dockerem')}</div>`; });
     }
