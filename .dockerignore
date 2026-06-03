@@ -1,0 +1,91 @@
+# =============================================================================
+# EthOS Docker Ignore File
+# Excludes unnecessary files from Docker build context
+# =============================================================================
+
+# ── Version control ────────────────────────────────────────────────
+.git/
+.gitignore
+.gitattributes
+
+# ── Python cache and bytecode ──────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv/
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ── IDE and editor files ───────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.settings/
+.classpath
+
+# ── OS files ───────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Runtime and data directories ───────────────────────────────────
+data/
+logs/
+backups/
+uploads/
+*.log
+
+# ── Environment files (contain secrets) ────────────────────────────
+.env
+.env.local
+.env.*.local
+ethos.env
+*.env.local
+
+# ── Docker files ───────────────────────────────────────────────────
+# Note: Docker reads Dockerfile BEFORE applying .dockerignore, so
+# excluding them here has no effect. Keeping them is fine for clarity.
+
+# ── Documentation and tests ────────────────────────────────────────
+docs/
+*.md
+LICENSE
+NOTICE
+tests/
+test_*.py
+*_test.py
+
+# ── Aider and AI tools cache ───────────────────────────────────────
+.aider*
+.continue/
+
+# ── Build artifacts ────────────────────────────────────────────────
+.installed
+.password_changed
+.pip-cache/
+
+# ── CUPS configuration (generated at runtime) ──────────────────────
+cups-config/
+
+# ── Node modules (if any frontend build tools) ─────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── Temporary files ────────────────────────────────────────────────
+tmp/
+temp/
+*.tmp
+*.bak
+*.old

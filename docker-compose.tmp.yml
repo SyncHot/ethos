@@ -1,0 +1,135 @@
+# =============================================================================
+# EthOS - Docker Compose Configuration (Cross-platform compatible)
+# Works on Linux, macOS, and Windows (Docker Desktop)
+# =============================================================================
+
+services:
+  # --------------------------------------------------------------------------
+  # EthOS Backend + Frontend (all-in-one service)
+  # --------------------------------------------------------------------------
+  ethos:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+    container_name: ethos-server
+    image: ethos-nas:latest
+
+    restart: unless-stopped
+
+    # Port mappings (safe for all platforms)
+    ports:
+      - "${ETHOS_PORT:-9000}:9000"     # Main web UI
+      - "${SSH_PORT:-2222}:22"         # SSH (optional)
+      # Samba/NetBIOS - uncomment only on Linux hosts
+      # - "${SAMBA_PORT:-445}:445"       # Samba file sharing
+      # - "${NETBIOS_PORT:-139}:139"     # NetBIOS
+      # HTTP/HTTPS - require admin/root on most platforms
+      # - "${HTTP_PORT:-80}:80"          # HTTP redirect
+      # - "${HTTPS_PORT:-443}:443"       # HTTPS
+
+    # Volume mounts for persistent data
+    volumes:
+      # Application data (users, settings, thumbnails)
+      - ethos_data:${DATA_DIR:-/opt/ethos/data}
+
+      # Logs directory
+      - ethos_logs:${LOG_DIR:-/opt/ethos/logs}
+
+      # Backups storage
+      - ethos_backups:/opt/ethos/backups
+
+      # User home directories (mount host /home or custom path)
+      - ${USER_HOME_MOUNT:-./dev_home}:/home:rw
+
+      # Media shares (customizable)
+      - ${MEDIA_MOUNT:-./dev_media}:/media:rw
+      - ${MNT_MOUNT:-./dev_mnt}:/mnt:rw
+
+    # Environment variables
+    environment:
+      # Core settings
+      - ETHOS_ROOT=/opt/ethos
+      - DATA_DIR=/opt/ethos/data
+      - LOG_DIR=/opt/ethos/logs
+      - PORT=${ETHOS_PORT:-9000}
+      - NAS_NAME=${NAS_NAME:-EthOS}
+      - TZ=${TIMEZONE:-Europe/Warsaw}
+
+      # Network settings
+      - SERVER_HOST=0.0.0.0
+
+      # Optional: Data disk mount point (for external storage)
+      - DATA_DISK=${DATA_DISK:-}
+
+      # Python settings
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+
+    # -----------------------------------------------------------------------
+    # Linux-only features removed for cross-platform compatibility:
+    #   - devices: (USB, disk access)
+    #   - cap_add: (SYS_ADMIN, NET_ADMIN, etc.)
+    #   - privileged: true
+    #   - security_opt: (apparmor, seccomp)
+    #   - /var/run/docker.sock mount
+    #
+    # To enable these on Linux, use docker-compose.prod.yml instead.
+    # -----------------------------------------------------------------------
+
+    # Resource limits (optional - adjust based on hardware)
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${ETHOS_PORT:-9000}/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+    # Logging configuration
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+        tag: "{{.Name}}"
+
+    # Networks
+    networks:
+      - ethos-network
+
+# --------------------------------------------------------------------------
+# Volumes for persistent data
+# --------------------------------------------------------------------------
+volumes:
+  ethos_data:
+    driver: local
+    name: ethos_data
+
+  ethos_logs:
+    driver: local
+    name: ethos_logs
+
+  ethos_backups:
+    driver: local
+    name: ethos_backups
+
+# --------------------------------------------------------------------------
+# Networks
+# --------------------------------------------------------------------------
+networks:
+  ethos-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

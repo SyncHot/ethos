@@ -201,7 +201,11 @@ def list_disks():
         "sudo /opt/ethos/tools/ethos-system-helper.sh lsblk -J -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL,SERIAL,TRAN,ROTA,RO,STATE,HCTL 2>/dev/null"
     )
     if r.returncode != 0:
-        return jsonify({'error': 'Cannot read disk list'}), 500
+        return jsonify({
+            'error': 'missing_dependency',
+            'message': 'Brak dostępu do dysków — wymagane uprawnienia lub smartmontools',
+            'install_cmd': 'sudo apt install -y smartmontools'
+        }), 503
 
     try:
         data = json.loads(r.stdout)

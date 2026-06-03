@@ -1,0 +1,161 @@
+# =============================================================================
+# EthOS - NAS Operating System Docker Compose Configuration
+# Production deployment with full system integration
+# =============================================================================
+
+version: '3.8'
+
+services:
+  # ──────────────────────────────────────────────────────────────────────
+  # EthOS Backend + Frontend (all-in-one service)
+  # ──────────────────────────────────────────────────────────────────────
+  ethos:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+    container_name: ethos-server
+    image: ethos-nas:latest
+    
+    # Restart policy
+    restart: unless-stopped
+    
+    # Port mappings
+    ports:
+      - "${ETHOS_PORT:-9000}:9000"     # Main web UI
+      - "${SSH_PORT:-2222}:22"         # SSH (optional)
+      - "${SAMBA_PORT:-445}:445"       # Samba file sharing
+      - "${NETBIOS_PORT:-139}:139"     # NetBIOS
+      - "${HTTP_PORT:-80}:80"          # HTTP redirect
+      - "${HTTPS_PORT:-443}:443"       # HTTPS
+    
+    # Volume mounts for persistent data
+    volumes:
+      # Application data (users, settings, thumbnails)
+      - ethos_data:${DATA_DIR:-/opt/ethos/data}
+      
+      # Logs directory
+      - ethos_logs:${LOG_DIR:-/opt/ethos/logs}
+      
+      # Backups storage
+      - ethos_backups:/opt/ethos/backups
+      
+      # User home directories (mount host /home or custom path)
+      - ${USER_HOME_MOUNT:-/home}:/home:rw
+      
+      # Media shares (customizable)
+      - ${MEDIA_MOUNT:-/media}:/media:rw
+      - ${MNT_MOUNT:-/mnt}:/mnt:rw
+      
+      # Docker socket (for container management features)
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      
+      # Optional: mount custom frontend build
+      # - ./frontend_dist:/opt/ethos/frontend:ro
+    
+    # Environment variables
+    environment:
+      # Core settings
+      - ETHOS_ROOT=/opt/ethos
+      - DATA_DIR=/opt/ethos/data
+      - LOG_DIR=/opt/ethos/logs
+      - PORT=${ETHOS_PORT:-9000}
+      - NAS_NAME=${NAS_NAME:-EthOS}
+      - TZ=${TIMEZONE:-Europe/Warsaw}
+      
+      # Network settings
+      - SERVER_HOST=0.0.0.0
+      
+      # Optional: Data disk mount point (for external storage)
+      - DATA_DISK=${DATA_DISK:-}
+      
+      # Python settings
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+    
+    # Device access for hardware management
+    devices:
+      - /dev/bus/usb:/dev/bus/usb          # USB devices
+      - /dev/disk/by-id:/dev/disk/by-id    # Disk identification
+      - /dev/disk/by-path:/dev/disk/by-path
+      - /dev/sda:/dev/sda                  # Example disk (adjust as needed)
+      - /dev/dri:/dev/dri
+    
+    # Linux capabilities for system management
+    cap_add:
+      - SYS_ADMIN                          # Required for mount/umount, loop devices
+      - NET_ADMIN                          # Network interface management
+      - DAC_OVERRIDE                       # File permission bypass
+      - FOWNER                             # Bypass permission checks on file ownership
+      - SETUID                             # UID manipulation
+      - SETGID                             # GID manipulation
+      - SYS_RAWIO                          # Raw I/O access
+    
+    # Security options (relax AppArmor/SELinux for NAS functionality)
+    security_opt:
+      - apparmor:unconfined
+      - seccomp:unconfined
+    
+    # Privileged mode (required for full NAS functionality)
+    privileged: true
+    
+    # Resource limits (optional - adjust based on hardware)
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${ETHOS_PORT:-9000}/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    
+    # Logging configuration
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+        tag: "{{.Name}}"
+    
+    # Networks
+    networks:
+      - ethos-network
+      - host-network  # For accessing host network services
+
+# ──────────────────────────────────────────────────────────────────────
+# Volumes for persistent data
+# ──────────────────────────────────────────────────────────────────────
+volumes:
+  ethos_data:
+    driver: local
+    name: ethos_data
+    
+  ethos_logs:
+    driver: local
+    name: ethos_logs
+    
+  ethos_backups:
+    driver: local
+    name: ethos_backups
+
+# ──────────────────────────────────────────────────────────────────────
+# Networks
+# ──────────────────────────────────────────────────────────────────────
+networks:
+  ethos-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+  
+  host-network:
+    driver: host

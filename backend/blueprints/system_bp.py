@@ -16,6 +16,7 @@ import json
 import time
 import re
 import subprocess
+import psutil
 from flask import Blueprint, request, jsonify, g
 from i18n import t
 
@@ -25,7 +26,9 @@ from host import (
     app_path as _app_path,
     ETHOS_ROOT,
     host_run as _host_run,
+    ensure_user_home_structure as _ensure_user_home_structure,
 )
+_host_run_base = _host_run  # alias — same function, different name from app.py era
 from utils import load_json as _load_json, save_json as _save_json
 from blueprints.eventlog import log as elog
 from blueprints.admin_required import admin_required
@@ -34,6 +37,7 @@ from blueprints.auth import require_auth
 system_bp = Blueprint('system', __name__)
 
 SETUP_DONE_FILE = _data_path('setup_done')
+PASSWORD_CHANGED_MARKER = '/opt/ethos/data/.password_changed'  # On persistent volume
 
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -1174,7 +1178,74 @@ def power_status():
 
 # ─────────────────────────── System Info ───────────────────────────
 
+# Global state for monitoring
+_ups_status = {'status': 'unknown', 'load_percent': 0, 'battery_percent': 0}
+NAS_NAME = 'EthOS'  # Default, updated during setup
+
+
+def _mon_cpu():
+    """Get CPU monitoring info."""
+    try:
+        usage = psutil.cpu_percent(interval=0)
+        cores = psutil.cpu_count(logical=True) or 1
+        temp = None
+        temps = psutil.sensors_temperatures()
+        if temps:
+            for name, entries in temps.items():
+                if 'cpu' in name.lower():
+                    temp = entries[0].current if entries else None
+                    break
+        return {'usage_percent': usage, 'core_count': cores, 'temperature': temp}
+    except Exception:
+        return {'usage_percent': 0, 'core_count': 1, 'temperature': None}
+
+
+def _mon_ram():
+    """Get RAM monitoring info."""
+    try:
+        mem = psutil.virtual_memory()
+        return {
+            'total': mem.total,
+            'used': mem.used,
+            'available': mem.available,
+            'percent': mem.percent
+        }
+    except Exception:
+        return {'total': 0, 'used': 0, 'available': 0, 'percent': 0}
+
+
+def _mon_sys():
+    """Get system monitoring info."""
+    try:
+        boot = psutil.boot_time()
+        uptime = int(time.time() - boot)
+        return {'uptime': uptime}
+    except Exception:
+        return {'uptime': 0}
+
+
+def _mon_disk():
+    """Get disk monitoring info."""
+    try:
+        disks = []
+        for part in psutil.disk_partitions(all=False):
+            usage = psutil.disk_usage(part.mountpoint)
+            disks.append({
+                'device': part.device,
+                'mountpoint': part.mountpoint,
+                'fstype': part.fstype,
+                'total': usage.total,
+                'used': usage.used,
+                'free': usage.free,
+                'percent': usage.percent
+            })
+        return disks
+    except Exception:
+        return []
+
+
 @system_bp.route('/api/system/info')
+@system_bp.route('/api/system-info')  # Alias for frontend compatibility
 @require_auth
 def system_info():
     cpu = _mon_cpu()
@@ -1204,11 +1275,160 @@ def system_info():
     })
 
 
+@system_bp.route('/api/resources/stats')
+@require_auth
+def resources_stats():
+    """Resource statistics endpoint (alias for system info)."""
+    return system_info()
+
+
+@system_bp.route('/api/health')
+def health_check():
+    """Public health check endpoint."""
+    try:
+        from app import ETHOS_VERSION
+    except Exception:
+        ETHOS_VERSION = {'version': 'unknown'}
+    return jsonify({'status': 'ok', 'version': ETHOS_VERSION.get('version', 'unknown')})
+
+
 @system_bp.route('/api/system/version')
 @require_auth
 def system_version():
     """Return EthOS version info and changelog."""
+    try:
+        from app import ETHOS_VERSION
+    except Exception:
+        ETHOS_VERSION = {'version': 'unknown'}
     return jsonify(ETHOS_VERSION)
+
+
+# ─────────────────────────── Missing Endpoints ───────────────────────────
+
+@system_bp.route('/api/storage/disks')
+@require_auth
+def storage_disks():
+    """List storage disks."""
+    import subprocess as _sp
+    try:
+        r = _sp.run(['lsblk', '-J', '-o', 'NAME,SIZE,FSTYPE,MOUNTPOINT,LABEL,MODEL,SERIAL,ROTA,STATE'],
+                    capture_output=True, text=True, timeout=10)
+        if r.returncode == 0:
+            return jsonify(json.loads(r.stdout))
+    except Exception as e:
+        pass
+    return jsonify({'blockdevices': []})
+
+
+@system_bp.route('/api/eventlog/entries')
+@require_auth
+def eventlog_entries():
+    """Get recent event log entries."""
+    try:
+        from blueprints.eventlog import get_db as _get_eventlog_db
+        db = _get_eventlog_db()
+        limit = int(request.args.get('limit', 50))
+        rows = db.execute(
+            'SELECT id, ts, time, category, level, message, details '
+            'FROM events ORDER BY id DESC LIMIT ?', (limit,)
+        ).fetchall()
+        events = []
+        for row in rows:
+            d = dict(row)
+            if isinstance(d.get('details'), str):
+                try:
+                    d['details'] = json.loads(d['details'])
+                except Exception:
+                    pass
+            events.append(d)
+        return jsonify({'events': events})
+    except Exception as e:
+        return jsonify({'events': [], 'error': str(e)})
+
+
+@system_bp.route('/api/settings/get')
+@require_auth
+def settings_get():
+    """Get system settings."""
+    try:
+        from blueprints.settings import get_settings as _get_settings
+        result = _get_settings()
+        # Handle Response objects that might be returned
+        if hasattr(result, 'get_json'):
+            return jsonify({'settings': result.get_json()})
+        elif isinstance(result, dict):
+            return jsonify({'settings': result})
+        else:
+            return jsonify({'settings': {}})
+    except Exception as e:
+        return jsonify({'settings': {}, 'error': str(e)})
+
+
+@system_bp.route('/api/auth/profile')
+@require_auth
+def auth_profile():
+    """Get current user profile."""
+    try:
+        from blueprints.auth import get_current_user
+        user = get_current_user()
+        if user:
+            return jsonify({'user': user})
+        return jsonify({'error': 'Not authenticated'}), 401
+    except Exception as e:
+        return jsonify({'error': str(e)})
+
+
+@system_bp.route('/api/files/tree')
+@require_auth
+def files_tree():
+    """Get file tree for a path."""
+    try:
+        from blueprints.file_manager import _listdir_cache_get, _dirsize_bg_jobs_prune
+        import os as _os
+        path = request.args.get('path', '/')
+        if not _os.path.isdir(path):
+            return jsonify({'error': 'Not a directory'}), 400
+
+        items = []
+        for name in sorted(_os.listdir(path)):
+            full = _os.path.join(path, name)
+            try:
+                st = _os.lstat(full)
+                import stat as _stat
+                is_dir = _stat.S_ISDIR(st.st_mode)
+                size = st.st_size if not is_dir else 0
+                items.append({
+                    'name': name,
+                    'is_dir': is_dir,
+                    'size': size,
+                    'modified': st.st_mtime
+                })
+            except OSError:
+                pass
+        return jsonify({'path': path, 'items': items})
+    except Exception as e:
+        return jsonify({'error': str(e)})
+
+
+@system_bp.route('/api/network/stats')
+@require_auth
+def network_stats():
+    """Get network statistics."""
+    try:
+        import psutil
+        net = psutil.net_io_counters()
+        pernic = psutil.net_io_counters(pernic=True)
+        return jsonify({
+            'total': {
+                'bytes_sent': net.bytes_sent,
+                'bytes_recv': net.bytes_recv,
+                'packets_sent': net.packets_sent,
+                'packets_recv': net.packets_recv
+            },
+            'per_interface': pernic
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)})
 
 
 @system_bp.route('/api/system/deps', methods=['POST'])

@@ -368,6 +368,12 @@ _FIX_ACTIONS = {
 def scan():
     return jsonify(run_scan())
 
+
+@security_advisor_bp.route('/status', methods=['GET'])
+def status_compat():
+    """Compatibility alias for /scan — frontend historically used /api/security-advisor/status."""
+    return scan()
+
 @security_advisor_bp.route('/fix', methods=['POST'])
 def fix():
     data = request.get_json(silent=True) or {}

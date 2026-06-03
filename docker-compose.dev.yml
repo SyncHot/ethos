@@ -1,0 +1,92 @@
+# =============================================================================
+# EthOS - Development Docker Compose Configuration (Cross-platform)
+# Hot reload for backend and frontend during development
+# Works on Linux, macOS, and Windows (Docker Desktop)
+# =============================================================================
+
+version: '3.8'
+
+services:
+  # --------------------------------------------------------------------------
+  # EthOS Backend (Development with hot reload)
+  # --------------------------------------------------------------------------
+  ethos-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      target: development
+    container_name: ethos-backend-dev
+    image: ethos-nas:dev
+
+    restart: unless-stopped
+
+    ports:
+      - "${ETHOS_PORT:-9000}:9000"     # Main web UI
+      - "${SSH_PORT:-2222}:22"         # SSH (optional)
+
+    volumes:
+      # Mount source code for hot reload
+      - ./backend:/opt/ethos/backend:cached
+
+      # Persistent data
+      - ethos_dev_data:/opt/ethos/data
+      - ethos_dev_logs:/opt/ethos/logs
+
+      # User home directories (local dev directory)
+      - ${USER_HOME_MOUNT:-./dev_home}:/home:rw
+
+    environment:
+      # Core settings
+      - ETHOS_ROOT=/opt/ethos
+      - DATA_DIR=/opt/ethos/data
+      - LOG_DIR=/opt/ethos/logs
+      - PORT=${ETHOS_PORT:-9000}
+      - NAS_NAME=EthOS-Dev
+      - TZ=${TIMEZONE:-Europe/Warsaw}
+
+      # Development mode flags
+      - FLASK_ENV=development
+      - DEBUG=true
+
+      # Python settings
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+
+    # -----------------------------------------------------------------------
+    # Linux-only features removed for cross-platform compatibility:
+    #   - devices: (/dev/bus/usb)
+    #   - cap_add: (SYS_ADMIN, NET_ADMIN, DAC_OVERRIDE)
+    #   - privileged: true
+    #   - /var/run/docker.sock mount
+    # -----------------------------------------------------------------------
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+    networks:
+      - ethos-dev-network
+
+# --------------------------------------------------------------------------
+# Volumes for development data
+# --------------------------------------------------------------------------
+volumes:
+  ethos_dev_data:
+    driver: local
+    name: ethos_dev_data
+
+  ethos_dev_logs:
+    driver: local
+    name: ethos_dev_logs
+
+# --------------------------------------------------------------------------
+# Networks
+# --------------------------------------------------------------------------
+networks:
+  ethos-dev-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16

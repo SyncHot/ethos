@@ -88,7 +88,7 @@ def _get_nas_name():
 def _get_brand_name():
     return os.environ.get('BRAND_NAME', 'EthOS')
 
-PASSWORD_CHANGED_MARKER = '/opt/ethos/.password_changed'
+PASSWORD_CHANGED_MARKER = '/opt/ethos/data/.password_changed'  # On persistent volume
 SETUP_DONE_FILE = _data_path('setup_done')
 
 def _is_setup_done():

@@ -4,6 +4,7 @@ import sys
 import sys as _sys
 import json
 import time
+import re
 import shutil
 import secrets
 import io
@@ -20,6 +21,7 @@ from host import (
     q,
     get_user_home as _get_user_home,
     user_data_path as _user_data_path,
+    get_photo_folders as _get_photo_folders,
 )
 from utils import (
     load_json as _load_json,
@@ -27,10 +29,17 @@ from utils import (
     DATA_ROOT,
     ALLOWED_ROOTS as _ALLOWED_ROOTS,
     generate_thumbnail,
+    list_directory as _list_dir,
 )
 from blueprints.eventlog import log as elog
 from blueprints.admin_required import admin_required
 from blueprints.auth import require_auth, get_current_user
+
+try:
+    from blueprints.file_manager_photos import _purge_thumb_cache
+except ImportError:
+    def _purge_thumb_cache(path):  # noqa: D103 — stub when photos module unavailable
+        pass
 
 
 def _main():
@@ -533,7 +542,7 @@ def files_trash_empty():
 @require_auth
 def files_trash_delete_permanent():
     """Permanently delete specific items from trash."""
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     trash_ids = data.get('trash_ids', [])
     if isinstance(data.get('trash_id'), str):
         trash_ids = [data['trash_id']]

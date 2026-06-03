@@ -1523,3 +1523,9 @@ def pool_delete(pool_name):
     return jsonify({"ok": True, "steps": steps})
 
 
+@storage_bp.route('/volumes')
+def volumes_compat():
+    """Compatibility alias for /pool/list — frontend historically used /api/storage/volumes."""
+    return pool_list()
+
+

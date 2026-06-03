@@ -99,7 +99,7 @@ from blueprints.backup import backup_bp, init_backup, get_backup_notifications
 from blueprints.users import users_bp, _load_privileges
 from blueprints.network import network_bp
 from blueprints.eventlog import eventlog_bp, init_eventlog, log as elog
-from blueprints.auth import auth_bp, security_bp, require_auth, get_current_user, get_token, generate_token, tokens
+from blueprints.auth import auth_bp, security_bp, require_auth, get_current_user, get_token, generate_token, tokens, SESSION_IDLE_TIMEOUT, _login_attempts, _login_lock, _ATTEMPT_WINDOW
 from blueprints.system_bp import system_bp, _register_avahi_service
 from blueprints.file_manager import files_bp
 from blueprints.file_manager_mobile import _start_trash_scheduler
@@ -109,6 +109,14 @@ from blueprints.file_manager_ops import (
     _resume_interrupted_move, _cleanup_stale_ethos_tmp, _bg_prewarm_home_listing
 )
 from blueprints.file_manager_photos import _restore_upload_sessions
+try:
+    from blueprints.file_manager_permissions import _unlocked_folders, _uf_lock
+except ImportError:
+    _unlocked_folders = {}
+    class _FakeLock:
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+    _uf_lock = _FakeLock()
 from audit import audit_log
 from blueprints.sandbox_policy import sandbox_bp
 from blueprints.updater import update_bp, updates_public_bp, init_update
@@ -179,7 +187,7 @@ Compress(app)
 app.config['COMPRESS_ALGORITHM'] = ['brotli', 'gzip', 'deflate']
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 31536000  # 1 year
 
-PASSWORD_CHANGED_MARKER = '/opt/ethos/.password_changed'
+PASSWORD_CHANGED_MARKER = '/opt/ethos/data/.password_changed'  # On persistent volume
 
 @app.before_request
 def check_password_change():
@@ -209,6 +217,9 @@ def check_password_change():
         '/api/setup/languages', # Firstboot i18n
         '/api/setup/translations/', # Firstboot i18n
         '/api/system/info',     # Often used by UI on load
+        '/api/system-info',     # Alias for frontend compatibility
+        '/api/resources/stats', # Resource monitoring
+        '/api/health',          # Health check (public)
         '/api/language',        # Needed for UI
     ]
 
@@ -270,6 +281,11 @@ def csrf_check():
 
     # Exclude Login (initial auth)
     if request.path == '/api/auth/login':
+        return
+
+    # Skip CSRF for setup endpoints when initial setup is not done yet
+    # (catch-22: can't get token without login, can't login before setup)
+    if not _is_setup_done() and request.path.startswith('/api/setup/'):
         return
 
     # Boot beacon — VM has no session token or CSRF cookie
@@ -485,6 +501,8 @@ app.register_blueprint(network_bp)
 app.register_blueprint(eventlog_bp)
 app.register_blueprint(sandbox_bp)
 app.register_blueprint(update_bp)
+# Compatibility alias — frontend historically used /api/updates/* (plural)
+app.register_blueprint(update_bp, url_prefix='/api/updates', name_prefix='updates_')
 app.register_blueprint(updates_public_bp)
 app.register_blueprint(ddns_bp)
 app.register_blueprint(settings_bp)
@@ -1781,6 +1799,11 @@ def serve_index():
 
 @app.route('/<path:path>')
 def serve_static(path):
+    # Never intercept API routes — let them 404 properly if not found
+    if path.startswith('api/'):
+        from flask import jsonify
+        return jsonify({'error': 'Not found'}), 404
+
     # PWA files must be served from root scope
     if path in ['manifest.json', 'manifest-music.json', 'sw.js', 'offline.html']:
         resp = send_from_directory(app.static_folder, path)

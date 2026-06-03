@@ -1,0 +1,89 @@
+# =============================================================================
+# EthOS - Development Dockerfile
+# Multi-stage build with hot reload capabilities
+# =============================================================================
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stage 1: Base system with all dependencies
+# ─────────────────────────────────────────────────────────────────────────────
+FROM python:3.11-slim AS base
+
+ENV ETHOS_ROOT=/opt/ethos \
+    DATA_DIR=/opt/ethos/data \
+    LOG_DIR=/opt/ethos/logs \
+    PORT=9000 \
+    PYTHONUNBUFFERED=1
+
+# Install system dependencies (same as production)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl wget ca-certificates gnupg sudo coreutils util-linux \
+    smartmontools mdadm lvm2 parted udisks2 udevil hdparm ntfs-3g exfatprogs e2fsprogs \
+    samba smbclient nfs-kernel-server lighttpd vsftpd minidlna \
+    wpasupplicant dnsmasq rfkill wireless-tools iw avahi-daemon \
+    lm-sensors usbutils pciutils rsync p7zip-full unrar-free zstd tar gzip bzip2 xz-utils \
+    ffmpeg ffprobe imagemagick ghostscript poppler-utils enscript tesseract-ocr libtesseract-dev \
+    libreoffice-writer libreoffice-common cups cups-client ufw fail2ban openssh-server nginx certbot \
+    build-essential gcc g++ make cmake pkg-config libffi-dev libssl-dev libjpeg-dev libpng-dev libtiff-dev \
+    tesseract-ocr-eng tesseract-ocr-pol \
+    && rm -rf /var/lib/apt/lists/* && apt-get clean
+
+# Create application directories
+RUN mkdir -p ${ETHOS_ROOT}/backend ${ETHOS_ROOT}/frontend ${DATA_DIR} ${LOG_DIR} \
+             /opt/ethos/backups /opt/ethos/uploads \
+    && chown -R root:root ${ETHOS_ROOT} && chmod -R 755 ${ETHOS_ROOT}
+
+WORKDIR ${ETHOS_ROOT}/backend
+
+# Copy and install Python dependencies
+COPY backend/requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
+    && pip install --no-cache-dir -r requirements.txt \
+    # Install development tools
+    && pip install --no-cache-dir \
+       flask-debugtoolbar \
+       watchdog \
+       autopep8 \
+       pylint
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stage 2: Development image with hot reload
+# ─────────────────────────────────────────────────────────────────────────────
+FROM base AS development
+
+LABEL description="EthOS Development Image with Hot Reload"
+
+# Copy application code (will be mounted as volume during dev)
+COPY backend/ .
+COPY frontend/ ../frontend/
+
+# Create runtime directories
+RUN mkdir -p ${DATA_DIR}/stickynotes ${DATA_DIR}/ssh_keys ${DATA_DIR}/.thumb_cache \
+    && touch ${LOG_DIR}/auth.log ${LOG_DIR}/access.log ${LOG_DIR}/ethos.log
+
+EXPOSE 9000/tcp 22/tcp
+
+# Development command with auto-reload
+CMD ["python", "app.py"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stage 3: Production image (optimized)
+# ─────────────────────────────────────────────────────────────────────────────
+FROM base AS production
+
+LABEL description="EthOS Production Image"
+
+# Copy application code
+COPY backend/ .
+COPY frontend/ ../frontend/
+
+# Create runtime directories
+RUN mkdir -p ${DATA_DIR}/stickynotes ${DATA_DIR}/ssh_keys ${DATA_DIR}/.thumb_cache \
+    && touch ${LOG_DIR}/auth.log ${LOG_DIR}/access.log ${LOG_DIR}/ethos.log
+
+EXPOSE 9000/tcp 22/tcp 445/tcp 139/tcp 80/tcp 443/tcp
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:${PORT}/api/health || exit 1
+
+CMD ["python", "app.py"]

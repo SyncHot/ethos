@@ -2,6 +2,7 @@
 import os
 import sys
 import sys as _sys
+import re
 import hashlib
 import threading as _threading
 import gevent.lock as _gevent_lock

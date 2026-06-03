@@ -54,11 +54,14 @@ def _main():
 files_bp = _sys.modules['blueprints.file_manager'].files_bp
 
 class _SocketioProxy:
-    """Lazy proxy for socketio – avoids import-lock issues under gevent."""
+    """Lazy proxy for socketio - avoids import-lock issues under gevent."""
     def __getattr__(self, name):
         sio = getattr(_sys.modules.get('app'), 'socketio', None)
         if sio is None:
-            raise AttributeError(f'socketio not yet available ({name!r})')
+            # Return a no-op function instead of raising an error
+            def noop(*args, **kwargs):
+                pass
+            return noop
         return getattr(sio, name)
 socketio = _SocketioProxy()
 

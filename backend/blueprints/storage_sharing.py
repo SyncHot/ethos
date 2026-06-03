@@ -1412,3 +1412,9 @@ def ftp_pkg_status():
     return jsonify({'status': 'ready' if installed else 'missing', 'ftp_installed': installed})
 
 
+@storage_bp.route('/shares')
+def shares_compat():
+    """Compatibility alias for /samba/shares — frontend historically used /api/storage/shares."""
+    return samba_shares()
+
+

@@ -116,11 +116,25 @@ def push_inbox(title, message, msg_type='info', category='system', action_app=No
     ts = time.time()
     try:
         conn = _get_inbox_db()
-        conn.execute(
-            'INSERT INTO inbox (ts, title, message, type, category, action_app, action_tab) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            (ts, title, message, msg_type, category, action_app, action_tab)
-        )
-        conn.commit()
+
+        # Deduplication: if same message+category occurred within last 60s, update timestamp instead of inserting
+        dedup_key = f'{title}|{message}'
+        existing = conn.execute(
+            'SELECT id FROM inbox WHERE title = ? AND message = ? AND category = ? AND ts > ?',
+            (title, message, category, ts - 60)
+        ).fetchone()
+
+        if existing:
+            # Update timestamp of existing notification instead of creating duplicate
+            conn.execute('UPDATE inbox SET ts = ? WHERE id = ?', (ts, existing[0]))
+            conn.commit()
+        else:
+            conn.execute(
+                'INSERT INTO inbox (ts, title, message, type, category, action_app, action_tab) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                (ts, title, message, msg_type, category, action_app, action_tab)
+            )
+            conn.commit()
+
         # Get unread count
         row = conn.execute('SELECT COUNT(*) FROM inbox WHERE read = 0').fetchone()
         unread = row[0] if row else 0
@@ -571,6 +585,12 @@ def unread_count():
     except Exception:
         count = 0
     return jsonify({'count': count})
+
+
+@notifications_bp.route('/count', methods=['GET'])
+def notification_count():
+    """Alias for /unread-count — frontend compatibility."""
+    return unread_count()
 
 
 @notifications_bp.route('/subscribe', methods=['POST'])

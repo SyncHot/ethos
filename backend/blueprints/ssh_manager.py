@@ -119,6 +119,24 @@ def _safe_keys(keys):
 #  SSH Keys CRUD
 # ══════════════════════════════════════════════════════════════════
 
+@ssh_bp.route('/status', methods=['GET'])
+def api_ssh_status():
+    """Return SSH service status and configuration summary."""
+    try:
+        enabled = _is_ssh_enabled()
+        port = _get_ssh_port()
+        root_login = _get_root_login_setting()
+        return jsonify({
+            'enabled': enabled,
+            'port': port,
+            'root_login': root_login,
+            'keys_count': len(list_ssh_keys_data())
+        })
+    except Exception as e:
+        log.exception('Error getting SSH status')
+        return jsonify({'error': str(e)}), 500
+
+
 @ssh_bp.route('/keys', methods=['GET'])
 def api_list_keys():
     try:

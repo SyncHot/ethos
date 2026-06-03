@@ -1366,5 +1366,24 @@ def get_progress():
         return jsonify({'progress': progress_state.get('last')})
 
 
+@backup_bp.route('/tasks')
+def tasks_compat():
+    """Compatibility alias — frontend historically used /api/backup/tasks."""
+    # Return status + scheduling info as a combined "tasks" view
+    try:
+        from blueprints.backup_scheduling import get_schedule_list
+        schedule = get_schedule_list()
+    except Exception:
+        schedule = []
+    with operation_lock:
+        busy = current_operation is not None
+        op = current_operation
+    return jsonify({
+        'busy': busy,
+        'current_operation': op,
+        'scheduled_tasks': schedule
+    })
+
+
 # ── Sub-module route registration ──
 from blueprints import backup_config, backup_scheduling, backup_history, backup_snapshots

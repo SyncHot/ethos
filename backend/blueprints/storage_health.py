@@ -83,7 +83,7 @@ def _health_monitor_loop():
                                            'message': f'RAID array /dev/{current_md} is DEGRADED ({bm.group(1)})'})
                             current_md = None
 
-            # 3) Disk usage check (>90%)
+            # 3) Disk usage check (>90%) — skip Docker/WSL internal mounts
             r = _host_run_base("df -B1 --output=target,pcent 2>/dev/null | tail -n +2")
             if r.returncode == 0:
                 for line in r.stdout.strip().splitlines():
@@ -98,7 +98,10 @@ def _health_monitor_loop():
                         pval = int(pct)
                     except ValueError:
                         continue
-                    if pval >= 90 and not mount.startswith(('/snap', '/run', '/sys', '/proc', '/dev')):
+                    # Skip virtual/system mounts AND Docker/WSL internal paths
+                    skip_prefixes = ('/snap', '/run', '/sys', '/proc', '/dev',
+                                     '/mnt/host/', '/var/lib/docker/')
+                    if pval >= 90 and not mount.startswith(skip_prefixes):
                         alerts.append({'type': 'disk_usage', 'level': 'warning' if pval < 95 else 'error',
                                        'mount': mount, 'percent': pval,
                                        'message': f'Disk usage at {pval}% on {mount}'})

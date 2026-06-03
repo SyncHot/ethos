@@ -173,6 +173,9 @@ def _strip(text, length=None):
     if not text:
         return ''
     text = str(text).strip()
+    # Sanitize HTML to prevent stored XSS — strip all tags
+    import html as _html_mod
+    text = _html_mod.escape(text, quote=True)
     if length and len(text) > length:
         return text[:length]
     return text

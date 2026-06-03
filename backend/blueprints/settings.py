@@ -143,6 +143,12 @@ def update_settings():
     restart_needed = False
     errors = []
 
+    # Reject completely empty submissions
+    recognized_keys = {'nas_name', 'port', 'hostname', 'timezone', 'auto_update',
+                       'backup_dir', 'ethos_root'}
+    if not data.keys() & recognized_keys:
+        return jsonify({'error': 'Brak rozpoznanych ustawień do zmiany'}), 400
+
     env = _read_env()
     current_port = int(env.get('PORT', '9000'))
     current_name = env.get('NAS_NAME', 'EthOS')

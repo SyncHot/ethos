@@ -43,21 +43,33 @@ def run_cmd(cmd):
 def get_status():
     config = load_config()
 
-    # 1. WOL
-    iface = _get_primary_iface()
+    # 1. WOL — gracefully handle missing ethtool / no interface (Docker)
+    iface = _get_primary_iface() or ''
     wol_status = "Unknown"
     if iface:
-        out = run_cmd(f"ethtool {shlex.quote(iface)} | grep 'Wake-on'")
-        # Supports Wake-on: pumbg
-        # Wake-on: g
-        if "Wake-on: g" in out:
-            wol_status = "Enabled"
-        elif "Wake-on: d" in out:
-            wol_status = "Disabled"
+        try:
+            out = run_cmd(f"ethtool {shlex.quote(iface)} | grep 'Wake-on'")
+            # Supports Wake-on: pumbg
+            # Wake-on: g
+            if "Wake-on: g" in out:
+                wol_status = "Enabled"
+            elif "Wake-on: d" in out:
+                wol_status = "Disabled"
+        except Exception:
+            wol_status = "Unavailable"
 
-    # 2. CPU Governor
-    gov = run_cmd("cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null") or "unknown"
-    avail_govs = run_cmd("cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors 2>/dev/null").split()
+    # 2. CPU Governor — gracefully handle missing sysfs (Docker/WSL)
+    gov = "unknown"
+    avail_govs = []
+    try:
+        gov_path = "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"
+        if os.path.exists(gov_path):
+            gov = run_cmd(f"cat {gov_path}") or "unknown"
+        avail_path = "/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors"
+        if os.path.exists(avail_path):
+            avail_govs = run_cmd(f"cat {avail_path}").split()
+    except Exception:
+        pass  # sysfs not available in container — keep defaults
 
     # 3. HDD Spindown (read from config + check actual status if possible)
     # Checking actual status (active/standby) takes time and might spin up disk, so we just show config.

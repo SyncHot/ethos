@@ -148,7 +148,12 @@ def get_status():
         combined = (out + ' ' + err).lower()
         if 'inactive' in combined:
             return jsonify(ok=True, status='inactive', rules=[], defaults={})
-        return jsonify(error=err or 'UFW error'), 500
+        # Sanitize error — never expose raw iptables/ufw output to client
+        return jsonify(
+            error='missing_dependency',
+            message='Firewall nie jest dostępny — wymagane uprawnienia lub zainstalowany UFW',
+            install_cmd='sudo apt install -y ufw'
+        ), 503
 
     status = 'active' if 'Status: active' in out else 'inactive'
 

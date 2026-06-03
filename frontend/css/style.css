@@ -586,12 +586,12 @@ input[type="checkbox"]:hover {
     font-size: 12px;
     white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     transition: all var(--transition);
 }
 
 .taskbar-win-btn i { flex-shrink: 0; font-size: 13px; }
-.taskbar-win-btn span { overflow: hidden; text-overflow: ellipsis; }
+.taskbar-win-btn span { overflow: hidden; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .taskbar-win-btn:hover { background: var(--hover-overlay); color: var(--text-primary); }
 .taskbar-win-btn.active { background: var(--active-overlay); border-color: var(--accent); color: var(--accent-hover); }
 .taskbar-win-btn.minimized { opacity: 0.5; }
@@ -698,7 +698,7 @@ input[type="checkbox"]:hover {
     text-align: center;
     max-width: 80px;
     overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap;
     text-shadow: 0 1px 3px rgba(0,0,0,0.8);
 }
@@ -777,7 +777,7 @@ input[type="checkbox"]:hover {
     color: var(--text-secondary);
     overflow: hidden;
     white-space: nowrap;
-    text-overflow: ellipsis;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     pointer-events: none;
 }
 
@@ -955,7 +955,7 @@ input[type="checkbox"]:hover {
     line-height: 1.3;
     max-width: 90px;
     overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap;
 }
 
@@ -965,7 +965,7 @@ input[type="checkbox"]:hover {
     text-align: center;
     max-width: 100px;
     overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap;
     opacity: 0.7;
     margin-top: -2px;
@@ -1065,7 +1065,7 @@ input[type="checkbox"]:hover {
     font-size: 15px;
 }
 .usb-tray-info { flex: 1; min-width: 0; }
-.usb-tray-name { font-size: 13px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.usb-tray-name { font-size: 13px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .usb-tray-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
 .usb-tray-bar { width: 100%; height: 3px; background: rgba(255,255,255,0.08); border-radius: 2px; overflow: hidden; margin-top: 4px; }
 .usb-tray-bar-fill { height: 100%; border-radius: 2px; transition: width 0.3s ease; }
@@ -1182,7 +1182,7 @@ input[type="checkbox"]:hover {
     color: var(--text-muted);
     white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
 .gts-track {
@@ -1719,7 +1719,7 @@ input[type="checkbox"]:hover {
     color: var(--text-primary);
     min-width: 0;
     overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap;
 }
 .fileop-title i {
@@ -1764,7 +1764,7 @@ input[type="checkbox"]:hover {
     color: var(--text-muted);
     white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
 
@@ -2087,7 +2087,7 @@ input[type="checkbox"]:hover {
     transition: all var(--transition);
     white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     border: none;
     background: none;
     width: 100%;
@@ -2320,7 +2320,7 @@ input[type="checkbox"]:hover {
     flex-shrink: 0; white-space: nowrap;
 }
 .fm-clipboard-bar i { font-size: 13px; }
-.fm-clipboard-bar span { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.fm-clipboard-bar span { flex: 1; overflow: hidden; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .fm-file-name {
     display: flex;
@@ -2338,7 +2338,7 @@ input[type="checkbox"]:hover {
 
 .fm-file-name span {
     overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap;
 }
 
@@ -2509,7 +2509,7 @@ input[type="checkbox"]:hover {
     color: var(--text-primary);
     white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .fm-trash-item-meta {
     display: flex;
@@ -2524,7 +2524,7 @@ input[type="checkbox"]:hover {
 .fm-trash-item-path {
     max-width: 300px;
     overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap;
 }
 .fm-trash-days { font-weight: 500; }
@@ -2738,7 +2738,7 @@ input[type="checkbox"]:hover {
     color: var(--text-primary);
     white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .fm-dup-live-actions {
     display: flex;
@@ -2886,7 +2886,7 @@ input[type="checkbox"]:hover {
     color: var(--text-primary);
     white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .fm-dup-keep-badge {
     display: inline-block;
@@ -2912,7 +2912,7 @@ input[type="checkbox"]:hover {
 .fm-dup-file-meta span {
     max-width: 320px;
     overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap;
 }
 .fm-dup-open-fm {
@@ -3068,7 +3068,7 @@ input[type="checkbox"]:hover {
 .ddisk-name { font-size: 14px; font-weight: 600; color: var(--text-primary); margin-bottom: 2px; }
 .ddisk-meta {
     font-size: 11px; color: var(--text-muted); margin-bottom: 8px;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; overflow: hidden; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .ddisk-bar-wrap { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
 .ddisk-bar {
@@ -3180,7 +3180,7 @@ input[type="checkbox"]:hover {
 .dkr-dot.dead      { background: var(--danger); }
 
 .dkr-muted { color: var(--text-muted); font-size: 12px; }
-.dkr-ellipsis { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dkr-ellipsis { max-width: 200px; overflow: hidden; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dkr-status-text { color: var(--text-secondary); font-size: 12px; }
 .dkr-link { color: #2496ed; cursor: pointer; text-decoration: none; font-weight: 500; }
 .dkr-link:hover { text-decoration: underline; }
@@ -3260,7 +3260,7 @@ input[type="checkbox"]:hover {
     font-size: 12px; padding: 4px 0; display: flex; align-items: center; gap: 8px;
     white-space: nowrap; overflow: hidden;
 }
-.dkr-project-ct .dkr-muted { overflow: hidden; text-overflow: ellipsis; }
+.dkr-project-ct .dkr-muted { overflow: hidden; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dkr-project-ct .dkr-status-text { margin-left: auto; flex-shrink: 0; }
 .dkr-ct-name { font-weight: 500; white-space: nowrap; }
 .dkr-ct-ports { display: flex; gap: 3px; flex-shrink: 0; flex-wrap: wrap; }
@@ -3801,7 +3801,7 @@ a.dkr-port-link:hover {
 }
 
 .cl-entry-meta { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.cl-entry-title { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cl-entry-title { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cl-entry-date { font-size: 11px; color: var(--text-muted); }
 
 .cl-changes {
@@ -4647,14 +4647,14 @@ a.dkr-port-link:hover {
     font-size: 14px;
     white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .as-card-dev {
     font-size: 11px;
     color: var(--text-muted);
     white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .as-card-tagline {
     font-size: 12px;
@@ -4948,7 +4948,7 @@ a.dkr-port-link:hover {
     font-weight: 500;
     white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     max-width: 120px;
 }
 
@@ -5018,14 +5018,14 @@ a.dkr-port-link:hover {
     font-size: 14px;
     white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .as-repo-url {
     font-size: 11px;
     color: var(--text-muted);
     white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     margin-top: 2px;
 }
 .as-repo-actions {
@@ -5169,7 +5169,7 @@ a.dkr-port-link:hover {
     color: var(--text-muted);
     white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     min-height: 16px;
     font-family: 'JetBrains Mono', monospace;
 }
@@ -5824,7 +5824,7 @@ a.dkr-port-link:hover {
     color: #fff;
     flex: 1;
     overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap;
 }
 .mv-actions {
@@ -6187,7 +6187,7 @@ a.dkr-port-link:hover {
 }
 .ce-check input { cursor: pointer; accent-color: var(--accent); }
 .ce-filename {
-    font-size: 12px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis;
+    font-size: 12px; color: var(--text-muted); overflow: hidden; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap; max-width: 200px;
 }
 .ce-find-bar {
@@ -6353,7 +6353,7 @@ a.dkr-port-link:hover {
 .dlm-item-info { flex: 1; min-width: 0; }
 .dlm-item-name {
     font-size: 14px; font-weight: 600; color: var(--text-primary);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; overflow: hidden; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     line-height: 1.4;
 }
 .dlm-item-meta {
@@ -6365,9 +6365,9 @@ a.dkr-port-link:hover {
 .dlm-status-completed .dlm-item-status { color: var(--success); }
 .dlm-status-failed .dlm-item-status { color: var(--danger); }
 .dlm-item-size { color: var(--text-secondary); }
-.dlm-item-error { color: var(--danger); max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dlm-item-error { color: var(--danger); max-width: 300px; overflow: hidden; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dlm-item-warn { color: var(--accent-orange); }
-.dlm-item-path { color: var(--text-muted); max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dlm-item-path { color: var(--text-muted); max-width: 250px; overflow: hidden; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Progress bar — taller, rounded, with inline text */
 .dlm-progress-bar {
     margin-top: 8px; height: 10px; background: var(--bg-primary); border-radius: var(--r-sm);
@@ -6415,7 +6415,7 @@ a.dkr-port-link:hover {
 .dlm-package-info { flex: 1; min-width: 0; }
 .dlm-package-name {
     font-size: 14px; white-space: nowrap; overflow: hidden;
-    text-overflow: ellipsis; display: flex; align-items: center;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center;
 }
 .dlm-package-name strong { font-weight: 600; }
 .dlm-package-status { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 2px; }
@@ -6570,7 +6570,7 @@ a.dkr-port-link:hover {
     flex: 1;
     min-width: 0;
     overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap;
 }
 .aic-health-badge--header {
@@ -6602,7 +6602,7 @@ a.dkr-port-link:hover {
 .aic-conv-item { padding: 10px 12px; border-radius: var(--r-md); cursor: pointer; transition: background var(--transition-fast); position: relative; margin-bottom: 2px; }
 .aic-conv-item:hover { background: var(--bg-hover); }
 .aic-conv-item.aic-conv-active { background: var(--bg-active); }
-.aic-conv-title { font-size: 13px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 24px; }
+.aic-conv-title { font-size: 13px; color: var(--text-primary); white-space: nowrap; overflow: hidden; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 24px; }
 .aic-conv-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
 .aic-conv-del { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); width: 24px; height: 24px; border: none; border-radius: var(--r-sm); background: transparent; color: var(--text-muted); cursor: pointer; display: none; align-items: center; justify-content: center; font-size: 11px; }
 .aic-conv-item:hover .aic-conv-del { display: flex; }
@@ -6690,7 +6690,7 @@ a.dkr-port-link:hover {
 /* ── attach bar (file chips) ── */
 .aic-attach-bar { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 24px 0; }
 .aic-attach-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: var(--r-md); background: rgba(139,92,246,0.12); color: #8b5cf6; font-size: 12px; border: 1px solid rgba(139,92,246,0.25); }
-.aic-attach-name { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aic-attach-name { max-width: 160px; overflow: hidden; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .aic-attach-size { color: var(--text-muted); font-size: 11px; }
 .aic-attach-remove { border: none; background: none; color: var(--text-muted); cursor: pointer; padding: 0 2px; font-size: 11px; }
 .aic-attach-remove:hover { color: #ef4444; }
@@ -7155,7 +7155,7 @@ textarea:disabled,
     color: var(--text-muted);
     flex: 1;
     overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap;
 }
 .ux-dir-list {

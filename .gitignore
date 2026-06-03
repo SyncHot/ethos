@@ -1,11 +1,18 @@
-# Environment and runtime
+# =============================================================================
+# EthOS - Git Ignore File
+# =============================================================================
+
+# ── Environment and runtime ────────────────────────────────────────
 .installed
 .password_changed
 .pip-cache/
 ethos.env
 *.env.local
 
-# Build and cache
+# Docker environment files
+.dockerenv
+
+# ── Build and cache ────────────────────────────────────────────────
 __pycache__/
 *.pyc
 *.pyo
@@ -26,25 +33,27 @@ npm-debug.log
 *.swo
 *~
 
-# Runtime
-logs
+# Runtime directories (created at runtime)
 logs/
-uploads
 uploads/
-data
 data/
-backups
 backups/
-venv
 venv/
 
-# System
+# System files
 .DS_Store
-*.local
 Thumbs.db
+desktop.ini
 
 # Specific directories
 cups-config/
 .aider*
-.env
 .continue/
+
+# Docker build cache
+_pip-cache/
+
+# Temporary files
+*.tmp
+*.bak
+*.old
